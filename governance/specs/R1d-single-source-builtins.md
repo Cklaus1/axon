@@ -4,11 +4,23 @@
 "BUILTIN_EXTERNS registry (R1d slice 1) — collapse 21 declare blocks"):
 `crates/axon-core/src/codegen/builtin_externs.rs` exists exactly as designed, 25 registry rows,
 `declare_one_extern`/`declare_builtin_externs` doing the iterate-and-declare this spec prescribes.
-**Slice 2 partially landed**: `sleep_ms`/`now_ms` (`daa01f7`) and `dict_merge` (`eff8ce2`) migrated
-into the registry; the str/math family slice 2 names as the next batch
+**Slice 2 landed a further batch 2026-07-18**: `sleep_ms`/`now_ms` (`daa01f7`) and `dict_merge`
+(`eff8ce2`) were already in the registry; this session added the 7 f64 math intrinsics
+`sqrt`/`pow`/`floor`/`ceil`/`exp`/`ln`/`log10` (all `llvm.*.f64` LLVM-intrinsic-backed, previously
+a hand-written "Phase 3 math builtins" block in `codegen/builtins.rs` declaring the same functions
+one `add_function` call at a time) — collapsed into 7 registry rows, the old block deleted. Verified
+before migrating: none of the 7 have bespoke call-site lowering (a single `get_function("sqrt")`
+reverse-dependency from `arr_std_f64` and the `sqrt_f64`/`floor_f64`/`ceil_f64` wrapper builtins
+still resolves correctly, since `declare_builtin_externs()` always runs first in `declare_builtins`
+regardless of which code path declares the underlying function). Re-verified: `cargo build -p
+axon-core` clean; `codegen::builtin_externs::drift_tests` both PASS (32 rows now); the full
+`scripts/fuzz_parity.sh` PASS including `sqrt`/`floor`/`ceil`/`exp`/`ln`/`log10` and the
+`nan_sqrt_neg` edge case; `pow` (not in the fuzz corpus) checked manually via
+`axon run`/`axon build` on `pow(2,10)`/`pow(2,0.5)`/`pow(-8,1/3)` — native matches interp exactly
+incl. the NaN case. The str/math family this slice originally named as its next batch
 (`str_to_upper`/`str_to_lower`/`str_trim`) were separately fixed for UTF-8 correctness (BUG_HUNT
-commits, R1b-adjacent) via direct axon-rt delegation, not necessarily added as `BUILTIN_EXTERNS`
-rows — not verified either way this session. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
+commits, R1b-adjacent) via direct axon-rt delegation, not added as `BUILTIN_EXTERNS` rows — still
+not verified either way. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
 `codegen::builtin_externs::drift_tests` — `every_extern_row_matches_a_known_builtin_with_the_same_arity`
 asserts every `BUILTIN_EXTERNS` row's `axon_name` (the join key the field comment reserved for
 exactly this) resolves to a `BUILTINS` entry with the same param count, and
@@ -37,7 +49,7 @@ supersedes: none
 related: R1b-str-return-abi, R1c-dict-runtime
 conflicts-with: none
 reserves: none
-evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, Slice 3, landed 2026-07-18); CLAUDE.md "Adding a New Builtin" (Slice 4, landed 2026-07-18); Slice 2 partial
+evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, 32 rows, re-verified 2026-07-18); scripts/fuzz_parity.sh (Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4); Slice 2 still partial (str/math family batch not verified)
 ```
 
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the

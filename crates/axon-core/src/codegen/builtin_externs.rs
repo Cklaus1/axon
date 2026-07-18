@@ -302,6 +302,75 @@ pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
         fn_key: Some("now_ms"),
         ret_type: Some(("now_ms", SemRet::I64)),
     },
+    // ── f64 math intrinsics (Phase 3; R1d slice 2 batch) ────────────────────
+    // LLVM intrinsics lowered to C libm (`llvm.*.f64`), not axon-rt externs —
+    // `symbol` is just the declared function name either way, so the same row
+    // shape covers both. `sqrt`/`floor`/`ceil` are also reused directly (by
+    // `self.functions.get_function`) from the sqrt_f64/floor_f64/ceil_f64
+    // wrapper builtins later in `declare_builtins`; that reuse still works
+    // because `declare_builtin_externs()` (this table) runs first (see the
+    // top of `declare_builtins`), so those lookups always find an existing
+    // declaration to reuse rather than redeclaring.
+    ExternSig {
+        axon_name: "sqrt",
+        symbol: "llvm.sqrt.f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("sqrt"),
+        ret_type: Some(("sqrt", SemRet::F64)),
+    },
+    ExternSig {
+        axon_name: "pow",
+        symbol: "llvm.pow.f64",
+        params: &[L::F64, L::F64],
+        ret: L::F64,
+        fn_key: Some("pow"),
+        ret_type: Some(("pow", SemRet::F64)),
+    },
+    ExternSig {
+        axon_name: "floor",
+        symbol: "llvm.floor.f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("floor"),
+        ret_type: Some(("floor", SemRet::F64)),
+    },
+    ExternSig {
+        axon_name: "ceil",
+        symbol: "llvm.ceil.f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("ceil"),
+        ret_type: Some(("ceil", SemRet::F64)),
+    },
+    // exp / ln / log10 — the transcendental trio, matching the interpreter's
+    // Rust f64::{exp,ln,log10} (which call the same libm), so native==interp.
+    // Axon `ln` = natural log = `llvm.log.f64` (C `log`); `log10` is the
+    // base-10 intrinsic.
+    ExternSig {
+        axon_name: "exp",
+        symbol: "llvm.exp.f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("exp"),
+        ret_type: Some(("exp", SemRet::F64)),
+    },
+    ExternSig {
+        axon_name: "ln",
+        symbol: "llvm.log.f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("ln"),
+        ret_type: Some(("ln", SemRet::F64)),
+    },
+    ExternSig {
+        axon_name: "log10",
+        symbol: "llvm.log10.f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("log10"),
+        ret_type: Some(("log10", SemRet::F64)),
+    },
 ];
 
 impl<'ctx> super::Codegen<'ctx> {

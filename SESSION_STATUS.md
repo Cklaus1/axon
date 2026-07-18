@@ -277,10 +277,35 @@ bug.
 
 Pre-convention count 40 → 38.
 
+## R1d Slice 2 batch: 7 f64 math intrinsics migrated (this iteration)
+
+First real R1d Slice 2 feature work this session (previous iterations were docs/verification).
+Diffed `BUILTINS` against the registry to find candidates, then filtered carefully before touching
+codegen internals: bitwise ops (`bit_and`/`or`/`xor`/`not`, `shl`/`shr`) were ruled OUT — already
+lowered as single native LLVM instructions inline, migrating them to a registry row would add
+function-call overhead where none exists today (a regression, not a win — the registry is for
+externs, not for things that are already optimal). `sqrt`/`pow`/`floor`/`ceil`/`exp`/`ln`/`log10`
+were the real fit: LLVM-intrinsic-backed (`llvm.*.f64`), previously a hand-written "Phase 3 math
+builtins" block declaring the same 7 functions one `add_function` call at a time — a smaller
+sibling of what Slice 1 already collapsed for the true `__axon_*` externs.
+
+Verified BEFORE migrating (not after): grepped for reverse dependencies (a `get_function("sqrt")`
+call in `arr_std_f64`, plus `sqrt_f64`/`floor_f64`/`ceil_f64` wrapper builtins that reuse the same
+underlying declarations) and confirmed the ordering holds regardless of which code path declares
+the function, since `declare_builtin_externs()` always runs first inside `declare_builtins()`.
+Migrated the 7 rows, deleted the old block, rebuilt clean, ran the drift cross-check tests (32 rows
+now), ran the full differential fuzzer (`scripts/fuzz_parity.sh` — sqrt/floor/ceil/exp/ln/log10 all
+covered, including the `nan_sqrt_neg` edge case), and manually verified `pow` (not in the fuzz
+corpus) via `axon run`/`axon build` on 3 cases including a NaN case — native matched interp
+exactly on all of them.
+
 ## Next candidate slice
 
-- R1d Slice 2 (migrate more inline-IR builtins into the `BUILTIN_EXTERNS` registry) — real feature
-  work, higher risk (touches codegen internals), pick ONE simple candidate rather than a batch.
+- Continue R1d Slice 2 (more batches — the str/math family named in the spec's own text,
+  `str_to_upper`/`str_to_lower`/`str_trim`, is worth checking whether it's already
+  `BUILTIN_EXTERNS`-eligible or needs the bespoke-lowering path), or pick a different simple
+  candidate the same way (diff `BUILTINS` against the registry, rule out anything with a reverse
+  dependency or already-optimal inline lowering before touching codegen).
 - Or: continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit
   per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick a fresh
   `REQUIREMENTS.md` row.
