@@ -794,6 +794,24 @@ None of these are founder-committed (unlike R17's §2.3 reversal or R18's greenl
 Draft research output, sized so a founder decision converts one directly into a committed track
 the way §2.3 did for R17.
 
+**Two more, added later the same day** — prompted by a user design proposal for formalizing
+AI-driven project governance as a typed compiler/graph system, rather than a platform-vision
+candidate like the four above:
+
+- **`governance/specs/R39-typed-execution-graph.md`** (Draft): scoped to Axon's *own* governance —
+  hardens the existing `BUILD_PROTOCOL.md`/`EXECUTION_MODEL.md` task-DAG/evidence-graph/
+  knowledge-graph conventions (currently markdown + `scripts/verify_all_specs.sh` regex) into typed
+  schemas + a real parser/validator. Directly motivated by this session's own failure record (a
+  dozen stale headers, dangling cross-references, an unexercised gate-script bug) — cheap, additive,
+  genuinely optional tooling, not a requirement gate.
+- **`governance/specs/R40-ai-native-research-compiler.md`** (Draft): the general-purpose superset —
+  a natural-language-to-typed-IR compiler with decision/experiment/evidence/knowledge/provenance
+  graphs, a mutation-validation engine, and a harness runtime, usable for *any* AI-driven project.
+  Preserved at full fidelity because it's a coherent design, but explicitly held for later: it's a
+  standalone product on the scale of a coding-agent orchestration platform, not a language feature,
+  and building it without first deciding "is Axon now this too?" risks the same identity sprawl the
+  R16/R17/R18/R36/R37/R38 platform-vision list already shows six competing fronts of.
+
 ---
 
 ## 11. One-line Summary
