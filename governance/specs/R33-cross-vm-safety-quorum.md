@@ -612,7 +612,8 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 
 | Claim | Verify command | Expected | Last verified (commit @ date) | Result |
 |---|---|---|---|---|
-| Quorum unit tests (`check_quorum` aggregator logic) pass | `bash scripts/r33_acceptance_gate.sh` (step 4) | 13 passed, 0 failed (11 + 2 coalition tests) | this commit @ 2026-07-18 | PASS |
+| Quorum unit tests (`check_quorum` aggregator logic) pass | `bash scripts/r33_acceptance_gate.sh` (step 4) | 16 passed, 0 failed (11 + 5 coalition tests, incl. even-N N=4/N=6 and legacy-vote coverage added after a decision audit flagged those paths as untested) | this commit @ 2026-07-18 | PASS |
+| Decision-audit follow-up: coalition cap formula holds at even N (N=4, N=6, sock-puppet + distinct-root control); legacy `.vote` JSON (no `lineage_root`) coalesces into one capped bucket as intended, not N independent voters; Risk >= Critical with no `--quorum-dir` now warns visibly instead of silently deploying unenforced | `bash scripts/r33_acceptance_gate.sh` (step 8 even-N tests via step 4; step 10e for the warning) | all pass; warning text present, deploy still succeeds (visibility only, no behavior change) | this commit @ 2026-07-18 | PASS |
 | `axon-vm` binary builds with the quorum CLI wired in | `bash scripts/r33_acceptance_gate.sh` (step 5) | build succeeds | this commit @ 2026-07-18 | PASS |
 | End-to-end propose→vote→check CLI journey, both majority outcomes | `bash scripts/r33_acceptance_gate.sh` (step 6) | 1/3 approvals → exit 13 QUORUM_BLOCKED; 2/3 approvals → exit 0 QUORUM MET | this commit @ 2026-07-18 | PASS |
 | Attestation mismatch across voters is a distinct failure from a plain minority | `bash scripts/r33_acceptance_gate.sh` (step 7) | mismatched `voter_tcb` → exit 14 QUORUM_ATTEST_FAIL, distinct from exit 13 | this commit @ 2026-07-18 | PASS |

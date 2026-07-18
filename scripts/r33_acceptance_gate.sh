@@ -33,6 +33,9 @@ REQUIRED_NAMES=(
     "collect_responses_malformed_file_is_io_error_not_panic"
     "coalition_bound_limits_same_lineage"
     "coalition_cap_does_not_block_distinct_lineage_roots"
+    "coalition_cap_at_even_n_sockpuppet_blocked"
+    "coalition_cap_at_even_n_distinct_roots_meets_quorum"
+    "legacy_votes_missing_lineage_root_share_one_capped_bucket"
 )
 
 for name in "${REQUIRED_NAMES[@]}"; do
@@ -359,6 +362,24 @@ if [ "$MISSING_BIN_RC" -eq 2 ] && echo "$MISSING_BIN_OUT" | grep -qi "axon-vm bi
     pass "missing --axon-vm-bin → hard error exit 2, never a silent open gate"
 else
     fail "missing axon-vm binary case → exit $MISSING_BIN_RC, expected 2: $MISSING_BIN_OUT"
+fi
+
+# 10e. Risk >= Critical with NO --quorum-dir at all: the gate stays open (by
+#      design — same convention as every other Phase-11 gate) but a decision
+#      audit flagged this as the highest-risk choice in the whole R33.S4
+#      integration (a silent false-sense-of-security failure mode), so a
+#      visible stderr warning is now required, not just a silent skip.
+CRITICAL_NO_QUORUM_ERR=$("$AXON_BIN" deploy "$HELLO_AX" --risk critical --json 2>&1 >/dev/null)
+CRITICAL_NO_QUORUM_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk critical --json 2>/dev/null)
+if echo "$CRITICAL_NO_QUORUM_ERR" | grep -qi "quorum gate is NOT enforced"; then
+    pass "Risk critical + no --quorum-dir → visible warning that the quorum gate is unenforced"
+else
+    fail "Risk critical + no --quorum-dir did not warn: '$CRITICAL_NO_QUORUM_ERR'"
+fi
+if echo "$CRITICAL_NO_QUORUM_OUT" | grep -q '"status":"deployed"'; then
+    pass "...and still deploys (the gate stays open by design — this is visibility, not a behavior change)"
+else
+    fail "Risk critical + no --quorum-dir unexpectedly changed deploy behavior: $CRITICAL_NO_QUORUM_OUT"
 fi
 
 # ── Final result ──────────────────────────────────────────────────────────────

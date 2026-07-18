@@ -221,4 +221,115 @@ mod tests {
         );
         assert_eq!(r.approvals, 2);
     }
+
+    /// Coalition cap at EVEN N — previously untested (every prior coalition
+    /// test used N=3, odd). The spec's own prose ("default max_quorum_power
+    /// is one fewer than the quorum threshold") and its worked numeric
+    /// example (`ceil(N/2)-1`) only provably agree for ODD N (where
+    /// `ceil(N/2) == floor(N/2)+1 == quorum_threshold`); for even N they
+    /// diverge (`ceil(N/2) != quorum_threshold`). This pins the
+    /// `ceil(N/2)-1` formula's actual behavior at even N=4 and N=6, so a
+    /// future change to the formula can't silently regress the untested
+    /// case — the exact gap a decision audit flagged after landing the
+    /// coalition cap.
+    #[test]
+    fn coalition_cap_at_even_n_sockpuppet_blocked() {
+        // N=4: quorum threshold = 4/2+1 = 3 (need > 2). cap = ceil(4/2)-1 = 1.
+        // 4 sock-puppet YES votes, one shared root -> only 1 admitted -> blocked.
+        let votes_n4: Vec<VoteResponse> = (0..4)
+            .map(|_| mk_vote_with_root("axtcb1-ext:aaa", true, "sockpuppet-root"))
+            .collect();
+        let r4 = check_quorum(&votes_n4, 4);
+        assert!(!r4.quorum_met, "N=4: 4 sock-puppet YES votes from one root must not meet quorum: {r4:?}");
+        assert_eq!(r4.approvals, 1, "N=4: cap=ceil(4/2)-1=1 admitted YES vote: {r4:?}");
+        assert!(
+            r4.blocking_reason.as_deref().unwrap_or("").contains("coalition"),
+            "N=4: must name the coalition cap, not a generic minority: {r4:?}"
+        );
+
+        // N=6: quorum threshold = 6/2+1 = 4 (need > 3). cap = ceil(6/2)-1 = 2.
+        // 6 sock-puppet YES votes, one shared root -> only 2 admitted -> blocked.
+        let votes_n6: Vec<VoteResponse> = (0..6)
+            .map(|_| mk_vote_with_root("axtcb1-ext:aaa", true, "sockpuppet-root"))
+            .collect();
+        let r6 = check_quorum(&votes_n6, 6);
+        assert!(!r6.quorum_met, "N=6: 6 sock-puppet YES votes from one root must not meet quorum: {r6:?}");
+        assert_eq!(r6.approvals, 2, "N=6: cap=ceil(6/2)-1=2 admitted YES votes: {r6:?}");
+        assert!(
+            r6.blocking_reason.as_deref().unwrap_or("").contains("coalition"),
+            "N=6: must name the coalition cap, not a generic minority: {r6:?}"
+        );
+    }
+
+    /// Control for the even-N case: the SAME vote counts from DISTINCT
+    /// lineage roots (no single root exceeding its cap) must meet quorum
+    /// normally — proves the even-N cap doesn't over-trigger either.
+    #[test]
+    fn coalition_cap_at_even_n_distinct_roots_meets_quorum() {
+        // N=4: 3 YES votes from 3 distinct roots (each count=1 <= cap=1) -> all
+        // admitted -> approvals=3 > 4/2=2 -> quorum met.
+        let votes_n4 = vec![
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-a"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-b"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-c"),
+            mk_vote_with_root("axtcb1-ext:aaa", false, "root-d"),
+        ];
+        let r4 = check_quorum(&votes_n4, 4);
+        assert!(r4.quorum_met, "N=4: 3 distinct-root YES votes (cap=1 each, not exceeded) must meet quorum: {r4:?}");
+        assert_eq!(r4.approvals, 3);
+
+        // N=6: 4 YES votes from 4 distinct roots (each count=1 <= cap=2) -> all
+        // admitted -> approvals=4 > 6/2=3 -> quorum met.
+        let votes_n6 = vec![
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-a"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-b"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-c"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-d"),
+            mk_vote_with_root("axtcb1-ext:aaa", false, "root-e"),
+            mk_vote_with_root("axtcb1-ext:aaa", false, "root-f"),
+        ];
+        let r6 = check_quorum(&votes_n6, 6);
+        assert!(r6.quorum_met, "N=6: 4 distinct-root YES votes (cap=2 each, not exceeded) must meet quorum: {r6:?}");
+        assert_eq!(r6.approvals, 4);
+    }
+
+    /// Legacy `.vote` JSON predating the `lineage_root` field: multiple such
+    /// votes all deserialize to the SAME empty-string default (see the
+    /// field's own doc comment) and therefore coalesce into one coalition
+    /// bucket under the cap — previously reasoned about but never actually
+    /// exercised end-to-end (the one existing hand-written-JSON fixture
+    /// missing this field short-circuits earlier on attestation mismatch,
+    /// never reaching the coalition-cap code at all). This pins the real,
+    /// intended behavior: legacy votes are treated as ONE undeclared
+    /// coalition (fail-closed), not N independent voters (fail-open).
+    #[test]
+    fn legacy_votes_missing_lineage_root_share_one_capped_bucket() {
+        // Deserialize from raw JSON with NO lineage_root field at all —
+        // exactly what a pre-R33-coalition-ceiling .vote file looks like.
+        let json_without_field = |approved: bool| -> VoteResponse {
+            let raw = format!(
+                r#"{{"voter_tcb":"axtcb1-ext:aaa","run_id":"legacy","approved":{approved},"reason":""}}"#
+            );
+            serde_json::from_str(&raw).expect("legacy .vote JSON (no lineage_root) must still parse")
+        };
+        let votes = vec![json_without_field(true), json_without_field(true), json_without_field(true)];
+        assert!(
+            votes.iter().all(|v| v.lineage_root.is_empty()),
+            "legacy votes must default lineage_root to the empty-string sentinel"
+        );
+
+        let r = check_quorum(&votes, 3);
+        assert!(
+            !r.quorum_met,
+            "3 legacy (no lineage_root) YES votes coalesce into ONE bucket and must not force quorum: {r:?}"
+        );
+        assert_eq!(
+            r.approvals, 1,
+            "cap=ceil(3/2)-1=1 applies to the shared empty-string bucket: {r:?}"
+        );
+        assert!(
+            r.blocking_reason.as_deref().unwrap_or("").contains("coalition"),
+            "must name the coalition cap as the cause: {r:?}"
+        );
+    }
 }

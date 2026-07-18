@@ -5386,7 +5386,13 @@ fn cmd_deploy(
     // R33 §5.2: quorum gate — only at Risk >= High, and only when the
     // operator opted in via --quorum-dir (absent = open gate, the same
     // convention every other pipeline gate function already follows when
-    // it isn't present in the program).
+    // it isn't present in the program). A decision audit of this design
+    // flagged the open-by-default case as the highest-risk choice in the
+    // whole integration (a silent false-sense-of-security failure mode if
+    // an operator forgets the flag at Risk >= Critical) — this doesn't
+    // change the default (still open, matching every other Phase-11 gate's
+    // convention), but makes it NON-silent: a visible stderr warning at
+    // exactly the risk tier where skipping it matters most.
     let mut quorum_json: Option<String> = None;
     if failed_gate.is_none() {
         if let Some(dir) = &quorum_dir {
@@ -5414,6 +5420,17 @@ fn cmd_deploy(
                     }
                 }
             }
+        } else if requires_full_pipeline && risk >= 3 {
+            // Risk >= Critical, no --quorum-dir at all: this is the case a
+            // decision audit flagged as risking a silent false sense of
+            // security. Warn visibly rather than proceeding silently — the
+            // deploy still proceeds (the gate stays open by design), but the
+            // operator can no longer be unaware they skipped it.
+            eprintln!(
+                "warning: deploying at Risk {} with no --quorum-dir — the R33 quorum gate is \
+                 NOT enforced for this deploy",
+                risk_level_name(risk)
+            );
         }
     }
     let quorum_field = quorum_json
