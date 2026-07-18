@@ -1,7 +1,9 @@
 # Tech Spec — R33: Cross-VM Safety Quorum (attested CoordGoal gate for irreversible actions)
 
 **Spec ID:** `R33-cross-vm-safety-quorum`
-**Status:** 📝 Draft (2026-06-28)
+**Status:** 🚧 Implementing (2026-07-18) — scoped slice landed (file-based propose/vote/check CLI +
+pure `check_quorum` aggregator); vsock transport, R27 coalition ceiling, and `axon deploy`
+integration remain open. See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
 mode — the VM itself could be compromised *after* its attestation report was produced. R33 distributes
@@ -18,6 +20,30 @@ each voter's identity is its R31 extended-TCB attestation (`axtcb1-ext:`).
 - Phase 11 risk typing (`examples/stdlib/risk.ax`) — `Risk`, `risk_requires_pipeline`; Risk ≥ High
   triggers the quorum gate at the `axon deploy` level
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
+
+```spec-meta
+id: R33-cross-vm-safety-quorum
+status-claim: Implementing
+depends-on: R31-extended-tcb-attestation
+blocks: none
+blocked-by: none
+supersedes: none
+related: R26-confidential-microvm-substrate, R27-corrigibility-resource-bounds, R34-incremental-attestation
+conflicts-with: none
+reserves: exit codes 13 (QUORUM_BLOCKED), 14 (QUORUM_ATTEST_FAIL) — grepped
+  crates/axon-vm/src/main.rs before claiming: existing axon-vm exit codes in use are 1, 2, 10, and
+  12 (EXTENDED_TCB_MEASURE_FAIL); R34-incremental-attestation separately reserves 15
+  (CHAIN_VERIFY_FAIL_EXIT_CODE). 13/14 were free — no collision found, claimed as-is.
+evidence: scripts/r33_acceptance_gate.sh
+```
+
+(This session builds a scoped-down slice of the full protocol below: a file-based
+`propose`/`vote`/`check` CLI exchange with a pure `check_quorum` aggregator in
+`crates/axon-vm/src/quorum/`, self-measurement via R31's `measure_host_stack`, and
+strict-majority + attestation-consistency checks. It does **not** yet implement the R26 vsock
+broadcast transport, the R27 per-lineage coalition ceiling, or the `axon deploy` pipeline
+integration described in §2/§4.5/§5.2 below — those remain open follow-on work tracked by this
+spec's unchanged body. See §14 Evidence ledger for exactly what was verified and how.)
 
 > **Read this framing first.** R33 does **not** change one line of Axon-level containment, the
 > kill-switch (R27), or the attestation protocol (R26/R31). What R33 changes is the **number of
@@ -516,6 +542,34 @@ axon-vm quorum propose \
 # 4. Audit the last quorum decision (shows each voter's axtcb1-ext: and score)
 axon-vm quorum audit --action-id <UUID-from-step-2> --json
 ```
+
+---
+
+## §13 — Dependency DAG
+
+| Node | Depends-on / blocked-by | Gate | Status |
+|---|---|---|---|
+| R33.S0 | R26-confidential-microvm-substrate, R31-extended-tcb-attestation (both landed) | `scripts/r33_acceptance_gate.sh` §§1-7 (CLI journey + exit-code distinctness) | landed |
+| R33.S1 | R33.S0 | R26/R31 regression check (`axon-attest` test suite unchanged) | landed |
+| R33.S2 | R33.S0; vsock transport (currently file-based propose/vote/check) | new transport-specific test, not yet named | todo |
+| R33.S3 | R33.S0; **blocked-by** R27's `max_quorum_power`/lineage-root coalition-ceiling wiring | not yet named | todo |
+| R33.S4 | R33.S0; `axon deploy` pipeline integration (§4.5/§5.2 of this spec) | not yet named | todo |
+
+## §14 — Evidence ledger
+
+| Claim | Verify command | Expected | Last verified (commit @ date) | Result |
+|---|---|---|---|---|
+| Quorum unit tests (`check_quorum` aggregator logic) pass | `bash scripts/r33_acceptance_gate.sh` (step 4) | 11 passed, 0 failed | this commit @ 2026-07-18 | PASS |
+| `axon-vm` binary builds with the quorum CLI wired in | `bash scripts/r33_acceptance_gate.sh` (step 5) | build succeeds | this commit @ 2026-07-18 | PASS |
+| End-to-end propose→vote→check CLI journey, both majority outcomes | `bash scripts/r33_acceptance_gate.sh` (step 6) | 1/3 approvals → exit 13 QUORUM_BLOCKED; 2/3 approvals → exit 0 QUORUM MET | this commit @ 2026-07-18 | PASS |
+| Attestation mismatch across voters is a distinct failure from a plain minority | `bash scripts/r33_acceptance_gate.sh` (step 7) | mismatched `voter_tcb` → exit 14 QUORUM_ATTEST_FAIL, distinct from exit 13 | this commit @ 2026-07-18 | PASS |
+| R33 did not regress R26/R31 | `bash scripts/r33_acceptance_gate.sh` (step 8) | `axon-attest` test suite: 22 passed, 0 failed | this commit @ 2026-07-18 | PASS |
+
+Honest scope, per this spec's own header: the above is a **file-based, single-host** slice. The
+vsock broadcast transport (§2), the R27 coalition ceiling (§4.5), and `axon deploy` pipeline
+integration (§5.2) are real, described in this spec's unchanged body, and not yet built — R33.S2–S4
+above. Do not read "gate: ALL CHECKS PASSED" as "R33 fully implements this spec"; it means "the
+scoped slice this session built is what it claims to be."
 
 ---
 

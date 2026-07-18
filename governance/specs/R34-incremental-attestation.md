@@ -13,7 +13,7 @@ depends-on: R31-extended-tcb-attestation
 blocks: none
 blocked-by: none
 supersedes: none
-related: R33-cross-vm-safety-quorum, R28-audit-ledger-writer
+related: R33-cross-vm-safety-quorum, R28-capability-audit-ledger
 conflicts-with: none
 reserves: exit code 15 (CHAIN_VERIFY_FAIL_EXIT_CODE) — confirmed free at claim time (grepped
   crates/ for `exit(1[0-9])`/`_EXIT_CODE.*1[0-9]`; 10/12 used by R26/R31, 13/14 reserved by
@@ -32,7 +32,7 @@ reconstruct and verify the complete execution sequence.
 **Depends on:**
 - `governance/specs/R31-extended-tcb-attestation.md` — `axtcb1-ext:` is the chain's genesis root;
   `crates/axon-attest` is extended with chain logic; the `axon-vm` binary gains `chain` subcommands
-- `governance/specs/R28-audit-ledger-writer.md` — the chain file uses the same append-only JSONL
+- `governance/specs/R28-capability-audit-ledger.md` — the chain file uses the same append-only JSONL
   format as the R28 audit ledger; `~/.axon/chains/<vm-id>/chain.jsonl` parallels the ledger path
 - `governance/specs/R33-cross-vm-safety-quorum.md` (in progress) — `VoteRequest` gains an optional
   `proposer_chain_tip` and `required_prog_hashes` extension for chain-aware quorum voting (§4)

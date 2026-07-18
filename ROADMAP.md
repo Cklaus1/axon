@@ -754,13 +754,13 @@ Specs: `governance/specs/R26-confidential-microvm-substrate.md` through
   loaded from initramfs and jumped to at guest startup; ships as `dist/guest/vmlinuz` +
   `dist/guest/initramfs.cpio`.
 
-### Forward (R32–R34)
+### Forward (R32–R34) — re-verified 2026-07-18
 
 | Spec | Headline | State |
 |---|---|---|
-| **R32** Formal Corrigibility Proof | Machine-checked proof (TLA+ or Coq) that the kill-switch cannot be bypassed by contained code; closes the last formal-methods gap in the TCB | **Spec only** (783-line spec, `40de581`) — zero proof code: no `.tla`/`.v` file exists anywhere in the repo |
-| **R33** Cross-VM Safety Quorum | High-Risk actions require N independently attested VMs to approve before proceeding; extends `CoordGoal` (Phase 14) with R26 attestation verification per vote; no single-VM compromise can force an irreversible action | **Spec only** (607-line spec, `279e661`) — no implementation commits |
-| **R34** Incremental Attestation (Rolling Hash) | Roll the attestation measurement as each new `.ax` program is loaded (`axon-vm run` extends the chain with the program's hash); enables auditors to reconstruct exactly what ran in what order | **Not started** — spec file has had no commits since its creation |
+| **R32** Formal Corrigibility Proof | Machine-checked proof (TLA+ or Coq) that the kill-switch cannot be bypassed by contained code; closes the last formal-methods gap in the TCB | **Draft, artifacts written** — `governance/proofs/R27KillSwitch.tla` + `R27Corrigibility.v` exist, have the three named invariants/theorems, no `Admitted`/`admit.`, all proofs end `Qed`. `scripts/r32_acceptance_gate.sh` 18/20 PASS, **2 SKIPPED** (TLC and coqc not installed on this host — the proof has never actually been machine-checked, only structurally validated). Not yet a closed formal-methods gap |
+| **R33** Cross-VM Safety Quorum | High-Risk actions require N independently attested VMs to approve before proceeding; extends `CoordGoal` (Phase 14) with R26 attestation verification per vote; no single-VM compromise can force an irreversible action | **Implementing** — a file-based (single-host) propose/vote/check CLI + pure `check_quorum` aggregator landed in `crates/axon-vm/src/quorum/` (committed `ee485e8`); `scripts/r33_acceptance_gate.sh` ALL PASS incl. exit-code distinctness (13 QUORUM_BLOCKED vs 14 QUORUM_ATTEST_FAIL) and an R26/R31 regression check. Vsock transport, the R27 coalition ceiling, and `axon deploy` integration remain open (spec §14) |
+| **R34** Incremental Attestation (Rolling Hash) | Roll the attestation measurement as each new `.ax` program is loaded (`axon-vm run` extends the chain with the program's hash); enables auditors to reconstruct exactly what ran in what order | **Implementing** — `ChainStore` + `axon-vm chain-stamp`/`chain-verify` CLI landed (`ee485e8`, evidence commits filled `1dba6a9`); `scripts/r34_acceptance_gate.sh` ALL PASS incl. tamper detection (exit 15 CHAIN_VERIFY_FAIL) and `run --chain-stamp` refusing to launch on a broken chain |
 
 ---
 

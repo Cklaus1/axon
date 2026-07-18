@@ -1,7 +1,10 @@
 # Tech Spec — R32: Formal Corrigibility Proof (TLA+ model + Coq proof of kill-switch invariants)
 
 **Spec ID:** `R32-formal-corrigibility-proof`
-**Status:** 📝 Draft (2026-06-28)
+**Status:** 📝 Draft (2026-07-18) — TLA+/Coq artifacts written and structurally valid (no
+`Admitted`, all proofs end `Qed`), gate passes 18/20 checks; the two checks that matter most —
+actually running TLC and coqc — are **SKIPPED** because neither tool is installed on this host.
+Not yet a machine-checked proof. See §14 Evidence ledger.
 **Implements:** Machine-checked verification of the R27 kill-switch guarantees:
 (1) contained code cannot disable the kill-switch; (2) the kill fires within a bounded time
 after being tripped; (3) the latch is monotone — clear-to-tripped is the only allowed
@@ -19,6 +22,31 @@ state transition, and it cannot be reversed by the supervised process.
   guarantee: the supervisor-owned latch).
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
 A background in TLA+ or Coq is assumed; familiarity with R27 is required.
+
+```spec-meta
+id: R32-formal-corrigibility-proof
+status-claim: Draft
+depends-on: R27-corrigibility-resource-bounds
+blocks: none
+blocked-by: none
+supersedes: none
+related: R31-extended-tcb-attestation, R36-full-asi-os
+conflicts-with: none
+reserves: none
+evidence: scripts/r32_acceptance_gate.sh
+```
+
+(Edge notes: `depends-on` lists only R27 — the kill-switch (`crates/axon-os/src/latch.rs`,
+`corrigible.rs`, `killchan.rs`) that the TLA+/Coq artifacts formally model. **R28 is deliberately
+NOT listed as a dependency**: R28 is the capability-audit ledger (AI/FS/Net/Exec/Random/IO call
+logging in `axon-core`), which is a different subsystem from R27's own `ledger.rs`
+(`ResourceBound`/`CoalitionBound` accounting, exit codes 9/10). Neither R27's resource ledger nor
+R28's audit ledger is modeled by the TLA+/Coq artifacts below — the formal model covers exactly
+the kill-latch/`KillChannel` state machine (§2 below), consistent with this spec's own §5.1 scope
+statement. `reserves: none` because R32 introduces no new exit/error codes — it reuses R27's
+existing `HALTED_EXIT_CODE = 4` and reasons about the existing `KillChannel` trait, nothing new is
+claimed at the Rust/interpreter level. `related` names R31 (the TCB-attestation chain this proof
+complements) and R36 (which already lists R32 as `related` in its own convergence DAG).)
 
 > **Read this framing first.** R27's informal argument — "the contained process runs in a
 > subprocess that doesn't have write access to the supervisor's kill file" — is correct as stated
@@ -666,6 +694,34 @@ coqc governance/proofs/R27Corrigibility.v
 Both commands must run to completion without errors for `acc_a3` to pass. Intermediate failures
 (e.g., Java not installed, `opam` not available) must be reported clearly by the gate script with
 remediation instructions.
+
+---
+
+## §13 — Dependency DAG
+
+| Node | Depends-on / blocked-by | Gate | Status |
+|---|---|---|---|
+| R32.S0 | R27-corrigibility-resource-bounds (landed) | `.tla`/`.v` artifacts exist + structural checks (no `Admitted`, all `Qed`) | landed |
+| R32.S1 | R32.S0 | `tlc_model_check` (TLC actually run) | todo — TLC not installed on this host |
+| R32.S2 | R32.S0 | `coqc_compile` (Coq actually compiled) | todo — coqc not installed on this host |
+
+R32.S1/S2 are the whole point of "machine-checked" — until they run, this is a structurally-valid
+but **unverified** proof, not a checked one. Do not upgrade `status-claim` past `Draft` until at
+least one host run of `tlc_model_check` and `coqc_compile` both PASS (not SKIP).
+
+## §14 — Evidence ledger
+
+| Claim | Verify command | Expected | Last verified (commit @ date) | Result |
+|---|---|---|---|---|
+| `.tla` model exists, has the three named invariants, syntactically well-formed | `bash scripts/r32_acceptance_gate.sh` | `tla_*` rows PASS | this commit @ 2026-07-18 | PASS |
+| `.v` proof exists, has the three named theorems, no `Admitted`/`admit.`, every block ends `Qed` | `bash scripts/r32_acceptance_gate.sh` | `coq_*` rows PASS | this commit @ 2026-07-18 | PASS |
+| TLC actually model-checks the spec (not just "the file parses") | `bash scripts/r32_acceptance_gate.sh` | `tlc_model_check` PASS | — | **SKIPPED — TLC not installed on this host, not run yet** |
+| coqc actually compiles the proof (not just "no `Admitted` by grep") | `bash scripts/r32_acceptance_gate.sh` | `coqc_compile` PASS | — | **SKIPPED — coqc not installed on this host, not run yet** |
+
+Per §2 of `EXECUTION_MODEL.md`: a SKIP is not a PASS. This spec's honest status is "proof artifacts
+exist and are structurally sound; the proof itself has never been machine-verified on any host in
+this repo's history." Anyone relying on R32 as a closed formal-methods gap must first install TLC
+(`tla2tools.jar`) and Coq 8.18 (§8 above) and re-run the gate to completion.
 
 ---
 

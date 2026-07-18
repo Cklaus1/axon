@@ -75,7 +75,7 @@ for f in "$SPECS_DIR"/R*.md; do
     [ "$id" = "$base" ] || finding "$base: spec-meta id '$id' != filename '$base'"
 
     # status-claim vs prose **Status:** first word
-    prose=$(grep -m1 -E '^\*\*Status:\*\*' "$f" | sed -E 's/^\*\*Status:\*\* *//; s/^[✅📝📋🟡 ]*//' | awk '{print $1}')
+    prose=$(grep -m1 -E '^\*\*Status:\*\*' "$f" | sed -E 's/^\*\*Status:\*\* *//; s/^[✅📝📋🟡🔧🚧 ]*//' | awk '{print $1}')
     claim_word=$(echo "$claim" | awk '{print $1}')
     if [ -n "$prose" ] && [ "$claim_word" != "$prose" ]; then
         finding "$base: status-claim '$claim_word' != prose Status '$prose'"
