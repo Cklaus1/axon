@@ -463,18 +463,53 @@ saved as memory `tail-pipe-masks-exit-code`. The one real test failure encounter
 (`wasm_browser_println_matches_interp_via_js_host`) was confirmed transient (isolated rerun: pass;
 full rerun: 419/419) — the known contention-flake class, unrelated to this change.
 
+## R33.S2 sized and deferred; R39 Slice 1 landed instead (commit `736d6ab`)
+
+Actually sized R33.S2 (vsock transport) before picking it: grepped the whole codebase for a
+`Substrate` trait / `MockSubstrate` — **zero hits**. The full-protocol spec's architecture diagram
+casually references "R26's existing Substrate trait boundary" as if it already exists; it doesn't.
+Building S2 for real means designing and building this abstraction from scratch (a real vsock impl
++ a CI-mock path), not just CLI plumbing — too big for one iteration, deferred with this finding
+recorded rather than discovered mid-slice. Picked **R39 Slice 1** instead, per the spec's own §12
+Q1 suggestion (cheap speculative spike): added `scripts/verify_all_specs.sh --export-jsonl PATH`,
+reusing the script's own per-spec extraction pass to write one JSON record per spec (schema
+`axon-gov-spec/1`) to a gitignored `governance/state/specs.jsonl`. New `scripts/r39_slice1_gate.sh`
+(9 checks): 61/61 spec files produce exactly one well-formed line, `pre_convention` count
+cross-checked exactly against the validator's own report (38), a known spec's edges spot-checked.
+R39 spec (Draft → Implementing), ROADMAP.md, REQUIREMENTS.md updated.
+
+## Decision-audit follow-up on R33 coalition ceiling (commit `7919154`)
+
+User ran a structured decision-audit on the freshly-landed R33 coalition-ceiling + axon-deploy work
+(prior two iterations). Verdict: VERIFY FIRST. It surfaced two real, previously-unverified paths in
+already-shipped code — the `ceil(N/2)-1` cap formula was only ever tested at N=3 (odd), and the
+`lineage_root` legacy-JSON fail-closed default was reasoned about but never actually exercised end
+to end. Added 3 new unit tests closing both gaps (`coalition_cap_at_even_n_sockpuppet_blocked` +
+`..._distinct_roots_meets_quorum` at N=4/N=6, `legacy_votes_missing_lineage_root_share_one_capped_bucket`)
+— **both gaps confirmed correct once tested, no bug found**, but real uncertainty closed rather than
+left implicit. The audit also flagged the quorum gate's silent-open default at Risk ≥ Critical as
+the single highest-risk design choice; grepped R11/R33 specs and confirmed no existing invariant
+mandates quorum at Critical (not a spec violation, a genuinely undecided policy question) — left the
+default unchanged (still open, matching every other Phase-11 gate's convention) but made it visible:
+`cmd_deploy` now prints a stderr warning at Risk ≥ Critical with no `--quorum-dir` at all. Deploy
+behavior (JSON, exit code) verified unchanged — visibility only. `crates/axon-vm/src/quorum/mod.rs`:
+13 → 16 unit tests. `r33_acceptance_gate.sh`: new §10e, ALL CHECKS PASSED (16 unit tests, 10 gate
+sections). Saved as memory: `r33-coalition-decision-audit-followup` — treat this audit format as a
+real VERIFY-FIRST signal when the user runs it, not a formality.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2 (the only R33 slice left, now that S4 has landed). Options for the next iteration:
-- **R33.S2** (vsock transport): replace the file-based propose/vote/check exchange with the real
-  R26 vsock broadcast — likely a bigger, more infrastructure-heavy lift (needs real multi-VM
-  coordination, not just CLI plumbing); size it carefully before committing to one iteration. This
-  is also the one thing standing between here and R34.S7 (R33 `VoteRequest` chain-awareness).
-- R39 §12 Q1's own suggestion: build R39 Slice 1 (schema + parser) as a cheap speculative spike,
-  since it's now a real spec'd item rather than just an idea.
+R33.S2 (vsock transport — now confirmed to need a from-scratch `Substrate` trait, a real design
+task, not sized for a quick slice). Options for the next iteration:
+- **R33.S2, properly scoped as a design task**: first write/extend the spec with a concrete
+  `Substrate` trait design (real vsock impl + CI-mock path, matching the R26 attestation
+  software-TPM-stand-in precedent) BEFORE writing code — this is Structural work per
+  BUILD_PROTOCOL Gate 1, not a quick CLI-wiring slice like S3/S4 were.
+- **R39 Slice 2** (port `verify_all_specs.sh`'s checks onto the typed JSONL store) — now that
+  Slice 1's export exists and is gate-verified, this is the natural, bounded next step.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
   bodies (would unlock the str-returning family for the registry) — real design work, size it
   before committing to it in one iteration.
