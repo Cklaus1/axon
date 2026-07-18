@@ -1,7 +1,26 @@
 # Tech Spec — R34: Incremental Attestation (rolling hash chain — every `axon-vm run` extends the chain)
 
 **Spec ID:** `R34-incremental-attestation`
-**Status:** 📝 Draft (2026-06-28)
+**Status:** 🔧 Implementing (2026-07-18) — core rolling-hash chain (S1–S3 scope: `chain.rs`
+formula + `ChainStore` append/verify + CLI `chain stamp`/`chain verify`/`run --chain-stamp`)
+landed; S4 (export/import), S6 (`chain show`/`export`/`verify-export`), S7 (R33 `VoteRequest`
+integration) NOT started — see spec-meta `status-claim` and §14 evidence ledger below.
+
+```spec-meta
+id: R34-incremental-attestation
+status-claim: Implementing
+depends-on: R31-extended-tcb-attestation
+blocks: none
+blocked-by: none
+supersedes: none
+related: R33-cross-vm-safety-quorum, R28-audit-ledger-writer
+conflicts-with: none
+reserves: exit code 15 (CHAIN_VERIFY_FAIL_EXIT_CODE) — confirmed free at claim time (grepped
+  crates/ for `exit(1[0-9])`/`_EXIT_CODE.*1[0-9]`; 10/12 used by R26/R31, 13/14 reserved by
+  R33 spec text though R33 itself is not yet landed in code; 15 was genuinely unclaimed)
+evidence: scripts/r34_acceptance_gate.sh
+```
+
 **Implements:** the execution-history gap identified after R31: R31 proves what *software* is running
 at boot, but says nothing about what *programs* were executed after boot. A VM whose R31 report is
 valid could run an arbitrary sequence of `.ax` programs after attestation, and the relying party
@@ -754,3 +773,26 @@ Only then is R34 done.
   logic.** If you are editing `measure.rs`, `latch.rs`, `aggregator.rs`, or `substrate.rs`, you
   are out of R34's scope. The R33 `VoteRequest` extension (§4.5) is an additive optional field
   change; it MUST be backward-compatible (old voters ignore unknown fields).
+
+---
+
+## §13 — Dependency DAG
+
+| Node | Depends-on / blocked-by | Gate (named test or script) | Status |
+|---|---|---|---|
+| R34.S1 | R31-extended-tcb-attestation | `chain_composes_with_r31`, `entry_hash_deterministic`, `different_prog_hash_different_entry_hash` (`crates/axon-vm/src/chain.rs`) | landed |
+| R34.S2 | R34.S1 | `verify_ok_three_entries`, `verify_detects_tampered_entry_hash`, `verify_empty_chain_ok`, `verify_wrong_genesis_breaks_at_zero`, `verify_malformed_json_line_is_clear_error` | landed |
+| R34.S3 | R34.S1, R34.S2 | `ChainStore::append` (O_APPEND JSONL) exercised by S2's multi-entry tests; no separate flock/concurrency gate built this pass | landed (append-only single-writer; concurrent-writer flock NOT built — see §12 note) |
+| R34.S4 (export/import) | R34.S3 | — | todo |
+| R34.S5 (`axon-vm run --chain-stamp` CLI) | R34.S1–S3 | `scripts/r34_acceptance_gate.sh` step 2 (stamp via real CLI) | landed |
+| R34.S6 (`chain show`/`export`/`verify-export` subcommands) | R34.S4 | — | todo (only `chain stamp`/`chain verify` built, not the full §5.2 surface) |
+| R34.S7 (R33 `VoteRequest` chain fields) | R33-cross-vm-safety-quorum | — | todo (R33 itself not landed in code yet, per parallel track) |
+| R34.S8 (acceptance gate) | R34.S1–S3, R34.S5 | `scripts/r34_acceptance_gate.sh` | landed (covers the core stamp/verify/tamper/wrong-genesis path; does NOT cover the full §0 A1–A6 quickstart-jq journey verbatim — that requires S4/S6) |
+
+## §14 — Evidence ledger
+
+| Claim | Verify command | Expected | Last verified (commit @ date) | Result |
+|---|---|---|---|---|
+| Core chain formula (§4.2) implemented byte-for-byte; deterministic; order/tamper/genesis-sensitive | `cargo test -p axon-vm chain::` | all pass | (filled in at commit time below) | PASS |
+| `scripts/r34_acceptance_gate.sh` — stamp twice, verify OK, corrupt, re-verify BROKEN exit 15, wrong-genesis exit 15 | `bash scripts/r34_acceptance_gate.sh` | exit 0, prints CHAIN OK / CHAIN BROKEN as expected | (filled in at commit time below) | PASS |
+| No regression in R26/R31 attestation tests | `cargo test -p axon-attest` | all pass | (filled in at commit time below) | PASS |

@@ -31,8 +31,32 @@ use axon_attest::{
     SOFTWARE_TPM_HW_ROOT,
 };
 
+/// R33: cross-VM safety quorum (attested VoteRequest/Response + strict-majority check).
+mod quorum;
+
+/// R34: incremental attestation rolling hash chain (ChainStore, compute_entry_hash).
+mod chain;
+
+/// R34: chain verification/tamper/stale-root failure (exit 15). Distinct from
+/// 10 (attestation mismatch), 11 (TCB chain break, unused today), 12 (extended
+/// measure failure), 13/14 (R33 quorum-blocked / vote-attestation-rejected).
+/// Confirmed free of 1/2/10/12/13/14 before being claimed
+/// (`governance/specs/R34-incremental-attestation.md` spec-meta `reserves`).
+const CHAIN_VERIFY_FAIL_EXIT_CODE: i32 = 15;
+
 /// R31: extended measurement failed — required component missing/unreadable (exit 12).
 const EXTENDED_TCB_MEASURE_FAIL: i32 = 12;
+
+/// R33: cross-VM safety quorum not met — insufficient approvals (or empty/timeout
+/// in the fuller protocol). Reserved per `governance/specs/R33-cross-vm-safety-quorum.md`
+/// spec-meta; confirmed free of the existing axon-vm exit codes (1, 2, 10, 12) and of
+/// R34's separately-reserved 15 before being claimed.
+const QUORUM_BLOCKED_EXIT_CODE: i32 = 13;
+
+/// R33: cross-VM safety quorum blocked specifically by an attestation mismatch
+/// (voters disagree on `voter_tcb`) — distinct from ordinary insufficient-approvals
+/// (`QUORUM_BLOCKED_EXIT_CODE`); never collapsed into it (spec §8 invariant I-6).
+const QUORUM_ATTEST_FAIL_EXIT_CODE: i32 = 14;
 
 // ── CLI surface ───────────────────────────────────────────────────────────────
 
@@ -95,12 +119,56 @@ enum Cmd {
         /// `axtcb1_ext`. Any measure failure → exit 12. Mismatch → exit 10.
         #[arg(long)]
         extended_tcb: bool,
+
+        /// R33: require a cross-VM safety quorum of size N before booting.
+        /// Collects `.vote` files from `--quorum-dir`, runs the strict-majority
+        /// `check_quorum`, and gates the Firecracker launch on the result.
+        /// Exit 13 = quorum blocked (insufficient approvals); exit 14 = quorum
+        /// blocked (attestation mismatch across voters).
+        #[arg(long)]
+        quorum: Option<usize>,
+
+        /// R33: directory of `.vote` response files for `--quorum`. Required
+        /// when `--quorum` is given.
+        #[arg(long)]
+        quorum_dir: Option<PathBuf>,
+
+        /// R34: extend the incremental attestation rolling hash chain at PATH
+        /// before booting. The chain is verified first (a broken/tampered
+        /// chain refuses the run — exit 15, VM never spawned); the new run's
+        /// program hash + run-id + timestamp are then chained onto the tip
+        /// and the new `axtcb1-run:` tip is printed to stderr.
+        #[arg(long)]
+        chain_stamp: Option<PathBuf>,
     },
 
     /// Manage principals
     Principal {
         #[command(subcommand)]
         cmd: PrincipalCmd,
+    },
+
+    /// R34: incremental attestation — rolling hash chain over `axon-vm run` invocations.
+    ///
+    /// Extends the R31 `axtcb1-ext:` boot measurement into an append-only per-run chain
+    /// (`governance/specs/R34-incremental-attestation.md`): each `chain stamp` call binds
+    /// the program's SHA-256, a run-id, and a timestamp onto the previous chain tip, so
+    /// removing / substituting / reordering any run is detectable by `chain verify`.
+    Chain {
+        #[command(subcommand)]
+        cmd: ChainCmd,
+    },
+
+    /// R33: cross-VM safety quorum — attested VoteRequest/Response + strict-majority check.
+    ///
+    /// Scoped file-based exchange (`governance/specs/R33-cross-vm-safety-quorum.md`): a
+    /// proposing host writes a VoteRequest, peer hosts vote by writing a VoteResponse,
+    /// and `check` aggregates `.vote` files with a pure strict-majority + attestation-
+    /// consistency check. Voter identity is the R31 extended-TCB `axtcb1-ext:` digest
+    /// (or a clearly-labeled CI mock identity under `AXON_CI_NO_KVM=1`).
+    Quorum {
+        #[command(subcommand)]
+        cmd: QuorumCmd,
     },
 
     /// R26: Measure a kernel image and produce a software-TPM attestation report.
@@ -190,6 +258,142 @@ enum PrincipalCmd {
     List,
 }
 
+#[derive(Subcommand)]
+enum ChainCmd {
+    /// Extend the chain: hash the program, chain onto the current tip, append,
+    /// and print the new `entry_hash`. Refuses (exit 15) if the existing chain
+    /// at `--store` fails verification against the genesis before appending.
+    Stamp {
+        /// Path to the .ax program being run (its SHA-256 is chained in).
+        #[arg(long)]
+        prog: PathBuf,
+
+        /// Run-id for this stamp. If omitted, a process-id + monotonic-clock
+        /// id is generated (same scheme `axon-vm run` uses for its own run_id).
+        #[arg(long)]
+        run_id: Option<String>,
+
+        /// Path to the chain JSONL file (created if absent).
+        #[arg(long)]
+        store: PathBuf,
+
+        /// Guest kernel image used to derive the R31 genesis root (default:
+        /// dist/guest/vmlinuz). Only consulted when the chain is empty.
+        #[arg(long)]
+        kernel: Option<PathBuf>,
+    },
+    /// Verify the whole chain from genesis, recomputing every link.
+    ///
+    /// Prints "CHAIN OK: N entries" and exits 0 on success, or "CHAIN BROKEN
+    /// at seq M" and exits 15 on the first broken link (never the last).
+    Verify {
+        /// Path to the chain JSONL file.
+        #[arg(long)]
+        store: PathBuf,
+
+        /// Expected genesis root (`axtcb1-ext:…`). If omitted, the chain's own
+        /// first entry's `prev_hash` is used (self-consistency check only —
+        /// pass this explicitly to pin against a known-good R31 boot root).
+        #[arg(long)]
+        genesis: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum QuorumCmd {
+    /// Propose an action for cross-VM quorum approval.
+    ///
+    /// Measures this host's own R31 extended TCB (`axtcb1-ext:`) as the proposer
+    /// identity — or a clearly-labeled CI mock identity when `AXON_CI_NO_KVM=1`
+    /// or the real kernel/axon-os binaries are unavailable — and writes a
+    /// `VoteRequest` JSON file for peer VMs to vote on.
+    Propose {
+        /// Unique id for this quorum instance (binds request and responses together).
+        #[arg(long)]
+        run_id: String,
+
+        /// Path to the Axon program (or job description) being proposed.
+        #[arg(long)]
+        prog: PathBuf,
+
+        /// Human-readable description of the proposed action.
+        #[arg(long)]
+        action: String,
+
+        /// Output path for the VoteRequest JSON.
+        #[arg(long)]
+        out: PathBuf,
+
+        /// Guest kernel image to measure (default: dist/guest/vmlinuz).
+        #[arg(long)]
+        kernel: Option<PathBuf>,
+
+        /// axon-os binary to measure (default: sibling of this executable).
+        #[arg(long)]
+        axon_os: Option<PathBuf>,
+
+        /// axon-audit-writer binary to measure (default: sibling; absent → R28-pending sentinel).
+        #[arg(long)]
+        axon_audit: Option<PathBuf>,
+    },
+
+    /// Vote (approve/deny) on a received VoteRequest.
+    ///
+    /// Measures this host's own R31 extended TCB as the voter identity (same
+    /// CI-mock fallback as `propose`) and writes a `VoteResponse` JSON file.
+    Vote {
+        /// Path to the VoteRequest JSON to vote on.
+        #[arg(long)]
+        request: PathBuf,
+
+        /// Approve the proposed action.
+        #[arg(long, conflicts_with = "deny")]
+        approve: bool,
+
+        /// Deny the proposed action.
+        #[arg(long)]
+        deny: bool,
+
+        /// Human-readable reason for the vote.
+        #[arg(long, default_value = "")]
+        reason: String,
+
+        /// Output path for the VoteResponse JSON.
+        #[arg(long)]
+        out: PathBuf,
+
+        /// Guest kernel image to measure (default: dist/guest/vmlinuz).
+        #[arg(long)]
+        kernel: Option<PathBuf>,
+
+        /// axon-os binary to measure (default: sibling of this executable).
+        #[arg(long)]
+        axon_os: Option<PathBuf>,
+
+        /// axon-audit-writer binary to measure (default: sibling; absent → R28-pending sentinel).
+        #[arg(long)]
+        axon_audit: Option<PathBuf>,
+    },
+
+    /// Collect `.vote` response files from a directory and check strict-majority quorum.
+    ///
+    /// Exit 0 = "QUORUM MET". Exit 13 = "QUORUM BLOCKED" (insufficient approvals or
+    /// empty). Exit 14 = "QUORUM BLOCKED" (attestation mismatch across voters).
+    Check {
+        /// Directory containing `.vote` response files.
+        #[arg(long = "responses-dir")]
+        responses_dir: PathBuf,
+
+        /// Required fleet size (operator-configured; NOT the number of files present).
+        #[arg(long)]
+        n: usize,
+
+        /// Emit JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 // ── Data types ────────────────────────────────────────────────────────────────
 
 /// Schema: axon-vm-mmds/1 — written to MMDS before VM boot.
@@ -250,7 +454,10 @@ fn main() {
             json,
             no_attest,
             extended_tcb,
-        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, extended_tcb),
+            quorum,
+            quorum_dir,
+            chain_stamp,
+        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, extended_tcb, quorum, quorum_dir, chain_stamp),
         Cmd::Attest {
             kernel,
             policy,
@@ -273,6 +480,20 @@ fn main() {
                 cpu_pct,
             } => cmd_principal_add(name, budget_tokens, allowed_effects, mem_mib, cpu_pct),
             PrincipalCmd::List => cmd_principal_list(),
+        },
+        Cmd::Quorum { cmd } => match cmd {
+            QuorumCmd::Propose { run_id, prog, action, out, kernel, axon_os, axon_audit } =>
+                cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit),
+            QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit } =>
+                cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit),
+            QuorumCmd::Check { responses_dir, n, json } =>
+                cmd_quorum_check(responses_dir, n, json),
+        },
+        Cmd::Chain { cmd } => match cmd {
+            ChainCmd::Stamp { prog, run_id, store, kernel } =>
+                cmd_chain_stamp(prog, run_id, store, kernel),
+            ChainCmd::Verify { store, genesis } =>
+                cmd_chain_verify(store, genesis),
         },
     }
 }
@@ -483,6 +704,9 @@ fn cmd_run(
     json_out: bool,
     no_attest: bool,
     extended_tcb: bool,
+    quorum: Option<usize>,
+    quorum_dir: Option<PathBuf>,
+    chain_stamp: Option<PathBuf>,
 ) {
     let start = Instant::now();
 
@@ -629,6 +853,79 @@ fn cmd_run(
         }
     }
 
+    // R33: cross-VM safety quorum gate — collected BEFORE any VM boots.
+    // The Firecracker launch never runs unless the quorum check passes.
+    if let Some(required_n) = quorum {
+        let dir = match quorum_dir {
+            Some(ref d) => d.clone(),
+            None => {
+                eprintln!("axon-vm: --quorum requires --quorum-dir");
+                process::exit(2);
+            }
+        };
+        let votes = match quorum::io::collect_responses(&dir, required_n) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("axon-vm: quorum: failed to collect responses from {}: {e}", dir.display());
+                process::exit(2);
+            }
+        };
+        let result = quorum::logic::check_quorum(&votes, required_n);
+        if result.quorum_met {
+            eprintln!(
+                "✓ quorum approved: {}/{} approvals — proceeding to boot",
+                result.approvals, required_n
+            );
+        } else {
+            let reason = result.blocking_reason.clone().unwrap_or_default();
+            eprintln!("✗ quorum blocked: {reason} — VM will NOT be booted");
+            if json_out {
+                let out = serde_json::json!({
+                    "schema": "axon-vm-run/1",
+                    "ok": false,
+                    "run_id": run_id,
+                    "exit_code": -1,
+                    "elapsed_ms": start.elapsed().as_millis(),
+                    "error": reason,
+                    "principal": principal_name,
+                    "risk": manifest.risk,
+                    "quorum_blocked": true,
+                });
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            }
+            if reason.contains("attestation") {
+                process::exit(QUORUM_ATTEST_FAIL_EXIT_CODE);
+            } else {
+                process::exit(QUORUM_BLOCKED_EXIT_CODE);
+            }
+        }
+    }
+
+    // R34: incremental attestation chain gate — verify the existing chain
+    // BEFORE ever spawning a VM, then extend it with this run. A broken
+    // chain (tamper, stale root, wrong genesis) refuses the run at exit 15;
+    // the Firecracker launch never runs when this gate fails.
+    if let Some(ref chain_path) = chain_stamp {
+        let genesis = chain_genesis(&kernel_path);
+        let store = chain::ChainStore::new(chain_path);
+        match store.verify(&genesis) {
+            Ok(_) => {}
+            Err(seq) => {
+                eprintln!("axon-vm: CHAIN BROKEN at seq {seq} — refusing to launch VM (exit {CHAIN_VERIFY_FAIL_EXIT_CODE})");
+                process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
+            }
+        }
+        match stamp_chain(&store, &genesis, &program, &run_id) {
+            Ok(entry_hash) => {
+                eprintln!("axtcb1-ext: {genesis}   axtcb1-run: {entry_hash}");
+            }
+            Err(e) => {
+                eprintln!("axon-vm: chain stamp failed: {e}");
+                process::exit(1);
+            }
+        }
+    }
+
     // Choose or generate the Firecracker socket path.
     let socket_path = fc_socket.unwrap_or_else(|| {
         PathBuf::from(format!("/tmp/axon-vm-{}.sock", process::id()))
@@ -668,6 +965,327 @@ fn cmd_run(
                 eprintln!("axon-vm: {e}");
                 process::exit(1);
             }
+        }
+    }
+}
+
+// ── cmd_chain_* (R34) ─────────────────────────────────────────────────────────
+
+/// Compute the chain genesis root: the R31 `axtcb1_ext` full-host-stack
+/// measurement, or a deterministic CI-mock value when the real kernel/axon-os
+/// binaries are unavailable (`AXON_CI_NO_KVM=1`, or the files simply don't
+/// exist in this environment). Reuses the exact same synthetic-bytes
+/// convention already established in `cmd_attest` (measure synthetic bytes
+/// derived from the path string through the pure `measure_extended` core)
+/// rather than inventing a new mock — the CI label is printed to stderr so
+/// this is never mistaken for a real attestation.
+fn chain_genesis(kernel_path: &Path) -> String {
+    let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let axon_os_path = exe_dir.join("axon-os");
+    let axon_audit_path = exe_dir.join("axon-audit-writer");
+
+    if ci_no_kvm || !kernel_path.exists() || !axon_os_path.exists() {
+        eprintln!(
+            "[axon-vm chain] CI mock genesis (AXON_CI_NO_KVM=1 or kernel/axon-os \
+             unavailable) — NOT a real attestation"
+        );
+        let mock_kernel = format!("axon-os-mock-kernel-ci:{}", kernel_path.display()).into_bytes();
+        let mock_axon_os = format!("axon-os-mock-binary-ci:{}", axon_os_path.display()).into_bytes();
+        let ext = axon_attest::measure_extended(axon_attest::ComponentPaths {
+            kernel: mock_kernel,
+            axon_os: mock_axon_os,
+            axon_audit: None,
+            kernel_path: format!("<ci-mock> {}", kernel_path.display()),
+            axon_os_path: format!("<ci-mock> {}", axon_os_path.display()),
+            axon_audit_path: None,
+        })
+        .expect("measure_extended over injected bytes cannot fail (kernel/axon-os always non-empty)");
+        ext.axtcb1_ext
+    } else {
+        let axon_audit_opt = if axon_audit_path.exists() { Some(axon_audit_path.as_path()) } else { None };
+        match measure_host_stack(kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
+            Ok(ext) => ext.axtcb1_ext,
+            Err(e) => {
+                eprintln!("axon-vm chain: extended TCB measurement failed: {e}");
+                process::exit(EXTENDED_TCB_MEASURE_FAIL);
+            }
+        }
+    }
+}
+
+/// Compute the next `ChainEntry`, append it, and return the new `entry_hash`.
+///
+/// Shared between `cmd_run`'s `--chain-stamp` gate and `axon-vm chain stamp` so
+/// both paths use byte-identical logic (hash the program, read the current
+/// tip, chain onto it, append). `run_id` is the caller's own run identifier
+/// (reused, not regenerated) so a `run --chain-stamp` invocation's chain entry
+/// carries the exact same run-id as the rest of that run's provenance.
+fn stamp_chain(
+    store: &chain::ChainStore,
+    genesis: &str,
+    prog: &Path,
+    run_id: &str,
+) -> std::io::Result<String> {
+    let (seq, prev_hash) = store.last_entry(genesis)?;
+    let prog_hash = chain::sha256_file(prog)?;
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let entry_hash = chain::compute_entry_hash(&prev_hash, &prog_hash, run_id, timestamp_ms);
+    store.append(&chain::ChainEntry {
+        seq,
+        run_id: run_id.to_string(),
+        prog_hash,
+        timestamp_ms,
+        prev_hash,
+        entry_hash: entry_hash.clone(),
+    })?;
+    Ok(entry_hash)
+}
+
+/// `axon-vm chain stamp` — hash the program, extend the chain, print the new tip.
+fn cmd_chain_stamp(prog: PathBuf, run_id: Option<String>, store_path: PathBuf, kernel: Option<PathBuf>) {
+    if !prog.exists() {
+        eprintln!("axon-vm chain stamp: program not found: {}", prog.display());
+        process::exit(1);
+    }
+    let kernel_path = kernel.unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
+    let genesis = chain_genesis(&kernel_path);
+    let store = chain::ChainStore::new(&store_path);
+
+    // Refuse to extend a chain that's already broken (append-only + tamper gate).
+    if let Err(seq) = store.verify(&genesis) {
+        eprintln!("axon-vm chain stamp: CHAIN BROKEN at seq {seq} — refusing to append");
+        process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
+    }
+
+    let run_id = run_id.unwrap_or_else(|| {
+        format!(
+            "vm-{}-{}",
+            process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        )
+    });
+
+    match stamp_chain(&store, &genesis, &prog, &run_id) {
+        Ok(entry_hash) => println!("{entry_hash}"),
+        Err(e) => {
+            eprintln!("axon-vm chain stamp: append failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+/// `axon-vm chain verify` — recompute every link from genesis; report the
+/// first broken seq (never the last) on failure.
+fn cmd_chain_verify(store_path: PathBuf, genesis: Option<String>) {
+    let store = chain::ChainStore::new(&store_path);
+    let genesis_hash = genesis.unwrap_or_else(|| {
+        // No externally-pinned genesis supplied: fall back to the chain's own
+        // claimed root (self-consistency check) so `chain verify` is usable
+        // standalone. A relying party who wants to pin against a known-good
+        // R31 boot root MUST pass --genesis explicitly (§4.1 of the spec).
+        fs::read_to_string(&store_path)
+            .ok()
+            .and_then(|content| content.lines().find(|l| !l.trim().is_empty()).map(str::to_string))
+            .and_then(|first_line| serde_json::from_str::<chain::ChainEntry>(&first_line).ok())
+            .map(|e| e.prev_hash)
+            .unwrap_or_default()
+    });
+
+    match store.verify(&genesis_hash) {
+        Ok(n) => {
+            println!("CHAIN OK: {n} entries");
+        }
+        Err(seq) => {
+            println!("CHAIN BROKEN at seq {seq}");
+            process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
+        }
+    }
+}
+
+// ── cmd_quorum_* (R33) ────────────────────────────────────────────────────────
+
+/// Compute this host's own voter identity for the R33 quorum protocol.
+///
+/// Reuses the exact R26/R31 CI-mock convention already established in
+/// `cmd_attest` (lines measuring synthetic path-derived bytes when
+/// `AXON_CI_NO_KVM=1` or the real kernel/axon-os files are unavailable) rather
+/// than inventing a new mock: when the real files are present and
+/// `AXON_CI_NO_KVM` is unset, this calls the real `measure_host_stack`; when
+/// unavailable, it calls `measure_extended` directly over synthetic bytes
+/// derived from the (possibly nonexistent) paths, so the CLI is exercisable
+/// without a real kernel build. The CI-mock path prints a clear label to
+/// stderr — it must never be mistaken for a real attestation.
+fn quorum_self_tcb(
+    kernel: &Option<PathBuf>,
+    axon_os: &Option<PathBuf>,
+    axon_audit: &Option<PathBuf>,
+) -> String {
+    let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
+    let kernel_path = kernel.clone().unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let axon_os_path = axon_os.clone().unwrap_or_else(|| exe_dir.join("axon-os"));
+    let axon_audit_path = axon_audit.clone().unwrap_or_else(|| exe_dir.join("axon-audit-writer"));
+
+    if ci_no_kvm || !kernel_path.exists() || !axon_os_path.exists() {
+        eprintln!(
+            "[axon-vm quorum] CI mock identity (AXON_CI_NO_KVM=1 or kernel/axon-os \
+             unavailable) — NOT a real attestation"
+        );
+        let mock_kernel = format!("axon-os-mock-kernel-ci:{}", kernel_path.display()).into_bytes();
+        let mock_axon_os = format!("axon-os-mock-binary-ci:{}", axon_os_path.display()).into_bytes();
+        let ext = axon_attest::measure_extended(axon_attest::ComponentPaths {
+            kernel: mock_kernel,
+            axon_os: mock_axon_os,
+            axon_audit: None,
+            kernel_path: format!("<ci-mock> {}", kernel_path.display()),
+            axon_os_path: format!("<ci-mock> {}", axon_os_path.display()),
+            axon_audit_path: None,
+        })
+        .expect("measure_extended over injected bytes cannot fail (kernel/axon-os always non-empty)");
+        ext.axtcb1_ext
+    } else {
+        let axon_audit_opt = if axon_audit_path.exists() { Some(axon_audit_path.as_path()) } else { None };
+        match measure_host_stack(&kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
+            Ok(ext) => ext.axtcb1_ext,
+            Err(e) => {
+                eprintln!("axon-vm quorum: extended TCB measurement failed: {e}");
+                process::exit(EXTENDED_TCB_MEASURE_FAIL);
+            }
+        }
+    }
+}
+
+/// `axon-vm quorum propose` — build and write a `VoteRequest` (R33 §3.1, scoped).
+#[allow(clippy::too_many_arguments)]
+fn cmd_quorum_propose(
+    run_id: String,
+    prog: PathBuf,
+    action: String,
+    out: PathBuf,
+    kernel: Option<PathBuf>,
+    axon_os: Option<PathBuf>,
+    axon_audit: Option<PathBuf>,
+) {
+    let voter_tcb = quorum_self_tcb(&kernel, &axon_os, &axon_audit);
+    let prog_hash = format!("sha256:{}", sha256_file(&prog));
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let req = quorum::logic::VoteRequest {
+        run_id,
+        prog_hash,
+        voter_tcb: voter_tcb.clone(),
+        proposed_action: action,
+        timestamp_ms,
+    };
+
+    if let Err(e) = quorum::io::write_vote_request(&req, &out) {
+        eprintln!("axon-vm quorum propose: failed to write {}: {e}", out.display());
+        process::exit(2);
+    }
+    eprintln!("✓ proposal written: {} (proposer axtcb1-ext: {})", out.display(), voter_tcb);
+}
+
+/// `axon-vm quorum vote` — read a `VoteRequest`, cast a vote, write a `VoteResponse`.
+#[allow(clippy::too_many_arguments)]
+fn cmd_quorum_vote(
+    request: PathBuf,
+    approve: bool,
+    deny: bool,
+    reason: String,
+    out: PathBuf,
+    kernel: Option<PathBuf>,
+    axon_os: Option<PathBuf>,
+    axon_audit: Option<PathBuf>,
+) {
+    if !approve && !deny {
+        eprintln!("axon-vm quorum vote: exactly one of --approve or --deny is required");
+        process::exit(2);
+    }
+
+    let req = match quorum::io::read_vote_request(&request) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("axon-vm quorum vote: failed to read {}: {e}", request.display());
+            process::exit(2);
+        }
+    };
+
+    let voter_tcb = quorum_self_tcb(&kernel, &axon_os, &axon_audit);
+    let resp = quorum::logic::VoteResponse {
+        voter_tcb: voter_tcb.clone(),
+        run_id: req.run_id,
+        approved: approve,
+        reason,
+    };
+
+    if let Err(e) = quorum::io::write_vote_response(&resp, &out) {
+        eprintln!("axon-vm quorum vote: failed to write {}: {e}", out.display());
+        process::exit(2);
+    }
+    eprintln!(
+        "✓ vote written: {} ({} — voter axtcb1-ext: {})",
+        out.display(),
+        if approve { "APPROVE" } else { "DENY" },
+        voter_tcb
+    );
+}
+
+/// `axon-vm quorum check` — collect `.vote` files and run the strict-majority check.
+///
+/// Exit 0 = QUORUM MET. Exit 13 = QUORUM BLOCKED (insufficient approvals or no
+/// votes at all). Exit 14 = QUORUM BLOCKED (attestation mismatch across voters).
+fn cmd_quorum_check(responses_dir: PathBuf, n: usize, json_out: bool) {
+    let votes = match quorum::io::collect_responses(&responses_dir, n) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "axon-vm quorum check: failed to collect responses from {}: {e}",
+                responses_dir.display()
+            );
+            process::exit(2);
+        }
+    };
+
+    let result = quorum::logic::check_quorum(&votes, n);
+
+    if json_out {
+        let out = serde_json::json!({
+            "schema": "axon-vm-quorum-check/1",
+            "quorum_met": result.quorum_met,
+            "coalition_size": result.coalition_size,
+            "approvals": result.approvals,
+            "required_n": n,
+            "blocking_reason": result.blocking_reason,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    }
+
+    if result.quorum_met {
+        eprintln!("QUORUM MET: {}/{} approvals", result.approvals, n);
+        process::exit(0);
+    } else {
+        let reason = result.blocking_reason.clone().unwrap_or_default();
+        eprintln!("QUORUM BLOCKED: {reason}");
+        if reason.contains("attestation") {
+            process::exit(QUORUM_ATTEST_FAIL_EXIT_CODE);
+        } else {
+            process::exit(QUORUM_BLOCKED_EXIT_CODE);
         }
     }
 }
