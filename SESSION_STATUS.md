@@ -92,8 +92,32 @@ section, matching the existing GPU/browser/Android/eBPF/Zephyr/TEE pattern) and 
 which installs both idempotently and re-runs `r32_acceptance_gate.sh` to confirm 20/20. Tested
 clean on this host (both tools already present → no-op + verify).
 
+## R21/R22/R23 stale Draft headers fixed (commit `1e91db5`)
+
+Same staleness class as R17/R31/R32: REQUIREMENTS.md already knew these three specs' own headers
+were stale but never fixed the source file itself. Re-verified each (axon-os: 88 `cargo test -p
+axon-os` tests; R22/R23: their acceptance gate scripts, both green) and flipped Draft → Landed 100%
+in the spec headers, added spec-meta to all three. Pre-convention count 53 → 50.
+
+## R30 gate: re-verified for real — was flaky, not hung (this iteration)
+
+The standing claim ("NOT re-run to completion — timed out past 4 min") was itself stale. Ran it
+to completion twice:
+- **First run** (alongside this session's earlier concurrent cargo activity): completed in a few
+  minutes (not a hang), but FAILED 2/6 — `acc_a1` (clean-repo run) failed at Stage 3
+  R26_ATTESTATION, and `acc_a4` (idempotency: two consecutive runs must match) caught two runs
+  producing genuinely different stage vectors (one stopped early, one passed all 8 stages).
+- **Second run** (isolated, no concurrent build load): **6/6 PASS**, both idempotency runs
+  produced identical 8-stage vectors.
+Conclusion: R30's gate is real and does complete, but is flaky under host contention (real-KVM
+boot timing sensitivity), matching the `gate-flakes-under-contention` memory pattern. Did not chase
+the root cause further this iteration — that's a separate, larger inner-loop item if it's ever
+worth hardening (e.g. retry-with-backoff inside the gate itself), not a quick slice. Updated
+`governance/REQUIREMENTS.md`'s R30 row with the precise, evidenced finding.
+
 ## Next candidate slice
 
-- Continue the outer-loop sweep into the 53 pre-convention specs (add spec-meta on next real edit
+- Continue the outer-loop sweep into the 50 pre-convention specs (add spec-meta on next real edit
   per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick the next
-  highest (load-bearing × cheap-to-close) `REQUIREMENTS.md` row.
+  highest (load-bearing × cheap-to-close) `REQUIREMENTS.md` row, or (bigger, separate item) harden
+  R30's gate against contention-flakiness if it starts blocking real deploys.
