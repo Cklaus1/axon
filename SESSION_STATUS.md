@@ -38,9 +38,14 @@
 - The `KNOWN_DUAL` allowlist in `verify_all_specs.sh` (R18/R21-R25 dual-numbering) — flagged for
   human sanity-check, not yet reconciled or confirmed as intentionally-legacy.
 
+## Gate status: fully green (commit `68a1e3e`)
+
+`scripts/gate.sh` passes clean end-to-end — 419 + 124 tests, fmt, clippy (lib + runtime crates),
+native codegen build. No known gaps remaining (the wasm-browser item above was a flake, not a bug;
+the clippy violation is fixed). Re-verified 2026-07-18.
+
 ## Next candidate slice
 
-- Fix the wasm-browser example-link gap (`wasm_browser_println_matches_interp_via_js_host`) if a
-  future iteration has bandwidth — it's the one thing keeping `gate.sh` from being fully green.
-- Or: continue the outer-loop sweep into the 53 pre-convention specs (add spec-meta on next real
-  edit per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
+- Continue the outer-loop sweep into the 53 pre-convention specs (add spec-meta on next real edit
+  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick the next
+  highest (load-bearing × cheap-to-close) `REQUIREMENTS.md` row.
