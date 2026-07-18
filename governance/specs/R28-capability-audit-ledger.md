@@ -1,7 +1,26 @@
 # Tech Spec — R28: Capability Audit Ledger (chained, tamper-evident, all-class)
 
 **Spec ID:** `R28-capability-audit-ledger`
-**Status:** Draft (2026-06-28)
+**Status:** ✅ Landed (re-verified 2026-07-18) — chained JSONL ledger for every capability-bearing
+action (FS/Net/AI/Exec/Random/IO); `axon-os audit verify --ledger PATH` checks chain integrity.
+Includes the 2026-07-18 fix (`0bfa74d`): `Ledger::open()` now eagerly creates the ledger file
+(previously a zero-AI-call run produced no file at all), and `call_builtin` audits every
+capability-bearing builtin, not just `ai_complete`. `scripts/r28_acceptance_gate.sh`: PASS. This
+header said "Draft" long after the code shipped — same staleness class as
+R17/R21/R22/R23/R31/R32, caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2).
+
+```spec-meta
+id: R28-capability-audit-ledger
+status-claim: Landed
+depends-on: R21-axon-os-supervisor, R27-corrigibility-resource-bounds
+blocks: R29-continuous-compliance-monitor
+blocked-by: none
+supersedes: none
+related: R31-extended-tcb-attestation, R36-full-asi-os
+conflicts-with: none
+reserves: none
+evidence: scripts/r28_acceptance_gate.sh (re-verified 2026-07-18)
+```
 **Implements:** `VISION_OS.md` §4.4 ("auditability — what happened, provably, in order") and the
 capability-audit pillar of the ASI safety stack. Provides a **single, chained, cross-class ledger**
 that records every capability-bearing action: FS, Net, AI, Exec, Random, IO — in order, with a

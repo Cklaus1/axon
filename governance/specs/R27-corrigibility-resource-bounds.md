@@ -1,7 +1,24 @@
 # Tech Spec — R27: Corrigibility & Resource Bounds (the model's own instrumental behavior)
 
 **Spec ID:** `R27-corrigibility-resource-bounds`
-**Status:** 📝 Draft (2026-06-27)
+**Status:** ✅ Landed (re-verified 2026-07-18) — `KillChannel` + file-backed latch → `axon-os kill
+<run-id>` (exit 4 HALTED); coalition ceiling (N principals from same lineage root can't exceed
+cap); tamper-evident hash-chained latch ledger. `scripts/r27_acceptance_gate.sh`: 19 passed, 0
+failed. This header said "Draft" long after the code shipped — same staleness class as
+R17/R21/R22/R23/R31/R32, caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2).
+
+```spec-meta
+id: R27-corrigibility-resource-bounds
+status-claim: Landed
+depends-on: R21-axon-os-supervisor, R20-smt-capability-proofs
+blocks: R28-capability-audit-ledger, R29-continuous-compliance-monitor, R32-formal-corrigibility-proof
+blocked-by: none
+supersedes: none
+related: R25-information-flow-monitor, R26-confidential-microvm-substrate, R36-full-asi-os
+conflicts-with: none
+reserves: none (exit 4 HALTED_EXIT_CODE)
+evidence: scripts/r27_acceptance_gate.sh (re-verified 2026-07-18)
+```
 **Implements:** `VISION_OS.md` §4.5 ("What the model itself DOES — corrigibility, resource
 acquisition, collusion") — the **only** pillar about the model's *instrumental* behavior under
 instrumental convergence, not the behavior of any single synthesized program. Defends priority-3

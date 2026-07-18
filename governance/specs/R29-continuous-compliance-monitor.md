@@ -1,7 +1,24 @@
 # Tech Spec — R29: Continuous Compliance Monitor
 
 **Spec ID:** `R29-continuous-compliance-monitor`
-**Status:** 📝 Draft (2026-06-28)
+**Status:** ✅ Landed (re-verified 2026-07-18) — `axon-os run --monitor` polls the R28 ledger every
+100ms; any denied-effect entry trips the R27 kill-switch within 2s (exit 12).
+`scripts/r29_acceptance_gate.sh`: 24 passed, 0 failed. This header said "Draft" long after the
+code shipped — same staleness class as R17/R21/R22/R23/R31/R32, caught by the same outer-loop
+sweep (`EXECUTION_MODEL.md` §2).
+
+```spec-meta
+id: R29-continuous-compliance-monitor
+status-claim: Landed
+depends-on: R26-confidential-microvm-substrate, R27-corrigibility-resource-bounds, R28-capability-audit-ledger
+blocks: R30-unified-safety-gate, R31-extended-tcb-attestation
+blocked-by: none
+supersedes: none
+related: R36-full-asi-os
+conflicts-with: none
+reserves: none (exit 12)
+evidence: scripts/r29_acceptance_gate.sh (re-verified 2026-07-18)
+```
 **Implements:** The feedback loop that closes R26 + R27 + R28:
 - R26 attests *what is running*
 - R27 can *stop it*

@@ -32,6 +32,17 @@
   one-line fix. This is why the first two gate reruns this session failed at different steps
   (tests, then clippy) — they were two independent, unrelated problems, not the same one recurring.
 
+## New flaky-test instance found (same class, different test)
+
+`persistent_learner_demo_carries_state_across_invocations` failed once during this iteration's
+`gate.sh` run (this iteration's changes are pure `.md` docs — nothing Rust-related). Root cause:
+the test uses a fixed, non-isolated state file (`/tmp/axon_persistent_learner.txt`, no per-run
+uniqueness) and clears it on entry, so it's racy under any concurrent process touching the same
+path. Isolated rerun: PASS. Immediate full-suite rerun: 419/419 PASS. Same `gate-flakes-under-
+contention` class as the `wasm_browser_*` flake found earlier this session — noting it here so a
+future iteration doesn't have to re-derive the diagnosis. Not fixed (would mean giving the test a
+per-PID/per-thread tmp path — a real, separate, small hardening slice if this starts recurring).
+
 ## Reconciled this iteration: `KNOWN_DUAL` allowlist sanity-check
 
 Read all 12 dual-numbered files in full (not just filenames). Two distinct shapes:
@@ -131,9 +142,37 @@ R31 was the only remaining instance. Pre-convention count 49.
 **Lesson for future iterations:** "REQUIREMENTS.md notes X is stale" is not the same claim as "X is
 fixed" — always check the actual file, not just the matrix row that describes it.
 
+## Systematic sweep found R26/R27/R28/R29 ALL had the same stale-header bug (this iteration)
+
+Rather than waiting to stumble onto more one at a time, grepped every spec's `**Status:**` line for
+"Draft" and cross-checked each hit against known-landed status. Found the **entire shipped
+safety/attestation stack** — R26, R27, R28, R29 — still had "📝 Draft" as their own header, despite
+REQUIREMENTS.md already correctly saying "Landed" for all four (unlike R31, these matrix rows were
+already accurate — only the spec files themselves lagged). Re-verified all four gates fresh
+(r26: OK, r27: 19/19, r28: PASS, r29: 24/24) before flipping any header. Fixed all four: Draft →
+Landed, added spec-meta with dependency edges cross-checked against each spec's own "Depends on"
+prose (not guessed) — caught and corrected one wrong edge in my first draft (R27 does NOT depend
+on R26 as I initially assumed; it depends on R21/R20, and R25 is `related` not `depends-on` since
+R27 shipped its full scope without R25 ever being built — a soft/conceptual reference, not a real
+blocking dependency). Pre-convention count 50 → 45.
+
+Also grepped for the SAME two bug classes (stale Draft + dangling filenames) across the rest of the
+tree and found candidates not yet fixed: `R12-kernel-runtime-services.md` ("Draft" — Phase 7 kernel
+is ✅ Complete per CLAUDE.md) and `R14-mobile-targets.md` ("Draft" — Android/iOS tests
+(`android_compute_parity_r14`, `android_lifecycle_adapter_r14`, `mobile::tests::*`) pass in every
+gate.sh run this session). Also `R1b-str-return-abi.md`/`R1c-dict-runtime.md`/
+`R1d-single-source-builtins.md` are early-phase legacy specs that may have the same gap (memory:
+"R1c/R1e actually mostly done" suggests R1c's header may be stale too). **Deliberately NOT fixed
+this iteration** — these need real individual research (R7's own row is a huge multi-paragraph
+partial-completion status; R12/R14 likely need similarly careful, non-mechanical characterization,
+not a one-line Draft→Landed flip) rather than the mechanical confirm-and-flip that worked for
+R26-R29.
+
 ## Next candidate slice
 
-- Continue the outer-loop sweep into the 50 pre-convention specs (add spec-meta on next real edit
-  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick the next
-  highest (load-bearing × cheap-to-close) `REQUIREMENTS.md` row, or (bigger, separate item) harden
-  R30's gate against contention-flakiness if it starts blocking real deploys.
+- Research and fix `R12-kernel-runtime-services.md` and `R14-mobile-targets.md`'s stale headers
+  (real investigation needed, not mechanical) — or check `R1b`/`R1c`/`R1d` for the same gap.
+- Or: continue the outer-loop sweep into the 45 pre-convention specs (spec-meta on next real edit
+  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
+- Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
+  real deploys.

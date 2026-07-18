@@ -1,7 +1,25 @@
 # Tech Spec — R26: Confidential Micro-VM Substrate (hardware-isolated, attested)
 
 **Spec ID:** `R26-confidential-microvm-substrate`
-**Status:** 📝 Draft (2026-06-27)
+**Status:** ✅ Landed (re-verified 2026-07-18) — `axon-vm attest` mandatorily attests before every
+boot (`--no-attest` dev escape; `AXON_CI_NO_KVM=1` CI); `axtcb1:` SHA-256(kernel_bytes) digest,
+HMAC-signed report. `scripts/r26_acceptance_gate.sh`: all §0 checks present, unstubbed, green
+(software-TPM stand-in lane; real SEV-SNP/TDX needs the `hw-attest` feature + confidential
+hardware). This header said "Draft" long after the code shipped — same staleness class as
+R17/R21/R22/R23/R31/R32, caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2).
+
+```spec-meta
+id: R26-confidential-microvm-substrate
+status-claim: Landed
+depends-on: R21-axon-os-supervisor
+blocks: R29-continuous-compliance-monitor, R31-extended-tcb-attestation, R33-cross-vm-safety-quorum
+blocked-by: none
+supersedes: none
+related: R24-tee-target, R36-full-asi-os
+conflicts-with: none
+reserves: none
+evidence: scripts/r26_acceptance_gate.sh (re-verified 2026-07-18)
+```
 **Implements:** `VISION_OS.md` §4.3 (pillar "what can be SENSED — side channels, hardware,
 confidential computing") + §5 (the host-substrate dial) + gap **G5** (micro-VM guest, ideally
 confidential) — and tied to **G6** (hardware root of trust) via mandatory remote attestation. Swaps
