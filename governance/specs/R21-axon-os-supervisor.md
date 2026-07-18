@@ -1,11 +1,30 @@
 # Tech Spec — R21: `axon-os` Containment Supervisor (Vision-OS v1 core)
 
 **Spec ID:** `R21-axon-os-supervisor`
-**Status:** 📝 Draft (2026-06-26)
+**Status:** ✅ Landed 100% (re-verified 2026-07-18) — grant algebra (`grant.rs`), admission gate
+(fail-closed on declared-effects ⊆ grant), hash-chained tamper-evident run records, deterministic
+replay (`replay.rs`), attenuated Principal minting all implemented and tested (`cargo test -p
+axon-os`: 88 tests, 1 intentionally ignored, 0 failed). Landed via commits `1e7be26`→`9f12499`
+("R21 100%") + the runtime capability-ceiling fix `59f84c0`. This header said "Draft" long after
+the code shipped — the same staleness class as R17/R22/R23/R31/R32, caught by the same outer-loop
+sweep (`EXECUTION_MODEL.md` §2).
 **Implements:** `VISION_OS.md` v1 "Containment Substrate" — the beating heart of the
 intent→**prove-bound**→enforce→audit→replay loop, as a runnable artifact built on shipped
 Axon primitives (Principal/Budget/Sandbox/provenance/replay/R20 mint proofs).
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
+
+```spec-meta
+id: R21-axon-os-supervisor
+status-claim: Landed
+depends-on: R20-smt-capability-proofs
+blocks: none
+blocked-by: none
+supersedes: none
+related: R22-intent-approve-gateway, R26-confidential-microvm-substrate, R27-corrigibility-resource-bounds, R36-full-asi-os
+conflicts-with: none
+reserves: none (dual-numbered with R21-decimal.md — see scripts/verify_all_specs.sh KNOWN_DUAL comment; reconciled 2026-07-18, both specs genuinely independent)
+evidence: cargo test -p axon-os --no-default-features (88 tests, re-verified 2026-07-18)
+```
 
 > **Read this framing first.** This spec is deliberately small. It is **not** the whole OS —
 > no micro-VM, no bare metal, no info-flow propagation, no model synthesis (see §1.2). It is

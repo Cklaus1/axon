@@ -1,12 +1,30 @@
 # Tech Spec — R22: Intent→Approve Gateway (Vision-OS v1 front half)
 
 **Spec ID:** `R22-intent-approve-gateway`
-**Status:** 📝 Draft (2026-06-26)
+**Status:** ✅ Landed 100% (re-verified 2026-07-18) — `scripts/r22_acceptance_gate.sh` OK: every
+§0 check present, unstubbed, and green, including the §9 quickstart against the built binary and
+byte-identical reproducibility (same intent+seed under mock ⇒ identical triple). Landed via commit
+`5e6e2fd` + the run-boundary wiring fix `c7d1d6a`. This header said "Draft" long after the code
+shipped — the same staleness class as R17/R21/R23/R31/R32, caught by the same outer-loop sweep
+(`EXECUTION_MODEL.md` §2).
 **Implements:** `VISION_OS.md` v1 §6 ("dynamic synthesized userland") — the *front half* of the
 loop whose *back half* is `R21-axon-os-supervisor.md`. R22 turns prose intent into a
 **proven-bounded job** (`.axjob` + `.ax`) that R21 runs; the human approves the **proof**, not the
 code.
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
+
+```spec-meta
+id: R22-intent-approve-gateway
+status-claim: Landed
+depends-on: R21-axon-os-supervisor
+blocks: none
+blocked-by: none
+supersedes: none
+related: R21-axon-os-supervisor, R38-embedded-agent-runtime
+conflicts-with: none
+reserves: none (dual-numbered with R22-domain-modules.md — see scripts/verify_all_specs.sh KNOWN_DUAL comment; reconciled 2026-07-18, both specs genuinely independent)
+evidence: scripts/r22_acceptance_gate.sh (re-verified 2026-07-18)
+```
 
 > **Read this framing first.** R22 is the synthesis + approval front-end. Its output is exactly the
 > input R21 consumes: a `.axjob` manifest + an `.ax` program, plus a signed-by-the-human **Approval

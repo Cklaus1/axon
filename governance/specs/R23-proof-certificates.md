@@ -1,7 +1,11 @@
 # Tech Spec — R23: Proof Certificates + Minimal Checker ("get Z3 out of the TCB")
 
 **Spec ID:** `R23-proof-certificates`
-**Status:** 📝 Draft (2026-06-26)
+**Status:** ✅ Landed 100% (re-verified 2026-07-18) — `scripts/r23_acceptance_gate.sh` OK: every
+§0 check present, unstubbed, and green; solver-free emission is byte-identical, Z3 confirmed out
+of the trust root. Landed via commit `4d8e2b8` + the default-build cert gate `9b08122`. This
+header said "Draft" long after the code shipped — the same staleness class as R17/R21/R22/R31/R32,
+caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2).
 **Implements:** `VISION_OS.md` §4.1 (pillar "what can be TRUSTED — the proof chain & trust roots")
 and gap **G2**. Closes the #1 assurance gap: today the R20 capability proofs and the R21 admission
 gate **trust Z3's verdict directly** — a ~500K-line unaudited solver sitting in the TCB, contradicting
@@ -9,6 +13,19 @@ gate **trust Z3's verdict directly** — a ~500K-line unaudited solver sitting i
 independent checker** validates, so **Z3 leaves the trust root**: you trust ~hundreds of lines, not
 the solver.
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
+
+```spec-meta
+id: R23-proof-certificates
+status-claim: Landed
+depends-on: R20-smt-capability-proofs
+blocks: none
+blocked-by: none
+supersedes: none
+related: R21-axon-os-supervisor
+conflicts-with: none
+reserves: none (dual-numbered with R23-ebpf-target.md — see scripts/verify_all_specs.sh KNOWN_DUAL comment; reconciled 2026-07-18, both specs genuinely independent)
+evidence: scripts/r23_acceptance_gate.sh (re-verified 2026-07-18)
+```
 
 > **Read this framing first.** The unsoundness we defend against is **the prover lying** (a Z3 bug, a
 > tampered solver, or a malicious drop-in returning "UNSAT" for a satisfiable query). The defense, from
