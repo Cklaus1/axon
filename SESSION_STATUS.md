@@ -32,11 +32,25 @@
   one-line fix. This is why the first two gate reruns this session failed at different steps
   (tests, then clippy) — they were two independent, unrelated problems, not the same one recurring.
 
+## Reconciled this iteration: `KNOWN_DUAL` allowlist sanity-check
+
+Read all 12 dual-numbered files in full (not just filenames). Two distinct shapes:
+- **R21/R22/R23/R24/R25: true collisions**, confirmed genuinely independent, non-conflicting specs
+  from two parallel work-tracks each claiming the same number. Decision: keep the full-slug
+  convention as the permanent mitigation; do NOT renumber an already-shipped/drafted spec — that's
+  pure churn (breaks existing cross-references) for no benefit the full-slug rule doesn't already
+  give. This was a judgment call with a sensible default, not a user-owed strategy fork — made and
+  recorded rather than asked.
+- **R18: not actually a collision** — one spec (`R18-provenance-ledger.md`, the only file with a
+  Spec ID) plus three supporting artifacts (spike/results/packet) sharing its filename prefix,
+  claiming no independent identity. It's in the allowlist only because the prefix-match check
+  can't distinguish the two shapes.
+Documented in `scripts/verify_all_specs.sh` (inline comment above `KNOWN_DUAL`) and
+`governance/EXECUTION_MODEL.md` §3.
+
 ## Not yet decided (owed to the user, not a loop default)
 
 - Whether to push `governance-audit-2026-07-18` to origin.
-- The `KNOWN_DUAL` allowlist in `verify_all_specs.sh` (R18/R21-R25 dual-numbering) — flagged for
-  human sanity-check, not yet reconciled or confirmed as intentionally-legacy.
 
 ## Gate status: fully green (commit `68a1e3e`)
 

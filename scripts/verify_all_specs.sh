@@ -33,6 +33,21 @@ note()    { echo "  note:  $*"; }
 #   R21/R22/R23/R24/R25 — two independent tracks each claimed the number (vertical targets vs
 #   safety stack). R18 — one spec + its companion docs (slice0 spike/results, jury packet).
 # These warn (reconcile when convenient); any NEW collision is a hard finding.
+# Reconciled 2026-07-18 (SESSION_STATUS.md): each entry below was read in full, not just
+# filename-matched. Two distinct shapes both trip the same prefix-collision check:
+#   - R21/R22/R23/R24/R25: TRUE collisions — two independent, unrelated specs from two
+#     parallel work-tracks each claimed the same next-available number (axon-os-supervisor
+#     vs decimal; domain-modules vs intent-approve-gateway; ebpf-target vs proof-certificates;
+#     defended-approval-boundary vs tee-target; information-flow-monitor vs zephyr-target).
+#     No content overlap or conflict found in either topic of any pair. Mitigation is the
+#     full-slug convention (EXECUTION_MODEL.md §3), not renumbering — renumbering an
+#     already-shipped/drafted spec would churn every existing cross-reference for no benefit
+#     the full-slug rule doesn't already provide.
+#   - R18: NOT a true collision — one initiative (R18-provenance-ledger.md is the only file
+#     with a Spec ID/spec-meta) with three supporting artifacts (slice0-spike, slice0-results,
+#     buyer-jury-packet) that share the R18- filename prefix but claim no independent spec
+#     identity. Kept in this list only because the prefix-match check can't tell the
+#     difference; do not read its presence here as "R18 has a numbering conflict."
 KNOWN_DUAL="R18 R21 R22 R23 R24 R25"
 echo "== [1] duplicate spec numbers =="
 dups=$(ls "$SPECS_DIR" | grep -E '^R[0-9]+[a-z]?-' | sed -E 's/^(R[0-9]+[a-z]?)-.*/\1/' \

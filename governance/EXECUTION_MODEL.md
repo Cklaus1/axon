@@ -99,6 +99,15 @@ evidence: <the acceptance-gate command, or none (valid only while Draft)>
 Conventions:
 - **Full slugs always** (`R21-axon-os-supervisor`, never `R21`) — bare numbers are ambiguous
   precisely because of the dual-numbering incident.
+- **Dual-numbering reconciliation (2026-07-18, `scripts/verify_all_specs.sh` `KNOWN_DUAL`
+  comment):** R21/R22/R23/R24/R25 were each read in full and confirmed as two genuinely
+  independent, non-conflicting specs from two parallel work-tracks that claimed the same number —
+  the full-slug convention above is the accepted permanent mitigation; renumbering an
+  already-shipped/drafted spec was rejected as pure churn with no benefit the full-slug rule
+  doesn't already provide. R18 is a different, benign shape: one spec
+  (`R18-provenance-ledger.md`, the only file with a Spec ID) plus three supporting artifacts
+  (spike/results/packet) that share its filename prefix without claiming independent spec
+  identity — it is not a numbering conflict at all, just a prefix-match false positive.
 - `related` is where "R36 explicitly converges R17+R21+R26–R31" and "R37 forks the design space
   from R17" become one grep instead of a close reading of §1 prose in three files.
 - `reserves` exists because code-block collisions have the same shape as number collisions
