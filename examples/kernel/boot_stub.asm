@@ -92,9 +92,20 @@ _start:
     mov dword [pdpt],   eax
     mov dword [pdpt+4], 0
 
-    ; PD[0] = 2 MB huge page at physical 0x0 (present + writable + PS)
-    mov dword [pd],   0x83
-    mov dword [pd+4], 0
+    ; PD[0..7] = eight 2 MB huge pages, identity-mapping physical 0x0-0x1000000
+    ; (16 MB): present + writable + PS. Was a single entry (0-2MB only) until
+    ; 2026-07-20, when hello_kernel_timer_irq.ax needed headroom past the
+    ; kernel image for its fixed-address IDT/IDTR (R17 spec §12 Q8).
+    mov ecx, 0
+.map_pd:
+    mov eax, ecx
+    shl eax, 21             ; eax = ecx * 2 MiB
+    or  eax, 0x83
+    mov [pd + ecx*8],     eax
+    mov dword [pd + ecx*8 + 4], 0
+    inc ecx
+    cmp ecx, 8
+    jl  .map_pd
 
     ; CR3 = PML4
     mov eax, pml4

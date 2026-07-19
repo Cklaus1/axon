@@ -1,0 +1,116 @@
+// R17 — timer interrupt acceptance test (`axon_kernel_handles_timer_interrupt`)
+//
+// Builds a real 256-entry IDT, remaps the PIC so IRQ0 (the PIT timer) lands on
+// a free vector, programs the PIT for a fast interrupt rate, enables
+// interrupts, and halts. Each timer tick fires isr_timer, which writes a
+// marker byte to the QEMU debugcon port (0xE9) and EOIs the PIC. A passing
+// boot proves the full chain: IDT construction -> lidt -> PIC remap -> PIT
+// programming -> sti -> a real hardware interrupt actually reaching an
+// Axon-compiled @[interrupt] handler.
+//
+// Uses the FIXED-PHYSICAL-ADDRESS idiom already established for the SMP
+// counter (hello_kernel_slice2.ax's COUNTER_ADDR) for the IDT/IDTR storage —
+// no address-of-a-local primitive needed (R17 spec §12 Q8, corrected
+// 2026-07-20: the fixed-address idiom was already sufficient).
+//
+// Type-checks with: axon check examples/kernel/hello_kernel_timer_irq.ax
+// QEMU boot test:    scripts/timer_irq_qemu_test.sh
+
+substrate
+
+// IDT/IDTR live at 0x300000 (3 MiB) — well clear of the kernel image loaded
+// at 0x100000 and boot_stub.asm's page tables/stack, and inside the 16 MiB
+// this kernel's boot stub identity-maps (extended from 2 MiB for this).
+let IDT_ADDR = 0x300000
+let IDTR_ADDR = 0x301000
+let IDT_ENTRIES = 256
+let IDT_ENTRY_SIZE = 16
+
+// PIT reload value for ~100 Hz (1193182 Hz / 100).
+let PIT_DIVISOR = 11932
+
+@[no_alloc]
+@[interrupt]
+fn isr_timer() | {Hal} {
+    port_out_u8(0xE9, 84)   // 'T' — proves the handler actually ran
+    port_out_u8(0x20, 0x20) // EOI to the master PIC
+}
+
+@[hal]
+fn idt_fill_gate(i: i64, handler_addr: i64) | {Hal} {
+    let base = IDT_ADDR + i * IDT_ENTRY_SIZE
+    volatile_store_u16(base, handler_addr as u16 as i64)
+    volatile_store_u16(base + 2, 8)
+    volatile_store_u8(base + 4, 0)
+    volatile_store_u8(base + 5, 142)  // 0x8E: present, ring0, 32-bit interrupt gate
+    volatile_store_u16(base + 6, shr(handler_addr, 16) as u16 as i64)
+    volatile_store_u32(base + 8, shr(handler_addr, 32) as u32 as i64)
+    volatile_store_u32(base + 12, 0)
+}
+
+@[hal]
+fn idt_fill_null(i: i64) | {Hal} {
+    let base = IDT_ADDR + i * IDT_ENTRY_SIZE
+    volatile_store_u16(base, 0)
+    volatile_store_u16(base + 2, 0)
+    volatile_store_u8(base + 4, 0)
+    volatile_store_u8(base + 5, 0)
+    volatile_store_u16(base + 6, 0)
+    volatile_store_u32(base + 8, 0)
+    volatile_store_u32(base + 12, 0)
+}
+
+@[hal]
+fn idt_build_and_load() | {Hal} {
+    for i in 0..IDT_ENTRIES {
+        idt_fill_null(i)
+    }
+    // Vector 32 = IRQ0 after the PIC remap below.
+    idt_fill_gate(32, fn_addr("isr_timer"))
+
+    volatile_store_u16(IDTR_ADDR, (IDT_ENTRIES * IDT_ENTRY_SIZE - 1) as u16 as i64)
+    volatile_store_u64(IDTR_ADDR + 2, IDT_ADDR)
+    lidt(IDTR_ADDR)
+}
+
+// Standard PIC remap: move IRQ0-7 off vectors 8-15 (which collide with CPU
+// exceptions) onto 32-39, IRQ8-15 onto 40-47, then mask everything except
+// IRQ0 (the timer) on the master.
+@[hal]
+fn pic_remap() | {Hal} {
+    port_out_u8(0x20, 0x11) // ICW1: master, init, cascade, ICW4 needed
+    port_out_u8(0xA0, 0x11) // ICW1: slave
+    port_out_u8(0x21, 0x20) // ICW2: master offset 32
+    port_out_u8(0xA1, 0x28) // ICW2: slave offset 40
+    port_out_u8(0x21, 0x04) // ICW3: master has a slave on IRQ2
+    port_out_u8(0xA1, 0x02) // ICW3: slave cascade identity
+    port_out_u8(0x21, 0x01) // ICW4: 8086 mode
+    port_out_u8(0xA1, 0x01) // ICW4: 8086 mode
+    port_out_u8(0x21, 0xFE) // mask all master IRQs except IRQ0 (timer)
+    port_out_u8(0xA1, 0xFF) // mask all slave IRQs
+}
+
+@[hal]
+fn pit_init() | {Hal} {
+    port_out_u8(0x43, 0x36) // channel 0, lobyte/hibyte, mode 3, binary
+    port_out_u8(0x40, bit_and(PIT_DIVISOR, 255))
+    port_out_u8(0x40, bit_and(shr(PIT_DIVISOR, 8), 255))
+}
+
+@[entry]
+fn kmain() | {Hal} {
+    idt_build_and_load()
+    pic_remap()
+    pit_init()
+    sti()
+    while true {
+        hlt()
+    }
+}
+
+@[panic_handler]
+fn on_panic() | {Hal} {
+    while true {
+        hlt()
+    }
+}
