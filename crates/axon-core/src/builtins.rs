@@ -542,6 +542,54 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Numeric cast to i64. Accepts i64 (identity), f64 (truncating), or bool (0/1); other types panic.",
     },
+    // ── R19 follow-up: fixed-width `as` casts (the `as` operator already
+    // desugars `expr as TYPE` to a call to `as_<TYPE>`, per parser.rs — these
+    // 7 were the missing callees; as_i64/as_f64 above were the only two that
+    // existed). Truncating/masking semantics (like Rust's `as`, no panic on
+    // narrowing); accepts i64, f64 (truncating), bool (0/1), or any other
+    // fixed-width int (re-masked to the new width) as source.
+    BuiltinFn {
+        name: "as_u8",
+        params: &[("v", "T")],
+        ret: "u8",
+        doc: "Numeric cast to u8 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as u8` operator.",
+    },
+    BuiltinFn {
+        name: "as_u16",
+        params: &[("v", "T")],
+        ret: "u16",
+        doc: "Numeric cast to u16 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as u16` operator.",
+    },
+    BuiltinFn {
+        name: "as_u32",
+        params: &[("v", "T")],
+        ret: "u32",
+        doc: "Numeric cast to u32 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as u32` operator.",
+    },
+    BuiltinFn {
+        name: "as_u64",
+        params: &[("v", "T")],
+        ret: "u64",
+        doc: "Numeric cast to u64 (bit-reinterpreting, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as u64` operator.",
+    },
+    BuiltinFn {
+        name: "as_i8",
+        params: &[("v", "T")],
+        ret: "i8",
+        doc: "Numeric cast to i8 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as i8` operator.",
+    },
+    BuiltinFn {
+        name: "as_i16",
+        params: &[("v", "T")],
+        ret: "i16",
+        doc: "Numeric cast to i16 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as i16` operator.",
+    },
+    BuiltinFn {
+        name: "as_i32",
+        params: &[("v", "T")],
+        ret: "i32",
+        doc: "Numeric cast to i32 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as i32` operator.",
+    },
     BuiltinFn {
         name: "arr_take",
         params: &[("xs", "[T]"), ("n", "i64")],
@@ -2445,6 +2493,31 @@ mod tests {
             !is_heap_allocating_builtin(name),
             "{name} must not be classified heap-allocating"
         );
+    }
+
+    #[test]
+    fn r19_fixed_width_as_casts_are_known_pure_general_purpose() {
+        // The `x as u16`-style operator (parser.rs) desugars to a call to
+        // `as_<type>`; as_i64/as_f64 were the only callees that existed
+        // before this — these 7 close the family. Pure, general-purpose
+        // (like as_i64/as_f64): no Hal gate, no impurity, no heap alloc.
+        for name in [
+            "as_u8", "as_u16", "as_u32", "as_u64", "as_i8", "as_i16", "as_i32",
+        ] {
+            assert!(is_known_builtin(name), "{name} must be a known builtin");
+            assert!(
+                !is_impure_builtin(name),
+                "{name} must be pure (a numeric cast, like as_i64/as_f64)"
+            );
+            assert!(
+                builtin_effect_row(name).is_empty(),
+                "{name} must carry no effect row (general-purpose, not Hal-gated)"
+            );
+            assert!(
+                !is_heap_allocating_builtin(name),
+                "{name} must not be classified heap-allocating"
+            );
+        }
     }
 
     #[test]

@@ -6856,6 +6856,23 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.current_option_inner = saved_oi;
                 self.current_result_types = saved_rt;
                 if let Some(fval) = emitted {
+                    // R19 Slice C coerces a fixed-width `let` binding's i64
+                    // literal down to its declared narrow width (above), but
+                    // never covered THIS sibling site — a struct-literal
+                    // field. Without it, `store i64 <val>, ptr <fptr>` writes
+                    // 8 bytes at a GEP offset the layout only reserved 1/2/4
+                    // bytes for (a `@[packed]` struct has no padding to
+                    // absorb the overrun), silently corrupting the following
+                    // field(s) or overrunning the alloca entirely. Found
+                    // while wiring `fn_addr`/`as uN` into an IDT-entry-style
+                    // struct — pre-existing since Slice 3 (@[repr(C)]), not
+                    // introduced here; every literal-valued narrow field in
+                    // hello_kernel_slice3.ax's GdtEntry hit the same bug.
+                    let fval = if let Some(field_ty) = field_sem_types.get(idx as usize) {
+                        self.coerce_to_fixed_width(fval, field_ty)
+                    } else {
+                        fval
+                    };
                     let fptr = self
                         .ir
                         .builder
@@ -7630,6 +7647,54 @@ impl<'ctx> super::Codegen<'ctx> {
                         _ => return None,
                     };
                     return Some(out.into());
+                }
+            }
+        }
+
+        // R19 follow-up: fixed-width `as` casts (as_u8/u16/u32/u64/i8/i16/i32)
+        // — the missing callees the `x as u16`-style operator already
+        // desugars to (parser.rs); as_i64/as_f64 above were the only two that
+        // existed. Truncating/masking (no panic on narrowing, like Rust's
+        // `as`). Route through i64 uniformly, then reuse R19 Slice C's
+        // `coerce_to_fixed_width` for the final narrow/widen — matching
+        // as_i64's own existing zero-extend-only handling of narrow sources
+        // (sign is not recoverable from a bare LLVM int's bit width alone;
+        // this is an existing limitation, not one introduced here — the
+        // realistic i64-source path this exists for is unaffected, since
+        // truncating a 64-bit value's low bits is sign-agnostic).
+        if let ast::Expr::Ident(name) = callee {
+            let fixed_width_target = match name.as_str() {
+                "as_u8" => Some(Type::U8),
+                "as_u16" => Some(Type::U16),
+                "as_u32" => Some(Type::U32),
+                "as_u64" => Some(Type::U64),
+                "as_i8" => Some(Type::I8),
+                "as_i16" => Some(Type::I16),
+                "as_i32" => Some(Type::I32),
+                _ => None,
+            };
+            if let Some(target) = fixed_width_target {
+                if args.len() == 1 {
+                    let v = self.emit_expr(&args[0], fn_val)?;
+                    let i64_ty = self.ir.context.i64_type();
+                    let as_i64_val = match v {
+                        BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 64 => iv,
+                        BasicValueEnum::IntValue(iv) => build_wrappers::w_int_z_extend(
+                            &self.ir.builder,
+                            iv,
+                            i64_ty,
+                            "cast_wzext",
+                        ),
+                        BasicValueEnum::FloatValue(fv) => build_wrappers::w_float_to_signed_int(
+                            &self.ir.builder,
+                            fv,
+                            i64_ty,
+                            "cast_ftoi",
+                        ),
+                        _ => return None,
+                    };
+                    let out = self.coerce_to_fixed_width(as_i64_val.into(), &target);
+                    return Some(out);
                 }
             }
         }

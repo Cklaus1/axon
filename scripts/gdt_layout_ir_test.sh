@@ -65,5 +65,22 @@ if grep -qE '%GdtEntry = type \{ ' "$IR"; then
     fail "GdtEntry emitted as a NON-packed struct (lost @[packed] padding control)"
 fi
 
-echo "PASS: GdtEntry lowers to byte-exact packed layout: $EXPECT"
+# Field-STORE width check (found 2026-07-20 as a live bug, not a hypothetical):
+# the struct TYPE being byte-exact is necessary but not sufficient — a literal-
+# valued field was being stored as `store i64 <val>, ptr <gep>` regardless of
+# the field's actual declared width. In a `@[packed]` struct (no padding to
+# absorb the overrun), an i64 store at a GEP offset the layout only reserved
+# 1 or 2 bytes for silently clobbers the following field(s), or overruns the
+# alloca outright for the last field. The struct-type check above would still
+# PASS on that broken codegen, which is exactly how it shipped undetected —
+# so assert every store into a GdtEntry field alloca is at the field's actual
+# width, not a blanket i64.
+BAD_STORES="$(grep -E 'store i64 [^,]+, ptr %(limit_lo|base_lo|base_mid|access|flags|base_hi)' "$IR" || true)"
+if [[ -n "$BAD_STORES" ]]; then
+    echo "--- wrong-width field stores (i64 into a narrower packed slot) ---" >&2
+    echo "$BAD_STORES" >&2
+    fail "GdtEntry field(s) stored at i64 width, not their declared narrow width — corrupts adjacent packed fields"
+fi
+
+echo "PASS: GdtEntry lowers to byte-exact packed layout: $EXPECT (fields store at correct width)"
 exit 0

@@ -976,6 +976,17 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let f = match &args[0] {
                     Value::Int(n) => *n as f64,
+                    // SizedInt's raw `val` is already the correctly-masked/
+                    // sign-extended i64 bit pattern for its width (R19 Slice
+                    // B invariant) — same widening `as` an Int takes. U64 is
+                    // the one width whose i64 bit pattern can be negative
+                    // while representing a value > i64::MAX unsigned, so it
+                    // needs the u64 reinterpret before widening to f64.
+                    Value::SizedInt {
+                        val,
+                        ty: crate::types::Type::U64,
+                    } => (*val as u64) as f64,
+                    Value::SizedInt { val, .. } => *val as f64,
                     Value::Float(v) => *v,
                     Value::Bool(b) => {
                         if *b {
@@ -986,7 +997,7 @@ impl<'p> Interp<'p> {
                     }
                     other => {
                         return panic(format!(
-                            "as_f64: expected i64/f64/bool, got {}",
+                            "as_f64: expected i64/f64/bool/fixed-width int, got {}",
                             other.type_name()
                         ))
                     }
@@ -997,6 +1008,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let n = match &args[0] {
                     Value::Int(n) => *n,
+                    Value::SizedInt { val, .. } => *val,
                     Value::Float(v) => *v as i64,
                     Value::Bool(b) => {
                         if *b {
@@ -1007,12 +1019,59 @@ impl<'p> Interp<'p> {
                     }
                     other => {
                         return panic(format!(
-                            "as_i64: expected i64/f64/bool, got {}",
+                            "as_i64: expected i64/f64/bool/fixed-width int, got {}",
                             other.type_name()
                         ))
                     }
                 };
                 ok!(Value::Int(n));
+            }
+
+            // R19 follow-up: fixed-width `as` casts — the missing callees the
+            // `x as u16`-style operator already desugars to (parser.rs). Same
+            // "polymorphic on source" shape as as_i64/as_f64 above, plus
+            // SizedInt (any other fixed-width int) as a source, re-masked to
+            // the new target width. Truncating/masking, never panics (matches
+            // Rust's `as`) — unlike the checked-literal-binding E1900 path.
+            "as_u8" | "as_u16" | "as_u32" | "as_u64" | "as_i8" | "as_i16" | "as_i32" => {
+                want(1)?;
+                let raw = match &args[0] {
+                    Value::Int(n) => *n,
+                    Value::SizedInt { val, .. } => *val,
+                    Value::Float(v) => *v as i64,
+                    Value::Bool(b) => {
+                        if *b {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    other => {
+                        return panic(format!(
+                            "{name}: expected i64/f64/bool/fixed-width int, got {}",
+                            other.type_name()
+                        ))
+                    }
+                };
+                let ty = match name {
+                    "as_u8" => crate::types::Type::U8,
+                    "as_u16" => crate::types::Type::U16,
+                    "as_u32" => crate::types::Type::U32,
+                    "as_u64" => crate::types::Type::U64,
+                    "as_i8" => crate::types::Type::I8,
+                    "as_i16" => crate::types::Type::I16,
+                    _ => crate::types::Type::I32,
+                };
+                let masked = match ty {
+                    crate::types::Type::U8 => (raw as u8) as i64,
+                    crate::types::Type::U16 => (raw as u16) as i64,
+                    crate::types::Type::U32 => (raw as u32) as i64,
+                    crate::types::Type::U64 => raw, // same 64-bit pattern; unsigned display handles it
+                    crate::types::Type::I8 => (raw as i8) as i64,
+                    crate::types::Type::I16 => (raw as i16) as i64,
+                    _ => raw as i32 as i64,
+                };
+                ok!(Value::SizedInt { val: masked, ty });
             }
 
             // ── Polymorphic slicing / reordering ──────────────────────────
