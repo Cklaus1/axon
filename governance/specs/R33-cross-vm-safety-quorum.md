@@ -11,8 +11,13 @@ fallback path (§6 slice-risk note, §-Gate anti-stub carve-out). **`axon deploy
 2026-07-18** (§5.2.1) — `axon deploy --quorum-dir DIR` shells out to `axon-vm quorum check`
 (the same cross-binary pattern `axon-web` already uses to wrap the `axon` CLI), inserting the
 quorum result as one more named pipeline gate; omitting the flag leaves the gate open, so every
-pre-existing `axon deploy` invocation is unaffected. Only the R26 vsock broadcast transport (S2)
-remains open. See §14 Evidence ledger.
+pre-existing `axon deploy` invocation is unaffected. **S2 (vsock broadcast transport) re-scoped
+2026-07-19** (§5.2.2, no code yet): scoping it for real found the "reuse R26's `Substrate` trait"
+premise was false (R26 never built that trait — see R26's own 2026-07-19 as-built note); §1.3's
+false claim struck out and corrected; a concrete, right-sized design (new `quorum/vsock.rs` module,
+not a trait; reuses `interp.rs`'s existing raw-`AF_VSOCK` wire framing; TCP-loopback CI-testable via
+an env-var swap, matching R26's own `AXON_CI_NO_KVM` precedent) now exists for a future iteration to
+size into buildable sub-slices. See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
 mode — the VM itself could be compromised *after* its attestation report was produced. R33 distributes
@@ -144,11 +149,16 @@ they must also compromise a majority of the peer fleet.
 
 - **Interface:** new subcommands on `axon-vm` (`quorum propose / vote / audit`).
 - **Language/crate:** Rust, extends `crates/axon-vm` (R26). Allowed new deps: none (`sha2`,
-  `serde_json`, and `serde` are already in scope). The vsock channel the VMs communicate over is
-  R26's existing `Substrate` trait boundary.
+  `serde_json`, and `serde` are already in scope). ~~The vsock channel the VMs communicate over is
+  R26's existing `Substrate` trait boundary.~~ **truth: corrected 2026-07-19** — this trait doesn't
+  exist. R26's own §2 never got built as designed (see R26 spec's own 2026-07-19 as-built note);
+  there is no `substrate.rs`, no `trait Substrate`, no `MockSubstrate` anywhere in the tree. S2's
+  design (§5.2.2 below) does NOT depend on it.
 - **Perf/security:** the `QuorumAggregator` is pure (no I/O, no clock); all vsock sends/receives
-  are behind the `Substrate` trait seam. Fail closed on every ambiguity: unknown vote attestation ⇒
-  vote rejected; channel error ⇒ vote absent; deadline elapsed ⇒ action blocked.
+  will live behind a dedicated seam in the quorum module itself (§5.2.2) — narrower than R26's
+  full launch/attest/job-run surface, since quorum only needs broadcast-request / collect-response.
+  Fail closed on every ambiguity: unknown vote attestation ⇒ vote rejected; channel error ⇒ vote
+  absent; deadline elapsed ⇒ action blocked.
 
 ---
 
@@ -449,6 +459,61 @@ file-based counterpart:
   (its existing "blocked" convention), while the JSON's `exit_code` field surfaces the real
   `axon-vm` code (13 QUORUM_BLOCKED / 14 QUORUM_ATTEST_FAIL) for detail.
 
+#### 5.2.2 S2 (vsock transport) design — corrected 2026-07-19, replaces the false "reuse R26's
+Substrate trait" claim struck out in §1.3
+
+**Why this needed re-scoping:** the original plan was "reuse R26's `Substrate` trait boundary."
+Scoping S2 for real found that trait was never built (R26's own §2 module layout — `substrate.rs`,
+`MockSubstrate`, `hw-attest` feature — is spec prose only; see R26's 2026-07-19 as-built note). S2
+therefore does NOT gain a pre-built abstraction to plug into. The corrected design below is scoped
+to exactly what quorum needs (broadcast a `VoteRequest`, collect `VoteResponse`s within a deadline)
+— narrower than R26's full launch/attest/job-run surface — and does not attempt to retroactively
+build R26's aspirational trait as a prerequisite (that would be a separate, much larger refactor of
+already-shipped, working R26 code, out of scope for this spec).
+
+**What exists to build on:** `crates/axon-core/src/interp.rs` already has a working, narrow vsock
+pattern — raw `libc` `AF_VSOCK` `socket`/`connect`, wrapped as a `TcpStream` via `FromRawFd`, with a
+4-byte-length-prefixed JSON wire protocol (`vsock_send_recv`, Gap-6 `host_await`). It is
+**guest-initiates-connection-to-host only** (connects to `VMADDR_CID_HOST`); there is no host-side
+`bind`/`listen`/`accept` anywhere in the tree, and no peer-to-peer or N-way broadcast precedent.
+S2's real new work is the host-side listener and the fan-out/collect loop — the wire framing can be
+reused as-is.
+
+**Proposed shape (new module, not a trait):**
+- New file `crates/axon-vm/src/quorum/vsock.rs` — a THIRD edge alongside `logic.rs` (pure
+  aggregation, unchanged) and `io.rs` (the existing file-based impure edge, unchanged and NOT
+  replaced — both transports coexist; file-based stays the default, tested, backward-compatible
+  path). `vsock.rs` is impure by design, mirroring `io.rs`'s role, not a generic seam other code
+  plugs into.
+- `vsock_broadcast_and_collect(peer_cids: &[u32], port: u32, req: &VoteRequest, deadline_ms: u64)
+  -> Vec<VoteResponse>` — proposer side. Connects to each peer CID (reusing `interp.rs`'s
+  connect+frame pattern), sends `req`, collects responses until `deadline_ms` elapses; a peer that
+  doesn't respond in time contributes no vote (fail-closed, matching §4.4's A4 test intent — this
+  is the SAME semantics `collect_responses` already has for a missing `.vote` file, just over a
+  live connection instead of a directory glob).
+- `vsock_listen_and_respond(port: u32, policy: impl Fn(&VoteRequest) -> VoteResponse) -> !` — voter
+  side. `bind`/`listen`/`accept` on `VMADDR_CID_ANY`, one connection at a time (quorum votes are
+  infrequent and low-throughput; no need for a connection pool in v1), applying the existing
+  `policy.rs` voter policy per request and writing the response back over the same connection.
+- CLI: `axon-vm quorum vote --listen PORT` (blocks, replaces the current one-shot file-read with a
+  vsock listener when this flag is given — omit it and the existing file-based `vote` behavior is
+  unchanged) and `axon-vm quorum propose --broadcast CID1,CID2,...  --port PORT` (additive flag;
+  omit it and `propose` keeps writing a request file as it does today).
+- **Testing without real microVMs:** raw `AF_VSOCK` loopback support is kernel/environment-
+  dependent, so the acceptance gate cannot assume it's available in every CI runner. Precedent
+  (R26's own `AXON_CI_NO_KVM` pattern — a runtime env-var swap, not a trait) is reused rather than
+  inventing a new mock abstraction: an `AXON_VM_QUORUM_TRANSPORT=tcp-loopback` env var swaps the
+  `socket()`/`connect()`/`bind()` calls for plain `127.0.0.1` TCP at the same framing, so the wire
+  protocol and fan-out/collect/deadline logic get real integration coverage in ordinary CI; a
+  separate, explicitly-gated real-vsock lane (matching R26's `hw-attest`-style separation) can
+  later validate actual `AF_VSOCK` on a host that supports it.
+
+**Sizing note:** this is still real, multi-part work (new module, listener lifecycle, CLI flags, a
+CI-safe test harness) — a single future iteration should size it into its own sub-slices (e.g. "S2a:
+wire protocol + CLI flag scaffolding, TCP-loopback-tested" as the first bounded cut) rather than
+attempt all of it at once. This section's job is to make that next iteration's scoping decision
+cheap, not to have built it.
+
 ### 5.3 Voter policy
 The default voter policy (`policy.rs`) maps Phase 11 Risk to a score:
 ```
@@ -604,7 +669,7 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 |---|---|---|---|
 | R33.S0 | R26-confidential-microvm-substrate, R31-extended-tcb-attestation (both landed) | `scripts/r33_acceptance_gate.sh` §§1-7 (CLI journey + exit-code distinctness) | landed |
 | R33.S1 | R33.S0 | R26/R31 regression check (`axon-attest` test suite unchanged) | landed |
-| R33.S2 | R33.S0; vsock transport (currently file-based propose/vote/check) | new transport-specific test, not yet named | todo |
+| R33.S2 | R33.S0; vsock transport (currently file-based propose/vote/check) | new transport-specific test, not yet named | **re-scoped 2026-07-19** (§5.2.2 design landed, no code) — was blocked on a nonexistent "R26 Substrate trait"; corrected design targets a dedicated `quorum/vsock.rs` module instead, sized into buildable sub-slices for a future iteration |
 | R33.S3 (coalition ceiling) | R33.S0 | `coalition_bound_limits_same_lineage`, `coalition_cap_does_not_block_distinct_lineage_roots` (`crates/axon-vm/src/quorum/mod.rs`); `scripts/r33_acceptance_gate.sh` §8 (real CLI sock-puppet + distinct-roots journey) | landed (hardcoded `ceil(N/2)-1` fallback per the spec's own §6 slice-risk note — no dependency on R27's real `Coalition`/`max_quorum_power` type) |
 | R33.S4 (`axon deploy` integration) | R33.S0 | `scripts/r33_acceptance_gate.sh` §10 (backward-compat + sock-puppet-blocked + legit-quorum-met + missing-binary-hard-error, real `axon`↔`axon-vm` cross-binary journey) | landed (scoped per §5.2.1: reads pre-collected votes via subprocess shell-out to `axon-vm quorum check`, no live broadcast — no new `axon-core` Cargo dependency) |
 
@@ -620,6 +685,7 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R27 coalition ceiling: 3 YES votes from ONE `--lineage-root` cannot alone force quorum (real CLI, not just unit test); 3 YES votes from 3 DISTINCT roots meet quorum normally (cap does not over-trigger) | `bash scripts/r33_acceptance_gate.sh` (step 8) | sock-puppet → exit 13, reason names "coalition"; distinct-roots → exit 0 | this commit @ 2026-07-18 | PASS |
 | R33 did not regress R26/R31 | `bash scripts/r33_acceptance_gate.sh` (step 9) | `axon-attest` test suite: 22 passed, 0 failed | this commit @ 2026-07-18 | PASS |
 | R33.S4: `axon deploy --quorum-dir` real cross-binary journey — no-flag backward compat (no `quorum` field); sock-puppet coalition BLOCKED (exit 1, `gate:quorum`, JSON `exit_code:13`); 3-distinct-root quorum met (deploys, `quorum_met:true`); missing `--axon-vm-bin` is a hard error (exit 2), never a silent open gate | `bash scripts/r33_acceptance_gate.sh` (step 10) | all 4 sub-checks pass | this commit @ 2026-07-18 | PASS |
+| S2's "reuse R26's Substrate trait" premise is false — no such trait exists in any crate | `grep -rn "trait Substrate\|MockSubstrate\|QemuSwtpmSubstrate" crates/` | zero hits (confirmed independently: an Explore-agent research pass over R26/R33/quorum code, 2026-07-19) | this commit @ 2026-07-19 | CONFIRMED (spec text corrected in §1.3, §5.2.2 added; no code claim, this is a documentation-drift finding) |
 
 Honest scope, per this spec's own header: the above is a **file-based, single-host** slice, now
 WITH the R27 coalition ceiling (§4.5) AND the `axon deploy` integration (§5.2.1) closed. The R26

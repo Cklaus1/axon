@@ -154,6 +154,22 @@ hardware-report fetching, and vsock transport live behind the `Substrate` trait*
 the boot→measure→attest→admit pipeline are fully testable with a mock (and with the QEMU+swtpm
 software stand-in as the integration impl).
 
+> **truth: as-built architecture note (added 2026-07-19, no functional/code change).** The module
+> layout and `trait Substrate` below describe the ORIGINAL design intent; the shipped implementation
+> took a simpler, pragmatic path that never matches it file-for-file. What actually exists: a flat
+> `crates/axon-attest/src/lib.rs` (attestation logic, no internal module split) plus ~5 independent
+> inline `env::var("AXON_CI_NO_KVM")` branches scattered across `crates/axon-vm/src/main.rs`
+> (`cmd_attest`, `quorum_self_tcb`, the deploy-gate check, etc.) — there is **no `substrate.rs`, no
+> `trait Substrate`, no `MockSubstrate`, no `QemuSwtpmSubstrate` struct, and no `hw-attest` Cargo
+> feature** (it appears only in doc-comment prose, never as a real `[features]` entry) anywhere in
+> the tree. The functional claim this spec's "Landed" status makes — mandatory attestation before
+> boot, a working software-TPM-stand-in CI lane, fail-closed on ambiguity — **is real and
+> gate-verified** (`r26_acceptance_gate.sh` passes); only the specific architectural claim below (a
+> trait-based seam with swappable impls) is aspirational, not built. Found while scoping R33.S2
+> (vsock transport), which cited this section as an "existing boundary" to reuse — it isn't one.
+> Left uncorrected below (not rewritten) since it's still a reasonable target architecture if this
+> crate is ever refactored; readers building on top of R26 should treat it as a plan, not a fact.
+
 ```
 crates/axon-vm/src/
   manifest.rs     Parse + validate a guest-image manifest (.axvm) → GuestManifest.   [PURE]
