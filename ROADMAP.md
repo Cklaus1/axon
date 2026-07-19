@@ -798,15 +798,20 @@ the way §2.3 did for R17.
 AI-driven project governance as a typed compiler/graph system, rather than a platform-vision
 candidate like the four above:
 
-- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slice 1 landed 2026-07-18):
+- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slices 1-2 landed 2026-07-18):
   scoped to Axon's *own* governance — hardens the existing `BUILD_PROTOCOL.md`/`EXECUTION_MODEL.md`
   task-DAG/evidence-graph/knowledge-graph conventions (currently markdown + `scripts/verify_all_specs.sh`
   regex) into typed schemas + a real parser/validator. Slice 1 (schema + parser) shipped as a
   `--export-jsonl` mode on the existing bash validator itself (one JSON record per spec, reusing —
-  not duplicating — its extraction logic); Slices 2-5 (ported validator, live re-verify, rendered
-  status, DAG cycle detection) not started. Directly motivated by this session's own failure record
-  (a dozen stale headers, dangling cross-references, an unexercised gate-script bug) — cheap,
-  additive, genuinely optional tooling, not a requirement gate.
+  not duplicating — its extraction logic). Slice 2 ported the validator's checks to read that typed
+  store instead of markdown (`scripts/r39_slice2_validate.sh`), gated by a synthetic-fixture
+  regression test proving it catches the same bugs, not just that both agree an already-clean tree
+  is clean (`scripts/r39_slice2_gate.sh`); sizing it also found and fixed a real flake in the bash
+  validator itself (a fork-per-reference dangling-edge check that could transiently misfire under
+  heavy host load). Slices 3-5 (live re-verify, rendered status, DAG cycle detection) not started.
+  Directly motivated by this session's own failure record (a dozen stale headers, dangling
+  cross-references, an unexercised gate-script bug) — cheap, additive, genuinely optional tooling,
+  not a requirement gate.
 - **`governance/specs/R40-ai-native-research-compiler.md`** (Draft): the general-purpose superset —
   a natural-language-to-typed-IR compiler with decision/experiment/evidence/knowledge/provenance
   graphs, a mutation-validation engine, and a harness runtime, usable for *any* AI-driven project.

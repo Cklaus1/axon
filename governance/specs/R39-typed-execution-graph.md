@@ -3,16 +3,24 @@
 **Spec ID:** `R39-typed-execution-graph` (hardens `governance/BUILD_PROTOCOL.md`'s inner/outer loop
 and `governance/EXECUTION_MODEL.md`'s task-DAG/evidence-graph/knowledge-graph sections — currently
 markdown + grep + `scripts/verify_all_specs.sh` — into typed schemas + a real, queryable state store)
-**Status:** Implementing (Slice 1 landed 2026-07-18) — §12 Q1 (build now vs. wait) resolved
+**Status:** Implementing (Slices 1-2 landed 2026-07-18) — §12 Q1 (build now vs. wait) resolved
 speculatively in favor of "build the cheap spike": Slice 1 (schema + parser) took the form of a
 `--export-jsonl` mode added to the *existing* `scripts/verify_all_specs.sh` (not a new, separately-
 drifting parser — it reuses the exact same per-spec extraction pass that already computes the
 validation findings), writing one JSON record per spec (schema `axon-gov-spec/1`) to
 `governance/state/specs.jsonl` (gitignored — a regeneratable index, not a second source of truth,
-per §12 Q2). Slices 2-5 (ported validator, live `axon-gov verify`, rendered `axon-gov status`, DAG
-cycle detection) remain not started. Scoped to Axon's *own* governance (this repo's
-specs/requirements/build state), not a general-purpose product for other projects — see §5
-non-goals and R40 for that larger, explicitly-deferred question.
+per §12 Q2). Slice 2 (`scripts/r39_slice2_validate.sh`) ports the bash validator's checks to read
+that typed store instead of re-parsing markdown; a synthetic-fixture regression gate
+(`scripts/r39_slice2_gate.sh`) proves it finds the same bugs the bash version finds, on both the
+real (clean) tree and a fixture with 4 deliberately injected findings. Sizing Slice 2 surfaced and
+fixed a real, unrelated bug in `verify_all_specs.sh` itself: under this host's heavy load (~50
+load-average on 32 cores) the dangling-edge check's per-reference forked `grep -qx` calls could
+transiently fail, producing a false "unknown spec" finding on a spec id that in fact existed —
+fixed by replacing the forked lookup with a pure-bash associative-array membership check (0
+findings across 8 consecutive reruns post-fix, vs. flaky pre-fix). Slices 3-5 (live `axon-gov
+verify`, rendered `axon-gov status`, DAG cycle detection) remain not started. Scoped to Axon's
+*own* governance (this repo's specs/requirements/build state), not a general-purpose product for
+other projects — see §5 non-goals and R40 for that larger, explicitly-deferred question.
 **Risk class:** Additive (governance tooling; changes how status gets recorded and checked, not
 what gets built; zero runtime/compiler/TCB surface)
 **Author / date:** cklaus (research agent draft, prompted by a user design proposal), 2026-07-18
@@ -27,7 +35,7 @@ supersedes: none
 related: R40-ai-native-research-compiler
 conflicts-with: none
 reserves: none
-evidence: scripts/r39_slice1_gate.sh
+evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh
 ```
 
 > **One-line scope:** replace "a human or AI reads REQUIREMENTS.md, ROADMAP.md, and 56 spec files
@@ -138,12 +146,27 @@ research platform) actually requires — sections in brackets are explicitly **n
    KNOWN LIMITATION (inherited from the shared extraction, not introduced by the export): a
    multi-line spec-meta field value (e.g. a wrapped `reserves:`/`blocked-by:` line) is captured
    from its first line only — documented in the script's own header, not silently hidden.
-2. **Validator, ported from `verify_all_specs.sh`.** Reimplement the existing bash/awk checks
-   (duplicate numbers, dangling `depends-on`/`related`/`blocks` references, status-claim vs. prose
-   mismatch, dangling evidence-script paths) against the typed store instead of regex. **Gate:**
-   byte-identical findings to the current `verify_all_specs.sh` on today's tree (a regression test:
-   the new validator must not find *fewer* real bugs than the bash version, and any *new* finding
-   must be manually confirmed real before the port is trusted).
+2. **Validator, ported from `verify_all_specs.sh` — LANDED 2026-07-18.** `scripts/r39_slice2_validate.sh
+   [STORE_JSONL]` reimplements the existing checks (duplicate numbers with the same `KNOWN_DUAL`
+   allowlist, spec-meta id vs. filename, status-claim vs. prose mismatch, non-Draft-requires-evidence,
+   dangling evidence-script paths, dangling `depends-on`/`blocks`/`supersedes`/`conflicts-with`/`related`
+   references — `blocked-by` intentionally excluded from the dangling-edge check, matching the bash
+   version, since it may legitimately name an open question rather than a spec id) against the typed
+   store's already-extracted fields, reading no markdown directly. **Gate
+   (`scripts/r39_slice2_gate.sh`, 10 checks):** (A) on the real tree, the bash validator and the ported
+   validator produce the exact same set of `FINDING:` lines (0 vs. 0, since the tree is clean) and
+   agree on the pre-convention count (38 vs. 38); (B) on a synthetic scratch fixture with 4
+   deliberately injected real bugs (a dangling `depends-on`, a status-claim/prose mismatch, a missing
+   evidence script, and a NEW duplicate spec number not on `KNOWN_DUAL`), both validators catch all 4
+   and produce byte-identical finding sets (module one cosmetic normalization: the bash version's
+   duplicate-number message lists filenames with `.md`, the typed store's `file` field is deliberately
+   bare — same finding, stripped before comparison); a real `KNOWN_DUAL` prefix (R21) is confirmed to
+   still warn rather than finding in both, proving the allowlist ported correctly rather than being
+   silently dropped. Sizing this slice found and fixed an unrelated, real bug in
+   `verify_all_specs.sh` itself: under heavy host load the dangling-edge check's per-reference forked
+   `grep -qx` could transiently fail and read as a false "unknown spec" finding — fixed with a
+   pure-bash associative-array lookup (0 forks instead of hundreds), 8/8 clean reruns post-fix at the
+   same load level that produced 3 different phantom findings across 3 pre-fix runs.
 3. **`axon-gov verify <spec>`: live re-run.** For a spec with a well-formed `evidence:` command,
    actually execute it, capture exit code + a result summary, and update the store's `last-verified`
    timestamp + commit hash automatically (replacing "re-verified 2026-07-18" prose with a real,
@@ -188,10 +211,11 @@ or runtime), with its own exit-code space independent of Axon's E1xxx/E2xxx/E3xx
 ### 9. Acceptance (definition of done for the R39 row)
 
 - **Slice 1 landed 2026-07-18**: every spec with `spec-meta` parses into `governance/state/specs.jsonl`
-  (`scripts/r39_slice1_gate.sh` ALL CHECKS PASSED). Slice 2 (the ported validator) not yet built.
-- Slice 2 landed: every spec with `spec-meta` parses into the typed store; the ported validator
-  finds every real bug the current `verify_all_specs.sh` finds, confirmed by a side-by-side run
-  reporting identical findings on the current tree.
+  (`scripts/r39_slice1_gate.sh` ALL CHECKS PASSED).
+- **Slice 2 landed 2026-07-18**: the ported validator (`scripts/r39_slice2_validate.sh`) finds every
+  real bug the current `verify_all_specs.sh` finds, confirmed by a side-by-side run reporting
+  identical findings on the current (clean) tree AND on a synthetic fixture with 4 injected real
+  bugs (`scripts/r39_slice2_gate.sh` ALL CHECKS PASSED, 10/10).
 - Slice 3 landed: `axon-gov verify` against at least R32, R33, R34 reproduces this session's
   hand-verified results exactly.
 - Documented, honestly, in `governance/EXECUTION_MODEL.md` as the "typed" successor to its own §1-3
