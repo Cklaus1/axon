@@ -497,19 +497,57 @@ behavior (JSON, exit code) verified unchanged — visibility only. `crates/axon-
 sections). Saved as memory: `r33-coalition-decision-audit-followup` — treat this audit format as a
 real VERIFY-FIRST signal when the user runs it, not a formality.
 
+## Fixed a real verify_all_specs.sh flake while sizing R39 Slice 2 (commit `eb6fbb2`)
+
+Before starting Slice 2, re-ran `verify_all_specs.sh` for a clean baseline and found it wasn't
+clean: 3 consecutive runs of an unchanged tree reported 3, then 1, then 0 "unknown spec"
+dangling-edge findings, each citing a DIFFERENT spec id. Manually confirmed every cited id
+actually exists (`R7-targets`, `R29-continuous-compliance-monitor`, `R25-zephyr-target`,
+`R16-axon-ui`, `R21-axon-os-supervisor`, `R26-confidential-microvm-substrate` — all real files).
+Root cause: this host was at load-average ~50 on 32 cores, and the dangling-edge check forked
+`grep -qx` once per referenced id (hundreds of forks across ~90 specs x 5 edge keys); a transient
+fork failure under `set -uo pipefail` (no `-e`) reads as "not found," not a script abort. Fixed by
+replacing the forked per-ref lookup with a pure-bash associative-array membership check — 8/8
+clean reruns post-fix at the same load level (was flaky 3/3 pre-fix). This is the same
+gate-flakes-under-contention class as prior wasm_browser/persistent_learner flakes, but hitting a
+governance validator is worse: a phantom FINDING invites a bogus "truth:" correction commit chasing
+a bug that doesn't exist. Also added `--specs-dir` to `verify_all_specs.sh` so a synthetic fixture
+dir could be used for testing (needed for Slice 2's own gate below). Memory `gate-flakes-under-
+contention` updated with this new instance/root-cause.
+
+## R39 Slice 2 landed: ported validator against the typed store (commit `03d2097`)
+
+`scripts/r39_slice2_validate.sh [STORE_JSONL]` reimplements every check `verify_all_specs.sh`
+performs (duplicate numbers incl. `KNOWN_DUAL` allowlist, id/filename match, status-claim vs prose
+mismatch, non-Draft-requires-evidence, dangling evidence scripts, dangling depends-on/blocks/
+supersedes/conflicts-with/related edges) reading ONLY the typed store's already-extracted fields —
+no markdown re-parsing. Gated by `scripts/r39_slice2_gate.sh` (10 checks, ALL PASSED): (A) on the
+real tree both validators agree exactly (0 findings, 38 pre-convention specs); (B) on a synthetic
+scratch fixture with 4 deliberately injected real bugs (dangling depends-on, status-claim/prose
+mismatch, missing evidence script, a NEW duplicate spec number not on `KNOWN_DUAL`), both catch all
+4 and produce byte-identical finding sets (one cosmetic `.md`-suffix formatting difference
+normalized away, documented as such — not a real divergence); a real `KNOWN_DUAL` prefix (R21) is
+confirmed to still warn rather than finding in both, proving the allowlist ported correctly. This
+is the actual regression test the spec's own Slice 2 gate calls for — proves the port finds bugs,
+not just that both agree an already-clean tree is clean. R39 spec (header, §6 slice 2, §9
+acceptance), `ROADMAP.md`, `REQUIREMENTS.md` updated.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2 (vsock transport — now confirmed to need a from-scratch `Substrate` trait, a real design
-task, not sized for a quick slice). Options for the next iteration:
+R33.S2 (vsock transport — confirmed to need a from-scratch `Substrate` trait, a real design task,
+not sized for a quick slice). R39 has Slices 1-2 landed; Slice 3 (`axon-gov verify`: live re-run of
+a spec's evidence command) is the natural next bounded step now that the typed store + ported
+validator both exist and are gate-verified. Options for the next iteration:
+- **R39 Slice 3** (`axon-gov verify <spec>`: execute a spec's `evidence:` command for real, capture
+  exit code + result, update the store's `last-verified` field) — bounded, the store + validator
+  scaffolding it needs already exist.
 - **R33.S2, properly scoped as a design task**: first write/extend the spec with a concrete
   `Substrate` trait design (real vsock impl + CI-mock path, matching the R26 attestation
   software-TPM-stand-in precedent) BEFORE writing code — this is Structural work per
   BUILD_PROTOCOL Gate 1, not a quick CLI-wiring slice like S3/S4 were.
-- **R39 Slice 2** (port `verify_all_specs.sh`'s checks onto the typed JSONL store) — now that
-  Slice 1's export exists and is gate-verified, this is the natural, bounded next step.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
   bodies (would unlock the str-returning family for the registry) — real design work, size it
   before committing to it in one iteration.
