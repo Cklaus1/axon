@@ -14,16 +14,24 @@
 //! and hardcoded to the guest-connects-to-host direction) — this module replicates the wire
 //! FORMAT, not the function, which is the only thing S2's design (§5.2.2) actually needs shared.
 //!
-//! NOT built yet (later S2 sub-slices, per the spec's own sizing note): opening a real socket
-//! (`AF_VSOCK` or the TCP-loopback CI swap), the broadcast/collect fan-out loop with a deadline,
-//! the listen/accept/respond loop, and the `axon-vm quorum vote --listen` / `propose --broadcast`
-//! CLI flags. This module only has to be correct for whatever stream those slices eventually hand
-//! it — proven here against an in-memory buffer, which exercises the identical code path a real
-//! `TcpStream` would.
+//! S2b (landed) adds [`connect_and_round_trip`]: the proposer side, over a real TCP-loopback
+//! socket (the §5.2.2 CI stand-in — real `AF_VSOCK` is a later, explicitly-gated swap of just the
+//! `connect` call, same wire format). One connection, one request, one response, deadline-bounded
+//! (fail-closed: timeout or connection failure ⇒ `Err`, treated by callers exactly like a missing
+//! `.vote` file — no vote from that peer, not a hard failure of the whole quorum).
+//!
+//! NOT built yet (later S2 sub-slices, per the spec's own sizing note): the N-peer broadcast/
+//! collect fan-out (calling `connect_and_round_trip` once per peer and aggregating), the
+//! listen/accept/respond loop (the voter side — still test-local only, see
+//! `spawn_one_shot_voter` in this module's own tests, not a production primitive yet), real
+//! `AF_VSOCK` (vs. this slice's TCP-loopback stand-in), and the `axon-vm quorum vote --listen` /
+//! `propose --broadcast` CLI flags.
 
-// Deliberately unwired to any caller yet — S2a lands the wire protocol alone, proven by its own
-// unit tests below; S2b wires it into a real broadcast/listen loop (see the module doc comment
-// above and R33 spec §5.2.2). Remove this allow once that caller exists.
+// write_frame/read_frame remain unused outside tests (write_json_frame/read_json_frame/
+// connect_and_round_trip are the real, wired-in callers now) — kept `pub` because they're the
+// documented low-level primitive a future non-JSON use might want directly. connect_and_round_trip
+// itself has no CLI caller yet (no --broadcast flag exists), so it's still unreferenced in a
+// non-test build too. Remove this allow once the broadcast/collect loop (S2c) calls it for real.
 #![allow(dead_code)]
 
 use serde::de::DeserializeOwned;
@@ -74,6 +82,31 @@ pub fn read_json_frame<T: DeserializeOwned>(r: &mut impl Read) -> io::Result<Opt
             .map(Some)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
     }
+}
+
+/// S2b — proposer side: connect to `addr` over TCP, send `req` as one JSON frame, read back one
+/// JSON frame as the response. `deadline` bounds BOTH the connect and the read (fail-closed on
+/// spec §4.4's A4 intent: a peer that doesn't respond in time contributes no vote, the same
+/// semantics `quorum::io::collect_responses` already has for a missing `.vote` file). `Ok(None)`
+/// means the peer responded with the EOF sentinel (a real "no vote" answer, not a fault); a
+/// timeout or connection failure is `Err` — callers collecting from multiple peers treat both
+/// `Ok(None)` and `Err` as "this peer contributed no vote," matching the file-based path's
+/// already-established fail-closed-on-absence policy.
+///
+/// TCP today, not real `AF_VSOCK` — this is deliberately the §5.2.2 CI-loopback stand-in; a real
+/// vsock connect is a later, explicitly-gated sub-slice (swapping this function's `TcpStream::
+/// connect_timeout` for the raw `libc::socket(AF_VSOCK, ...)` call `interp.rs`'s `vsock_send_recv`
+/// already demonstrates, same wire format either way).
+pub fn connect_and_round_trip<Req: Serialize, Resp: DeserializeOwned>(
+    addr: std::net::SocketAddr,
+    req: &Req,
+    deadline: std::time::Duration,
+) -> io::Result<Option<Resp>> {
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, deadline)?;
+    stream.set_read_timeout(Some(deadline))?;
+    stream.set_write_timeout(Some(deadline))?;
+    write_json_frame(&mut stream, req)?;
+    read_json_frame(&mut stream)
 }
 
 #[cfg(test)]
@@ -182,5 +215,83 @@ mod tests {
         let mut cursor = Cursor::new(buf);
         assert_eq!(read_frame(&mut cursor).unwrap(), Some(b"first".to_vec()));
         assert_eq!(read_frame(&mut cursor).unwrap(), Some(b"second".to_vec()));
+    }
+
+    // ── S2b: real-socket round trip (TCP loopback) ──────────────────────────────────────
+    // These spin up an ad-hoc std::net::TcpListener on 127.0.0.1:0 (OS-assigned port) as a
+    // throwaway test-local "voter" — not a new production listen/accept/respond primitive
+    // (that's the separate, larger S2c work the module doc comment still lists as open). The
+    // point of these tests is proving connect_and_round_trip works over a REAL socket, not just
+    // an in-memory Cursor (which S2a's tests above already fully covered).
+
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    fn spawn_one_shot_voter(
+        respond: impl FnOnce(VoteRequest) -> Option<VoteResponse> + Send + 'static,
+    ) -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let req: VoteRequest = read_json_frame(&mut stream).unwrap().unwrap();
+            match respond(req) {
+                Some(resp) => write_json_frame(&mut stream, &resp).unwrap(),
+                None => write_frame(&mut stream, b"").unwrap(), // EOF sentinel
+            }
+        });
+        addr
+    }
+
+    fn a_vote_request() -> VoteRequest {
+        VoteRequest {
+            run_id: "run-s2b".to_string(),
+            prog_hash: "abc123".to_string(),
+            voter_tcb: "axtcb1:deadbeef".to_string(),
+            proposed_action: "deploy".to_string(),
+            timestamp_ms: 1_234_567_890,
+        }
+    }
+
+    #[test]
+    fn connect_and_round_trip_over_real_tcp_socket_returns_the_voters_response() {
+        let expected = VoteResponse {
+            voter_tcb: "axtcb1:deadbeef".to_string(),
+            run_id: "run-s2b".to_string(),
+            approved: true,
+            reason: "policy: risk within bounds".to_string(),
+            lineage_root: "principal-a".to_string(),
+        };
+        let resp_clone = expected.clone();
+        let addr = spawn_one_shot_voter(move |req| {
+            assert_eq!(req, a_vote_request());
+            Some(resp_clone)
+        });
+
+        let got: Option<VoteResponse> =
+            connect_and_round_trip(addr, &a_vote_request(), Duration::from_secs(5)).unwrap();
+        assert_eq!(got, Some(expected));
+    }
+
+    #[test]
+    fn connect_and_round_trip_eof_sentinel_from_a_real_voter_is_none_not_an_error() {
+        let addr = spawn_one_shot_voter(|_req| None); // voter sends the EOF sentinel
+        let got: io::Result<Option<VoteResponse>> =
+            connect_and_round_trip(addr, &a_vote_request(), Duration::from_secs(5));
+        assert_eq!(got.unwrap(), None);
+    }
+
+    #[test]
+    fn connect_and_round_trip_to_a_dead_port_is_an_io_error_not_a_panic() {
+        // Bind and immediately drop, so the OS-assigned port is (almost certainly) refusing
+        // connections when we try it — a peer that's simply not there, matching the "channel
+        // error ⇒ vote absent" fail-closed policy this function's own doc comment describes.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let got: io::Result<Option<VoteResponse>> =
+            connect_and_round_trip(addr, &a_vote_request(), Duration::from_millis(500));
+        assert!(got.is_err());
     }
 }

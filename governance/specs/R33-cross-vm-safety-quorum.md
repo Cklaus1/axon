@@ -18,11 +18,15 @@ struck out and corrected; a concrete, right-sized design (new `quorum/vsock.rs` 
 trait; reuses `interp.rs`'s existing raw-`AF_VSOCK` wire framing; TCP-loopback CI-testable via an
 env-var swap, matching R26's own `AXON_CI_NO_KVM` precedent) now sizes it into buildable sub-slices.
 **S2a (wire protocol) landed 2026-07-19**: `quorum/vsock.rs`'s length-prefixed JSON framing, 9 unit
-tests, deliberately unwired to any caller yet (S2b+ is the broadcast/listen loop + CLI flags,
-still open). Also closed an incidental gate-coverage gap found while landing S2a: `axon-vm`/
+tests. Also closed an incidental gate-coverage gap found while landing S2a: `axon-vm`/
 `axon-attest` were never clippy-gated by `scripts/gate.sh` (same blind spot BUG_HUNT #35 found in
 the runtime crates) — 3 small pre-existing findings fixed, no behavior change, both crates now
-enforced. See §14 Evidence ledger.
+enforced. **S2b (real-socket round trip) landed same day**: `connect_and_round_trip` — one
+TCP-loopback connection (the §5.2.2 CI stand-in for real `AF_VSOCK`), deadline-bounded, fail-closed
+on timeout/refused connection, proven against a real socket (not just an in-memory buffer), 3 new
+tests (12 total), 5 consecutive reruns checked for flakiness. S2c+ (N-peer broadcast/collect
+fan-out, a real listen/accept/respond primitive, real `AF_VSOCK`, and the CLI flags) still open.
+See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
 mode — the VM itself could be compromised *after* its attestation report was produced. R33 distributes
@@ -674,8 +678,9 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 |---|---|---|---|
 | R33.S0 | R26-confidential-microvm-substrate, R31-extended-tcb-attestation (both landed) | `scripts/r33_acceptance_gate.sh` §§1-7 (CLI journey + exit-code distinctness) | landed |
 | R33.S1 | R33.S0 | R26/R31 regression check (`axon-attest` test suite unchanged) | landed |
-| R33.S2a (wire protocol) | R33.S0 | `crates/axon-vm/src/quorum/vsock.rs` unit tests (9); `cargo clippy -p axon-vm --all-targets -D warnings` clean | **landed 2026-07-19** — length-prefixed JSON framing (`write_frame`/`read_frame`/`write_json_frame`/`read_json_frame`), transport-agnostic (generic `Read`/`Write`), matching `interp.rs`'s existing `vsock_send_recv` wire convention exactly. Deliberately unwired to any caller yet (`#![allow(dead_code)]`, documented) — S2b wires it into a real broadcast/listen loop |
-| R33.S2b+ (transport + broadcast/listen loop) | R33.S2a | not yet named | todo — open a real socket (`AF_VSOCK` or the TCP-loopback CI swap per §5.2.2), the broadcast/collect fan-out with a deadline, the listen/accept/respond loop, and the `axon-vm quorum vote --listen` / `propose --broadcast` CLI flags |
+| R33.S2a (wire protocol) | R33.S0 | `crates/axon-vm/src/quorum/vsock.rs` unit tests (9); `cargo clippy -p axon-vm --all-targets -D warnings` clean | **landed 2026-07-19** — length-prefixed JSON framing (`write_frame`/`read_frame`/`write_json_frame`/`read_json_frame`), transport-agnostic (generic `Read`/`Write`), matching `interp.rs`'s existing `vsock_send_recv` wire convention exactly |
+| R33.S2b (real-socket round trip) | R33.S2a | `crates/axon-vm/src/quorum/vsock.rs` unit tests (3 new, 12 total) | **landed 2026-07-19** — `connect_and_round_trip`: proposer side, one real TCP-loopback connection (the §5.2.2 CI stand-in for `AF_VSOCK`), deadline-bounded (`connect_timeout` + read/write timeouts), fail-closed on timeout/refused-connection (`Err`, treated like a missing `.vote` file by future collect logic). Voter side still test-local only (`spawn_one_shot_voter`, not a production primitive) |
+| R33.S2c+ (broadcast/collect fan-out + listen loop + CLI flags) | R33.S2b | not yet named | todo — N-peer broadcast/collect aggregation calling `connect_and_round_trip` per peer, a REAL listen/accept/respond primitive (voter side), real `AF_VSOCK` (swapping S2b's TCP stand-in), and the `axon-vm quorum vote --listen` / `propose --broadcast` CLI flags |
 | R33.S3 (coalition ceiling) | R33.S0 | `coalition_bound_limits_same_lineage`, `coalition_cap_does_not_block_distinct_lineage_roots` (`crates/axon-vm/src/quorum/mod.rs`); `scripts/r33_acceptance_gate.sh` §8 (real CLI sock-puppet + distinct-roots journey) | landed (hardcoded `ceil(N/2)-1` fallback per the spec's own §6 slice-risk note — no dependency on R27's real `Coalition`/`max_quorum_power` type) |
 | R33.S4 (`axon deploy` integration) | R33.S0 | `scripts/r33_acceptance_gate.sh` §10 (backward-compat + sock-puppet-blocked + legit-quorum-met + missing-binary-hard-error, real `axon`↔`axon-vm` cross-binary journey) | landed (scoped per §5.2.1: reads pre-collected votes via subprocess shell-out to `axon-vm quorum check`, no live broadcast — no new `axon-core` Cargo dependency) |
 
@@ -695,6 +700,8 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R33.S2a: vsock wire protocol (`quorum/vsock.rs`) round-trips arbitrary bytes and real `VoteRequest`/`VoteResponse` JSON; truncated/empty/malformed-JSON streams are `io::Error`s, never panics; the EOF sentinel (length=0) is distinguishable from a real empty payload | `cargo test -p axon-vm quorum::vsock::` | 9 passed, 0 failed | this commit @ 2026-07-19 | PASS |
 | `axon-vm`/`axon-attest` clippy-clean under `--all-targets -D warnings` (previously ungated by `gate.sh`, same class of blind spot BUG_HUNT #35 found in the runtime crates) — 3 pre-existing findings fixed (a 9-arg fn, a manual-range-contains, a dead-code manifest struct), no behavior change | `cargo clippy -p axon-vm -p axon-attest --all-targets -- -D warnings` | clean | this commit @ 2026-07-19 | PASS |
 | R33.S2a did not regress any existing R33 CLI journey | `bash scripts/r33_acceptance_gate.sh` | ALL CHECKS PASSED (unchanged from before S2a) | this commit @ 2026-07-19 | PASS |
+| R33.S2b: `connect_and_round_trip` completes a real round trip over TCP loopback (voter's actual response returned); a voter's EOF sentinel is `Ok(None)`, not an error; connecting to a dead/refused port is `Err`, not a panic or a hang past the deadline | `cargo test -p axon-vm quorum::vsock::` (5 consecutive reruns, checking for socket/timing flakiness) | 12 passed, 0 failed, all 5 reruns identical | this commit @ 2026-07-19 | PASS |
+| R33.S2b did not regress axon-vm as a whole or any existing R33 CLI journey | `cargo test -p axon-vm`; `bash scripts/r33_acceptance_gate.sh` | 58/58 unit tests; ALL CHECKS PASSED (unchanged) | this commit @ 2026-07-19 | PASS |
 
 Honest scope, per this spec's own header: the above is a **file-based, single-host** slice, now
 WITH the R27 coalition ceiling (§4.5) AND the `axon deploy` integration (§5.2.1) closed. The R26
