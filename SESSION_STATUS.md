@@ -1024,18 +1024,49 @@ changed this iteration (only `.asm`, a new `.ax` example, and governance docs) �
 clean; the one existing consumer of the changed `.asm` file (the Slice 1 QEMU boot test) re-verified
 passing.
 
+## R17 §12 Q9 landed — `axon_kernel_handles_timer_interrupt` PASSES for real (this iteration)
+
+Picked up "size and build R17 §12 Q9's fix" — candidate (a) from the spec (codegen synthesizes an
+internal, freestanding-safe trap instead of declaring an external `__axon_arith_panic`) turned out
+to be exactly right and buildable in one iteration. Added a `Codegen.freestanding` flag
+(`set_freestanding`, mirrors the existing `set_target_is_wasm`, threaded from `main.rs`'s
+`build_ir_and_link`) and `synthesize_freestanding_trap`: defines a real in-module function (not an
+external declaration) that writes a distinguishing marker byte to the QEMU debugcon port then halts
+forever, ignoring its arguments (no formatting possible without a host runtime). Wired into the three
+IMPLICIT safety checks a substrate author can't opt out of — arith ('A'), bounds ('B'), refine
+('R') — leaving the explicit-API ones (`@[verify]`, `assert_eq`, `assert`, `random_*`) unchanged,
+since a kernel author can simply avoid calling those.
+
+**Verified thoroughly, both directions:** `hello_kernel_timer_irq.ax` (written last iteration, blocked
+on exactly this) now links AND boots — a real QEMU run shows the timer interrupt firing **194 times
+in 2 seconds** (~97 Hz, matching the programmed PIT divisor) with **zero** spurious trap markers (the
+kernel's real arithmetic never actually overflows, as expected). Separately confirmed the trap itself
+actually fires correctly, not just staying inert: a deliberate `i64::MAX + 1` overflow probe produces
+exactly one 'A' byte then halts cleanly (no crash, no corruption, no further output). **This is the
+full `axon_kernel_handles_timer_interrupt` acceptance criterion, genuinely passing end to end** — IDT
+construction (§12 Q8's corrected fixed-address idiom) → `lidt` → PIC remap → PIT programming → `sti`
+→ real hardware interrupt → `@[interrupt]` handler → EOI → repeated firing, all real, not IR-inspected.
+Landed as `scripts/timer_irq_qemu_test.sh` (mirrors the Slice 1 harness) + cargo test
+`r17_timer_interrupt_fires_and_is_handled` in `integration_fixtures.rs`.
+
+Caught and fixed a real process mistake along the way: the trap-synthesis method initially landed in
+`codegen/mod.rs`, which the existing `r1e_direct_ir_emission_stays_confined` convergence test
+correctly flagged as a new raw-IR-emission file outside its allowlist. Moved to `expr.rs` (where the
+identical-style `port_out_u8`/`lidt` hand-rolled asm already lives) and the test passed clean — a
+good confirmation this session's architectural-convergence tests catch real drift, not just
+contrived cases.
+
+`cargo build`/clippy clean both feature sets. Full `cargo test -p axon-core` suite green (the one
+`wasm_browser_target_is_wasi_free_and_matches_interp` failure seen mid-iteration re-confirmed as the
+same known contention flake — passed clean on the next run). R17 spec §12 Q9 marked resolved;
+`REQUIREMENTS.md`'s R17 row bumped 70→90 (only the separately-deferred 2-core SMP harness remains).
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d is fully done. R33's easy sub-slices are exhausted (S2f blocked on a founder decision, §12 Q1).
-R39 is fully landed. R17's timer-interrupt path now has every primitive it needs EXCEPT a working
-link — blocked on §12 Q9 (checked-arithmetic panics have no freestanding-compatible implementation).
-Options for the next iteration:
-- **Size and build R17 §12 Q9's fix**: most likely "codegen synthesizes an internal, `no_std`-safe
-  trap for `--freestanding` builds instead of declaring an external `__axon_arith_panic`" (candidate
-  (a) in the spec) — check whether `codegen/builtins.rs`'s extern declaration can be made conditional
-  on the freestanding flag, and what a minimal in-module trap (debugcon marker + `hlt` loop) looks
-  like in LLVM IR terms. This is the direct unlock for `hello_kernel_timer_irq.ax` actually booting
-  and for `axon_kernel_handles_timer_interrupt` closing out.
+R39 is fully landed. R17's acceptance surface is now essentially complete (only the deliberately-
+deferred 2-core QEMU SMP harness remains, and the golden-IR proxy already stands in for it per spec
+§9). Options for the next iteration:
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
