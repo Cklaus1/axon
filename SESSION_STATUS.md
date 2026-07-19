@@ -986,17 +986,56 @@ directly gave a clean 4/4 PASS, and the specific test re-run in isolation (`carg
 passed cleanly too. `verify_all_specs.sh` clean. R17 spec (§12 Q8 + header) and `REQUIREMENTS.md`
 updated.
 
+## §12 Q8 corrected — no new primitive needed; found a real, different blocker instead (this iteration)
+
+Picked up "design R17 §12 Q8 properly" — but before starting the design work Q8's own conclusion
+called for (address-of-local or a `static` storage class), tried the cheaper existing-tooling path
+first: the fixed-physical-address idiom already proven for the SMP counter
+(`hello_kernel_slice2.ax`'s `COUNTER_ADDR` + `ptr_from_addr` + atomics). A freestanding kernel's
+"globals" don't need Axon-level storage at all — they're just known physical-address constants a
+linker script reserves, exactly like MMIO. Wrote a real test
+(`examples/kernel/hello_kernel_timer_irq.ax`): IDT/IDTR at fixed addresses (`0x300000`/`0x301000`),
+filled via a `for i in 0..256` loop of direct `volatile_store_*` calls (no `@[repr(C)]` struct value
+ever constructed, sidestepping that whole path), then `lidt`-loaded. **It type-checks and compiles
+to a valid object file** — confirmed via `axon check` + `axon build --freestanding --emit-obj` +
+disassembly, not assumed. My own previous iteration's Q8 conclusion was wrong — corrected the spec
+in place rather than silently moving past it, same discipline as
+[[r26-substrate-trait-aspirational]]'s prior instances, now extended to catch my OWN write-up, not
+just an old spec or a stale plan.
+
+Also extended `examples/kernel/boot_stub.asm`'s identity-mapped region from a single 2 MiB page to
+eight (16 MiB) — `0x300000` falls outside the original 1-page mapping. Re-verified
+`scripts/qemu_boot_test.sh` (Slice 1's real QEMU boot test, the only existing consumer of
+`boot_stub.asm`) still PASSES after the change.
+
+**Found a genuinely different, deeper blocker while trying to actually LINK the new example.**
+Checked-arithmetic overflow panics (I-9) call an external `__axon_arith_panic` symbol that only
+`axon-rt` (a full host runtime — `std::string`/`format!`/`std::process`) implements, and freestanding
+builds never link `axon-rt` at all (by design — no host OS underneath). Linking failed with
+`undefined reference to __axon_arith_panic` at every non-trivial arithmetic site. Confirmed via
+`grep` that this was never exercised before: Slice 1 (the only R17 example EVER actually linked +
+booted) does no runtime arithmetic at all, only literal constants; Slice 2/3 DO have arithmetic
+(`i = i + 1`) but are only ever exercised via `--emit-llvm` golden-IR checks, which never link. This
+blocks essentially any non-trivial freestanding kernel logic, not just the timer-interrupt path.
+Written up as a new R17 spec §12 Q9 with candidate fixes sketched (codegen synthesizes an internal,
+`no_std`-safe trap for `--freestanding` builds instead of an external symbol; or a tiny separate
+freestanding-safe runtime stub) — not decided or built, this needs its own sizing pass. No Rust code
+changed this iteration (only `.asm`, a new `.ax` example, and governance docs) — `verify_all_specs.sh`
+clean; the one existing consumer of the changed `.asm` file (the Slice 1 QEMU boot test) re-verified
+passing.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d is fully done. R33's easy sub-slices are exhausted (S2f blocked on a founder decision, §12 Q1).
-R39 is fully landed. R17's timer-interrupt path now has 3 of its primitives (`fn_addr`, the `as`
-casts, `lidt`) but is freshly blocked on a 4th, more structural one (§12 Q8: address-of-a-local, or
-a `static` storage class). Options for the next iteration:
-- **Design R17 §12 Q8** (address-of-local vs. a `static` storage class) properly before building
-  either — this is real language-design surface (lifetime/aliasing for the former; mutability/
-  zero-init/linker-section semantics for the latter), not a quick primitive like `fn_addr`/`lidt`
-  turned out to be. Worth a dedicated sizing pass, possibly ending in a spec write-up rather than
-  code, per Gate 1 (spec-first for Structural changes).
+R39 is fully landed. R17's timer-interrupt path now has every primitive it needs EXCEPT a working
+link — blocked on §12 Q9 (checked-arithmetic panics have no freestanding-compatible implementation).
+Options for the next iteration:
+- **Size and build R17 §12 Q9's fix**: most likely "codegen synthesizes an internal, `no_std`-safe
+  trap for `--freestanding` builds instead of declaring an external `__axon_arith_panic`" (candidate
+  (a) in the spec) — check whether `codegen/builtins.rs`'s extern declaration can be made conditional
+  on the freestanding flag, and what a minimal in-module trap (debugcon marker + `hlt` loop) looks
+  like in LLVM IR terms. This is the direct unlock for `hello_kernel_timer_irq.ax` actually booting
+  and for `axon_kernel_handles_timer_interrupt` closing out.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
