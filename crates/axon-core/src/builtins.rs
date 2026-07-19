@@ -1851,6 +1851,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
               Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
     },
+    BuiltinFn {
+        name: "lidt",
+        params: &[("idtr_addr", "i64")],
+        ret: "()",
+        doc: "R17 HAL: execute the x86_64 `lidt` instruction — loads the Interrupt Descriptor \
+              Table register from a 10-byte IDTR structure (2-byte limit, 8-byte base) at \
+              `idtr_addr`. The caller is responsible for constructing that structure (e.g. a \
+              `@[repr(C)] @[packed] { limit: u16, base: u64 }`) and obtaining its address — \
+              `lidt` itself only consumes the address, like `ptr_from_addr`/`volatile_load_*` do \
+              (see R17 spec §12 Q8 for the still-open \"address of an Axon-owned value\" gap this \
+              runs into in practice). Substrate-only.",
+    },
     // ── R25: Zephyr RTOS console hook (HAL; Hal effect; E0910 in interp) ──────
     // Architecture-neutral console output for an Axon program running AS a Zephyr
     // application on an ARM Cortex-M (or any Zephyr) target. Lowers in codegen to
@@ -2103,7 +2115,7 @@ pub fn is_browser_incompatible_builtin(name: &str) -> bool {
             | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32" | "volatile_load_u64"
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32"
             | "volatile_store_u64"
-            | "hlt" | "cli" | "sti"
+            | "hlt" | "cli" | "sti" | "lidt"
             | "port_out_u8" | "port_in_u8"
     )
 }
@@ -2153,7 +2165,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "ptr_from_addr"
             | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32" | "volatile_load_u64"
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
-            | "hlt" | "cli" | "sti"
+            | "hlt" | "cli" | "sti" | "lidt"
             | "port_out_u8" | "port_in_u8"
             // R25: Zephyr console hook (host-driven device I/O)
             | "zephyr_console_putc"
@@ -2249,7 +2261,7 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // path automatically.
         "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
-        | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
+        | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti" | "lidt"
         | "port_out_u8" | "port_in_u8"
         // R25: Zephyr console hook — device I/O via the host RTOS, Hal-gated.
         | "zephyr_console_putc"
@@ -2549,6 +2561,7 @@ mod tests {
             "hlt",
             "cli",
             "sti",
+            "lidt",
         ] {
             assert!(
                 !is_heap_allocating_builtin(name),
@@ -2682,6 +2695,7 @@ mod tests {
             "hlt",
             "cli",
             "sti",
+            "lidt",
             "ptr_from_addr",
             "volatile_load_u8",
             "volatile_store_u64",

@@ -8985,6 +8985,35 @@ impl<'ctx> super::Codegen<'ctx> {
                         return Some(ext.into());
                     }
                 }
+                // `lidt (%0)` — load the IDT register from a 10-byte IDTR
+                // structure (2-byte limit, 8-byte base) at the given address.
+                // A general-purpose register constraint ("r"), not a fixed
+                // register like port I/O's {dx}/{al} — any GPR can hold a
+                // pointer for register-indirect addressing. `~{memory}` since
+                // it changes how subsequent memory accesses (interrupts) are
+                // dispatched, even though it doesn't itself touch memory
+                // through this operand.
+                "lidt" if args.len() == 1 => {
+                    if let Some(addr_v) = self.emit_expr(&args[0], fn_val) {
+                        let i64_ty = self.ir.context.i64_type();
+                        let void_ty = self.ir.context.void_type();
+                        let fn_ty = void_ty.fn_type(&[i64_ty.into()], false);
+                        let asm_ptr = self.ir.context.create_inline_asm(
+                            fn_ty,
+                            "lidt ($0)".to_string(),
+                            "r,~{memory}".to_string(),
+                            true,
+                            false,
+                            None,
+                            false,
+                        );
+                        self.ir
+                            .builder
+                            .build_indirect_call(fn_ty, asm_ptr, &[addr_v.into()], "lidt")
+                            .unwrap();
+                        return Some(self.ir.context.i64_type().const_zero().into());
+                    }
+                }
                 // ── R25: Zephyr console hook ──────────────────────────────────
                 // `zephyr_console_putc(b)` lowers to a call to the extern C symbol
                 // `void axon_console_putc(int)` which the Zephyr application
