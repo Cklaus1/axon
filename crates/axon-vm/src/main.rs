@@ -481,8 +481,12 @@ struct MmdsPayload {
     seccomp_bpf_b64: Option<String>,
 }
 
-/// Schema: axon-manifest/1 — sidecar emitted by `axon build --emit-manifest`.
+/// Schema: axon-manifest/1 — sidecar emitted by `axon build --emit-manifest`. `schema`/`source`/
+/// `binary`/`per_fn` mirror the full sidecar schema for documentation/forward-compat even though
+/// only `effect_union`/`syscall_hint`/`risk` are read today — pre-existing, found (not introduced)
+/// while adding axon-vm to gate.sh's clippy coverage 2026-07-19.
 #[derive(Deserialize, Debug, Default)]
+#[allow(dead_code)]
 struct AxonManifest {
     schema: Option<String>,
     source: Option<String>,
@@ -1503,6 +1507,10 @@ struct RunResult {
     exit_code: i32,
 }
 
+// Pre-existing 9-arg shape, found (not introduced) while adding axon-vm to gate.sh's clippy
+// coverage 2026-07-19 — a real grouping-into-a-config-struct refactor is a separate, larger
+// change than that gate-coverage fix; allowed here rather than bundled in.
+#[allow(clippy::too_many_arguments)]
 fn run_in_firecracker(
     program: &Path,
     kernel: &Path,
@@ -1802,7 +1810,7 @@ fn fc_put(
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
-    if status_code < 200 || status_code >= 300 {
+    if !(200..300).contains(&status_code) {
         return Err(format!(
             "Firecracker API PUT {path} returned {status_line}\n{resp_str}"
         )

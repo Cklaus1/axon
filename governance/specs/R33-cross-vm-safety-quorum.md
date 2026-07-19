@@ -12,12 +12,17 @@ fallback path (§6 slice-risk note, §-Gate anti-stub carve-out). **`axon deploy
 (the same cross-binary pattern `axon-web` already uses to wrap the `axon` CLI), inserting the
 quorum result as one more named pipeline gate; omitting the flag leaves the gate open, so every
 pre-existing `axon deploy` invocation is unaffected. **S2 (vsock broadcast transport) re-scoped
-2026-07-19** (§5.2.2, no code yet): scoping it for real found the "reuse R26's `Substrate` trait"
-premise was false (R26 never built that trait — see R26's own 2026-07-19 as-built note); §1.3's
-false claim struck out and corrected; a concrete, right-sized design (new `quorum/vsock.rs` module,
-not a trait; reuses `interp.rs`'s existing raw-`AF_VSOCK` wire framing; TCP-loopback CI-testable via
-an env-var swap, matching R26's own `AXON_CI_NO_KVM` precedent) now exists for a future iteration to
-size into buildable sub-slices. See §14 Evidence ledger.
+2026-07-19** (§5.2.2): scoping it for real found the "reuse R26's `Substrate` trait" premise was
+false (R26 never built that trait — see R26's own 2026-07-19 as-built note); §1.3's false claim
+struck out and corrected; a concrete, right-sized design (new `quorum/vsock.rs` module, not a
+trait; reuses `interp.rs`'s existing raw-`AF_VSOCK` wire framing; TCP-loopback CI-testable via an
+env-var swap, matching R26's own `AXON_CI_NO_KVM` precedent) now sizes it into buildable sub-slices.
+**S2a (wire protocol) landed 2026-07-19**: `quorum/vsock.rs`'s length-prefixed JSON framing, 9 unit
+tests, deliberately unwired to any caller yet (S2b+ is the broadcast/listen loop + CLI flags,
+still open). Also closed an incidental gate-coverage gap found while landing S2a: `axon-vm`/
+`axon-attest` were never clippy-gated by `scripts/gate.sh` (same blind spot BUG_HUNT #35 found in
+the runtime crates) — 3 small pre-existing findings fixed, no behavior change, both crates now
+enforced. See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
 mode — the VM itself could be compromised *after* its attestation report was produced. R33 distributes
@@ -669,7 +674,8 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 |---|---|---|---|
 | R33.S0 | R26-confidential-microvm-substrate, R31-extended-tcb-attestation (both landed) | `scripts/r33_acceptance_gate.sh` §§1-7 (CLI journey + exit-code distinctness) | landed |
 | R33.S1 | R33.S0 | R26/R31 regression check (`axon-attest` test suite unchanged) | landed |
-| R33.S2 | R33.S0; vsock transport (currently file-based propose/vote/check) | new transport-specific test, not yet named | **re-scoped 2026-07-19** (§5.2.2 design landed, no code) — was blocked on a nonexistent "R26 Substrate trait"; corrected design targets a dedicated `quorum/vsock.rs` module instead, sized into buildable sub-slices for a future iteration |
+| R33.S2a (wire protocol) | R33.S0 | `crates/axon-vm/src/quorum/vsock.rs` unit tests (9); `cargo clippy -p axon-vm --all-targets -D warnings` clean | **landed 2026-07-19** — length-prefixed JSON framing (`write_frame`/`read_frame`/`write_json_frame`/`read_json_frame`), transport-agnostic (generic `Read`/`Write`), matching `interp.rs`'s existing `vsock_send_recv` wire convention exactly. Deliberately unwired to any caller yet (`#![allow(dead_code)]`, documented) — S2b wires it into a real broadcast/listen loop |
+| R33.S2b+ (transport + broadcast/listen loop) | R33.S2a | not yet named | todo — open a real socket (`AF_VSOCK` or the TCP-loopback CI swap per §5.2.2), the broadcast/collect fan-out with a deadline, the listen/accept/respond loop, and the `axon-vm quorum vote --listen` / `propose --broadcast` CLI flags |
 | R33.S3 (coalition ceiling) | R33.S0 | `coalition_bound_limits_same_lineage`, `coalition_cap_does_not_block_distinct_lineage_roots` (`crates/axon-vm/src/quorum/mod.rs`); `scripts/r33_acceptance_gate.sh` §8 (real CLI sock-puppet + distinct-roots journey) | landed (hardcoded `ceil(N/2)-1` fallback per the spec's own §6 slice-risk note — no dependency on R27's real `Coalition`/`max_quorum_power` type) |
 | R33.S4 (`axon deploy` integration) | R33.S0 | `scripts/r33_acceptance_gate.sh` §10 (backward-compat + sock-puppet-blocked + legit-quorum-met + missing-binary-hard-error, real `axon`↔`axon-vm` cross-binary journey) | landed (scoped per §5.2.1: reads pre-collected votes via subprocess shell-out to `axon-vm quorum check`, no live broadcast — no new `axon-core` Cargo dependency) |
 
@@ -686,6 +692,9 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R33 did not regress R26/R31 | `bash scripts/r33_acceptance_gate.sh` (step 9) | `axon-attest` test suite: 22 passed, 0 failed | this commit @ 2026-07-18 | PASS |
 | R33.S4: `axon deploy --quorum-dir` real cross-binary journey — no-flag backward compat (no `quorum` field); sock-puppet coalition BLOCKED (exit 1, `gate:quorum`, JSON `exit_code:13`); 3-distinct-root quorum met (deploys, `quorum_met:true`); missing `--axon-vm-bin` is a hard error (exit 2), never a silent open gate | `bash scripts/r33_acceptance_gate.sh` (step 10) | all 4 sub-checks pass | this commit @ 2026-07-18 | PASS |
 | S2's "reuse R26's Substrate trait" premise is false — no such trait exists in any crate | `grep -rn "trait Substrate\|MockSubstrate\|QemuSwtpmSubstrate" crates/` | zero hits (confirmed independently: an Explore-agent research pass over R26/R33/quorum code, 2026-07-19) | this commit @ 2026-07-19 | CONFIRMED (spec text corrected in §1.3, §5.2.2 added; no code claim, this is a documentation-drift finding) |
+| R33.S2a: vsock wire protocol (`quorum/vsock.rs`) round-trips arbitrary bytes and real `VoteRequest`/`VoteResponse` JSON; truncated/empty/malformed-JSON streams are `io::Error`s, never panics; the EOF sentinel (length=0) is distinguishable from a real empty payload | `cargo test -p axon-vm quorum::vsock::` | 9 passed, 0 failed | this commit @ 2026-07-19 | PASS |
+| `axon-vm`/`axon-attest` clippy-clean under `--all-targets -D warnings` (previously ungated by `gate.sh`, same class of blind spot BUG_HUNT #35 found in the runtime crates) — 3 pre-existing findings fixed (a 9-arg fn, a manual-range-contains, a dead-code manifest struct), no behavior change | `cargo clippy -p axon-vm -p axon-attest --all-targets -- -D warnings` | clean | this commit @ 2026-07-19 | PASS |
+| R33.S2a did not regress any existing R33 CLI journey | `bash scripts/r33_acceptance_gate.sh` | ALL CHECKS PASSED (unchanged from before S2a) | this commit @ 2026-07-19 | PASS |
 
 Honest scope, per this spec's own header: the above is a **file-based, single-host** slice, now
 WITH the R27 coalition ceiling (§4.5) AND the `axon deploy` integration (§5.2.1) closed. The R26

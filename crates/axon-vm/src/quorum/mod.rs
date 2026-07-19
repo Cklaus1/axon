@@ -1,13 +1,16 @@
 //! R33 — cross-VM safety quorum: attested `VoteRequest`/`VoteResponse` +
-//! strict-majority `check_quorum` aggregation.
+//! strict-majority `check_quorum` aggregation (with the R27 per-lineage coalition
+//! ceiling folded in — landed, see `logic::default_coalition_cap`).
 //!
 //! Scoped slice of `governance/specs/R33-cross-vm-safety-quorum.md`: a file-based
-//! `propose`/`vote`/`check` CLI exchange with a pure aggregator, not yet the vsock
-//! broadcast transport or the R27 per-lineage coalition ceiling (see that spec's
-//! `spec-meta` note for exactly what remains open).
+//! `propose`/`vote`/`check` CLI exchange with a pure aggregator. The vsock broadcast
+//! transport (S2) is landing in sub-slices — `vsock` currently has only the wire
+//! protocol (S2a); the real socket transport and broadcast/collect/listen loops are
+//! not yet built (see that spec's §5.2.2 for exactly what remains open).
 
 pub mod logic;
 pub mod io;
+pub mod vsock;
 
 #[cfg(test)]
 mod tests {

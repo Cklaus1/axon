@@ -73,8 +73,13 @@ cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clip
 # are now clippy-clean under --all-targets (the intentional C-ABI ptr-deref
 # seams carry a documented crate-level allow), so the gate enforces them. They
 # have no codegen feature, so this is cheap and needs no --no-default-features.
+# axon-vm/axon-attest joined 2026-07-19 (found while sizing R33.S2a): same class
+# of gap, same fix -- 3 pre-existing findings in axon-vm (a too-many-arguments
+# and a manual-range-contains in main.rs, a dead-code AxonManifest struct) fixed
+# with #[allow(..)]/a mechanical rewrite, no behavior change; axon-attest was
+# already clean.
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
-cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain --all-targets -- -D warnings \
+cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 if [ "$STRICT" = 1 ]; then
