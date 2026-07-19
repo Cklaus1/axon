@@ -644,19 +644,43 @@ network I/O, not pure logic) — all 5 identical, 12/12 clean. `cargo test -p ax
 `r33_acceptance_gate.sh`: unchanged, ALL CHECKS PASSED. R33 spec §13/§14/header, REQUIREMENTS.md
 updated.
 
+## R33.S2c landed: N-peer broadcast/collect fan-out (commit `93d6086`)
+
+Next piece after S2b: `broadcast_and_collect` in `quorum/vsock.rs` — calls `connect_and_round_trip`
+once per peer, each from its own thread, so total wall-clock stays bounded by the single `deadline`
+regardless of how many peers there are (a sequential loop would let one slow/unreachable peer at
+the front inflate latency past what §4.4's deadline promises — exactly the failure mode a single
+bad peer must not be able to cause). Feeds straight into the existing pure `check_quorum`, no
+changes there. 3 new tests (15 total): gathers every responsive peer's vote; an unreachable peer
+(dead port) contributes nothing without blocking a live peer's response; a timing assertion with 4
+dead peers proves wall-clock stays under 3x a single deadline (a sequential regression would show
+~4x — generous margin for host contention, still catches the bug class). Ran 5 consecutive reruns
+to check for threading/socket/timing flakiness — all identical. `cargo test -p axon-vm`: 61/61.
+`r33_acceptance_gate.sh`: unchanged, ALL CHECKS PASSED. R33 spec §13/§14/header, REQUIREMENTS.md
+updated.
+
+Also worth noting: the long-running background `gate.sh --strict` from prior iterations became
+ambiguous to track (likely PID reuse from another Claude session sharing this host — the same
+`bash scripts/gate.sh --strict` command line, but process start-time didn't match the original
+launch). Rather than keep guessing at its state, relaunched a fresh one with proper `run_in_
+background` tracking this iteration and moved on — the S2a/S2b/S2c work above was independently,
+thoroughly verified regardless (targeted tests, clippy, acceptance gate, spec verifier, all
+multiple times over), so the ambiguous background process was never load-bearing for trusting this
+iteration's own changes.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2c+ (N-peer broadcast/collect fan-out + a real listen/accept/respond primitive + CLI flags —
-S2a's wire protocol and S2b's single round trip are both done). R39 has Slices 1-3, 5 landed; only
-Slice 4 (`axon-gov status` render) remains, and it needs design work before it's a quick slice.
-Options for the next iteration:
-- **R33.S2c**: the N-peer broadcast/collect fan-out (calling `connect_and_round_trip` once per
-  peer, aggregating into `Vec<VoteResponse>` for the existing pure `check_quorum`) — the natural
-  next piece now that the single-peer round trip is proven; the listen/accept/respond primitive
-  and CLI flags can follow once this exists.
+R33.S2d+ (a real listen/accept/respond primitive + CLI flags + real `AF_VSOCK` — S2a/S2b/S2c, the
+whole proposer-side path, are done; S2d is the voter/listen side). R39 has Slices 1-3, 5 landed;
+only Slice 4 (`axon-gov status` render) remains, and it needs design work before it's a quick
+slice. Options for the next iteration:
+- **R33.S2d**: a real listen/accept/respond primitive (the voter side — currently only
+  `spawn_one_shot_voter` in `vsock.rs`'s own tests, not production code) plus the
+  `axon-vm quorum vote --listen` CLI flag — this is what finally gives `broadcast_and_collect` and
+  `connect_and_round_trip` their first non-test callers, closing out the `#![allow(dead_code)]`.
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
