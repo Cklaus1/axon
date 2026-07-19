@@ -4603,6 +4603,10 @@ fn build_ir_and_link(
     let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
     // R4: stamp the source path into native @[adaptive] provenance (`"src"`).
     cg.set_source_path(source_path.display().to_string());
+    // R17 §12 Q9: freestanding builds never link axon-rt, so the implicit
+    // safety-check panic hooks (arith/bounds/refine) get a minimal in-module
+    // trap instead of an external symbol nothing will provide.
+    cg.set_freestanding(freestanding);
     // R23: solver-free mint cert gate before emitting a native binary, too.
     axon_core::cert_gate::enforce_or_exit();
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks

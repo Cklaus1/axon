@@ -339,6 +339,20 @@ pub struct Codegen<'ctx> {
     /// size param and call sites truncate the i64 byte-count to i32. Set by
     /// `set_target_is_wasm` BEFORE `emit_program`; defaults to false (native).
     pub(super) target_is_wasm: bool,
+    /// R17 §12 Q9: true for `--freestanding` builds. `axon-rt` (the runtime
+    /// providing `__axon_arith_panic`/`__axon_bounds_panic`/`__axon_refine_panic`
+    /// etc.) is never linked into a freestanding kernel — there is no host OS
+    /// underneath it to provide one. When set, those three implicit safety
+    /// checks (arithmetic overflow/div-zero, array bounds, refinement
+    /// violations — the ones the compiler inserts automatically, not an
+    /// explicit API call) get a minimal internal trap DEFINED in the same
+    /// module instead of an external symbol DECLARED against it: write a
+    /// distinguishing marker byte to the QEMU debugcon port (0xE9, the same
+    /// diagnostic convention every other R17 example/test already uses), then
+    /// halt forever. Set by `set_freestanding` BEFORE `emit_program`; defaults
+    /// to false (hosted builds keep linking the real `axon-rt` implementation,
+    /// unchanged).
+    pub(super) freestanding: bool,
     /// Hard codegen errors collected during emission (e.g. a known builtin that
     /// has no native lowering). emit_program does not return a Result, so these
     /// accumulate here; the build pipeline checks `codegen_errors()` after
@@ -416,6 +430,7 @@ impl<'ctx> Codegen<'ctx> {
             current_verify_fn: None,
             current_ret_refine: None,
             target_is_wasm: false,
+            freestanding: false,
             codegen_errors: Vec::new(),
             transitive_effects: HashMap::new(),
             handler_ctx: Vec::new(),
@@ -442,6 +457,12 @@ impl<'ctx> Codegen<'ctx> {
     /// `emit_program`; native builds leave this false (LP64, i64 size).
     pub fn set_target_is_wasm(&mut self, is_wasm: bool) {
         self.target_is_wasm = is_wasm;
+    }
+
+    /// R17 §12 Q9: mark this build as `--freestanding`. Call BEFORE
+    /// `emit_program`; defaults to false (hosted).
+    pub fn set_freestanding(&mut self, freestanding: bool) {
+        self.freestanding = freestanding;
     }
 
     /// R7: the LLVM integer type of a C `size_t` on the current target — i32 on

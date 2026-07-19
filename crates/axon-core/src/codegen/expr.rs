@@ -633,6 +633,67 @@ impl<'ctx> super::Codegen<'ctx> {
             .unwrap();
     }
 
+    /// R17 §12 Q9: define a minimal, self-contained trap directly in this
+    /// module — used in place of declaring an external panic-hook symbol for
+    /// `--freestanding` builds, since `axon-rt` is never linked into one.
+    /// Ignores every argument (no formatting capability without a host
+    /// runtime); writes `marker` to the QEMU debugcon port (0xE9) via the same
+    /// hand-written inline asm `port_out_u8`/`lidt` already use, then halts
+    /// forever. The function never returns (matches the external symbol's
+    /// noreturn contract the call sites already assume via a trailing
+    /// `unreachable`), so no block needs a `ret`.
+    pub(super) fn synthesize_freestanding_trap(
+        &mut self,
+        name: &str,
+        fn_ty: inkwell::types::FunctionType<'ctx>,
+        marker: u8,
+    ) -> FunctionValue<'ctx> {
+        let fn_val = self.ir.module.add_function(name, fn_ty, None);
+        let entry = self.ir.context.append_basic_block(fn_val, "entry");
+        let halt = self.ir.context.append_basic_block(fn_val, "halt");
+        self.ir.builder.position_at_end(entry);
+
+        let i16_ty = self.ir.context.i16_type();
+        let i8_ty = self.ir.context.i8_type();
+        let void_ty = self.ir.context.void_type();
+        let outb_fn_ty = void_ty.fn_type(&[i16_ty.into(), i8_ty.into()], false);
+        let outb_asm = self.ir.context.create_inline_asm(
+            outb_fn_ty,
+            "outb $1, $0".to_string(),
+            "{dx},{al},~{memory}".to_string(),
+            true,
+            false,
+            None,
+            false,
+        );
+        let port = i16_ty.const_int(0xE9, false);
+        let val = i8_ty.const_int(marker as u64, false);
+        self.ir
+            .builder
+            .build_indirect_call(outb_fn_ty, outb_asm, &[port.into(), val.into()], "trap_outb")
+            .unwrap();
+        self.ir.builder.build_unconditional_branch(halt).unwrap();
+
+        self.ir.builder.position_at_end(halt);
+        let hlt_fn_ty = void_ty.fn_type(&[], false);
+        let hlt_asm = self.ir.context.create_inline_asm(
+            hlt_fn_ty,
+            "hlt".to_string(),
+            "~{memory}".to_string(),
+            true,
+            false,
+            None,
+            false,
+        );
+        self.ir
+            .builder
+            .build_indirect_call(hlt_fn_ty, hlt_asm, &[], "trap_hlt")
+            .unwrap();
+        self.ir.builder.build_unconditional_branch(halt).unwrap();
+
+        fn_val
+    }
+
     /// R17 Slice 2: resolve an atomic builtin's `ordering` argument — which MUST
     /// be a compile-time integer literal (0=relaxed,1=acquire,2=release,
     /// 3=acq_rel,4=seq_cst) — to its LLVM `AtomicOrdering`. A non-literal or

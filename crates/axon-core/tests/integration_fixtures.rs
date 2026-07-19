@@ -1698,6 +1698,49 @@ fn r17_slice1_qemu_boot_writes_axon_s1() {
     );
 }
 
+/// Acceptance gate `axon_kernel_handles_timer_interrupt`: `hello_kernel_timer_irq.ax`
+/// builds a real 256-entry IDT (fixed-physical-address idiom, R17 §12 Q8),
+/// loads it via `lidt`, remaps the PIC, programs the PIT, enables interrupts,
+/// and a real hardware timer interrupt must reach the compiled @[interrupt]
+/// handler repeatedly (proving the handler's EOI actually works, not just a
+/// lucky single fire) — also exercises R17 §12 Q9's freestanding
+/// arithmetic-panic trap (the IDT-fill loop's address arithmetic), asserting
+/// it does NOT spuriously fire.
+///
+/// Skips gracefully if any required tool is missing, same as the Slice 1 gate.
+#[test]
+fn r17_timer_interrupt_fires_and_is_handled() {
+    use std::process::Command;
+
+    let script = {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.pop();
+        p.pop();
+        p.push("scripts/timer_irq_qemu_test.sh");
+        p
+    };
+    if !script.exists() {
+        panic!("missing scripts/timer_irq_qemu_test.sh — was it deleted?");
+    }
+
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("failed to spawn timer_irq_qemu_test.sh");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    if out.status.code() == Some(0) {
+        return;
+    }
+
+    panic!(
+        "R17 timer-interrupt QEMU boot test FAILED (exit {})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        out.status.code().unwrap_or(-1),
+    );
+}
+
 // ── R17 Slice 2: SMP atomic golden-IR gate ───────────────────────────────────
 
 /// Acceptance gate `axon_smp_atomic_counter_is_race_free` (golden-IR proxy).

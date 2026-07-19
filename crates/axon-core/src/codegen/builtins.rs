@@ -3554,10 +3554,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 ],
                 false,
             );
-            let _ = self
-                .ir
-                .module
-                .add_function("__axon_arith_panic", ap_ty, None);
+            if self.freestanding {
+                self.synthesize_freestanding_trap("__axon_arith_panic", ap_ty, b'A');
+            } else {
+                let _ = self
+                    .ir
+                    .module
+                    .add_function("__axon_arith_panic", ap_ty, None);
+            }
         }
 
         // ── Array bounds-check runtime trap (I-9 + memory-safety parity) ──────
@@ -3571,10 +3575,14 @@ impl<'ctx> super::Codegen<'ctx> {
         // a memory-safety hole). This brings native into line.
         {
             let bp_ty = void_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let _ = self
-                .ir
-                .module
-                .add_function("__axon_bounds_panic", bp_ty, None);
+            if self.freestanding {
+                self.synthesize_freestanding_trap("__axon_bounds_panic", bp_ty, b'B');
+            } else {
+                let _ = self
+                    .ir
+                    .module
+                    .add_function("__axon_bounds_panic", bp_ty, None);
+            }
         }
 
         // ── Generic message panic (fixed-string runtime faults) ──────────────
@@ -3635,10 +3643,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 ],
                 false,
             );
-            let _ = self
-                .ir
-                .module
-                .add_function("__axon_refine_panic", rp_ty, None);
+            if self.freestanding {
+                self.synthesize_freestanding_trap("__axon_refine_panic", rp_ty, b'R');
+            } else {
+                let _ = self
+                    .ir
+                    .module
+                    .add_function("__axon_refine_panic", rp_ty, None);
+            }
         }
 
         // ── ASI Layer-3: adaptive registry registration ───────────────────────
