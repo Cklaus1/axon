@@ -747,6 +747,31 @@ the existing validator's own finding (no second notion of "wrong"); most-recent 
 wins over a stale one; regenerating twice against an unchanged store is byte-identical except the
 timestamp (pure function of the store). **All five R39 slices are now landed.**
 
+## R30 flakiness partially chased (commit `08db0bf`) — real fixes, root cause still open
+
+Did a fresh SELECT sweep across `REQUIREMENTS.md` (both R33 and R39's easy scope were exhausted).
+R30's row has said "root cause not chased further" for its documented host-contention flakiness
+since 2026-07-18 — investigated rather than re-flagging it a third time. Confirmed `acc_a1`/`acc_a4`
+run in STRUCTURAL mode (`AXON_CI_NO_KVM=1`), which never invokes `axon-vm run` (the real Firecracker
+VM launch) anywhere across R26-R29's own acceptance gates — so a real-KVM-boot-timing theory doesn't
+actually fit the observed failure path, contrary to the prior note's guess. Found and fixed the one
+real hardcoded, non-configurable timeout on that code anyway (`wait_for_socket`'s 5s Firecracker
+API-socket wait, `crates/axon-vm/src/main.rs`, had no env override unlike its sibling
+`AXON_VM_TIMEOUT_SECS`) — genuinely valuable for FULL-mode runs, now tunable via
+`AXON_VM_SOCKET_TIMEOUT_SECS`, but honestly NOT confirmed as the structural-mode flake's actual
+cause. Also fixed a real, unrelated gap found along the way: `axon_safety_gate.sh`'s
+`STAGE_LOG_PREFIX` had no PID suffix, so two concurrent invocations (e.g. two Claude sessions
+sharing this host, directly observed happening earlier this session) could clobber each other's
+diagnostic logs — doesn't affect pass/fail but hinders future debugging of this exact flake class;
+now PID-suffixed. **The real root cause — most likely nested `cargo build`/`test` contention across
+R26-R29's own internal test suites, the same class `fuzz_parity.sh`'s nbuild-retry precedent already
+addresses elsewhere — remains open.** A live repro attempt (`bash scripts/r30_acceptance_gate.sh`,
+launched at low host load ~9-13) was still executing 5+ minutes in, several cargo/node subprocesses
+deep, when this iteration closed — genuinely deeper than fits one iteration. Left running in the
+background for a later iteration to check. `cargo build/clippy/test -p axon-vm`: clean, 62/62.
+`verify_all_specs.sh`: clean. `governance/REQUIREMENTS.md`'s R30 row updated honestly (partial
+progress, not "fixed").
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
@@ -755,6 +780,9 @@ R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), s
 R33.S2f, which is itself blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay
 vs. hardened TCP — not something to pick unilaterally). R39 is fully landed (all 5 slices). Options
 for the next iteration:
+- **Check the R30 background repro run** (see above) — if it finished, read its result before
+  deciding whether to chase R30's actual root cause further (nested cargo contention across
+  R26-R29) or whether it was clean this time (inconclusive either way, but worth reading).
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
   bodies (would unlock the str-returning family for the registry) — real design work, size it
   before committing to it in one iteration.
@@ -763,7 +791,3 @@ for the next iteration:
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
   genuinely stalled on it now — this is exactly the kind of decision this build loop shouldn't make
   unilaterally.
-- With both R39 and the easy R33 sub-slices exhausted, the next genuinely fresh vein of "quick,
-  well-scoped, gate-verifiable" work may itself need a fresh SELECT sweep across `REQUIREMENTS.md`
-  rather than continuing to mine the same two specs.
-- R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
