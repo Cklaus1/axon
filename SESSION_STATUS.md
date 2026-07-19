@@ -790,30 +790,61 @@ R1d spec updated with the correction. A full `cargo test -p axon-core --no-defau
 was launched in the background for additional confirmation beyond the direct evidence already
 gathered — check its result before the next iteration.
 
-## R30 background repro: still needs checking
+## R1d out-param-synthesis extension landed: 7 str-out builtins migrated (commit `c769853`)
 
-The `bash scripts/r30_acceptance_gate.sh` run launched two iterations ago (see the entry above)
-had already live-captured a real flake (`wasm_examples_run_identically_on_aot_wasm`, confirmed via
-isolated rerun, documented in memory) but its FULL run (acc_a1 through acc_a6, including two more
-idempotency reruns of the whole pipeline) may still be going — it's a genuinely long-running
-process (300+ seconds per full cargo test pass, times several nested invocations). Check
-`/tmp/r30_gate_run1.log` for `REAL_EXIT=` before deciding whether to chase R30's root cause
-further.
+Sized "extend `ExternSig`/`declare_one_extern` for out-param synthesis" properly this time (last
+iteration only found and migrated `str_count`, a miscategorized non-out-param candidate). Before
+implementing, verified two things that could have made this riskier than it looked: (1) the
+out-param convention these rt fns use is a DELIBERATE cross-target design — axon-rt's own
+`#[cfg(target_arch="wasm32")]` variants exist because wasm32's struct-arg/return ABI genuinely
+differs from native's — so a "just return `AxonStr` by value directly" shortcut (which `L::Str`
+already supports as a `ret` shape) was considered and correctly rejected as unverified for wasm32,
+not assumed safe; (2) codegen's own LLVM-IR-generation side has NO wasm32-specific branching for
+any of the 7 candidates, meaning the cross-target complexity lives entirely in axon-rt's Rust
+signatures, invisible to codegen — so a generic synthesis function reproducing the hand-written
+wrappers' EXACT IR shape is safe on both targets by construction, not something new to prove.
+Implemented as a NEW, separate `StrOutSig`/`STR_OUT_EXTERNS` table (not a field on `ExternSig`) +
+`Codegen::synthesize_str_out_wrapper`, migrating `str_reverse`/`str_to_upper`/`str_to_lower`/
+`str_digits_only`/`str_trim`/`str_trim_start`/`str_trim_end` (every candidate sharing the identical
+single-`L::Str`-param shape) and deleting the 7 hand-written codegen blocks. Added 3 new drift
+tests (a real gap found: the existing drift tests only covered `BUILTIN_EXTERNS`, not any future
+second table). Verified: `cargo build`/clippy clean (both feature sets); 5/5 drift tests; a manual
+native==interp check across 14 hand-picked cases (incl. `straße`→`STRASSE` Unicode-growing
+case-map, empty strings) byte-identical; the full `scripts/fuzz_parity.sh` corpus (all 7 already
+had entries) PASS. Explicitly still out of scope: `str_replace`/`str_pad_start`/`str_pad_end`/
+`str_slice`/`str_repeat` (extra args, likely fit but unverified) and `str_split`/`str_join`
+(genuinely different `Array<Str>` shapes, confirmed by reading their codegen, not assumed). R1d
+spec updated with the full finding.
+
+## Background runs from prior iterations: still need checking
+
+Two long-running background verifications may still be executing (both were competing for the
+same cargo build lock, which is why they're taking unusually long):
+- `bash scripts/r30_acceptance_gate.sh` (`/tmp/r30_gate_run1.log`) — already live-captured a real
+  flake (`wasm_examples_run_identically_on_aot_wasm`, confirmed via isolated rerun, documented in
+  memory); its idempotency check (acc_a4) showed both sub-runs failing the SAME way (BUILD/
+  UNIT_TESTS/R26_ATTESTATION), which is technically "idempotent" even though it's a flake relative
+  to isolation. Check for `REAL_EXIT=` before deciding whether to chase R30's root cause further.
+- `cargo test -p axon-core --no-default-features` (task `bss3doll5`) — additional full-suite
+  confirmation for the R1d out-param-synthesis change above, which already has strong direct
+  evidence (build/clippy/drift-tests/manual-parity/fuzz_parity all clean) independent of this run.
 
 ## Next candidate slice — genuinely fresh scope needed
 
-R1d's easy scope is now fully exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete
-including the str_count catch; only remaining work is the genuine out-param-synthesis extension —
-real structural design work, not a quick slice). R34 has S1-S6, S8 landed; only S7 remains (R33
-`VoteRequest` chain-awareness), still blocked on R33.S2f, which is itself blocked on a
+R1d's out-param-synthesis extension is now real and proven (7 candidates landed); the remaining
+5 multi-arg candidates (str_replace/str_pad_*/str_slice/str_repeat) are a natural, much lower-risk
+follow-on now that the mechanism exists — just extending `params` for rows with more than one
+leading arg, no new synthesis logic needed (verify this claim before assuming it, though — the
+same discipline that caught str_count's miscategorization). R34 has S1-S6, S8 landed; only S7
+remains (R33 `VoteRequest` chain-awareness), still blocked on R33.S2f, which is itself blocked on a
 founder/architecture decision (R33 spec §12 Q1 — host relay vs. hardened TCP — not something to
 pick unilaterally). R39 is fully landed (all 5 slices). Options for the next iteration:
-- **Check both background runs** (R30's repro, R1d's full test-suite confirmation) — read their
-  results before deciding next steps.
-- Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
-  bodies (would unlock the ~10 real str-returning candidates for the registry) — real design work,
-  size it properly (study the shared shape across all ~10, same way this iteration verified
-  str_count's actual shape before acting) before committing to it in one iteration.
+- **Check both background runs** (see above) — read their results before deciding next steps.
+- **R1d: migrate the multi-arg out-param candidates** (`str_replace`/`str_pad_start`/
+  `str_pad_end`/`str_slice`/`str_repeat`) using the now-proven `STR_OUT_EXTERNS` mechanism — verify
+  each one's actual codegen shape first (extra scalar/str args before the two out-params) before
+  assuming they fit `params: &'static [L]` cleanly, the same discipline used for the 7 already
+  landed.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
