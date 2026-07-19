@@ -1,7 +1,7 @@
 # R17 — Freestanding Substrate + Trusted HAL (bare-metal Axon)
 
 **Spec ID:** `R17-freestanding-substrate` (new requirement row; depends on `R13-native-ffi.md`, `R7-targets.md`; extends ROADMAP §3 substrate/surface + §7 TCB; **reverses ROADMAP §2.3** — see §12 Q1)
-**Status:** 🚧 Implementing (re-verified 2026-07-18) — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** The leading word here said "Draft" for weeks after Slices 0-3 landed — misleading at a skim even though the detail immediately following was accurate; same staleness class as R17's siblings (R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c/R1d), caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2), just not fixed at the leading word until now. Slice 0 LANDED (076c445): `@[entry]`/`@[panic_handler]`, `Hal` effect row, HAL builtins, `axon build --freestanding`. **Slice 1 LANDED (bf97c55):** hex/binary/underscore integer literals, `asm(...)` expression (real LLVM inline asm in codegen, E0910 in interp), `@[naked]`/`@[interrupt]` → LLVM naked attribute / x86-interrupt CC 83, `hlt`/`cli`/`sti` builtins emit real inline asm, `scripts/kernel.ld` + `--linker-script` CLI option. Demo: `examples/kernel/hello_kernel_slice1.ax`. **Slice 2 LANDED (a7b262c):** SMP atomics `atomic_{load,store,fetch_add,cas}_i64` with a compile-time memory-order literal (0=relaxed…4=seq_cst) → real LLVM atomics (`atomicrmw add … seq_cst` etc.); golden-IR gate `axon_smp_atomic_counter_is_race_free`; new `axon build --emit-llvm`. **Slice 3 LANDED:** `@[repr(C)]`/`@[packed]`/`@[align]` struct layout (golden-IR `axon_repr_c_gdt_layout_byte_exact` → `<{ i16, i16, i8, i8, i8, i8 }>`) + `@[no_alloc]`→E1704 (transitive). Demos: `examples/kernel/hello_kernel_slice2.ax`, `hello_kernel_slice3.ax`. Remaining: the full 2-core QEMU SMP harness (deferred — the golden-IR proxy stands as the unit gate per §9) and `axon_kernel_handles_timer_interrupt` (now unblocked by `@[repr(C)]` for IDT entries; deferred to a wiring slice).
+**Status:** 🚧 Implementing (re-verified 2026-07-18) — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** The leading word here said "Draft" for weeks after Slices 0-3 landed — misleading at a skim even though the detail immediately following was accurate; same staleness class as R17's siblings (R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c/R1d), caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2), just not fixed at the leading word until now. Slice 0 LANDED (076c445): `@[entry]`/`@[panic_handler]`, `Hal` effect row, HAL builtins, `axon build --freestanding`. **Slice 1 LANDED (bf97c55):** hex/binary/underscore integer literals, `asm(...)` expression (real LLVM inline asm in codegen, E0910 in interp), `@[naked]`/`@[interrupt]` → LLVM naked attribute / x86-interrupt CC 83, `hlt`/`cli`/`sti` builtins emit real inline asm, `scripts/kernel.ld` + `--linker-script` CLI option. Demo: `examples/kernel/hello_kernel_slice1.ax`. **Slice 2 LANDED (a7b262c):** SMP atomics `atomic_{load,store,fetch_add,cas}_i64` with a compile-time memory-order literal (0=relaxed…4=seq_cst) → real LLVM atomics (`atomicrmw add … seq_cst` etc.); golden-IR gate `axon_smp_atomic_counter_is_race_free`; new `axon build --emit-llvm`. **Slice 3 LANDED:** `@[repr(C)]`/`@[packed]`/`@[align]` struct layout (golden-IR `axon_repr_c_gdt_layout_byte_exact` → `<{ i16, i16, i8, i8, i8, i8 }>`) + `@[no_alloc]`→E1704 (transitive). Demos: `examples/kernel/hello_kernel_slice2.ax`, `hello_kernel_slice3.ax`. Remaining: the full 2-core QEMU SMP harness (deferred — the golden-IR proxy stands as the unit gate per §9) and `axon_kernel_handles_timer_interrupt` — **re-scoped 2026-07-20** (§12 Q7): sizing it found it's blocked on a genuinely missing language primitive (no way to get a function's address as a value from `.ax` source — confirmed via exhaustive search, not the "just wiring" the old note implied), real new compiler work, not started.
 **Risk class:** Structural (introduces the language's *only* `unsafe` surface; amends I-3/I-4/I-5/I-6, extends I-11/I-12)
 **Author / date:** cklaus, 2026-06-12
 
@@ -282,3 +282,23 @@ part is the *invariant amendments* (§7) — each gated to the slice that needs 
 6. **(§7)** `@[global_allocator]`: does v1 require a user allocator, or support a no-alloc kernel (static
    allocation only)? *Default: no-alloc first (Slice 0 boots with zero heap); the allocator hook lands when a
    slice needs `str`/array/closure heap ops in kernel context.*
+7. **(added 2026-07-20) `axon_kernel_handles_timer_interrupt` needs a genuinely missing language
+   primitive, not just wiring.** Sized this task before starting it (it was flagged as "unblocked
+   by `@[repr(C)]` for IDT entries; deferred to a wiring slice" — implying only assembly remained).
+   Confirmed via an exhaustive search (AST/parser/builtins/checker/infer/codegen, the full spec
+   text, every `examples/kernel/*.ax` file, and `asm(...)`'s actual operand model) that Axon has
+   **no way to obtain a function's address as a usable value from `.ax` source** — no `fn_addr`
+   builtin, no address-of operator applicable to a function identifier (`&` is array/slice-borrow
+   only, per `infer.rs`'s own "Phase 1: transparent" comment), and `asm(...)`'s
+   `outputs`/`inputs`/`clobbers` sections are raw opaque strings with no operand-binding syntax at
+   all (so there's no `sym(...)`-style symbol operand either). `@[interrupt]` itself does nothing
+   beyond setting the LLVM `x86-interrupt` calling convention — no automatic registration, no
+   symbol table. Q2's own default ("lgdt/lidt/mode-switch is R13 asm") doesn't resolve this either:
+   R13's native-FFI mechanism is interp-only (codegen `E0910`-refuses it), unusable for a
+   freestanding kernel that must run under native codegen (there is no OS to interpret under).
+   **An IDT entry literally cannot be constructed without a new language primitive** exposing a
+   function's address (e.g. a `fn_addr(name) -> u64` builtin, or a `sym(...)` operand kind added to
+   `asm(...)`'s currently-nonexistent structured-operand model) — real, new compiler work
+   (parser/checker/codegen), not a "connect the already-landed pieces" wiring task. Not started;
+   properly scoping the primitive itself (which of the two shapes, interaction with `@[pure]`/
+   `@[total]`, whether it's `@[hal]`-gated) is a future iteration's job, not decided here.
