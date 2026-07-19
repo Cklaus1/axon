@@ -839,22 +839,45 @@ A fresh full-suite confirmation for THIS iteration's second batch is running in 
 (task `buknyl7xw`) — check its result before the next iteration, though direct evidence is already
 strong.
 
+## R17 timer-interrupt wiring sized, found blocked on a missing primitive (commit `7a803b3`)
+
+Did the fresh SELECT sweep across `REQUIREMENTS.md` this pointed at. Picked R17's
+`axon_kernel_handles_timer_interrupt` (flagged "unblocked by `@[repr(C)]` for IDT entries;
+deferred to a wiring slice" — implying only assembly remained) and sized it before starting, same
+discipline as R33.S2f/R26. Traced the actual requirement: an IDT gate descriptor needs the ISR
+handler's memory address split into offset fields. Confirmed via exhaustive search (AST/parser/
+builtins/checker/infer/codegen, the full R17 spec, every `examples/kernel/*.ax` file, `asm(...)`'s
+actual operand model) that **Axon has no way to obtain a function's address as a usable value from
+`.ax` source at all** — no `fn_addr` builtin, `&` is array/slice-borrow only, `asm(...)`'s operand
+sections are raw opaque strings with no symbol-operand syntax, `@[interrupt]` sets only the calling
+convention with no registration, and R13's native-FFI (which a *different* open question had
+assumed would cover this bring-up class) is interp-only and codegen-refuses — useless for a kernel
+that must run under native codegen. `hello_kernel_slice3.ax` already proves the LANGUAGE side of
+ISR handlers works (a stub `@[no_alloc] @[interrupt] fn isr_timer()`); the blocker is entirely
+"how do you point an IDT entry at it," which needs genuinely new compiler work (a new builtin or
+`asm` operand kind), not wiring. No code changed — spec-first (Gate 1). Written up as R17 spec new
+§12 Q7; header and `REQUIREMENTS.md`'s R17 row corrected. `verify_all_specs.sh` clean. Updated the
+`r26-substrate-trait-aspirational` memory with a third instance — three-for-three now on "just
+wiring" notes turning out to rest on something that doesn't exist when actually sized.
+
+Also confirmed this iteration: the R1d background full-suite run (second batch) hit the SAME
+already-documented `wasm_examples_run_identically_on_aot_wasm` flake (418 passed / 1 failed) —
+isolated rerun passed clean immediately, confirming flake not regression, per the established
+protocol. No new information, R1d's change remains fully verified.
+
 ## Next candidate slice — genuinely fresh scope needed
 
-R1d's out-param-synthesis extension is essentially done (12/12 identified single-AxonStr-return
-candidates migrated; only `str_split`/`str_join`, genuinely different array shapes, remain, and
-they'd need their own from-scratch design, not more rows on the existing mechanism). R34 has
-S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on R33.S2f,
-which is itself blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay vs.
-hardened TCP — not something to pick unilaterally). R39 is fully landed (all 5 slices). Options for
-the next iteration:
-- **Check the background test-suite run** (task `buknyl7xw`) — read its result before deciding
-  next steps.
+R1d is fully done. R33's easy sub-slices are exhausted (S2f blocked on a founder decision, §12 Q1).
+R39 is fully landed. R17's timer-interrupt wiring is now known to need a real language feature
+(function-address primitive) rather than being pickable directly. Options for the next iteration:
+- **Properly scope the function-address primitive** R17 needs (a `fn_addr(name) -> u64` builtin vs.
+  an `asm(...)` symbol-operand extension — R17 spec §12 Q7 deliberately left this undecided) as a
+  design task before building it — real structural work, not a quick slice.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
   genuinely stalled on it now — this is exactly the kind of decision this build loop shouldn't make
   unilaterally.
-- With R1d, R33's easy sub-slices, and R39 all now exhausted, the next iteration likely needs a
-  fresh SELECT sweep across `governance/REQUIREMENTS.md` again (same as two iterations ago) rather
-  than continuing to mine any single spec.
+- Another fresh `REQUIREMENTS.md` SELECT sweep may be needed again if the above don't pan out —
+  R24/R25's dual-numbered "spec only, no implementation" rows (defended-approval-boundary,
+  information-flow-monitor) haven't been sized yet and could be worth a look.
