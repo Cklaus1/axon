@@ -3,7 +3,7 @@
 **Spec ID:** `R39-typed-execution-graph` (hardens `governance/BUILD_PROTOCOL.md`'s inner/outer loop
 and `governance/EXECUTION_MODEL.md`'s task-DAG/evidence-graph/knowledge-graph sections — currently
 markdown + grep + `scripts/verify_all_specs.sh` — into typed schemas + a real, queryable state store)
-**Status:** Implementing (Slices 1-3, 5 landed 2026-07-18; Slice 4 not started) — §12 Q1 (build now vs. wait) resolved
+**Status:** Implementing (Slices 1-3, 5 landed 2026-07-18; Slice 4 landed 2026-07-20, re-scoped) — §12 Q1 (build now vs. wait) resolved
 speculatively in favor of "build the cheap spike": Slice 1 (schema + parser) took the form of a
 `--export-jsonl` mode added to the *existing* `scripts/verify_all_specs.sh` (not a new, separately-
 drifting parser — it reuses the exact same per-spec extraction pass that already computes the
@@ -52,7 +52,7 @@ supersedes: none
 related: R40-ai-native-research-compiler
 conflicts-with: none
 reserves: none
-evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh; scripts/r39_slice3_gate.sh; scripts/r39_slice5_gate.sh
+evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh; scripts/r39_slice3_gate.sh; scripts/r39_slice4_gate.sh; scripts/r39_slice5_gate.sh
 ```
 
 > **One-line scope:** replace "a human or AI reads REQUIREMENTS.md, ROADMAP.md, and 56 spec files
@@ -196,12 +196,41 @@ research platform) actually requires — sections in brackets are explicitly **n
    well-formed; **running it against R32, R33, and R34 for real reproduces PASS for all three**,
    matching this session's own hand-verified record of their acceptance gates being green;
    `--record-jsonl` without `--run` is a hard usage error (exit 2), not a silent no-op.
-4. **`axon-gov status`: the render.** Regenerate a `GOVERNANCE_STATUS.md` snapshot from the
-   authoritative store (mirroring the user's "the LLM should not rewrite RESEARCH_STATUS.md
-   directly; the harness generates it from validated state" principle) instead of `SESSION_STATUS.md`
-   being hand-maintained prose. **Gate:** the generated file is a strict superset of what
-   `SESSION_STATUS.md` currently records by hand, and nothing in it can silently drift from the
-   store (it's regenerated, not edited).
+4. **`axon-gov status`: the render — RE-SCOPED 2026-07-20 (design-only correction, no code yet
+   in this edit).** The original gate ("a strict superset of what `SESSION_STATUS.md` currently
+   records by hand") doesn't hold up: `SESSION_STATUS.md` is 700+ lines of iteration-by-iteration
+   *narrative* — decision rationale, "why we chose X over Y," investigation findings — and the
+   typed store (Slices 1/3) only carries *structured* facts (spec id/status-claim/prose-status,
+   evidence commands, verify-run results). A generated file can be a strict superset of the
+   store's structured facts; it cannot reproduce hand-written narrative reasoning, and trying to
+   would mean either (a) making the store carry free-text narrative too — which defeats the
+   "typed, queryable" point of R39 in the first place — or (b) the render silently failing its own
+   gate forever. Neither is the fix; the gate was wrong, not the render.
+   **Corrected scope:** `GOVERNANCE_STATUS.md` is a NEW, separate, purely-generated artifact
+   (`scripts/r39_render_status.sh`, reading `governance/state/specs.jsonl` + the Slice-3
+   verify-results sidecar if present) — it does **not** replace or subsume `SESSION_STATUS.md`,
+   which keeps recording narrative exactly as it does today. What it exists for: every STRUCTURED
+   status claim currently only reachable by hand-grepping `REQUIREMENTS.md` + 60+ spec files +
+   scattered `SESSION_STATUS.md` mentions, in one place, sourced ONLY from the store (never
+   hand-typed, so it cannot silently drift from what the store actually says) — id, status-claim,
+   prose-status-word, whether they match (the exact mismatch class `verify_all_specs.sh`/
+   `r39_slice2_validate.sh` already catch), and the most recent verify-run result/timestamp/commit
+   if one exists. **Gate:** the render is a strict superset of the store's structured facts (every
+   spec-meta-carrying spec appears exactly once with its real fields; nothing hand-added, nothing
+   silently dropped); a synthetic fixture with an injected status-claim/prose mismatch shows up
+   flagged in the render, matching what the existing validators already report.
+   **Landed 2026-07-20**: `scripts/r39_render_status.sh [STORE_JSONL] [--verify-results PATH]
+   [--out PATH]` renders `governance/state/GOVERNANCE_STATUS.md` (gitignored, regenerated not
+   committed, matching `specs.jsonl`'s own precedent). Gated by `scripts/r39_slice4_gate.sh` (8
+   checks): every spec-meta-carrying spec appears exactly once with real fields (nothing dropped,
+   nothing invented); the spec-with-meta and pre-convention counts both match
+   `verify_all_specs.sh`'s own report exactly; a synthetic status-claim/prose mismatch renders
+   flagged, matching what `verify_all_specs.sh` itself reports for the same fixture (no second,
+   differently-worded notion of "wrong"); a clean spec doesn't false-positive; when a Slice-3
+   verify-results sidecar has multiple records for one spec, the render shows the MOST RECENT one,
+   not a stale earlier result; regenerating twice against an unchanged store produces
+   byte-identical output except the timestamp line (a pure function of the store, no hidden
+   accumulated state).
 5. **DAG cycle + blocked-by staleness — LANDED 2026-07-19 (out of numeric order, ahead of Slice
    4).** `scripts/r39_slice5_dag_check.sh [STORE_JSONL] [--specs-dir DIR]` builds one directed
    "must-happen-before" graph from every spec's `depends_on`/`blocks` edges (already-typed arrays
@@ -222,10 +251,11 @@ research platform) actually requires — sections in brackets are explicitly **n
    text ("**Unresolved**, deliberately") — fixed with a word-boundary match excluding an "un-"
    prefix; and the bullet-matcher assumed every spec bold-labels its questions `**Qn**`, but
    R37/R38 in fact use plain `1./2./3.` numbering — fixed with a plain-numbered-item fallback.
-   Slice 4 (`axon-gov status`: the render) remains not started — its own gate ("a strict superset
-   of what `SESSION_STATUS.md` currently records by hand") needs design work first (`SESSION_STATUS.md`
-   is 500+ lines of iteration-by-iteration narrative reasoning, not just structured facts the
-   typed store can render; what "superset" should mean here isn't yet decided).
+   Slice 4 (`axon-gov status`: the render) was not started at the time — its own gate ("a strict
+   superset of what `SESSION_STATUS.md` currently records by hand") needed design work first
+   (`SESSION_STATUS.md` is 500+ lines of iteration-by-iteration narrative reasoning, not just
+   structured facts a typed store can render). Landed 2026-07-20 with the gate corrected — see
+   above.
 
 Slices 1-3 alone would have mechanically caught 4 of the ~8 real bugs this session found by hand
 (the stale headers, the dangling filenames, the false-negative gate bug — not the R28 silent-log
@@ -264,7 +294,10 @@ or runtime), with its own exit-code space independent of Axon's E1xxx/E2xxx/E3xx
 - **Slice 5 landed 2026-07-19** (ahead of Slice 4 — see §6 slice 4 for why): DAG cycle detection
   and blocked-by open-question staleness checking, including R36's own real example
   (`scripts/r39_slice5_gate.sh` ALL CHECKS PASSED, 10/10).
-- Slice 4 (rendered `axon-gov status`) not yet started.
+- **Slice 4 landed 2026-07-20**, re-scoped: `GOVERNANCE_STATUS.md` is a purely-generated
+  structured-facts index (NOT a superset of `SESSION_STATUS.md`'s narrative — see §6 slice 4 for
+  why that original gate didn't hold) (`scripts/r39_slice4_gate.sh` ALL CHECKS PASSED, 8/8). All
+  five R39 slices are now landed.
 - Documented, honestly, in `governance/EXECUTION_MODEL.md` as the "typed" successor to its own §1-3
   prose sketch — not a separate, competing document.
 
