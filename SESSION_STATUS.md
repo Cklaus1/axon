@@ -950,17 +950,53 @@ confirming the ISR fires. Every primitive that test needs now exists (`fn_addr`,
 correct packed-struct field stores); the vertical assembly is real systems work for a future
 iteration, deliberately left for its own slice.
 
+## `lidt` landed, but sizing it surfaced R17's THIRD missing primitive (this iteration)
+
+Picked up the top candidate ("size the `lidt` piece specifically before assuming it's just asm").
+Confirmed the suspicion was right: `asm(...)`'s `outputs`/`inputs`/`clobbers` are raw string literals
+with zero operand-binding syntax (`parser.rs`'s `parse_inline_asm`), so a dynamic pointer operand
+can't be threaded through the user-facing surface at all — same shape as the `fn_addr` finding.
+Landed `lidt(idtr_addr: i64)` as a new HAL builtin instead, following the `port_out_u8`/`port_in_u8`
+precedent exactly: hand-written `create_inline_asm` in codegen, template `"lidt ($0)"`, constraint
+`"r,~{memory}"`. Verified past IR-text inspection this time — `axon build --emit-obj` + `objdump -d`
+on the real object file shows the actual encoded instruction (`0f 01 18  lidt (%rax)`), confirming
+LLVM's real assembler accepts the template, not just that the IR text looks plausible. Added `lidt`
+to all 6 classification sites (`is_browser_incompatible_builtin`, `is_impure_builtin`,
+`builtin_effect_row`, plus the 3 existing sweep-style unit tests that group it with `hlt`/`cli`/`sti`).
+
+**But sizing how a real caller would actually USE `lidt` found a third missing primitive.** `lidt`
+only consumes an address — the caller must construct the 10-byte IDTR structure (and, for the real
+acceptance test, the 256-entry IDT array) and obtain ITS address. Axon has no way to do this today:
+`ptr_from_addr` only wraps a known FIXED physical constant (the `COUNTER_ADDR` idiom), not something
+Axon itself allocated; `fn_addr` (last iteration) only takes function addresses. There is no
+address-of-a-local/array operator, and — the real finding — **no `static`/global-variable concept
+exists in the language at all** (confirmed by grep: no keyword, no surface, nothing). Real kernels
+place the IDT/GDT in stable, linker-placed storage, not a stack frame that unwinds on return. Written
+up as R17 spec §12 Q8 rather than attempted — this needs its own design pass (an address-of-local
+primitive with real lifetime/aliasing questions Axon's ownership model doesn't cover yet, OR a new
+`static` storage class with its own mutability/zero-init/linker-section design surface), not a quick
+follow-on slice.
+
+Full suite verification: `cargo build`/clippy clean both feature sets. `cargo test -p axon-core` hit
+one failure on the first run — `wasm_browser_target_is_wasi_free_and_matches_interp` (a browser-wasm
+build of an unrelated "arith" example reported as failed/skipped). Confirmed this is the known
+contention-flake class (`gate-flakes-under-contention` memory), not a regression: my changes touch
+only R17 HAL codegen dispatch, nothing wasm/browser-related; re-running `scripts/wasm_browser_parity.sh`
+directly gave a clean 4/4 PASS, and the specific test re-run in isolation (`cargo test ... -- --exact`)
+passed cleanly too. `verify_all_specs.sh` clean. R17 spec (§12 Q8 + header) and `REQUIREMENTS.md`
+updated.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d is fully done. R33's easy sub-slices are exhausted (S2f blocked on a founder decision, §12 Q1).
-R39 is fully landed. R17/R19 now have every primitive the timer-interrupt path needs. Options for the
-next iteration:
-- **Build the R17 timer-interrupt acceptance test** (`axon_kernel_handles_timer_interrupt`): the full
-  256-entry IDT array (likely via `@[repr(C)]` + a fixed-size array, or 256 individual gate-fill
-  calls), `lidt` (needs an `asm` operand or a new builtin — check what `lidt` actually needs before
-  assuming `asm(...)`'s raw-string operands suffice), PIC remap/unmask via `port_out_u8`, PIT
-  programming, and a QEMU golden-output gate confirming the ISR fires and EOIs. Real systems work,
-  likely multiple sub-slices — size the `lidt` piece specifically before assuming it's "just asm".
+R39 is fully landed. R17's timer-interrupt path now has 3 of its primitives (`fn_addr`, the `as`
+casts, `lidt`) but is freshly blocked on a 4th, more structural one (§12 Q8: address-of-a-local, or
+a `static` storage class). Options for the next iteration:
+- **Design R17 §12 Q8** (address-of-local vs. a `static` storage class) properly before building
+  either — this is real language-design surface (lifetime/aliasing for the former; mutability/
+  zero-init/linker-section semantics for the latter), not a quick primitive like `fn_addr`/`lidt`
+  turned out to be. Worth a dedicated sizing pass, possibly ending in a spec write-up rather than
+  code, per Gate 1 (spec-first for Structural changes).
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
