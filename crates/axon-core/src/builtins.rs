@@ -1859,6 +1859,25 @@ pub const BUILTINS: &[BuiltinFn] = &[
               returns the value that WAS in memory (== expected iff the swap happened) with the \
               named memory order. Lowers to LLVM `cmpxchg`. Substrate-only.",
     },
+    // R17 §12 Q7 (2026-07-20): the missing primitive that blocked
+    // axon_kernel_handles_timer_interrupt — a way to get a function's address as a
+    // value, needed to fill an IDT gate descriptor's offset fields. `name` MUST be
+    // a compile-time string literal naming a fn defined in this program (E1707
+    // otherwise, checked at codegen time — the memory order precedent set by
+    // atomic_*'s `ordering` arg, E1706). Returns the raw address as i64 (matching
+    // every other R17 HAL builtin's convention of representing addresses/widths
+    // as plain i64, e.g. volatile_load_u32 also returns "i64", not "u32").
+    BuiltinFn {
+        name: "fn_addr",
+        params: &[("name", "str")],
+        ret: "i64",
+        doc: "R17: the address of the function named `name`, as a raw i64. `name` MUST be a \
+              compile-time string literal naming a fn defined in this program — E1707 if it is \
+              not a literal, or names no known function. Used to fill hardware descriptor-table \
+              entries (e.g. an IDT gate's offset fields) that must point at an @[interrupt] \
+              handler. Substrate-only; codegen-only (E0910 in interp — a function's address is \
+              meaningless in a tree-walking interpreter).",
+    },
     // ── R23 eBPF helpers (substrate-only; Bpf effect row; E0910 in interp) ──────
     // These lower to a BPF `call <id>` (or atomicrmw add) only under
     // `axon build --target bpf`. They are the capability allowlist; an
@@ -2093,6 +2112,11 @@ pub fn is_impure_builtin(name: &str) -> bool {
             // R17 Slice 2: SMP atomics (shared-memory side effects)
             | "atomic_load_i64" | "atomic_store_i64"
             | "atomic_fetch_add_i64" | "atomic_cas_i64"
+            // R17 SS12 Q7: fn_addr — substrate-only (Hal-gated) like every other R17
+            // primitive, even though its value is a compile-time constant; exposing raw
+            // code addresses has no sane use outside kernel-level code, and gating it
+            // keeps the whole Hal-confinement story (E1700, substrate-file-only) uniform.
+            | "fn_addr"
             // R23 eBPF helpers (kernel side effects; Bpf effect row)
             | "bpf_map_lookup_elem" | "bpf_map_value_add"
             | "bpf_ktime_get_ns" | "bpf_get_smp_processor_id"
@@ -2183,7 +2207,11 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         | "zephyr_console_putc"
         // R17 Slice 2: SMP atomics — shared-memory hardware access, Hal-gated.
         | "atomic_load_i64" | "atomic_store_i64"
-        | "atomic_fetch_add_i64" | "atomic_cas_i64" => &["Hal"],
+        | "atomic_fetch_add_i64" | "atomic_cas_i64"
+        // R17 §12 Q7: fn_addr — Hal-gated like every other R17 primitive (see
+        // is_impure_builtin's own comment for why, even though it's pure in the
+        // strict sense of touching no runtime state).
+        | "fn_addr" => &["Hal"],
 
         // R23 eBPF helpers — the `Bpf` capability axis, gated like Hal: only a
         // @[bpf] substrate program may call them, and only the allowlisted set.
@@ -2401,6 +2429,22 @@ mod tests {
                 "{name} must not be classified heap-allocating"
             );
         }
+    }
+
+    #[test]
+    fn r17_fn_addr_is_hal_impure_alloc_free() {
+        let name = "fn_addr";
+        assert!(is_known_builtin(name), "{name} must be a known builtin");
+        assert!(is_impure_builtin(name), "{name} must be impure");
+        assert_eq!(
+            builtin_effect_row(name),
+            &["Hal"],
+            "{name} must carry the Hal effect row"
+        );
+        assert!(
+            !is_heap_allocating_builtin(name),
+            "{name} must not be classified heap-allocating"
+        );
     }
 
     #[test]

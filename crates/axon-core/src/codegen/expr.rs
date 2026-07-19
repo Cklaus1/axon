@@ -678,6 +678,45 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// R17 §12 Q7: resolve `fn_addr`'s argument — which MUST be a compile-time string
+    /// literal naming a function defined in this program — to that function's
+    /// `FunctionValue`. A non-literal argument, or a literal naming no known function,
+    /// is an E1707 codegen error (returns `None`), mirroring `atomic_ordering_arg`'s own
+    /// E1706 precedent: the address is resolved once at compile time, never a runtime
+    /// string lookup (unlike `goal_run`'s dynamic dispatch, which this is NOT — `goal_run`
+    /// re-resolves its name argument at RUNTIME against a table of registered adaptive
+    /// fns; `fn_addr` needs the actual LLVM symbol, which only exists at compile time).
+    fn fn_addr_target(&mut self, arg: &ast::Expr) -> Option<inkwell::values::FunctionValue<'ctx>> {
+        let name = match arg {
+            ast::Expr::Literal(ast::Literal::Str(s)) => s.clone(),
+            _ => {
+                let msg = "codegen error [E1707]: `fn_addr` argument must be a compile-time \
+                           string literal naming a function defined in this program, not a \
+                           runtime expression — the address is resolved once at compile time"
+                    .to_string();
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                return None;
+            }
+        };
+        match self.functions.get(&name).copied() {
+            Some(f) => Some(f),
+            None => {
+                let msg = format!(
+                    "codegen error [E1707]: `fn_addr(\"{name}\")` names no function defined in \
+                     this program"
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                None
+            }
+        }
+    }
+
     // ── Literal emission ──────────────────────────────────────────────────────
 
     pub(super) fn comptime_val_to_llvm(
@@ -8915,6 +8954,26 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
                         return Some(self.ir.context.i64_type().const_zero().into());
                     }
+                }
+                // ── R17 §12 Q7: fn_addr ─────────────────────────────────────────
+                // Resolves once at compile time (see fn_addr_target's own doc comment
+                // for why this is not goal_run-style runtime dispatch): the target
+                // fn's LLVM global value, cast to a plain i64 address via ptrtoint —
+                // the same "take a function's address" primitive codegen/asi.rs
+                // already uses internally for adaptive-fn registration, now exposed
+                // to substrate .ax source.
+                "fn_addr" if args.len() == 1 => {
+                    if let Some(target_fn) = self.fn_addr_target(&args[0]) {
+                        let i64_ty = self.ir.context.i64_type();
+                        let ptr_val = target_fn.as_global_value().as_pointer_value();
+                        let addr = self
+                            .ir
+                            .builder
+                            .build_ptr_to_int(ptr_val, i64_ty, "fn_addr")
+                            .unwrap();
+                        return Some(addr.into());
+                    }
+                    return Some(self.ir.context.i64_type().const_zero().into());
                 }
                 // ── R17 Slice 2: SMP atomics ───────────────────────────────────
                 // Each lowers to the real LLVM atomic with the named memory order.
