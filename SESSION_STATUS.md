@@ -551,19 +551,44 @@ training jobs saturating CPU, not anything this session touched); the R32/R33/R3
 completed correctly, just slowly. R39 spec (header, §6 slice 3, §9 acceptance), `ROADMAP.md`,
 `REQUIREMENTS.md` updated.
 
+## R39 Slice 5 landed: DAG cycle + blocked-by staleness (commit `09e045d`)
+
+Picked Slice 5 over Slice 4 this iteration: Slice 4's own gate ("a strict superset of what
+`SESSION_STATUS.md` currently records by hand") is ill-specified for a mechanically-generated file
+— this document is 500+ lines of iteration narrative reasoning, not just structured facts a
+typed-store render could reproduce; deciding what "superset" should mean needs design work first,
+the same class of gap that deferred R33.S2. Slice 5 was cleanly specified instead.
+`scripts/r39_slice5_dag_check.sh` builds one directed graph from every spec's `depends_on`/`blocks`
+edges (typed, from the Slice 1 store — no markdown re-parsing) and 3-color DFS-detects cycles;
+separately, for every `blocked_by: R<id> §<N> Q<k>` it reads the *target* spec's markdown directly
+(new extraction — no landed slice types §-section prose yet) and checks whether that question is
+actually marked resolved. Gated by `scripts/r39_slice5_gate.sh` (10 checks, ALL PASSED): real tree
+clean; R36's real blocked-by (the spec's own named example) correctly reported still-blocking;
+synthetic depends-on AND blocks-edge cycles both rejected; a synthetic resolved-question is flagged
+stale; a synthetic genuinely-unresolved one is not (regression test). **Running the check against
+the real tree BEFORE finishing the fixtures found two real bugs in the check's own first draft**: a
+naive `grep -qi resolved` false-positived on R40's actual text ("**Unresolved**, deliberately" —
+"resolved" is a literal substring of "unresolved"), fixed with a word-boundary match excluding
+"un-"; and the bullet-matcher assumed every spec bold-labels questions `**Qn**`, but R37/R38 use
+plain `1./2./3.` numbering, fixed with a plain-numbered-item fallback. Neither would have been
+caught by fixtures alone, since I'd have written fixtures using the convention I assumed was
+universal — saved as memory `new-check-verify-against-real-corpus`. R39 spec (header, §6 slice 5,
+§9 acceptance), `ROADMAP.md`, `REQUIREMENTS.md` updated. The background full `gate.sh --strict` run
+from the previous iteration also finished clean during this iteration (host load was from unrelated
+processes — several `vllm` model servers and ML training jobs — not anything this session touched).
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
 R33.S2 (vsock transport — confirmed to need a from-scratch `Substrate` trait, a real design task,
-not sized for a quick slice). R39 has Slices 1-3 landed; Slices 4-5 (rendered `axon-gov status`,
-DAG cycle detection) remain. Options for the next iteration:
-- **R39 Slice 4** (`axon-gov status`: regenerate a `GOVERNANCE_STATUS.md` snapshot from the typed
-  store, superseding hand-maintained `SESSION_STATUS.md` prose) — bounded, the store now carries
-  both spec data (Slice 1) and live verify results (Slice 3) to render from.
-- **R39 Slice 5** (DAG cycle + orphan detection over `depends-on`/`blocks`/`blocked-by` edges) —
-  also bounded, same typed store.
+not sized for a quick slice). R39 has Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render)
+remains, and it needs design work before it's a quick slice (see above). Options for the next
+iteration:
+- **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
+  `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
+  only? a hybrid render + hand-written narrative section?) before writing a renderer.
 - **R33.S2, properly scoped as a design task**: first write/extend the spec with a concrete
   `Substrate` trait design (real vsock impl + CI-mock path, matching the R26 attestation
   software-TPM-stand-in precedent) BEFORE writing code — this is Structural work per
