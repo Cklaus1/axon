@@ -24,19 +24,16 @@
 //! broadcast's wall-clock stays bounded by `deadline` regardless of peer count, feeding straight
 //! into `logic::check_quorum`'s existing `&[VoteResponse]` + `required_n` shape.
 //!
-//! NOT built yet (later S2 sub-slices, per the spec's own sizing note): the listen/accept/respond
-//! loop (the voter side — still test-local only, see `spawn_one_shot_voter` in this module's own
-//! tests, not a production primitive yet), real `AF_VSOCK` (vs. this slice's TCP-loopback
-//! stand-in), and the `axon-vm quorum vote --listen` / `propose --broadcast` CLI flags that would
-//! give `broadcast_and_collect` a real, non-test caller.
-
-// write_frame/read_frame remain unused outside tests (write_json_frame/read_json_frame are the
-// real, wired-in callers now, via connect_and_round_trip) — kept `pub` because they're the
-// documented low-level primitive a future non-JSON use might want directly. broadcast_and_collect
-// (and transitively connect_and_round_trip, now only reachable through it) has no CLI caller yet
-// (no --broadcast flag exists), so it's still unreferenced in a non-test build. Remove this allow
-// once the CLI flags (S2d) call it for real.
-#![allow(dead_code)]
+//! S2d (landed) adds [`respond_once`]: the voter side, single-shot accept/read/respond (no daemon
+//! loop) — now backing `axon-vm quorum vote --listen PORT` in `main.rs`.
+//!
+//! S2e (landed) wires [`broadcast_and_collect`] into `axon-vm quorum propose --broadcast` in
+//! `main.rs` — every function in this module now has a real, non-test caller.
+//!
+//! NOT built yet: real `AF_VSOCK` (this whole module is still the §5.2.2 TCP-loopback CI
+//! stand-in — swapping `connect`/`bind` for the raw `libc::socket(AF_VSOCK, ...)` calls
+//! `interp.rs`'s `vsock_send_recv` already demonstrates is the one remaining piece, same wire
+//! format either way).
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -167,12 +164,13 @@ pub fn respond_once(
     ) -> Option<crate::quorum::logic::VoteResponse>,
 ) -> io::Result<()> {
     let (mut stream, _) = listener.accept()?;
-    let req: crate::quorum::logic::VoteRequest = read_json_frame(&mut stream)?.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "peer sent the EOF sentinel instead of a VoteRequest",
-        )
-    })?;
+    let req: crate::quorum::logic::VoteRequest =
+        read_json_frame(&mut stream)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "peer sent the EOF sentinel instead of a VoteRequest",
+            )
+        })?;
     match respond(req) {
         Some(resp) => write_json_frame(&mut stream, &resp),
         None => write_frame(&mut stream, b""),

@@ -456,6 +456,67 @@ else
     echo "  (skipped: python3 not available)"
 fi
 
+echo ""
+echo "12. R33.S2e: real 'quorum propose --broadcast' CLI journey (real vote --listen peers)"
+
+BROADCAST_DIR="$(mktemp -d /tmp/r33-broadcast-XXXXXX)"
+PORT_A=$((30000 + RANDOM % 5000))
+PORT_B=$((PORT_A + 1))
+PORT_DEAD=$((PORT_A + 2)) # never listened on — a real unreachable peer
+
+AXON_CI_NO_KVM=1 "$BIN" quorum vote --listen "$PORT_A" --approve --reason "peer A" \
+    --lineage-root peer-a >"$BROADCAST_DIR/voter_a.log" 2>&1 &
+VOTER_A_PID=$!
+AXON_CI_NO_KVM=1 "$BIN" quorum vote --listen "$PORT_B" --approve --reason "peer B" \
+    --lineage-root peer-b >"$BROADCAST_DIR/voter_b.log" 2>&1 &
+VOTER_B_PID=$!
+sleep 0.3 # let both listeners bind before the broadcast connects
+
+set +e
+MET_OUT=$(AXON_CI_NO_KVM=1 "$BIN" quorum propose --run-id "gate-broadcast" --prog "$HELLO_AX" \
+    --action "deploy" --out "$BROADCAST_DIR/req.json" \
+    --broadcast "127.0.0.1:$PORT_A,127.0.0.1:$PORT_B,127.0.0.1:$PORT_DEAD" \
+    --n 3 --deadline-ms 3000 --json 2>&1)
+MET_RC=$?
+wait "$VOTER_A_PID" "$VOTER_B_PID" 2>/dev/null
+set -e
+
+if [ "$MET_RC" -eq 0 ] \
+    && echo "$MET_OUT" | grep -q '"approvals": 2' \
+    && echo "$MET_OUT" | grep -q '"quorum_met": true'; then
+    pass "propose --broadcast against 2 real vote --listen peers + 1 unreachable -> QUORUM MET (2/3), exit 0"
+else
+    fail "propose --broadcast quorum-met journey: rc=$MET_RC out=$MET_OUT"
+fi
+
+# Insufficient approvals: both peers unreachable -> QUORUM BLOCKED, exit 13, never a hang.
+set +e
+BLOCKED_OUT=$(AXON_CI_NO_KVM=1 "$BIN" quorum propose --run-id "gate-broadcast-blocked" --prog "$HELLO_AX" \
+    --action "deploy" --out "$BROADCAST_DIR/req2.json" \
+    --broadcast "127.0.0.1:$((PORT_DEAD + 1)),127.0.0.1:$((PORT_DEAD + 2))" \
+    --n 2 --deadline-ms 500 --json 2>&1)
+BLOCKED_RC=$?
+set -e
+if [ "$BLOCKED_RC" -eq 13 ] && echo "$BLOCKED_OUT" | grep -q '"quorum_met": false'; then
+    pass "propose --broadcast against 2 unreachable peers -> QUORUM BLOCKED, exit 13, no hang"
+else
+    fail "propose --broadcast blocked journey: rc=$BLOCKED_RC (want 13) out=$BLOCKED_OUT"
+fi
+
+# Backward compat: omitting --broadcast is unaffected (always exit 0, no quorum check runs).
+set +e
+NOBCAST_OUT=$(AXON_CI_NO_KVM=1 "$BIN" quorum propose --run-id "gate-nobcast" --prog "$HELLO_AX" \
+    --action "deploy" --out "$BROADCAST_DIR/req3.json" 2>&1)
+NOBCAST_RC=$?
+set -e
+if [ "$NOBCAST_RC" -eq 0 ] && ! echo "$NOBCAST_OUT" | grep -q 'broadcasting to\|"quorum_met"'; then
+    pass "omitting --broadcast is unaffected (writes the file, exits 0, no quorum check runs)"
+else
+    fail "no --broadcast backward-compat check: rc=$NOBCAST_RC out=$NOBCAST_OUT"
+fi
+
+rm -rf "$BROADCAST_DIR"
+
 # ── Final result ──────────────────────────────────────────────────────────────
 echo ""
 if [ "$FAIL" -eq 0 ]; then

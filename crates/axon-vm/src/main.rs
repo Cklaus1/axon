@@ -397,6 +397,27 @@ enum QuorumCmd {
         /// axon-audit-writer binary to measure (default: sibling; absent → R28-pending sentinel).
         #[arg(long)]
         axon_audit: Option<PathBuf>,
+
+        /// R33.S2e: also broadcast the VoteRequest to these peers (comma-separated
+        /// "host:port" TCP-loopback addresses — the R33 spec §5.2.2 CI stand-in for real
+        /// AF_VSOCK) and run the same strict-majority check `quorum check` does against
+        /// whatever VoteResponses come back within --deadline-ms, exiting with the same
+        /// 0/13/14 convention. Omit for the original write-only behavior (unaffected).
+        #[arg(long, value_delimiter = ',')]
+        broadcast: Option<Vec<String>>,
+
+        /// Required fleet size for the --broadcast quorum check (operator-configured, NOT
+        /// necessarily the number of --broadcast peers). Defaults to the peer count if omitted.
+        #[arg(long)]
+        n: Option<usize>,
+
+        /// Deadline for the --broadcast round trip, in milliseconds.
+        #[arg(long, default_value = "5000")]
+        deadline_ms: u64,
+
+        /// Emit JSON output (only meaningful with --broadcast).
+        #[arg(long)]
+        json: bool,
     },
 
     /// Vote (approve/deny) on a received VoteRequest.
@@ -566,8 +587,8 @@ fn main() {
             PrincipalCmd::List => cmd_principal_list(),
         },
         Cmd::Quorum { cmd } => match cmd {
-            QuorumCmd::Propose { run_id, prog, action, out, kernel, axon_os, axon_audit } =>
-                cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit),
+            QuorumCmd::Propose { run_id, prog, action, out, kernel, axon_os, axon_audit, broadcast, n, deadline_ms, json } =>
+                cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit, broadcast, n, deadline_ms, json),
             QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen } =>
                 cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen),
             QuorumCmd::Check { responses_dir, n, json } =>
@@ -1370,7 +1391,9 @@ fn quorum_self_tcb(
     }
 }
 
-/// `axon-vm quorum propose` — build and write a `VoteRequest` (R33 §3.1, scoped).
+/// `axon-vm quorum propose` — build and write a `VoteRequest` (R33 §3.1, scoped); optionally
+/// (R33.S2e) also broadcast it to real peers and run the same strict-majority check `quorum
+/// check` does, exiting with the same 0/13/14 convention.
 #[allow(clippy::too_many_arguments)]
 fn cmd_quorum_propose(
     run_id: String,
@@ -1380,6 +1403,10 @@ fn cmd_quorum_propose(
     kernel: Option<PathBuf>,
     axon_os: Option<PathBuf>,
     axon_audit: Option<PathBuf>,
+    broadcast: Option<Vec<String>>,
+    n: Option<usize>,
+    deadline_ms: u64,
+    json_out: bool,
 ) {
     let voter_tcb = quorum_self_tcb(&kernel, &axon_os, &axon_audit);
     let prog_hash = format!("sha256:{}", sha256_file(&prog));
@@ -1401,6 +1428,57 @@ fn cmd_quorum_propose(
         process::exit(2);
     }
     eprintln!("✓ proposal written: {} (proposer axtcb1-ext: {})", out.display(), voter_tcb);
+
+    let Some(peer_strs) = broadcast else { return };
+
+    let peers: Vec<std::net::SocketAddr> = peer_strs
+        .iter()
+        .map(|s| {
+            s.parse().unwrap_or_else(|e| {
+                eprintln!("axon-vm quorum propose --broadcast: invalid peer address '{s}': {e}");
+                process::exit(2);
+            })
+        })
+        .collect();
+    let required_n = n.unwrap_or(peers.len());
+    let deadline = std::time::Duration::from_millis(deadline_ms);
+
+    eprintln!("broadcasting to {} peer(s), deadline {deadline_ms}ms ...", peers.len());
+    let votes = quorum::vsock::broadcast_and_collect(&peers, &req, deadline);
+    let result = quorum::logic::check_quorum(&votes, required_n);
+    report_quorum_result(result, required_n, json_out);
+}
+
+/// Shared by `quorum check` (file-based votes) and `quorum propose --broadcast` (live votes):
+/// prints the result and exits with R33's established convention — 0 = QUORUM MET, 13 =
+/// QUORUM_BLOCKED (insufficient approvals), 14 = QUORUM_ATTEST_FAIL (attestation mismatch across
+/// voters, a materially different and more serious signal than a plain minority — see
+/// `check_quorum`'s own doc comment, never conflated with 13).
+fn report_quorum_result(result: quorum::logic::QuorumResult, n: usize, json_out: bool) -> ! {
+    if json_out {
+        let out = serde_json::json!({
+            "schema": "axon-vm-quorum-check/1",
+            "quorum_met": result.quorum_met,
+            "coalition_size": result.coalition_size,
+            "approvals": result.approvals,
+            "required_n": n,
+            "blocking_reason": result.blocking_reason,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    }
+
+    if result.quorum_met {
+        eprintln!("QUORUM MET: {}/{} approvals", result.approvals, n);
+        process::exit(0);
+    } else {
+        let reason = result.blocking_reason.clone().unwrap_or_default();
+        eprintln!("QUORUM BLOCKED: {reason}");
+        if reason.contains("attestation") {
+            process::exit(QUORUM_ATTEST_FAIL_EXIT_CODE);
+        } else {
+            process::exit(QUORUM_BLOCKED_EXIT_CODE);
+        }
+    }
 }
 
 /// `axon-vm quorum vote` — cast a vote on a `VoteRequest`, either read from `--request`/written
@@ -1516,31 +1594,7 @@ fn cmd_quorum_check(responses_dir: PathBuf, n: usize, json_out: bool) {
     };
 
     let result = quorum::logic::check_quorum(&votes, n);
-
-    if json_out {
-        let out = serde_json::json!({
-            "schema": "axon-vm-quorum-check/1",
-            "quorum_met": result.quorum_met,
-            "coalition_size": result.coalition_size,
-            "approvals": result.approvals,
-            "required_n": n,
-            "blocking_reason": result.blocking_reason,
-        });
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    }
-
-    if result.quorum_met {
-        eprintln!("QUORUM MET: {}/{} approvals", result.approvals, n);
-        process::exit(0);
-    } else {
-        let reason = result.blocking_reason.clone().unwrap_or_default();
-        eprintln!("QUORUM BLOCKED: {reason}");
-        if reason.contains("attestation") {
-            process::exit(QUORUM_ATTEST_FAIL_EXIT_CODE);
-        } else {
-            process::exit(QUORUM_BLOCKED_EXIT_CODE);
-        }
-    }
+    report_quorum_result(result, n, json_out);
 }
 
 // ── Firecracker orchestration ─────────────────────────────────────────────────
