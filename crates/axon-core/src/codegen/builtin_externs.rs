@@ -15,6 +15,7 @@
 
 use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 
+use super::build_wrappers;
 use crate::types::Type;
 
 /// LLVM shape of one builtin parameter or return slot.
@@ -455,7 +456,172 @@ impl<'ctx> super::Codegen<'ctx> {
             self.declare_one_extern(row);
         }
     }
+
+    /// Synthesize ONE str-out wrapper (R1d slice 2 out-param-synthesis extension, 2026-07-20):
+    /// the rt symbol uses the `void f(params.., i64* out_len, i8** out_ptr)` convention (a str
+    /// return can't come back as a simple `BasicTypeEnum` the way `declare_one_extern` handles
+    /// scalar/str-by-value rows), so this generates a NEW function `row.axon_name(params..) ->
+    /// AxonStr` that: allocas the two out-slots, calls the rt symbol with `params` plus the two
+    /// out-pointers appended, loads the results back, and reassembles them into an `AxonStr` via
+    /// `insert_value` — the EXACT SAME LLVM IR shape every hand-written wrapper (str_reverse,
+    /// str_to_upper, str_trim, …) already produced before migration. That shape is already
+    /// proven correct on both native and wasm32 by every one of those pre-migration wrappers —
+    /// this function only stops writing it by hand, it does not change the shape itself.
+    ///
+    /// Deliberately a SEPARATE synthesis path from `declare_one_extern`, not a branch inside it
+    /// — `ExternSig`'s ~33 existing rows are untouched by this extension (additive, not invasive;
+    /// see [`StrOutSig`]'s own doc comment for why it's a separate table, not a new field).
+    pub(super) fn synthesize_str_out_wrapper(&mut self, row: &StrOutSig) {
+        let i64_ty = self.ir.context.i64_type();
+        let i8_ptr = self
+            .ir
+            .context
+            .i8_type()
+            .ptr_type(inkwell::AddressSpace::default());
+        let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+        let str_ty = self
+            .ir
+            .context
+            .struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+
+        let param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
+            row.params.iter().map(|&l| self.l_basic(l)).collect();
+
+        let mut rt_param_tys = param_tys.clone();
+        rt_param_tys.push(i64_ptr.into());
+        rt_param_tys.push(i8_ptr_ptr.into());
+        let rt_fn_ty = self.ir.context.void_type().fn_type(&rt_param_tys, false);
+        let rt_fn = self
+            .ir
+            .module
+            .get_function(row.symbol)
+            .unwrap_or_else(|| self.ir.module.add_function(row.symbol, rt_fn_ty, None));
+
+        let fn_ty = str_ty.fn_type(&param_tys, false);
+        let fn_val = self.ir.module.add_function(row.axon_name, fn_ty, None);
+        let bb = self.ir.context.append_basic_block(fn_val, "entry");
+        let saved = self.ir.builder.get_insert_block();
+        self.ir.builder.position_at_end(bb);
+
+        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = (0..row
+            .params
+            .len())
+            .map(|i| fn_val.get_nth_param(i as u32).unwrap().into())
+            .collect();
+
+        let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "sout_olen");
+        let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "sout_optr");
+        let out_ptr_slot_cast = build_wrappers::w_pointer_cast(
+            &self.ir.builder,
+            out_ptr_slot,
+            i8_ptr_ptr,
+            "sout_ptrptr",
+        );
+        call_args.push(out_len_slot.into());
+        call_args.push(out_ptr_slot_cast.into());
+
+        build_wrappers::w_call(&self.ir.builder, rt_fn, &call_args, "sout_call");
+
+        let out_len =
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "sout_len")
+                .into_int_value();
+        let out_ptr =
+            build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "sout_ptr")
+                .into_pointer_value();
+
+        let mut result = str_ty.const_zero();
+        result =
+            build_wrappers::w_insert_value(&self.ir.builder, result, out_len.into(), 0, "sout_r0")
+                .into_struct_value();
+        result =
+            build_wrappers::w_insert_value(&self.ir.builder, result, out_ptr.into(), 1, "sout_r1")
+                .into_struct_value();
+        build_wrappers::w_ret(&self.ir.builder, result.into());
+
+        if let Some(b) = saved {
+            self.ir.builder.position_at_end(b);
+        }
+        self.functions.insert(row.axon_name.to_string(), fn_val);
+        self.fn_return_types
+            .insert(row.axon_name.to_string(), Type::Str);
+    }
+
+    /// Synthesize every row in [`STR_OUT_EXTERNS`] (R1d slice 2 out-param-synthesis extension).
+    pub(super) fn declare_str_out_externs(&mut self) {
+        for row in STR_OUT_EXTERNS {
+            self.synthesize_str_out_wrapper(row);
+        }
+    }
 }
+
+/// One builtin whose runtime symbol uses the out-param convention
+/// (`void f(params.., i64* out_len, i8** out_ptr)`) to return a str, needing a SYNTHESIZED (not
+/// merely declared) wrapper — see [`Codegen::synthesize_str_out_wrapper`].
+///
+/// Kept as a table separate from [`ExternSig`]/[`BUILTIN_EXTERNS`] rather than a new field on
+/// `ExternSig` — this extension is additive (a new table + a new synthesis fn), so it doesn't
+/// touch any of `BUILTIN_EXTERNS`'s ~33 existing rows or `declare_one_extern`'s existing,
+/// already-gate-verified declare-only logic. Confirmed 2026-07-20 (governance/specs/
+/// R1d-single-source-builtins.md): every row here shares the IDENTICAL shape (a single leading
+/// `L::Str` param, no other args) — str_reverse/str_to_upper/str_to_lower/str_digits_only/
+/// str_trim/str_trim_start/str_trim_end. Multi-arg out-param candidates (str_replace/str_pad_*/
+/// str_slice — extra scalar/str args before the two out-params) and array-shaped candidates
+/// (str_split returns Array<Str>, str_join takes an array as input — a different output/input
+/// shape entirely, not just more params) are explicitly OUT of scope for this table; migrating
+/// them needs verifying they still fit `params: &'static [L]` cleanly (str_replace/str_pad_*
+/// likely do) or a further, separate extension (str_split/str_join likely need one), not assumed.
+pub(super) struct StrOutSig {
+    /// Source-level builtin name — also the generated function's name and the
+    /// `self.functions`/`self.fn_return_types` insert key (also the drift-test join key against
+    /// `BUILTINS`, unlike `ExternSig::axon_name`, which is join-key-only in slice 1).
+    pub axon_name: &'static str,
+    /// The rt symbol (e.g. `"__axon_str_reverse"`). Its real signature has two MORE trailing
+    /// params than `params` lists — `i64* out_len, i8** out_ptr` — appended implicitly by
+    /// `synthesize_str_out_wrapper`, matching every hand-written wrapper this replaces.
+    pub symbol: &'static str,
+    /// LLVM shapes of the symbol's LEADING params only (the two out-params are implicit).
+    pub params: &'static [L],
+}
+
+/// The single-source table of str-out-param-synthesis externs (R1d slice 2 extension).
+pub(super) const STR_OUT_EXTERNS: &[StrOutSig] = &[
+    StrOutSig {
+        axon_name: "str_reverse",
+        symbol: "__axon_str_reverse",
+        params: &[L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_to_upper",
+        symbol: "__axon_str_to_upper",
+        params: &[L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_to_lower",
+        symbol: "__axon_str_to_lower",
+        params: &[L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_digits_only",
+        symbol: "__axon_str_digits_only",
+        params: &[L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_trim",
+        symbol: "__axon_str_trim",
+        params: &[L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_trim_start",
+        symbol: "__axon_str_trim_start",
+        params: &[L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_trim_end",
+        symbol: "__axon_str_trim_end",
+        params: &[L::Str],
+    },
+];
 
 // ── R1d slice 3: drift cross-check ──────────────────────────────────────────
 // `axon_name` is the join key against `crate::builtins::BUILTINS` (see its
@@ -463,7 +629,7 @@ impl<'ctx> super::Codegen<'ctx> {
 // promise from governance/specs/R1d-single-source-builtins.md §4 slice 3.
 #[cfg(test)]
 mod drift_tests {
-    use super::BUILTIN_EXTERNS;
+    use super::{BUILTIN_EXTERNS, STR_OUT_EXTERNS};
     use crate::builtins::BUILTINS;
 
     #[test]
@@ -495,6 +661,60 @@ mod drift_tests {
             assert!(
                 seen.insert(row.axon_name),
                 "BUILTIN_EXTERNS has more than one row for '{}' — duplicate registration",
+                row.axon_name
+            );
+        }
+    }
+
+    // R1d slice 2 out-param-synthesis extension (2026-07-20): STR_OUT_EXTERNS is a SEPARATE
+    // table from BUILTIN_EXTERNS (see StrOutSig's own doc comment for why), so it needs its own
+    // drift coverage — the slice 3 promise ("so the two tables can't drift") applies here too,
+    // not just to the original registry.
+    #[test]
+    fn every_str_out_row_matches_a_known_builtin_with_the_same_arity() {
+        for row in STR_OUT_EXTERNS {
+            let b = BUILTINS.iter().find(|b| b.name == row.axon_name).unwrap_or_else(|| {
+                panic!(
+                    "STR_OUT_EXTERNS row '{}' has no matching BUILTINS entry \
+                     (renamed or removed without updating the registry — R1d slice 3 drift)",
+                    row.axon_name
+                )
+            });
+            assert_eq!(
+                b.params.len(),
+                row.params.len(),
+                "STR_OUT_EXTERNS row '{}' declares {} LLVM param(s) but BUILTINS says {} \
+                 source-level param(s) — signature drift (R1d slice 3)",
+                row.axon_name,
+                row.params.len(),
+                b.params.len()
+            );
+        }
+    }
+
+    #[test]
+    fn no_duplicate_str_out_registry_rows() {
+        let mut seen = std::collections::HashSet::new();
+        for row in STR_OUT_EXTERNS {
+            assert!(
+                seen.insert(row.axon_name),
+                "STR_OUT_EXTERNS has more than one row for '{}' — duplicate registration",
+                row.axon_name
+            );
+        }
+    }
+
+    #[test]
+    fn str_out_and_builtin_externs_never_name_the_same_builtin() {
+        // The two tables synthesize/declare functions via genuinely different codegen paths
+        // (declare-only vs. out-param-unwrapping synthesis) -- a name appearing in BOTH would
+        // mean whichever runs second silently overwrites the first's self.functions entry
+        // while leaving an orphaned duplicate LLVM function behind (harmless but confusing,
+        // and a sign the row belongs in only one table).
+        for row in STR_OUT_EXTERNS {
+            assert!(
+                !BUILTIN_EXTERNS.iter().any(|b| b.axon_name == row.axon_name),
+                "'{}' is registered in BOTH BUILTIN_EXTERNS and STR_OUT_EXTERNS",
                 row.axon_name
             );
         }
