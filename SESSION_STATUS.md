@@ -693,19 +693,36 @@ in-progress uncommitted changes, not a real regression in the already-committed 
 was independently verified clean before its own commit). A separate, freshly-relaunched background
 run from last iteration is still the one actually confirming the current committed tree.
 
+## R33.S2e landed: `propose --broadcast`, S2's proposer+voter path complete (commit `372fcc8`)
+
+Last CLI piece of S2: `axon-vm quorum propose --broadcast CID1,CID2,... --n N --deadline-ms MS
+[--json]` — gives `broadcast_and_collect` (S2c) its first real, non-test caller. Broadcasts,
+collects, runs the same `check_quorum` `check` already uses, exits 0/13/14 — factored the
+exit-code/JSON logic into a shared `report_quorum_result` helper so `propose --broadcast` and
+`check` share one mechanism, not two. Verified with a real multi-process journey (new
+`r33_acceptance_gate.sh` §12, 3 checks, 3 reruns): `propose --broadcast` against 2 real
+`vote --listen` processes + 1 genuinely unreachable port correctly reports 2/3 approvals and
+QUORUM MET; against 2 unreachable peers, QUORUM BLOCKED with no hang; omitting `--broadcast` is
+fully unaffected. This closes `vsock.rs`'s module-level `#[allow(dead_code)]` entirely — every
+function now has a real, non-test caller, not just unit tests. S2's whole proposer+voter round
+trip (wire protocol → single round trip → N-peer fan-out → listen primitive → both CLI flags) is
+complete end-to-end. `cargo test -p axon-vm`: 62/62. Clippy clean with zero allows. R33 spec
+§13/§14/header, `REQUIREMENTS.md` updated.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2e+ (the `propose --broadcast` CLI flag — `broadcast_and_collect`'s first real, non-test
-caller — and real `AF_VSOCK`, swapping S2b/S2c/S2d's TCP-loopback stand-in). R39 has Slices 1-3, 5
-landed; only Slice 4 (`axon-gov status` render) remains, and it needs design work before it's a
-quick slice. Options for the next iteration:
-- **R33.S2e**: the `axon-vm quorum propose --broadcast CID1,CID2,...` CLI flag, wiring
-  `broadcast_and_collect` into a real caller for the first time — closes out the module's
-  `#![allow(dead_code)]` entirely and completes S2's proposer+voter round trip as a real CLI
-  journey (propose --broadcast against N real `vote --listen` processes).
+R33.S2f (real `AF_VSOCK` — swapping the whole `vsock.rs` module's TCP-loopback stand-in; everything
+else in S2 — wire protocol, round trip, fan-out, listen primitive, both CLI flags — is done). R39
+has Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render) remains, and it needs design work
+before it's a quick slice. Options for the next iteration:
+- **R33.S2f**: real `AF_VSOCK`, swapping `connect`/`bind`/`listen` in `vsock.rs` for the raw
+  `libc::socket(AF_VSOCK, ...)` calls `interp.rs`'s `vsock_send_recv` already demonstrates, same
+  wire format either way — this would need real microVM infrastructure to test meaningfully
+  (unlike TCP loopback), so likely needs its own sizing pass before committing to it in one
+  iteration (does this repo/CI have a way to test AF_VSOCK without real VMs? check before starting).
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
