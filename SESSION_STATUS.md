@@ -899,16 +899,68 @@ fields via `fn_addr`, `lidt`, unmasking the PIC/PIT, and confirming the ISR actu
 QEMU) — matching this session's "smallest safe increment first" discipline (same shape as R33.S2's
 a-through-e sub-slices).
 
+## R19 Slice D landed: `as` cast family + a critical struct-literal-field-store bug fix (this iteration)
+
+Picked up the top candidate from the previous iteration (build the R17 IDT-construction path now that
+`fn_addr` exists) and immediately hit a real blocker before writing any IDT code: `fn_addr`'s i64
+result needs splitting into u16/u32 fields for a gate descriptor, and `addr as u16` failed with
+"cannot find name `as_u16`" — the `x as TYPE` operator (parser.rs) already desugars to `as_<TYPE>`,
+and the R19 spec's own §4 text already said "the `as` operator already exists, F8", but only
+`as_i64`/`as_f64` were ever actually implemented. Verified this wasn't reachable any other way first
+(no implicit i64→u16 coercion for `let`/struct-field either — E0102 both times) before building,
+same discipline as the `fn_addr` sizing.
+
+Landed the 7 missing casts (`as_u8`/`as_u16`/`as_u32`/`as_u64`/`as_i8`/`as_i16`/`as_i32`): pure,
+general-purpose (not Hal-gated — same as `as_i64`/`as_f64`), truncating/masking semantics (no panic on
+narrowing, matches Rust's `as`). Interp: new match arm producing `Value::SizedInt`; also widened
+`as_i64`/`as_f64` to accept a `SizedInt` source (previously a value cast down to u16 couldn't be cast
+back up to i64 — asymmetric, now fixed). Codegen: routes every source through i64 uniformly, then
+reuses R19 Slice C's existing `coerce_to_fixed_width` helper (previously wired only at the `let`-
+binding call site) to narrow/widen to the target width.
+
+**While building a real test case to prove this works (a `@[repr(C)] @[packed] IdtEntry` filled via
+`fn_addr` + `shr`/`bit_and` + the new casts), found a second, more serious bug: struct-literal field
+stores were NEVER wired to `coerce_to_fixed_width` at all.** A literal-valued field narrower than i64
+(e.g. `access: u8`) was stored via a blanket `store i64 <val>, ptr <gep>` regardless of the field's
+declared width. In a `@[packed]` struct (no padding), that silently overwrites the following field's
+bytes — or overruns the alloca entirely for the last field. This is a real, silent, shipped-since-
+Slice-3 memory-corruption bug, confirmed on the ALREADY-SHIPPED `hello_kernel_slice3.ax` GDT example
+(every field after the first was corrupting its neighbor). It shipped undetected because the existing
+golden-IR gate (`axon_repr_c_gdt_layout_byte_exact`) only ever checked the struct *type* declaration
+string, never the actual field-store instructions.
+
+Fixed by applying `coerce_to_fixed_width` at the struct-field-store site too (`emit_struct_lit`).
+Verified the fix is real, not just "looks different": stashed the fix, rebuilt, confirmed the GDT
+example's IR reverts to the broken `store i64` shape and the strengthened test correctly FAILS, then
+restored the fix and confirmed PASS again. Strengthened `scripts/gdt_layout_ir_test.sh` to assert
+every field store is at its declared width, closing the exact coverage gap that let this ship
+silently. Re-verified against a real IDT gate descriptor end-to-end: every field (`offset_lo`,
+`selector`, `ist`, `type_attr`, `offset_mid`, `offset_hi`) now stores at its correct width
+(`store i16`/`store i8`/`store i32`, not a blanket `store i64`), confirmed via `--emit-llvm`.
+
+New unit test `r19_fixed_width_as_casts_are_known_pure_general_purpose`. `cargo build`/clippy clean
+both feature sets. `cargo test -p axon-core` full suite (interp + integration, incl. the strengthened
+`axon_repr_c_gdt_layout_byte_exact`) re-verified green. `governance/specs/R19-fixed-width-integers.md`
+gets a new Slice D; `R17-freestanding-substrate.md` and `REQUIREMENTS.md` updated to record that the
+IDT-construction path is now unblocked at the primitive level.
+
+**Deliberately still not built:** the actual `axon_kernel_handles_timer_interrupt` acceptance test —
+the full 256-entry IDT array, `lidt`, PIC remap/unmask, PIT programming, and a QEMU boot gate
+confirming the ISR fires. Every primitive that test needs now exists (`fn_addr`, the `as` casts,
+correct packed-struct field stores); the vertical assembly is real systems work for a future
+iteration, deliberately left for its own slice.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d is fully done. R33's easy sub-slices are exhausted (S2f blocked on a founder decision, §12 Q1).
-R39 is fully landed. R17 now has the `fn_addr` primitive; the remaining timer-interrupt acceptance
-test (IDT construction + PIC/PIT + QEMU boot) is real, boundable systems work. Options for the next
-iteration:
-- **Build the R17 timer-interrupt acceptance test** (`axon_kernel_handles_timer_interrupt`) now that
-  `fn_addr` unblocks it: a fixed-layout IDT-entry array via `@[repr(C)]`, filled via `fn_addr` +
-  bit-splitting, `lidt`, PIC remap/unmask, PIT programming, and a QEMU golden-output gate confirming
-  the ISR fires. Real systems work, likely multiple sub-slices.
+R39 is fully landed. R17/R19 now have every primitive the timer-interrupt path needs. Options for the
+next iteration:
+- **Build the R17 timer-interrupt acceptance test** (`axon_kernel_handles_timer_interrupt`): the full
+  256-entry IDT array (likely via `@[repr(C)]` + a fixed-size array, or 256 individual gate-fill
+  calls), `lidt` (needs an `asm` operand or a new builtin — check what `lidt` actually needs before
+  assuming `asm(...)`'s raw-string operands suffice), PIC remap/unmask via `port_out_u8`, PIT
+  programming, and a QEMU golden-output gate confirming the ISR fires and EOIs. Real systems work,
+  likely multiple sub-slices — size the `lidt` piece specifically before assuming it's "just asm".
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
