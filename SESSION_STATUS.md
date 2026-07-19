@@ -577,22 +577,46 @@ universal — saved as memory `new-check-verify-against-real-corpus`. R39 spec (
 from the previous iteration also finished clean during this iteration (host load was from unrelated
 processes — several `vllm` model servers and ML training jobs — not anything this session touched).
 
+## R33.S2 properly designed this iteration (commit `b76ccea`) — no code yet, a truth-correction + a buildable design
+
+Sized R33.S2 (vsock transport) for real via an Explore research pass, rather than leaving it
+"blocked on a Substrate trait" (as the last several iterations' notes said). Found the premise was
+false: R33's spec claimed it could "reuse R26's existing `Substrate` trait boundary," but that trait
+was never built anywhere — R26's spec fully designs it (§2/§5.1: `trait Substrate`,
+`MockSubstrate`, `QemuSwtpmSubstrate`, an `hw-attest` feature) but grep across the whole tree
+returns zero hits for any of it. R26 actually shipped a simpler path: a flat
+`crates/axon-attest/src/lib.rs` plus ~5 independent inline `AXON_CI_NO_KVM` env-var branches in
+`axon-vm/src/main.rs`. R26's `✅ Landed` status is still honest as a *functional* claim (the
+attestation gate genuinely works, gate-verified) — only the specific trait-architecture claim in
+the same document was aspirational, never reconciled after the code shipped differently. Corrected
+both specs (no behavior change, prose only): R26 gets a 2026-07-19 as-built note near its module
+table; R33's false claim is struck out. Then did the actual design work R33.S2 was missing: a new
+§5.2.2 scopes a real, buildable path that does NOT depend on R26's unbuilt trait — a dedicated
+`quorum/vsock.rs` module (not a generic trait), reusing the wire-framing pattern that DOES already
+exist (`interp.rs`'s raw-`AF_VSOCK` `vsock_send_recv`, currently guest→host only; S2's real new
+work is a host-side listener, which has no existing precedent), CI-testable via a TCP-loopback
+env-var swap matching R26's own `AXON_CI_NO_KVM` precedent rather than inventing a new mock
+abstraction. Explicitly still too big for one iteration — the section's job is to make a future
+iteration's sub-slice scoping decision cheap ("S2a: wire protocol + CLI flags, TCP-loopback-tested"
+as a first bounded cut), not to have built it. `verify_all_specs.sh` clean (3/3 reruns);
+`r39_slice1_gate.sh`/`r39_slice5_gate.sh` both still pass against the regenerated store. Saved as
+memory `r26-substrate-trait-aspirational`: verify a spec's claimed abstractions exist in code,
+independent of whether its overall status says "Landed" — the two claims can diverge.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2 (vsock transport — confirmed to need a from-scratch `Substrate` trait, a real design task,
-not sized for a quick slice). R39 has Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render)
-remains, and it needs design work before it's a quick slice (see above). Options for the next
-iteration:
+R33.S2, now properly designed (§5.2.2) but not yet sized into a buildable first sub-slice. R39 has
+Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render) remains, and it needs design work
+before it's a quick slice. Options for the next iteration:
+- **R33.S2a**: size the vsock design's own suggested first cut ("wire protocol + CLI flag
+  scaffolding, TCP-loopback-tested") into an actually-buildable slice — the design now exists
+  (§5.2.2), this is picking the smallest real piece of it.
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
-- **R33.S2, properly scoped as a design task**: first write/extend the spec with a concrete
-  `Substrate` trait design (real vsock impl + CI-mock path, matching the R26 attestation
-  software-TPM-stand-in precedent) BEFORE writing code — this is Structural work per
-  BUILD_PROTOCOL Gate 1, not a quick CLI-wiring slice like S3/S4 were.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
   bodies (would unlock the str-returning family for the registry) — real design work, size it
   before committing to it in one iteration.
