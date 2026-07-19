@@ -627,17 +627,36 @@ actually named in `gate.sh`'s clippy lines before trusting its lint state — co
 allowlist, not workspace-wide. Full `gate.sh --strict` running in background to confirm workspace-
 wide.
 
+## R33.S2b landed: real-socket round trip over TCP loopback (commit `d618c77`)
+
+Next smallest piece after S2a: `connect_and_round_trip` in `quorum/vsock.rs` — the proposer side of
+ONE real connection (TCP loopback, the §5.2.2 CI stand-in for `AF_VSOCK`), deadline-bounded
+(`connect_timeout` + read/write timeouts), fail-closed (timeout/refused connection → `Err`, meant
+to be treated by a future collect loop exactly like a missing `.vote` file — no vote from that
+peer, not a hard quorum failure). 3 new tests (12 total): a full round trip returns the voter's
+real response over an actual socket (not just an in-memory buffer, which is all S2a's tests
+covered); a voter's EOF sentinel comes back `Ok(None)` not an error; connecting to a dead/refused
+port is `Err`, not a panic or a hang past the deadline. The voter side in these tests
+(`spawn_one_shot_voter`) is deliberately test-local only — a real listen/accept/respond primitive
+is separate, still-open S2c+ work, along with the N-peer broadcast/collect fan-out and the CLI
+flags. Ran the vsock test module 5 consecutive times to check for socket/timing flakiness (real
+network I/O, not pure logic) — all 5 identical, 12/12 clean. `cargo test -p axon-vm`: 58/58.
+`r33_acceptance_gate.sh`: unchanged, ALL CHECKS PASSED. R33 spec §13/§14/header, REQUIREMENTS.md
+updated.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2b+ (the real socket + broadcast/listen loop + CLI flags — S2a's wire protocol is done, this
-is the next, bigger piece). R39 has Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render)
-remains, and it needs design work before it's a quick slice. Options for the next iteration:
-- **R33.S2b**: open a real socket (start with the TCP-loopback CI stand-in per §5.2.2, defer real
-  `AF_VSOCK` to a later, explicitly-gated lane) and wire `vsock.rs`'s framing into an actual
-  connect/send/recv round trip — the first slice where the wire protocol gets a real caller.
+R33.S2c+ (N-peer broadcast/collect fan-out + a real listen/accept/respond primitive + CLI flags —
+S2a's wire protocol and S2b's single round trip are both done). R39 has Slices 1-3, 5 landed; only
+Slice 4 (`axon-gov status` render) remains, and it needs design work before it's a quick slice.
+Options for the next iteration:
+- **R33.S2c**: the N-peer broadcast/collect fan-out (calling `connect_and_round_trip` once per
+  peer, aggregating into `Vec<VoteResponse>` for the existing pure `check_quorum`) — the natural
+  next piece now that the single-peer round trip is proven; the listen/accept/respond primitive
+  and CLI flags can follow once this exists.
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
