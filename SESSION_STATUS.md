@@ -865,14 +865,50 @@ already-documented `wasm_examples_run_identically_on_aot_wasm` flake (418 passed
 isolated rerun passed clean immediately, confirming flake not regression, per the established
 protocol. No new information, R1d's change remains fully verified.
 
+## R17 `fn_addr` primitive landed (this iteration)
+
+Took the previous iteration's sizing further: the function-address primitive R17's timer-interrupt
+wiring needs turned out to have a clear, well-precedented design once actually sized (`atomic_ordering_arg`,
+Slice 2's compile-time-literal validator, is the exact template), so built it end-to-end rather than
+stopping at a design doc. Landed `fn_addr(name: str) -> i64` (E1707 band): `Hal`-effect-gated like
+every other R17 HAL builtin (added to `is_impure_builtin` + `builtin_effect_row` in `builtins.rs`),
+substrate-only and codegen-only (`E0910` in interp — a function's address is meaningless in a
+tree-walking interpreter). `name` must be a compile-time string literal naming a function defined in
+the program; a new `fn_addr_target` codegen helper (mirrors `atomic_ordering_arg`'s structure exactly)
+validates this and fails closed with E1707 on a non-literal argument or an unknown function name.
+Resolves the function's `FunctionValue` from the existing `self.functions` map (the same map
+`codegen/asi.rs`'s adaptive-fn registration already uses for a different purpose) and lowers to
+`ptrtoint (ptr @fn to i64)`. Return type is plain `i64`, not `u64`, matching 100% of existing R17 HAL
+builtin precedent despite the "address" semantics (checked: `volatile_load_u8`/`_u32` etc. all use
+`i64` internally too).
+
+Verified, not just implemented: `axon build --freestanding --emit-obj` compiles the happy-path test
+that previously failed with E0910; `axon build --emit-llvm` confirms the emitted IR is a compile-time-
+constant `ptrtoint` (no runtime cost); a non-literal-argument test and an unknown-function-name test
+both correctly fail closed at build time with E1707, exit 1. Added `r17_fn_addr_is_hal_impure_alloc_free`
+unit test (mirrors the existing `r17_atomics_carry_hal_effect_and_are_impure` pattern). `cargo build`
+clean on both feature sets, both clippy variants (`--no-default-features --bin axon` and
+`--all-targets`) clean with `-D warnings`, `cargo test -p axon-core --lib` 574/574 pass,
+`verify_all_specs.sh` clean. R17 spec §12 Q7 marked resolved; `REQUIREMENTS.md`'s R17 row updated.
+
+**Deliberately still not done:** the actual IDT gate-descriptor construction, PIC/PIT programming,
+and the `axon_kernel_handles_timer_interrupt` QEMU boot test itself — `fn_addr` is the primitive that
+unblocks that work, not the acceptance test in full. That remains real systems work for a future
+iteration (building a fixed-layout `@[repr(C)]` IDT-entry struct array, filling each gate's offset
+fields via `fn_addr`, `lidt`, unmasking the PIC/PIT, and confirming the ISR actually fires under
+QEMU) — matching this session's "smallest safe increment first" discipline (same shape as R33.S2's
+a-through-e sub-slices).
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d is fully done. R33's easy sub-slices are exhausted (S2f blocked on a founder decision, §12 Q1).
-R39 is fully landed. R17's timer-interrupt wiring is now known to need a real language feature
-(function-address primitive) rather than being pickable directly. Options for the next iteration:
-- **Properly scope the function-address primitive** R17 needs (a `fn_addr(name) -> u64` builtin vs.
-  an `asm(...)` symbol-operand extension — R17 spec §12 Q7 deliberately left this undecided) as a
-  design task before building it — real structural work, not a quick slice.
+R39 is fully landed. R17 now has the `fn_addr` primitive; the remaining timer-interrupt acceptance
+test (IDT construction + PIC/PIT + QEMU boot) is real, boundable systems work. Options for the next
+iteration:
+- **Build the R17 timer-interrupt acceptance test** (`axon_kernel_handles_timer_interrupt`) now that
+  `fn_addr` unblocks it: a fixed-layout IDT-entry array via `@[repr(C)]`, filled via `fn_addr` +
+  bit-splitting, `lidt`, PIC remap/unmask, PIT programming, and a QEMU golden-output gate confirming
+  the ISR fires. Real systems work, likely multiple sub-slices.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
