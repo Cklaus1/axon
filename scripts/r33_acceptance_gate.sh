@@ -36,6 +36,13 @@ REQUIRED_NAMES=(
     "coalition_cap_at_even_n_sockpuppet_blocked"
     "coalition_cap_at_even_n_distinct_roots_meets_quorum"
     "legacy_votes_missing_lineage_root_share_one_capped_bucket"
+    "frame_round_trips_arbitrary_bytes"
+    "connect_and_round_trip_over_real_tcp_socket_returns_the_voters_response"
+    "connect_and_round_trip_to_a_dead_port_is_an_io_error_not_a_panic"
+    "broadcast_and_collect_gathers_every_responsive_peers_vote"
+    "broadcast_and_collect_drops_unreachable_peers_without_blocking_the_others"
+    "broadcast_and_collect_wall_clock_does_not_scale_with_peer_count"
+    "respond_once_on_a_peer_that_sends_the_eof_sentinel_instead_of_a_request_is_an_io_error"
 )
 
 for name in "${REQUIRED_NAMES[@]}"; do
@@ -380,6 +387,73 @@ if echo "$CRITICAL_NO_QUORUM_OUT" | grep -q '"status":"deployed"'; then
     pass "...and still deploys (the gate stays open by design — this is visibility, not a behavior change)"
 else
     fail "Risk critical + no --quorum-dir unexpectedly changed deploy behavior: $CRITICAL_NO_QUORUM_OUT"
+fi
+
+echo ""
+echo "11. R33.S2d: real 'quorum vote --listen' CLI journey (TCP-loopback wire protocol)"
+
+if command -v python3 >/dev/null 2>&1; then
+    LISTEN_PORT=$((20000 + RANDOM % 10000))
+    LISTEN_LOG="$(mktemp /tmp/r33-listen-XXXXXX.log)"
+    AXON_CI_NO_KVM=1 "$BIN" quorum vote --listen "$LISTEN_PORT" --approve \
+        --reason "gate journey" --lineage-root "gate-voter" >"$LISTEN_LOG" 2>&1 &
+    LISTEN_PID=$!
+    sleep 0.3 # let the listener bind before the client connects
+
+    CLIENT_OUT=$(python3 - "$LISTEN_PORT" <<'PYEOF'
+import socket, struct, json, sys
+port = int(sys.argv[1])
+req = {"run_id": "gate-run", "prog_hash": "sha256:gate", "voter_tcb": "axtcb1-ext:proposer",
+       "proposed_action": "deploy", "timestamp_ms": 1}
+payload = json.dumps(req).encode("utf-8")
+s = socket.create_connection(("127.0.0.1", port), timeout=5)
+s.sendall(struct.pack("<I", len(payload)) + payload)
+lbuf = s.recv(4)
+(length,) = struct.unpack("<I", lbuf)
+resp = b""
+while len(resp) < length:
+    resp += s.recv(length - len(resp))
+print(json.dumps(json.loads(resp)))
+PYEOF
+)
+    set +e
+    wait "$LISTEN_PID" 2>/dev/null
+    LISTEN_RC=$?
+    set -e
+
+    if [ "$LISTEN_RC" -eq 0 ] \
+        && echo "$CLIENT_OUT" | grep -q '"approved": true' \
+        && echo "$CLIENT_OUT" | grep -q '"lineage_root": "gate-voter"' \
+        && echo "$CLIENT_OUT" | grep -q '"run_id": "gate-run"'; then
+        pass "propose (python client) -> vote --listen -> real VoteResponse over TCP loopback"
+    else
+        fail "--listen CLI journey: rc=$LISTEN_RC client_out=$CLIENT_OUT listen_log=$(cat "$LISTEN_LOG")"
+    fi
+    rm -f "$LISTEN_LOG"
+
+    # --listen conflicts with --request/--out (clap-level, not a runtime check)
+    set +e
+    CONFLICT_OUT=$("$BIN" quorum vote --request /nonexistent --listen $((LISTEN_PORT + 1)) --approve 2>&1)
+    CONFLICT_RC=$?
+    set -e
+    if [ "$CONFLICT_RC" -ne 0 ] && echo "$CONFLICT_OUT" | grep -qi "cannot be used with"; then
+        pass "--listen conflicts with --request/--out (clap-enforced, not a silent override)"
+    else
+        fail "--listen + --request should conflict: rc=$CONFLICT_RC out=$CONFLICT_OUT"
+    fi
+
+    # backward compat: omitting --listen still requires --request/--out (clap-enforced)
+    set +e
+    BACKCOMPAT_OUT=$("$BIN" quorum vote --approve 2>&1)
+    BACKCOMPAT_RC=$?
+    set -e
+    if [ "$BACKCOMPAT_RC" -ne 0 ] && echo "$BACKCOMPAT_OUT" | grep -qi "required arguments were not provided"; then
+        pass "omitting --listen still requires --request/--out (100% backward compatible)"
+    else
+        fail "no --listen backward-compat check: rc=$BACKCOMPAT_RC out=$BACKCOMPAT_OUT"
+    fi
+else
+    echo "  (skipped: python3 not available)"
 fi
 
 # ── Final result ──────────────────────────────────────────────────────────────

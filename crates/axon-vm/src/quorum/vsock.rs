@@ -148,6 +148,37 @@ pub fn broadcast_and_collect(
         .collect()
 }
 
+/// S2d — voter side: accept exactly ONE inbound connection on `listener`, read one `VoteRequest`
+/// JSON frame, hand it to `respond`, and write back whatever `VoteResponse` `respond` returns (or
+/// the EOF sentinel if `respond` returns `None` — mirrors [`connect_and_round_trip`]'s own `Ok
+/// (None)` convention: a deliberate "no vote" answer is a legitimate outcome, not a fault).
+///
+/// Deliberately single-shot, not a daemon loop: the CLI command this backs (`axon-vm quorum vote
+/// --listen PORT`) is meant to be invoked once per expected proposal, the same invocation
+/// granularity `propose`/`vote`/`check` already have in the file-based path — an external
+/// orchestrator (systemd, a shell script, `axon-web`'s CLI-wrapping pattern) owns retry/repeat
+/// policy, not this function. `listener.accept()` blocks with no internal timeout — a legitimate
+/// scope boundary for a "wait for the one expected connection" primitive, not an oversight; a
+/// caller that needs a bounded wait wraps this call with its own timeout.
+pub fn respond_once(
+    listener: &std::net::TcpListener,
+    respond: impl FnOnce(
+        crate::quorum::logic::VoteRequest,
+    ) -> Option<crate::quorum::logic::VoteResponse>,
+) -> io::Result<()> {
+    let (mut stream, _) = listener.accept()?;
+    let req: crate::quorum::logic::VoteRequest = read_json_frame(&mut stream)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "peer sent the EOF sentinel instead of a VoteRequest",
+        )
+    })?;
+    match respond(req) {
+        Some(resp) => write_json_frame(&mut stream, &resp),
+        None => write_frame(&mut stream, b""),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,18 +297,16 @@ mod tests {
     use std::net::TcpListener;
     use std::time::Duration;
 
+    // Delegates to the real production `respond_once` (S2d) rather than duplicating its
+    // accept/read/respond/write logic — so every test in this file that uses this helper
+    // (S2a-c, written before `respond_once` existed) also exercises `respond_once` itself.
     fn spawn_one_shot_voter(
         respond: impl FnOnce(VoteRequest) -> Option<VoteResponse> + Send + 'static,
     ) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let req: VoteRequest = read_json_frame(&mut stream).unwrap().unwrap();
-            match respond(req) {
-                Some(resp) => write_json_frame(&mut stream, &resp).unwrap(),
-                None => write_frame(&mut stream, b"").unwrap(), // EOF sentinel
-            }
+            respond_once(&listener, respond).unwrap();
         });
         addr
     }
@@ -428,5 +457,24 @@ mod tests {
             "broadcast_and_collect took {elapsed:?} for 4 dead peers at deadline {deadline:?} — \
              looks sequential, not parallel"
         );
+    }
+
+    // ── S2d: respond_once (voter side) ──────────────────────────────────────────────────
+    // The happy path (a valid VoteRequest in, a VoteResponse or EOF sentinel out) is already
+    // exercised end-to-end by every connect_and_round_trip/broadcast_and_collect test above, all
+    // of which go through spawn_one_shot_voter -> respond_once. This section covers the one path
+    // those don't: a malformed peer that never sends a valid request at all.
+
+    #[test]
+    fn respond_once_on_a_peer_that_sends_the_eof_sentinel_instead_of_a_request_is_an_io_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || respond_once(&listener, |_req| None));
+
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        write_frame(&mut stream, b"").unwrap(); // EOF sentinel where a VoteRequest was expected
+
+        let result = handle.join().unwrap();
+        assert!(result.is_err());
     }
 }

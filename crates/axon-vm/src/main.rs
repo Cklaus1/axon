@@ -404,9 +404,9 @@ enum QuorumCmd {
     /// Measures this host's own R31 extended TCB as the voter identity (same
     /// CI-mock fallback as `propose`) and writes a `VoteResponse` JSON file.
     Vote {
-        /// Path to the VoteRequest JSON to vote on.
-        #[arg(long)]
-        request: PathBuf,
+        /// Path to the VoteRequest JSON to vote on. Required unless --listen is given.
+        #[arg(long, required_unless_present = "listen")]
+        request: Option<PathBuf>,
 
         /// Approve the proposed action.
         #[arg(long, conflicts_with = "deny")]
@@ -420,9 +420,16 @@ enum QuorumCmd {
         #[arg(long, default_value = "")]
         reason: String,
 
-        /// Output path for the VoteResponse JSON.
-        #[arg(long)]
-        out: PathBuf,
+        /// Output path for the VoteResponse JSON. Required unless --listen is given.
+        #[arg(long, required_unless_present = "listen")]
+        out: Option<PathBuf>,
+
+        /// R33.S2d: listen on this TCP port for ONE inbound VoteRequest instead of reading
+        /// --request/writing --out as files (TCP-loopback CI stand-in for real AF_VSOCK, per
+        /// R33 spec §5.2.2 — same --approve/--deny/--reason/--lineage-root decision either way).
+        /// Blocks until exactly one connection arrives; an external caller owns any timeout.
+        #[arg(long, conflicts_with_all = ["request", "out"])]
+        listen: Option<u16>,
 
         /// Guest kernel image to measure (default: dist/guest/vmlinuz).
         #[arg(long)]
@@ -561,8 +568,8 @@ fn main() {
         Cmd::Quorum { cmd } => match cmd {
             QuorumCmd::Propose { run_id, prog, action, out, kernel, axon_os, axon_audit } =>
                 cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit),
-            QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root } =>
-                cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root),
+            QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen } =>
+                cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen),
             QuorumCmd::Check { responses_dir, n, json } =>
                 cmd_quorum_check(responses_dir, n, json),
         },
@@ -1396,31 +1403,27 @@ fn cmd_quorum_propose(
     eprintln!("✓ proposal written: {} (proposer axtcb1-ext: {})", out.display(), voter_tcb);
 }
 
-/// `axon-vm quorum vote` — read a `VoteRequest`, cast a vote, write a `VoteResponse`.
+/// `axon-vm quorum vote` — cast a vote on a `VoteRequest`, either read from `--request`/written
+/// to `--out` as files (the original, still-default path), or (R33.S2d) received over a single
+/// TCP-loopback connection on `--listen PORT` and answered on that same connection — same
+/// approve/deny/reason/lineage-root decision either way, only the I/O layer differs.
 #[allow(clippy::too_many_arguments)]
 fn cmd_quorum_vote(
-    request: PathBuf,
+    request: Option<PathBuf>,
     approve: bool,
     deny: bool,
     reason: String,
-    out: PathBuf,
+    out: Option<PathBuf>,
     kernel: Option<PathBuf>,
     axon_os: Option<PathBuf>,
     axon_audit: Option<PathBuf>,
     lineage_root: Option<String>,
+    listen: Option<u16>,
 ) {
     if !approve && !deny {
         eprintln!("axon-vm quorum vote: exactly one of --approve or --deny is required");
         process::exit(2);
     }
-
-    let req = match quorum::io::read_vote_request(&request) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("axon-vm quorum vote: failed to read {}: {e}", request.display());
-            process::exit(2);
-        }
-    };
 
     let voter_tcb = quorum_self_tcb(&kernel, &axon_os, &axon_audit);
     // Deliberately NOT defaulting to `voter_tcb` (see the CLI flag's own doc
@@ -1437,23 +1440,62 @@ fn cmd_quorum_vote(
                 .as_nanos()
         )
     });
-    let resp = quorum::logic::VoteResponse {
-        voter_tcb: voter_tcb.clone(),
-        run_id: req.run_id,
-        approved: approve,
-        reason,
-        lineage_root,
+    let build_resp = move |req: quorum::logic::VoteRequest, voter_tcb: &str| {
+        quorum::logic::VoteResponse {
+            voter_tcb: voter_tcb.to_string(),
+            run_id: req.run_id,
+            approved: approve,
+            reason,
+            lineage_root,
+        }
     };
+
+    if let Some(port) = listen {
+        let addr = format!("127.0.0.1:{port}");
+        let listener = match std::net::TcpListener::bind(&addr) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("axon-vm quorum vote --listen: failed to bind {addr}: {e}");
+                process::exit(2);
+            }
+        };
+        eprintln!("listening on {addr} for one VoteRequest (voter axtcb1-ext: {voter_tcb}) ...");
+        let voter_tcb_for_closure = voter_tcb.clone();
+        let result = quorum::vsock::respond_once(&listener, move |req| {
+            Some(build_resp(req, &voter_tcb_for_closure))
+        });
+        if let Err(e) = result {
+            eprintln!("axon-vm quorum vote --listen: {e}");
+            process::exit(2);
+        }
+        eprintln!(
+            "✓ vote sent ({} — voter axtcb1-ext: {voter_tcb})",
+            if approve { "APPROVE" } else { "DENY" }
+        );
+        return;
+    }
+
+    // File-based path (clap's required_unless_present="listen" guarantees these are Some here).
+    let request = request.expect("clap: --request required unless --listen");
+    let out = out.expect("clap: --out required unless --listen");
+
+    let req = match quorum::io::read_vote_request(&request) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("axon-vm quorum vote: failed to read {}: {e}", request.display());
+            process::exit(2);
+        }
+    };
+    let resp = build_resp(req, &voter_tcb);
 
     if let Err(e) = quorum::io::write_vote_response(&resp, &out) {
         eprintln!("axon-vm quorum vote: failed to write {}: {e}", out.display());
         process::exit(2);
     }
     eprintln!(
-        "✓ vote written: {} ({} — voter axtcb1-ext: {})",
+        "✓ vote written: {} ({} — voter axtcb1-ext: {voter_tcb})",
         out.display(),
         if approve { "APPROVE" } else { "DENY" },
-        voter_tcb
     );
 }
 
