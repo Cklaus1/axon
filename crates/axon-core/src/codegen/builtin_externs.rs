@@ -621,6 +621,36 @@ pub(super) const STR_OUT_EXTERNS: &[StrOutSig] = &[
         symbol: "__axon_str_trim_end",
         params: &[L::Str],
     },
+    // Multi-arg out-param candidates, migrated 2026-07-20 (second batch): each verified by
+    // reading its actual codegen before adding a row, same discipline as the first batch —
+    // confirmed every one shares the identical output-side shape (2 out-params -> AxonStr), the
+    // only difference is how many/which LEADING params come before them, which
+    // synthesize_str_out_wrapper already handles generically (it just iterates `params`).
+    StrOutSig {
+        axon_name: "str_repeat",
+        symbol: "__axon_str_repeat",
+        params: &[L::Str, L::I64],
+    },
+    StrOutSig {
+        axon_name: "str_slice",
+        symbol: "__axon_str_slice",
+        params: &[L::Str, L::I64, L::I64],
+    },
+    StrOutSig {
+        axon_name: "str_replace",
+        symbol: "__axon_str_replace",
+        params: &[L::Str, L::Str, L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_pad_start",
+        symbol: "__axon_str_pad_start",
+        params: &[L::Str, L::I64, L::Str],
+    },
+    StrOutSig {
+        axon_name: "str_pad_end",
+        symbol: "__axon_str_pad_end",
+        params: &[L::Str, L::I64, L::Str],
+    },
 ];
 
 // ── R1d slice 3: drift cross-check ──────────────────────────────────────────

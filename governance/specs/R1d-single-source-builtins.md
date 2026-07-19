@@ -17,11 +17,19 @@ tests extend R1d Slice 3's "the tables can't drift" promise to the new table (5 
 Verified: `cargo build`/clippy clean (both feature sets); 5/5 drift tests; a manual native==interp
 check across 14 hand-picked cases (incl. `straße`→`STRASSE` Unicode-growing case-map, empty
 strings) byte-identical; full `scripts/fuzz_parity.sh` (all 7 already had corpus entries) PASS.
-**Explicitly still out of scope**: `str_replace`/`str_pad_start`/`str_pad_end`/`str_slice`/
-`str_repeat` (extra scalar/str args before the two out-params — likely fit `params: &'static [L]`
-cleanly but not yet verified) and `str_split`/`str_join` (genuinely different shapes: `str_split`
-returns `Array<Str>` not a single `AxonStr`; `str_join` takes an array as INPUT — confirmed by
-reading their actual codegen, not assumed). Below this line is the original **Slice 1 LANDED**
+**Second batch LANDED same day**: `str_repeat`/`str_slice`/`str_replace`/`str_pad_start`/
+`str_pad_end` — the multi-arg candidates, confirmed by reading each one's actual codegen (not
+assumed) to share the identical output-side shape as the first batch, needing zero new synthesis
+logic — `synthesize_str_out_wrapper` already iterates `params: &'static [L]` generically, so mixed
+leading-arg shapes (`[Str, I64]`, `[Str, I64, I64]`, `[Str, Str, Str]`, `[Str, I64, Str]`) all work
+unchanged. Verified: `cargo build`/clippy clean; 5/5 drift tests (now covering all 12
+`STR_OUT_EXTERNS` rows); a manual native==interp check across 12 more hand-picked cases (incl.
+multibyte fill char `★` padding, empty-string edge cases, a byte-vs-char UTF-8 slice boundary)
+byte-identical; full `scripts/fuzz_parity.sh` PASS. **`STR_OUT_EXTERNS` is now 12 rows — every
+single-`AxonStr`-return out-param candidate identified in the 2026-07-18 scan except `str_split`
+(returns `Array<Str>`) and `str_join` (takes an array as input), which remain genuinely different
+shapes needing separate, further extension, not assumed to fit this table.** Below this line is
+the original **Slice 1 LANDED**
 header (`b8f54fb`,
 "BUILTIN_EXTERNS registry (R1d slice 1) — collapse 21 declare blocks"):
 `crates/axon-core/src/codegen/builtin_externs.rs` exists exactly as designed, 25 registry rows,
@@ -109,7 +117,7 @@ supersedes: none
 related: R1b-str-return-abi, R1c-dict-runtime
 conflicts-with: none
 reserves: none
-evidence: cargo test --lib codegen::builtin_externs -p axon-core (5 tests, 33 BUILTIN_EXTERNS rows + 7 STR_OUT_EXTERNS rows, re-verified 2026-07-20); scripts/fuzz_parity.sh (all 7 str-out-synthesis candidates + Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4); str_count + str-out-synthesis-batch native==interp manual verification 2026-07-20 (5 + 14 cases). Slice 2's simple-batch scope found one more real candidate 2026-07-20 (str_count, a miscategorized non-out-param builtin) after the 2026-07-18 scan missed it. The out-param-synthesis extension landed 2026-07-20 for the 7 single-Str-param candidates (STR_OUT_EXTERNS); str_replace/str_pad_start/str_pad_end/str_slice/str_repeat (extra args, likely fit) and str_split/str_join (genuinely different Array<Str> shapes, confirmed by reading the codegen) remain, separate follow-on work, not a batch-migration gap
+evidence: cargo test --lib codegen::builtin_externs -p axon-core (5 tests, 33 BUILTIN_EXTERNS rows + 12 STR_OUT_EXTERNS rows, re-verified 2026-07-20); scripts/fuzz_parity.sh (all 12 str-out-synthesis candidates + Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4); str_count + str-out-synthesis batches native==interp manual verification 2026-07-20 (5 + 14 + 12 cases). Slice 2's simple-batch scope found one more real candidate 2026-07-20 (str_count, a miscategorized non-out-param builtin) after the 2026-07-18 scan missed it. The out-param-synthesis extension landed 2026-07-20 in two batches: 7 single-Str-param candidates then 5 multi-arg candidates (str_repeat/str_slice/str_replace/str_pad_start/str_pad_end), all 12 in STR_OUT_EXTERNS now. Only str_split/str_join remain (genuinely different Array<Str> input/output shapes, confirmed by reading the codegen, not assumed) — separate, further extension, not a batch-migration gap
 ```
 
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the
