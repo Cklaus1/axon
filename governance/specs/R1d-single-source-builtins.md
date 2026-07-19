@@ -64,6 +64,18 @@ excludes. All 4 slices now landed (Slice 2 is the one exception — genuinely pa
 see above). This header said "Draft" with zero indication that a third of the design already
 shipped; same staleness class as R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c, caught by
 the same outer-loop sweep (`EXECUTION_MODEL.md` §2) — genuinely partial, not a clean flip.
+**Slice 2 correction 2026-07-20**: sizing "extend `ExternSig`/`declare_one_extern` for out-param
+synthesis" (per the "further Slice 2 progress requires..." note above) found the 2026-07-18
+"exhaustive `__axon_*` symbol scan" had one real miscategorization: `str_count` was bucketed with
+the str-returning out-param wrapper family (`str_replace`/`str_slice`/etc.) purely by name
+resemblance — its actual codegen never used the out-param dance at all (`__axon_str_count(AxonStr,
+AxonStr) -> i64` was a straight two-str-arg-to-scalar call, the exact shape `str_index_of` already
+had a registry row for). Migrated it (33rd row) and deleted the now-redundant hand-written block;
+native==interp verified manually (5 cases incl. empty needle, empty haystack, overlapping matches
+— all byte-identical). This does NOT mean the "extend the registry for out-param synthesis" work is
+done or unnecessary — the other ~10 named candidates (`str_replace`/`str_slice`/`str_reverse`/…)
+are genuinely out-param wrappers and still need that real, separate structural extension; this was
+just the one candidate that turned out not to need it after all.
 
 ```spec-meta
 id: R1d-single-source-builtins
@@ -75,7 +87,7 @@ supersedes: none
 related: R1b-str-return-abi, R1c-dict-runtime
 conflicts-with: none
 reserves: none
-evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, 32 rows, re-verified 2026-07-18); scripts/fuzz_parity.sh (Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4). Slice 2's simple-batch scope is complete (exhaustive __axon_* symbol scan, 2026-07-18, found zero further eligible candidates); extending the registry to cover out-param wrapper builtins is unstarted, separate structural work, not a batch-migration gap
+evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, 33 rows, re-verified 2026-07-20); scripts/fuzz_parity.sh (Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4); str_count native==interp manual verification 2026-07-20 (5 cases). Slice 2's simple-batch scope found one more real candidate 2026-07-20 (str_count, a miscategorized non-out-param builtin) after the 2026-07-18 scan missed it; the ~10 genuine out-param wrapper builtins still need the registry's out-param-synthesis extension, unstarted, separate structural work, not a batch-migration gap
 ```
 
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the

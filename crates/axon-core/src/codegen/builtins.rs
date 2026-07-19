@@ -3290,52 +3290,10 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         self.declare_phase9_math_builtins();
-        // ── str_count(s: str, needle: str) -> i64 ───────────────────────────
-        // Delegate to axon-rt's __axon_str_count (Rust `s.matches(needle).count()`)
-        // — byte-identical to the interpreter (I-2). The old inline `strstr` loop
-        // returned 0 for an empty needle (interp returns char_count+1, one match
-        // per char boundary) and mis-handled an embedded NUL. Same delegate-to-rt
-        // pattern as str_to_upper; returns the count scalar directly.
-        {
-            let str_ty = self
-                .ir
-                .context
-                .struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let rt_fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let rt_fn = self
-                .ir
-                .module
-                .get_function("__axon_str_count")
-                .unwrap_or_else(|| {
-                    self.ir
-                        .module
-                        .add_function("__axon_str_count", rt_fn_ty, None)
-                });
-            let fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("str_count", fn_ty, None);
-            let bb = self.ir.context.append_basic_block(fn_val, "sc_entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(bb);
-            let s = fn_val.get_nth_param(0).unwrap();
-            let needle = fn_val.get_nth_param(1).unwrap();
-            let count = build_wrappers::w_call(
-                &self.ir.builder,
-                rt_fn,
-                &[s.into(), needle.into()],
-                "sc_call",
-            )
-            .try_as_basic_value()
-            .left()
-            .unwrap()
-            .into_int_value();
-            build_wrappers::w_ret(&self.ir.builder, count.into());
-            if let Some(b) = saved {
-                self.ir.builder.position_at_end(b);
-            }
-            self.functions.insert("str_count".to_string(), fn_val);
-            self.fn_return_types
-                .insert("str_count".to_string(), Type::I64);
-        }
+        // str_count moved to the BUILTIN_EXTERNS registry (codegen/builtin_externs.rs) — R1d
+        // simple-batch migration. Was previously hand-written here despite fitting the
+        // straight-declare-and-link shape exactly (same as str_index_of); see that file's row
+        // comment for how the miscategorization was found.
 
         // ── Phase 10: str_reverse(s: str) -> str ─────────────────────────────
         // BUG_HUNT #38: delegate to axon-rt's char-correct __axon_str_reverse

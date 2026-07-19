@@ -237,6 +237,21 @@ pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
         fn_key: Some("str_len"),
         ret_type: Some(("str_len", SemRet::I64)),
     },
+    // str_count was previously miscategorized as one of the str-returning out-param wrapper
+    // builtins (R1d spec's own "exhaustive scan") purely by name resemblance to str_replace/
+    // str_slice/etc — its actual codegen never used the out-param dance at all: a straight
+    // `__axon_str_count(AxonStr, AxonStr) -> i64` call, same shape as str_index_of right above.
+    // Found while sizing "extend ExternSig for out-param synthesis" (governance/specs/
+    // R1d-single-source-builtins.md) and migrating it here instead — a real, if small,
+    // simple-batch candidate the spec's own scan missed, not new registry capability.
+    ExternSig {
+        axon_name: "str_count",
+        symbol: "__axon_str_count",
+        params: &[L::Str, L::Str],
+        ret: L::I64,
+        fn_key: Some("str_count"),
+        ret_type: Some(("str_count", SemRet::I64)),
+    },
     // ── dict scalars (R1c) ──────────────────────────────────────────────────
     // These resolve at the call site via the bare `__axon_*` symbol
     // (`self.functions.get(...).or_else(module.get_function(...))`), so the
