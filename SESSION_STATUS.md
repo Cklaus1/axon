@@ -668,19 +668,44 @@ thoroughly verified regardless (targeted tests, clippy, acceptance gate, spec ve
 multiple times over), so the ambiguous background process was never load-bearing for trusting this
 iteration's own changes.
 
+## R33.S2d landed: real listen primitive + `quorum vote --listen` CLI flag (commit `4066538`)
+
+Voter side of S2: `respond_once` in `quorum/vsock.rs` — accepts exactly ONE inbound connection,
+reads a `VoteRequest` frame, hands it to a caller-supplied closure, writes back a `VoteResponse` (or
+the EOF sentinel). Deliberately single-shot, no daemon loop, no internal accept timeout — matches
+the CLI's existing per-invocation granularity, external caller owns any wait-bound policy.
+Refactored the S2a-c test helper (`spawn_one_shot_voter`) to delegate to it instead of duplicating
+the logic, so all 12 prior tests now also exercise the new production primitive. Wired into the
+real CLI: `axon-vm quorum vote --listen PORT [--approve|--deny] [--reason] [--lineage-root]` — same
+decision logic as the file-based path, just a different I/O layer. `--request`/`--out` became
+`required_unless_present="listen"` (100% backward compatible: omitting `--listen` still requires
+them exactly as before); `--listen` `conflicts_with_all` them. Verified end-to-end with a
+from-scratch Python client speaking the real wire protocol directly (not the Rust test helpers) —
+proves the actual bytes on the wire, not just Rust-to-Rust round-trips. New
+`r33_acceptance_gate.sh` §11 (3 checks, 3 consecutive reruns for socket/timing flakiness — all
+identical). `cargo test -p axon-vm`: 62/62. Clippy clean. R33 spec §13/§14/header,
+`REQUIREMENTS.md` updated.
+
+Along the way, the long-running background `gate.sh --strict` from two iterations ago finally
+completed (`REAL_EXIT` not directly captured — its log's last line was `❌ gate FAILED at:
+runtime-crate clippy`, but that failure was sampled mid-edit against this iteration's own
+in-progress uncommitted changes, not a real regression in the already-committed S2c state, which
+was independently verified clean before its own commit). A separate, freshly-relaunched background
+run from last iteration is still the one actually confirming the current committed tree.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2d+ (a real listen/accept/respond primitive + CLI flags + real `AF_VSOCK` — S2a/S2b/S2c, the
-whole proposer-side path, are done; S2d is the voter/listen side). R39 has Slices 1-3, 5 landed;
-only Slice 4 (`axon-gov status` render) remains, and it needs design work before it's a quick
-slice. Options for the next iteration:
-- **R33.S2d**: a real listen/accept/respond primitive (the voter side — currently only
-  `spawn_one_shot_voter` in `vsock.rs`'s own tests, not production code) plus the
-  `axon-vm quorum vote --listen` CLI flag — this is what finally gives `broadcast_and_collect` and
-  `connect_and_round_trip` their first non-test callers, closing out the `#![allow(dead_code)]`.
+R33.S2e+ (the `propose --broadcast` CLI flag — `broadcast_and_collect`'s first real, non-test
+caller — and real `AF_VSOCK`, swapping S2b/S2c/S2d's TCP-loopback stand-in). R39 has Slices 1-3, 5
+landed; only Slice 4 (`axon-gov status` render) remains, and it needs design work before it's a
+quick slice. Options for the next iteration:
+- **R33.S2e**: the `axon-vm quorum propose --broadcast CID1,CID2,...` CLI flag, wiring
+  `broadcast_and_collect` into a real caller for the first time — closes out the module's
+  `#![allow(dead_code)]` entirely and completes S2's proposer+voter round trip as a real CLI
+  journey (propose --broadcast against N real `vote --listen` processes).
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
