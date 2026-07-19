@@ -603,17 +603,41 @@ as a first bounded cut), not to have built it. `verify_all_specs.sh` clean (3/3 
 memory `r26-substrate-trait-aspirational`: verify a spec's claimed abstractions exist in code,
 independent of whether its overall status says "Landed" — the two claims can diverge.
 
+## R33.S2a landed: vsock wire protocol (commit `e554173`)
+
+Picked the smallest real piece of the §5.2.2 vsock design: `crates/axon-vm/src/quorum/vsock.rs`,
+length-prefixed JSON framing (`write_frame`/`read_frame`/`write_json_frame`/`read_json_frame`),
+transport-agnostic (generic `Read`/`Write`, so a TCP-loopback stand-in and a real vsock socket hit
+the identical code path), matching `interp.rs`'s existing `vsock_send_recv` convention exactly.
+9 new unit tests (round-trips real `VoteRequest`/`VoteResponse`, truncated/malformed streams are
+`io::Error`s not panics, EOF sentinel distinguishable from a real empty payload). Deliberately
+unwired to any caller yet (documented `#![allow(dead_code)]`) — S2b+ (real socket, broadcast/
+listen loop, CLI flags) is separate, larger work, not started.
+
+Found and closed an incidental gap while landing this: `axon-vm`/`axon-attest` were never
+clippy-gated by `gate.sh` at all — the same blind spot BUG_HUNT #35 found in the runtime crates,
+just never re-checked for these two. Confirmed 3 small findings pre-existed (not introduced by
+this change) via `git stash` before fixing: a 9-arg `run_in_firecracker` (documented
+`#[allow(clippy::too_many_arguments)]`), a manual `!Range::contains` rewrite (mechanical), and a
+dead-code `AxonManifest` struct whose fields mirror an external JSON schema but aren't all consumed
+yet (documented `#[allow(dead_code)]`). Both crates added to `gate.sh`'s existing runtime-crate
+clippy line. `cargo test -p axon-vm`: 55/55. `r33_acceptance_gate.sh`: unchanged, ALL CHECKS
+PASSED (no regression). Saved as memory `gate-sh-clippy-coverage-gaps`: check whether a crate is
+actually named in `gate.sh`'s clippy lines before trusting its lint state — coverage is an explicit
+allowlist, not workspace-wide. Full `gate.sh --strict` running in background to confirm workspace-
+wide.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2, now properly designed (§5.2.2) but not yet sized into a buildable first sub-slice. R39 has
-Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render) remains, and it needs design work
-before it's a quick slice. Options for the next iteration:
-- **R33.S2a**: size the vsock design's own suggested first cut ("wire protocol + CLI flag
-  scaffolding, TCP-loopback-tested") into an actually-buildable slice — the design now exists
-  (§5.2.2), this is picking the smallest real piece of it.
+R33.S2b+ (the real socket + broadcast/listen loop + CLI flags — S2a's wire protocol is done, this
+is the next, bigger piece). R39 has Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render)
+remains, and it needs design work before it's a quick slice. Options for the next iteration:
+- **R33.S2b**: open a real socket (start with the TCP-loopback CI stand-in per §5.2.2, defer real
+  `AF_VSOCK` to a later, explicitly-gated lane) and wire `vsock.rs`'s framing into an actual
+  connect/send/recv round trip — the first slice where the wire protocol gets a real caller.
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
