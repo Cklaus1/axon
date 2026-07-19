@@ -1644,8 +1644,17 @@ fn run_in_firecracker(
         drains.push(std::thread::spawn(move || drain_to_stderr(err, "fc", quiet)));
     }
 
-    // Wait for Firecracker to create its API socket (typically < 50ms).
-    let api = wait_for_socket(socket_path, Duration::from_secs(5))?;
+    // Wait for Firecracker to create its API socket (typically < 50ms; a fixed 5s margin
+    // was found flaky under heavy host CPU contention — R30's own acceptance gate observed
+    // acc_a1/acc_a4 failing at this exact R26_ATTESTATION stage under concurrent load, isolated
+    // reruns always passing clean, "root cause not chased further" per REQUIREMENTS.md — a
+    // starved Firecracker process spawn can plausibly take longer than 5s to even get scheduled.
+    // Tunable via AXON_VM_SOCKET_TIMEOUT_SECS (default 5), mirroring AXON_VM_TIMEOUT_SECS below.
+    let socket_timeout_secs: u64 = env::var("AXON_VM_SOCKET_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+    let api = wait_for_socket(socket_path, Duration::from_secs(socket_timeout_secs))?;
 
     // Configure boot source.
     // The policy is embedded in the cmdline as base64-JSON so the guest kernel

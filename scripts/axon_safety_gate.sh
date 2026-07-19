@@ -132,7 +132,13 @@ SKIP_R29="${SKIP_R29:-}"
 
 RESULTS=()
 OVERALL_OK=true
-STAGE_LOG_PREFIX="/tmp/axon_gate_stage"
+# PID-suffixed: unqualified paths here would let two concurrent invocations of this script (e.g.
+# two Claude sessions on a shared host each running gate.sh --strict) interleave/clobber each
+# other's per-stage diagnostic logs. Found while investigating R30's documented "flaky under host
+# contention" acceptance-gate note (REQUIREMENTS.md) -- doesn't affect pass/fail (that's the
+# underlying command's own exit code, not a re-read of this log), but a corrupted diagnostic log
+# actively hinders debugging the exact flake this fix is a response to.
+STAGE_LOG_PREFIX="/tmp/axon_gate_stage_$$"
 
 # ── Helper functions ───────────────────────────────────────────────────────────
 
