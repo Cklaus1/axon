@@ -20,18 +20,22 @@
 //! (fail-closed: timeout or connection failure ⇒ `Err`, treated by callers exactly like a missing
 //! `.vote` file — no vote from that peer, not a hard failure of the whole quorum).
 //!
-//! NOT built yet (later S2 sub-slices, per the spec's own sizing note): the N-peer broadcast/
-//! collect fan-out (calling `connect_and_round_trip` once per peer and aggregating), the
-//! listen/accept/respond loop (the voter side — still test-local only, see
-//! `spawn_one_shot_voter` in this module's own tests, not a production primitive yet), real
-//! `AF_VSOCK` (vs. this slice's TCP-loopback stand-in), and the `axon-vm quorum vote --listen` /
-//! `propose --broadcast` CLI flags.
+//! S2c (landed) adds [`broadcast_and_collect`]: N-peer fan-out, one thread per peer so the whole
+//! broadcast's wall-clock stays bounded by `deadline` regardless of peer count, feeding straight
+//! into `logic::check_quorum`'s existing `&[VoteResponse]` + `required_n` shape.
+//!
+//! NOT built yet (later S2 sub-slices, per the spec's own sizing note): the listen/accept/respond
+//! loop (the voter side — still test-local only, see `spawn_one_shot_voter` in this module's own
+//! tests, not a production primitive yet), real `AF_VSOCK` (vs. this slice's TCP-loopback
+//! stand-in), and the `axon-vm quorum vote --listen` / `propose --broadcast` CLI flags that would
+//! give `broadcast_and_collect` a real, non-test caller.
 
-// write_frame/read_frame remain unused outside tests (write_json_frame/read_json_frame/
-// connect_and_round_trip are the real, wired-in callers now) — kept `pub` because they're the
-// documented low-level primitive a future non-JSON use might want directly. connect_and_round_trip
-// itself has no CLI caller yet (no --broadcast flag exists), so it's still unreferenced in a
-// non-test build too. Remove this allow once the broadcast/collect loop (S2c) calls it for real.
+// write_frame/read_frame remain unused outside tests (write_json_frame/read_json_frame are the
+// real, wired-in callers now, via connect_and_round_trip) — kept `pub` because they're the
+// documented low-level primitive a future non-JSON use might want directly. broadcast_and_collect
+// (and transitively connect_and_round_trip, now only reachable through it) has no CLI caller yet
+// (no --broadcast flag exists), so it's still unreferenced in a non-test build. Remove this allow
+// once the CLI flags (S2d) call it for real.
 #![allow(dead_code)]
 
 use serde::de::DeserializeOwned;
@@ -107,6 +111,41 @@ pub fn connect_and_round_trip<Req: Serialize, Resp: DeserializeOwned>(
     stream.set_write_timeout(Some(deadline))?;
     write_json_frame(&mut stream, req)?;
     read_json_frame(&mut stream)
+}
+
+/// S2c — proposer side: broadcast `req` to every address in `peers` and collect whatever
+/// `VoteResponse`s come back within `deadline`, feeding directly into [`super::logic::
+/// check_quorum`] (which takes `&[VoteResponse]` + the operator-configured `required_n` — NOT
+/// `peers.len()`, so a peer that contributes nothing here is simply absent from the count, exactly
+/// as `check_quorum`'s own doc comment already specifies for the file-based path).
+///
+/// Each peer is contacted from its OWN thread so the total wall-clock is bounded by `deadline`
+/// itself, not `deadline * peers.len()` — a sequential loop would let one slow/unreachable peer at
+/// the front silently inflate the whole broadcast's latency past what §4.4's deadline is supposed
+/// to guarantee. A peer whose [`connect_and_round_trip`] returns `Err` (timeout, refused
+/// connection) or `Ok(None)` (the peer's own EOF sentinel) contributes NO entry to the result —
+/// both are "no vote from this peer," never a hard error for the whole broadcast; a single
+/// unreachable peer must not be able to block quorum outright (that's exactly the failure mode
+/// the deadline + fail-closed-on-absence design exists to avoid).
+pub fn broadcast_and_collect(
+    peers: &[std::net::SocketAddr],
+    req: &crate::quorum::logic::VoteRequest,
+    deadline: std::time::Duration,
+) -> Vec<crate::quorum::logic::VoteResponse> {
+    let handles: Vec<_> = peers
+        .iter()
+        .copied()
+        .map(|addr| {
+            let req = req.clone();
+            std::thread::spawn(move || connect_and_round_trip(addr, &req, deadline))
+        })
+        .collect();
+
+    handles
+        .into_iter()
+        .filter_map(|h| h.join().ok()) // a panicked collector thread contributes nothing either
+        .filter_map(|result| result.ok().flatten())
+        .collect()
 }
 
 #[cfg(test)]
@@ -293,5 +332,101 @@ mod tests {
         let got: io::Result<Option<VoteResponse>> =
             connect_and_round_trip(addr, &a_vote_request(), Duration::from_millis(500));
         assert!(got.is_err());
+    }
+
+    // ── S2c: N-peer broadcast/collect fan-out ───────────────────────────────────────────
+
+    fn a_vote_response(voter_tcb: &str, approved: bool, lineage_root: &str) -> VoteResponse {
+        VoteResponse {
+            voter_tcb: voter_tcb.to_string(),
+            run_id: "run-s2c".to_string(),
+            approved,
+            reason: "fixture".to_string(),
+            lineage_root: lineage_root.to_string(),
+        }
+    }
+
+    #[test]
+    fn broadcast_and_collect_gathers_every_responsive_peers_vote() {
+        let r1 = a_vote_response("axtcb1:aaa", true, "principal-a");
+        let r2 = a_vote_response("axtcb1:aaa", true, "principal-b");
+        let r3 = a_vote_response("axtcb1:aaa", false, "principal-c");
+        let addrs = [
+            spawn_one_shot_voter({
+                let r = r1.clone();
+                move |_| Some(r)
+            }),
+            spawn_one_shot_voter({
+                let r = r2.clone();
+                move |_| Some(r)
+            }),
+            spawn_one_shot_voter({
+                let r = r3.clone();
+                move |_| Some(r)
+            }),
+        ];
+
+        let mut got = broadcast_and_collect(
+            &addrs,
+            &VoteRequest {
+                run_id: "run-s2c".to_string(),
+                prog_hash: "abc123".to_string(),
+                voter_tcb: "axtcb1:aaa".to_string(),
+                proposed_action: "deploy".to_string(),
+                timestamp_ms: 1,
+            },
+            Duration::from_secs(5),
+        );
+        got.sort_by(|a, b| a.lineage_root.cmp(&b.lineage_root));
+        assert_eq!(got, vec![r1, r2, r3]);
+    }
+
+    #[test]
+    fn broadcast_and_collect_drops_unreachable_peers_without_blocking_the_others() {
+        // One real voter, one dead port (bind-then-drop) — the dead peer must contribute NOTHING
+        // to the result, not an error that aborts the whole broadcast (§4.4 fail-closed-on-
+        // absence: a single unreachable peer must not be able to block quorum outright).
+        let r1 = a_vote_response("axtcb1:aaa", true, "principal-a");
+        let live_addr = spawn_one_shot_voter({
+            let r = r1.clone();
+            move |_| Some(r)
+        });
+        let dead_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_addr = dead_listener.local_addr().unwrap();
+        drop(dead_listener);
+
+        let got = broadcast_and_collect(
+            &[live_addr, dead_addr],
+            &a_vote_request(),
+            Duration::from_secs(2),
+        );
+        assert_eq!(got, vec![r1]);
+    }
+
+    #[test]
+    fn broadcast_and_collect_wall_clock_does_not_scale_with_peer_count() {
+        // 4 dead peers, each individually bounded by `deadline` — if broadcast_and_collect were
+        // sequential, this would take ~4x deadline; parallelized (one thread per peer), it should
+        // take roughly ONE deadline's worth of wall-clock. Generous margin (3x a single deadline)
+        // to stay robust under this host's own contention, while still catching an accidental
+        // regression to a sequential loop (which would take ~4x, comfortably over the margin).
+        let deadline = Duration::from_millis(300);
+        let mut dead_addrs = Vec::new();
+        for _ in 0..4 {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            dead_addrs.push(listener.local_addr().unwrap());
+            drop(listener);
+        }
+
+        let start = std::time::Instant::now();
+        let got = broadcast_and_collect(&dead_addrs, &a_vote_request(), deadline);
+        let elapsed = start.elapsed();
+
+        assert!(got.is_empty());
+        assert!(
+            elapsed < deadline * 3,
+            "broadcast_and_collect took {elapsed:?} for 4 dead peers at deadline {deadline:?} — \
+             looks sequential, not parallel"
+        );
     }
 }
