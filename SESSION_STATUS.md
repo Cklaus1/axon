@@ -772,20 +772,48 @@ background for a later iteration to check. `cargo build/clippy/test -p axon-vm`:
 `verify_all_specs.sh`: clean. `governance/REQUIREMENTS.md`'s R30 row updated honestly (partial
 progress, not "fixed").
 
+## R1d: str_count migrated to the registry, one candidate closed (commit `e7c9635`)
+
+Went to size "extend `ExternSig`/`declare_one_extern` for out-param synthesis" (R1d's own flagged
+next step, per SESSION_STATUS's prior note) and found a smaller, real, immediately-actionable gap
+first: `str_count` was miscategorized in the spec's own 2026-07-18 "exhaustive scan" as one of the
+str-returning out-param wrapper builtins, purely by name resemblance — its actual codegen never
+used the out-param dance at all (`__axon_str_count(AxonStr, AxonStr) -> i64`, the exact shape
+`str_index_of` already had a row for). Migrated it (33rd registry row), deleted the redundant
+hand-written codegen block. Verified: `cargo build` clean, both drift tests pass, clippy clean
+(both feature sets), and a manual native==interp check across 5 cases (normal/overlapping matches,
+empty needle, empty haystack, substring match) byte-identical. `verify_all_specs.sh` clean. **This
+does not close the out-param-synthesis work** — the other ~10 named candidates
+(`str_replace`/`str_slice`/`str_reverse`/etc.) are genuinely out-param wrappers and still need that
+real, separate structural extension; this was the one candidate that turned out not to need it.
+R1d spec updated with the correction. A full `cargo test -p axon-core --no-default-features` run
+was launched in the background for additional confirmation beyond the direct evidence already
+gathered — check its result before the next iteration.
+
+## R30 background repro: still needs checking
+
+The `bash scripts/r30_acceptance_gate.sh` run launched two iterations ago (see the entry above)
+had already live-captured a real flake (`wasm_examples_run_identically_on_aot_wasm`, confirmed via
+isolated rerun, documented in memory) but its FULL run (acc_a1 through acc_a6, including two more
+idempotency reruns of the whole pipeline) may still be going — it's a genuinely long-running
+process (300+ seconds per full cargo test pass, times several nested invocations). Check
+`/tmp/r30_gate_run1.log` for `REAL_EXIT=` before deciding whether to chase R30's root cause
+further.
+
 ## Next candidate slice — genuinely fresh scope needed
 
-R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
-work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
-R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2f, which is itself blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay
-vs. hardened TCP — not something to pick unilaterally). R39 is fully landed (all 5 slices). Options
-for the next iteration:
-- **Check the R30 background repro run** (see above) — if it finished, read its result before
-  deciding whether to chase R30's actual root cause further (nested cargo contention across
-  R26-R29) or whether it was clean this time (inconclusive either way, but worth reading).
+R1d's easy scope is now fully exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete
+including the str_count catch; only remaining work is the genuine out-param-synthesis extension —
+real structural design work, not a quick slice). R34 has S1-S6, S8 landed; only S7 remains (R33
+`VoteRequest` chain-awareness), still blocked on R33.S2f, which is itself blocked on a
+founder/architecture decision (R33 spec §12 Q1 — host relay vs. hardened TCP — not something to
+pick unilaterally). R39 is fully landed (all 5 slices). Options for the next iteration:
+- **Check both background runs** (R30's repro, R1d's full test-suite confirmation) — read their
+  results before deciding next steps.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
-  bodies (would unlock the str-returning family for the registry) — real design work, size it
-  before committing to it in one iteration.
+  bodies (would unlock the ~10 real str-returning candidates for the registry) — real design work,
+  size it properly (study the shared shape across all ~10, same way this iteration verified
+  str_count's actual shape before acting) before committing to it in one iteration.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
