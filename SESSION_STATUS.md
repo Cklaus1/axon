@@ -532,18 +532,38 @@ is the actual regression test the spec's own Slice 2 gate calls for — proves t
 not just that both agree an already-clean tree is clean. R39 spec (header, §6 slice 2, §9
 acceptance), `ROADMAP.md`, `REQUIREMENTS.md` updated.
 
+## R39 Slice 3 landed: live evidence re-run records (commit `407c078`)
+
+`verify_all_specs.sh --run TARGET --record-jsonl PATH` now appends one JSON record (schema
+`axon-gov-verify/1`: spec, command, result, exit_code, ISO-8601 UTC timestamp, short git commit
+hash) per evidence command actually re-run, to a sidecar file kept deliberately separate from
+`specs.jsonl` (which stays a pure function of the markdown tree — a verify-run record is evidence
+of an action taken, not re-derivable from the tree alone). No separate `axon-gov` binary yet
+(spec's §12 Q3 still open); continues Slices 1-2's pattern of extending the existing bash validator
+rather than standing up a new tool prematurely. Gated by `scripts/r39_slice3_gate.sh` (11 checks,
+ALL PASSED): synthetic PASS/FAIL fixtures record the correct result AND exact exit code (7, not
+just "nonzero"); every record's timestamp/commit-hash are well-formed; **live re-runs against the
+real R32, R33, and R34 acceptance gates all reproduce PASS**, matching this session's own
+hand-verified results; `--record-jsonl` without `--run` is a hard usage error (exit 2), not a
+silent no-op. This ran while the host was under exceptionally heavy load (~50 load-average on 32
+cores, later traced to unrelated processes — several `vllm` model servers and `train_rssm_breakout.py`
+training jobs saturating CPU, not anything this session touched); the R32/R33/R34 gate re-runs still
+completed correctly, just slowly. R39 spec (header, §6 slice 3, §9 acceptance), `ROADMAP.md`,
+`REQUIREMENTS.md` updated.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
 R33.S2 (vsock transport — confirmed to need a from-scratch `Substrate` trait, a real design task,
-not sized for a quick slice). R39 has Slices 1-2 landed; Slice 3 (`axon-gov verify`: live re-run of
-a spec's evidence command) is the natural next bounded step now that the typed store + ported
-validator both exist and are gate-verified. Options for the next iteration:
-- **R39 Slice 3** (`axon-gov verify <spec>`: execute a spec's `evidence:` command for real, capture
-  exit code + result, update the store's `last-verified` field) — bounded, the store + validator
-  scaffolding it needs already exist.
+not sized for a quick slice). R39 has Slices 1-3 landed; Slices 4-5 (rendered `axon-gov status`,
+DAG cycle detection) remain. Options for the next iteration:
+- **R39 Slice 4** (`axon-gov status`: regenerate a `GOVERNANCE_STATUS.md` snapshot from the typed
+  store, superseding hand-maintained `SESSION_STATUS.md` prose) — bounded, the store now carries
+  both spec data (Slice 1) and live verify results (Slice 3) to render from.
+- **R39 Slice 5** (DAG cycle + orphan detection over `depends-on`/`blocks`/`blocked-by` edges) —
+  also bounded, same typed store.
 - **R33.S2, properly scoped as a design task**: first write/extend the spec with a concrete
   `Substrate` trait design (real vsock impl + CI-mock path, matching the R26 attestation
   software-TPM-stand-in precedent) BEFORE writing code — this is Structural work per
