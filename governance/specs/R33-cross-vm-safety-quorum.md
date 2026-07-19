@@ -42,8 +42,14 @@ day**: `axon-vm quorum propose --broadcast CID1,CID2,... --n N --deadline-ms MS 
 `vote --listen` peers + 1 genuinely unreachable one correctly reports 2/3 approvals; against 2
 unreachable peers, QUORUM BLOCKED with no hang; omitting `--broadcast` is fully unaffected. The
 whole `vsock.rs` module is now clippy-clean with ZERO `#[allow(dead_code)]` — S2's proposer+voter
-round trip is complete end-to-end. **S2f (real `AF_VSOCK`, swapping this whole module's
-TCP-loopback stand-in) is the one remaining piece.** See §14 Evidence ledger.
+round trip is complete end-to-end. **S2f re-scoped 2026-07-20** (see §5.2.3): "swap TCP for real
+`AF_VSOCK`, same wire format" was the plan carried since S2a, but sizing it for real found the
+premise doesn't hold — Firecracker's vsock device (`crates/axon-vm/src/main.rs`'s existing
+`/vsock` config + `vsock_relay`) connects a guest ONLY to its own host (CID 2), never to another
+guest directly, and `axon-vm run` launches exactly one VM per process (no shared host process
+across peer VMs to relay through). §5.2.3 lays out the two real options — a host-mediated relay
+(a new broker) vs. hardening the existing TCP path into the real transport (auth + TLS, not a
+wire-level swap) — as an open question, not a decided plan; see §12 Q1. See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
 mode — the VM itself could be compromised *after* its attestation report was produced. R33 distributes
@@ -540,6 +546,62 @@ wire protocol + CLI flag scaffolding, TCP-loopback-tested" as the first bounded 
 attempt all of it at once. This section's job is to make that next iteration's scoping decision
 cheap, not to have built it.
 
+#### 5.2.3 S2f (real transport) — the "swap TCP for AF_VSOCK" plan doesn't hold, corrected
+2026-07-20
+
+**What was assumed (S2a-e's own doc comments, written across four iterations landing the
+TCP-loopback path):** real `AF_VSOCK` support would be a late, narrow swap — replace `vsock.rs`'s
+`TcpStream::connect`/`TcpListener::bind` with the raw `libc::socket(AF_VSOCK, ...)` calls
+`crates/axon-core/src/interp.rs`'s `vsock_send_recv` already demonstrates, keep the identical
+length-prefixed JSON wire format, done. This was never verified against how `AF_VSOCK` is actually
+wired up elsewhere in THIS codebase before committing to it as the plan.
+
+**What sizing S2f for real found:** the premise is false. Every existing use of vsock in this repo
+(`crates/axon-vm/src/main.rs`'s `/vsock` Firecracker device config at `cmd_run` — `"guest_cid": 3`,
+a host-side `uds_path` — and the `vsock_relay` function that serves `host_await` over it) connects
+a guest **only to its own host** (`VMADDR_CID_HOST` = 2, the convention `interp.rs`'s
+`vsock_send_recv` also uses). There is no mechanism, in Firecracker's vsock device model or
+anywhere in this codebase, for one guest VM to address ANOTHER guest VM directly over vsock — it is
+architecturally a guest↔own-host channel, not a peer-to-peer one. Compounding this: `axon-vm run`
+launches exactly one VM per process (confirmed: `cmd_run`'s signature takes one `program`/`kernel`/
+`initrd`/`vsock_port` — a single Firecracker instance), so there is no existing "one host process
+already manages N peer VMs" structure to relay quorum votes through, the way `vsock_relay` relays
+`host_await` calls for the single VM its own process launched.
+
+**Why this matters for the threat model, not just the plumbing:** R33's own motivation (§1,
+"Implements") is explicit that the threat is *a single VM being compromised after its attestation
+report was produced* — a guest-level compromise, not a host-kernel compromise. That threat model is
+satisfied by Firecracker-class micro-VM isolation regardless of whether voter VMs share one
+physical host or are spread across several; the spec does not require (and never stated) that voter
+VMs must be on separate hosts. So this is NOT a "the whole quorum concept requires separate hosts
+and vsock can never work" dead end — same-host co-located voter VMs are a legitimate, spec-consistent
+deployment. But it does mean the mechanism has to actually match one of the topologies vsock can
+support, and "peer VMs connect directly to each other over vsock" isn't one of them.
+
+**Two real options, deliberately left as an open question (§12 Q1) rather than silently picked:**
+
+1. **Host-mediated relay.** A NEW broker component (not `vsock_relay` as-is, which is scoped to one
+   process's one VM) would need to run on the host, aware of every voter VM's own vsock UDS path,
+   relaying `VoteRequest`/`VoteResponse` frames between them — the same wire format `vsock.rs`
+   already has, carried over an extra hop (guest → own UDS → broker → peer's UDS → peer guest)
+   instead of a direct connection. Preserves R26-style attestation of the voting PROCESS itself
+   (it runs inside an attested guest). Real, non-trivial new work: the broker's own trust boundary
+   becomes part of the TCB (it can see and possibly tamper with every vote in transit), and it only
+   works when voter VMs share a host — cross-host quorum still needs a different mechanism for the
+   broker-to-broker hop.
+2. **Harden the existing TCP path into the real transport.** Rather than treating `vsock.rs`'s TCP
+   implementation as a throwaway CI stand-in, harden it (mutual TLS or an equivalent authenticated
+   channel, non-loopback addressing) and use it as the actual production transport. Voter VMs would
+   need real network reachability to each other (or to a rendezvous point) — a materially different
+   deployment assumption than vsock's intra-host model, but one that naturally supports both
+   same-host and cross-host quorum without a broker's added TCB surface. The attestation of the
+   voting PROCESS itself would then rely on TLS client-cert identity tied to the R31 `axtcb1-ext:`
+   measurement (a real, if unbuilt, design — not sketched further here since it's the losing half of
+   an undecided fork, not a committed plan).
+
+Neither is a quick sub-slice the way S2a-e were — both are real design+build efforts with different
+trust-boundary and deployment-topology consequences. **This spec does not pick one.** See §12 Q1.
+
 ### 5.3 Voter policy
 The default voter policy (`policy.rs`) maps Phase 11 Risk to a score:
 ```
@@ -689,6 +751,19 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 
 ---
 
+## §12 — Open questions
+
+- **Q1 (real S2f transport — added 2026-07-20, unresolved): host-mediated vsock relay, or a
+  hardened real-network path?** See §5.2.3 for the full analysis. Sizing "swap TCP for real
+  `AF_VSOCK`" found the premise doesn't hold — Firecracker's vsock is guest↔own-host only, never
+  peer-to-peer, and `axon-vm run` launches one VM per process with no existing multi-VM host relay
+  to extend. The two real options have materially different trust-boundary and deployment
+  consequences (a new broker's TCB surface + same-host-only, vs. TLS-hardening the TCP path +
+  needing real network reachability between voters) — this is a founder/architecture-level fork,
+  not something to pick implicitly while landing an incremental slice. Unresolved.
+
+---
+
 ## §13 — Dependency DAG
 
 | Node | Depends-on / blocked-by | Gate | Status |
@@ -700,7 +775,7 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R33.S2c (broadcast/collect fan-out) | R33.S2b | `crates/axon-vm/src/quorum/vsock.rs` unit tests (3 new, 15 total) | **landed 2026-07-19** — `broadcast_and_collect`: one thread per peer (wall-clock bounded by `deadline` regardless of peer count, not `deadline * N`), feeds `logic::check_quorum`'s existing `&[VoteResponse]` shape directly. An unreachable/timed-out peer contributes nothing, never aborts the whole broadcast |
 | R33.S2d (listen primitive + `quorum vote --listen` CLI flag) | R33.S2c | `crates/axon-vm/src/quorum/vsock.rs` unit tests (1 new, 16 total); `scripts/r33_acceptance_gate.sh` §11 (real CLI journey) | **landed 2026-07-19** — `respond_once`: real production listen/accept/respond primitive (single-shot, no daemon loop), also now backing the test helper every S2a-c test already used (`spawn_one_shot_voter` delegates to it). `axon-vm quorum vote --listen PORT` wires it in — same `--approve`/`--deny`/`--reason`/`--lineage-root` decision as the file-based path, `--request`/`--out` become `required_unless_present="listen"` (100% backward compatible), `--listen` `conflicts_with_all` them. Still `broadcast_and_collect`'s ONLY non-test caller is `axon-vm quorum vote --listen`'s peer, not itself — the `propose --broadcast` flag (S2e) is what would finally give `broadcast_and_collect` a real caller |
 | R33.S2e (`propose --broadcast` CLI flag) | R33.S2d | `scripts/r33_acceptance_gate.sh` §12 (real multi-process CLI journey) | **landed 2026-07-19** — `axon-vm quorum propose --broadcast CID1,CID2,... --n N --deadline-ms MS [--json]` wires `broadcast_and_collect` into a real, non-test caller for the first time: broadcasts, collects, runs the same `check_quorum` `check` uses, exits with the same 0/13/14 convention (factored into a shared `report_quorum_result` helper, not duplicated). Whole S2 proposer+voter path is now real end-to-end: `propose --broadcast` against real `vote --listen` peers + an unreachable one correctly reports partial approvals and excludes the unreachable peer |
-| R33.S2f (real `AF_VSOCK`) | R33.S2e | not yet named | todo — the one remaining piece: swap the `connect`/`bind`/`listen` calls in `vsock.rs` for the raw `libc::socket(AF_VSOCK, ...)` calls `interp.rs`'s `vsock_send_recv` already demonstrates, same wire format either way. Everything else in S2 (wire protocol, round trip, fan-out, listen primitive, both CLI flags) is done |
+| R33.S2f (real transport) | R33.S2e; **§12 Q1 must be resolved first** | not yet named | **blocked, not just todo (re-scoped 2026-07-20, §5.2.3)** — the "swap TCP for real AF_VSOCK" premise was found false (Firecracker vsock is guest↔own-host only, never peer-to-peer; `axon-vm run` is one-VM-per-process). Two real options remain (host-mediated relay vs. hardened real-network path), each real design+build work with different trust-boundary consequences — this is a founder/architecture decision (§12 Q1), not a mechanical sub-slice like S2a-e were |
 | R33.S3 (coalition ceiling) | R33.S0 | `coalition_bound_limits_same_lineage`, `coalition_cap_does_not_block_distinct_lineage_roots` (`crates/axon-vm/src/quorum/mod.rs`); `scripts/r33_acceptance_gate.sh` §8 (real CLI sock-puppet + distinct-roots journey) | landed (hardcoded `ceil(N/2)-1` fallback per the spec's own §6 slice-risk note — no dependency on R27's real `Coalition`/`max_quorum_power` type) |
 | R33.S4 (`axon deploy` integration) | R33.S0 | `scripts/r33_acceptance_gate.sh` §10 (backward-compat + sock-puppet-blocked + legit-quorum-met + missing-binary-hard-error, real `axon`↔`axon-vm` cross-binary journey) | landed (scoped per §5.2.1: reads pre-collected votes via subprocess shell-out to `axon-vm quorum check`, no live broadcast — no new `axon-core` Cargo dependency) |
 
@@ -729,6 +804,7 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R33.S2e: `propose --broadcast` against 2 real `vote --listen` peers + 1 unreachable peer reports exactly 2/3 approvals and QUORUM MET (exit 0); against 2 unreachable peers, QUORUM BLOCKED (exit 13) with no hang; omitting `--broadcast` is unaffected (writes the file, exits 0, no quorum check runs at all) | `bash scripts/r33_acceptance_gate.sh` §12 (3 sub-checks, real multi-process journey, 3 consecutive reruns for flakiness) | all pass, all 3 reruns identical | this commit @ 2026-07-19 | PASS |
 | R33.S2e: the whole `vsock.rs` module is now clippy-clean with ZERO `#[allow(dead_code)]` — every function has a real, non-test caller | `cargo clippy -p axon-vm --all-targets -- -D warnings` (after removing the module-level allow) | clean | this commit @ 2026-07-19 | PASS |
 | R33.S2e did not regress axon-vm as a whole or any existing R33 CLI journey | `cargo test -p axon-vm`; `bash scripts/r33_acceptance_gate.sh` | 62/62 unit tests; ALL CHECKS PASSED (12 sections now) | this commit @ 2026-07-19 | PASS |
+| S2f's "swap TCP for real AF_VSOCK" premise is false — Firecracker vsock is guest↔own-host only, `axon-vm run` is one-VM-per-process | `grep -n 'vsock' crates/axon-vm/src/main.rs` (the `/vsock` device config in `cmd_run`, `guest_cid: 3`/`VMADDR_CID_HOST`-style host-only addressing, `vsock_relay`'s single-VM scope); `grep -n 'fn cmd_run'` (confirms one VM per process, no multi-VM host structure) | confirmed: no peer-to-peer vsock mechanism anywhere in this codebase or Firecracker's own device model | this commit @ 2026-07-20 | CONFIRMED (spec text corrected in header + §5.2.3 added + §12 Q1 opened; no code claim, this is a documentation-drift-prevention finding, same class as the earlier R26 Substrate-trait correction) |
 
 Honest scope, per this spec's own header: the above is a **file-based, single-host** slice, now
 WITH the R27 coalition ceiling (§4.5) AND the `axon deploy` integration (§5.2.1) closed. The R26
