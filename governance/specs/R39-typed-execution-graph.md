@@ -3,7 +3,7 @@
 **Spec ID:** `R39-typed-execution-graph` (hardens `governance/BUILD_PROTOCOL.md`'s inner/outer loop
 and `governance/EXECUTION_MODEL.md`'s task-DAG/evidence-graph/knowledge-graph sections — currently
 markdown + grep + `scripts/verify_all_specs.sh` — into typed schemas + a real, queryable state store)
-**Status:** Implementing (Slices 1-3 landed 2026-07-18) — §12 Q1 (build now vs. wait) resolved
+**Status:** Implementing (Slices 1-3, 5 landed 2026-07-18; Slice 4 not started) — §12 Q1 (build now vs. wait) resolved
 speculatively in favor of "build the cheap spike": Slice 1 (schema + parser) took the form of a
 `--export-jsonl` mode added to the *existing* `scripts/verify_all_specs.sh` (not a new, separately-
 drifting parser — it reuses the exact same per-spec extraction pass that already computes the
@@ -24,10 +24,20 @@ exit_code, ISO-8601 UTC timestamp, short git commit hash) appended to a sidecar 
 kept separate from `specs.jsonl` (which stays a pure function of the markdown tree; a verify-run
 record is evidence of an action taken, not something re-derivable from the tree alone). No separate
 `axon-gov` binary yet (§12 Q3 still open) — Slice 3 continues Slices 1-2's pattern of extending the
-existing bash validator. Slices 4-5 (rendered `axon-gov status`, DAG cycle detection) remain not
-started. Scoped to Axon's *own* governance (this repo's specs/requirements/build state), not a
-general-purpose product for other projects — see §5 non-goals and R40 for that larger,
-explicitly-deferred question.
+existing bash validator. **Slice 5 (DAG cycle + blocked-by staleness, landed out of order ahead of
+Slice 4 — cleanly specified where Slice 4's own "strict superset of hand-maintained
+SESSION_STATUS.md prose" gate needed design work first)**: `scripts/r39_slice5_dag_check.sh`
+builds one directed graph from every spec's `depends_on`/`blocks` edges and DFS-detects cycles, and
+separately checks every non-empty `blocked_by` matching `R<id> §<N> Q<k>` against whether that
+question is actually marked resolved in the target spec's own §N section. Sizing/building it found
+and fixed two real bugs in the check's own first draft (not in any spec): a naive substring match
+on "resolved" false-positived on R40's real §12 Q1 text ("**Unresolved**, deliberately"), and a
+bullet-matcher that assumed every spec labels its open questions `**Qn**` in bold, when R37/R38 in
+fact use plain `1./2./3.` numbering — both fixed before landing (word-boundary match excluding
+"un-"; a plain-numbered-item fallback when no bold `**Qn**` labels exist in a section). Slice 4
+(rendered `axon-gov status`) remains not started. Scoped to Axon's *own* governance (this repo's
+specs/requirements/build state), not a general-purpose product for other projects — see §5
+non-goals and R40 for that larger, explicitly-deferred question.
 **Risk class:** Additive (governance tooling; changes how status gets recorded and checked, not
 what gets built; zero runtime/compiler/TCB surface)
 **Author / date:** cklaus (research agent draft, prompted by a user design proposal), 2026-07-18
@@ -42,7 +52,7 @@ supersedes: none
 related: R40-ai-native-research-compiler
 conflicts-with: none
 reserves: none
-evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh; scripts/r39_slice3_gate.sh
+evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh; scripts/r39_slice3_gate.sh; scripts/r39_slice5_gate.sh
 ```
 
 > **One-line scope:** replace "a human or AI reads REQUIREMENTS.md, ROADMAP.md, and 56 spec files
@@ -192,11 +202,30 @@ research platform) actually requires — sections in brackets are explicitly **n
    being hand-maintained prose. **Gate:** the generated file is a strict superset of what
    `SESSION_STATUS.md` currently records by hand, and nothing in it can silently drift from the
    store (it's regenerated, not edited).
-5. **DAG cycle + orphan detection.** Validate `depends-on`/`blocks`/`blocked-by` edges form a DAG
-   (no cycles) and that every `blocked-by` naming an open question (`R36 §12 Q1`) is checked against
-   whether that question has actually been marked resolved in the spec's own §12 section. **Gate:**
-   a synthetic test fixture with an intentional cycle is rejected; R36's real `blocked-by: R36 §12
-   Q1` is correctly reported as still-blocking (Q1 unresolved).
+5. **DAG cycle + blocked-by staleness — LANDED 2026-07-19 (out of numeric order, ahead of Slice
+   4).** `scripts/r39_slice5_dag_check.sh [STORE_JSONL] [--specs-dir DIR]` builds one directed
+   "must-happen-before" graph from every spec's `depends_on`/`blocks` edges (already-typed arrays
+   from Slice 1's store — no markdown re-parsing for this half) and 3-color DFS-detects cycles.
+   Separately, for every non-empty `blocked_by` matching `R<id> §<N> Q<k>`, it reads the *target*
+   spec's markdown directly (deliberately — "is this question marked resolved in prose" is not
+   information any landed slice has typed yet, so this is genuinely new extraction, not a second
+   parser duplicating existing logic) to isolate the `Q<k>` bullet's text and check whether it's
+   actually marked resolved. **Gate (`scripts/r39_slice5_gate.sh`, 10 checks):** the real tree is
+   clean and R36's real `blocked-by: R36 §12 Q1` is correctly reported as still-blocking (Q1
+   unresolved) — the spec's own named example; a synthetic 2-spec `depends-on` cycle and a
+   synthetic `blocks`-edge cycle are both rejected; a synthetic blocked-by naming an
+   already-resolved question is flagged stale; a synthetic blocked-by naming a genuinely
+   unresolved question is correctly NOT flagged; a synthetic target using plain `1./2./3.`
+   numbering (no bold `**Qn**` labels) still resolves a `Qn`-labeled blocked-by correctly.
+   **Building this found two real bugs in the check's own first draft** (against real specs, not
+   contrived): a naive `grep -qi resolved` substring match false-positived on R40's actual §12 Q1
+   text ("**Unresolved**, deliberately") — fixed with a word-boundary match excluding an "un-"
+   prefix; and the bullet-matcher assumed every spec bold-labels its questions `**Qn**`, but
+   R37/R38 in fact use plain `1./2./3.` numbering — fixed with a plain-numbered-item fallback.
+   Slice 4 (`axon-gov status`: the render) remains not started — its own gate ("a strict superset
+   of what `SESSION_STATUS.md` currently records by hand") needs design work first (`SESSION_STATUS.md`
+   is 500+ lines of iteration-by-iteration narrative reasoning, not just structured facts the
+   typed store can render; what "superset" should mean here isn't yet decided).
 
 Slices 1-3 alone would have mechanically caught 4 of the ~8 real bugs this session found by hand
 (the stale headers, the dangling filenames, the false-negative gate bug — not the R28 silent-log
@@ -232,6 +261,10 @@ or runtime), with its own exit-code space independent of Axon's E1xxx/E2xxx/E3xx
   bugs (`scripts/r39_slice2_gate.sh` ALL CHECKS PASSED, 10/10).
 - **Slice 3 landed 2026-07-18**: live evidence re-run against R32, R33, R34 reproduces this
   session's hand-verified results exactly (`scripts/r39_slice3_gate.sh` ALL CHECKS PASSED, 11/11).
+- **Slice 5 landed 2026-07-19** (ahead of Slice 4 — see §6 slice 4 for why): DAG cycle detection
+  and blocked-by open-question staleness checking, including R36's own real example
+  (`scripts/r39_slice5_gate.sh` ALL CHECKS PASSED, 10/10).
+- Slice 4 (rendered `axon-gov status`) not yet started.
 - Documented, honestly, in `governance/EXECUTION_MODEL.md` as the "typed" successor to its own §1-3
   prose sketch — not a separate, competing document.
 

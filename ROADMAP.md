@@ -798,7 +798,8 @@ the way §2.3 did for R17.
 AI-driven project governance as a typed compiler/graph system, rather than a platform-vision
 candidate like the four above:
 
-- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slices 1-3 landed 2026-07-18):
+- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slices 1-3 landed 2026-07-18,
+  Slice 5 landed 2026-07-19):
   scoped to Axon's *own* governance — hardens the existing `BUILD_PROTOCOL.md`/`EXECUTION_MODEL.md`
   task-DAG/evidence-graph/knowledge-graph conventions (currently markdown + `scripts/verify_all_specs.sh`
   regex) into typed schemas + a real parser/validator. Slice 1 (schema + parser) shipped as a
@@ -812,7 +813,13 @@ candidate like the four above:
   actually re-run gets a timestamped, commit-hashed JSON record in a sidecar file (deliberately
   separate from `specs.jsonl`, which stays a pure function of the markdown), verified by live
   re-runs of R32/R33/R34's real acceptance gates all reproducing PASS (`scripts/r39_slice3_gate.sh`).
-  Slices 4-5 (rendered status, DAG cycle detection) not started.
+  Slice 5 (landed ahead of Slice 4) DFS-detects cycles across `depends_on`/`blocks` edges and
+  checks `blocked_by: R<id> §<N> Q<k>` fields against whether that question is actually marked
+  resolved in the target's own §N section (`scripts/r39_slice5_dag_check.sh`, gated by
+  `scripts/r39_slice5_gate.sh`); building it found and fixed two real bugs in the check itself (a
+  substring match false-positiving "resolved" inside "Unresolved," and a bullet-matcher assuming a
+  `**Qn**` bold-label convention two real specs don't follow). Slice 4 (rendered status) not
+  started — its own gate needs design work first.
   Directly motivated by this session's own failure record (a dozen stale headers, dangling
   cross-references, an unexercised gate-script bug) — cheap, additive, genuinely optional tooling,
   not a requirement gate.
