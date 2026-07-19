@@ -31,6 +31,11 @@
 #   introduced by the export, a pre-existing property of the shared extraction inherited as-is.
 #
 # Exit codes: 0 = clean (pre-convention specs alone don't fail it), 1 = at least one finding.
+#
+# --specs-dir DIR overrides governance/specs/ — for R39 Slice 2's gate, which points both this
+# script and the ported jq validator at a synthetic fixture dir to prove the port finds the same
+# real bugs, not just to confirm both agree on the already-clean tree (a synthetic-fixture
+# regression test, not a mass renumbering or new default).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,6 +46,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --run) RUN_TARGET="${2:-all}"; shift 2 ;;
         --export-jsonl) EXPORT_JSONL="${2:?--export-jsonl requires a PATH}"; shift 2 ;;
+        --specs-dir) SPECS_DIR="${2:?--specs-dir requires a PATH}"; shift 2 ;;
         *) echo "verify_all_specs: unknown arg '$1'" >&2; exit 2 ;;
     esac
 done
@@ -95,6 +101,16 @@ fi
 # ── 2. Per-spec spec-meta lint ─────────────────────────────────────────────────────────
 echo "== [2] spec-meta lint =="
 all_ids=$(ls "$SPECS_DIR" | grep -E '\.md$' | sed 's/\.md$//')
+# Pure-bash membership set for the dangling-edge check below, instead of forking a `grep -qx`
+# per referenced id (hundreds of forks across ~90 specs x 5 edge keys). Under heavy host load
+# this host has been observed at load-average ~50 on 32 cores — a subprocess fork can transiently
+# fail, which `set -uo pipefail` (no `-e`) turns into a silent false "unknown spec" finding, not a
+# script abort. Confirmed by hand: every id a flaky run cited as "unknown" in fact exists. This is
+# the same gate-flakes-under-contention class as the wasm_browser/persistent_learner flakes, but
+# hitting a governance validator is worse (a phantom FINDING invites a bogus correction commit),
+# so it's worth removing the fork pressure rather than just noting the flake.
+declare -A ALL_IDS_SET
+while IFS= read -r _id; do [ -n "$_id" ] && ALL_IDS_SET["$_id"]=1; done <<< "$all_ids"
 pre_convention=()
 declare -A META_EVIDENCE
 
@@ -164,7 +180,7 @@ for f in "$SPECS_DIR"/R*.md; do
     for key in depends-on blocks supersedes conflicts-with related; do
         val=$(get_key "$f" "$key")
         for ref in $(echo "$val" | grep -oE 'R[0-9]+[a-z]?-[a-z0-9-]+'); do
-            echo "$all_ids" | grep -qx "$ref" || finding "$base: $key references unknown spec '$ref'"
+            [ -n "${ALL_IDS_SET[$ref]:-}" ] || finding "$base: $key references unknown spec '$ref'"
         done
     done
 
