@@ -36,20 +36,35 @@
 # script and the ported jq validator at a synthetic fixture dir to prove the port finds the same
 # real bugs, not just to confirm both agree on the already-clean tree (a synthetic-fixture
 # regression test, not a mass renumbering or new default).
+#
+# R39 Slice 3: --run TARGET --record-jsonl PATH appends one JSONL record (schema
+# axon-gov-verify/1) per evidence command actually re-run, to a SEPARATE sidecar file from
+# --export-jsonl's specs.jsonl. Kept separate deliberately: specs.jsonl is a regeneratable index
+# derivable purely from markdown (R39 spec §12 Q2); a verify-run record (exit code, timestamp,
+# commit) is NOT derivable from markdown alone — it's evidence of an action actually taken, so it
+# gets its own append-only log rather than being folded into (and silently mutating the meaning
+# of) the "pure function of the tree" export.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SPECS_DIR="$ROOT/governance/specs"
 RUN_TARGET=""
 EXPORT_JSONL=""
+RECORD_JSONL=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --run) RUN_TARGET="${2:-all}"; shift 2 ;;
         --export-jsonl) EXPORT_JSONL="${2:?--export-jsonl requires a PATH}"; shift 2 ;;
         --specs-dir) SPECS_DIR="${2:?--specs-dir requires a PATH}"; shift 2 ;;
+        --record-jsonl) RECORD_JSONL="${2:?--record-jsonl requires a PATH}"; shift 2 ;;
         *) echo "verify_all_specs: unknown arg '$1'" >&2; exit 2 ;;
     esac
 done
+if [ -n "$RECORD_JSONL" ]; then
+    [ -n "$RUN_TARGET" ] || { echo "verify_all_specs: --record-jsonl requires --run" >&2; exit 2; }
+    command -v jq >/dev/null 2>&1 || { echo "verify_all_specs: --record-jsonl requires jq" >&2; exit 2; }
+    mkdir -p "$(dirname "$RECORD_JSONL")"
+fi
 if [ -n "$EXPORT_JSONL" ]; then
     command -v jq >/dev/null 2>&1 || { echo "verify_all_specs: --export-jsonl requires jq" >&2; exit 2; }
     mkdir -p "$(dirname "$EXPORT_JSONL")"
@@ -225,26 +240,49 @@ fi
 # ── 3. Evidence re-run (opt-in) ────────────────────────────────────────────────────────
 if [ -n "$RUN_TARGET" ]; then
     echo "== [3] evidence re-run (target: $RUN_TARGET) =="
+    RUN_COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+    record_verify() { # record_verify <base> <script> <result> <exit_code>
+        [ -n "$RECORD_JSONL" ] || return 0
+        local ts; ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        jq -n -c \
+            --arg schema "axon-gov-verify/1" \
+            --arg spec "$1" --arg command "$2" --arg result "$3" \
+            --argjson exit_code "$4" --arg ts "$ts" --arg commit "$RUN_COMMIT" \
+            '{schema: $schema, spec: $spec, command: $command, result: $result,
+              exit_code: $exit_code, ts: $ts, commit: $commit}' \
+            >> "$RECORD_JSONL"
+    }
     for base in "${!META_EVIDENCE[@]}"; do
         case "$RUN_TARGET" in
             all) ;;
             *) echo "$base" | grep -qE "^${RUN_TARGET}(-|$)" || continue ;;
         esac
         ev="${META_EVIDENCE[$base]}"
-        [ "${ev%% *}" = "none" ] && { note "$base: no evidence to run"; continue; }
+        if [ "${ev%% *}" = "none" ]; then
+            note "$base: no evidence to run"
+            record_verify "$base" "none" "SKIP_NO_EVIDENCE" -1
+            continue
+        fi
         # only auto-run a single plain scripts/*.sh pointer; anything richer is manual
         script=$(echo "$ev" | grep -oE '^scripts/[A-Za-z0-9_.-]+\.sh' || true)
         if [ -n "$script" ] && [ -f "$ROOT/$script" ]; then
             echo "  running $script for $base ..."
             if bash "$ROOT/$script"; then
                 echo "  PASS: $base ($script)"
+                record_verify "$base" "$script" "PASS" 0
             else
+                rc=$?
                 finding "$base: evidence command $script FAILED — status-claim may be stale-optimistic"
+                record_verify "$base" "$script" "FAIL" "$rc"
             fi
         else
             note "$base: evidence not a single script pointer — re-run manually: $ev"
+            record_verify "$base" "$ev" "SKIP_NOT_A_SCRIPT_POINTER" -1
         fi
     done
+    if [ -n "$RECORD_JSONL" ]; then
+        echo "  recorded $(wc -l < "$RECORD_JSONL" | tr -d ' ') verify-run record(s) to ${RECORD_JSONL#$ROOT/}"
+    fi
 fi
 
 echo "=="

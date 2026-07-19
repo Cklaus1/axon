@@ -798,7 +798,7 @@ the way §2.3 did for R17.
 AI-driven project governance as a typed compiler/graph system, rather than a platform-vision
 candidate like the four above:
 
-- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slices 1-2 landed 2026-07-18):
+- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slices 1-3 landed 2026-07-18):
   scoped to Axon's *own* governance — hardens the existing `BUILD_PROTOCOL.md`/`EXECUTION_MODEL.md`
   task-DAG/evidence-graph/knowledge-graph conventions (currently markdown + `scripts/verify_all_specs.sh`
   regex) into typed schemas + a real parser/validator. Slice 1 (schema + parser) shipped as a
@@ -808,7 +808,11 @@ candidate like the four above:
   regression test proving it catches the same bugs, not just that both agree an already-clean tree
   is clean (`scripts/r39_slice2_gate.sh`); sizing it also found and fixed a real flake in the bash
   validator itself (a fork-per-reference dangling-edge check that could transiently misfire under
-  heavy host load). Slices 3-5 (live re-verify, rendered status, DAG cycle detection) not started.
+  heavy host load). Slice 3 added `--run TARGET --record-jsonl PATH`: each evidence command
+  actually re-run gets a timestamped, commit-hashed JSON record in a sidecar file (deliberately
+  separate from `specs.jsonl`, which stays a pure function of the markdown), verified by live
+  re-runs of R32/R33/R34's real acceptance gates all reproducing PASS (`scripts/r39_slice3_gate.sh`).
+  Slices 4-5 (rendered status, DAG cycle detection) not started.
   Directly motivated by this session's own failure record (a dozen stale headers, dangling
   cross-references, an unexercised gate-script bug) — cheap, additive, genuinely optional tooling,
   not a requirement gate.

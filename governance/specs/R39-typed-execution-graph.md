@@ -3,7 +3,7 @@
 **Spec ID:** `R39-typed-execution-graph` (hardens `governance/BUILD_PROTOCOL.md`'s inner/outer loop
 and `governance/EXECUTION_MODEL.md`'s task-DAG/evidence-graph/knowledge-graph sections — currently
 markdown + grep + `scripts/verify_all_specs.sh` — into typed schemas + a real, queryable state store)
-**Status:** Implementing (Slices 1-2 landed 2026-07-18) — §12 Q1 (build now vs. wait) resolved
+**Status:** Implementing (Slices 1-3 landed 2026-07-18) — §12 Q1 (build now vs. wait) resolved
 speculatively in favor of "build the cheap spike": Slice 1 (schema + parser) took the form of a
 `--export-jsonl` mode added to the *existing* `scripts/verify_all_specs.sh` (not a new, separately-
 drifting parser — it reuses the exact same per-spec extraction pass that already computes the
@@ -17,10 +17,17 @@ fixed a real, unrelated bug in `verify_all_specs.sh` itself: under this host's h
 load-average on 32 cores) the dangling-edge check's per-reference forked `grep -qx` calls could
 transiently fail, producing a false "unknown spec" finding on a spec id that in fact existed —
 fixed by replacing the forked lookup with a pure-bash associative-array membership check (0
-findings across 8 consecutive reruns post-fix, vs. flaky pre-fix). Slices 3-5 (live `axon-gov
-verify`, rendered `axon-gov status`, DAG cycle detection) remain not started. Scoped to Axon's
-*own* governance (this repo's specs/requirements/build state), not a general-purpose product for
-other projects — see §5 non-goals and R40 for that larger, explicitly-deferred question.
+findings across 8 consecutive reruns post-fix, vs. flaky pre-fix). Slice 3 (live re-run) extends
+`verify_all_specs.sh --run TARGET` with a `--record-jsonl PATH` flag: each evidence command it
+actually re-runs gets one JSON record (schema `axon-gov-verify/1`: spec, command, result,
+exit_code, ISO-8601 UTC timestamp, short git commit hash) appended to a sidecar file, deliberately
+kept separate from `specs.jsonl` (which stays a pure function of the markdown tree; a verify-run
+record is evidence of an action taken, not something re-derivable from the tree alone). No separate
+`axon-gov` binary yet (§12 Q3 still open) — Slice 3 continues Slices 1-2's pattern of extending the
+existing bash validator. Slices 4-5 (rendered `axon-gov status`, DAG cycle detection) remain not
+started. Scoped to Axon's *own* governance (this repo's specs/requirements/build state), not a
+general-purpose product for other projects — see §5 non-goals and R40 for that larger,
+explicitly-deferred question.
 **Risk class:** Additive (governance tooling; changes how status gets recorded and checked, not
 what gets built; zero runtime/compiler/TCB surface)
 **Author / date:** cklaus (research agent draft, prompted by a user design proposal), 2026-07-18
@@ -35,7 +42,7 @@ supersedes: none
 related: R40-ai-native-research-compiler
 conflicts-with: none
 reserves: none
-evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh
+evidence: scripts/r39_slice1_gate.sh; scripts/r39_slice2_gate.sh; scripts/r39_slice3_gate.sh
 ```
 
 > **One-line scope:** replace "a human or AI reads REQUIREMENTS.md, ROADMAP.md, and 56 spec files
@@ -167,11 +174,18 @@ research platform) actually requires — sections in brackets are explicitly **n
    `grep -qx` could transiently fail and read as a false "unknown spec" finding — fixed with a
    pure-bash associative-array lookup (0 forks instead of hundreds), 8/8 clean reruns post-fix at the
    same load level that produced 3 different phantom findings across 3 pre-fix runs.
-3. **`axon-gov verify <spec>`: live re-run.** For a spec with a well-formed `evidence:` command,
-   actually execute it, capture exit code + a result summary, and update the store's `last-verified`
-   timestamp + commit hash automatically (replacing "re-verified 2026-07-18" prose with a real,
-   automatically-dated field). **Gate:** running it against R32/R33/R34 (already re-verified by hand
-   this session) reproduces the same pass/fail/skip results recorded in their evidence tables.
+3. **Live re-run — LANDED 2026-07-18.** `scripts/verify_all_specs.sh --run TARGET --record-jsonl
+   PATH` (no separate `axon-gov` binary yet, per §12 Q3): for each evidence command actually
+   re-run, appends one JSON record (schema `axon-gov-verify/1`: `spec`, `command`, `result`
+   [`PASS`/`FAIL`/`SKIP_NO_EVIDENCE`/`SKIP_NOT_A_SCRIPT_POINTER`], `exit_code`, ISO-8601 UTC `ts`,
+   short git `commit`) to a sidecar file kept separate from `specs.jsonl` (a verify-run record is
+   evidence of an action taken, not re-derivable from the markdown tree the way `specs.jsonl` is).
+   **Gate (`scripts/r39_slice3_gate.sh`, 11 checks):** a synthetic PASS-fixture spec records
+   `result=PASS, exit_code=0`; a synthetic FAIL-fixture spec (exit 7) records `result=FAIL,
+   exit_code=7` (the real code, not just "nonzero"); every record's timestamp and commit hash are
+   well-formed; **running it against R32, R33, and R34 for real reproduces PASS for all three**,
+   matching this session's own hand-verified record of their acceptance gates being green;
+   `--record-jsonl` without `--run` is a hard usage error (exit 2), not a silent no-op.
 4. **`axon-gov status`: the render.** Regenerate a `GOVERNANCE_STATUS.md` snapshot from the
    authoritative store (mirroring the user's "the LLM should not rewrite RESEARCH_STATUS.md
    directly; the harness generates it from validated state" principle) instead of `SESSION_STATUS.md`
@@ -216,8 +230,8 @@ or runtime), with its own exit-code space independent of Axon's E1xxx/E2xxx/E3xx
   real bug the current `verify_all_specs.sh` finds, confirmed by a side-by-side run reporting
   identical findings on the current (clean) tree AND on a synthetic fixture with 4 injected real
   bugs (`scripts/r39_slice2_gate.sh` ALL CHECKS PASSED, 10/10).
-- Slice 3 landed: `axon-gov verify` against at least R32, R33, R34 reproduces this session's
-  hand-verified results exactly.
+- **Slice 3 landed 2026-07-18**: live evidence re-run against R32, R33, R34 reproduces this
+  session's hand-verified results exactly (`scripts/r39_slice3_gate.sh` ALL CHECKS PASSED, 11/11).
 - Documented, honestly, in `governance/EXECUTION_MODEL.md` as the "typed" successor to its own §1-3
   prose sketch — not a separate, competing document.
 
