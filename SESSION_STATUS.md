@@ -730,18 +730,31 @@ this up as R33 spec new §5.2.3 + §12 Q1 (an explicit open founder/architecture
 `r26-substrate-trait-aspirational` memory to cover this second instance — the lesson generalizes to
 re-verifying your OWN prior-iteration "later we'll just do X" plans, not just old specs' claims.
 
+## R39 Slice 4 landed: GOVERNANCE_STATUS.md render, re-scoped (commit `5bddc6e`)
+
+Did the design work first: the original gate ("a strict superset of what `SESSION_STATUS.md`
+currently records by hand") never held up — `SESSION_STATUS.md` is 700+ lines of hand-written
+narrative (decision rationale, investigation findings), and the typed store only carries
+structured facts. Corrected scope: `GOVERNANCE_STATUS.md` is a NEW, separate, purely-generated
+artifact — does NOT replace `SESSION_STATUS.md`'s narrative, exists so every structured status
+claim (id/status-claim/prose-status/match/last-verify-result) is reachable from one place, sourced
+only from the store, never hand-typed so it can't silently drift. `scripts/r39_render_status.sh`
+renders `governance/state/GOVERNANCE_STATUS.md` (gitignored, matching `specs.jsonl`'s own
+precedent) from `specs.jsonl` + an optional Slice-3 verify-results sidecar. Gated by
+`scripts/r39_slice4_gate.sh` (8 checks, ALL PASSED): nothing dropped/invented; counts cross-checked
+against `verify_all_specs.sh`'s own report; a synthetic mismatch fixture renders flagged matching
+the existing validator's own finding (no second notion of "wrong"); most-recent verify-run record
+wins over a stale one; regenerating twice against an unchanged store is byte-identical except the
+timestamp (pure function of the store). **All five R39 slices are now landed.**
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2f, which is itself now blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay
-vs. hardened TCP — not something to pick unilaterally). R39 has Slices 1-3, 5 landed; only Slice 4
-(`axon-gov status` render) remains, and it needs design work before it's a quick slice. Options for
-the next iteration:
-- **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
-  `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
-  only? a hybrid render + hand-written narrative section?) before writing a renderer.
+R33.S2f, which is itself blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay
+vs. hardened TCP — not something to pick unilaterally). R39 is fully landed (all 5 slices). Options
+for the next iteration:
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
   bodies (would unlock the str-returning family for the registry) — real design work, size it
   before committing to it in one iteration.
@@ -750,4 +763,7 @@ the next iteration:
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
   genuinely stalled on it now — this is exactly the kind of decision this build loop shouldn't make
   unilaterally.
+- With both R39 and the easy R33 sub-slices exhausted, the next genuinely fresh vein of "quick,
+  well-scoped, gate-verifiable" work may itself need a fresh SELECT sweep across `REQUIREMENTS.md`
+  rather than continuing to mine the same two specs.
 - R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
