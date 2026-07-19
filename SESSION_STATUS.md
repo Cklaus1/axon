@@ -816,37 +816,45 @@ had entries) PASS. Explicitly still out of scope: `str_replace`/`str_pad_start`/
 (genuinely different `Array<Str>` shapes, confirmed by reading their codegen, not assumed). R1d
 spec updated with the full finding.
 
-## Background runs from prior iterations: still need checking
+## R1d out-param-synthesis extension: second batch landed, essentially complete (commit `564399d`)
 
-Two long-running background verifications may still be executing (both were competing for the
-same cargo build lock, which is why they're taking unusually long):
-- `bash scripts/r30_acceptance_gate.sh` (`/tmp/r30_gate_run1.log`) — already live-captured a real
-  flake (`wasm_examples_run_identically_on_aot_wasm`, confirmed via isolated rerun, documented in
-  memory); its idempotency check (acc_a4) showed both sub-runs failing the SAME way (BUILD/
-  UNIT_TESTS/R26_ATTESTATION), which is technically "idempotent" even though it's a flake relative
-  to isolation. Check for `REAL_EXIT=` before deciding whether to chase R30's root cause further.
-- `cargo test -p axon-core --no-default-features` (task `bss3doll5`) — additional full-suite
-  confirmation for the R1d out-param-synthesis change above, which already has strong direct
-  evidence (build/clippy/drift-tests/manual-parity/fuzz_parity all clean) independent of this run.
+Migrated the remaining 5 multi-arg candidates — `str_repeat`/`str_slice`/`str_replace`/
+`str_pad_start`/`str_pad_end` — confirming each one's actual codegen shape before adding a row
+(not assumed from name resemblance), same discipline that caught `str_count`'s miscategorization
+earlier. All 5 shared the identical output-side shape as the first batch, needing ZERO new
+synthesis logic — `synthesize_str_out_wrapper` already handles mixed leading-arg shapes generically
+via `params: &'static [L]`. Deleted the 5 hand-written codegen blocks. `STR_OUT_EXTERNS` is now 12
+rows — every single-`AxonStr`-return out-param candidate from the original scan except
+`str_split`/`str_join` (genuinely different `Array<Str>` input/output shapes, confirmed by reading
+their codegen, remain out of scope). Verified: `cargo build`/clippy clean; 5/5 drift tests (all 12
+rows covered); a manual native==interp check across 12 more hand-picked cases (multibyte fill-char
+padding, empty-string edges, a byte-vs-char UTF-8 slice boundary) byte-identical; full
+`scripts/fuzz_parity.sh` PASS. R1d's out-param-synthesis extension is now essentially complete.
+
+Also confirmed during this iteration: the R30 background gate run from two iterations ago
+finished (4 passed, 2 failed) — `acc_a1`/`acc_a6` failing was fully explained by the already-known,
+already-documented Stage 2 flake (`wasm_examples_run_identically_on_aot_wasm`), no new information.
+The R1d first-batch full-test-suite confirmation (task `bss3doll5`) also completed clean (124/124).
+A fresh full-suite confirmation for THIS iteration's second batch is running in the background
+(task `buknyl7xw`) — check its result before the next iteration, though direct evidence is already
+strong.
 
 ## Next candidate slice — genuinely fresh scope needed
 
-R1d's out-param-synthesis extension is now real and proven (7 candidates landed); the remaining
-5 multi-arg candidates (str_replace/str_pad_*/str_slice/str_repeat) are a natural, much lower-risk
-follow-on now that the mechanism exists — just extending `params` for rows with more than one
-leading arg, no new synthesis logic needed (verify this claim before assuming it, though — the
-same discipline that caught str_count's miscategorization). R34 has S1-S6, S8 landed; only S7
-remains (R33 `VoteRequest` chain-awareness), still blocked on R33.S2f, which is itself blocked on a
-founder/architecture decision (R33 spec §12 Q1 — host relay vs. hardened TCP — not something to
-pick unilaterally). R39 is fully landed (all 5 slices). Options for the next iteration:
-- **Check both background runs** (see above) — read their results before deciding next steps.
-- **R1d: migrate the multi-arg out-param candidates** (`str_replace`/`str_pad_start`/
-  `str_pad_end`/`str_slice`/`str_repeat`) using the now-proven `STR_OUT_EXTERNS` mechanism — verify
-  each one's actual codegen shape first (extra scalar/str args before the two out-params) before
-  assuming they fit `params: &'static [L]` cleanly, the same discipline used for the 7 already
-  landed.
+R1d's out-param-synthesis extension is essentially done (12/12 identified single-AxonStr-return
+candidates migrated; only `str_split`/`str_join`, genuinely different array shapes, remain, and
+they'd need their own from-scratch design, not more rows on the existing mechanism). R34 has
+S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on R33.S2f,
+which is itself blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay vs.
+hardened TCP — not something to pick unilaterally). R39 is fully landed (all 5 slices). Options for
+the next iteration:
+- **Check the background test-suite run** (task `buknyl7xw`) — read its result before deciding
+  next steps.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
   genuinely stalled on it now — this is exactly the kind of decision this build loop shouldn't make
   unilaterally.
+- With R1d, R33's easy sub-slices, and R39 all now exhausted, the next iteration likely needs a
+  fresh SELECT sweep across `governance/REQUIREMENTS.md` again (same as two iterations ago) rather
+  than continuing to mine any single spec.
