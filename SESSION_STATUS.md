@@ -709,20 +709,36 @@ trip (wire protocol → single round trip → N-peer fan-out → listen primitiv
 complete end-to-end. `cargo test -p axon-vm`: 62/62. Clippy clean with zero allows. R33 spec
 §13/§14/header, `REQUIREMENTS.md` updated.
 
+## R33.S2f sized, found blocked on a real architecture fork — not built (commit `7379950`)
+
+Went to size S2f ("swap TCP for real `AF_VSOCK`, same wire format" — the plan carried unquestioned
+across all four S2a-e iterations' own doc comments) before building it, same discipline that caught
+the R26 Substrate-trait finding two iterations ago. Found the premise false: every real vsock use in
+this repo (`crates/axon-vm/src/main.rs`'s Firecracker `/vsock` device config, `vsock_relay`, and
+`interp.rs`'s `vsock_send_recv`) connects a guest ONLY to its own host, never to another guest
+directly — Firecracker's vsock device model has no peer-to-peer mode. Compounding it: `axon-vm run`
+launches exactly one VM per process, so there's no existing multi-VM host structure to relay
+through either. This does NOT mean the quorum concept requires separate physical hosts (R33's own
+stated threat model — a single VM compromised post-attestation — is satisfied by micro-VM isolation
+regardless of host topology) — it means the transport has to match a topology vsock can actually
+support, and direct peer-to-peer isn't one. Two real options remain, with materially different
+trust-boundary/deployment consequences: a new host-mediated relay broker (extends the TCB,
+same-host only) vs. hardening the existing TCP path with real auth/TLS (works cross-host). Wrote
+this up as R33 spec new §5.2.3 + §12 Q1 (an explicit open founder/architecture question, unresolved
+— not silently picked) rather than building on the wrong premise. No code changed — pure spec-first
+(Gate 1) work. `verify_all_specs.sh` and both R39 governance gates confirm clean. Updated the
+`r26-substrate-trait-aspirational` memory to cover this second instance — the lesson generalizes to
+re-verifying your OWN prior-iteration "later we'll just do X" plans, not just old specs' claims.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
 R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
-R33.S2f (real `AF_VSOCK` — swapping the whole `vsock.rs` module's TCP-loopback stand-in; everything
-else in S2 — wire protocol, round trip, fan-out, listen primitive, both CLI flags — is done). R39
-has Slices 1-3, 5 landed; only Slice 4 (`axon-gov status` render) remains, and it needs design work
-before it's a quick slice. Options for the next iteration:
-- **R33.S2f**: real `AF_VSOCK`, swapping `connect`/`bind`/`listen` in `vsock.rs` for the raw
-  `libc::socket(AF_VSOCK, ...)` calls `interp.rs`'s `vsock_send_recv` already demonstrates, same
-  wire format either way — this would need real microVM infrastructure to test meaningfully
-  (unlike TCP loopback), so likely needs its own sizing pass before committing to it in one
-  iteration (does this repo/CI have a way to test AF_VSOCK without real VMs? check before starting).
+R33.S2f, which is itself now blocked on a founder/architecture decision (R33 spec §12 Q1 — host relay
+vs. hardened TCP — not something to pick unilaterally). R39 has Slices 1-3, 5 landed; only Slice 4
+(`axon-gov status` render) remains, and it needs design work before it's a quick slice. Options for
+the next iteration:
 - **R39 Slice 4, properly scoped as a design task**: first decide what "strict superset of
   `SESSION_STATUS.md`" should concretely mean for a mechanically-generated file (structured facts
   only? a hybrid render + hand-written narrative section?) before writing a renderer.
@@ -731,4 +747,7 @@ before it's a quick slice. Options for the next iteration:
   before committing to it in one iteration.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
+- Consider surfacing R33 §12 Q1 explicitly to the user/founder, since R33.S2/R34.S7 are both
+  genuinely stalled on it now — this is exactly the kind of decision this build loop shouldn't make
+  unilaterally.
 - R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
