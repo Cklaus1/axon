@@ -152,6 +152,21 @@ Fix: add an LLVM-17 job running `gate.sh`, or at minimum the parity suite.
 Note: this may surface pre-existing failures. Those go to `opportunities.md`; they
 do not block T7, whose deliverable is *the gate running*, not the gate passing.
 
+## Status (2026-08-01)
+
+| task | state | commit |
+|---|---|---|
+| T1 nested sandbox narrows only | done | `d74d04c` |
+| T8 IO does not imply exec | done | `71e135b` |
+| T4 scan_effects hardened | done | `ac1a590` |
+| T2 string-dispatch walker | done | `870469a` |
+| T5 LICENSE / T6 README counts | done | `1a89758` |
+| T3 fs/net allowlists bind | done | `4dd69e2` |
+| T7 CI covers 19 crates + codegen | in progress | — |
+
+All four confirmed sandbox-escape CRITICALs are closed, each with a regression
+test verified to fail before the fix.
+
 ## Stop condition
 
 Stop and report when **either**:
