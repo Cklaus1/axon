@@ -221,6 +221,29 @@ pub fn verify_report(
         ));
     }
 
+    // Step 4 (AUDIT T13, part of finding OSK-P7-C1): `hw_root` was never read
+    // by this function AT ALL. Since nothing here recomputes the HMAC — the
+    // software stand-in's key is operator-owned, documented above — a report
+    // could simply CLAIM `hw_root = "sev-snp"` and verify identically to a real
+    // hardware quote. That turns the one field distinguishing "no
+    // memory-encryption vs the host" from "confidential computing" into an
+    // unchecked self-assertion.
+    //
+    // This build has no hardware-attestation backend compiled in, so the ONLY
+    // hw_root it can honestly verify is the software stand-in. A hardware claim
+    // is refused rather than accepted on trust. Closing this needs no key
+    // decision; the cryptographic binding (recomputing the HMAC against a key
+    // the VERIFIER holds) still does — see O007-adjacent notes and §8.
+    if report.hw_root != SOFTWARE_TPM_HW_ROOT {
+        return Err(format!(
+            "unverifiable hw_root claim: report claims `{}`, but this build has \
+             no hardware-attestation backend and cannot verify anything beyond \
+             `{SOFTWARE_TPM_HW_ROOT}`. Refusing rather than accepting a \
+             hardware root of trust on the report's own say-so.",
+            report.hw_root,
+        ));
+    }
+
     Ok(())
 }
 
@@ -1531,5 +1554,40 @@ mod tests {
         // Different key ⇒ different HMAC
         let h4 = hmac_sha256(b"other-key", data);
         assert_ne!(h1, h4, "HMAC with different key must differ");
+    }
+}
+#[cfg(test)]
+mod hw_root_verification_tests {
+    use super::*;
+
+    /// AUDIT T13 (finding OSK-P7-C1). `verify_report` never read `hw_root`, so a
+    /// software stand-in could claim `sev-snp` and verify exactly like a real
+    /// hardware quote — making the single field that distinguishes "no memory
+    /// encryption vs the host" from "confidential computing" an unchecked
+    /// self-assertion.
+    #[test]
+    fn a_forged_hardware_root_claim_is_refused() {
+        let kernel = b"fake kernel bytes for measurement";
+        let report = sign_report(measure_kernel_bytes(kernel), b"test-ek");
+        let digest = report.measurement.digest;
+        let tcb = report.measurement.axtcb1.clone();
+
+        // The honest stand-in verifies.
+        assert!(
+            verify_report(&report, &digest, &tcb).is_ok(),
+            "an unmodified software-stand-in report must verify"
+        );
+
+        // The SAME report, claiming a hardware root of trust, must NOT.
+        for forged in ["sev-snp", "tdx", "totally-real-tpm"] {
+            let mut liar = report.clone();
+            liar.hw_root = forged.to_string();
+            let err = verify_report(&liar, &digest, &tcb)
+                .expect_err(&format!("a forged hw_root `{forged}` must be refused"));
+            assert!(
+                err.contains("unverifiable hw_root"),
+                "the refusal must name the reason, got: {err}"
+            );
+        }
     }
 }
