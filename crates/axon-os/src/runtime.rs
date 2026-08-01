@@ -443,6 +443,32 @@ impl Runtime for AxonCoreRuntime {
         if let Some(p) = std::env::var_os("PATH") {
             cmd.env("PATH", p); // cc/linker discovery for the interpreter
         }
+        // AUDIT T23 (findings OSK-P4-H4 / O017 / O018). `env_clear` is correct
+        // and stays — but the allowlist omitted every AXON_* control an operator
+        // legitimately sets, so they were silently dropped:
+        //
+        //   AXON_AUDIT_LEDGER — the R28 capability-audit ledger was NEVER
+        //     written for a job run under the supervisor: exactly the execution
+        //     path where an operator most wants that trail.
+        //   AXON_AI_MOCK / AXON_AI_REPLAY — the deterministic stub and the
+        //     record/replay cache were inert here, so a job fell through to the
+        //     live path (observed: it then hit the AI-policy refusal, exit 5),
+        //     making replay-reproducibility non-functional through axon-os,
+        //     which is where it is meant to hold.
+        //
+        // Silent in every case: the operator sets the variable, the run
+        // succeeds, and the artifact simply never appears.
+        for key in [
+            "AXON_AUDIT_LEDGER",
+            "AXON_AI_MOCK",
+            "AXON_AI_REPLAY",
+            "AXON_PATH",
+            "AXON_MAX_DEPTH",
+        ] {
+            if let Some(v) = std::env::var_os(key) {
+                cmd.env(key, v);
+            }
+        }
         // Relative paths in the program resolve against the job's directory, so
         // an example runs the same wherever it is invoked from (hermetic).
         if let Some(dir) = program.parent() {
