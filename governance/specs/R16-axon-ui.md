@@ -163,10 +163,7 @@ Three consequences:
    control: if Vello's alpha gaps (blur/filters, conflation artifacts) block a slice, the seam is
    what makes swapping possible rather than catastrophic. §9 must exercise a backend swap.
 2. **Vello's compute-shader requirement is a platform-reach constraint, and it is not recorded
-   anywhere in §2/§10.** No software fallback. Any target without compute shaders — older
-   hardware, some embedded, constrained VMs — cannot run Axon UI at all. Slint's *software*
-   renderer is the existence proof that a CPU path is achievable; if reach matters, the seam must
-   admit one. This needs a decision, not a default.
+   anywhere in §2/§10.** See §1d — this is now a decision, not an open question.
 3. **Blitz is the reference implementation to read first.** It already composes Stylo + Taffy +
    Parley + Vello + Winit + AccessKit — our exact stack plus both §3b seams — so the integration
    questions §3b raises have a worked answer in-tree somewhere. Read it before designing the
@@ -178,6 +175,56 @@ four platforms. The real objection is different and narrower: gpui is a *hybrid 
 retained* mode framework, and an immediate-mode component has no persistent tree to inspect,
 which is what §1's checkability argument needs. Right conclusion, wrong reason — and the wrong
 reason would have led us to stop looking at it, which the corrected one does not.
+
+#### 1d. Reach — the renderer seam MUST admit a CPU path *(decision, 2026-08-01)*
+
+**Decision: the renderer seam is required to support a software (CPU) backend. Vello is the
+default renderer, not the only one.**
+
+Vello requires a GPU with compute-shader support and ships no software fallback (§1b, verified).
+Taken alone that is a hardware-support footnote. It is not, for three reasons, and the third is
+the one that decides it.
+
+**(a) Reach.** Any target without compute shaders cannot run Axon UI *at all* — older hardware,
+much embedded, constrained or GPU-less VMs, remote/headless sessions, and locked-down enterprise
+environments where GPU access is restricted. That is not a long tail for a system whose pitch is
+running agents under supervision on infrastructure you do not necessarily control.
+
+**(b) It contradicts a stated target.** R17's bare-metal Axon OS track and R14's mobile targets
+both reach hardware where a compute-shader GPU driver is the hardest part of the port. ROADMAP
+§2.3 already names "the GPU driver + HAL below the language" as the hard 90%. A UI framework that
+*cannot render without that driver* makes the hard 90% a prerequisite for the UI rather than a
+later slice.
+
+**(c) The decisive one: a GPU-only renderer cannot be gate-tested.** This project's entire
+governance discipline is executed gates — and §7.2 documents what happens to controls that are
+not executed: the R28 ledger was never written, the kill switch polled nothing, verdicts sealed
+faults as success, all silently, all for months. CI has no GPU. A renderer with no CPU path means
+**every visual and layout acceptance criterion in §9 is either skipped in CI or asserted without
+running** — which is precisely the vacuous-gate failure this repo has spent an audit cycle
+removing (see the harness skip census, `tasks/opportunities.md` O006). A software backend is not
+primarily a reach feature; it is the thing that makes Axon UI *testable in the same way as the
+rest of the system*.
+
+**Existence proofs** (verified §1b): Slint ships a `software` renderer with no dependencies, and
+Iced ships `iced_tiny_skia`. A CPU path for 2D vector UI is well-trodden; this is not research.
+
+**Obligations:**
+
+1. The renderer provider trait (§13) is defined so that a CPU backend is a *conforming
+   implementation*, not a special case. If any part of the `View`→pixels contract assumes GPU
+   semantics, that is a defect in the seam.
+2. **§9 acceptance criteria render on the CPU backend in CI**, and the GPU backend is verified
+   separately where hardware exists. Golden-image comparison runs headless. A criterion that can
+   only pass on a developer's machine is, by this repo's own standard, not a gate.
+3. Any output difference between backends is either bounded and documented (antialiasing
+   tolerance) or a bug. "GPU and CPU render differently" must not be discovered late — it is the
+   same class as the native↔interp parity invariant (I-2) the language already holds itself to.
+4. 3D (`render3d`) is explicitly **out of scope** for the CPU path. Compute-shader hardware is a
+   reasonable requirement for 3D; it is not one for a button.
+
+**Non-goal:** the CPU backend need not match GPU performance. §10's budget applies to the GPU
+path. The CPU path's bar is *correctness and testability*, not frame rate.
 
 #### Verification status of this section
 
