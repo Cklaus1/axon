@@ -100,16 +100,16 @@ remain replaceable.** If a decision here makes a renderer hard to swap, that dec
 
 | Project | What it is | What Axon takes | What Axon refuses |
 |---|---|---|---|
-| **Vello** | GPU compute-based 2D vector renderer (Linebender) | The renderer. Already chosen; this section ratifies it. | Writing our own rasterizer. |
+| **Vello** | "A 2D graphics rendering engine written in Rust, with a focus on GPU compute" (Linebender) — same role as Skia/Cairo. Uses prefix-sum algorithms to parallelize normally-sequential work onto the GPU; runs on `wgpu`, targets anything supporting WebGPU default limits (desktop, web via Chrome, Android). ***Verified 2026-08-01: IN AN ALPHA STATE.*** Acknowledged open work: blur/filter effects, conflation artifacts, GPU memory allocation strategy, glyph caching. **Hard requirement: a GPU with compute-shader support** — no software fallback. | The renderer. Already chosen; this section ratifies it **as an alpha dependency** — see §1c. | Writing our own rasterizer. |
 | **Parley** | "An API for implementing rich text layout" (Linebender). ***Verified 2026-08-01 against the repo.*** Sits on the "Parley text stack": **Fontique** (font enumeration + fallback), **HarfRust** (a Rust port of HarfBuzz — shaping), **Skrifa** (TrueType/OpenType reading, glyph metrics), **ICU4X** (bidi, segmentation, Unicode). Parley itself computes layout: glyph coordinates, line breaking, bidi resolution. MSRV Rust 1.88+, Apache-2.0/MIT, actively maintained. | Text layout, wholesale. **Currently absent from this spec — that is a hole.** | Shaping/bidi/font fallback. This is the classic thing hand-rolled UI frameworks underestimate and never finish. |
-| **Taffy** | Flexbox/grid layout (used by Bevy, Zed) | The layout engine. Ratifies §12 Q2's default. | A bespoke layout engine. |
-| **Masonry** | Retained widget layer beneath Xilem, on Vello | The widget/paint seam — the concrete candidate for our backend boundary. | Owning widget internals. |
-| **Xilem** | Reactive view-tree architecture over Masonry/Vello | The *architecture study* for §12 Q1. Closest live experiment to our exact question. | Adopting its type machinery wholesale; its view traits are a large surface. |
-| **gpui** | Zed's production GPU UI framework | Evidence on what product quality actually costs — text, input, platform integration, per-frame budget. Read it to calibrate, not to vendor. | Its custom stack; it is coupled to Zed's needs and not designed as a reusable dependency. |
-| **Slint** | Declarative DSL compiled AOT into a typed tree | The **closest architectural analogue to what we are building**: a compiler that turns a declarative DSL into a typed tree, with a compiler/runtime split. `col{}`/`row{}` in `.ax` is structurally their `.slint`. Study their split, and how they keep the compiled artifact inspectable. | Their runtime and language; we already have a language and a type system. |
-| **Iced** | Elm `View`/`Msg`/`update` in Rust | The reference implementation of the model §3/§4 already names. Cheapest way to sanity-check our `update` semantics. | Its renderer abstraction. |
+| **Taffy** | "A flexible, high-performance, cross-platform UI layout library." ***Verified 2026-08-01.*** Implements **CSS Block, Flexbox and CSS Grid**. Used by **Servo, Blitz, Bevy, Slint, Lapce and Zed** — by some distance the best-attested dependency in this table. | The layout engine. Ratifies §12 Q2. | A bespoke layout engine. |
+| **Masonry** | ***Verified 2026-08-01:*** "a toolkit for building UI frameworks (including Xilem)" — retained widget tree, event handling, update passes. Explicitly **experimental**. Note its self-description targets *framework builders*, which is exactly our position. | The widget/paint seam — still the concrete candidate for our backend boundary, now known to be experimental. | Owning widget internals. |
+| **Xilem** | Reactive UI framework over Masonry, "inspired by React, SwiftUI and Elm"; lightweight view tree, re-renders from tree changes. ***Verified 2026-08-01: explicitly EXPERIMENTAL.*** | The *architecture study* for §12 Q1 — and its experimental status is itself evidence for Q1's resolution (fine-grained reactivity in Rust is not settled). | Adopting its type machinery wholesale. |
+| **gpui** | ***Verified 2026-08-01 — the draft was WRONG about reusability.*** README: "a hybrid immediate and retained mode, GPU accelerated, UI framework for Rust, designed to support a wide variety of applications", with setup instructions for standalone apps on macOS/Linux/FreeBSD/Windows. So it IS intended for use outside Zed. But: "still in active development as we work on the Zed code editor, and is still pre-1.0. There will often be breaking changes between versions." | Evidence on what product quality costs, and a live standalone option worth re-evaluating — not the dismissal the draft implied. | Its **hybrid immediate/retained** model: an immediate-mode component undercuts §1's retained-tree checkability argument (see the egui row). |
+| **Slint** | ***Verified 2026-08-01 — analogue claim CONFIRMED:*** ".slint files are compiled ahead of time. The expressions in the .slint are pure functions that the compiler can optimize" — lex/parse/optimize/codegen into Rust/C++/JS/Python. Backends: femtovg (GLES2), Skia, **software (CPU, no deps)**, Qt. **Stable 1.x API** — the only mature option in this table. **Licensing: royalty-free / GPLv3 / commercial — NOT permissive.** | The compiler/runtime split, and their AOT-purity framing, which matches §5's `app` purity obligation almost exactly. Their **software renderer** is also the answer to Vello's compute-shader hard requirement, if that becomes a constraint. | Adopting it: the licence is incompatible with vendoring into a permissively-licensed Axon, and we already have a language. Study only. |
+| **Iced** | "Cross-platform GUI library for Rust focused on simplicity and type-safety. Inspired by Elm" — State / Messages / view / update, exactly §3's model. Renderers: `iced_wgpu` (Vulkan/Metal/DX12) and `iced_tiny_skia` (software). ***Verified 2026-08-01: README says "currently experimental software"*** despite wide adoption. | The reference implementation of our `update` model. | Its renderer abstraction. |
 | **Floem** | Fine-grained reactive (Lapce) | The counter-data-point for §12 Q1 — what signals cost in practice. | — |
-| **Blitz** | HTML/CSS renderer on Vello + Taffy + Stylo (Dioxus) | Proof the Vello+Taffy pairing carries a real layout model at scale. | CSS. |
+| **Blitz** | "A radically modular HTML/CSS rendering engine." ***Verified 2026-08-01 — and it is the single most useful row here:*** it composes **Stylo + Taffy + Parley + Vello + Winit + html5ever + AccessKit**. That is our entire chosen stack *including both §3b seams*, wired together and rendering real layout. Status: **pre-alpha** — "already has a very capable renderer, but there are also still many bugs and missing features." | Existence proof that the stack composes, and a reference for HOW to wire Parley and AccessKit into a Vello/Taffy tree — the two seams §3b just added. | CSS. |
 | **Makepad** | Shader-based DSL with live reload | Only if shader-level control becomes a requirement. | Currently out of scope. |
 | **egui / Dear ImGui** | Immediate mode | Studied as the **contrast case**: immediate mode is simple and fast to build, and it is *structurally wrong here* — there is no retained tree to inspect, so the entire §1 checkability argument evaporates. | The paradigm. |
 | **AccessKit** | "Accessibility infrastructure for UI toolkits" — a cross-platform, cross-language abstraction so a toolkit implements a11y once. ***Verified 2026-08-01 against the repo.*** Tree-based schema: nodes with **stable integer IDs**, **roles** (button/label/text input), attributes, and an **action system** (focus, invoke, text selection). Push-a-full-tree-then-incremental-updates model, explicitly after Chromium's design; adapters keep the full tree in memory. Released adapters: **Windows (UI Automation), macOS (NSAccessibility), Linux/Unix (AT-SPI D-Bus), Android, iOS**. C and Python bindings. Adapters at "rough feature parity"; single- and multi-line text inputs supported, **rich text / hypertext not yet**. | The accessibility seam. **Also absent from this spec — a second hole.** | Retrofitting a11y later; it is far more expensive after the tree design is frozen. |
@@ -135,6 +135,50 @@ remain replaceable.** If a decision here makes a renderer hard to swap, that dec
    acceptance criteria in §9 should include *swapping one out* as an exercised test, not an
    aspiration.
 
+#### 1c. The finding the verification produced: the whole stack is pre-1.0
+
+Verifying the rows changed the picture more than any individual row did.
+
+| dependency | status as verified 2026-08-01 |
+|---|---|
+| Vello (renderer) | **alpha**; needs compute shaders; glyph caching + GPU memory strategy still open |
+| Masonry (widget seam) | **experimental** |
+| Xilem (architecture reference) | **experimental** |
+| Blitz (composition reference) | **pre-alpha** |
+| Iced (model reference) | "currently experimental software" |
+| gpui | **pre-1.0**, "often breaking changes between versions" |
+| Taffy (layout) | mature and widely attested — Servo, Bevy, Slint, Lapce, Zed |
+| Slint | **stable 1.x** — and licensed royalty-free / GPLv3 / commercial |
+
+**Every pixel-producing dependency Axon has chosen is pre-1.0, and the only stable
+alternative is not permissively licensed.** §1b's "we do not build the renderer" decision is
+still right — the alternative is building an alpha renderer ourselves, which is strictly worse.
+But "ratifies" was too settled a word for what these actually are, and the spec should not read
+as though the stack were a solved problem.
+
+Three consequences:
+
+1. **The replaceability invariant in §1b is now load-bearing, not stylistic.** It was written as
+   good hygiene. Given an alpha renderer and an experimental widget layer, it is the actual risk
+   control: if Vello's alpha gaps (blur/filters, conflation artifacts) block a slice, the seam is
+   what makes swapping possible rather than catastrophic. §9 must exercise a backend swap.
+2. **Vello's compute-shader requirement is a platform-reach constraint, and it is not recorded
+   anywhere in §2/§10.** No software fallback. Any target without compute shaders — older
+   hardware, some embedded, constrained VMs — cannot run Axon UI at all. Slint's *software*
+   renderer is the existence proof that a CPU path is achievable; if reach matters, the seam must
+   admit one. This needs a decision, not a default.
+3. **Blitz is the reference implementation to read first.** It already composes Stylo + Taffy +
+   Parley + Vello + Winit + AccessKit — our exact stack plus both §3b seams — so the integration
+   questions §3b raises have a worked answer in-tree somewhere. Read it before designing the
+   seams from first principles.
+
+Also worth recording as a correction: the draft dismissed **gpui** as "coupled to Zed's needs and
+not designed as a reusable dependency". That is wrong — it ships standalone setup instructions for
+four platforms. The real objection is different and narrower: gpui is a *hybrid immediate and
+retained* mode framework, and an immediate-mode component has no persistent tree to inspect,
+which is what §1's checkability argument needs. Right conclusion, wrong reason — and the wrong
+reason would have led us to stop looking at it, which the corrected one does not.
+
 #### Verification status of this section
 
 **Parley and AccessKit rows were verified against their upstream repositories on 2026-08-01**
@@ -143,8 +187,13 @@ sitting on **swash**, which is wrong — the current stack is Fontique + HarfRus
 Swash is not in it. That is precisely the failure mode this note warns about, caught on the first
 two rows checked.
 
-**The remaining rows are still unverified** and were written from working knowledge (no network
-access in the original authoring session). Every
+**Verified 2026-08-01:** Parley, AccessKit, Vello, Taffy, Masonry, Xilem, gpui, Slint, Iced,
+Blitz. Three corrections came out of it (Parley's stack, gpui's reusability, and the maturity
+picture in §1c) — a 3-in-10 error rate on rows written from working knowledge, which is the
+argument for this note existing.
+
+**Still unverified:** Floem, Makepad, egui/Dear ImGui. All three are minor rows (a counter-data
+point and two contrast cases), none of which currently binds a decision. Every
 "what Axon takes" row is a hypothesis about a dependency, and this project has a documented,
 repeatedly-measured habit of code-read confidence being wrong. Before any of this binds a slice:
 clone each candidate, build the hello-world, and record the actual API shape and activity level.
