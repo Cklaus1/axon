@@ -36,6 +36,17 @@ AXON="target/debug/axon"
 INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
+# AUDIT O013: give this harness its OWN cargo target directory for the wasm
+# builds below. Several wasm harnesses run `--target wasm32-*` concurrently under
+# the full test suite and contended on the shared target/, so some builds failed
+# and their cases reported "wasm build failed" — the test then correctly refused
+# to pass on partial coverage, but the cause was contention, not a real parity
+# break. Set AFTER the two host `cargo build` calls above so those still reuse
+# the shared cache and are not rebuilt into the temp dir.
+#
+# Same isolation the SMT harnesses already use (smt_discharge_parity.sh:41).
+export CARGO_TARGET_DIR="$WORK/wasm-target"
+
 # The AOT-wasm-linkable subset: programs that, after dead-function pruning, have
 # no SURVIVING i64-ABI `__axon_*` import that clashes with wasm32's i32 libc — so
 # they link in reactor mode and run under `wasmtime --invoke main`. This is wider
