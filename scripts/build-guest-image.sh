@@ -39,6 +39,7 @@ build_kernel_axon() {
     # The custom target JSON is at crates/axon-guest-kernel/targets/x86_64-axon-metal.json.
     RUSTFLAGS="-C target-feature=+crt-static" \
     cargo build -p axon-guest-kernel \
+        -Z json-target-spec \
         --target "crates/axon-guest-kernel/targets/x86_64-axon-metal.json" \
         --release \
         -Z build-std=core,compiler_builtins \
@@ -120,7 +121,13 @@ build_initramfs() {
     local AXON_BIN="target/x86_64-unknown-linux-musl/release/axon"
     local INITDIR
     INITDIR="$(mktemp -d)"
-    trap 'rm -rf "$INITDIR"' EXIT
+    # AUDIT T12: INITDIR is `local` to this function, but an EXIT trap runs in
+    # global scope AFTER the function has returned — where the name is unbound.
+    # Under `set -u` that made the script exit 1 at the very end, after all the
+    # real work had succeeded. Default the expansion so cleanup is best-effort
+    # rather than fatal. (Latent until now: the script previously died earlier,
+    # on the json-target-spec error, so the trap never ran.)
+    trap 'rm -rf "${INITDIR:-}"' EXIT
 
     mkdir -p "$INITDIR"/{dev,proc,sys,tmp,axon,usr/bin}
     cp "$AXON_BIN" "$INITDIR/usr/bin/axon"

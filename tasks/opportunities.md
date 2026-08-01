@@ -143,3 +143,48 @@ sweep:
 Directly relevant to O002/O004: the browser-parity floor guard is the one
 harness observed doing this correctly, refusing to go green when coverage
 shrank. It is the model to converge on.
+
+### O007 — [critical] mmds fail-closed is correct but BLOCKED: the fail-open default is load-bearing
+
+Attempted as T12 (finding OSK-P7-C3) and **reverted**, with new evidence that
+makes the finding stronger than reported.
+
+`mmds.rs` grants `EffectSet(0xFF)` — all eight effects — on every miss path (no
+boot_params, no cmdline ptr, absent `axon.policy=`, non-array value, decode
+failure, `!POLICY_READY`), and `enforce.rs:29` mirrors that default explicitly
+"so the kernel boots even if K2 hasn't filled in a real policy yet". Inverting
+all six to `EffectSet(0)` is a small, obviously-correct change and it compiles.
+
+**But it breaks Layer 3 of the product's own gate**, and the reason matters:
+`scripts/axon_kernel_gate.sh:113` invokes `axon-vm run "$GOOD" --kernel ...
+--initrd ... --json` with **no policy argument at all**. Nothing ever sets
+`axon.policy=`. So the microVM enforcement layer has only ever worked because
+the kernel defaults to granting everything — the fail-open default is not a
+safety-net, it is the mechanism by which the demo functions.
+
+Correct sequencing, which is why this is not a one-line fix:
+
+1. `axon-vm` must derive a policy from the job's grant and pass it on the kernel
+   cmdline as `axon.policy=<base64>`; and refuse to launch when it has none.
+2. **Only then** flip the six defaults to `EffectSet(0)` and the `enforce.rs`
+   static to `0`.
+
+Doing (2) without (1) means no agent can run in a microVM at all. Doing (1)
+alone is already an improvement and is independently testable.
+
+### O008 — [medium] Rebuilding the guest kernel invalidates the local attestation baseline
+
+`~/.axon/kernel_baseline.sha256` pins the kernel digest, and `axon-vm run`
+correctly refuses with "ATTESTATION FAILED: kernel digest mismatch" when the
+kernel is rebuilt. That is attestation working as designed — but there is no
+documented operator step for re-recording the baseline after a legitimate
+rebuild, and `axon-vm attest` does not update it.
+
+Consequence observed here: after `scripts/build-guest-image.sh` succeeds,
+`axon_kernel_gate.sh` Layer 3 fails until an operator re-pins. Deliberately NOT
+re-pinned by this run — silently re-recording an attestation baseline is exactly
+the action that should require a human, and automating it would defeat the
+control.
+
+Needs: a documented `axon-vm attest --record-baseline` (or equivalent) plus a
+note in the kernel-gate docs that a rebuild requires an explicit re-pin.
