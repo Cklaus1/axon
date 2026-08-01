@@ -233,6 +233,75 @@ capability of any kind makes an effect legal inside `app` or a `View` builder.**
 `@[ui]` program in a headless/sandboxed host with no `Window`/`Gfx` capability fails closed, not by crashing
 (I-4): the runtime returns a coded error, exit non-zero.
 
+### 3b. Two seams that belong in the `View` type, not the backend *(added 2026-08-01)*
+
+§1b flagged text layout and accessibility as absent. Both are commonly treated as backend
+concerns and added later. In this spec they cannot be, for the same reason: **each one changes
+what the `View` tree *means*, and §7.1 hashes that tree.** They are type-level obligations.
+
+#### (a) The text seam — `Text` is a shaped result, not a string
+
+`text("Users: {n}").font(24)` currently implies the node holds a string plus style. That is
+insufficient, and not merely for layout:
+
+> **The rendered glyphs are not a function of the `View` tree alone.** Shaping depends on the
+> fonts actually resolved at render time — bidi reordering, cluster breaking, and font fallback
+> can change what a human sees without changing one byte of the source string.
+
+So a canonical hash taken over `text: "…"` does **not** bind what was displayed. §7.1's claim
+("what you see is what was authorized") is false at the glyph level unless the shaped result is
+part of the hashed artifact. This is a small hole with the same shape as the audit failures in
+§7.2: a control that appears to cover something it does not.
+
+Type rule: a `text(...)` node carries a **`TextLayout`** — an opaque handle produced by the text
+provider (Parley) from `(string, style, available width, font set)` — and the canonical
+serialization of a `View` includes a **digest of the resolved shaping inputs**: the font
+identities and versions actually selected, not the requested family. Two runs that resolve
+different fonts must produce different hashes, because they produced different pixels.
+
+Consequences: `TextLayout` is opaque to `.ax` (no glyph-level API on the surface); measurement is
+a provider call, so layout (taffy) and paint (vello) consume one shaped result rather than each
+shaping independently; and font resolution becomes a **capability-visible input** — a program
+whose rendering changes with ambient system fonts is not reproducible, which R15/§9.5 replay
+already treats as a defect elsewhere.
+
+#### (b) The accessibility seam — the a11y tree IS the audit tree
+
+Every `View` node must be able to produce an accessibility node: **role, name, value, state,
+relations**. The framing that makes this cheap rather than an add-on:
+
+> An auditor asking "what does this screen assert, and what can it do?" and a screen reader
+> asking the same question want **the same tree**. AccessKit's node model is, structurally, the
+> machine-readable description of the interface that §1's checkability argument already requires.
+
+Building a11y is therefore not a separate cost centre — it is the export format for the property
+this spec exists to provide. A `View` tree that cannot describe its own accessible structure is
+one an auditor cannot fully read, and that is the exact defect §1 levels at `axon-web`.
+
+Type rules:
+
+- Every builtin `View` constructor has a defined default role (`button` → button, `text` → static
+  text, `input` → text field, `col`/`row` → generic container).
+- **Name is mandatory for interactive nodes.** A `button` whose accessible name cannot be derived
+  from its content is a **compile error**, not a lint. Rationale: an unnamed interactive control
+  is exactly an action a human cannot audit — the same class as an approval banner that does not
+  say what it approves.
+- Decorative nodes must be marked explicitly (`.a11y_hidden()`), never defaulted. Fail-closed:
+  an unmarked node is exposed, so forgetting the annotation produces noise rather than an
+  invisible control.
+- The accessible tree is derived from the `View` tree by construction — never assembled
+  separately — so the two cannot drift. This is a structural guarantee, not a test obligation.
+
+#### Acceptance obligations (feed §9)
+
+1. A `text` node whose resolved font differs between two runs produces two different canonical
+   hashes. *Executed*, not asserted from the code path (§7.2 obligation 1).
+2. A `button` with no derivable accessible name fails to compile with an `E21xx` code.
+3. The AccessKit tree exported for the §3 headline example round-trips: every interactive node in
+   the `View` tree appears with a role and a non-empty name.
+4. Layout and paint consume the **same** `TextLayout` instance — asserted by provider-call count,
+   so a regression that re-shapes independently is caught rather than merely being slow.
+
 ### 3a. Scope of the 2D surface — demand-driven catalog + named hard deferrals
 
 **The widget/primitive catalog is deliberately NOT defined completely, and should not be.** A complete 2D UI
