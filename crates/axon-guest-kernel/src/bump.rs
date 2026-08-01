@@ -31,8 +31,20 @@ pub fn alloc(size: usize, align: usize) -> *mut u8 {
     debug_assert!(align.is_power_of_two());
     let mut current = BUMP.load(Ordering::Relaxed);
     loop {
-        let aligned = (current + align - 1) & !(align - 1);
-        let next = aligned + size;
+        // AUDIT T19 (finding OSK-L02): both additions were UNCHECKED. This is a
+        // no_std release kernel build with debug assertions off, so they wrap
+        // silently: a `size` near usize::MAX yields a small `next` that passes
+        // the `> HEAP_END` bound check, and `alloc` then hands back a pointer
+        // into the middle of the kernel image. The bound check reads like the
+        // safety property but does not provide it once the arithmetic can wrap.
+        let aligned = match current.checked_next_multiple_of(align) {
+            Some(a) => a,
+            None => panic!("kernel heap: alignment overflow"),
+        };
+        let next = match aligned.checked_add(size) {
+            Some(n) => n,
+            None => panic!("kernel heap: size overflow"),
+        };
         if next > HEAP_END {
             panic!("kernel heap exhausted");
         }
