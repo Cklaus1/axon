@@ -1,7 +1,12 @@
 # Tech Spec — Kernel `Goal` (principal-scoped, budgeted objective runner)
 
-Status: **Draft** (2026-06-10) — Gate-1 spec for the missing half of R12 Slice 5.
-Author: autonomous build loop. Needs review before implementation (Structural change).
+Status: ✅ **Landed** (re-verified 2026-07-31) — header was stale; the design below is fully implemented.
+`kernel.rs` has the `KernelGoal` struct (line ~627) and all five builtins (`kernel_goal_create/run/
+best_score/spent/budget_left`, `builtins.rs`); budget-exhaustion enforcement (exit 7, E1604) and the
+interp-only codegen refusal (E0910) are both landed and covered by
+`kernel_goal_is_principal_budget_scoped_r12b` and `kernel_goal_builtins_are_codegen_refused_e0910`
+(`crates/axon-core/tests/cli_run.rs`). Closes the Phase-7 gap CLAUDE.md previously called out.
+Author: autonomous build loop. Original draft 2026-06-10 (Structural change).
 
 ## Kernel `Goal`
 

@@ -101,8 +101,20 @@ codegen-only). No `surface` code gains any power; the default hosted build is un
 ### 8. Acceptance criteria (the done gate)
 
 **Slice 1 — "Axon runs on a Cortex-M RTOS" (LANDED):**
+
+> **⚠ REGRESSED 2026-07-31 (by R17 §12 Q9) — arithmetic-bearing builds.** The Q9 freestanding
+> safety trap is synthesized as x86-only inline asm (`outb` with a `{dx}` register constraint +
+> `hlt`, `codegen/expr.rs::synthesize_freestanding_trap`); it survives dead-function pruning
+> whenever any checked-arithmetic/bounds/refinement site references it, so the first checkbox
+> below is FALSE today for any kernel body containing `+`/`-`/`*`/`/`/`%`: the exact command on
+> `examples/zephyr/app.ax` exits 1 with `error: couldn't allocate input reg for constraint '{dx}'`
+> and leaves a 0-byte object (reproduced 2026-07-31). The `__weak`-stub design below predates the
+> Q9 in-module-trap change; the SKIP-guarded QEMU gate did not catch the regression. Fix = an
+> arch-conditional trap body (thumb `bkpt`/`wfi` loop or equivalent); tracked as R37 §4 gap item 1.
+
 - [x] `axon build --freestanding --target zephyr --emit-obj app.ax` emits an `arm-zephyr-eabi` ELF32 ARM
       relocatable object exposing `axon_main` (defined) and `axon_console_putc` (undefined extern).
+      *(Regressed for arithmetic-bearing sources — see the 2026-07-31 note above.)*
 - [x] The Zephyr app skeleton (`examples/zephyr/`) links that object and builds for `qemu_cortex_m3`.
 - [x] **`zephyr_qemu_gate.sh`** — the object is built, the Zephyr app is built, it runs under QEMU
       (`west build -t run`, captured with a timeout), and the console shows the Axon output: the `AXON`
