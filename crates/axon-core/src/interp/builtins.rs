@@ -3550,10 +3550,27 @@ impl<'p> Interp<'p> {
                         "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
                     ));
                 }
+                // AUDIT T20 (finding F006): this was `principal.max(0) as usize`,
+                // which silently coerces ANY invalid handle — negative, or past
+                // the end of the registry — to 0, i.e. ROOT. So
+                // `kernel_goal_create(-1, ...)` produced a goal scoped to the
+                // root principal and debited ROOT's budget. An unknown
+                // capability handle resolving to the most-privileged principal
+                // is the wrong direction to fail; refuse it instead.
+                {
+                    let ps = self.principals.borrow();
+                    if principal < 0 || ps.get(principal as usize).is_none() {
+                        return panic(format!(
+                            "kernel_goal_create: unknown principal handle {principal} \
+                             (a goal must be scoped to a principal that exists — an \
+                             invalid handle is NOT silently treated as root)"
+                        ));
+                    }
+                }
                 let mut goals = self.goals.borrow_mut();
                 let handle = goals.len();
                 goals.push(crate::kernel::KernelGoal::new(
-                    principal.max(0) as usize,
+                    principal as usize,
                     name,
                     target,
                 ));

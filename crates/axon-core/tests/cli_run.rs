@@ -1728,6 +1728,35 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn kernel_goal_refuses_an_unknown_principal_instead_of_defaulting_to_root() {
+    // AUDIT T20 (finding F006). kernel_goal_create used
+    // `principal.max(0) as usize`, silently coercing ANY invalid handle —
+    // negative, or past the end of the registry — to 0, which is ROOT. So
+    // `kernel_goal_create(-1, ...)` produced a goal scoped to root and debited
+    // ROOT's budget. An unknown capability handle resolving to the
+    // most-privileged principal is the wrong direction to fail.
+    //
+    // Before the fix this printed "ESCAPED" and exited 0.
+    let out = axon()
+        .args(["run", &fixture("kernel_goal_bad_principal.ax")])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !msg.contains("ESCAPED"),
+        "an invalid principal handle must not create a goal: {msg}"
+    );
+    assert!(
+        msg.contains("unknown principal handle"),
+        "the refusal must name the reason: {msg}"
+    );
+}
+
+#[test]
 fn deploy_gate_accepts_both_nullary_and_one_arg_signatures() {
     // AUDIT T17 (finding P5-01). run_named_fn_as_bool called every gate with
     // `vec![]` and no arity check, so a gate declared

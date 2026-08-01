@@ -1,0 +1,12 @@
+// AUDIT T20 (F006): an invalid principal handle must be REFUSED, not silently
+// coerced to 0 (root). Before the fix this created a goal scoped to root and
+// debited root's budget.
+@[adaptive]
+fn metric(x: i64) -> f64 { 1.0 }
+
+fn main() -> i64 {
+    let root = principal_root("r", false, false, false, 50)
+    let g = kernel_goal_create(-1, "metric", 90.0)
+    println("ESCAPED: created goal {to_str(g)} with an invalid principal")
+    0
+}
