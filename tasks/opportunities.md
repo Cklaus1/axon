@@ -340,3 +340,29 @@ Fix: add a generic `walk_expr(&Expr, &mut impl FnMut(&Expr))` to codegen/mod.rs,
 re-express `expr_calls` in terms of it, then push the same E0910 for any
 `Some(t)` where `t != "balanced"` — arguably for ANY `Some(t)`, since an unknown
 tier is E1302 in the interpreter and native cannot replicate that.
+
+### O013 — [medium] `wasm_aot_runs_and_matches_interp_on_pure_int` fails under full-suite parallelism
+
+Observed on the final verification run: 429 passed, 1 failed, with the failure
+reporting `SKIP dict_closure (wasm build failed)` for 4 of its 7 cases. It
+passes cleanly in isolation (all 7 OK).
+
+Several wasm harnesses invoke `cargo build --target wasm32-*` concurrently and
+contend on the same target directory, so some builds fail and the case is
+skipped; the test then correctly refuses to pass on partial coverage.
+
+**My part in this, stated plainly:** it did not appear in the T14 verification
+run (426 passed / 0 failed). Between then and now this audit added three tests
+(T16, T17 ×2), which increased concurrent load and made an existing contention
+window more likely to be hit. So the behaviour is pre-existing but this run
+raised its probability. That is not a code regression, and it is also not
+nothing — a suite that gets flakier as tests are added has a scaling problem.
+
+Note the harness does the RIGHT thing here, the same way the browser-parity
+floor guard does (O002/O004): it refuses to report green when cases did not
+actually run. Three separate harnesses now demonstrate that pattern; the fix is
+to stop the contention, not to soften the assertion.
+
+Fix: give each wasm harness its own `CARGO_TARGET_DIR`, or serialise the wasm
+builds behind a shared lock. Related: O004 (browser parity, same cause), O010
+(bandit, fixed-path contention).
