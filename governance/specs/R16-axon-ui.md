@@ -362,6 +362,55 @@ Type rules:
 4. Layout and paint consume the **same** `TextLayout` instance — asserted by provider-call count,
    so a regression that re-shapes independently is caught rather than merely being slow.
 
+### 3c. How Blitz wires Parley and AccessKit — a read of the reference *(added 2026-08-01)*
+
+§1c named Blitz as the one project already composing our exact stack plus both §3b seams. Read at
+`packages/blitz-dom/src`. Four things transfer directly, and one gap is more instructive than the
+things that work.
+
+**Module shape.** Accessibility and text are *peer consumers of the node tree*, not layers inside
+it: `accessibility.rs` walks the DOM independently, and `stylo_to_parley.rs` converts resolved
+style into text-layout input, with `font_metrics.rs` handling measurement. Text layout is
+positioned as a specialised **style consumer** rather than a layout stage — which is why it can
+be swapped without touching the tree.
+
+**What transfers to the `View` type:**
+
+1. **The accessible tree is built by walking the node tree** — `build_accessibility_tree(&self)
+   -> TreeUpdate`, visiting every node and building parent/child links as it goes. This is the
+   direct validation of §3b(b)'s "derived by construction, never assembled separately". It is not
+   a theoretical property; it is how the only working reference does it.
+2. **Accessibility node IDs are the node's own IDs** — `NodeId(node.id.as_u64())`, with the window
+   root at `NodeId(u64::MAX)`. **This imposes a requirement §3b did not state: `View` nodes need
+   stable identity.** A tree rebuilt each frame with fresh identities cannot produce a stable
+   accessible tree, and assistive technology tracks nodes across updates. Identity must be
+   derivable from tree position or an explicit key — this is now a §5 type obligation, not an
+   implementation detail.
+3. **Roles come from a static element→role table** (W3C HTML-AAM: `"button" => Role::Button`,
+   `<input>` role varying by `type`). Exactly §3b(b)'s constructor→role mapping. Confirms the
+   approach is a lookup table, not inference.
+4. **The tree is FULLY REBUILT on each call** — fresh map, single traversal, converted into one
+   `TreeUpdate`. Independent convergence with §12 Q1's resolution (full rebuild for v1): the
+   reference implementation of our stack made the same choice for its accessibility tree.
+
+**The instructive gap: accessible *name* computation is not visible in that module.** Text
+content is read via `node.text_content()`, but deriving a name from `aria-label`, `alt`, labelled-by
+relations and so on is not there. That is the genuinely hard part of accessibility, and the
+reference punts on it.
+
+This *strengthens* §3b(b) rather than undermining it. Blitz inherits HTML's problem: a name can
+come from six places with a precedence order, and must be computed at runtime from a document it
+does not control. **Axon does not have that problem** — `button("Delete")` has its name in the
+constructor. Making a derivable name a *compile-time obligation* (E21xx, §3b) is available to us
+precisely because we control the surface syntax, and it converts the hardest part of a11y from a
+runtime resolution algorithm into a type rule. That is a real advantage of the compiled-DSL
+approach, and §3b should be read as claiming it deliberately.
+
+**Recommended before Slice 1:** build Blitz, run its a11y output against a screen reader, and
+diff its `TreeUpdate` against what our `View` tree would produce for the §3 headline example. The
+seam design questions are answered there; re-deriving them from first principles would be the
+same mistake §1b's verification note warns about.
+
 ### 3a. Scope of the 2D surface — demand-driven catalog + named hard deferrals
 
 **The widget/primitive catalog is deliberately NOT defined completely, and should not be.** A complete 2D UI
