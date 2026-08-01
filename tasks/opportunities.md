@@ -548,3 +548,42 @@ are built on, so it needs a full axon-os suite cycle to land safely.
 **Method note:** 3 of the 4 code-read findings re-triaged by execution so far
 were wrong (OSK-L03, INTERP-H04) or right-but-different (this one is right AND
 worse than described). Executing before implementing is cheap and keeps paying.
+
+### O017 — [high] OSK-P4-H4 CONFIRMED BY EXECUTION: the audit ledger never reaches a sandboxed job
+
+Third code-read finding re-triaged by running it. Confirmed, and the contrast
+makes it unambiguous:
+
+```
+# through axon-os (env_clear strips it)
+$ AXON_AUDIT_LEDGER=D/ledger.jsonl axon-os run ok.axjob ...
+  ledger file exists: NO
+
+# the same interpreter, invoked directly
+$ AXON_AUDIT_LEDGER=D/direct.jsonl axon run io.ax
+  ledger file exists: YES (1 entry)
+```
+
+`runtime.rs:339` calls `cmd.env_clear()` and then re-adds only `AXON_SEED` and
+`PATH`. `AXON_AUDIT_LEDGER` is never forwarded, so the R28 capability-audit
+ledger is silently disabled for **every** job run under the supervisor — the one
+execution path where an operator most wants a capability audit trail.
+
+The hermetic env_clear is correct and should stay; the bug is the allowlist
+missing an entry. Note the failure mode: not an error, not a warning — the
+operator sets the variable, the run succeeds, and no ledger appears.
+
+Compounding: this sits next to O016 (the sealed record can attest `Completed`
+for a job that never ran). Together, the supervisor's two audit artifacts — the
+verdict record and the capability ledger — are respectively unreliable and
+absent, on the same code path.
+
+Fix: forward `AXON_AUDIT_LEDGER` (and audit which other AXON_* vars the
+sandboxed job legitimately needs — `AXON_AI_MOCK`/`AXON_AI_REPLAY` are likely in
+the same position) in the `env_clear` allowlist at runtime.rs:339. Add an
+axon-os acceptance test asserting a ledger file is produced for a job that
+exercises a capability.
+
+**Execution re-triage scorecard so far: 5 findings, 5 answers changed.**
+2 false (OSK-L03, INTERP-H04), 2 true-but-understated (O016, this), 1 true as
+written (OSK-L02). Reading the code has not once predicted the outcome.
