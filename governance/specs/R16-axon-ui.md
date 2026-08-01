@@ -481,8 +481,9 @@ slice, even though v1 ships without them. Treating them as silent omissions woul
 
 | Deferred capability | Why it's architectural (not a widget) | v1 stopgap | Target |
 |---|---|---|---|
-| **Text/font shaping** (`cosmic-text`/`swash`) | shaping produces glyph metrics that drive **layout** — it is *upstream* of taffy, not downstream of it; i18n/bidi/emoji/fallback change box sizes | one bundled font, naive single-run shaping | Slice 2 (real shaping), pre-i18n |
-| **Accessibility** (`accesskit` tree) | a GPU UI has **no DOM**, so the a11y tree is the framework's job and cannot be inherited — this is the precise cost of "no webview"; retrofitting it after the View model freezes is a rewrite | none (documented gap) | Slice 3 — must be designed against the View tree *before* it's frozen |
+| **Text/font shaping** (**Parley** — *corrected 2026-08-01; the draft said `cosmic-text`/`swash`, and Parley's stack is Fontique + HarfRust + Skrifa + ICU4X, §1b*) | shaping produces glyph metrics that drive **layout** — it is *upstream* of taffy, not downstream of it; i18n/bidi/emoji/fallback change box sizes | one bundled font, naive single-run shaping | Slice 2 (real shaping), pre-i18n |
+| **Accessibility** (`accesskit` tree) | a GPU UI has **no DOM**, so the a11y tree is the framework's job and cannot be inherited — this is the precise cost of "no webview"; retrofitting it after the View model freezes is a rewrite | none (documented gap) | **Split 2026-08-01:** the *seam* (roles, mandatory names, stable ids, `.a11y_hidden()`) is now a §3b/§5 **type obligation in Slice 1** — it constrains the View type and so cannot wait. Platform *adapter* wiring stays Slice 3. |
+| **Rich text / hypertext** (styled runs, inline links) | **a11y-BLOCKED, not merely unscoped** *(added 2026-08-01, discovered by verifying AccessKit against upstream — §1b)*. AccessKit adapters support single- and multi-line text inputs but **do not yet support rich text or hypertext**. §3b(b) requires every `View` node to be describable in the accessible tree, so shipping styled or linked text would create a surface that **renders but cannot be described** — which §3b forbids by construction, not by preference. | plain text runs only; a whole-node style (`.font()`, `.color()`) is fine, *inline* style spans and inline links are not | **Blocked on upstream AccessKit**, not on our slice order. Re-check before scheduling; do not schedule against our own roadmap. |
 | **Scroll + list virtualization** | the headline demo is a *list*; at real sizes you cannot lay out N rows — virtualization is a **layout-engine** concern, not a widget | clip + non-virtualized scroll (small lists only) | Slice 2 |
 | **Hi-DPI / scale factor** | winit's scale factor multiplies **every** coordinate vello emits; wrong handling mis-renders the whole frame | read scale factor, no fractional-scaling polish | Slice 1 |
 
@@ -498,6 +499,13 @@ generate, the bottleneck inverts: per-item human review becomes the throughput l
 no drift) turns from a documentation discipline into a rate limit.** This spec does not assume that inversion
 has happened; it states the dependency so the model can be retired deliberately rather than silently
 overrun. Nothing in the deferral list above is unsound today.
+
+> **One deferral is now externally gated** *(2026-08-01)*. Rich text is blocked on an upstream
+> dependency rather than on our sequencing — the first item in this table we cannot unblock by
+> deciding to. It is listed with the others because it is a scope boundary, but it must not be
+> planned like them: no slice may assume it, and the gate is "AccessKit ships rich-text support",
+> checked upstream. Recorded because a deferral that *looks* like a scheduling choice but is
+> actually an external dependency is the kind of thing a roadmap silently absorbs and then misses.
 
 **Mechanical widget-conformance contract (obligation, from the first post-v1 widget).** So that catalog growth
 is gated by a suite rather than by review bandwidth, any new builder added to the catalog MUST ship with all
