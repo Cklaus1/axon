@@ -505,6 +505,49 @@ record is the same decision, at the same moment, and is now made:
 Note the interaction with §5's `Input` taint rule: the presented-frame record must not itself become the
 exfiltration channel — fields marked `.secret()` are excluded from it (§4).
 
+### 7.2. Empirical status of the mechanisms §7.1 depends on *(added 2026-08-01, from the audit of 2026-07-31)*
+
+§7.1 makes Axon UI's central claim conditional on machinery it does not own: the R24 approval
+boundary, the R28 capability-audit ledger, and R31 extended-TCB attestation. "What you see is
+what was authorized" is only a property if those work. A governance audit executed those paths
+rather than reading them, and **most of them did not work.** Recorded here because a threat model
+that cites a control which silently no-ops is worse than one that cites nothing — it converts an
+absent guarantee into a stated one.
+
+Found broken and **fixed** (see `tasks/todo.md` for commits):
+
+| mechanism §7.1 relies on | observed behaviour | status |
+|---|---|---|
+| R28 capability-audit ledger | **never written** for any job run under the supervisor — `env_clear` dropped `AXON_AUDIT_LEDGER`. Silent: operator sets it, run succeeds, no ledger. | fixed (T23) |
+| sealed verdict record | a program that **failed to parse** sealed as `{"kind":"Completed","value":2}`; an AI-policy refusal (exit 5, a *carved* fault code) sealed as `Completed{value:5}` | fixed (T24) |
+| R27 operator kill switch | `--killable --monitor` created no latch that anything polled; `axon-os kill` printed "🛑 kill tripped" and exited 0 against a dead path | fixed (T26) |
+| R29 compliance monitor | returned `CleanExit` on the stop flag with **no final ledger read** — a violation committed in the last ~100 ms window was reported as a clean run | fixed (T27) |
+| supervised runs generally | any job emitting more than a pipe buffer deadlocked, and the record blamed the job (`Denied{axis:"time"}`) for a program that runs in 0.09 s | fixed (T25) |
+
+Found and **still open** — these bound what §7.1 may currently claim:
+
+- **Carved fault codes other than AI-policy are still indistinguishable from a program's return
+  value** in the sealed verdict, because `axon run` propagates `main`'s integer return. Blocked on
+  the exit-code semantics decision (needs-human queue, group A). Until resolved, a verdict of
+  `Completed{value:N}` for N in 3/4/6/7/8/12 is **not** evidence the run succeeded.
+- **`principal_root` is ungated** (O003) — principal attenuation assumes root authority is hard to
+  obtain, and it is not.
+- **`--killable --monitor` still splits the latch** (O020); only the `kill` side was repaired.
+  Whether the two flags should share one latch is a semantics call.
+
+**Consequence for this spec.** §7.1's canonical-hash and approval-binding arguments should not be
+written as if the ledger and verdict record are trustworthy substrates — they were not, three
+weeks before this spec's threat model was drafted, and nothing in the spec would have detected
+that. Two obligations follow:
+
+1. Any §9 acceptance criterion that says "the ledger records X" must **execute** and assert the
+   artifact exists and contains X. Not "the code path calls the logger."
+2. Axon UI should treat a *missing or unverifiable* provenance record as a **rendering-visible
+   state**, not a silent absence. A pane that shows an unverified claim identically to a verified
+   one reproduces, in the product surface, exactly the failure this table documents in the
+   substrate — and it is the failure mode with the worst blast radius, because it manufactures
+   confidence rather than merely losing it.
+
 ### 8. Test plan (maps 1:1 to §4)
 
 - [ ] **Unit:** `View` tree construction (`col{}`/`row{}` desugar → expected node tree); modifier chains
