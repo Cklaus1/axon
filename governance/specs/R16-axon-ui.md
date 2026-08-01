@@ -458,6 +458,126 @@ diff its `TreeUpdate` against what our `View` tree would produce for the §3 hea
 seam design questions are answered there; re-deriving them from first principles would be the
 same mistake §1b's verification note warns about.
 
+### 3d. ASI view semantics — rendering values that are not yet values *(added 2026-08-01)*
+
+Everything in §3–§3c is table stakes: a competent 2026 Rust GUI needs a renderer, layout, text,
+a11y and stable identity. **None of it is specific to this system.** This section is the part that
+is, and it exists because a UI expert review found the spec had no answer for the four things an
+ASI interface actually does.
+
+**The unifying observation.** Four apparent gaps — uncertainty, pending operations, streaming
+output, and agent activity — are one problem: *a `View` must be able to render a value that is not
+(yet, or not fully) a value.* They differ only in which axis is incomplete:
+
+| axis | incomplete how | Axon type that already exists |
+|---|---|---|
+| **epistemic** | known, but not confidently | `Uncertain<T>` |
+| **temporal — pending** | does not exist yet; an effect is in flight | *(none — see (b))* |
+| **temporal — streaming** | arriving, append-only | *(none — see (c))* |
+| **provenance** | exists, but its origin is unverified | R28 ledger record (§7.2, §9E) |
+
+One rule covers all four, and it is §1's checkability thesis applied to values rather than to
+structure:
+
+> **A `View` may not silently render an incomplete value as though it were complete.** Collapsing
+> an incomplete value to a plain one is permitted, but it must be an **explicit, visible act in
+> the source** — and therefore an act the compiler, the auditor and the reviewer can all see.
+
+That is the whole design. The rest is what it implies.
+
+#### (a) Uncertainty is not silently discardable
+
+`text(u)` where `u: Uncertain<f64>` is a **compile error** (`E21xx`). The author must write one of:
+
+- `text(u)` → *(with a `View`-level uncertainty renderer configured)* renders the value **and its
+  confidence** — the default, chosen so the honest thing is the short thing;
+- `text(u.point_estimate())` → renders the value alone, discarding confidence. Legal, greppable,
+  and reviewable. It is the UI counterpart of an `unwrap()`.
+
+This is available to Axon and to essentially no one else: the uncertainty is *in the type*, so the
+framework can refuse the lossy path at compile time rather than hoping a designer remembers. It is
+also the first place the language's ASI types reach the surface — today `Uncertain<T>` is
+enforced through the interpreter and invisible to the product layer.
+
+Same treatment for `Result<T,E>` in a `View` position: no implicit "render the Ok arm and blank on
+error". A UI that blanks on error is how an operator ends up looking at a screen that is confidently
+wrong — §7.2's failure mode, in the surface.
+
+#### (b) Pending is a runtime state, not an app-state field
+
+Every MVU app eventually grows `is_loading: bool` fields, and they drift from reality. They should
+not exist here, because **the runtime already knows**: it issued the effect. An `ai_complete`, a
+`goal_run`, a `host_await` — the frame loop knows which are outstanding.
+
+Proposal: `Pending<T>` is a runtime-provided value, not something `update` maintains. A `View` node
+bound to a pending value renders a defined pending representation, and — critically — **carries the
+effect row of the operation it is waiting on**, so the interface can say *what* it is waiting for
+(a model call, the filesystem, the network) rather than showing an undifferentiated spinner.
+
+Consequences: `update` stays pure and synchronous (§5 preserved); the §12 Q3 main-thread question
+narrows, because long work is *by construction* not in `update`; and "what is this app waiting on"
+becomes inspectable in the `View` tree, which is exactly what §1 wants of everything else.
+
+#### (c) Streaming is append-only, and that is a type-level fact
+
+LLM output arrives token by token. Under §12 Q1's full-rebuild-per-frame, naive streaming reshapes
+the whole string every frame — quadratic, and the first thing that will blow §10's budget in a
+real ASI app. Q1's resolution did not consider it.
+
+`Stream<str>` is an **append-only** text value. Because appendedness is in the type rather than
+inferred by diffing, the text provider may shape only the new run and append glyphs — which is
+what Parley's incremental layout supports (§3b(a)), and what §12 Q1 would otherwise have to be
+reopened for. **This is the case that would have forced fine-grained reactivity**; typing the
+append instead of detecting it avoids that, and keeps Q1 resolved.
+
+Constraint: a `Stream` node's identity (§5) is stable across appends by definition — the node is
+not replaced, it grows. Otherwise a screen reader re-announces the whole message on every token,
+which is the a11y failure that makes streaming interfaces unusable.
+
+#### (d) Agency is ambient, and rendering it is mandatory
+
+For an approval-boundary product the first UI question is not "what does the data look like" but
+**what is the agent doing right now, what did it just do, and how do I stop it.** R27's kill switch
+exists at the CLI (§7.2 — and was silently inert until today). It has no `View` representation.
+
+Agency is not app state; it is ambient runtime state, like focus. The runtime exposes an
+`Agency` value — the acting **principal**, the **effect row** currently being exercised, **budget
+remaining**, and the **stop affordance** bound to R27.
+
+Rules, deliberately fail-closed in the same shape as `.a11y_hidden()`:
+
+- When agency is non-idle, an app that renders **no** agency surface is a **compile error**. An
+  interface that hides a running agent is the one failure this product cannot ship.
+- The stop affordance is not the app's to implement. It is provided, always reachable, and — per
+  §1d — must render on the **CPU path** too, because "the operator can always stop it" cannot
+  depend on a working GPU driver.
+- The agency surface is part of the a11y tree with a mandatory name (§3b(b)). A stop control a
+  screen-reader user cannot find is not a stop control.
+
+#### Deliberately NOT specified here — adopt, do not invent
+
+The review also found input and presentation gaps. They are real and they are **ordinary**, and
+this spec is better served by naming a reference than by inventing:
+
+- **Focus, tab order, pointer capture, IME** — adopt Masonry's model. Note focus order and the
+  a11y traversal are *the same traversal* (§3b(b)); specifying them separately would guarantee
+  they drift.
+- **Animation / transitions** — the known-hard case for MVU. Defer to Slice 3; do not design it
+  before (b) and (c) land, since pending and streaming are where transitions are actually needed.
+- **Theming, dark mode, localization** — Slice 3+, unremarkable.
+
+#### Acceptance obligations (extend §9.0)
+
+- [ ] `axon_ui_uncertain_in_view_position_is_a_compile_error` — `text(u: Uncertain<f64>)` fails with
+      `E21xx`; `text(u.point_estimate())` compiles.
+- [ ] `axon_ui_pending_node_reports_its_effect_row` — a node awaiting `ai_complete` renders a
+      pending state naming the **AI/Net** row, not a generic spinner.
+- [ ] `axon_ui_stream_append_does_not_reshape_prefix` — asserted by **text-provider call count**
+      across N appends (same technique as §9.0(B)); a quadratic regression fails the gate.
+- [ ] `axon_ui_stream_node_identity_is_stable_across_appends` — id unchanged; no re-announcement.
+- [ ] `axon_ui_non_idle_agency_without_surface_is_a_compile_error`.
+- [ ] `axon_ui_stop_affordance_renders_on_cpu_backend` — §1d(A) + §3d(d), executed headless.
+
 ### 3a. Scope of the 2D surface — demand-driven catalog + named hard deferrals
 
 **The widget/primitive catalog is deliberately NOT defined completely, and should not be.** A complete 2D UI
