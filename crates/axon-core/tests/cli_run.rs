@@ -1728,6 +1728,54 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn host_await_worker_has_a_deep_stack_not_the_default_2mib() {
+    // AUDIT T16 (finding INTERP-H03). run_suspendable_values spawned its worker
+    // with a bare `scope.spawn`, i.e. the DEFAULT ~2 MiB stack. The tree-walking
+    // interpreter burns a lot of native stack per call, so a suspendable program
+    // recursing a few hundred frames deep died with a hard stack overflow
+    // (SIGSEGV/abort, exit 134, core dumped) instead of the graceful
+    // RECURSION_LIMIT panic the guard exists to provide.
+    //
+    // The two sibling substrates (vsock at :1278, hypercall at :1354) already
+    // sized their threads via on_deep_stack — only this path was missed, so it
+    // was an isolated omission rather than a design choice.
+    //
+    // Before the fix this aborted with "has overflowed its stack".
+    let out = axon()
+        .args(["run", &fixture("host_await_deep_recursion.ax")])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            use std::io::Write;
+            if let Some(mut si) = c.stdin.take() {
+                let _ = si.write_all(b"x\n");
+            }
+            c.wait_with_output()
+        })
+        .expect("run host_await deep recursion");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !msg.contains("overflowed its stack"),
+        "the host_await worker must have a deep stack, not the default 2 MiB: {msg}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "deep recursion under host_await must complete, not abort: {msg}"
+    );
+    assert!(
+        msg.contains("depth: 2000"),
+        "the recursion must actually run to depth 2000: {msg}"
+    );
+}
+
+#[test]
 fn divergent_builtins_are_excluded_from_the_wasm_pure_corpus() {
     // AUDIT O009, from T14 / P5-03. scripts/wasm_parity.sh auto-discovers a
     // "pure compute" corpus by EXCLUDING examples that call host builtins, under

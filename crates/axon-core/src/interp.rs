@@ -1506,14 +1506,30 @@ pub fn run_suspendable_values(
     use std::sync::mpsc::channel;
     let (req_tx, req_rx) = channel::<SendValue>(); // worker → host (await requests)
     let (rep_tx, rep_rx) = channel::<Option<SendValue>>(); // host → worker (replies; None = EOF)
+
+    // AUDIT T16 (finding INTERP-H03): this used a bare `scope.spawn`, giving the
+    // worker the DEFAULT ~2 MiB stack. The tree-walking interpreter burns a lot
+    // of native stack per call, so a suspendable program recursing a few hundred
+    // frames deep hit a hard stack overflow (SIGSEGV) instead of the graceful
+    // RECURSION_LIMIT panic — the guard exists precisely so the limit trips
+    // first. The two sibling substrates (vsock, hypercall) already size their
+    // threads this way, so this was an isolated omission rather than a design
+    // choice. Same sizing as `on_deep_stack`.
+    //
+    // The worker must remain the thread that installs HOST_AWAIT (thread-local),
+    // so the closure is sized in place rather than nested inside another thread.
+    let stack = stack_size_for_depth(resolve_max_depth());
     std::thread::scope(|scope| {
-        let worker = scope.spawn(move || {
-            HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
-            let code = run_program_inner(program, crate::verify::Discharged::default());
-            // Drop the channels → req_tx closes → the host loop below ends.
-            HOST_AWAIT.with(|h| *h.borrow_mut() = None);
-            code
-        });
+        let worker = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(scope, move || {
+                HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
+                let code = run_program_inner(program, crate::verify::Discharged::default());
+                // Drop the channels → req_tx closes → the host loop below ends.
+                HOST_AWAIT.with(|h| *h.borrow_mut() = None);
+                code
+            })
+            .expect("spawn interpreter worker");
         // Host loop: service each suspension until the worker finishes (req_tx drops).
         while let Ok(req) = req_rx.recv() {
             let _ = rep_tx.send(host(req));
