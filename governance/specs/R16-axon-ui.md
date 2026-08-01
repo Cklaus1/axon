@@ -1150,6 +1150,39 @@ Sliced so each commit is independently revertible:
 test are untouched (the flag is off by default). A `git revert` of any slice leaves the tree building because
 the flag gates all of it.
 
+### 11a. Cross-spec dependency: §3d needs three types the language does not have *(added 2026-08-01)*
+
+**Verified against `crates/axon-core/src/types.rs`:** `Uncertain<T>` and `Temporal<T>` exist
+(`Type::Uncertain`, `Type::Temporal`). **`Pending`, `Stream` and `Agency` do not** — zero matches.
+
+So §3d(a) is implementable against the language as it stands, and §3d(b)/(c)/(d) are not. That is
+a **cross-spec dependency on the language**, not an axon-ui work item, and it changes the slice
+plan:
+
+| §3d part | needs | status |
+|---|---|---|
+| (a) uncertainty | `Uncertain<T>` — **exists** | implementable now; the natural first ASI-specific slice |
+| (b) pending | `Pending<T>` + a runtime registry of in-flight effects | **new language/runtime type** |
+| (c) streaming | `Stream<T>` with append-only semantics in the type | **new language type** |
+| (d) agency | `Agency` value from the kernel (principal, effect row, budget, stop handle) | **new runtime surface**; the pieces exist separately (R12 principals, effect rows, R12b budget, R27 kill) but are not exposed as one value |
+
+Three consequences, stated because a spec that silently assumes non-existent types is how a slice
+plan becomes fiction:
+
+1. **§3d(a) should be sequenced first and alone.** It is the whole ASI-specific thesis —
+   incomplete values are not silently rendered complete — demonstrable with zero language changes.
+   It is also the cheapest possible test of whether the idea is right before three new types are
+   built for it.
+2. **(b)/(c)/(d) require a separate language-side requirement row**, not an axon-ui slice. R16
+   cannot land them alone, and a slice that claims to would either stall on an unowned dependency
+   or grow the types informally inside `axon-ui` — where they would be invisible to the checker,
+   which defeats the point of putting them in the type.
+3. **(d) is mostly assembly, not invention.** Principals (R12), effect rows (Phase 6), budget
+   (R12b) and the kill switch (R27) all exist and were exercised today (§7.2). What is missing is
+   a single value exposing them to a `View`. That is the smallest of the three, and — given §7.2
+   found R27 silently inert — the one with the strongest independent reason to exist: a surfaced
+   stop control is harder to leave broken than a CLI flag nobody renders.
+
 ### 12. Open questions
 
 1. **(§5, blocks Slice 2)** Reactive granularity: full re-`app(&State)` per frame (simple, Elm-pure, fine at
