@@ -566,6 +566,21 @@ byte-equality.
   `Material`, `Mesh`, `Camera`, `Light` (struct-like value types in the Axon UI prelude).
 - `col{}`/`row{}`/`scene{}` block expressions have type `View`/`Scene3D`; their bodies are sequences of
   `View`/scene-node expressions (a new block-body kind the parser must learn, mirroring Phase-8 `goal{}`).
+- **`View` nodes carry STABLE IDENTITY** *(added 2026-08-01; obligation discovered by reading
+  Blitz, §3c)*. AccessKit keys its tree on node IDs and assistive technology tracks nodes across
+  updates — Blitz uses the DOM node's own id (`NodeId(node.id.as_u64())`). With §12 Q1 resolved as
+  *full rebuild per frame*, identity cannot come from allocation: a fresh tree each frame would
+  produce a fresh accessible tree each frame, and a screen reader would lose focus and cursor
+  position on every repaint. Identity is therefore **derived from structural position** (the path
+  of child indices from the root), with an **explicit `.key(k)`** escape for nodes whose position
+  moves between frames — the `for u in s.users` case in §3, where reordering or deleting a row
+  must not renumber its siblings.
+  - This is a type rule, not an implementation detail: a `View` constructor that cannot produce a
+    stable id is ill-formed.
+  - It also serves §7.1: a canonical hash over a tree whose node identities churn per frame is
+    not a stable artifact to sign.
+  - Keys are required, not optional, inside a `for` body that can reorder — checked, `E21xx`.
+    Absent-key reordering is the classic reconciliation bug, and here it is also an a11y bug.
 - Modifier chains (`.font(24).pad(8)`) are postfix methods on `View` returning `View` — structural, no new
   trait machinery; resolved like existing builtin method dispatch.
 - `@[ui]`/`@[ui3d]` attributes constrain the annotated `fn`'s signature: `main: fn() -> State` and the file
