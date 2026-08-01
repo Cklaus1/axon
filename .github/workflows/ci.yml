@@ -57,3 +57,90 @@ jobs:
       # Lint — only flag things that are also blocked by RUSTFLAGS=-D warnings.
       - name: cargo clippy (no codegen)
         run: cargo clippy --no-default-features -p axon-core -- -D warnings
+
+  # AUDIT T7. Every job above passes `-p axon-core`, so CI covered 1 of the 19
+  # workspace crates. axon-os (the supervisor/gate), axon-attest, axon-vm,
+  # axon-web, axon-guest-kernel and the rest were never built or tested by CI —
+  # including the crates that hold the capability-enforcement code.
+  #
+  # RUSTFLAGS is deliberately cleared for this job. The workspace-wide
+  # `-D warnings` from the top-level env would fail on pre-existing warnings in
+  # crates that have never been lint-gated (unused imports in axon-os tests,
+  # dead_code in axon-vm), turning a useful TEST signal into a lint failure.
+  # Lint-gating the remaining crates is a separate, larger change — tracked
+  # rather than bundled here, so this job reports what it actually measures.
+  workspace-test:
+    name: Test all 19 crates (no LLVM)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-ws-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ws-
+
+      # --no-default-features keeps LLVM out of this job; the codegen half is
+      # covered by the `codegen` job below.
+      - name: cargo test --workspace (no codegen)
+        run: cargo test --workspace --no-default-features
+
+  # AUDIT T7. The native/interp parity harnesses are the I-2 invariant this
+  # project rests on, and NONE of them ran in CI — the codegen feature needs
+  # LLVM 17, so it was skipped entirely and parity was only ever checked
+  # locally. A parity invariant that no automation enforces is an aspiration.
+  #
+  # LLVM must be pinned to 17: the apt `llvm` metapackage resolves to 18, which
+  # does not match inkwell 0.4's `llvm17-0` feature and fails to link.
+  codegen:
+    name: Codegen + native/interp parity (LLVM 17)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install LLVM 17
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y llvm-17 llvm-17-dev libpolly-17-dev
+          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-17" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-cg-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-cg-
+
+      - name: cargo build (codegen)
+        run: cargo build -p axon-core
+
+      # The parity + capability integration tests. This is the job that would
+      # have caught the sandbox-escape defects this audit found by hand.
+      - name: cargo test (codegen)
+        run: cargo test -p axon-core
