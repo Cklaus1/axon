@@ -594,6 +594,15 @@ fn format_type(ty: &crate::types::Type) -> String {
         Type::Bool => "bool".into(),
         Type::Str => "str".into(),
         Type::Unit => "()".into(),
+        // AUDIT T15 (finding P5-34): these three arms were missing, so
+        // `--features serde-json` did not COMPILE — meaning `axon lsp` and
+        // `axon parse --json`, both advertised in CLAUDE.md's commands block
+        // under a "Phase 4 ✅ Complete" heading, could not be built at all.
+        // Nothing gated this path: gate.sh and CI never build the serde-json
+        // feature, so the file rotted silently as new Type variants landed.
+        Type::Decimal => "decimal".into(),
+        Type::RawPtr(inner) => format!("*{}", format_type(inner)),
+        Type::Never => "!".into(),
         Type::Struct(n) | Type::Enum(n) => n.clone(),
         Type::TypeParam(n) => n.clone(),
         Type::DynTrait(n) => format!("dyn {n}"),

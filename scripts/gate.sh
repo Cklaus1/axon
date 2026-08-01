@@ -65,6 +65,16 @@ fi
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 
+# AUDIT T15 (finding P5-34). Nothing ever built the serde-json feature — not
+# gate.sh, not CI — so lsp.rs rotted silently as new Type variants landed and
+# `cargo check --features serde-json` failed outright. That means `axon lsp` and
+# `axon parse --json`, both advertised in CLAUDE.md under "Phase 4 ✅ Complete",
+# could not be compiled at all. An advertised command with no build gate is a
+# command that will eventually stop existing without anyone noticing.
+echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
+cargo check --no-default-features --features serde-json -p axon-core \
+  || fail "serde-json feature check (axon lsp / axon parse --json)"
+
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
 cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
 
