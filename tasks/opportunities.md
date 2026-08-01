@@ -446,12 +446,30 @@ The most-recent-`.kill` search it advertises is the fallback at :565, which runs
 only when no run-id was given. So `axon-os status <run-id> --latest` silently
 ignores the flag and reports on `<run-id>`.
 
-**Attempted and reverted.** The one-line fix (set a `latest` flag; make the
-fallback condition `run_id.as_ref().filter(|_| !latest)`) compiles and all 89
-axon-os tests pass — but I could not exercise it end-to-end from the CLI before
-running out of room, and shipping a flag whose behaviour I have not observed is
-how the "the check that exists is not the check that was claimed" class gets
-another entry. Reverted; tree clean.
+**[RESOLVED — FALSE POSITIVE. Do not "fix" this.]** Ran it. The flag works:
 
-To finish: apply that change in `cmd_status`, then verify with two `.kill` files
-of different mtimes that `status <older-id> --latest` reports the NEWER one.
+```
+$ axon-os status --store D older --json
+{"run_id":"older", ..., "kill_file":".../older.kill"}
+
+$ axon-os status --store D older --latest --json
+{"run_id":"older", ..., "kill_file":".../newest.kill"}     ← differs
+```
+
+Two `.kill` files of different mtimes; adding `--latest` changes which file is
+reported, from `older.kill` to `newest.kill`. So the flag is NOT parsed and
+discarded, whatever the `i += 1` arm looks like in isolation — some other part
+of the path honours it.
+
+I had already written the "fix" and reverted it for a *different* reason (could
+not verify in the time left). That instinct was right, but for the wrong reason:
+the change was not merely unverified, it was **unnecessary**, and applying it
+would have altered working behaviour to match a misreading of the code.
+
+Lesson, and the reason this entry is kept rather than deleted: OSK-L03 was
+marked `confirmed` by triage on a code read — "VERIFIED at cli.rs:543-546" — and
+the code really does look like a no-op at that line. Nobody ran it. That is the
+same failure mode this audit documents in the codebase, occurring in the audit's
+own evidence: a claim that reads as verified because someone looked carefully at
+the wrong thing. Treat `confirmed`-by-code-read differently from
+`confirmed`-by-repro; the triage JSON distinguishes them and it matters.
