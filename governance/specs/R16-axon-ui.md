@@ -79,6 +79,71 @@ already landed two things this spec MUST build on, not duplicate:
 What §1 correctly calls missing is everything **above** that substrate: the `View` tree, `Msg`/`update`
 model, `.ax` surface syntax, taffy layout integration, vello raster, and the R15 event loop.
 
+### 1b. Prior art out-of-tree — what we adopt, and what we refuse to build *(added 2026-08-01, founder decision)*
+
+**Decision: Axon UI does not build a renderer.** It does not build a text engine, a layout
+engine, or a platform/windowing layer either. It builds exactly one thing — **the typed,
+inspectable `View` tree and the `.ax` surface syntax that produces it** — and sits that on a
+thin, replaceable backend seam.
+
+The rationale follows §1's own framing. The differentiator is *checkability*: effect rows, R6
+taint, refinement types, SMT discharge and the R28 ledger can all read a typed `View` tree. None
+of that value lives in rasterization, glyph shaping, or event loops. Those are years of work that
+several teams have already done, and doing them again buys Axon nothing strategically while
+adding a large, permanently-maintained surface *below* the TCB boundary that §7.1 is trying to
+keep small.
+
+Stated as an invariant for this spec: **every pixel-producing component is a dependency, and must
+remain replaceable.** If a decision here makes a renderer hard to swap, that decision is wrong.
+
+#### The survey
+
+| Project | What it is | What Axon takes | What Axon refuses |
+|---|---|---|---|
+| **Vello** | GPU compute-based 2D vector renderer (Linebender) | The renderer. Already chosen; this section ratifies it. | Writing our own rasterizer. |
+| **Parley** | Text layout over swash/fontique (Linebender) | Text layout, wholesale. **Currently absent from this spec — that is a hole.** | Shaping/bidi/font fallback. This is the classic thing hand-rolled UI frameworks underestimate and never finish. |
+| **Taffy** | Flexbox/grid layout (used by Bevy, Zed) | The layout engine. Ratifies §12 Q2's default. | A bespoke layout engine. |
+| **Masonry** | Retained widget layer beneath Xilem, on Vello | The widget/paint seam — the concrete candidate for our backend boundary. | Owning widget internals. |
+| **Xilem** | Reactive view-tree architecture over Masonry/Vello | The *architecture study* for §12 Q1. Closest live experiment to our exact question. | Adopting its type machinery wholesale; its view traits are a large surface. |
+| **gpui** | Zed's production GPU UI framework | Evidence on what product quality actually costs — text, input, platform integration, per-frame budget. Read it to calibrate, not to vendor. | Its custom stack; it is coupled to Zed's needs and not designed as a reusable dependency. |
+| **Slint** | Declarative DSL compiled AOT into a typed tree | The **closest architectural analogue to what we are building**: a compiler that turns a declarative DSL into a typed tree, with a compiler/runtime split. `col{}`/`row{}` in `.ax` is structurally their `.slint`. Study their split, and how they keep the compiled artifact inspectable. | Their runtime and language; we already have a language and a type system. |
+| **Iced** | Elm `View`/`Msg`/`update` in Rust | The reference implementation of the model §3/§4 already names. Cheapest way to sanity-check our `update` semantics. | Its renderer abstraction. |
+| **Floem** | Fine-grained reactive (Lapce) | The counter-data-point for §12 Q1 — what signals cost in practice. | — |
+| **Blitz** | HTML/CSS renderer on Vello + Taffy + Stylo (Dioxus) | Proof the Vello+Taffy pairing carries a real layout model at scale. | CSS. |
+| **Makepad** | Shader-based DSL with live reload | Only if shader-level control becomes a requirement. | Currently out of scope. |
+| **egui / Dear ImGui** | Immediate mode | Studied as the **contrast case**: immediate mode is simple and fast to build, and it is *structurally wrong here* — there is no retained tree to inspect, so the entire §1 checkability argument evaporates. | The paradigm. |
+| **AccessKit** | Cross-platform accessibility tree | The accessibility seam. **Also absent from this spec — a second hole.** | Retrofitting a11y later; it is far more expensive after the tree design is frozen. |
+
+#### Consequences for this spec
+
+1. **§12 Q1 (reactive granularity) — RESOLVED: full rebuild for v1.** The default stands, and the
+   survey strengthens it rather than merely deferring: Xilem and Floem are both still actively
+   working out the ergonomics of fine-grained reactivity in Rust, and their type surfaces are
+   large. A coarse rebuild also keeps the `View` tree trivially serializable, which §7.1 depends
+   on for the canonical hash. Revisit only if §10's bench fails — and if it does, adopt Masonry's
+   damage/dirty-region model before reaching for signals.
+2. **§12 Q2 (layout engine) — RESOLVED: taffy.** Ratified by the "no pixel-producing component is
+   ours" rule; Blitz and Bevy are the scale evidence.
+3. **Two gaps this spec must close before Slice 1.** Text layout (**Parley**) and accessibility
+   (**AccessKit**) appear nowhere in §3/§4/§9. Both are seams that must exist in the `View` type
+   from the start — a11y in particular cannot be bolted on after the tree design freezes, and a
+   `View` tree that cannot describe its own accessible structure is also one an auditor cannot
+   fully read, which is the same defect §1 objects to in `axon-web`.
+4. **The backend seam is the deliverable.** §13 already argues the window/GPU surface is an
+   `AxonHost` provider rather than a hardcoded `winit` dependency. This section extends that to
+   the renderer, text engine and layout engine: all four sit behind provider traits, and the
+   acceptance criteria in §9 should include *swapping one out* as an exercised test, not an
+   aspiration.
+
+#### Verification status of this section
+
+The comparisons above are from working knowledge and were **not** re-verified against the
+upstream repositories at authoring time (no network access in the authoring session). Every
+"what Axon takes" row is a hypothesis about a dependency, and this project has a documented,
+repeatedly-measured habit of code-read confidence being wrong. Before any of this binds a slice:
+clone each candidate, build the hello-world, and record the actual API shape and activity level.
+Treat this table as a research plan, not a finding.
+
 ### 2. Requirement link
 
 This opens a **new `REQUIREMENTS.md` row R16** (the PRD's UI/3D platform vision was previously folded into
@@ -602,9 +667,12 @@ the flag gates all of it.
 
 1. **(§5, blocks Slice 2)** Reactive granularity: full re-`app(&State)` per frame (simple, Elm-pure, fine at
    ~200 nodes) vs. fine-grained reactive diffing (signals, à la Leptos/Xilem — faster but a much larger type
-   surface). *Default: full rebuild for v1; revisit if the perf bench fails at scale.*
+   surface). ***RESOLVED 2026-08-01 (§1b): full rebuild for v1.*** Coarse rebuild also keeps the
+   `View` tree trivially serializable for §7.1's canonical hash. If §10's bench fails, adopt a
+   damage/dirty-region model (Masonry) before reaching for signals.
 2. **(§3)** Layout engine: adopt **taffy** (mature flexbox/grid, used by Bevy/Zed) vs. write a minimal
-   bespoke one. *Default: taffy — don't rebuild a layout engine.*
+   bespoke one. ***RESOLVED 2026-08-01 (§1b): taffy.*** Ratified by the "no pixel-producing
+   component is ours" rule; Blitz and Bevy are the scale evidence.
 3. **(§4/§7 — I-4 OBLIGATION, blocks Slice 2; reclassified 2026-07-31 from "hazard/ergonomics")** Main-thread
    blocking: a long synchronous `update` freezes the frame (browser: the tab). **"Document the hazard" is no
    longer an admissible answer** — I-4 says "never hang", and the frame loop is the operator's Stop button
