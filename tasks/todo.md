@@ -23,6 +23,9 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | T12a | `88cd2e4` | guest image builds again (json-target-spec + EXIT trap scope) |
 | O006 | `570dd95` | meta-test: harness success markers must be strings their scripts emit |
 | **T13** | `de03d7f` | attest refuses an unverifiable hardware root-of-trust claim (OSK-P7-C1, partial) |
+| O006b | `c9c5491` | harness skips countable + fatal under `AXON_HARNESS_STRICT` |
+| **T15** | `c79034a` | `--features serde-json` compiles again (`axon lsp`/`parse --json`) + gate stage |
+| **T14** | `6426c75` | wasm-parity corpus fixed — **suite now 426 passed / 0 failed** |
 
 **Ten fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
@@ -45,6 +48,8 @@ anyway, which is the defect class this audit exists to document.
 
 ## Verification standard used
 
-Green = **no failing test other than `wasm_interp_matches_native_on_pure_compute`**
-(the single clean-baseline failure). Every task above was checked against that,
-not against "100% green".
+Through T13: green = **no failing test other than
+`wasm_interp_matches_native_on_pure_compute`**, the single clean-baseline
+failure. From **T14 onward: zero failures** — that test was fixed rather than
+tolerated, so the bar tightened mid-run. Every task was checked against the
+standard in force when it landed, never against an aspirational "100% green".

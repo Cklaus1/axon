@@ -34,7 +34,21 @@ test wasm_interp_matches_native_on_pure_compute ... FAILED
 Both targets exit 1. This is a **message** divergence on an unconfigured-network
 path, not a compute divergence. Tracked as O001.
 
-## Gate definition for this run
+## [UPDATED 2026-08-01] Gate tightened to ZERO failures
+
+The one baseline failure was **fixed**, not tolerated — see T14 / `6426c75`.
+Root cause: `scripts/wasm_parity.sh` classified four host-touching examples
+(`env_var` / `http_*`) as "pure compute", so the corpus diverged on an
+unconfigured-network path. `cli_run` is now **426 passed, 0 failed**.
+
+> **Green, from T14 onward, means ZERO failing tests.**
+
+Everything committed before `6426c75` was verified against the older, looser
+bar ("no failure other than `wasm_interp_matches_native_on_pure_compute`"), which
+was correct at the time — that test was genuinely red for reasons unrelated to
+those changes.
+
+## Gate definition for this run (superseded — kept for audit)
 
 > Green = **no failing test other than `wasm_interp_matches_native_on_pure_compute`.**
 
