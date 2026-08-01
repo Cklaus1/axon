@@ -81,6 +81,71 @@ new unsound ground (forged attestations, a fail-open guest policy parser, forgea
 principal handles, approval not bound to the artifact). A cycle-2 is warranted, but
 the finding rate is no longer the bottleneck: 49 unresolved criticals are.
 
+### [REVISED 2026-08-01] Adversarial triage of the 20 code CRITICALs
+
+Before building a task DAG, all 20 code-side CRITICAL findings (P4–P7) were
+re-checked by 4 agents instructed to **refute by default**. Full evidence:
+`.archive/triage/verdict-{1..4}.md`; summary `.archive/triage/SUMMARY.md`.
+**Nothing below is deleted — every finding keeps its section; only its grade moves.**
+
+| verdict | n | ids |
+|---|---|---|
+| CONFIRMED — stays CRITICAL | **3** | F013, F041, F153 |
+| CONFIRMED — → HIGH | 11 | F001, F014, F040, F042, F093, F109, F132, F133, F138, F140, F162 |
+| CONFIRMED — → MEDIUM | 4 | F110, F139, F152, F160 |
+| REFUTED — → MEDIUM / LOW | 2 | F161 → MEDIUM, F154 → LOW |
+
+**18/20 describe a real, reproducible defect; 3/20 warrant CRITICAL.** The facts
+in these findings held up; the grades did not. That is the single most important
+correction to this document: the *severity* column of cycle 1 is inflated and
+should not be used to plan work without triage. The corrected code-side critical
+count is **3, not 20**.
+
+The 3 survivors are one cluster — **capability-sandbox escape**:
+
+- **F153** — string-dispatch builtins bypass the `@[contained]` walker (both vectors reproduced)
+- **F041** — `sandbox_run` **replaces** rather than **intersects** the effect ceiling (escape reproduced)
+- **F013** — an axon-os zero-capability job re-widened its own sandbox; the control exits 8
+
+Two of the downgraded-to-HIGH findings are the *same system*, and were reached
+independently by two agents from two different findings: **F014** and **F040** —
+`effect_set()` reduces capabilities to a boolean set, discarding path prefixes and
+host allowlists, and no path or host check exists anywhere downstream. So
+`@[contained](fs: [write("./out/")], net: ["api.example.com"])` enforces "may
+write **somewhere**" and "may reach **some** host". The allowlists parse,
+type-check, appear in the approval UI, and are dropped before they constrain
+anything. Independent corroboration makes this the most solid result in the set.
+
+Recurring reasons for downgrade, each a lens worth applying to the remaining
+165 untriaged findings:
+
+1. **Defense-in-depth counted as sole defense** (F162: guest-kernel `0xFF` fail-open) —
+   real, but sits behind an already-enforcing layer.
+2. **Error direction unexamined** (F139) — over-reports, cannot hide a real
+   violation. A correctness wart, not a security hole.
+3. **Unbuilt feature filed as bug** (F160) — the attestation stand-in is documented
+   as a stand-in and no `hw-attest` feature exists. Roadmap item, not a DAG task.
+4. **Mechanism real, impact nil** (F154) — see below.
+
+#### Correction to this document's own Pass-7 spot-verification
+
+F154 (forgeable principal handles) was hand-verified *by the orchestrator* in the
+Pass-7 section below and graded CRITICAL. The mechanism is correct and undisputed:
+`principals: Vec<Principal>` makes handles dense array indices, so `child - 1`
+reaches the parent.
+
+It is also irrelevant. **`principal_root` is ungated** — an attacker mints a root
+principal directly, so forging a parent handle grants nothing already unavailable.
+
+Confirming that cited code says what a finding claims is not confirming that the
+finding matters. This is precisely the failure this review names for the codebase
+(*"the check that exists is not the check that was claimed"*), committed here in
+the review itself. The Pass-3 and Pass-7 spot-verifications below should be read
+with that caveat: they establish **mechanism**, not **impact**.
+
+Ungated `principal_root` is a larger issue than the finding that surfaced it, and
+is covered nowhere in the 185. Logged as O003 in `tasks/opportunities.md`.
+
 ### Pass-3 spot-verification (orchestrator, independent of the reporting agents)
 
 Pass 3's tally (25C/73H) is far above passes 1–2, so three of its critical claims were re-checked by
