@@ -535,6 +535,27 @@ impl Runtime for AxonCoreRuntime {
                 reason: first_axon_line(err, "interpreter panic"),
                 axis: "runtime".into(),
             }
+        } else if err.contains("ai policy") || err.contains("E1300") {
+            // AUDIT T24 (O016/O018): observed sealing as Completed{value:5}.
+            // Exit 5 is AI_POLICY_EXIT_CODE — a CARVED fault code — so the
+            // record stored a fault code in the `value` field of a SUCCESS
+            // verdict, and a reader could not tell "returned 5" from "refused
+            // by AI policy".
+            Verdict::Denied {
+                reason: first_axon_line(err, "AI policy refused the call"),
+                axis: "ai-policy".into(),
+            }
+        } else if err.contains("parse error") || err.contains("type error") {
+            // AUDIT T24 (O016): a program that does not compile executes ZERO
+            // statements, yet sealed as `✓ completed (value=2)` because the
+            // interpreter reports it as `error: parse error: ...` — no `axon:`
+            // fault line, so none of the arms above matched and it fell through
+            // to Completed. The tamper-evident record then attested success for
+            // a job that never ran.
+            Verdict::Denied {
+                reason: first_axon_line(err, "program failed to compile"),
+                axis: "malformed".into(),
+            }
         } else {
             // No fault diagnostic ⇒ a clean run; the exit code is main's return.
             Verdict::Completed {
