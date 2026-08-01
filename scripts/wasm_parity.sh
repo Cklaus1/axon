@@ -16,6 +16,14 @@
 # Usage:  scripts/wasm_parity.sh
 set -u
 
+# AUDIT O004: take the SHARED wasm build lock. Several of these harnesses build
+# for wasm32 concurrently under cargo's parallel test threads and clobber each
+# other's intermediates, which surfaces as examples silently failing to link.
+# Nine harnesses already took this lock; this one did not, so it raced against
+# them. No-op without flock.
+if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
+
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
