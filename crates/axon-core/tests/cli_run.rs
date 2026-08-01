@@ -11576,11 +11576,17 @@ fn persistent_learner_demo_carries_state_across_invocations() {
     //   run 1 — IMPROVED (or FIRST_RUN), records best to disk
     //   run 2 — STABLE, the previously-found peak still wins
     // The file is in /tmp and not in the repo; clear it on entry + exit.
-    let state_file = "/tmp/axon_persistent_learner.txt";
-    let _ = std::fs::remove_file(state_file);
+    // AUDIT O011: per-process state file, so this test cannot share mutable
+    // state with anything else. The example honours AXON_LEARNER_STATE.
+    let state_file = std::env::temp_dir()
+        .join(format!("axon_learner_{}.txt", std::process::id()))
+        .display()
+        .to_string();
+    let _ = std::fs::remove_file(&state_file);
 
     let run1 = axon()
         .args(["run", &ex("asi/persistent_learner.ax")])
+        .env("AXON_LEARNER_STATE", &state_file)
         .output()
         .unwrap();
     assert!(run1.status.success(), "run 1 should succeed: {:?}", run1);
@@ -11596,9 +11602,10 @@ fn persistent_learner_demo_carries_state_across_invocations() {
 
     let run2 = axon()
         .args(["run", &ex("asi/persistent_learner.ax")])
+        .env("AXON_LEARNER_STATE", &state_file)
         .output()
         .unwrap();
-    let _ = std::fs::remove_file(state_file);
+    let _ = std::fs::remove_file(&state_file);
     assert!(run2.status.success(), "run 2 should succeed: {:?}", run2);
     let out2 = String::from_utf8_lossy(&run2.stdout);
     assert!(

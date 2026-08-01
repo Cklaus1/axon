@@ -294,8 +294,18 @@ as a regression — this session lost time to exactly that twice.
 corpus-sweep tests run every example, including this one, in parallel with the
 dedicated persistence test.
 
-It has not been observed failing — the timing window is narrower — but the
-mechanism is identical and it is one edit to close: give the example an
-`AXON_LEARNER_STATE` override and point the test at a per-process file, as done
-for the bandit in O010. Not done here only because it was not verified failing,
-and an unverified fix to a flake is indistinguishable from noise.
+**[DONE — but read the rationale, which changed.]** The example now honours
+`AXON_LEARNER_STATE` and the test uses a per-process file.
+
+The original justification given here — "corpus-sweep tests run every example
+including this one in parallel" — was WRONG, for the learner and for the bandit
+that prompted it. `all_examples_parity.sh` iterates `examples/*.ax` and does not
+recurse into `examples/asi/`; nothing sweeps that directory. See the correction
+commit following O010.
+
+This was applied anyway, on the narrower and defensible ground that removing a
+fixed shared-mutable `/tmp` path is right on its own terms. It is hardening, not
+a fix for any diagnosed failure — none was observed for the learner, and the
+bandit's actual cause remains **undiagnosed**. Recorded that way deliberately:
+"hardening with no known failure" and "fixes bug X" are different claims, and
+only the first is supported.

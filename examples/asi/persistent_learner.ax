@@ -25,7 +25,16 @@ fn objective(x: i64) -> i64 {
 // "<best_x>,<best_score>" — two i64s separated by a comma. Parse-or-default
 // keeps the demo robust to missing / corrupt state.
 
-fn state_path() -> str { "/tmp/axon_persistent_learner.txt" }
+// AUDIT O011: overridable so each runner can use its own file rather than
+// sharing one fixed /tmp path. Same hardening applied to persistent_bandit.ax
+// (O010). Removing shared mutable state is justified on its own terms — this
+// is not a fix for any diagnosed failure, and none was observed here.
+fn state_path() -> str {
+    match env_var("AXON_LEARNER_STATE") {
+        Ok(p) => p
+        Err(_) => "/tmp/axon_persistent_learner.txt"
+    }
+}
 
 fn load_state() -> (i64, i64) {
     match read_file(state_path()) {
