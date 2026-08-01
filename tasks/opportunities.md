@@ -285,3 +285,17 @@ Practical note for anyone reading a red suite here: `persistent_bandit_demo_*`
 and `wasm_browser_examples_run_identically_via_js_host` are the two known
 non-deterministic tests. Confirm with an isolated re-run before treating either
 as a regression — this session lost time to exactly that twice.
+
+### O011 — [low] `persistent_learner` has the same fixed-/tmp-path race as O010
+
+`crates/axon-core/tests/cli_run.rs:11578` uses a hardcoded
+`/tmp/axon_persistent_learner.txt`, exactly the pattern that made
+`persistent_bandit_demo_accumulates_across_runs` fail intermittently (O010):
+corpus-sweep tests run every example, including this one, in parallel with the
+dedicated persistence test.
+
+It has not been observed failing — the timing window is narrower — but the
+mechanism is identical and it is one edit to close: give the example an
+`AXON_LEARNER_STATE` override and point the test at a per-process file, as done
+for the bandit in O010. Not done here only because it was not verified failing,
+and an unverified fix to a flake is indistinguishable from noise.

@@ -10760,11 +10760,20 @@ fn persistent_bandit_demo_accumulates_across_runs() {
     // file I/O to persist bandit state across processes. Two
     // sequential runs: the second loads the first's state, so its
     // arm-2 pull count is higher than the first's.
-    let state_file = "/tmp/axon_persistent_bandit.txt";
-    let _ = std::fs::remove_file(state_file);
+    // AUDIT O010: use a state file unique to THIS test process. The path was a
+    // fixed /tmp name, and corpus-sweep tests run every example — including this
+    // one — in parallel with this test, so a sweep's run recreated the state
+    // between the remove and the assertion and "run 1 should be fresh" failed
+    // intermittently. The example honours AXON_BANDIT_STATE.
+    let state_file = std::env::temp_dir()
+        .join(format!("axon_bandit_{}.txt", std::process::id()))
+        .display()
+        .to_string();
+    let _ = std::fs::remove_file(&state_file);
 
     let mut cmd = axon();
     cmd.args(["run", &ex("asi/persistent_bandit.ax")]);
+    cmd.env("AXON_BANDIT_STATE", &state_file);
     cmd.env(
         "AXON_PATH",
         format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
@@ -10783,12 +10792,13 @@ fn persistent_bandit_demo_accumulates_across_runs() {
 
     let mut cmd2 = axon();
     cmd2.args(["run", &ex("asi/persistent_bandit.ax")]);
+    cmd2.env("AXON_BANDIT_STATE", &state_file);
     cmd2.env(
         "AXON_PATH",
         format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
     );
     let run2 = cmd2.output().unwrap();
-    let _ = std::fs::remove_file(state_file);
+    let _ = std::fs::remove_file(&state_file);
     assert!(run2.status.success(), "run 2: {:?}", run2);
     let out2 = String::from_utf8_lossy(&run2.stdout);
     assert!(

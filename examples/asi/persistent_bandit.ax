@@ -25,7 +25,17 @@ use bandit.{Bandit, bandit_new, bandit_select, bandit_update, bandit_pulls, band
 
 fn n_arms() -> i64 { 5 }
 fn budget() -> i64 { 40 }
-fn state_path() -> str { "/tmp/axon_persistent_bandit.txt" }
+// AUDIT O010: the state path is overridable so concurrent runners cannot race
+// on one fixed file. Corpus-sweep tests execute EVERY example, including this
+// one, in parallel with the dedicated persistence test — the sweep's run
+// created state mid-test and the "run 1 should be fresh" assertion failed
+// intermittently. Each runner can now point at its own file.
+fn state_path() -> str {
+    match env_var("AXON_BANDIT_STATE") {
+        Ok(p) => p
+        Err(_) => "/tmp/axon_persistent_bandit.txt"
+    }
+}
 
 fn true_mean(arm: i64) -> f64 {
     let means = [0.30, 0.55, 0.85, 0.40, 0.50]
