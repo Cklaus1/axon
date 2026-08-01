@@ -176,12 +176,25 @@ Android NDK unavailable — lifecycle adapter
 Android NDK/emulator unavailable — compute parity
 ```
 
-The first six skip because `--no-default-features` builds an `axon` without
-codegen. So **the entire native/interp parity suite — the I-2 invariant this
-project rests on — skipped in CI**, and reported green while doing it. That is
-not a weak gate; for that configuration it is no gate. It also quantifies why
-T7's codegen job matters: without it, CI's "tests pass" said nothing about
-native/interp agreement.
+**[CORRECTED.]** My first reading of this census overstated it. I wrote that
+"the entire native/interp parity suite skipped in CI". That is wrong on two
+counts, and the accurate version is narrower:
+
+- **8 of the 44 skip-guarded tests actually skipped here, not 44.** The other 36
+  ran for real. Harnesses that build their own codegen binary — `dict_parity`,
+  `checked_arith_parity`, `str_utf8_parity` — invoke `cargo build -p axon-core`
+  with DEFAULT features, so they get codegen regardless of the flags the outer
+  `cargo test` used. They are unaffected.
+- **This census was measured on THIS host, which has LLVM 17 installed.** It is
+  not the CI census. On a runner without LLVM, every harness that shells out to
+  build codegen would also skip — so the CI number is *worse* than these 8, but
+  I have not measured it and should not quote 8 as if I had.
+
+What the 8 do establish: the wasm/browser sweeps and the two script-driven
+codegen parity harnesses (`all-examples parity`, `fuzz parity`) silently
+measured nothing in this configuration and reported green. That is a real hole,
+and it is the reason T7's codegen job matters — but "no gate at all" was my
+overstatement, not the data.
 
 Recommended next: set `AXON_HARNESS_STRICT=1` on the T7 codegen job (which HAS
 LLVM), so a regression that disables codegen can never again present as green.
