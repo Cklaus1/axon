@@ -428,3 +428,30 @@ recorded bar: browser parity must link >= 28 of 34 under a full-suite run, and
 NOT attempted here: 12 scripts is a mechanical change but it must be verified
 under full-suite load, not standalone — standalone measurement is what made the
 CARGO_TARGET_DIR attempt look like a fix when it was a regression.
+
+### O014 — [low] `axon-os status --latest` is parsed and discarded (OSK-L03), attempted and reverted
+
+`crates/axon-os/src/cli.rs:543` — the arm is inside **`cmd_status`**, not
+`cmd_kill`. (The finding cites the line number but not the command; `cmd_kill`
+at :486 has no `--latest` arm at all.)
+
+```rust
+"--latest" => {
+    // Find the most recently modified .kill file in store.
+    i += 1;          // ← advances the index and does nothing else
+}
+```
+
+The most-recent-`.kill` search it advertises is the fallback at :565, which runs
+only when no run-id was given. So `axon-os status <run-id> --latest` silently
+ignores the flag and reports on `<run-id>`.
+
+**Attempted and reverted.** The one-line fix (set a `latest` flag; make the
+fallback condition `run_id.as_ref().filter(|_| !latest)`) compiles and all 89
+axon-os tests pass — but I could not exercise it end-to-end from the CLI before
+running out of room, and shipping a flag whose behaviour I have not observed is
+how the "the check that exists is not the check that was claimed" class gets
+another entry. Reverted; tree clean.
+
+To finish: apply that change in `cmd_status`, then verify with two `.kill` files
+of different mtimes that `status <older-id> --latest` reports the NEWER one.
