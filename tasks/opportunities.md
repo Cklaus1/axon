@@ -309,3 +309,34 @@ a fix for any diagnosed failure — none was observed for the learner, and the
 bandit's actual cause remains **undiagnosed**. Recorded that way deliberately:
 "hardening with no known failure" and "fixes bug X" are different claims, and
 only the first is supported.
+
+### O012 — [high] F062: native codegen ignores the PER-CALL `tier:` on `ai_*` calls
+
+Verified in code, attempted, and **deliberately not fixed** — the correct fix is
+larger than it looks and I would not ship a hasty version of a safety refusal.
+
+`codegen/mod.rs:944` refuses (E0910) when a fn's ATTRIBUTES request a
+non-`balanced` AI tier, because the native runtime routes every call to the
+default model and would otherwise "silently call the wrong model". But R3b's
+per-call form — `ai_complete("hi", tier: "cheap")` — is carried on
+`Expr::Call { tier }`, and `codegen/expr.rs:375-377` explicitly DROPS it under a
+comment that is factually wrong ("native AI calls aren't in the codegen path";
+`ai_complete` is fully lowered in `codegen/builtins.rs`).
+
+So the attribute path is closed and the per-call path is open, for the same
+hazard. The interpreter gives the per-call tier TOP priority, so native and
+interp disagree about which model runs — an I-2 divergence, and precisely the
+outcome the attribute-level refusal exists to prevent.
+
+Why it is not a small change: the scan needs to find `Expr::Call { tier: Some(t) }`
+anywhere in a fn body, and `expr_calls` is a bespoke ~70-line recursion with no
+generic visitor. Doing this right means extracting a reusable expression walker
+(which several other checks in this file would also benefit from), not
+copy-pasting the recursion a second time — a copy would itself become the next
+"walker missed an arm" laundering bug, a class already fixed three times here
+(R6 taint, @[contained] helpers, string-dispatch/T2).
+
+Fix: add a generic `walk_expr(&Expr, &mut impl FnMut(&Expr))` to codegen/mod.rs,
+re-express `expr_calls` in terms of it, then push the same E0910 for any
+`Some(t)` where `t != "balanced"` — arguably for ANY `Some(t)`, since an unknown
+tier is E1302 in the interpreter and native cannot replicate that.
