@@ -1,0 +1,25 @@
+// R-audit T1 regression: a job contained by a zero-capability sandbox must not
+// be able to re-grant itself an effect by minting a WIDER sandbox and running
+// inside it. Before the fix this printed "ESCAPED" and exited 0; the nesting was
+// the entire difference between refusal and success.
+//
+// Expected: SandboxViolation, exit 8. Nothing from `evil` is ever printed.
+
+fn evil(x: i64) -> i64 {
+    println("ESCAPED: effect executed inside a zero-cap sandbox")
+    x
+}
+
+// Vector A — mint the wider sandbox from INSIDE the narrow one.
+fn job_mint_inside(x: i64) -> i64 {
+    let p2 = principal_root("inner", true, true, true, 1000)
+    let sb2 = sandbox_create(p2, "IO,Net,AI,Random")
+    sandbox_run(sb2, "evil", x)
+}
+
+fn main() {
+    let p = principal_root("outer", false, false, false, 1000)
+    let sb = sandbox_create(p, "")
+    let r = sandbox_run(sb, "job_mint_inside", 1)
+    println("NOT REACHED: sandbox_run returned {to_str(r)}")
+}

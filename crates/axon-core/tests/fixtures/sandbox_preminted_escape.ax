@@ -1,0 +1,23 @@
+// R-audit T1 regression, vector B: the wide sandbox is minted BEFORE the narrow
+// one is entered, so the `sandbox_create` guard never sees it. The escape is the
+// *entry* — `sandbox_run` must refuse to widen the active ceiling.
+//
+// Expected: SandboxViolation, exit 8. Nothing from `evil` is ever printed.
+
+fn evil(x: i64) -> i64 {
+    println("ESCAPED: effect executed via a pre-minted wider sandbox")
+    x
+}
+
+fn job_enter_wide(x: i64) -> i64 {
+    // handle 1 was minted at top level, while no sandbox was active
+    sandbox_run(1, "evil", x)
+}
+
+fn main() {
+    let p = principal_root("outer", false, false, false, 1000)
+    let narrow = sandbox_create(p, "")
+    let _wide = sandbox_create(p, "IO,Net,AI,Random")
+    let r = sandbox_run(narrow, "job_enter_wide", 1)
+    println("NOT REACHED: sandbox_run returned {to_str(r)}")
+}

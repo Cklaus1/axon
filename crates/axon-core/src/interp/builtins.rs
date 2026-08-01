@@ -2804,6 +2804,34 @@ impl<'p> Interp<'p> {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
+                // A sandbox minted from *inside* another sandbox may never be
+                // wider than the one enclosing it — otherwise a contained job
+                // re-grants itself any effect simply by creating a fresh
+                // sandbox and running inside it. Refuse loudly rather than
+                // silently intersecting: a silent narrowing would let the
+                // escape attempt succeed-ish and hide the bug.
+                {
+                    let active = self.active_sandbox.get();
+                    if active >= 0 {
+                        let sbs = self.sandboxes.borrow();
+                        if let Some(outer) = sbs.get(active as usize) {
+                            let mut escalated: Vec<&str> = allowed
+                                .iter()
+                                .filter(|e| !outer.allowed.contains(*e))
+                                .map(|e| e.as_str())
+                                .collect();
+                            if !escalated.is_empty() {
+                                escalated.sort_unstable();
+                                return Err(crate::interp::Flow::SandboxViolation(format!(
+                                    "sandbox_create: cannot grant effect(s) {escalated:?} not \
+                                     held by the enclosing sandbox (allowed set {:?}, principal \
+                                     handle {}) — a nested sandbox may only narrow, never widen",
+                                    outer.allowed, outer.principal
+                                )));
+                            }
+                        }
+                    }
+                }
                 let mut sbs = self.sandboxes.borrow_mut();
                 let handle = sbs.len() as i64;
                 sbs.push(SandboxEntry { principal, allowed });
@@ -2832,6 +2860,38 @@ impl<'p> Interp<'p> {
                 let Some(f) = self.fns.get(&fn_name).copied() else {
                     return panic(format!("sandbox_run: no function `{fn_name}`"));
                 };
+                // Entering a sandbox may only ever *narrow* the active ceiling.
+                // Without this, a job contained by sandbox A escapes by running
+                // inside a wider sandbox B that was minted before A was entered
+                // (so the sandbox_create guard above never saw it). The ceiling
+                // is the intersection of every enclosing sandbox, so entering a
+                // sandbox that is not a subset of the current one is refused.
+                {
+                    let active = self.active_sandbox.get();
+                    if active >= 0 && active != sb_handle {
+                        let sbs = self.sandboxes.borrow();
+                        if let (Some(outer), Some(inner)) =
+                            (sbs.get(active as usize), sbs.get(sb_handle as usize))
+                        {
+                            let mut escalated: Vec<&str> = inner
+                                .allowed
+                                .iter()
+                                .filter(|e| !outer.allowed.contains(*e))
+                                .map(|e| e.as_str())
+                                .collect();
+                            if !escalated.is_empty() {
+                                escalated.sort_unstable();
+                                return Err(crate::interp::Flow::SandboxViolation(format!(
+                                    "sandbox_run: sandbox {sb_handle} grants effect(s) \
+                                     {escalated:?} not held by the enclosing sandbox (allowed \
+                                     set {:?}, principal handle {}) — entering a sandbox may \
+                                     only narrow the active ceiling, never widen it",
+                                    outer.allowed, outer.principal
+                                )));
+                            }
+                        }
+                    }
+                }
                 // Set the active sandbox, save the previous value for restore.
                 let prev_sandbox = self.active_sandbox.replace(sb_handle);
                 let result = self.call_fn(f, vec![Value::Int(arg)]);

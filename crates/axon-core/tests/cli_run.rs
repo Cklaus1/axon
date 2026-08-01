@@ -1643,6 +1643,51 @@ fn contained_sandbox_is_enforced_transitively_through_helpers() {
 }
 
 #[test]
+fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
+    // SECURITY (audit T1, findings OSK-P4-C1 / INTERP-C01 / P4-INT-01 — three
+    // independent agents, each with an executed repro). The runtime sandbox is
+    // the fence axon-os relies on (`wrap_in_sandbox`), so every axon-os grant
+    // was voidable from inside the job it was meant to contain.
+    //
+    // Two vectors, because the two escapes are guarded in different places:
+    //   A. mint the wider sandbox from INSIDE the narrow one  -> sandbox_create
+    //   B. mint it BEFORE entering the narrow one, then enter -> sandbox_run
+    //
+    // Vector B is the one a create-side-only fix misses: the wide sandbox is
+    // registered while nothing is active, so the create guard never sees it and
+    // the escape is the *entry*. Both must exit 8 (SANDBOX_VIOLATION).
+    //
+    // Before the fix both printed "ESCAPED" and exited 0.
+    for (label, fixture_name) in [
+        ("mint-inside", "sandbox_nested_escape.ax"),
+        ("pre-minted", "sandbox_preminted_escape.ax"),
+    ] {
+        let out = axon()
+            .args(["run", &fixture(fixture_name)])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(8),
+            "[{label}] a nested sandbox must not widen the ceiling; expected exit 8, got: {msg}"
+        );
+        assert!(
+            !msg.contains("ESCAPED"),
+            "[{label}] the guarded effect must never execute: {msg}"
+        );
+        assert!(
+            msg.contains("only narrow"),
+            "[{label}] expected the narrow-only refusal message, got: {msg}"
+        );
+    }
+}
+
+#[test]
 fn no_main_function_is_a_clean_error_exit_2() {
     // BUG_HUNT #23: a program with no `main` is a COMPILE-time error (malformed),
     // not a runtime panic. It must report a clean diagnostic and exit 2 — NOT

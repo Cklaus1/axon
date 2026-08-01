@@ -73,3 +73,23 @@ for the embedding story, and picking one is a product decision, not a bug fix.
 
 See O002 — kept as a candidate task: make the floor check deterministic by
 asserting *which* examples linked, not *how many*.
+
+### O005 — [high] CI's `cargo fmt` job is RED on `main`, at baseline
+
+`.github/workflows/ci.yml:55` runs `cargo fmt -p axon-core -- --check`. That
+command fails at baseline with **41 diffs** (42 on nightly), across
+`decimal.rs`, `codegen/bpf.rs`, `codegen/builtin_externs.rs`, `codegen/builtins.rs`,
+`checker.rs`, `interp.rs`, `main.rs`, `lib.rs`, `error.rs`, `capabilities.rs`,
+`builtins.rs`.
+
+`decimal.rs` and `codegen/bpf.rs` are **byte-identical to `origin/main`**, so this
+is not branch-local — CI is broken on main. Both trace to the parallel R21
+(Decimal) / R23 (eBPF) track.
+
+Not fixed here, deliberately: a 41-site reformat of another track's live files
+would collide with concurrent work, and it would bury this run's security diff in
+unrelated churn. It needs coordination with that track, not a unilateral sweep.
+
+Consequence for this loop: the recorded baseline (`cargo test --workspace`) does
+**not** include fmt. "Green" for this run remains test-only. T7 must account for
+this — turning on more CI does not help while an existing CI job is already red.
