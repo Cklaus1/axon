@@ -1688,6 +1688,75 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn contained_is_not_launderable_through_string_named_dispatch() {
+    // SECURITY (audit T2, findings F153 / P7-SEC-02). Several builtins dispatch
+    // to a user fn NAMED BY A STRING. The capability walker built follow-edges
+    // only from Call CALLEE names, so the target was walked as an inert string
+    // argument and its body never checked — while the interpreter dispatched
+    // exactly that string. A @[contained] fn laundered any effect by moving the
+    // callee's name into a string literal.
+    //
+    // Same transitive-laundering class already closed twice in this repo (R6
+    // taint, @[contained] helpers): a guard that inspects only the immediate
+    // call is escapable one hop out. Before the fix each case below checked
+    // clean (exit 0).
+    let cases: &[(&str, &str)] = &[
+        (
+            "sandbox_run",
+            "fn evil(x: i64) -> i64 { match exec(\"echo\", [\"p\"]) { Ok(_) => 1  Err(_) => 0 } }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 {\n\
+               let p = principal_root(\"p\", false, false, false, 10)\n\
+               let sb = sandbox_create(p, \"IO,Exec\")\n\
+               sandbox_run(sb, \"evil\", 0)\n\
+             }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+        (
+            "scheduler_spawn",
+            "fn evil(x: i64) -> i64 { match exec(\"echo\", [\"p\"]) { Ok(_) => 1  Err(_) => 0 } }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 { let _ = scheduler_spawn(\"evil\", 0)\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+        (
+            "goal_run",
+            "@[adaptive]\n\
+             fn evil(x: i64) -> i64 { match exec(\"echo\", [\"p\"]) { Ok(_) => 1  Err(_) => 0 } }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 { let _ = goal_run(\"evil\", 0, 10, 3)\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+    ];
+    for (label, src) in cases {
+        let dir = std::env::temp_dir().join(format!("axon_t2_{label}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prog.ax");
+        std::fs::write(&path, src).unwrap();
+        let out = axon()
+            .args(["check", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[{label}] effect laundered through a string-named callee must be \
+             rejected, got: {msg}"
+        );
+        assert!(
+            msg.contains("E1001"),
+            "[{label}] expected E1001 containment violation, got: {msg}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
 fn sandbox_io_grant_does_not_imply_process_spawn_exit_8() {
     // SECURITY (audit T8, finding P6-COV-01). `builtin_effect_row` puts `exec`
     // in the SAME "IO" bucket as println/read_file/env_var/exit, so a sandbox

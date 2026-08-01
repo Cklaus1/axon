@@ -328,6 +328,33 @@ pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<Str
 /// `classify_call` so the taxonomy is shared by the `@[contained]` checker, the
 /// R10 capability-diff, and R4's `@[agent]` action log (which records the
 /// `caps_used` of each agent action). Public so the interpreter can stamp it.
+/// AUDIT T2: argument positions at which a builtin dispatches to a USER FN
+/// named by a string literal. The capability walker must follow these exactly
+/// as it follows a direct call, or a `@[contained]` fn launders any effect by
+/// putting the callee's name in a string.
+///
+/// Deliberately an explicit allowlist rather than "any string arg that happens
+/// to name a fn": the latter would follow `println("helper")` and report
+/// effects for a fn the program never invokes.
+fn indirect_dispatch_args(builtin: &str) -> &'static [usize] {
+    match builtin {
+        // sandbox_run(sandbox, fn_name, arg)
+        "sandbox_run" => &[1],
+        // scheduler_spawn(fn_name, arg)
+        "scheduler_spawn" => &[0],
+        // goal_run_constrained(name, constraint, ...) — BOTH are invoked
+        "goal_run_constrained" => &[0, 1],
+        // the rest of the goal family invokes the @[adaptive] fn named first
+        "goal_run"
+        | "goal_run_categorical"
+        | "goal_run_random"
+        | "goal_run_multistart"
+        | "goal_continue"
+        | "goal_eval" => &[0],
+        _ => &[],
+    }
+}
+
 pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
     classify_call(name).map(|k| cap_label(&k))
 }
@@ -635,6 +662,31 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             if let Some(name) = callee_name {
                 // A builtin I/O call is checked against the spec directly.
                 check_call(name, args, ctx.spec, ctx.errors);
+                // AUDIT T2 (finding F153 / P7-SEC-02). Several builtins dispatch
+                // to a user fn NAMED BY A STRING — `sandbox_run(sb, "job", 0)`,
+                // `scheduler_spawn("worker", 0)`, the whole `goal_run` family.
+                // The walker built follow-edges only from `Expr::Call` CALLEE
+                // names, so such a target was walked as an inert string argument
+                // and its body never checked, while the interpreter dispatched
+                // exactly that string. Same transitive-laundering class already
+                // closed twice here (R6 taint, @[contained] helpers): a guard
+                // that inspects only the immediate call is escapable one hop out.
+                for &idx in indirect_dispatch_args(name) {
+                    let Some(Expr::Literal(crate::ast::Literal::Str(target))) = args.get(idx)
+                    else {
+                        continue;
+                    };
+                    if let Some(helper) = ctx.fn_map.get(target.as_str()) {
+                        // `ctx.visited` keys on &str borrowed from the fn_map key,
+                        // so re-look-up the canonical key rather than the literal.
+                        if let Some((canon, _)) = ctx.fn_map.get_key_value(target.as_str()) {
+                            if ctx.visited.insert(canon) {
+                                check_expr(&helper.body, ctx);
+                                ctx.visited.remove(canon);
+                            }
+                        }
+                    }
+                }
                 // A USER fn call escapes the sandbox unless we follow it: the
                 // helper's body must also satisfy this spec (the helper inherits
                 // the caller's containment). Guard against recursion via `visited`.

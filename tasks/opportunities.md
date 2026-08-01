@@ -69,10 +69,31 @@ Not acted on. Candidate task, blocked on a design decision that is genuinely
 build-time capability? an explicit host grant?) Each has different implications
 for the embedding story, and picking one is a product decision, not a bug fix.
 
-### O004 — [low] `wasm_browser_examples_run_identically_via_js_host` is build-state sensitive
+### O004 — [medium] `wasm_browser_examples_run_identically_via_js_host` is FLAKY under concurrent test execution
 
-See O002 — kept as a candidate task: make the floor check deterministic by
-asserting *which* examples linked, not *how many*.
+Upgraded from [low] with direct evidence. Observed across four full runs of
+`cargo test -p axon-core --test cli_run` at three different commits:
+
+| run | result |
+|---|---|
+| after T1 | passes (420 passed / 1 failed) |
+| after T8 | passes (421 passed / 1 failed) |
+| after T2 | **FAILS** (420 passed / 2 failed) |
+| after T2, immediate re-run, no code change | passes (421 passed / 1 failed) |
+| after T2, run in isolation | passes |
+
+Same binary, same commit, opposite results — so it is non-deterministic under
+full-suite parallelism, not merely sensitive to a stale `target/`. The likely
+mechanism is several tests racing on shared wasm build artifacts, so the "how
+many examples linked" count is read while another test is mid-build.
+
+This cost real time: it presented as a T2 regression and had to be
+disambiguated by a 6-minute re-run plus an isolated run. A flaky gate is worse
+than a missing one — it trains the reader to dismiss failures, which is the
+same end state as a vacuous gate, reached from the other direction.
+
+Candidate fix: assert *which* examples linked rather than how many, and give
+the test its own build directory so it cannot race.
 
 ### O005 — [high] CI's `cargo fmt` job is RED on `main`, at baseline
 
