@@ -329,6 +329,27 @@ struct SandboxEntry {
     principal: i64,
     /// The concrete effects this sandbox permits (e.g. {"AI", "Net"}).
     allowed: std::collections::HashSet<String>,
+    /// AUDIT T3: the SCOPE of those effects. `None` means "unscoped" — the
+    /// effect is granted without a path/host restriction, which is the
+    /// pre-existing `sandbox_create` behaviour and stays the default so old
+    /// callers are unaffected. `Some(list)` restricts the effect to arguments
+    /// matching one of the entries.
+    ///
+    /// Without this, `@[contained(fs: [write("./out/")], net: ["api.x.com"])]`
+    /// enforced only "may write SOMEWHERE" / "may reach SOME host": the
+    /// allowlists parsed, type-checked and were rendered to the approving human,
+    /// then discarded before anything could enforce them.
+    scope: SandboxScope,
+}
+
+/// Path/host restrictions attached to a sandbox. `None` = unscoped (grant the
+/// effect with no argument restriction); `Some(v)` = the call argument must
+/// match an entry, or it is a SandboxViolation.
+#[derive(Default, Clone)]
+struct SandboxScope {
+    fs_read: Option<Vec<String>>,
+    fs_write: Option<Vec<String>>,
+    net: Option<Vec<String>>,
 }
 
 // ── Interpreter ──────────────────────────────────────────────────────────────

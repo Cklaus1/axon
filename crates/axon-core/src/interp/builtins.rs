@@ -16,6 +16,62 @@ use super::*;
 #[allow(unused_imports)]
 use axon_audit;
 
+/// AUDIT T3 (findings OSK-P4-C2 / F014 / F040). Returns `Some(message)` if this
+/// builtin call violates the active sandbox's path/host SCOPE.
+///
+/// The effect row check above answers "may this program do FS at all". This
+/// answers "may it do FS *to this path*" — the question the grant actually
+/// asked and which nothing downstream was asking. Matching reuses the static
+/// `@[contained]` helpers verbatim, including their refusal of any `..`
+/// component, so the compile-time and runtime layers cannot drift.
+fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<String> {
+    use crate::capabilities as caps;
+    let deny = |what: &str, val: &str, list: &[String]| {
+        Some(format!(
+            "builtin `{name}` is not permitted to {what} `{val}`: the active sandbox \
+             restricts it to {list:?} (principal handle {})",
+            sb.principal
+        ))
+    };
+    // Net: either the first arg IS the host/URL (http_*), or the host is
+    // implicit and fixed (the AI builtins reach the Anthropic endpoint).
+    if let Some(allow) = sb.scope.net.as_deref() {
+        let host = match caps::ai_builtin_host(name) {
+            Some(h) => Some(h.to_string()),
+            None if caps::capability_of_builtin(name) == Some("net") => match args.first() {
+                Some(Value::Str(s)) => Some(caps::host_of(s)),
+                // A net call whose target we cannot read is refused, not waved
+                // through — an unreadable target is exactly the case a scope
+                // exists to stop.
+                _ => Some(String::from("<dynamic>")),
+            },
+            None => None,
+        };
+        if let Some(h) = host {
+            if !allow.iter().any(|g| caps::host_matches_glob(&h, g)) {
+                return deny("reach host", &h, allow);
+            }
+        }
+    }
+    // FS: read and write are scoped independently — a read grant must not
+    // authorise a write to the same prefix.
+    let fs_list = match caps::capability_of_builtin(name) {
+        Some("fs:read") => sb.scope.fs_read.as_deref().map(|l| ("read path", l)),
+        Some("fs:write") => sb.scope.fs_write.as_deref().map(|l| ("write path", l)),
+        _ => None,
+    };
+    if let Some((what, allow)) = fs_list {
+        let path = match args.first() {
+            Some(Value::Str(s)) => s.clone(),
+            _ => String::from("<dynamic>"),
+        };
+        if !allow.iter().any(|p| caps::path_has_prefix(&path, p)) {
+            return deny(what, &path, allow);
+        }
+    }
+    None
+}
+
 /// F3 (Phase 9): map a raw capability kind (from `capability_of_builtin`) to its
 /// effect-row tag for audit records. Unmapped kinds default to the raw cap name.
 fn cap_to_effect_row(cap: &str) -> &'static str {
@@ -213,6 +269,12 @@ impl<'p> Interp<'p> {
                                     sb.allowed, sb.principal
                                 )));
                             }
+                        }
+                        // AUDIT T3: the effect is permitted — now check its
+                        // SCOPE. A grant of `fs: [write("./out/")]` must mean
+                        // "may write ./out/", not "may write somewhere".
+                        if let Some(v) = scope_violation(name, args, sb) {
+                            return Err(crate::interp::Flow::SandboxViolation(v));
                         }
                     }
                 }
@@ -2845,7 +2907,81 @@ impl<'p> Interp<'p> {
                 }
                 let mut sbs = self.sandboxes.borrow_mut();
                 let handle = sbs.len() as i64;
-                sbs.push(SandboxEntry { principal, allowed });
+                sbs.push(SandboxEntry {
+                    principal,
+                    allowed,
+                    scope: Default::default(),
+                });
+                ok!(Value::Int(handle));
+            }
+
+            // AUDIT T3: `sandbox_create_scoped(principal, effects, fs_read,
+            // fs_write, net) -> i64`. As `sandbox_create`, but the fs/net
+            // effects are restricted to the given comma-separated path prefixes
+            // and host globs. An EMPTY string means "unscoped" (grant with no
+            // argument restriction) so this is a strict superset of
+            // `sandbox_create`; a non-empty list means every read_file /
+            // write_file path, and every net host, must match an entry.
+            //
+            // This is what makes `@[contained(fs: [write("./out/")])]` mean
+            // "may write ./out/" at RUNTIME rather than "may write somewhere".
+            // Path matching reuses the SAME helpers as the static @[contained]
+            // checker (`capabilities::path_has_prefix` / `host_matches_glob`),
+            // including its refusal of any `..` component — so the two layers
+            // cannot drift apart. Interp-only.
+            "sandbox_create_scoped" => {
+                want(5)?;
+                let principal = as_int(&args[0])?;
+                let raw = as_str(&args[1])?.to_string();
+                let allowed: std::collections::HashSet<String> = raw
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let list = |v: &Value| -> Result<Option<Vec<String>>, Flow> {
+                    let s = as_str(v)?;
+                    let items: Vec<String> = s
+                        .split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect();
+                    Ok(if items.is_empty() { None } else { Some(items) })
+                };
+                let scope = crate::interp::SandboxScope {
+                    fs_read: list(&args[2])?,
+                    fs_write: list(&args[3])?,
+                    net: list(&args[4])?,
+                };
+                {
+                    let active = self.active_sandbox.get();
+                    if active >= 0 {
+                        let sbs = self.sandboxes.borrow();
+                        if let Some(outer) = sbs.get(active as usize) {
+                            let mut escalated: Vec<&str> = allowed
+                                .iter()
+                                .filter(|e| !outer.allowed.contains(*e))
+                                .map(|e| e.as_str())
+                                .collect();
+                            if !escalated.is_empty() {
+                                escalated.sort_unstable();
+                                return Err(crate::interp::Flow::SandboxViolation(format!(
+                                    "sandbox_create_scoped: cannot grant effect(s) {escalated:?} \
+                                     not held by the enclosing sandbox (allowed set {:?}, \
+                                     principal handle {}) — a nested sandbox may only narrow, \
+                                     never widen",
+                                    outer.allowed, outer.principal
+                                )));
+                            }
+                        }
+                    }
+                }
+                let mut sbs = self.sandboxes.borrow_mut();
+                let handle = sbs.len() as i64;
+                sbs.push(SandboxEntry {
+                    principal,
+                    allowed,
+                    scope,
+                });
                 ok!(Value::Int(handle));
             }
 

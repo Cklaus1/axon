@@ -1,0 +1,16 @@
+// AUDIT T3: a grant of fs: [write("./out/")] must mean "may write ./out/", not
+// "may write somewhere". Before the fix the prefix was discarded before the
+// runtime could see it, so the second write below succeeded.
+//
+// Expected: the allowed write succeeds, the escape is SandboxViolation exit 8.
+fn job(x: i64) -> i64 {
+    match write_file("./out/log.txt", "ok") { Ok(_) => println("wrote allowed path")  Err(e) => println("err {e}") }
+    match write_file("/tmp/axon_t3_escape.txt", "pwn") { Ok(_) => println("ESCAPED: wrote outside the prefix")  Err(e) => println("err {e}") }
+    0
+}
+fn main() {
+    let p = principal_root("p", false, true, false, 100)
+    let sb = sandbox_create_scoped(p, "IO", "", "./out/", "")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}

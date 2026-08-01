@@ -46,7 +46,7 @@ pub fn run(
     let outcome = rt.run_sandboxed(
         &manifest.program,
         &principal,
-        eff.effect_set(),
+        &eff,
         &eff.budget,
         manifest.seed,
     );

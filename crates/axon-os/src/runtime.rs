@@ -37,11 +37,16 @@ pub trait Runtime {
     /// Run `program` as `principal` inside a sandbox enforcing `ceiling` +
     /// `budget` with a fixed `seed`. Returns the observed events and the verdict
     /// (mapping any runtime over-reach to Denied/BudgetExhausted/RefineViolation).
+    /// AUDIT T3: takes the full `Grant`, not just its induced `EffectSet`.
+    /// `effect_set()` reduces the grant to four booleans, discarding the path
+    /// prefixes and host allowlists — so the ceiling could only ever express
+    /// "may write SOMEWHERE", never "may write ./out/". The scoped runtime
+    /// needs the allowlists themselves.
     fn run_sandboxed(
         &self,
         program: &Path,
         principal: &PrincipalHandle,
-        ceiling: EffectSet,
+        grant: &Grant,
         budget: &Budget,
         seed: u64,
     ) -> RunOutcome;
@@ -326,7 +331,8 @@ fn calls_name(source: &str, name: &str) -> bool {
 /// scan — which a single space (`exec (`) defeats. The interpreter now requires
 /// an explicit `Exec` tag for process spawning, so exec is emitted here only
 /// when the grant actually carries it.
-fn wrap_in_sandbox(src: &str, ceiling: EffectSet, budget: &Budget) -> String {
+fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget) -> String {
+    let ceiling = grant.effect_set();
     let mut tags: Vec<&str> = Vec::new();
     if ceiling.net {
         tags.push("Net");
@@ -339,17 +345,33 @@ fn wrap_in_sandbox(src: &str, ceiling: EffectSet, budget: &Budget) -> String {
         tags.push("Exec");
     }
     let csv = tags.join(",");
+    // AUDIT T3: pass the ALLOWLISTS through, not just the booleans they induce.
+    // `axon-os explain` renders "This program MAY: write ./out/" to the human
+    // approving the run; before this the prefixes were dropped here and the
+    // runtime enforced only "may write somewhere", so that sentence was false.
+    let esc = |v: &[String]| {
+        v.iter()
+            .map(|x| x.replace('\\', "\\\\").replace('"', "\\\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let fs_read_csv = esc(&grant.fs_read);
+    let fs_write_csv = esc(&grant.fs_write);
+    let net_csv = esc(&grant.net);
     // `sandbox_run(sb, fn, arg)` calls `fn(arg)`, so the entry must take one i64.
     // Axon `main` is nullary — inject an unused i64 param when renaming.
     let renamed = src
         .replace("fn main()", "fn __job_entry(_axon_arg: i64)")
         .replace("fn main ()", "fn __job_entry(_axon_arg: i64)");
     format!(
-        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create(__p, \"{csv}\")\n    sandbox_run(__sb, \"__job_entry\", 0)\n}}\n",
+        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    sandbox_run(__sb, \"__job_entry\", 0)\n}}\n",
         net = ceiling.net,
         fsw = ceiling.fs_write,
         exec = ceiling.exec,
         budget = budget.calls.max(0),
+        fsr_l = fs_read_csv,
+        fsw_l = fs_write_csv,
+        net_l = net_csv,
     )
 }
 
@@ -371,10 +393,11 @@ impl Runtime for AxonCoreRuntime {
         &self,
         program: &Path,
         _principal: &PrincipalHandle,
-        ceiling: EffectSet,
+        grant: &Grant,
         budget: &Budget,
         seed: u64,
     ) -> RunOutcome {
+        let ceiling = grant.effect_set();
         // RUNTIME ENFORCEMENT (the sound fence). Rather than running the program
         // raw, wrap it: mint a principal + `sandbox_run` it inside an effect
         // ceiling. The interpreter then refuses ANY builtin whose effect row
@@ -394,7 +417,7 @@ impl Runtime for AxonCoreRuntime {
                 }
             }
         };
-        let wrapper_src = wrap_in_sandbox(&src, ceiling, budget);
+        let wrapper_src = wrap_in_sandbox(&src, grant, budget);
         let wrapper_path = std::env::temp_dir().join(format!(
             "axon-os-wrap-{}-{}.ax",
             std::process::id(),
@@ -538,7 +561,7 @@ impl Runtime for MockRuntime {
         &self,
         _program: &Path,
         _principal: &PrincipalHandle,
-        _ceiling: EffectSet,
+        _grant: &Grant,
         _budget: &Budget,
         _seed: u64,
     ) -> RunOutcome {

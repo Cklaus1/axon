@@ -1,0 +1,13 @@
+// AUDIT T3: the runtime prefix check reuses the STATIC @[contained] matcher,
+// so it inherits its refusal of any `..` component. Otherwise
+// "./out/../etc/passwd" passes a raw starts_with("./out/") test.
+fn job(x: i64) -> i64 {
+    match write_file("./out/../etc/passwd", "pwn") { Ok(_) => println("ESCAPED: traversal wrote")  Err(e) => println("err {e}") }
+    0
+}
+fn main() {
+    let p = principal_root("p", false, true, false, 100)
+    let sb = sandbox_create_scoped(p, "IO", "", "./out/", "")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}

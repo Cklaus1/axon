@@ -1,0 +1,12 @@
+// AUDIT T3: a grant of net: ["api.trusted.io"] must pin the host. Before the
+// fix the allowlist was discarded and the ceiling meant "may reach SOME host".
+fn job(x: i64) -> i64 {
+    match http_get("https://evil.example.com/x", "") { Ok(_) => println("ESCAPED: reached evil host")  Err(e) => println("http err {e}") }
+    0
+}
+fn main() {
+    let p = principal_root("p", true, false, false, 100)
+    let sb = sandbox_create_scoped(p, "Net", "", "", "api.trusted.io")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}

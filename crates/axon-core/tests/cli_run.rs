@@ -1688,6 +1688,63 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
+    // SECURITY (audit T3, findings OSK-P4-C2 / F014 / F040 — the last reached
+    // independently by two agents from two different findings).
+    //
+    // `Grant::effect_set()` reduced a grant to four booleans, discarding the
+    // path prefixes and host allowlists, and no path/host check existed
+    // anywhere downstream. So `@[contained(fs: [write("./out/")], net:
+    // ["api.example.com"])]` enforced only "may write SOMEWHERE" and "may reach
+    // SOME host" — while `axon-os explain` rendered "This program MAY: write
+    // ./out/" to the human approving the run. The allowlists parsed,
+    // type-checked, were displayed, and were then dropped.
+    //
+    // Before the fix each escape below succeeded and the program exited 0.
+    //
+    // The in-scope write targets ./out/ relative to the test process's cwd, so
+    // ensure it exists — otherwise the positive assertion below would fail for
+    // a missing directory rather than a denied capability, and a scope that
+    // denied EVERYTHING would still pass the refusal assertions.
+    let _ = std::fs::create_dir_all("./out");
+    for (label, fixture_name) in [
+        ("fs prefix", "sandbox_scope_fs.ax"),
+        ("path traversal", "sandbox_scope_traversal.ax"),
+        ("net host", "sandbox_scope_net.ax"),
+    ] {
+        let out = axon()
+            .args(["run", &fixture(fixture_name)])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(8),
+            "[{label}] out-of-scope access must be a sandbox violation: {msg}"
+        );
+        assert!(
+            !msg.contains("ESCAPED"),
+            "[{label}] the out-of-scope access must never happen: {msg}"
+        );
+    }
+    // The in-scope write must still succeed — a scope that denies everything
+    // would pass the assertions above while being useless.
+    let ok = axon()
+        .args(["run", &fixture("sandbox_scope_fs.ax")])
+        .output()
+        .unwrap();
+    let msg = String::from_utf8_lossy(&ok.stdout).to_string();
+    assert!(
+        msg.contains("wrote allowed path"),
+        "an in-scope write must still be permitted: {msg}"
+    );
+}
+
+#[test]
 fn contained_is_not_launderable_through_string_named_dispatch() {
     // SECURITY (audit T2, findings F153 / P7-SEC-02). Several builtins dispatch
     // to a user fn NAMED BY A STRING. The capability walker built follow-edges

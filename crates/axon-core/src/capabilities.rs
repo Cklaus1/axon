@@ -93,7 +93,7 @@ const ANTHROPIC_HOST: &str = "api.anthropic.com";
 /// (the Anthropic endpoint) and the first call argument is the PROMPT, not a
 /// host. Returns the implicit host for those builtins, or `None` for a net
 /// builtin whose first arg genuinely IS the host (`http_get`/`http_post`).
-fn ai_builtin_host(name: &str) -> Option<&'static str> {
+pub(crate) fn ai_builtin_host(name: &str) -> Option<&'static str> {
     if name == "ai_complete"
         || name == "ai_extract_uncertain_i64"
         || name == "ai_extract_uncertain_f64"
@@ -116,7 +116,7 @@ fn ai_builtin_host(name: &str) -> Option<&'static str> {
 /// stay within the allowed prefix, so the capability check denies it (the call
 /// is refused, the conservative-safe outcome). Paths without `..` use the plain
 /// prefix test.
-fn path_has_prefix(path: &str, prefix: &str) -> bool {
+pub(crate) fn path_has_prefix(path: &str, prefix: &str) -> bool {
     if path_has_dotdot(path) {
         return false;
     }
@@ -131,7 +131,7 @@ fn path_has_dotdot(path: &str) -> bool {
 
 /// Check if `host` matches a glob pattern like `*.myapi.com`.
 /// Only supports leading `*` wildcard for now.
-fn host_matches_glob(host: &str, glob: &str) -> bool {
+pub(crate) fn host_matches_glob(host: &str, glob: &str) -> bool {
     if let Some(suffix) = glob.strip_prefix('*') {
         host.ends_with(suffix)
     } else {
@@ -934,7 +934,7 @@ fn native_net_host(name: &str, args: &[Expr]) -> Option<String> {
 
 /// Extract the bare host from a literal that may be a plain host or a base URL
 /// (`http://host:port/path` → `host`).
-fn host_of(s: &str) -> String {
+pub(crate) fn host_of(s: &str) -> String {
     let after_scheme = s.split_once("://").map(|(_, rest)| rest).unwrap_or(s);
     let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
     host_port

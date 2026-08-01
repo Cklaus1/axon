@@ -1272,6 +1272,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "F5 (Phase 9): register a runtime sandbox bound to `principal` that allows only the comma-separated `allowed_effects` (e.g. \"AI,Net\" or \"IO\" or \"\"). Returns a sandbox handle (i64). Interp-only (codegen E0910-refused).",
     },
     BuiltinFn {
+        name: "sandbox_create_scoped",
+        params: &[
+            ("principal", "i64"),
+            ("allowed_effects", "str"),
+            ("fs_read", "str"),
+            ("fs_write", "str"),
+            ("net", "str"),
+        ],
+        ret: "i64",
+        doc: "AUDIT T3: as `sandbox_create`, but SCOPES the fs/net effects to comma-separated path prefixes and host globs. An empty string means unscoped (no argument restriction), so this is a strict superset of `sandbox_create`. A non-empty list means every read_file/write_file path and every net host must match an entry, or the call is a SandboxViolation (exit 8). Matching reuses the static @[contained] helpers, including their refusal of any `..` component. Interp-only (codegen E0910-refused).",
+    },
+    BuiltinFn {
         name: "sandbox_run",
         params: &[("sandbox", "i64"), ("fn_name", "str"), ("arg", "i64")],
         ret: "i64",

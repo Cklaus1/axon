@@ -59,3 +59,7 @@ examples/jobs/out/
 *.vos
 *.glob
 .*.aux
+
+# test artifact: sandbox_scope_fs.ax writes here to prove an IN-SCOPE write is
+# still permitted (a scope that denied everything would pass the refusal asserts)
+out/
