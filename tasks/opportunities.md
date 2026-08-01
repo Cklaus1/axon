@@ -366,3 +366,30 @@ to stop the contention, not to soften the assertion.
 Fix: give each wasm harness its own `CARGO_TARGET_DIR`, or serialise the wasm
 builds behind a shared lock. Related: O004 (browser parity, same cause), O010
 (bandit, fixed-path contention).
+
+
+### O013 follow-up — the browser-parity isolation ATTEMPT MADE IT WORSE (reverted)
+
+Applying the per-harness `CARGO_TARGET_DIR` fix to
+`wasm_browser_examples_parity.sh` **regressed** it and was reverted.
+
+| condition | examples linked (floor 28) |
+|---|---|
+| shared target/, standalone | 30 — passes |
+| isolated target/, standalone | 30 — passes |
+| shared target/, full suite | 26 / 11 / (sometimes >=28) — variable |
+| **isolated target/, full suite** | **5 — much worse** |
+
+Cause: a fresh `CARGO_TARGET_DIR` forces `axon-rt` for wasm32-unknown-unknown to
+rebuild from cold inside the harness. Standalone there is time; under full-suite
+load that rebuild loses the race and most links fail. So isolation traded shared
+contention for cold-cache rebuild cost — and the rebuild is the bigger cost.
+
+The same change was a clear win for `wasm_aot_run_parity` (3/7 -> 7/7 under full
+load) because that harness's wasm deps are far smaller. Kept there, reverted here.
+
+Lesson for whoever fixes O004 properly: the answer is NOT per-harness target
+dirs. Candidates that do not pay the rebuild cost — a shared *prebuilt*
+wasm32-unknown-unknown artifact produced once before the suite runs, a lock
+serialising the wasm harnesses against each other, or `--test-threads` pinning
+for that group. The counts above are the measurements to beat.

@@ -30,15 +30,6 @@ AXON="target/debug/axon"
 if [ ! -x "$AXON" ]; then
   cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_examples_parity: codegen unavailable — skipping"; exit 0; }
 fi
-# AUDIT O013: isolate this harness's wasm builds from the other wasm harnesses,
-# which run concurrently under the full suite and contended on the shared
-# target/. That contention is the likely cause of this test's long-standing
-# intermittent failure (O002/O004: "26 linked vs floor 28" with 0 differing —
-# coverage shrank, nothing diverged). Set AFTER the host `axon` build above so
-# it still reuses the shared cache.
-BWORK="$(mktemp -d)"; trap 'rm -rf "$BWORK"' EXIT
-export CARGO_TARGET_DIR="$BWORK/wasm-target"
-
 if ! cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>/dev/null; then
   echo "wasm_browser_examples_parity: unknown-unknown axon-rt unavailable — skipping"; exit 0
 fi
