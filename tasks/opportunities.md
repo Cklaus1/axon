@@ -130,15 +130,32 @@ script skip, and the stale assertion meant that even when it ran, the check
 would not have matched. Fixing the build converted a vacuous pass into a real
 failure, which is the only reason the stale assertion surfaced.
 
-`scripts/` holds ~50 `*_parity.sh` harnesses and most follow this shape:
-`if output contains "skipping" { return }` plus a `contains(...)` assertion on a
-prose line. Every one is a candidate for the same failure. Worth a mechanical
-sweep:
+**[SWEPT — hypothesis was WRONG, and the residual risk is elsewhere.]**
 
-1. for each harness, assert its success marker is a string the script can
-   actually produce (grep the script for the literal), and
-2. count skips — a harness that skips in CI or on a dev box is not a gate, and
-   should say so loudly rather than returning 0.
+I predicted this was a class across the ~50 harnesses. It is not. A mechanical
+sweep of all **47** harness-backed tests — checking that every
+`stdout.contains("...")` success literal actually appears in the script it
+drives — found **zero** further instances. T11's stale assertion was a one-off.
+(Two initial hits were false positives from a regex splitting an `||` chain;
+both tests correctly check `contains("SKIP")` first.)
+
+That check is now permanent: `harness_success_assertions_are_strings_their_
+scripts_can_emit` in cli_run.rs re-derives the sweep on every run and fails with
+the offending test/script/literal. It carries its own vacuity guard
+(`checked >= 40`), and was verified to catch the original T11 defect when
+reintroduced.
+
+**The real residual risk is different and larger: 44 of the 47 harness-backed
+tests have a silent skip early-return.** Each exits green when its script prints
+SKIP — missing NDK, no emulator, no LLVM, no libz3, no Docker. On any given
+machine or CI runner an unknown subset of the parity suite measures nothing,
+and reports the same green as a full pass. That is not a stale-assertion bug; it
+is the absence of a skip census. Worth doing:
+
+1. have each harness-backed test report SKIPPED distinctly from PASSED, and
+2. assert a floor on how many actually ran in CI, the way the browser-parity
+   test already asserts a floor on examples linked (O002/O004) — the one
+   harness observed doing this correctly.
 
 Directly relevant to O002/O004: the browser-parity floor guard is the one
 harness observed doing this correctly, refusing to go green when coverage

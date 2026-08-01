@@ -1688,6 +1688,77 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn harness_success_assertions_are_strings_their_scripts_can_emit() {
+    // AUDIT O006, generalised from T11. `codegen_str_reverse_replace_..._utf8`
+    // asserted `"str_reverse and str_replace match the interpreter"` — a string
+    // scripts/str_utf8_parity.sh CANNOT emit (its success line uses slashes).
+    // That test could therefore only ever pass via its `skipping` early return,
+    // and did, for as long as the script's build was broken. A gate whose
+    // success marker is unmatchable is a gate that can only pass vacuously.
+    //
+    // This meta-test re-derives that check across every harness-backed test:
+    // for each `stdout.contains("...")` in a test that invokes a scripts/*.sh,
+    // the literal must appear somewhere in that script.
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let src =
+        std::fs::read_to_string(format!("{manifest}/tests/cli_run.rs")).expect("read own source");
+    let mut checked = 0usize;
+    let mut bad: Vec<String> = Vec::new();
+
+    for chunk in src.split("\n#[test]\n") {
+        let Some(fn_name) = chunk
+            .split_once("fn ")
+            .and_then(|(_, r)| r.split_once('(').map(|(n, _)| n.trim()))
+        else {
+            continue;
+        };
+        // The script this test drives, if any.
+        let Some(script_rel) = chunk.split_once("scripts/").and_then(|(_, r)| {
+            let end = r.find(".sh")?;
+            Some(format!("scripts/{}.sh", &r[..end]))
+        }) else {
+            continue;
+        };
+        let script_path = format!("{manifest}/../../{script_rel}");
+        let Ok(script) = std::fs::read_to_string(&script_path) else {
+            continue;
+        };
+        checked += 1;
+        // Every asserted stdout literal must be producible by the script.
+        // "SKIP"/"skipping" are guard words, not success markers.
+        let mut rest = chunk;
+        while let Some(i) = rest.find("stdout.contains(\"") {
+            rest = &rest[i + "stdout.contains(\"".len()..];
+            let Some(j) = rest.find('"') else { break };
+            let lit = &rest[..j];
+            rest = &rest[j..];
+            if lit.len() < 8 || lit.contains("SKIP") || lit.contains("skip") {
+                continue;
+            }
+            if !script.contains(lit) {
+                bad.push(format!(
+                    "  {fn_name}\n    script:  {script_rel}\n    asserts: {lit:?}\n\
+                         ^ this string never appears in the script, so the assertion \
+                     can only be reached vacuously"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        checked >= 40,
+        "expected to check ~47 harness-backed tests, only found {checked} — \
+         the extractor has drifted and is measuring nothing (the very failure \
+         this test exists to catch)"
+    );
+    assert!(
+        bad.is_empty(),
+        "harness success assertions that their script cannot emit:\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
 fn deploy_approval_binds_the_program_text_not_the_filename() {
     // SECURITY (audit T10, finding P7-SEC-01). `is_approved` was
     // `approved_path.exists()`, and the hash written by `ast approve` was read
