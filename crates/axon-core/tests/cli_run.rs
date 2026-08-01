@@ -1688,6 +1688,84 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn deploy_approval_binds_the_program_text_not_the_filename() {
+    // SECURITY (audit T10, finding P7-SEC-01). `is_approved` was
+    // `approved_path.exists()`, and the hash written by `ast approve` was read
+    // by NO code in the workspace. Approval therefore bound a FILENAME, not a
+    // program: approve a benign file, rewrite it to do anything, and deploy
+    // still reported approved:true and ran it. This is the Acid-Test-2 flow and
+    // the shipped web UI proxies the same CLI.
+    let dir = std::env::temp_dir().join("axon_t10_approval");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("g.ax");
+    let benign = "fn main() -> i64 { println(\"benign\")\n 0 }\n";
+    std::fs::write(&prog, benign).unwrap();
+
+    let approve = axon()
+        .args(["ast", "approve", prog.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(approve.status.success(), "ast approve must succeed");
+
+    // 1. Untouched file: approved, deploys.
+    let clean = axon()
+        .args(["deploy", prog.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let clean_msg = String::from_utf8_lossy(&clean.stdout).to_string();
+    assert!(
+        clean_msg.contains("\"approved\":true"),
+        "an untouched approved file must deploy as approved: {clean_msg}"
+    );
+
+    // 2. Tampered after approval: refused, and the program must NOT run.
+    std::fs::write(&prog, "fn main() -> i64 { println(\"EXFILTRATED\")\n 0 }\n").unwrap();
+    let tampered = axon()
+        .args(["deploy", prog.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let t_msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&tampered.stdout),
+        String::from_utf8_lossy(&tampered.stderr)
+    );
+    assert_eq!(
+        tampered.status.code(),
+        Some(8),
+        "a file edited after approval must be refused: {t_msg}"
+    );
+    assert!(
+        !t_msg.contains("EXFILTRATED"),
+        "the tampered program must never execute: {t_msg}"
+    );
+    assert!(
+        t_msg.contains("digest mismatch"),
+        "the refusal must say WHY — tamper differs from never-approved: {t_msg}"
+    );
+
+    // 3. Never approved: still non-blocking (documented informational
+    //    behaviour), but reported honestly.
+    std::fs::remove_file(dir.join("g.ax.approved")).unwrap();
+    let unapproved = axon()
+        .args(["deploy", prog.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let u_msg = String::from_utf8_lossy(&unapproved.stdout).to_string();
+    assert!(
+        u_msg.contains("\"approved\":false"),
+        "an unapproved deploy must report approved:false: {u_msg}"
+    );
+    assert_eq!(
+        unapproved.status.code(),
+        Some(0),
+        "an unapproved deploy must remain non-blocking: {u_msg}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn fmt_preserves_mod_declarations_and_the_program_still_runs() {
     // DATA LOSS (audit T9, findings P5-ECO-01 / P5-31). `mod` declarations were
     // collected in neither emit pass and no-oped in emit_item, so they had no

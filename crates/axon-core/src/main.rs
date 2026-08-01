@@ -4992,8 +4992,13 @@ fn cmd_ast_approve(file: PathBuf) {
         process::exit(1);
     });
 
-    // Compute a simple hash of the file bytes (FNV-1a for no-dep portability).
-    let hash = fnv1a_hex(src.as_bytes());
+    // AUDIT T10: SHA-256, not FNV-1a. This hash is the binding between what a
+    // human approved and what later gets deployed, so it must be
+    // collision-resistant — FNV is trivially collidable, so an attacker could
+    // craft a malicious file matching the approved hash. Same `axsha256:`
+    // format as `axon_intent::approval::program_digest`, so the two approval
+    // stacks agree.
+    let hash = program_digest_hex(src.as_bytes());
 
     let approved_path = PathBuf::from(format!("{}.approved", file.display()));
     let now_secs = std::time::SystemTime::now()
@@ -5351,9 +5356,66 @@ fn cmd_deploy(
     let risk = std::cmp::max(derived_risk, declared_risk);
     let requires_full_pipeline = risk >= 2; // >= High
 
-    // Check if approve file exists (informational, not blocking).
+    // AUDIT T10 (finding P7-SEC-01). This was `approved_path.exists()`, and the
+    // hash written by `ast approve` was read by NO code in the workspace. So
+    // approval bound a FILENAME, not a program: approve a benign file, rewrite
+    // it to exfiltrate /etc/passwd, and deploy still reported approved:true and
+    // ran it. This is the Acid-Test-2 flow, and the shipped web UI proxies the
+    // same CLI.
+    //
+    // Approval now binds the exact program text: recompute the digest of the
+    // CURRENT source and compare. A tampered file is not approved.
     let approved_path = PathBuf::from(format!("{}.approved", file.display()));
-    let is_approved = approved_path.exists();
+    let (is_approved, approval_detail, approval_tampered) =
+        match std::fs::read_to_string(&approved_path) {
+            Err(_) => (false, String::from("no .approved file"), false),
+            Ok(rec) => {
+                let recorded = json_field(&rec, "hash");
+                let cur_src = std::fs::read_to_string(&file).unwrap_or_default();
+                let current = program_digest_hex(cur_src.as_bytes());
+                match recorded {
+                    Some(h) if h == current => (true, String::new(), false),
+                    // The file was approved and THEN changed. Unambiguous.
+                    Some(_) => (
+                        false,
+                        String::from("source changed since approval (digest mismatch)"),
+                        true,
+                    ),
+                    // A record with no readable hash cannot bind anything. Treat
+                    // as tampered rather than falling back to mere existence —
+                    // falling back is exactly how this defect would return.
+                    None => (
+                        false,
+                        String::from("approval record has no usable hash field"),
+                        true,
+                    ),
+                }
+            }
+        };
+
+    // AUDIT T10: refuse to deploy a TAMPERED artifact. A missing approval stays
+    // non-blocking (the documented informational behaviour, and a workflow many
+    // users rely on), but "approved, then edited" is never legitimate: it is the
+    // exact sequence that turns a human sign-off into a lie. Refusing only this
+    // case closes the vulnerability without breaking unapproved-deploy flows.
+    if approval_tampered {
+        if json_flag {
+            println!(
+                "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"blocked_approval\",\
+                 \"exit_code\":8,\"approved\":false,\"reason\":{}}}",
+                json_str(&file.display().to_string()),
+                json_str(&approval_detail),
+            );
+        } else {
+            eprintln!("deploy REFUSED: {} — {approval_detail}", file.display());
+            eprintln!(
+                "  the approval record does not match the current source; \
+                 re-review and run `axon ast approve {}` again",
+                file.display()
+            );
+        }
+        process::exit(8);
+    }
 
     // Phase 11: run the risk-gated pipeline.
     // High/Critical: simulate → stress → redteam_check → assert_deployable
@@ -5502,8 +5564,11 @@ fn cmd_deploy(
     } else {
         println!("deploy: {} — {status} (risk: {risk_name})", file.display());
         if !is_approved {
+            // AUDIT T10: say WHY. "not approved" because the file was edited
+            // after approval is a materially different event from "never
+            // approved", and the tamper case is the one a human must not miss.
             eprintln!(
-                "warning: no .approved file found — run `axon ast approve {}` first",
+                "warning: not approved ({approval_detail}) — run `axon ast approve {}` first",
                 file.display()
             );
         }
@@ -5676,6 +5741,33 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
 // ── Phase-10 helpers ──────────────────────────────────────────────────────────
 
 /// Minimal JSON string escaping (no serde — avoids inkwell trait collision).
+/// AUDIT T10: the approval digest. SHA-256 in the same `axsha256:` form as
+/// `axon_intent::approval::program_digest`, so the CLI approval stack and the
+/// intent approval stack cannot drift on what "the same program" means.
+///
+/// Replaces FNV-1a, which is not collision-resistant: an attacker who can pick
+/// the file contents could craft a malicious program hashing to the approved
+/// value. A hash used as a security binding has to resist that.
+fn program_digest_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("axsha256:{:x}", h.finalize())
+}
+
+/// Extract a top-level string field from the flat JSON records this CLI writes.
+/// Deliberately minimal — these records are produced a few lines away in this
+/// same file and are not general JSON — but it returns `None` rather than a
+/// default when the field is absent, so a malformed record cannot read as a
+/// match.
+fn json_field(src: &str, key: &str) -> Option<String> {
+    let pat = format!("\"{key}\":\"");
+    let start = src.find(&pat)? + pat.len();
+    let rest = &src[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 fn json_str(s: &str) -> String {
     let escaped = s
         .replace('\\', "\\\\")
@@ -5687,6 +5779,9 @@ fn json_str(s: &str) -> String {
 }
 
 /// FNV-1a 64-bit hash → hex string (portable, no-dep file fingerprint).
+/// AUDIT T10: superseded by `program_digest_hex` for the approval binding
+/// (FNV is not collision-resistant). Retained for any non-security use.
+#[allow(dead_code)]
 fn fnv1a_hex(bytes: &[u8]) -> String {
     let mut h: u64 = 14695981039346656037;
     for &b in bytes {
