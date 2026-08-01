@@ -157,6 +157,35 @@ is the absence of a skip census. Worth doing:
    test already asserts a floor on examples linked (O002/O004) — the one
    harness observed doing this correctly.
 
+**[DONE — and the first census is worse than expected.]** All 44 skip sites now
+call `note_harness_skip`, which appends to `target/harness-skips.log` and, under
+`AXON_HARNESS_STRICT=1`, PANICS — so CI can demand that the harnesses it thinks
+it is running actually ran. Both modes verified.
+
+The first census under `cargo test -p axon-core --no-default-features` — the
+exact command CI ran before T7 — shows these silently measuring nothing:
+
+```
+codegen unavailable — all-examples parity
+codegen unavailable — fuzz parity
+codegen/wasm unavailable — AOT-wasm example sweep
+codegen/wasm unavailable — browser-target parity
+node/codegen/wasm unavailable — browser I/O parity
+node/codegen/wasm unavailable — browser example sweep
+Android NDK unavailable — lifecycle adapter
+Android NDK/emulator unavailable — compute parity
+```
+
+The first six skip because `--no-default-features` builds an `axon` without
+codegen. So **the entire native/interp parity suite — the I-2 invariant this
+project rests on — skipped in CI**, and reported green while doing it. That is
+not a weak gate; for that configuration it is no gate. It also quantifies why
+T7's codegen job matters: without it, CI's "tests pass" said nothing about
+native/interp agreement.
+
+Recommended next: set `AXON_HARNESS_STRICT=1` on the T7 codegen job (which HAS
+LLVM), so a regression that disables codegen can never again present as green.
+
 Directly relevant to O002/O004: the browser-parity floor guard is the one
 harness observed doing this correctly, refusing to go green when coverage
 shrank. It is the model to converge on.

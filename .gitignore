@@ -63,3 +63,6 @@ examples/jobs/out/
 # test artifact: sandbox_scope_fs.ax writes here to prove an IN-SCOPE write is
 # still permitted (a scope that denied everything would pass the refusal asserts)
 out/
+
+# AUDIT O006: harness skip census, regenerated per test run
+target/harness-skips.log
