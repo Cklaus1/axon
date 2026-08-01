@@ -101,7 +101,7 @@ remain replaceable.** If a decision here makes a renderer hard to swap, that dec
 | Project | What it is | What Axon takes | What Axon refuses |
 |---|---|---|---|
 | **Vello** | GPU compute-based 2D vector renderer (Linebender) | The renderer. Already chosen; this section ratifies it. | Writing our own rasterizer. |
-| **Parley** | Text layout over swash/fontique (Linebender) | Text layout, wholesale. **Currently absent from this spec — that is a hole.** | Shaping/bidi/font fallback. This is the classic thing hand-rolled UI frameworks underestimate and never finish. |
+| **Parley** | "An API for implementing rich text layout" (Linebender). ***Verified 2026-08-01 against the repo.*** Sits on the "Parley text stack": **Fontique** (font enumeration + fallback), **HarfRust** (a Rust port of HarfBuzz — shaping), **Skrifa** (TrueType/OpenType reading, glyph metrics), **ICU4X** (bidi, segmentation, Unicode). Parley itself computes layout: glyph coordinates, line breaking, bidi resolution. MSRV Rust 1.88+, Apache-2.0/MIT, actively maintained. | Text layout, wholesale. **Currently absent from this spec — that is a hole.** | Shaping/bidi/font fallback. This is the classic thing hand-rolled UI frameworks underestimate and never finish. |
 | **Taffy** | Flexbox/grid layout (used by Bevy, Zed) | The layout engine. Ratifies §12 Q2's default. | A bespoke layout engine. |
 | **Masonry** | Retained widget layer beneath Xilem, on Vello | The widget/paint seam — the concrete candidate for our backend boundary. | Owning widget internals. |
 | **Xilem** | Reactive view-tree architecture over Masonry/Vello | The *architecture study* for §12 Q1. Closest live experiment to our exact question. | Adopting its type machinery wholesale; its view traits are a large surface. |
@@ -112,7 +112,7 @@ remain replaceable.** If a decision here makes a renderer hard to swap, that dec
 | **Blitz** | HTML/CSS renderer on Vello + Taffy + Stylo (Dioxus) | Proof the Vello+Taffy pairing carries a real layout model at scale. | CSS. |
 | **Makepad** | Shader-based DSL with live reload | Only if shader-level control becomes a requirement. | Currently out of scope. |
 | **egui / Dear ImGui** | Immediate mode | Studied as the **contrast case**: immediate mode is simple and fast to build, and it is *structurally wrong here* — there is no retained tree to inspect, so the entire §1 checkability argument evaporates. | The paradigm. |
-| **AccessKit** | Cross-platform accessibility tree | The accessibility seam. **Also absent from this spec — a second hole.** | Retrofitting a11y later; it is far more expensive after the tree design is frozen. |
+| **AccessKit** | "Accessibility infrastructure for UI toolkits" — a cross-platform, cross-language abstraction so a toolkit implements a11y once. ***Verified 2026-08-01 against the repo.*** Tree-based schema: nodes with **stable integer IDs**, **roles** (button/label/text input), attributes, and an **action system** (focus, invoke, text selection). Push-a-full-tree-then-incremental-updates model, explicitly after Chromium's design; adapters keep the full tree in memory. Released adapters: **Windows (UI Automation), macOS (NSAccessibility), Linux/Unix (AT-SPI D-Bus), Android, iOS**. C and Python bindings. Adapters at "rough feature parity"; single- and multi-line text inputs supported, **rich text / hypertext not yet**. | The accessibility seam. **Also absent from this spec — a second hole.** | Retrofitting a11y later; it is far more expensive after the tree design is frozen. |
 
 #### Consequences for this spec
 
@@ -137,8 +137,14 @@ remain replaceable.** If a decision here makes a renderer hard to swap, that dec
 
 #### Verification status of this section
 
-The comparisons above are from working knowledge and were **not** re-verified against the
-upstream repositories at authoring time (no network access in the authoring session). Every
+**Parley and AccessKit rows were verified against their upstream repositories on 2026-08-01**
+(see the inline notes). The verification found a real error in the draft: it described Parley as
+sitting on **swash**, which is wrong — the current stack is Fontique + HarfRust + Skrifa + ICU4X.
+Swash is not in it. That is precisely the failure mode this note warns about, caught on the first
+two rows checked.
+
+**The remaining rows are still unverified** and were written from working knowledge (no network
+access in the original authoring session). Every
 "what Axon takes" row is a hypothesis about a dependency, and this project has a documented,
 repeatedly-measured habit of code-read confidence being wrong. Before any of this binds a slice:
 clone each candidate, build the hello-world, and record the actual API shape and activity level.
@@ -291,6 +297,11 @@ Type rules:
   invisible control.
 - The accessible tree is derived from the `View` tree by construction — never assembled
   separately — so the two cannot drift. This is a structural guarantee, not a test obligation.
+- **Constraint discovered on verification (2026-08-01):** AccessKit adapters support single- and
+  multi-line text inputs but **not rich text / hypertext**. §3a's deferral list must therefore
+  name rich text as a11y-blocked, not merely unscoped — shipping styled/linked text before
+  upstream support exists would create a surface that is renderable but not describable, which
+  §3b(b) forbids by design.
 
 #### Acceptance obligations (feed §9)
 
