@@ -114,3 +114,32 @@ unrelated churn. It needs coordination with that track, not a unilateral sweep.
 Consequence for this loop: the recorded baseline (`cargo test --workspace`) does
 **not** include fmt. "Green" for this run remains test-only. T7 must account for
 this — turning on more CI does not help while an existing CI job is already red.
+
+### O006 — [high] Audit every `*_parity.sh` gate for the same vacuous-skip pattern
+
+Found while fixing T11. `codegen_str_reverse_replace_match_interp_on_utf8`
+asserted a string the script **cannot emit** (`"str_reverse and str_replace
+match the interpreter"`; the script's real success line uses slashes). The test
+could therefore only ever pass via its early `skipping` return — and it did,
+because the script's own `axon build` was failing from the runtime
+`CARGO_MANIFEST_DIR` bug. So a UTF-8 parity gate had been measuring **nothing**,
+while reporting green.
+
+Two compounding defects, each of which hid the other: the build bug made the
+script skip, and the stale assertion meant that even when it ran, the check
+would not have matched. Fixing the build converted a vacuous pass into a real
+failure, which is the only reason the stale assertion surfaced.
+
+`scripts/` holds ~50 `*_parity.sh` harnesses and most follow this shape:
+`if output contains "skipping" { return }` plus a `contains(...)` assertion on a
+prose line. Every one is a candidate for the same failure. Worth a mechanical
+sweep:
+
+1. for each harness, assert its success marker is a string the script can
+   actually produce (grep the script for the literal), and
+2. count skips — a harness that skips in CI or on a dev box is not a gate, and
+   should say so loudly rather than returning 0.
+
+Directly relevant to O002/O004: the browser-parity floor guard is the one
+harness observed doing this correctly, refusing to go green when coverage
+shrank. It is the model to converge on.

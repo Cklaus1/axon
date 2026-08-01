@@ -53,3 +53,31 @@ of a kill then scales with one agent, not the whole fan-out.
 And: a baseline is only valid from a **clean, complete** run. Never adopt gate
 numbers from a partial or interrupted run — a too-loose gate is worse than no
 gate, because it silently licenses regressions for the rest of the loop.
+---
+
+## L004 — `git stash pop` is not the inverse of `git stash push <pathspec>`
+
+**Mistake:** Used `git stash push <one-file>` … `git stash pop` repeatedly to
+verify fails-before. On one iteration the pop applied a DIFFERENT, pre-existing
+stash (another session's 374-line WIP), leaving 34 conflict markers in
+`crates/axon-vm/src/main.rs` — a file this run never touched — and reporting a
+conflict on a file I had not stashed.
+
+Nothing was lost: `pop` retains the entry on conflict, so the other session's
+work stayed in `stash@{0}`, and restoring the file to HEAD undid only what my
+own command had done.
+
+**Rule:** `pop` always takes `stash@{0}`, which is NOT necessarily the entry you
+just pushed — any repo with pre-existing stashes can hand you someone else's
+work. For the fails-before check, don't use the stash at all:
+
+```
+git diff <file> > /tmp/fix.patch     # save
+git apply -R /tmp/fix.patch          # revert, run the test, expect FAIL
+git apply  /tmp/fix.patch            # restore
+```
+
+That is idempotent, names the exact change, and cannot collide with an unrelated
+stash. Corollary: `git stash list` before any pop in a shared/long-lived repo,
+and treat a conflict in a file you never edited as a signal to STOP and inspect
+rather than resolve.

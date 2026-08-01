@@ -14774,8 +14774,19 @@ fn codegen_str_reverse_replace_match_interp_on_utf8() {
         out.status.success(),
         "native str_reverse/str_replace must match the interpreter (#38/#39):\n{stdout}{stderr}"
     );
+    // AUDIT T11: this asserted `"str_reverse and str_replace match the
+    // interpreter"` — a string the script CANNOT emit (its success line uses
+    // slashes: "str_reverse/str_replace/str_to_upper/... match the
+    // interpreter"). The test could therefore only ever pass via the early
+    // return above, and it did: the script's own `axon build` was failing
+    // because of the runtime CARGO_MANIFEST_DIR bug fixed in this same change,
+    // so it printed "native build failed — skipping" and this gate silently
+    // measured nothing. Fixing the build turned the vacuous pass into a real
+    // failure, which is how the stale assertion surfaced.
+    //
+    // Asserted against the script's actual success marker.
     assert!(
-        stdout.contains("str_reverse and str_replace match the interpreter"),
+        stdout.contains("str_utf8_parity: OK"),
         "expected the agreement line:\n{stdout}{stderr}"
     );
 }

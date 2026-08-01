@@ -649,6 +649,33 @@ pub(super) fn build_axon_rt(release: bool) -> Option<String> {
 /// to the produced `.a`. When `target` is `Some(triple)` the crate is
 /// cross-built for that triple (R14: the Android cross-build of axon-rt) and the
 /// artifact is read from `target/<triple>/<profile>/`.
+/// AUDIT T11: absolute path to the workspace `Cargo.toml`, resolved without
+/// depending on the current working directory.
+///
+/// Order matters. `env!("CARGO_MANIFEST_DIR")` is baked in at compile time and
+/// is right for a binary run out of `target/`. For an installed/copied binary
+/// that directory may not exist, so fall back to walking up from the real
+/// executable. The literal relative `"Cargo.toml"` is the last resort only,
+/// because it is the one that silently produces a broken link from the wrong
+/// cwd — the defect this function exists to fix.
+fn workspace_manifest() -> String {
+    let baked = concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml");
+    if std::path::Path::new(baked).exists() {
+        return baked.to_string();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            let candidate = d.join("Cargo.toml");
+            if candidate.exists() {
+                return candidate.display().to_string();
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+    "Cargo.toml".into()
+}
+
 fn build_crate_staticlib(
     pkg: &str,
     libname: &str,
@@ -660,10 +687,20 @@ fn build_crate_staticlib(
         .unwrap_or_else(|| "cargo".into());
     let profile = if release { "release" } else { "debug" };
 
-    // Locate the workspace root relative to this binary.
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .map(|d| format!("{d}/../../../Cargo.toml"))
-        .unwrap_or_else(|_| "Cargo.toml".into());
+    // AUDIT T11 (findings P5-15 / DOC-01, both reproduced). This read
+    // `std::env::var("CARGO_MANIFEST_DIR")` at RUNTIME. That variable is set by
+    // cargo only while COMPILING, so it is absent from every released binary's
+    // environment and the fallback — the RELATIVE path "Cargo.toml" — is
+    // correct only when the cwd happens to be the workspace root. From anywhere
+    // else, `axon build hello.ax` emitted ~100 `undefined reference to
+    // __axon_*` and failed at link, while the identical binary succeeded from
+    // the repo root.
+    //
+    // `env!` bakes the path at COMPILE time (correct for a dev build), and the
+    // fallback walks up from the actual executable to the first directory
+    // containing Cargo.toml (correct for an installed binary). Neither depends
+    // on the cwd.
+    let manifest = workspace_manifest();
 
     let mut cmd = Command::new(&cargo);
     cmd.args(["build", "-p", pkg, "--manifest-path", &manifest])
@@ -710,11 +747,13 @@ fn build_crate_staticlib(
     }
 
     // Resolve the target directory from CARGO_TARGET_DIR or adjacent to manifest.
+    // AUDIT T11: same cwd-dependent bug as the manifest path above.
     let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        // Walk up from CARGO_MANIFEST_DIR to find <workspace>/target.
-        std::env::var("CARGO_MANIFEST_DIR")
-            .map(|d| format!("{d}/../../../target"))
-            .unwrap_or_else(|_| "target".into())
+        let m = workspace_manifest();
+        match std::path::Path::new(&m).parent() {
+            Some(root) => root.join("target").display().to_string(),
+            None => "target".into(),
+        }
     });
 
     // Cross-built artifacts live under target/<triple>/<profile>/.
