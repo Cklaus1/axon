@@ -1,8 +1,20 @@
-// EVASION DEMO: this program reaches a capability (env_var, an IO effect) via a
-// builtin the static source scan does NOT enumerate — so the static gate is
-// fooled and ADMITS it. The RUNTIME sandbox catches it anyway (SandboxViolation,
-// exit 8), because it checks the builtin's real effect row at dispatch, not a
-// substring. This is the defense-in-depth the static gate alone cannot provide.
+// EVASION DEMO: this program reaches a capability (random_i64, a Random effect)
+// via a builtin the static source scan does NOT enumerate — so the static gate
+// is fooled and ADMITS it. The RUNTIME sandbox catches it anyway
+// (SandboxViolation, exit 8), because it checks the builtin's real effect row at
+// dispatch, not a substring. This is the defense-in-depth the static gate alone
+// cannot provide.
+//
+// AUDIT T4: this demo previously used `env_var`. That builtin IS now enumerated
+// by the scanner (it reads ambient process state, so it is classified fs_read),
+// which makes the static gate correctly DENY it — closing that evasion but also
+// invalidating the demo. `random_i64` replaces it because it remains a genuine
+// miss, and a permanent one: the scanner's four axes
+// (fs_read/fs_write/net/exec) cannot even REPRESENT a Random effect, so no
+// amount of enumerating builtins would catch it. The static scan's blind spot
+// is structural, not a missing entry in a list — which is precisely why the
+// runtime fence has to exist.
 fn main() -> i64 {
-    match env_var("HOME") { Ok(_) => 0  Err(_) => 1 }
+    let _ = random_i64(0, 100)
+    0
 }

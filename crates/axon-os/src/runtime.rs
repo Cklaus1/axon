@@ -216,20 +216,53 @@ fn first_axon_line(stderr: &str, default: &str) -> String {
 /// yields the FULL set). A fully sound extractor uses `axon ast review`; this
 /// conservative scanner is sound *as a lower bound made safe by over-approx*.
 fn scan_effects(source: &str) -> Decl {
-    let net = [
+    // AUDIT T4 (finding OSK-P4-H1). The previous implementation tested
+    // `source.contains("exec(")`, which `exec (name, args)` — one space — parses
+    // identically and evades. That is an UNDER-approximation, the opposite of
+    // this function's documented deny-by-default contract, and it mattered
+    // because runtime collapsed fs and exec into one bucket, making this scan
+    // the sole exec control. (T8 has since given exec its own runtime effect, so
+    // this is no longer load-bearing — but a gate whose result is shown to a
+    // human as an approval assertion must not state falsehoods either way.)
+    //
+    // A module import means the effects live in a file we are not reading, so
+    // the honest answer is the full set, not "none found here".
+    if calls_name(source, "mod") || source.contains("\nmod ") || source.starts_with("mod ") {
+        return Decl {
+            row: EffectSet {
+                fs_read: true,
+                fs_write: true,
+                net: true,
+                exec: true,
+            },
+            max_label: Label::Internal,
+        };
+    }
+    let any = |names: &[&str]| names.iter().any(|m| calls_name(source, m));
+    let net = any(&[
         "http_get",
         "http_post",
         "http_sse",
+        "http_sse_post",
         "ai_complete",
-        "ai_extract",
-    ]
-    .iter()
-    .any(|m| source.contains(m));
-    let fs_read = ["read_file", "read_line"]
-        .iter()
-        .any(|m| source.contains(m));
-    let fs_write = source.contains("write_file");
-    let exec = source.contains("exec(") || source.contains("spawn_proc");
+        "ai_extract_i64",
+        "ai_extract_f64",
+        "ai_extract_str",
+        "ai_extract_bool",
+        "ai_extract_uncertain_i64",
+        "ai_extract_uncertain_f64",
+        // The goal_run family re-calls @[adaptive] metrics, which may ai_complete.
+        "goal_run",
+        "goal_run_constrained",
+        "goal_run_categorical",
+        "goal_run_random",
+        "goal_run_multistart",
+        "goal_continue",
+        "goal_eval",
+    ]);
+    let fs_read = any(&["read_file", "read_line", "env_var"]);
+    let fs_write = any(&["write_file"]);
+    let exec = any(&["exec", "spawn_proc"]);
     Decl {
         row: EffectSet {
             fs_read,
@@ -239,6 +272,41 @@ fn scan_effects(source: &str) -> Decl {
         },
         max_label: Label::Internal,
     }
+}
+
+/// True if `source` appears to CALL `name` — the identifier on a word boundary,
+/// followed by optional whitespace and `(`. Deliberately over-approximates:
+/// occurrences inside comments or string literals count, because a false
+/// positive only narrows the grant (safe) while a false negative widens it.
+fn calls_name(source: &str, name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0usize;
+    while let Some(rel) = source[from..].find(name) {
+        let start = from + rel;
+        let end = start + name.len();
+        from = start + 1;
+        // Must not be a suffix of a longer identifier (e.g. `my_exec`),
+        // and must not be a prefix of one (e.g. `exec_report`).
+        if start > 0 && is_word(bytes[start - 1]) {
+            continue;
+        }
+        let mut i = end;
+        if i < bytes.len() && is_word(bytes[i]) {
+            continue;
+        }
+        // `mod foo` is a declaration, not a call — accept a bare keyword.
+        if name == "mod" {
+            return true;
+        }
+        while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b'(' {
+            return true;
+        }
+    }
+    false
 }
 
 /// Wrap a user program so it runs inside a RUNTIME sandbox enforcing `ceiling`.
@@ -536,5 +604,51 @@ mod runtime_tests {
             "must return quickly after latch trip"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_effects_is_not_evaded_by_whitespace_or_module_imports() {
+        // AUDIT T4 (OSK-P4-H1). `source.contains("exec(")` was defeated by a
+        // single space, so a job declaring exec:"none" scanned clean while
+        // calling exec. The scan's result is rendered to a human as an approval
+        // assertion, so an under-approximation makes the UI state a falsehood.
+        assert!(
+            scan_effects("fn f() { exec(\"id\", []) }").row.exec,
+            "baseline: exec( must be detected"
+        );
+        for evasion in [
+            "fn f() { exec (\"id\", []) }",
+            "fn f() { exec\t(\"id\", []) }",
+            "fn f() { exec\n        (\"id\", []) }",
+        ] {
+            assert!(
+                scan_effects(evasion).row.exec,
+                "whitespace before `(` must not evade the exec scan: {evasion}"
+            );
+        }
+        // Word boundaries: a longer identifier must NOT trip the exec axis.
+        assert!(
+            !scan_effects("fn f() { my_exec(1) }").row.exec,
+            "`my_exec` is not `exec`"
+        );
+        assert!(
+            !scan_effects("fn f() { exec_report(1) }").row.exec,
+            "`exec_report` is not `exec`"
+        );
+        // A module import puts effects in a file this scanner never reads, so
+        // the honest answer is the full set, not "nothing found here".
+        let m = scan_effects("mod util\nfn main() { util.go() }").row;
+        assert!(
+            m.exec && m.net && m.fs_read && m.fs_write,
+            "a mod import must deny-by-default to the full effect set"
+        );
+        // Previously-invisible capability builtins are now classified.
+        assert!(scan_effects("fn f() { env_var(\"X\") }").row.fs_read);
+        assert!(scan_effects("fn f() { goal_run(\"g\", 1) }").row.net);
+        let sse = scan_effects("fn f() { http_sse_post(\"u\", \"b\") }").row;
+        assert!(sse.net);
+        // A pure program stays pure.
+        let pure = scan_effects("fn add(a: i64, b: i64) -> i64 { a + b }").row;
+        assert!(!pure.exec && !pure.net && !pure.fs_read && !pure.fs_write);
     }
 }
