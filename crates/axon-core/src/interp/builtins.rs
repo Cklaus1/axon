@@ -190,10 +190,21 @@ impl<'p> Interp<'p> {
             let sb_handle = self.active_sandbox.get();
             if sb_handle >= 0 && name != "sandbox_create" && name != "sandbox_run" {
                 let row = crate::builtins::builtin_effect_row(name);
-                if !row.is_empty() {
+                // `builtin_effect_row` puts process spawning in the SAME `IO`
+                // bucket as `println`/`read_file`/`env_var`, so a sandbox
+                // granting `IO` for console output also granted arbitrary
+                // process spawn. The fine-grained classification already exists
+                // (`capability_of_builtin`, single-sourced with the @[contained]
+                // checker) and the audit layer already records exec as its own
+                // `Exec` kind — only enforcement was coarse. Require an explicit
+                // `Exec` grant, so `IO` never implies spawn.
+                let requires_exec =
+                    crate::capabilities::capability_of_builtin(name) == Some("exec");
+                let extra: &[&str] = if requires_exec { &["Exec"] } else { &[] };
+                if !row.is_empty() || requires_exec {
                     let sbs = self.sandboxes.borrow();
                     if let Some(sb) = sbs.get(sb_handle as usize) {
-                        for &eff in row {
+                        for &eff in row.iter().chain(extra) {
                             if !sb.allowed.contains(eff) {
                                 return Err(crate::interp::Flow::SandboxViolation(format!(
                                     "builtin `{name}` requires effect `{eff}` which is not \

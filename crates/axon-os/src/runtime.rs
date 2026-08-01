@@ -250,6 +250,14 @@ fn scan_effects(source: &str) -> Decl {
 /// coarse sandbox tags: net→{Net,AI} (model calls are AI+Net); any of
 /// fs_read/fs_write/exec→IO (the sandbox's single IO bucket — finer fs-vs-exec
 /// distinctions are enforced only by the static gate, a documented coarseness).
+///
+/// AUDIT T8: that coarseness was not merely imprecise, it was unsound for `exec`.
+/// Collapsing exec into the same `IO` bucket as fs meant any job granted
+/// `fs_read` or `fs_write` was granted arbitrary process spawn at runtime, and
+/// the ONLY thing separating `exec: "none"` from spawn was the static source
+/// scan — which a single space (`exec (`) defeats. The interpreter now requires
+/// an explicit `Exec` tag for process spawning, so exec is emitted here only
+/// when the grant actually carries it.
 fn wrap_in_sandbox(src: &str, ceiling: EffectSet, budget: &Budget) -> String {
     let mut tags: Vec<&str> = Vec::new();
     if ceiling.net {
@@ -258,6 +266,9 @@ fn wrap_in_sandbox(src: &str, ceiling: EffectSet, budget: &Budget) -> String {
     }
     if ceiling.fs_read || ceiling.fs_write || ceiling.exec {
         tags.push("IO");
+    }
+    if ceiling.exec {
+        tags.push("Exec");
     }
     let csv = tags.join(",");
     // `sandbox_run(sb, fn, arg)` calls `fn(arg)`, so the entry must take one i64.

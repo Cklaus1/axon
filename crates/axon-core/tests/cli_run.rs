@@ -1688,6 +1688,42 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn sandbox_io_grant_does_not_imply_process_spawn_exit_8() {
+    // SECURITY (audit T8, finding P6-COV-01). `builtin_effect_row` puts `exec`
+    // in the SAME "IO" bucket as println/read_file/env_var/exit, so a sandbox
+    // granting IO for console output also granted arbitrary process spawn.
+    //
+    // This is the root cause beneath the axon-os `scan_effects` finding: because
+    // runtime cannot tell fs from exec, the ONLY control separating
+    // `exec: "none"` from spawn was a source substring scan (`exec (` with a
+    // space defeats it). Fixing the scan alone would leave no floor beneath it.
+    //
+    // Before the fix this ran `echo pwned` and exited 0.
+    let out = axon()
+        .args(["run", &fixture("sandbox_io_does_not_grant_exec.ax")])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("io is allowed"),
+        "an IO grant must still permit console output: {msg}"
+    );
+    assert!(
+        !msg.contains("ESCAPED"),
+        "an IO grant must NOT permit process spawn: {msg}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(8),
+        "exec without an Exec grant must be a sandbox violation: {msg}"
+    );
+}
+
+#[test]
 fn no_main_function_is_a_clean_error_exit_2() {
     // BUG_HUNT #23: a program with no `main` is a COMPILE-time error (malformed),
     // not a runtime panic. It must report a clean diagnostic and exit 2 — NOT

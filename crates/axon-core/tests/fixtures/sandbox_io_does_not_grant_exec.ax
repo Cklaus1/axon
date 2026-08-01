@@ -1,0 +1,20 @@
+// R-audit T8 regression: a sandbox granting IO (for console/file work) must NOT
+// thereby grant process spawn. builtin_effect_row puts exec in the same "IO"
+// bucket as println/read_file, so before the fix an IO grant implied exec.
+//
+// Expected: SandboxViolation, exit 8 — println works, exec is refused.
+
+fn job(x: i64) -> i64 {
+    println("io is allowed")
+    match exec("echo", ["pwned"]) {
+        Ok(s) => { println("ESCAPED: exec ran: {s}")  1 }
+        Err(e) => { println("exec returned Err: {e}")  0 }
+    }
+}
+
+fn main() {
+    let p = principal_root("io-only", false, true, false, 1000)
+    let sb = sandbox_create(p, "IO")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED: returned {to_str(r)}")
+}
