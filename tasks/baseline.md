@@ -34,7 +34,26 @@ test wasm_interp_matches_native_on_pure_compute ... FAILED
 Both targets exit 1. This is a **message** divergence on an unconfigured-network
 path, not a compute divergence. Tracked as O001.
 
-## [UPDATED 2026-08-01] Gate tightened to ZERO failures
+## [FINAL 2026-08-01] Suite is 430 passed / 0 failed, no known flakes
+
+Two separate things had to be fixed to get here, and they were different:
+
+1. **T14** fixed the one genuinely failing test (`wasm_parity.sh` classified
+   host-touching examples as pure compute). That took the gate from
+   "one accepted failure" to zero — on a clean, serial run.
+2. **O004** fixed the last *flake*: only 9 of 21 wasm-building scripts took the
+   shared `flock`, so the rest clobbered their intermediates under parallel
+   load. Full-suite runs varied (26 / 11 / 5 examples linked against a floor of
+   28) until all ten remaining harnesses took the lock.
+
+`cargo test -p axon-core --no-default-features --test cli_run`
+→ **430 passed, 0 failed, 388s.**
+
+Green now means green under FULL-SUITE LOAD, not just standalone. That
+distinction cost three attempts to learn: two harness "fixes" measured
+standalone looked correct and were regressions.
+
+## [SUPERSEDED] Gate tightened to ZERO failures
 
 The one baseline failure was **fixed**, not tolerated — see T14 / `6426c75`.
 Root cause: `scripts/wasm_parity.sh` classified four host-touching examples

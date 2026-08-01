@@ -32,6 +32,7 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | **T16** | `—` | host_await worker gets a deep stack: abort/exit-134 → graceful limit (INTERP-H03) |
 | **T17** | `1289b74` | deploy gates accept 0/1-arg (P5-01, Acid Test 2 works); legacy approvals ≠ tampering |
 | O012 | logged | F062 per-call AI tier ignored natively — attempted, reverted, needs a `walk_expr` refactor first |
+| **O004** | `final` | all wasm harnesses take the shared build lock — **suite 430 passed / 0 failed, no known flakes** |
 
 **Ten fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
