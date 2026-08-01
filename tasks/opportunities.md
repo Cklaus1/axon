@@ -508,3 +508,43 @@ rated on how the code reads at one site, and both are covered elsewhere. The
 `REPRODUCED`-vs-`verified by direct read` distinction in the triage rationales
 is now measurably load-bearing: of the findings I worked, every code-read-only
 one cost a revert, and every executed-repro one landed cleanly.
+
+### O016 — [high] OSK-P4-H2 CONFIRMED BY EXECUTION: a job that never ran seals as `Completed`
+
+Re-triaged by running it, not reading it (the method O015 argued for). This one
+holds — and it is worse in the record than in the console.
+
+A syntactically invalid program, zero statements executed:
+
+```
+$ axon-os run bad.axjob --run-id badtest --out D
+✓ completed (value=2)   (run-id: badtest, record: D/badtest.json)
+$ axon-os exit = 0
+
+$ jq .verdict D/badtest.json
+{"kind": "Completed", "value": 2}
+```
+
+`runtime.rs:377-415` infers the verdict from a chain of `err.contains(...)`
+substring tests over the child's stderr, with a terminal
+`else => Verdict::Completed { value: proc.code.unwrap_or(0) }`. The interpreter
+reports a parse error as `error: parse error: ...` with exit 2 — no `axon:`
+fault line, none of the matched substrings — so it falls through to Completed.
+
+This is an ATTESTATION-INTEGRITY failure, not a containment bypass: the
+hash-chained, tamper-evident record confidently attests that a job succeeded
+when it never ran. Everything downstream that trusts the record inherits the
+lie, and the same else-branch will swallow any future fault whose wording drifts.
+
+Fix (from triage, unchanged): branch on the EXIT CODE first — 2 -> Malformed,
+3/4/5/6/7/8/12 -> their carved verdicts, 0 -> Completed, any other non-zero ->
+Denied{axis:"runtime"} — never Completed. Keep the stderr scan only to populate
+the human-readable `reason`. Longer term, have the interpreter emit a
+machine-readable outcome line so the supervisor stops parsing prose.
+
+Not fixed here: it touches the verdict mapping that axon-os's records and tests
+are built on, so it needs a full axon-os suite cycle to land safely.
+
+**Method note:** 3 of the 4 code-read findings re-triaged by execution so far
+were wrong (OSK-L03, INTERP-H04) or right-but-different (this one is right AND
+worse than described). Executing before implementing is cheap and keeps paying.
