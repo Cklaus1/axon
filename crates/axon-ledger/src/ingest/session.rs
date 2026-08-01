@@ -380,7 +380,8 @@ fn extract_first_user_text(event: &serde_json::Value) -> Option<String> {
     let content = msg.get("content")?;
     let text = if let Some(s) = content.as_str() {
         s.to_string()
-    } else if let Some(arr) = content.as_array() {
+    } else {
+        let arr = content.as_array()?;
         arr.iter()
             .filter_map(|block| {
                 if block.get("type").and_then(|v| v.as_str()) == Some("text") {
@@ -394,8 +395,6 @@ fn extract_first_user_text(event: &serde_json::Value) -> Option<String> {
             })
             .collect::<Vec<_>>()
             .join(" ")
-    } else {
-        return None;
     };
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() {

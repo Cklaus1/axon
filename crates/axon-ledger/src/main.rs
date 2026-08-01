@@ -589,7 +589,7 @@ fn main() -> Result<()> {
                 if result.commit.repo.as_deref() != Some(r.as_str()) {
                     anyhow::bail!(
                         "commit {} is not tagged with repo {:?} (actual: {:?})",
-                        &sha,
+                        sha,
                         r,
                         result.commit.repo
                     );

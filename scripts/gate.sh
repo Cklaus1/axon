@@ -78,8 +78,12 @@ cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clip
 # and a manual-range-contains in main.rs, a dead-code AxonManifest struct) fixed
 # with #[allow(..)]/a mechanical rewrite, no behavior change; axon-attest was
 # already clean.
+# axon-ledger joined 2026-07-31 (R18 governance audit): same coverage-gap class
+# — the crate landed as a workspace member with 63 tests but was never lint-
+# gated; 2 mechanical clippy fixes (a ?-operator rewrite, a redundant &) made
+# it clean, no behavior change.
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
-cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest --all-targets -- -D warnings \
+cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest -p axon-ledger --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 if [ "$STRICT" = 1 ]; then
@@ -104,6 +108,17 @@ if [ "$STRICT" = 1 ]; then
   # CARGO_BIN_EXE harnesses. Under --strict only because it links LLVM.
   echo "── gate: codegen-gated integration tests ────────────────────────"
   cargo test -p axon-core --test integration_fixtures || fail "codegen integration tests"
+
+  # R1d Slice-3 drift kill-gate (governance/specs/R1d-single-source-builtins.md):
+  # the builtin_externs drift tests live behind #[cfg(feature = "codegen")], so
+  # the standard-gate `cargo test --no-default-features` at the top compiles them
+  # out (0 run) and the integration_fixtures line above skips --lib entirely — a
+  # BUILTIN_EXTERNS/STR_OUT_EXTERNS table-drift regression passed both gates
+  # green (same class as the clippy allowlist gap above). Run them explicitly
+  # with default features (codegen on). Cheap: same build as the two stages
+  # above, 5 tests, ~0s.
+  echo "── gate: builtin-externs drift tests (R1d slice 3) ──────────────"
+  cargo test -p axon-core --lib codegen::builtin_externs || fail "builtin-externs drift tests"
 
   # The two-engine invariant (I-2): native codegen + AOT-wasm must match the
   # interpreter oracle byte-for-byte. ~22 scripts/*_parity.sh harnesses assert

@@ -18,6 +18,7 @@ pub mod emit;
 pub mod grant_infer;
 pub mod intent;
 pub mod pipeline;
+pub mod policy;
 pub mod refusal;
 pub mod synth;
 

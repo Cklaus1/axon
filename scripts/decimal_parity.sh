@@ -62,8 +62,16 @@ fn main() { assert(f(100d, 30d) == 70d) }'
 
 # ── 2. codegen refusal ───────────────────────────────────────────────────────
 echo "decimal_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "decimal_parity: codegen build unavailable (LLVM absent) — skipping refusal check"
+if ! cargo build -q -p axon-core --bin axon 2>"$WORK/codegen_build.err"; then
+  # Distinguish "LLVM absent" (legit interp-only CI skip) from "codegen build
+  # broken" (a real failure that must not silently pass as interp-only green).
+  if command -v llvm-config-17 >/dev/null 2>&1 || command -v llvm-config >/dev/null 2>&1; then
+    echo "decimal_parity: codegen build FAILED with LLVM present — NOT a skip:"
+    sed 's/^/    /' "$WORK/codegen_build.err" | tail -30
+    fail=1
+  else
+    echo "decimal_parity: codegen build unavailable (no llvm-config on PATH) — skipping refusal check"
+  fi
 else
   CAXON="target/debug/axon"
   prog="$WORK/dec_codegen.ax"

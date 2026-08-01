@@ -569,7 +569,7 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
             .and_then(|entries| {
                 entries
                     .filter_map(|e| e.ok())
-                    .filter(|e| e.path().extension().map_or(false, |x| x == "kill"))
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "kill"))
                     .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
             })
             .map(|e| e.path());
