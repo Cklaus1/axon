@@ -825,6 +825,16 @@ pub fn run_program_with_discharged(
 ///
 /// Globals are initialized before calling so the function can read module-level lets.
 pub fn run_named_fn_as_bool(program: &Program, fn_name: &str) -> Option<i32> {
+    run_named_fn_as_bool_with_score(program, fn_name, None)
+}
+
+/// As [`run_named_fn_as_bool`], but supplies `score` to a gate declared with one
+/// parameter (AUDIT T17 / P5-01).
+pub fn run_named_fn_as_bool_with_score(
+    program: &Program,
+    fn_name: &str,
+    score: Option<i64>,
+) -> Option<i32> {
     on_deep_stack(|| {
         let mut interp =
             Interp::build(program).with_discharged(crate::verify::Discharged::default());
@@ -841,7 +851,30 @@ pub fn run_named_fn_as_bool(program: &Program, fn_name: &str) -> Option<i32> {
             return Some(code);
         }
         let f: &FnDef = *interp.fns.get(fn_name)?;
-        let result = interp.call_fn(f, vec![]);
+        // AUDIT T17 (finding P5-01): this called every gate with `vec![]` and no
+        // arity check, so a gate declared `fn assert_deployable(score: i64)`
+        // panicked with "expected 1 args, got 0". `axon intent compile` GENERATES
+        // exactly that signature, so the tool's own generator emitted a gate ABI
+        // the tool's own runner could not call — and CLAUDE.md's Acid Test 2
+        // failed 100% of the time on the shipped example.
+        //
+        // Both shapes are now accepted: a nullary gate is called as before, and a
+        // 1-arg gate receives the score it is written to judge (0 when no score
+        // is available, which is the conservative input for a `score >= N` gate).
+        // Any other arity is a clear error rather than a panic from deep inside
+        // the interpreter.
+        let args: Vec<Value> = match f.params.len() {
+            0 => vec![],
+            1 => vec![Value::Int(score.unwrap_or(0))],
+            n => {
+                eprintln!(
+                    "axon: gate `{fn_name}` takes {n} arguments; a deploy gate must take \
+                     0 (no input) or 1 (the score to judge)"
+                );
+                return Some(2);
+            }
+        };
+        let result = interp.call_fn(f, args);
         Some(match result {
             Ok(Value::Bool(true)) => 0,
             Ok(Value::Bool(false)) => 1,

@@ -1728,6 +1728,115 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn deploy_gate_accepts_both_nullary_and_one_arg_signatures() {
+    // AUDIT T17 (finding P5-01). run_named_fn_as_bool called every gate with
+    // `vec![]` and no arity check, so a gate declared
+    // `fn assert_deployable(score: i64)` panicked with "expected 1 args, got 0".
+    // `axon intent compile` GENERATES exactly that signature — the tool's own
+    // generator emitted a gate ABI its own runner could not call — so CLAUDE.md's
+    // Acid Test 2 failed 100% of the time on the shipped example.
+    let dir = std::env::temp_dir().join("axon_t17_gates");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    for (label, gate) in [
+        (
+            "one-arg gate",
+            "fn assert_deployable(score: i64) -> i64 { 0 }",
+        ),
+        ("nullary gate", "fn assert_deployable() -> i64 { 0 }"),
+    ] {
+        let p = dir.join(format!("g_{}.ax", label.replace(' ', "_")));
+        std::fs::write(&p, format!("{gate}\nfn main() -> i64 {{ 0 }}\n")).unwrap();
+        let out = axon()
+            .args(["deploy", p.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !msg.contains("expected 1 args"),
+            "[{label}] the gate must not panic on arity: {msg}"
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[{label}] deploy should succeed: {msg}"
+        );
+    }
+
+    // A gate with an unsupported arity is a clear error, not an interpreter panic.
+    let bad = dir.join("bad.ax");
+    std::fs::write(
+        &bad,
+        "fn assert_deployable(a: i64, b: i64) -> i64 { 0 }\nfn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["deploy", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("must take") && !msg.contains("panic in"),
+        "a 2-arg gate must give a clear ABI message, not an interpreter panic: {msg}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_legacy_format_approval_record_is_not_treated_as_tampering() {
+    // AUDIT T17. T10 switched the approval digest from FNV-1a to SHA-256 without
+    // handling records written by an older axon. Those have no `axsha256:`
+    // prefix, so they compared unequal and were classified as TAMPERED —
+    // blocking deploy and telling the user "source changed since approval" about
+    // a file nobody had edited. A format change is not evidence of tampering.
+    let dir = std::env::temp_dir().join("axon_t17_legacy");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("p.ax");
+    std::fs::write(&prog, "fn main() -> i64 { 0 }\n").unwrap();
+    // A record in the OLD format: 16 hex chars, no `axsha256:` prefix.
+    std::fs::write(
+        dir.join("p.ax.approved"),
+        "{\"schema\":\"axon-ast-approved/1\",\"file\":\"p.ax\",\"hash\":\"4b2f8f47c78fdee1\",\"approved_at_unix\":1}\n",
+    )
+    .unwrap();
+
+    let out = axon()
+        .args(["deploy", prog.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a legacy-format record must not BLOCK the deploy: {msg}"
+    );
+    assert!(
+        msg.contains("legacy hash format"),
+        "it must say the format is legacy, not that the source changed: {msg}"
+    );
+    assert!(
+        !msg.contains("digest mismatch"),
+        "a format change must not be reported as tampering: {msg}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn host_await_worker_has_a_deep_stack_not_the_default_2mib() {
     // AUDIT T16 (finding INTERP-H03). run_suspendable_values spawned its worker
     // with a bare `scope.spawn`, i.e. the DEFAULT ~2 MiB stack. The tree-walking

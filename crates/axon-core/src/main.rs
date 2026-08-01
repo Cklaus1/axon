@@ -5375,6 +5375,25 @@ fn cmd_deploy(
                 let current = program_digest_hex(cur_src.as_bytes());
                 match recorded {
                     Some(h) if h == current => (true, String::new(), false),
+                    // AUDIT T17: a record written by an older axon used FNV-1a
+                    // and has no `axsha256:` prefix. That is NOT evidence of
+                    // tampering — the source may be untouched and only the hash
+                    // FORMAT changed — so it must not be treated as one. T10
+                    // introduced this hazard by switching the algorithm without
+                    // handling pre-existing records; blocking on it would have
+                    // told upgrading users "source changed since approval" about
+                    // a file nobody had edited.
+                    //
+                    // Not approved (correctly — nothing verified it), but
+                    // non-blocking, like an absent record.
+                    Some(h) if !h.starts_with("axsha256:") => (
+                        false,
+                        String::from(
+                            "approval record uses a legacy hash format — re-run \
+                             `axon ast approve` to bind it to the current source",
+                        ),
+                        false,
+                    ),
                     // The file was approved and THEN changed. Unambiguous.
                     Some(_) => (
                         false,
