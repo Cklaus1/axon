@@ -578,6 +578,92 @@ this spec is better served by naming a reference than by inventing:
 - [ ] `axon_ui_non_idle_agency_without_surface_is_a_compile_error`.
 - [ ] `axon_ui_stop_affordance_renders_on_cpu_backend` — §1d(A) + §3d(d), executed headless.
 
+### 3d(a)-SLICE. Incomplete values in `View` position — the first ASI-specific slice
+
+§11a establishes this is the only part of §3d buildable without new language types. It is
+specified to implementation depth here because it carries the whole §3d thesis, and shipping it
+alone is the cheapest test of whether that thesis is right before `Pending`/`Stream`/`Agency` are
+built for it.
+
+**Scope: two types, one rule.** `Uncertain<T>` and `Temporal<T>` both already exist
+(`Type::Uncertain`, `Type::Temporal`). They are the same defect in different axes, and today both
+collapse silently in a UI:
+
+| type | what is silently lost | the dangerous render |
+|---|---|---|
+| `Uncertain<T>` | confidence | a model's 0.3-confidence guess shown identically to a measured fact |
+| `Temporal<T>` | validity window | **stale data shown as current** — arguably worse, because staleness has no visual tell at all |
+
+Rule (E2114): **an `Uncertain<T>` or `Temporal<T>` in a `View` position must either render its
+incompleteness or be explicitly collapsed.**
+
+#### Surface
+
+```axon
+text(u)                      // Uncertain<f64> → value + confidence.  DEFAULT, and the short form
+text(u.point_estimate())     // explicit discard. Legal, greppable, reviewable.
+text(t)                      // Temporal<f64> → value + staleness when outside its validity window
+text(t.assume_fresh())       // explicit discard of the validity check
+```
+
+The honest form is the short form. That is deliberate: a rule whose safe path is more typing than
+its unsafe path trains people to take the unsafe path.
+
+#### Where the check lives
+
+`checker.rs`, at the argument-type check for `View`-accepting builtins — the existing
+`check_call_arity_and_types` path, not a new pass. `View` constructor params are declared to
+require a **complete** type; `Type::Uncertain(_)` and `Type::Temporal(_)` in those positions are
+E2114. This is a small, local change with no new analysis, which is much of why this slice is
+first.
+
+#### Collapse operators — one gap found
+
+`uncertain_confidence`, `uncertain_deterministic`, `temporal_confidence`, `temporal_is_valid`,
+`temporal_at` and `temporal_new` exist. **There is no obvious plain-value extractor for
+`Uncertain<T>`** — `uncertain_deterministic` is the likely candidate but its semantics must be
+confirmed before `.point_estimate()` is defined as sugar over it. *(Checked against `builtins.rs`
+2026-08-01; if no extractor exists, adding one is in this slice — it is the escape hatch the rule
+depends on, and a refusal with no legal way out is not a rule, it is a ban.)*
+
+#### Default rendering — and one thing that is NOT acceptable
+
+When confidence *is* rendered, the encoding is configurable but **its presence is not**. Two hard
+constraints, both a11y-derived (§3b(b)):
+
+1. **The confidence must appear in the accessible name**, not only in pixels. "0.31 confidence"
+   is information; a faded label is decoration, and a screen-reader user given the faded version
+   receives the model's guess as fact.
+2. **Opacity or colour alone is refused.** It fails contrast requirements, it is invisible to
+   assistive technology, and it is precisely the "looks uncertain to a designer, reads as certain
+   to everyone else" failure. A textual or structural indicator is mandatory; visual encoding may
+   accompany it.
+
+Staleness follows the same rules: a `Temporal<T>` outside its window renders its age in the
+accessible name, not merely greyed out.
+
+#### Acceptance (extends §9.0)
+
+- [ ] `axon_ui_uncertain_in_view_position_is_e2114` — `text(u)` without a renderer configured, and
+      `text(u.point_estimate())`, compile respectively to error and success.
+- [ ] `axon_ui_temporal_outside_window_renders_staleness` — an expired `Temporal<T>` does not
+      render identically to a fresh one.
+- [ ] `axon_ui_confidence_appears_in_accessible_name` — asserted against the exported AccessKit
+      tree (§9.0(C)), not against the pixels. **This is the criterion that catches the
+      opacity-only implementation**, and it is the one most likely to be quietly dropped.
+- [ ] `axon_ui_point_estimate_is_greppable` — the discard appears in source as a named call, so a
+      reviewer can find every place confidence was dropped with one grep. The audit property, not
+      an ergonomic one.
+
+#### Why this slice first — the falsifiable claim
+
+If §3d is right, this slice makes a class of interface defect *impossible to write accidentally*,
+at the cost of one extra call at each deliberate discard. If it is wrong, it will show up here as
+`.point_estimate()` appearing reflexively at nearly every call site — at which point the rule is
+noise and should be reconsidered **before** three new language types are built on the same
+premise. Measure it: count `.point_estimate()` / `.assume_fresh()` per `View` node in the first
+real app. A ratio near 1 falsifies §3d.
+
 ### 3a. Scope of the 2D surface — demand-driven catalog + named hard deferrals
 
 **The widget/primitive catalog is deliberately NOT defined completely, and should not be.** A complete 2D UI
