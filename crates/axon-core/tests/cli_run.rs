@@ -1728,6 +1728,68 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn divergent_builtins_are_excluded_from_the_wasm_pure_corpus() {
+    // AUDIT O009, from T14 / P5-03. scripts/wasm_parity.sh auto-discovers a
+    // "pure compute" corpus by EXCLUDING examples that call host builtins, under
+    // a comment promising "no hand-maintained list to drift" — while defining
+    // exactly such a list. It drifted: env_var and the whole http_* family were
+    // missing, so examples that read the environment or opened a socket were
+    // classified as pure compute and the suite carried a permanent failure.
+    //
+    // This test makes the promise real: every builtin that can DIVERGE between
+    // the native and wasm interpreters must be matched by HOST_BUILTINS.
+    //
+    // "Divergent" deliberately is NOT "has a non-empty effect row". Console IO
+    // (println/print/eprint) carries an `IO` row but is precisely what this
+    // harness compares — excluding it would empty the corpus. That distinction
+    // is only necessary because `builtin_effect_row` lumps console output and
+    // filesystem access into one `IO` tag: the same conflation T8 fixed for
+    // exec, still unfixed for console-vs-fs. If that tag is ever split, this
+    // test should key on the row alone.
+    let script_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/wasm_parity.sh");
+    let script = std::fs::read_to_string(script_path).expect("read wasm_parity.sh");
+
+    // Kernel-only mnemonics. Their names are too short to grep for safely
+    // (a bare `cli` matches "client"), and freestanding code cannot appear in
+    // an examples/*.ax with a `fn main`. Listed explicitly so the exemption is
+    // visible rather than silently absent.
+    const TOO_SHORT_TO_GREP: &[&str] = &["hlt", "cli", "sti", "lidt"];
+    const DIVERGENT_TAGS: &[&str] = &["Net", "AI", "Random", "Time", "Hal", "Bpf", "Tee"];
+
+    let mut missing: Vec<&str> = Vec::new();
+    let mut checked = 0usize;
+    for b in axon_core::builtins::BUILTINS {
+        let row = axon_core::builtins::builtin_effect_row(b.name);
+        let diverges = row.iter().any(|t| DIVERGENT_TAGS.contains(t))
+            || axon_core::capabilities::capability_of_builtin(b.name).is_some();
+        if !diverges || TOO_SHORT_TO_GREP.contains(&b.name) {
+            continue;
+        }
+        checked += 1;
+        // The script greps with an unanchored ERE, so a substring match is a hit.
+        let covered = script.split('\'').any(|seg| {
+            seg.split('|')
+                .any(|alt| !alt.is_empty() && b.name.contains(alt))
+        });
+        if !covered {
+            missing.push(b.name);
+        }
+    }
+
+    assert!(
+        checked >= 30,
+        "expected to check 30+ divergent builtins, found {checked} — the \
+         extractor has drifted and is measuring nothing"
+    );
+    assert!(
+        missing.is_empty(),
+        "these builtins can diverge native-vs-wasm but are NOT excluded from the \
+         pure-compute corpus by scripts/wasm_parity.sh HOST_BUILTINS, so an \
+         example using them would be wrongly compared as pure compute:\n  {missing:?}"
+    );
+}
+
+#[test]
 fn harness_success_assertions_are_strings_their_scripts_can_emit() {
     // AUDIT O006, generalised from T11. `codegen_str_reverse_replace_..._utf8`
     // asserted `"str_reverse and str_replace match the interpreter"` — a string

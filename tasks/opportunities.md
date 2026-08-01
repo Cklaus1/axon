@@ -265,3 +265,23 @@ recommended for axon-os `scan_effects` in T4.
 Note the pattern this is the third instance of: a comment asserting an invariant
 ("no hand-maintained list", "deny-by-default", "attestation verified") sitting
 directly above code that does not implement it. The comment is not evidence.
+
+### O010 — [medium] `persistent_bandit_demo_accumulates_across_runs` depends on ambient leftover state
+
+`crates/axon-core/tests/cli_run.rs:10775`. Fails with
+`run 1 should be fresh: ... prior pulls (loaded): 40` when a persisted bandit
+state file survives from an earlier suite run; passes in isolation and passes on
+a clean tree.
+
+Not caused by any change in this audit — it is a pre-existing state dependency,
+surfaced because this run executed the suite many times in a row. Same family as
+O004 (build-state-sensitive browser parity): a test whose greenness depends on
+ambient state rather than on the code under test.
+
+Fix: have the test create and remove its own state directory (or point the demo
+at a temp path via env), so run 1 is fresh by construction rather than by luck.
+
+Practical note for anyone reading a red suite here: `persistent_bandit_demo_*`
+and `wasm_browser_examples_run_identically_via_js_host` are the two known
+non-deterministic tests. Confirm with an isolated re-run before treating either
+as a regression — this session lost time to exactly that twice.

@@ -57,7 +57,23 @@ WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 # defining precisely such a list. It drifted. Deriving this set from
 # `builtins::builtin_effect_row` is tracked separately (O009) — this change makes
 # the corpus match its own stated invariant now.
-HOST_BUILTINS='read_file|write_file|read_line|env_var|http_get|http_post|http_sse|ai_complete|ai_extract|exec|spawn|chan_|random_|now_ms|temporal_now|goal_run|agent_detect|agent_uncertainty|agent_trace'
+# Divergent-effect builtins, grouped by why they can differ native-vs-wasm.
+# Derived from `builtins::builtin_effect_row`: anything tagged Net/AI/Random/
+# Time/Hal/Bpf/Tee, plus everything `capabilities::classify_call` treats as a
+# capability (fs/net/exec/env). Console IO (println/print/eprint) is DELIBERATELY
+# absent — stdout is what this harness compares, so excluding it would empty the
+# corpus. That distinction is why this set cannot be "every non-empty effect
+# row": `builtin_effect_row` lumps console output and filesystem access into the
+# same `IO` tag (the same conflation T8 fixed for exec).
+#
+# `builtin_effect_row_names_are_excluded_from_the_pure_corpus` in cli_run.rs
+# fails if any divergent builtin is missing here, so this can no longer drift.
+HOST_BUILTINS='read_file|write_file|read_line|env_var'\
+'|http_get|http_post|http_sse|ai_complete|ai_extract|ai_cost_spent'\
+'|exec|spawn|chan_|goal_|agent_detect|agent_uncertainty|agent_trace|zephyr_'\
+'|random_|gaussian_sample|beta_sample|categorical_sample'\
+'|now_ms|sleep_ms|temporal_now'\
+'|atomic_|volatile_|port_in_|port_out_|ptr_from_addr|fn_addr|tee_|bpf_'
 CORPUS=()
 for f in examples/*.ax; do
   grep -q "fn main" "$f" || continue
