@@ -587,3 +587,46 @@ exercises a capability.
 **Execution re-triage scorecard so far: 5 findings, 5 answers changed.**
 2 false (OSK-L03, INTERP-H04), 2 true-but-understated (O016, this), 1 true as
 written (OSK-L02). Reading the code has not once predicted the outcome.
+
+### O018 — [high] `AXON_AI_MOCK` is also stripped, and exit 5 seals as `Completed` — one repro, both bugs
+
+Follow-up to O017 (predicted) and O016 (strengthened). A job whose grant permits
+net, calling `ai_complete`, run under `AXON_AI_MOCK=1`:
+
+```
+$ AXON_AI_MOCK=1 axon-os run ai.axjob ...
+✓ completed (value=5)
+$ grep verdict aitest2.json
+"verdict":{"kind":"Completed","value":5}
+
+# same program, same env, interpreter invoked directly
+$ AXON_AI_MOCK=1 axon run ai.ax
+AI OK
+```
+
+Two confirmations in one run:
+
+1. **O017 generalises as predicted.** `AXON_AI_MOCK` does not survive
+   `env_clear` either, so the deterministic AI stub is silently inert under the
+   supervisor. The job fell through to the live path and hit the AI-policy
+   refusal. `AXON_AI_REPLAY` is near-certainly in the same position, which would
+   make the R15/§9.5 replay-reproducibility story non-functional through
+   axon-os — the exact place reproducibility is supposed to be guaranteed.
+
+2. **O016 is worse than my first repro showed.** Exit **5** is not an
+   unrecognised code — it is `AI_POLICY_EXIT_CODE`, one of the project's
+   deliberately CARVED fault codes (3=verify, 4=halted, 5=ai-policy, 6=refine,
+   7=goal-budget, 8=sandbox, 12=containment). The verdict mapper still sealed it
+   as `Completed{value:5}`. So the record does not merely mis-handle unknown
+   faults; it mis-handles a fault the codebase went out of its way to define,
+   and stores the fault code in the `value` field of a SUCCESS verdict.
+
+Anyone reading these records sees `Completed` with a small integer value and has
+no way to distinguish "returned 5" from "refused by AI policy".
+
+Fix: both are one change each in `runtime.rs` (forward the AXON_* allowlist at
+:441; branch on exit code before the stderr scan at :377). They should land
+together with an acceptance test per carved code asserting the sealed verdict is
+NOT `Completed`.
+
+**Execution re-triage scorecard: 6 findings, 6 answers changed.**
