@@ -865,6 +865,57 @@ that. Two obligations follow:
 
 ### 9. Acceptance criteria (the done gate — per slice)
 
+#### 9.0 Cross-slice obligations *(added 2026-08-01 — from §1d, §3b, §3c, §5, §7.2)*
+
+These bind every slice and are stated once. **Each must EXECUTE and assert an artifact** — not
+assert that a code path was called. That distinction is not pedantry here: §7.2 records five
+controls in this repo that called their logger, reported success, and produced nothing, silently,
+for months. A criterion that cannot fail is not a gate.
+
+**(A) Renderer backend — from §1d**
+- [ ] `axon_ui_renders_on_cpu_backend` — every visual/layout criterion below runs on the **software
+      backend** in CI, headless, no GPU. This is the primary execution path for §9 on the gate host.
+- [ ] `axon_ui_backend_swap_is_exercised` — the same `View` tree renders through **two** backends
+      (CPU and GPU) in one test run. §1b's replaceability invariant is otherwise unfalsifiable, and
+      given an alpha renderer (§1c) it is the actual risk control.
+- [ ] `axon_ui_backend_output_difference_is_bounded` — CPU vs GPU output differs only within a
+      documented antialiasing tolerance. Same class as the I-2 native↔interp parity invariant; an
+      undocumented divergence is a bug, not a rounding detail.
+- [ ] **No visual criterion may be satisfied by a SKIP.** If the GPU path is unavailable on the
+      host, the CPU path still runs. (`tasks/opportunities.md` O006: 8 of this repo's harnesses were
+      silently skipping and reporting green.)
+
+**(B) Text — from §3b(a)**
+- [ ] `axon_ui_text_hash_covers_resolved_fonts` — two runs that resolve **different fonts** for the
+      same source string produce **different canonical hashes**. Executed by forcing a font set, not
+      argued from the serializer's code.
+- [ ] `axon_ui_layout_and_paint_share_one_text_layout` — asserted by **provider-call count**, so a
+      regression that re-shapes independently is caught rather than merely being slow.
+
+**(C) Accessibility — from §3b(b), §3c**
+- [ ] `axon_ui_unnamed_interactive_node_is_a_compile_error` — a `button` with no derivable
+      accessible name fails to compile with the reserved `E21xx` code.
+- [ ] `axon_ui_accesskit_tree_round_trips` — for the §3 headline example, every interactive node in
+      the `View` tree appears in the exported AccessKit tree with a role and a **non-empty name**.
+- [ ] `axon_ui_a11y_tree_is_derived_not_assembled` — the exported tree is produced by walking the
+      `View` tree (§3c: Blitz's `build_accessibility_tree`), so the two cannot drift. Asserted
+      structurally: no second source of nodes exists.
+
+**(D) Identity — from §5**
+- [ ] `axon_ui_node_identity_is_stable_across_rebuild` — a full rebuild with unchanged state
+      produces **identical** node ids. With §12 Q1's full-rebuild-per-frame, unstable ids would make
+      a screen reader lose focus every repaint, and would make §7.1's canonical hash unsignable.
+- [ ] `axon_ui_reordered_list_preserves_keyed_identity` — deleting or reordering a row in the §3
+      `for u in s.users` example does **not** renumber its siblings; a missing key in a reorderable
+      `for` is `E21xx`.
+
+**(E) Provenance surfacing — from §7.2**
+- [ ] `axon_ui_unverified_claim_is_visually_distinct` — a pane rendering a claim whose provenance
+      record is **missing or unverifiable** must not render identically to a verified one. §7.2's
+      second obligation, and the failure mode with the worst blast radius: it manufactures
+      confidence rather than losing it.
+- [ ] Any criterion asserting "the ledger records X" opens the artifact and checks it contains X.
+
 **Slice 0 (v0, static frame):**
 - [ ] `axon_ui_view_tree_structural_golden` passes — **the primary oracle** (§8): canonical `View`-tree +
       box-model serialization matches a committed, provenance-recorded reference *(added 2026-07-31; a
