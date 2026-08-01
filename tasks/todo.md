@@ -16,9 +16,15 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | **T2** | `870469a` | `@[contained]` not launderable via string dispatch (F153) |
 | T5+T6 | `1a89758` | MIT LICENSE added; README test count corrected |
 | **T3** | `4dd69e2` | fs prefixes + net hosts actually constrain (OSK-P4-C2, F014, F040) |
-| T7 | pending | CI covers 19 crates + codegen/parity, not 1 crate and no codegen |
+| T7 | `aba53a2` | CI covers 19 crates + codegen/parity, not 1 crate and no codegen |
+| **T9** | `3e579ff` | `axon fmt` no longer deletes `mod` declarations (P5-ECO-01, P5-31) |
+| **T10** | `c0c4d55` | deploy approval binds the program text, not the filename (P7-SEC-01) |
+| **T11** | `5a3282f` | link no longer cwd-dependent; un-skipped a dead parity gate (P5-15, DOC-01) |
+| T12a | `88cd2e4` | guest image builds again (json-target-spec + EXIT trap scope) |
+| O006 | `570dd95` | meta-test: harness success markers must be strings their scripts emit |
+| **T13** | `de03d7f` | attest refuses an unverifiable hardware root-of-trust claim (OSK-P7-C1, partial) |
 
-**All four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Ten fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
