@@ -510,11 +510,40 @@ fn cmd_kill(rest: &[&str]) -> ExitCode {
         eprintln!("axon-os kill: missing <run-id>");
         return ExitCode::from(2);
     };
-    let kill_path = store.join(format!("{run_id}.kill"));
+    // AUDIT T26 (finding OSK-P4-H6 / O020): this reconstructed ONE path by
+    // naming convention. A run started with `--killable --monitor` never
+    // creates `<run>.kill` (cli.rs:273 requires `monitor_effects.is_none()`) —
+    // it has `<run>.monitor.kill` instead. So `axon-os kill` wrote a file
+    // nothing polls, printed the tripped banner and exited 0, leaving the
+    // operator believing a run had been killed when it had not.
+    //
+    // Trip EVERY kill latch that exists for this run. Writing an already-clear
+    // latch is harmless; missing the live one is not.
+    let candidates = [
+        store.join(format!("{run_id}.kill")),
+        store.join(format!("{run_id}.monitor.kill")),
+    ];
+    let existing: Vec<&PathBuf> = candidates.iter().filter(|p| p.exists()).collect();
+    // Nothing to trip: fall back to the conventional path so a kill armed
+    // BEFORE the run starts still works (the pre-arm case), but say so.
+    let targets: Vec<&PathBuf> = if existing.is_empty() {
+        eprintln!(
+            "axon-os kill: no existing kill latch for run `{run_id}` — \
+             writing {} (a run that has not started yet will pick it up)",
+            candidates[0].display()
+        );
+        vec![&candidates[0]]
+    } else {
+        existing
+    };
+    let kill_path = targets[0].clone();
     let content = format!(
         "{{\"latch\":\"tripped\",\"reason\":\"{}\"}}",
         reason.replace('"', "'")
     );
+    for t in targets.iter().skip(1) {
+        let _ = std::fs::write(t, &content); // trip every live latch
+    }
     match std::fs::write(&kill_path, &content) {
         Ok(()) => {
             println!("\u{1f6d1} kill tripped for run `{run_id}` (reason: {reason})");
