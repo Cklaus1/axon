@@ -26,6 +26,12 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | O006b | `c9c5491` | harness skips countable + fatal under `AXON_HARNESS_STRICT` |
 | **T15** | `c79034a` | `--features serde-json` compiles again (`axon lsp`/`parse --json`) + gate stage |
 | **T14** | `6426c75` | wasm-parity corpus fixed — **suite now 426 passed / 0 failed** |
+| O009 | `e459558` | drift test: the pure-compute corpus can no longer silently widen |
+| O010 | `9cb7859` | persistent-bandit fixed /tmp path removed (mechanism undiagnosed — see correction) |
+| O011 | `110`-era | persistent-learner same hardening (explicitly NOT a bug-fix claim) |
+| **T16** | `—` | host_await worker gets a deep stack: abort/exit-134 → graceful limit (INTERP-H03) |
+| **T17** | `1289b74` | deploy gates accept 0/1-arg (P5-01, Acid Test 2 works); legacy approvals ≠ tampering |
+| O012 | logged | F062 per-call AI tier ignored natively — attempted, reverted, needs a `walk_expr` refactor first |
 
 **Ten fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
@@ -34,7 +40,11 @@ anyway, which is the defect class this audit exists to document.
 
 ## Not done, deliberately
 
-- **165 findings remain untriaged-for-implementation.** They are triaged for
+- **O012 / F062** — verified real, fix reverted rather than rushed: it needs a
+  generic `walk_expr` extracted first, because copy-pasting `expr_calls`'
+  70-line recursion is how the "walker missed an arm" class recurs (already
+  fixed 3x here: R6 taint, `@[contained]` helpers, T2 string dispatch).
+- **~160 findings remain untriaged-for-implementation.** They are triaged for
   *severity* (`governance/reviews/2026-08-01-triage/full-185.json`) but no code
   was written for them. Effort profile: 59 trivial / 125 small / 112 medium /
   42 large.
