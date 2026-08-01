@@ -630,3 +630,44 @@ together with an acceptance test per carved code asserting the sealed verdict is
 NOT `Completed`.
 
 **Execution re-triage scorecard: 6 findings, 6 answers changed.**
+
+### O019 — [high] OSK-P4-H3 CONFIRMED BY EXECUTION: axon-os deadlocks on a job with large stdout
+
+The triage flagged this one honestly as *"Confirmed by code read (NOT reproduced
+— building axon-os was out of budget, so confidence is code-level)"*. Reproduced
+now, and it is real:
+
+```
+$ axon run big.ax                      -> 0.09s        (20,000 println lines)
+$ axon-os run big.axjob                -> DENIED: timed out after 30000 ms
+                                          (axis: time)
+```
+
+Same program. 0.09s standalone; killed by the 30-second timeout under the
+supervisor.
+
+`run_bounded` (`runtime.rs:132-190`) takes the child's stdout/stderr handles at
+:138-139 but does not read them until :181-182 — strictly AFTER the
+`try_wait`/timeout loop. So the child blocks writing into a full 64 KiB pipe
+buffer, the parent blocks waiting for the child to exit, and neither proceeds.
+The wall-clock timeout is the only thing that breaks it.
+
+Severity is higher than "a slow job gets killed":
+
+- **Any** job producing more than a pipe buffer of output is unrunnable under
+  axon-os, and the failure is attributed to the wrong cause — the record says
+  `Denied{axis:"time"}`, blaming the job for being slow when it was fast.
+- The timeout MASKS the deadlock, so this presents as a mysterious performance
+  problem rather than a hang. That is why it survived: the symptom is plausible.
+
+Fix: drain stdout/stderr concurrently with the wait — spawn a reader thread per
+pipe before the loop and join them after, or use a poll-based reader. The
+handles are already `take()`n at :138, so the change is local to `run_bounded`.
+
+Add an acceptance test with a job emitting >64 KiB that must complete, not time
+out — it fails today in ~30s and passes in ~0.1s once fixed.
+
+**Execution re-triage scorecard: 7 findings, 7 answers changed.** This one was
+explicitly labelled unreproduced by the triage and turned out true AND
+mis-attributed. Two were false. Two were true-but-understated. Reading has still
+never predicted the outcome.
