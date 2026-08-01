@@ -1688,6 +1688,75 @@ fn nested_sandbox_cannot_widen_the_active_ceiling_exit_8() {
 }
 
 #[test]
+fn fmt_preserves_mod_declarations_and_the_program_still_runs() {
+    // DATA LOSS (audit T9, findings P5-ECO-01 / P5-31). `mod` declarations were
+    // collected in neither emit pass and no-oped in emit_item, so they had no
+    // emit path and were silently DELETED. `axon fmt` writes in place and exits
+    // 0, so formatting a working two-file project turned it into one that fails
+    // E0003 `module not found`.
+    //
+    // The assertion is deliberately the ROUND TRIP — format, then run — not
+    // just "the text still contains mod". A formatter that preserved the line
+    // but corrupted it would pass a text-only check while leaving the program
+    // broken, and "it still runs" is the property a user actually cares about.
+    let dir = std::env::temp_dir().join("axon_t9_modfmt");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("util.ax"), "fn double(n: i64) -> i64 { n * 2 }\n").unwrap();
+    let main_ax = dir.join("main.ax");
+    let src =
+        "mod util\nuse util.{double}\n\nfn main() {\n    println(\"{to_str(double(21))}\")\n}\n";
+    std::fs::write(&main_ax, src).unwrap();
+
+    let run = |label: &str| -> String {
+        let out = axon()
+            .args(["run", main_ax.to_str().unwrap()])
+            .env("AXON_PATH", dir.to_str().unwrap())
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            msg.contains("42"),
+            "[{label}] the two-file program must print 42: {msg}"
+        );
+        msg
+    };
+
+    run("before fmt");
+
+    let fmt = axon()
+        .args(["fmt", main_ax.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(fmt.status.success(), "axon fmt must succeed");
+
+    let after = std::fs::read_to_string(&main_ax).unwrap();
+    assert!(
+        after.contains("mod util"),
+        "fmt must not delete the mod declaration, got:\n{after}"
+    );
+    run("after fmt");
+
+    // Idempotence: formatting the formatted file changes nothing.
+    let fmt2 = axon()
+        .args(["fmt", main_ax.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(fmt2.status.success());
+    assert_eq!(
+        after,
+        std::fs::read_to_string(&main_ax).unwrap(),
+        "fmt must be idempotent"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
     // SECURITY (audit T3, findings OSK-P4-C2 / F014 / F040 — the last reached
     // independently by two agents from two different findings).

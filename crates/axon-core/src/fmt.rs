@@ -69,6 +69,34 @@ impl Formatter {
     // ── Program ───────────────────────────────────────────────────────────────
 
     fn emit_program(&mut self, program: &Program) {
+        // AUDIT T9 (findings P5-ECO-01 / P5-31). `mod` declarations were
+        // collected in neither pass and no-oped in `emit_item`, so they had no
+        // emit path at all and were silently DELETED. `axon fmt` writes in
+        // place and exits 0, so formatting a working two-file project turned it
+        // into one that fails E0003 `module not found` — data loss in a tool
+        // people are told to run over their source.
+        //
+        // Emitted before `use`, matching the source order the parser requires.
+        let mods: Vec<_> = program
+            .items
+            .iter()
+            .filter_map(|i| {
+                if let Item::ModDecl(m) = i {
+                    Some(m)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !mods.is_empty() {
+            for m in mods {
+                self.write("mod ");
+                self.write(&m.name);
+                self.nl();
+            }
+            self.nl();
+        }
+
         // Emit `use` declarations first, then a blank line.
         let uses: Vec<_> = program
             .items
