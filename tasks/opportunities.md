@@ -671,3 +671,46 @@ out — it fails today in ~30s and passes in ~0.1s once fixed.
 explicitly labelled unreproduced by the triage and turned out true AND
 mis-attributed. Two were false. Two were true-but-understated. Reading has still
 never predicted the outcome.
+
+### O020 — [high] OSK-P4-H6 CONFIRMED BY EXECUTION: `--killable --monitor` silently disables the kill switch
+
+Eighth execution re-triage. Confirmed, and it is a safety-control failure with a
+success banner on top.
+
+```
+$ axon-os run job --run-id km --killable --monitor IO
+$ ls km.*
+  km.axjob   km.json   km.monitor.kill        ← NO km.kill
+
+$ axon-os kill --store D km
+🛑 kill tripped for run `km` (reason: operator shutdown)
+$ echo $?
+0
+```
+
+`cli.rs:273` is `if killable && monitor_effects.is_none()`, so passing BOTH
+flags takes the else branch and `$out/$run_id.kill` is never created;
+`AXON_KILL_FILE` is then overwritten at :286 to point at `.monitor.kill`.
+`cmd_kill` reconstructs `$store/$run_id.kill` by naming convention, writes that
+file, prints the tripped banner, and exits 0 — against a path nothing polls.
+
+So an operator who asks for BOTH the kill switch and compliance monitoring gets
+neither a working kill switch nor any indication of that. The failure is
+maximally quiet: the flag is accepted, the command succeeds, the banner says
+"kill tripped". R27 documents sub-second operator kill as a headline guarantee
+(it is Layer 3 of the flagship demo's four).
+
+Fix options, needing a product call on intended semantics:
+  (a) make the two flags share one kill file, so either path trips the same
+      latch — probably right, since both mean "stop this run";
+  (b) have `cmd_kill` trip whichever kill file exists for the run, rather than
+      reconstructing one path by convention; and
+  (c) at minimum, refuse the combination at parse time instead of silently
+      dropping one — never accept a flag that will be ignored.
+
+(b) alone fixes the observed symptom and needs no semantic decision; (a) is the
+better end state. Not attempted: `cmd_kill`, `cmd_status`, the R29 monitor
+thread and `run_bounded`'s poll all key on these paths, so it wants one coherent
+change plus tests for each flag combination.
+
+**Execution re-triage scorecard: 8 findings, 8 answers changed.**
