@@ -393,3 +393,38 @@ dirs. Candidates that do not pay the rebuild cost — a shared *prebuilt*
 wasm32-unknown-unknown artifact produced once before the suite runs, a lock
 serialising the wasm harnesses against each other, or `--test-threads` pinning
 for that group. The counts above are the measurements to beat.
+
+
+### O004 — ROOT CAUSE FOUND: the wasm build lock exists but is only taken by 9 of 21 scripts
+
+`scripts/wasm_browser_examples_parity.sh:22` already serialises wasm sweeps:
+
+```sh
+if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
+```
+
+Nine scripts take that lock. **Twelve wasm-touching scripts do not**, and race
+against the ones that do:
+
+  browser_compute_parity.sh      wasm_asyncify_host_await.sh
+  wasm_parity.sh                 wasm_browser_host_await.sh
+  wasm_fs_parity.sh              wasm_aot_link_probe.sh
+  wasm_browser_interp_parity.sh  wasm_unknown_interp_builds.sh
+  wasm_host_await_parity.sh      wasm_object_prune.sh
+  parity_all.sh                  setup-environments.sh
+
+So the mitigation is real but partial, which is why O004 has been intermittently
+red for the whole session despite a lock being present. This also explains why
+per-harness CARGO_TARGET_DIR made things worse rather than better: the design
+intent is one SHARED warm cache with serialised writers, and isolation fought
+that intent instead of completing it.
+
+Fix: add the same two-line guard to each unlocked script that builds for wasm32
+(`parity_all.sh` and `setup-environments.sh` are orchestrators — check whether
+they should take it or just not build directly). Then re-measure against the
+recorded bar: browser parity must link >= 28 of 34 under a full-suite run, and
+`wasm_aot_run_parity` must report 7/7.
+
+NOT attempted here: 12 scripts is a mechanical change but it must be verified
+under full-suite load, not standalone — standalone measurement is what made the
+CARGO_TARGET_DIR attempt look like a fix when it was a regression.
