@@ -4,11 +4,11 @@
 **Status:** Draft
 **Risk class:** Structural
 **Author / date:** cklaus, 2026-06-12
-**Reserves:** the **E21xx / W21xx** block (E2100–E2108, W2110–W2112) — *renumbered 2026-07-31; extended
+**Reserves:** the **E2109 / W21xx** block (E2100–E2108, W2110–W2112) — *renumbered 2026-07-31; extended
 2026-07-31 with E2105–E2108 / W2112 by the ASI-trajectory review, §6* — from the
 draft's E16xx claim, which was wrong: `E1604` is already live as the R12b kernel-goal budget-exhausted code
 (dedicated exit 7, asserted by supervisors and `cli_run.rs` tests), and `error.rs` allocates the E16xx band
-to R20 kernel TCB obligations (E1610/E1611). E21xx confirmed free at claim time (grepped `error.rs` + all
+to R20 kernel TCB obligations (E1610/E1611). E2109 confirmed free at claim time (grepped `error.rs` + all
 `governance/specs/` reserve lines; E20xx is R41's, E2300–E2302 are eBPF's). When the first R16 code lands,
 record the band in `error.rs` with a reserving comment, R14/R17-style.
 
@@ -385,7 +385,7 @@ Type rules:
 - Every builtin `View` constructor has a defined default role (`button` → button, `text` → static
   text, `input` → text field, `col`/`row` → generic container).
 - **Name is mandatory for interactive nodes.** A `button` whose accessible name cannot be derived
-  from its content is a **compile error**, not a lint. Rationale: an unnamed interactive control
+  from its content is a **compile error** (**`E2109`**), not a lint. Rationale: an unnamed interactive control
   is exactly an action a human cannot audit — the same class as an approval banner that does not
   say what it approves.
 - Decorative nodes must be marked explicitly (`.a11y_hidden()`), never defaulted. Fail-closed:
@@ -403,7 +403,7 @@ Type rules:
 
 1. A `text` node whose resolved font differs between two runs produces two different canonical
    hashes. *Executed*, not asserted from the code path (§7.2 obligation 1).
-2. A `button` with no derivable accessible name fails to compile with an `E21xx` code.
+2. A `button` with no derivable accessible name fails to compile with an `E2109` code.
 3. The AccessKit tree exported for the §3 headline example round-trips: every interactive node in
    the `View` tree appears with a role and a non-empty name.
 4. Layout and paint consume the **same** `TextLayout` instance — asserted by provider-call count,
@@ -448,7 +448,7 @@ reference punts on it.
 This *strengthens* §3b(b) rather than undermining it. Blitz inherits HTML's problem: a name can
 come from six places with a precedence order, and must be computed at runtime from a document it
 does not control. **Axon does not have that problem** — `button("Delete")` has its name in the
-constructor. Making a derivable name a *compile-time obligation* (E21xx, §3b) is available to us
+constructor. Making a derivable name a *compile-time obligation* (E2109, §3b) is available to us
 precisely because we control the surface syntax, and it converts the hardest part of a11y from a
 runtime resolution algorithm into a type rule. That is a real advantage of the compiled-DSL
 approach, and §3b should be read as claiming it deliberately.
@@ -487,7 +487,7 @@ That is the whole design. The rest is what it implies.
 
 #### (a) Uncertainty is not silently discardable
 
-`text(u)` where `u: Uncertain<f64>` is a **compile error** (`E21xx`). The author must write one of:
+`text(u)` where `u: Uncertain<f64>` is a **compile error** (**`E2114`**). The author must write one of:
 
 - `text(u)` → *(with a `View`-level uncertainty renderer configured)* renders the value **and its
   confidence** — the default, chosen so the honest thing is the short thing;
@@ -546,7 +546,7 @@ remaining**, and the **stop affordance** bound to R27.
 
 Rules, deliberately fail-closed in the same shape as `.a11y_hidden()`:
 
-- When agency is non-idle, an app that renders **no** agency surface is a **compile error**. An
+- When agency is non-idle, an app that renders **no** agency surface is a **compile error** (**`E2115`**). An
   interface that hides a running agent is the one failure this product cannot ship.
 - The stop affordance is not the app's to implement. It is provided, always reachable, and — per
   §1d — must render on the **CPU path** too, because "the operator can always stop it" cannot
@@ -569,7 +569,7 @@ this spec is better served by naming a reference than by inventing:
 #### Acceptance obligations (extend §9.0)
 
 - [ ] `axon_ui_uncertain_in_view_position_is_a_compile_error` — `text(u: Uncertain<f64>)` fails with
-      `E21xx`; `text(u.point_estimate())` compiles.
+      **`E2114`**; `text(u.point_estimate())` compiles.
 - [ ] `axon_ui_pending_node_reports_its_effect_row` — a node awaiting `ai_complete` renders a
       pending state naming the **AI/Net** row, not a generic spinner.
 - [ ] `axon_ui_stream_append_does_not_reshape_prefix` — asserted by **text-provider call count**
@@ -707,12 +707,12 @@ byte-equality.
     stable id is ill-formed.
   - It also serves §7.1: a canonical hash over a tree whose node identities churn per frame is
     not a stable artifact to sign.
-  - Keys are required, not optional, inside a `for` body that can reorder — checked, `E21xx`.
-    Absent-key reordering is the classic reconciliation bug, and here it is also an a11y bug.
+  - Keys are required, not optional, inside a `for` body that can reorder — checked (**`E2113`**).
+    Absent-key reordering is the classic reconciliation bug, and here it is also an a11y bug. (**`E2113`**)
 - Modifier chains (`.font(24).pad(8)`) are postfix methods on `View` returning `View` — structural, no new
   trait machinery; resolved like existing builtin method dispatch.
 - `@[ui]`/`@[ui3d]` attributes constrain the annotated `fn`'s signature: `main: fn() -> State` and the file
-  must define `app: fn(&State) -> View` and `update: fn(State, Msg) -> State` (checker rule, §6 `E21xx`).
+  must define `app: fn(&State) -> View` and `update: fn(State, Msg) -> State` (checker rule, §6 `E2109`).
 - `on_click(Msg)` / `on_change(|arg| Msg)` require the closure/value to be the file's `Msg` type — a new
   unification obligation (the `Msg` type is inferred from `update`'s second param).
 - **`app` purity is a closed, mandatory obligation — not an opt-in effect annotation** *(tightened
@@ -771,11 +771,11 @@ byte-equality.
 
 ### 6. Error codes
 
-New block **E21xx / W21xx**. *(Renumbered 2026-07-31 — the draft claimed "E16xx, next free range", which was
+New block **E2109 / W21xx**. *(Renumbered 2026-07-31 — the draft claimed "E16xx, next free range", which was
 false: `E1604` is already shipped as the R12b kernel-goal budget-exhausted code with dedicated exit 7
 (supervisors branch on it; `cli_run.rs` asserts it), and `error.rs` allocates the E16xx band to R20 kernel
 TCB obligations (E1610/E1611) — the draft's W1610/W1611 shadowed those exactly. Same failure class as the
-R13 E170x→E18xx move after the R17 collision. E21xx confirmed free — see the spec-meta Reserves line.)*
+R13 E170x→E18xx move after the R17 collision. E2109 confirmed free — see the spec-meta Reserves line.)*
 
 | Code | Trigger | Message shape |
 |---|---|---|
@@ -792,6 +792,31 @@ R13 E170x→E18xx move after the R17 collision. E21xx confirmed free — see the
 | W2110 | `View` root lays out to zero area | `app() root has zero size — likely a missing child or pad` |
 | W2111 | asset (`model`/`texture`/`heightmap`) not found at load | `asset `char.glb` not found; rendering placeholder` |
 | E0910 (reuse) | `@[ui]`/`Scene3D` built with native LLVM codegen (interp-only v1) | `Axon UI is interpreter + windowing-host only; not supported by `axon build`` |
+
+#### 6a. Codes added 2026-08-01 — and the band is now nearly full
+
+The additions of 2026-08-01 (§3b, §3d, §5) introduced five new compile-time refusals. They were
+drafted as `E21xx` placeholders; allocated here, because this spec's own header records what
+happens when a band is claimed without checking (the draft's E16xx claim collided with the live
+R12b kernel-goal exit code).
+
+| code | refusal | source |
+|---|---|---|
+| **E2109** | interactive node with no derivable accessible name | §3b(b) |
+| **E2113** | missing `.key()` on a node inside a reorderable `for` | §5 |
+| **E2114** | incomplete value (`Uncertain<T>`, `Result<T,E>`) in a `View` position without an explicit collapse | §3d(a) |
+| **E2115** | non-idle agency with no rendered agency surface | §3d(d) |
+| **E2116** | `View` constructor that cannot produce a stable node id | §5 |
+
+`E2110`–`E2112` are **deliberately skipped**, not free: `W2110`–`W2112` occupy those numbers in
+the warning namespace, and although `E` and `W` are distinct prefixes, this spec has interleaved
+them, so reusing the digits would be a diagnostic-reading hazard for no gain.
+
+**Remaining headroom in the reserved band: `E2117`–`E2199`.** Comfortable — but note that R16 has
+gone from 9 codes to 14 in a single day of spec work, and §3d's design is not yet implemented. When
+the first R16 code lands, record the band in `error.rs` with a reserving comment (R14/R17 style) as
+the header already instructs, and record **E2109–E2116 as taken** at the same time so a future
+slice does not re-derive them.
 
 ### 7. Invariants touched
 
@@ -1014,7 +1039,7 @@ for months. A criterion that cannot fail is not a gate.
 
 **(C) Accessibility — from §3b(b), §3c**
 - [ ] `axon_ui_unnamed_interactive_node_is_a_compile_error` — a `button` with no derivable
-      accessible name fails to compile with the reserved `E21xx` code.
+      accessible name fails to compile with **`E2109`**.
 - [ ] `axon_ui_accesskit_tree_round_trips` — for the §3 headline example, every interactive node in
       the `View` tree appears in the exported AccessKit tree with a role and a **non-empty name**.
 - [ ] `axon_ui_a11y_tree_is_derived_not_assembled` — the exported tree is produced by walking the
@@ -1027,7 +1052,7 @@ for months. A criterion that cannot fail is not a gate.
       a screen reader lose focus every repaint, and would make §7.1's canonical hash unsignable.
 - [ ] `axon_ui_reordered_list_preserves_keyed_identity` — deleting or reordering a row in the §3
       `for u in s.users` example does **not** renumber its siblings; a missing key in a reorderable
-      `for` is `E21xx`.
+      `for` is **`E2113`**.
 
 **(E) Provenance surfacing — from §7.2**
 - [ ] `axon_ui_unverified_claim_is_visually_distinct` — a pane rendering a claim whose provenance
