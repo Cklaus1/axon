@@ -473,3 +473,38 @@ same failure mode this audit documents in the codebase, occurring in the audit's
 own evidence: a claim that reads as verified because someone looked carefully at
 the wrong thing. Treat `confirmed`-by-code-read differently from
 `confirmed`-by-repro; the triage JSON distinguishes them and it matters.
+
+### O015 — [medium] INTERP-H04's claimed budget bypass did NOT reproduce (fix reverted)
+
+`kernel_goal_run` computes `let evals = max_evals.max(0).min(avail);` and every
+downstream site reads a non-positive eval count as "no cap" (goal.rs:137, :399,
+:698 all test `max_evals <= 0`). On a code read that clearly implies: exhausted
+budget → `evals == 0` → uncapped optimizer run.
+
+**It does not happen.** With a principal whose budget is fully spent:
+
+```
+axon run <exhausted-budget goal>   →  exit 7
+axon: goal budget exhausted: goal `metric` (principal 0) ran 0 of 100
+      requested evaluations before its budget was exhausted
+```
+
+A downstream guard inside the optimizer catches the exhausted budget and raises
+`GoalBudgetExhausted` before any uncapped work happens. The dangerous-looking
+clamp is real; the consequence is already covered one layer down.
+
+I wrote an early short-circuit, verified it produced a *clearer* message from a
+*better* place — and reverted it, because "clearer error" is not what the
+finding claimed and shipping it under this finding's banner would record a
+bypass as fixed when no bypass existed.
+
+Worth doing eventually, as HARDENING with an honest label: the early check makes
+the invariant local instead of relying on a guard three call-levels away, and it
+would survive someone refactoring the optimizer. But it must not be filed as
+closing INTERP-H04.
+
+**Second false positive from a code-read `confirmed`, after OSK-L03.** Both were
+rated on how the code reads at one site, and both are covered elsewhere. The
+`REPRODUCED`-vs-`verified by direct read` distinction in the triage rationales
+is now measurably load-bearing: of the findings I worked, every code-read-only
+one cost a revert, and every executed-repro one landed cleanly.
