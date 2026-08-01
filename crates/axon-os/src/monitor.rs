@@ -92,10 +92,25 @@ impl ComplianceMonitor {
         let mut current_offset: u64 = 0;
         let mut line_buf = String::new();
 
+        // AUDIT T27 (finding OSK-P4-H5). The stop flag caused an UNCONDITIONAL
+        // early return with no final read of the ledger. cli.rs sets stop the
+        // instant the job process returns, and this loop sleeps 100 ms between
+        // polls — so any entry written in that final window was never parsed,
+        // and a containment violation committed just before exit was reported
+        // as a clean run. The monitor exists to catch exactly that.
+        //
+        // On seeing stop, do ONE more scan before returning. `final_pass` makes
+        // the next observation terminal, so every `continue` path in the body
+        // below still ends the loop rather than spinning.
+        let mut final_pass = false;
         loop {
-            // Honour the stop flag (set when the job exits normally).
+            // Honour the stop flag (set when the job exits normally), but only
+            // AFTER a last drain of the ledger.
             if self.stop.load(Ordering::Acquire) {
-                return MonitorResult::CleanExit;
+                if final_pass {
+                    return MonitorResult::CleanExit;
+                }
+                final_pass = true;
             }
 
             // Try to open + stat the ledger.  Absent = transient (job hasn't
