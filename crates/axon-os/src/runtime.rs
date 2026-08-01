@@ -140,8 +140,35 @@ fn run_bounded(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    // AUDIT T25 (finding OSK-P4-H3 / O019). These handles were taken here but
+    // not READ until after the try_wait/timeout loop below, so a child emitting
+    // more than a pipe buffer (~64 KiB) blocked writing while the parent blocked
+    // waiting for it to exit — a deadlock broken only by the wall-clock timeout.
+    // Observed: a 20,000-line program that runs in 0.09s standalone was sealed
+    // as `Denied{axis:"time"}` after 30s, blaming the job for being slow when it
+    // was fast.
+    //
+    // Drain both pipes on their own threads, concurrently with the wait. The
+    // timeout and kill-file polling below are untouched; only the reads move.
+    let out_h = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = String::new();
+        if let Some(mut s) = stdout_pipe {
+            let _ = s.read_to_string(&mut buf);
+        }
+        buf
+    });
+    let err_h = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = String::new();
+        if let Some(mut s) = stderr_pipe {
+            let _ = s.read_to_string(&mut buf);
+        }
+        buf
+    });
     let start = std::time::Instant::now();
     let mut killed_by_latch = false;
     let code = loop {
@@ -167,24 +194,9 @@ fn run_bounded(
         }
     };
 
-    let read_all = |s: Option<std::process::ChildStdout>| -> String {
-        use std::io::Read;
-        let mut buf = String::new();
-        if let Some(mut s) = s {
-            let _ = s.read_to_string(&mut buf);
-        }
-        buf
-    };
-    let read_err = |s: Option<std::process::ChildStderr>| -> String {
-        use std::io::Read;
-        let mut buf = String::new();
-        if let Some(mut s) = s {
-            let _ = s.read_to_string(&mut buf);
-        }
-        buf
-    };
-    let _ = read_all(stdout); // drained so the child isn't blocked on a full pipe
-    let stderr = read_err(stderr);
+    // Join the drainers: both pipes are at EOF once the child has exited.
+    let _ = out_h.join(); // stdout drained concurrently (see T25 above)
+    let stderr = err_h.join().unwrap_or_default();
 
     Ok(ProcOutcome {
         code,
