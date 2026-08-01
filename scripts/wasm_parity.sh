@@ -46,7 +46,18 @@ WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 # interface, R7 §4.3) is empty, so the native and wasm interpreters MUST agree by
 # construction (I-2: same interp.rs, two targets). Auto-discovery means a new
 # pure-compute example is covered automatically — no hand-maintained list to drift.
-HOST_BUILTINS='read_file|write_file|read_line|ai_complete|ai_extract|exec|spawn|chan_|random_|now_ms|temporal_now|goal_run|agent_detect|agent_uncertainty|agent_trace'
+# AUDIT T14 (finding P5-03): `env_var` and the `http_*` family were MISSING from
+# this alternation, so examples that read the environment or open a socket were
+# auto-discovered as "pure compute". anthropic_stream.ax (env_var + http_sse_post),
+# http_get.ax and trainloop_stream.ax are all in that class — which is why the
+# corpus produced a native-vs-wasm divergence on an unconfigured-network path and
+# the suite carried a permanent baseline failure.
+#
+# Note the comment above promises "no hand-maintained list to drift" while
+# defining precisely such a list. It drifted. Deriving this set from
+# `builtins::builtin_effect_row` is tracked separately (O009) — this change makes
+# the corpus match its own stated invariant now.
+HOST_BUILTINS='read_file|write_file|read_line|env_var|http_get|http_post|http_sse|ai_complete|ai_extract|exec|spawn|chan_|random_|now_ms|temporal_now|goal_run|agent_detect|agent_uncertainty|agent_trace'
 CORPUS=()
 for f in examples/*.ax; do
   grep -q "fn main" "$f" || continue

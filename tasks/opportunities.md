@@ -247,3 +247,21 @@ control.
 
 Needs: a documented `axon-vm attest --record-baseline` (or equivalent) plus a
 note in the kernel-gate docs that a rebuild requires an explicit re-pin.
+
+### O009 — [medium] Derive the wasm-parity exclusion set from `builtin_effect_row`, not a hand-written regex
+
+`scripts/wasm_parity.sh:50` defines `HOST_BUILTINS` as a hand-maintained
+alternation, directly beneath a comment promising "no hand-maintained list to
+drift". It drifted: `env_var` and the whole `http_*` family were missing, so
+examples that read the environment or open a socket were auto-discovered as
+"pure compute" (T14 / P5-03).
+
+The exclusion set should come from `builtins::builtin_effect_row` — any builtin
+with a non-empty effect row is host-touching by definition — so a newly-added
+capability builtin cannot silently widen the "pure" corpus. Same shape as the
+R1d drift test that already keeps `BUILTIN_EXTERNS` honest, and the same shape
+recommended for axon-os `scan_effects` in T4.
+
+Note the pattern this is the third instance of: a comment asserting an invariant
+("no hand-maintained list", "deny-by-default", "attestation verified") sitting
+directly above code that does not implement it. The comment is not evidence.
