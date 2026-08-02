@@ -5345,14 +5345,24 @@ fn cmd_deploy(
 
     // Phase 11: compute final risk (derived from AST; user may only raise it).
     let derived_risk = derive_risk_from_ast(&program);
-    let declared_risk = risk_flag.as_deref().and_then(parse_risk_level).unwrap_or(0);
-    if risk_flag.is_some() && declared_risk == -1 {
-        eprintln!(
-            "error: invalid --risk level '{}' — expected low|medium|high|critical",
-            risk_flag.as_deref().unwrap_or("")
-        );
-        process::exit(2);
-    }
+    // AUDIT T30 (finding P4-PROD-05). This was
+    // `.and_then(parse_risk_level).unwrap_or(0)` followed by a `== -1` guard —
+    // but parse_risk_level returns Option and yields only 0..=3 or None, so
+    // unwrap_or(0) turned an UNPARSEABLE level into "low" and the guard below it
+    // was dead code. `axon deploy --json --risk criticl` (one typo) reported
+    // risk:"low", stages_run:[], status:"deployed", exit 0 — the operator asked
+    // for the strictest gate and silently got the weakest. Fail-open on a
+    // safety flag; refuse instead.
+    let declared_risk = match risk_flag.as_deref() {
+        None => 0,
+        Some(s) => match parse_risk_level(s) {
+            Some(r) => r,
+            None => {
+                eprintln!("error: invalid --risk level '{s}' — expected low|medium|high|critical");
+                process::exit(2);
+            }
+        },
+    };
     let risk = std::cmp::max(derived_risk, declared_risk);
     let requires_full_pipeline = risk >= 2; // >= High
 

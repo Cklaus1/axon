@@ -63,6 +63,19 @@ identical bit pattern). Third data-loss bug in this one tool — `emit_program`
 still carries the `AUDIT T9` note about `mod` declarations having been silently
 DELETED — which argues the AST-based architecture is the problem, not any arm.
 
+### Purity / safety-flag sweep — executed-repro first, per the re-triage result
+
+| task | commit | what |
+|---|---|---|
+| **T29** | `—` | `@[pure]` could launder any impure operation through a lambda — the purity walker listed `Expr::Lambda` in its terminal LEAF arm, so it never looked inside a closure body. `arr_fold(xs, 0, \|a, x\| { println("boom") a + x })` in a `@[pure]` fn checked exit 0, while the same `println` written directly is E1207 (P4-FE-01) |
+| **T29** | `—` | the four R15 `host_await*` builtins were in neither `is_impure_builtin` nor `builtin_effect_row`, so `@[pure] fn g() -> str { host_await("hi") }` checked clean — they suspend to the host and resume with its reply, which is I/O plus unbounded nondeterminism (P4-INT-02) |
+| **T30** | `—` | `axon deploy --risk criticl` (one typo) reported `risk:"low"`, `stages_run:[]`, `status:"deployed"`, exit 0. `.unwrap_or(0)` collapsed an unparseable level to the WEAKEST one and the `== -1` guard beneath it was dead code — `parse_risk_level` returns Option and never yields -1. Fail-open on a safety flag (P4-PROD-05) |
+
+T29 is the transitive-laundering class again, third instance after `@[contained]`
+and `@[sensitive]`: a guard that inspects only the immediate body is escapable by
+moving the work one hop. Worth a systematic sweep of every walker's leaf arm
+rather than waiting for the next report — `Expr::InlineAsm` is still a leaf there.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |

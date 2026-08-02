@@ -1757,6 +1757,60 @@ fn kernel_goal_refuses_an_unknown_principal_instead_of_defaulting_to_root() {
 }
 
 #[test]
+fn deploy_refuses_an_unparseable_risk_level() {
+    // AUDIT T30 (finding P4-PROD-05). `--risk` was parsed with
+    // `.and_then(parse_risk_level).unwrap_or(0)` and then guarded by a
+    // `== -1` check — but parse_risk_level returns Option and never yields -1,
+    // so the guard was dead code and an UNPARSEABLE level silently became
+    // "low". `axon deploy --json --risk criticl` reported risk:"low",
+    // stages_run:[], status:"deployed", exit 0: the operator asked for the
+    // strictest gate and got the weakest, with no warning. Fail-open on a
+    // safety flag.
+    let dir = std::env::temp_dir().join("axon_t30_risk");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("risk.ax");
+    std::fs::write(&p, "fn main() -> i64 { println(\"deployed\") 0 }\n").unwrap();
+
+    let run = |level: &str| -> (Option<i32>, String) {
+        let out = axon()
+            .args(["deploy", "--json", "--risk", level, p.to_str().unwrap()])
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+
+    // A typo must be refused, NOT silently downgraded to the weakest level.
+    let (code, msg) = run("criticl");
+    assert_eq!(code, Some(2), "malformed --risk must exit 2: {msg}");
+    assert!(
+        msg.contains("invalid --risk level"),
+        "must name the bad flag: {msg}"
+    );
+    assert!(
+        !msg.contains("\"status\":\"deployed\""),
+        "must not deploy on a malformed risk flag: {msg}"
+    );
+
+    // Every valid level must still be accepted and reported back faithfully.
+    for level in ["low", "medium", "high", "critical"] {
+        let (code, msg) = run(level);
+        assert_eq!(code, Some(0), "--risk {level} should deploy: {msg}");
+        assert!(
+            msg.contains(&format!("\"risk\":\"{level}\"")),
+            "--risk {level} must be reported as {level}: {msg}"
+        );
+    }
+}
+
+#[test]
 fn deploy_gate_accepts_both_nullary_and_one_arg_signatures() {
     // AUDIT T17 (finding P5-01). run_named_fn_as_bool called every gate with
     // `vec![]` and no arity check, so a gate declared
@@ -10093,6 +10147,97 @@ fn goal_optimizer_builtins_are_impure_e1207() {
         let (c, m) = check(body);
         assert_eq!(c, 2, "@[pure] calling `{body}` must be rejected: {m}");
         assert!(m.contains("E1207"), "expected E1207 for `{body}`: {m}");
+    }
+}
+
+/// AUDIT T29 (finding P4-FE-01). The purity walker listed `Expr::Lambda` in its
+/// terminal leaf arm, so it never looked inside a closure body. Any impure
+/// operation moved one hop into a lambda passed `@[pure]` clean.
+///
+/// Same class as the `@[contained]` and `@[sensitive]` laundering holes: a guard
+/// that inspects only the immediate body is escapable by moving the work.
+#[test]
+fn pure_fn_cannot_launder_impurity_through_a_lambda() {
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!(
+            "axon_purelambda_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+
+    // Control: the same `println` written directly was ALWAYS caught. If this
+    // ever stops holding, the test below proves nothing.
+    let (c, m) = check(
+        "@[pure]\nfn f(xs: &[i64]) -> i64 { println(\"boom\") 1 }\n\
+         fn main() { let v = [1] println(to_str(f(&v))) }\n",
+    );
+    assert_eq!(c, 2, "control: direct impure call must be E1207: {m}");
+    assert!(m.contains("E1207"), "control: expected E1207: {m}");
+
+    // The hole: one hop into a closure. Was exit 0 before the fix.
+    let (c, m) = check(
+        "@[pure]\nfn f(xs: &[i64]) -> i64 { arr_fold(xs, 0, |a, x| { println(\"boom\") a + x }) }\n\
+         fn main() { let v = [1, 2, 3] println(to_str(f(&v))) }\n",
+    );
+    assert_eq!(c, 2, "impurity inside a lambda must be E1207, got {c}: {m}");
+    assert!(m.contains("E1207"), "expected E1207: {m}");
+
+    // A genuinely pure lambda must still pass — the walk must not over-reject.
+    let (c, m) = check(
+        "@[pure]\nfn f(xs: &[i64]) -> i64 { arr_fold(xs, 0, |a, x| a + x) }\n\
+         fn main() { let v = [1, 2, 3] println(to_str(f(&v))) }\n",
+    );
+    assert_eq!(c, 0, "pure lambda must still pass, got {c}: {m}");
+}
+
+/// AUDIT T29 (finding P4-INT-02). The four R15 `host_await*` builtins suspend
+/// the program to the host and resume with whatever it sends back — I/O plus an
+/// unbounded non-deterministic input — but appeared in neither
+/// `is_impure_builtin` nor `builtin_effect_row`, so a `@[pure]` fn could call
+/// one and check clean.
+#[test]
+fn pure_fn_cannot_call_host_await() {
+    for b in [
+        "host_await(\"hi\")",
+        "host_await_opt(\"hi\")",
+        "host_await_val(\"hi\")",
+        "host_await_val_opt(\"hi\")",
+    ] {
+        let src = format!("@[pure]\nfn g() -> str {{ {b} }}\nfn main() {{ println(\"ok\") }}\n");
+        let f = std::env::temp_dir().join(format!(
+            "axon_pureawait_{}_{}.ax",
+            std::process::id(),
+            b.len()
+        ));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let c = out.status.code().unwrap_or(-1);
+        let m = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(c, 2, "@[pure] calling `{b}` must be rejected: {m}");
+        assert!(m.contains("E1207"), "expected E1207 for `{b}`: {m}");
     }
 }
 

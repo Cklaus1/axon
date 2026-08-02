@@ -2222,6 +2222,22 @@ impl CheckCtx {
                     }
                 }
             }
+            // AUDIT T29 (finding P4-FE-01). A lambda body is NOT a leaf: it is
+            // code this function causes to run. Listing it here meant the
+            // purity walker never looked inside one, so an impure operation
+            // laundered through a closure passed clean:
+            //
+            //     @[pure] fn f(xs: &[i64]) -> i64 {
+            //         arr_fold(xs, 0, |a, x| { println("boom") a + x })
+            //     }
+            //
+            // checked exit 0, while the same `println` written directly in the
+            // body is correctly E1207. Same shape as the @[contained] and
+            // @[sensitive] laundering holes: a guard that inspects only the
+            // immediate body is escapable by moving the work one hop.
+            Expr::Lambda { body, .. } => {
+                Self::collect_purity_violations(body, pure_fns, out);
+            }
             // Leaves / no child exprs to walk.
             Expr::Ident(_)
             | Expr::Literal(_)
@@ -2229,8 +2245,7 @@ impl CheckCtx {
             | Expr::Break
             | Expr::Continue
             | Expr::Return(None)
-            | Expr::InlineAsm { .. }
-            | Expr::Lambda { .. } => {}
+            | Expr::InlineAsm { .. } => {}
         }
     }
 

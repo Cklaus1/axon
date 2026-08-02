@@ -2171,6 +2171,13 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "chan_new" | "chan_send" | "chan_recv"
             // F5 sandbox execution — runs user code that may have effects (modeled as IO)
             | "sandbox_run"
+            // AUDIT T29 (finding P4-INT-02). R15 suspend-to-host: these unwind the
+            // program to the host, hand it a payload, and resume with whatever the
+            // host sends back. That is I/O plus an unbounded non-deterministic
+            // input — about as impure as a builtin gets — but they were absent
+            // from this table AND from builtin_effect_row, so
+            // `@[pure] fn g() -> str { host_await("hi") }` passed check exit 0.
+            | "host_await" | "host_await_opt" | "host_await_val" | "host_await_val_opt"
             // Phase 13: distribution sampling (Random effect)
             | "gaussian_sample" | "beta_sample" | "categorical_sample"
             // R17 HAL: raw hardware access (Hal effect)
@@ -2224,6 +2231,11 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
 
         // Network — raw HTTP calls.
         "http_get" | "http_post" | "http_sse" | "http_sse_post" => &["Net"],
+
+        // AUDIT T29 (P4-INT-02). R15 suspend-to-host. The call leaves the
+        // program, hands the host a payload, and resumes with the host's reply —
+        // an I/O round trip in both directions.
+        "host_await" | "host_await_opt" | "host_await_val" | "host_await_val_opt" => &["IO"],
 
         // Time / scheduling.
         "now_ms" | "sleep_ms" => &["Time"],

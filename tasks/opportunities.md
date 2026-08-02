@@ -770,3 +770,54 @@ or a token/span-based formatter. Worth noting `emit_program` carries an
 `AUDIT T9` comment about `mod` declarations having been silently *deleted* by
 this same tool — that is three data-loss bugs in one formatter, which argues
 the architecture is the problem rather than any individual arm.
+
+---
+
+## O022 — `codegen_random_i64_degenerate_bounds_match_interp` is intermittent (UNDIAGNOSED)
+
+Failed once in a full `cargo test -p axon-core --no-default-features` run
+(432 passed / 1 failed), then passed in isolation and passed again in a second
+full run of the same suite (433/0) on the same commit. So it is genuinely
+non-deterministic, and it is NOT caused by the T29/T30 changes — those touch the
+purity walker, the builtin effect catalog, and `--risk` parsing, none of which
+the test exercises.
+
+**Cause unknown.** My first hypothesis was build contention: the test shells out
+to `scripts/random_i64_parity.sh`, which does a native LLVM build, and only
+14 of 56 harness scripts take the shared `flock` (see O023). I tested that
+directly — ran `random_i64_parity.sh` concurrently with four other unlocked
+native-building harnesses — and it passed. So the contention hypothesis is
+NOT confirmed, and I am not recording it as the explanation.
+
+The diagnostic mistake worth avoiding next time: the first failing run was
+captured through `grep -E "^test result|FAILED|^error"`, which threw away the
+assertion body. The harness prints the script's stdout+stderr on failure and
+that is the only real evidence — capture full output when chasing an
+intermittent. (Second instance of a pipe destroying the evidence needed for the
+decision, after the `| tail` exit-code masking.)
+
+Sibling of the still-undiagnosed bandit flake. Two known intermittents now.
+Next step when one recurs: full output, plus `--test-threads=1` to establish
+whether cross-test interference is involved at all.
+
+---
+
+## O023 — harness lock coverage is 14 of 56 (LEAD, not a confirmed defect)
+
+O004 fixed the wasm subset (9 of 21 scripts took the shared `flock`). The wider
+picture: of 56 harness scripts, only 14 take it, and **38 of the unlocked ones
+invoke `cargo build`/`cargo run`** — `checked_arith_parity`, `exit_code_parity`,
+`fuzz_parity`, `random_i64_parity`, `qemu_boot_test`, and 33 more. They run
+concurrently as cargo integration tests, each shelling out to its own build.
+
+I could not make this produce a failure on demand (see O022), so this is a lead
+rather than a diagnosed cause. Two cautions before anyone "fixes" it by adding
+`flock` everywhere:
+
+  * cargo's own target-dir lock already serialises these builds, so the flock
+    changes queueing discipline, not whether they serialise;
+  * an earlier attempt this session to wrap an ALREADY-locked harness in a
+    second flock deadlocked and left a stale holder blocking later runs.
+
+Worth measuring (does lock coverage correlate with the observed intermittents?)
+before changing.
