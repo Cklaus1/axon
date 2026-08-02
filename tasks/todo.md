@@ -32,9 +32,39 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | **T16** | `—` | host_await worker gets a deep stack: abort/exit-134 → graceful limit (INTERP-H03) |
 | **T17** | `1289b74` | deploy gates accept 0/1-arg (P5-01, Acid Test 2 works); legacy approvals ≠ tampering |
 | O012 | logged | F062 per-call AI tier ignored natively — attempted, reverted, needs a `walk_expr` refactor first |
-| **O004** | `final` | all wasm harnesses take the shared build lock — **suite 430 passed / 0 failed, no known flakes** |
+| **O004** | `f9f3869` | all wasm harnesses take the shared build lock — **suite 430/0, no known flakes** |
+| **T19** | `—` | checked arithmetic in the guest-kernel bump allocator (OSK-L02) |
+| **T20** | `—` | unknown principal handle refused, not silently treated as root (F006) |
 
-**Ten fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+### axon-os supervisor sweep — found by EXECUTING code-read findings
+
+| task | commit | what |
+|---|---|---|
+| **T23** | `—` | `AXON_*` operator controls forwarded through `env_clear` — the R28 ledger was never written for ANY supervised run; mock/replay were inert (OSK-P4-H4) |
+| **T24** | `—` | a job that never ran no longer seals as `Completed` — parse failure sealed `Completed{2}`, AI-policy refusal `Completed{5}` (O016/O018) |
+| **T25** | `—` | child pipes drained concurrently — >64 KiB output deadlocked, blamed as `Denied{time}`; 30s → 0.50s (OSK-P4-H3) |
+| **T26** | `—` | `axon-os kill` trips every live latch — `--killable --monitor` polled nothing while printing "🛑 kill tripped" (OSK-P4-H6) |
+| **T27** | `—` | compliance monitor drains the ledger before exiting — violations in the last ~100 ms were reported as a clean run (OSK-P4-H5) |
+
+### R16 Axon UI spec (design work, no code)
+
+| section | what |
+|---|---|
+| §1b | prior-art survey; **decision: we do not build the renderer** |
+| §1c | **the whole chosen stack is pre-1.0** — Vello alpha, Masonry/Xilem experimental, Blitz pre-alpha; only Taffy mature, only Slint stable (and not permissively licensed) |
+| §1d | **decision: the renderer seam MUST admit a CPU path** — decisive reason is that a GPU-only renderer cannot be gate-tested |
+| §3a | rich text marked **a11y-BLOCKED** (externally gated on AccessKit, not on our slice order) |
+| §3b | Parley + AccessKit as **type obligations**, not backend details |
+| §3c | read Blitz's wiring — yielded the stable-identity requirement |
+| §3d | **ASI view semantics** — uncertainty / pending / streaming / agency as one problem |
+| §3d(a) | first ASI slice, to implementation depth, **with a stated falsifier** |
+| §5 | stable `View` node identity + `.key()` |
+| §6a | E2109/E2113–E2116 allocated |
+| §7.2 | **empirical status of the controls §7.1 depends on** — the audit findings above, in the spec |
+| §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
+| §11a | §3d(b)(c)(d) need three types the language **does not have** |
+
+**Seventeen fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
@@ -45,7 +75,13 @@ anyway, which is the defect class this audit exists to document.
   generic `walk_expr` extracted first, because copy-pasting `expr_calls`'
   70-line recursion is how the "walker missed an arm" class recurs (already
   fixed 3x here: R6 taint, `@[contained]` helpers, T2 string dispatch).
-- **~160 findings remain untriaged-for-implementation.** They are triaged for
+- **The execution re-triage result (the most useful thing to carry forward).** 8 code-read-only
+  findings were re-checked by RUNNING them: 8 answers changed — 2 false (OSK-L03 `--latest`,
+  INTERP-H04 budget bypass), 2 true-but-understated, 1 true-and-mis-attributed, 3 true as written.
+  Reading never once predicted the outcome. Of the findings worked all session, every code-read
+  one cost a revert and every executed-repro one landed cleanly. **Work the remaining findings in
+  that order** — the triage JSON records which is which ("REPRODUCED" vs "verified by direct read").
+- **~150 findings remain untriaged-for-implementation.** They are triaged for
   *severity* (`governance/reviews/2026-08-01-triage/full-185.json`) but no code
   was written for them. Effort profile: 59 trivial / 125 small / 112 medium /
   42 large.
