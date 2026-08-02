@@ -821,3 +821,51 @@ rather than a diagnosed cause. Two cautions before anyone "fixes" it by adding
 
 Worth measuring (does lock coverage correlate with the observed intermittents?)
 before changing.
+
+---
+
+## O024 — chain truncation was undetectable in BOTH verify paths (PARTIALLY FIXED)
+
+`chain.rs`, the `axon-vm chain` CLI help, and the R34 spec all asserted that
+"removing / substituting / reordering any run is detectable by `chain verify`".
+Removing is not. Executed against a real 3-entry chain:
+
+| attack                                  | before                  |
+|-----------------------------------------|-------------------------|
+| modify an entry in place                | `CHAIN BROKEN` exit 15  |
+| delete an INTERIOR entry (the tested case) | `CHAIN BROKEN` exit 15 |
+| **truncate the tail** (hide the last runs) | `CHAIN OK: 1 entries` exit 0 |
+| **erase the chain entirely**            | `CHAIN OK: 0 entries` exit 0 |
+| **truncate, then re-export**            | `EXPORT OK: 1 entries` exit 0 |
+
+The mechanism is not a bug in the hash — it is what linkage means. Every prefix
+of a valid chain is itself a valid chain, so linkage proves the entries you were
+GIVEN are well-formed and says nothing about entries you were not given.
+`--genesis` pins the ROOT; truncation moves the TIP. The auditor-facing export
+path was blind for a second reason: `head` is written by whoever produced the
+export, so truncate-then-re-export yields a head consistent with the shortened
+list and the existing head check passes.
+
+Only `verify_detects_missing_entry` (INTERIOR deletion) was ever tested — the
+same shape as the golden-IR shape-vs-content gap and the fmt idempotence gap:
+the test next to the hole tested the neighbouring property.
+
+**Fixed:** `--expect-head` / `--expect-count` on both `chain verify` and
+`chain verify-export`, plus `ChainStore::verify_pinned` / `verify_export_pinned`
+and a `ChainVerifyFailure` enum that distinguishes `Broken` / `CountMismatch` /
+`HeadMismatch`. All five attacks above are refused (exit 15) when a pin is
+supplied. Unpinned behaviour is unchanged for compatibility but now prints
+"(unpinned — truncation undetectable, see --expect-head)" instead of a bare
+`CHAIN OK`. The false claims in chain.rs, the CLI help, and the R34 spec were
+corrected. `scripts/r34_acceptance_gate.sh` still passes (its checks are
+substring matches).
+
+**NOT fixed — needs an architecture decision.** Nothing in the system *stores* a
+pin, so the guarantee is only as strong as the relying party's own bookkeeping.
+Where the tip should live — R33 quorum state, the R28 capability ledger, or an
+external attestation service — is a design call. Until that exists, an operator
+who never records a head is exactly as exposed as before; the CLI can now tell
+them so, which is the most a local fix can do.
+
+A characterization test (`unpinned_verify_cannot_detect_a_truncated_tail`) pins
+the limitation so it cannot silently regress or be silently "fixed" unnoticed.

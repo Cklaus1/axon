@@ -152,8 +152,12 @@ enum Cmd {
     ///
     /// Extends the R31 `axtcb1-ext:` boot measurement into an append-only per-run chain
     /// (`governance/specs/R34-incremental-attestation.md`): each `chain stamp` call binds
-    /// the program's SHA-256, a run-id, and a timestamp onto the previous chain tip, so
-    /// removing / substituting / reordering any run is detectable by `chain verify`.
+    /// the program's SHA-256, a run-id, and a timestamp onto the previous chain tip.
+    ///
+    /// `chain verify` detects modification in place and INTERIOR deletion. It cannot
+    /// detect a truncated tail on its own — every prefix of a valid chain is itself a
+    /// valid chain — so pass `--expect-head` (and/or `--expect-count`) to pin the tip
+    /// against what you last saw. `--genesis` pins the ROOT, which is the wrong end.
     Chain {
         #[command(subcommand)]
         cmd: ChainCmd,
@@ -296,6 +300,19 @@ enum ChainCmd {
         /// pass this explicitly to pin against a known-good R31 boot root).
         #[arg(long)]
         genesis: Option<String>,
+
+        /// Expected chain tip (`axtcb1-run:…`, as printed by `chain stamp` or
+        /// `chain show`). AUDIT T31: `--genesis` pins the ROOT, which cannot
+        /// detect a truncated tail — every prefix of a valid chain is itself a
+        /// valid chain, so chopping off the last runs still verifies clean.
+        /// Pin the TIP with this to detect rollback.
+        #[arg(long)]
+        expect_head: Option<String>,
+
+        /// Expected number of entries. Catches a truncation even when the
+        /// relying party recorded only how many runs it had seen, not the hash.
+        #[arg(long)]
+        expect_count: Option<u64>,
     },
     /// Show the current chain state (spec §5.2): vm_id, boot_root, entry
     /// count, and the current head (tip). Read-only; never writes.
@@ -358,6 +375,17 @@ enum ChainCmd {
     VerifyExport {
         /// Path to the exported chain JSON file.
         file: PathBuf,
+
+        /// Expected chain tip. AUDIT T31: the export's own `head` field is
+        /// written by whoever produced the export, so an attacker who truncates
+        /// and re-exports produces a head that agrees with the shortened entry
+        /// list. Only a head the AUDITOR already knows detects that.
+        #[arg(long)]
+        expect_head: Option<String>,
+
+        /// Expected number of entries (see `--expect-head`).
+        #[arg(long)]
+        expect_count: Option<u64>,
     },
 }
 
@@ -597,14 +625,14 @@ fn main() {
         Cmd::Chain { cmd } => match cmd {
             ChainCmd::Stamp { prog, run_id, store, kernel } =>
                 cmd_chain_stamp(prog, run_id, store, kernel),
-            ChainCmd::Verify { store, genesis } =>
-                cmd_chain_verify(store, genesis),
+            ChainCmd::Verify { store, genesis, expect_head, expect_count } =>
+                cmd_chain_verify(store, genesis, expect_head, expect_count),
             ChainCmd::Show { store, vm_id, json, kernel } =>
                 cmd_chain_show(store, vm_id, json, kernel),
             ChainCmd::Export { store, out, vm_id, kernel } =>
                 cmd_chain_export(store, out, vm_id, kernel),
-            ChainCmd::VerifyExport { file } =>
-                cmd_chain_verify_export(file),
+            ChainCmd::VerifyExport { file, expect_head, expect_count } =>
+                cmd_chain_verify_export(file, expect_head, expect_count),
         },
     }
 }
@@ -1197,7 +1225,12 @@ fn cmd_chain_stamp(prog: PathBuf, run_id: Option<String>, store_path: PathBuf, k
 
 /// `axon-vm chain verify` — recompute every link from genesis; report the
 /// first broken seq (never the last) on failure.
-fn cmd_chain_verify(store_path: PathBuf, genesis: Option<String>) {
+fn cmd_chain_verify(
+    store_path: PathBuf,
+    genesis: Option<String>,
+    expect_head: Option<String>,
+    expect_count: Option<u64>,
+) {
     let store = chain::ChainStore::new(&store_path);
     let genesis_hash = genesis.unwrap_or_else(|| {
         // No externally-pinned genesis supplied: fall back to the chain's own
@@ -1212,12 +1245,26 @@ fn cmd_chain_verify(store_path: PathBuf, genesis: Option<String>) {
             .unwrap_or_default()
     });
 
-    match store.verify(&genesis_hash) {
+    // AUDIT T31 (OSK-P7-H3 / P7-KRN-06 / P6-COV-02). Linkage alone cannot see a
+    // truncated tail: every prefix of a valid chain is itself a valid chain, so
+    // a 3-entry chain with the incriminating run chopped off reported
+    // "CHAIN OK: 1 entries" and an erased one "CHAIN OK: 0 entries", both
+    // exit 0. --genesis pins the ROOT; truncation moves the TIP. The pins below
+    // are the only thing that closes it, and they must come from the caller.
+    match store.verify_pinned(&genesis_hash, expect_head.as_deref(), expect_count) {
         Ok(n) => {
-            println!("CHAIN OK: {n} entries");
+            if expect_head.is_none() && expect_count.is_none() {
+                // Say what was actually established. Without a pin this is
+                // "well-formed from the genesis", NOT "complete".
+                println!(
+                    "CHAIN OK: {n} entries (unpinned — truncation undetectable, see --expect-head)"
+                );
+            } else {
+                println!("CHAIN OK: {n} entries (pinned)");
+            }
         }
-        Err(seq) => {
-            println!("CHAIN BROKEN at seq {seq}");
+        Err(e) => {
+            println!("{e}");
             process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
         }
     }
@@ -1311,7 +1358,11 @@ fn cmd_chain_export(store_path: PathBuf, out_path: PathBuf, vm_id: String, kerne
 
 /// `axon-vm chain verify-export` — verify an exported chain JSON (auditor
 /// side, no live VM required). Same pass/fail contract as `chain verify`.
-fn cmd_chain_verify_export(file: PathBuf) {
+fn cmd_chain_verify_export(
+    file: PathBuf,
+    expect_head: Option<String>,
+    expect_count: Option<u64>,
+) {
     let content = match fs::read_to_string(&file) {
         Ok(c) => c,
         Err(e) => {
@@ -1326,10 +1377,21 @@ fn cmd_chain_verify_export(file: PathBuf) {
             process::exit(1);
         }
     };
-    match chain::verify_export(&export) {
-        Ok(n) => println!("EXPORT OK: {n} entries"),
-        Err(seq) => {
-            println!("EXPORT BROKEN at seq {seq}");
+    // AUDIT T31. The export's own `head` is written by whoever produced it, so
+    // truncate-then-re-export yields a head consistent with the shortened entry
+    // list and the existing check passes. Only an auditor-supplied pin sees it.
+    match chain::verify_export_pinned(&export, expect_head.as_deref(), expect_count) {
+        Ok(n) => {
+            if expect_head.is_none() && expect_count.is_none() {
+                println!(
+                    "EXPORT OK: {n} entries (unpinned — truncation undetectable, see --expect-head)"
+                );
+            } else {
+                println!("EXPORT OK: {n} entries (pinned)");
+            }
+        }
+        Err(e) => {
+            println!("{}", e.to_string().replace("CHAIN ", "EXPORT "));
             process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
         }
     }

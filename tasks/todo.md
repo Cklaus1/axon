@@ -76,6 +76,18 @@ and `@[sensitive]`: a guard that inspects only the immediate body is escapable b
 moving the work one hop. Worth a systematic sweep of every walker's leaf arm
 rather than waiting for the next report — `Expr::InlineAsm` is still a leaf there.
 
+### Attestation-chain integrity
+
+| task | commit | what |
+|---|---|---|
+| **T31** | `—` | chain **truncation** was undetectable in both verify paths. `chain.rs`, the CLI help and the R34 spec all claimed removal was detectable; only INTERIOR deletion was, and only interior deletion was tested. Chopping the tail off a 3-entry chain reported `CHAIN OK: 1 entries` exit 0; erasing it reported `CHAIN OK: 0 entries`; truncate-then-re-export reported `EXPORT OK`. Added `--expect-head`/`--expect-count` pins (OSK-P7-H3 / P7-KRN-06 / P6-COV-02) |
+
+Linkage cannot catch truncation unaided — every prefix of a valid chain is a
+valid chain, and `--genesis` pins the ROOT while truncation moves the TIP. The
+pin has to come from outside, so **nothing yet stores one**: where the tip should
+live (R33 quorum state / R28 ledger / external attestation) is on the
+needs-human list, not something a local fix can close.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -94,7 +106,7 @@ rather than waiting for the next report — `Expr::InlineAsm` is still a leaf th
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Eighteen fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Nineteen fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

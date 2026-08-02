@@ -1001,8 +1001,28 @@ axon-vm run examples/while.ax --chain --verify-chain "${EXPECTED}" --vm-id demo-
 - The chain formula in §4.2 is implemented byte-for-byte; same inputs → same output across
   any two invocations (`acc_a4` passes).
 - Same programs in different order produce different chain values (`acc_a5` passes).
-- Tampering any entry (hash, linkage, removal, reorder) is detected by `chain verify`
-  (`acc_a2` passes for all 4 tamper variants).
+- Tampering any entry (hash, linkage, **interior** removal, reorder) is detected by
+  `chain verify` (`acc_a2` passes for all 4 tamper variants).
+- **Truncation of the TAIL is NOT detected by `chain verify` alone, and cannot be**
+  (AUDIT T31, findings OSK-P7-H3 / P7-KRN-06 / P6-COV-02). Every prefix of a valid
+  chain is itself a valid chain, so chopping off the last runs — the exact move an
+  operator hiding a run would make — verified clean (`CHAIN OK: 1 entries`, exit 0),
+  as did erasing the chain outright (`CHAIN OK: 0 entries`). The auditor path was
+  equally blind: an attacker who truncates and re-exports emits a `head` consistent
+  with the shortened entry list, so `verify-export`'s internal head check passed too.
+  `--genesis` pins the ROOT; truncation moves the TIP.
+
+  Closing it requires a pin the attacker does not control, which must come from
+  outside this crate. `chain verify` / `chain verify-export` therefore accept
+  `--expect-head <hash>` and `--expect-count <n>`; a relying party that records the
+  tip it last saw detects any rollback (`pinned_verify_detects_a_truncated_tail`,
+  `pinned_verify_export_detects_truncate_then_reexport`). Unpinned output now says
+  so explicitly rather than implying completeness.
+
+  **Open (needs a decision):** nothing in the system yet *stores* a pin, so the
+  guarantee is only as good as the relying party's own bookkeeping. Where the tip
+  should be persisted — R33 quorum state, the R28 ledger, or an external
+  attestation service — is an architecture call, not a code fix.
 - Attempting to re-extend from a stale root is refused (`acc_a6` passes).
 - Chain root equals R31 `axtcb1-ext:` boot measurement (`chain_composes_with_r31` passes).
 - Export → import → verify round-trip succeeds (`chain_exported_and_imported` passes).

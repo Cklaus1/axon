@@ -3,8 +3,34 @@
 //! Extends the R31 `axtcb1-ext:` boot measurement into an append-only, per-run
 //! hash chain (`governance/specs/R34-incremental-attestation.md` §4.2). Every
 //! chain link binds: the previous chain tip, the program's SHA-256, a run-id,
-//! and a timestamp, so removing / substituting / reordering any run is detected
-//! by `ChainStore::verify`.
+//! and a timestamp.
+//!
+//! # What linkage alone does and does not catch (AUDIT T31, findings
+//! OSK-P7-H3 / P7-KRN-06 / P6-COV-02)
+//!
+//! This doc previously claimed that "removing / substituting / reordering any
+//! run is detected by `ChainStore::verify`". **Removal of a SUFFIX is not**, and
+//! no hash chain can catch it unaided. Executed against this crate:
+//!
+//! | attack                                | `chain verify`          |
+//! |---------------------------------------|-------------------------|
+//! | modify an entry in place              | `CHAIN BROKEN` exit 15  |
+//! | delete an INTERIOR entry              | `CHAIN BROKEN` exit 15  |
+//! | truncate the tail (hide the last run) | `CHAIN OK: 1 entries`   |
+//! | erase the chain entirely              | `CHAIN OK: 0 entries`   |
+//!
+//! Linkage proves the entries you were GIVEN form an unbroken chain from the
+//! genesis; it says nothing about entries you were not given. Every prefix of a
+//! valid chain is itself a valid chain. `--genesis` pins the ROOT, which is the
+//! wrong end — truncation moves the TIP.
+//!
+//! Detecting truncation therefore requires the tip to be pinned somewhere the
+//! attacker does not control. [`ChainStore::verify`] cannot do that on its own,
+//! so the pin is supplied by the caller: `chain verify --expect-head <hash>`
+//! and/or `--expect-count <n>` (same flags on `verify-export`). A relying party
+//! that records the head it last saw can then detect any rollback. Without a
+//! pin, verify's contract is only "this is a well-formed chain from the
+//! genesis", and it now says so rather than implying completeness.
 //!
 //! Preimage (spec §4.2, byte-for-byte, MUST NOT be altered without a version
 //! bump to `axon-run-v2\n`):
@@ -207,6 +233,33 @@ impl ChainStore {
         verify_entries(&entries, genesis_hash)
     }
 
+    /// Verify linkage AND that the chain still ends where the relying party
+    /// last saw it (AUDIT T31). See [`verify_entries_pinned`] for why linkage
+    /// alone cannot detect a truncated tail. With both pins `None` this is
+    /// exactly [`ChainStore::verify`], modulo the richer error type.
+    pub fn verify_pinned(
+        &self,
+        genesis_hash: &str,
+        expect_head: Option<&str>,
+        expect_count: Option<u64>,
+    ) -> Result<u64, ChainVerifyFailure> {
+        let lines = match self.read_lines() {
+            Ok(v) => v,
+            Err(_) => return Err(ChainVerifyFailure::Broken(0)),
+        };
+        let mut entries = Vec::with_capacity(lines.len());
+        for (idx, parsed) in lines {
+            match parsed {
+                Ok(e) => entries.push(e),
+                Err(_) => return Err(ChainVerifyFailure::Broken(idx)),
+            }
+        }
+        // NOTE: no early `entries.is_empty() -> Ok(0)` shortcut here. That is
+        // precisely the erased-chain case the pins exist to catch — an absent
+        // or emptied chain must still be compared against the pinned tip.
+        verify_entries_pinned(&entries, genesis_hash, expect_head, expect_count)
+    }
+
     /// Export the full chain as a self-contained [`ChainExport`] (R34 Slice 4,
     /// spec §5.4): everything an auditor needs to call [`verify_export`]
     /// without a live VM — just this struct plus the program source files.
@@ -259,6 +312,107 @@ pub struct ChainExport {
     pub head: String,
     pub exported_at_ms: u64,
     pub entries: Vec<ChainEntry>,
+}
+
+/// Why a pinned verification failed (AUDIT T31). Plain linkage failure keeps
+/// the historical `Err(seq)` contract; the two new arms report a chain that is
+/// internally well-formed but does not match the tip the relying party pinned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChainVerifyFailure {
+    /// First broken link — modification in place, or an interior deletion.
+    Broken(u64),
+    /// Entry count differs from the pinned count (rollback / truncation).
+    CountMismatch { expected: u64, actual: u64 },
+    /// Tip differs from the pinned head (rollback / truncation / fork).
+    HeadMismatch { expected: String, actual: String },
+}
+
+impl std::fmt::Display for ChainVerifyFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Broken(seq) => write!(f, "CHAIN BROKEN at seq {seq}"),
+            Self::CountMismatch { expected, actual } => write!(
+                f,
+                "CHAIN TRUNCATED: expected {expected} entries, found {actual}"
+            ),
+            Self::HeadMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "CHAIN HEAD MISMATCH: expected {expected}, found {actual}"
+                )
+            }
+        }
+    }
+}
+
+/// The tip of `entries`, or `genesis_hash` when the chain is empty — the same
+/// convention [`ChainStore::export`] uses to fill [`ChainExport::head`].
+fn head_of(entries: &[ChainEntry], genesis_hash: &str) -> String {
+    entries
+        .last()
+        .map(|e| e.entry_hash.clone())
+        .unwrap_or_else(|| genesis_hash.to_string())
+}
+
+/// Verify linkage AND, when supplied, that the chain still ends where the
+/// relying party last saw it (AUDIT T31, findings OSK-P7-H3 / P7-KRN-06 /
+/// P6-COV-02).
+///
+/// Linkage alone cannot detect a truncated tail: every prefix of a valid chain
+/// is itself a valid chain, so `verify` reported `CHAIN OK: 1 entries` for a
+/// 3-entry chain with the incriminating run chopped off, and `CHAIN OK: 0
+/// entries` for one erased outright. `--genesis` pins the ROOT, which is the
+/// wrong end. The only thing that closes it is a pin on the TIP, which must
+/// come from outside this file — hence these parameters.
+///
+/// Both pins are optional and independent: `expect_count` catches a rollback
+/// even if the caller did not record the hash, `expect_head` catches a fork at
+/// the same length. Passing neither preserves the historical behaviour exactly.
+fn verify_entries_pinned(
+    entries: &[ChainEntry],
+    genesis_hash: &str,
+    expect_head: Option<&str>,
+    expect_count: Option<u64>,
+) -> Result<u64, ChainVerifyFailure> {
+    let count = verify_entries(entries, genesis_hash).map_err(ChainVerifyFailure::Broken)?;
+    if let Some(expected) = expect_count {
+        if count != expected {
+            return Err(ChainVerifyFailure::CountMismatch {
+                expected,
+                actual: count,
+            });
+        }
+    }
+    if let Some(expected) = expect_head {
+        let actual = head_of(entries, genesis_hash);
+        if actual != expected {
+            return Err(ChainVerifyFailure::HeadMismatch {
+                expected: expected.to_string(),
+                actual,
+            });
+        }
+    }
+    Ok(count)
+}
+
+/// Pinned counterpart of [`verify_export`] (AUDIT T31). The plain form is
+/// equally blind to truncation: an attacker who truncates and then re-exports
+/// produces a `head` that agrees with the shortened entry list, so the existing
+/// head check passes. Only a head the AUDITOR supplies catches it.
+pub fn verify_export_pinned(
+    export: &ChainExport,
+    expect_head: Option<&str>,
+    expect_count: Option<u64>,
+) -> Result<u64, ChainVerifyFailure> {
+    // Keep the export's own internal head-vs-entries consistency check first,
+    // so a hand-edited export still fails the way it always did.
+    verify_export(export).map_err(ChainVerifyFailure::Broken)?;
+    verify_entries_pinned(
+        &export.entries,
+        &export.boot_root,
+        expect_head,
+        expect_count,
+    )
 }
 
 /// Shared verification core (spec §4.3) — the ONE mechanism both
@@ -349,6 +503,170 @@ mod tests {
         let h = compute_entry_hash(GENESIS, PROG_A, "run-0", 0);
         assert!(h.starts_with("axtcb1-run:"));
         assert_ne!(h, GENESIS, "the run-chain link must differ from the genesis root");
+    }
+
+    /// Build a `n`-entry chain in `dir`, returning `(store, entries, head)`.
+    /// AUDIT T31 helper — the truncation cases all need the entry list and the
+    /// true tip, not just a verify result.
+    fn build_chain(path: &Path, n: u64) -> (ChainStore, Vec<ChainEntry>, String) {
+        let store = ChainStore::new(path);
+        let mut prev = GENESIS.to_string();
+        let mut entries = Vec::new();
+        for i in 0..n {
+            let prog_hash = sha256_hex(format!("program-{i}").as_bytes());
+            let run_id = format!("run-{i}");
+            let ts = 1_000 + i;
+            let entry_hash = compute_entry_hash(&prev, &prog_hash, &run_id, ts);
+            let e = ChainEntry {
+                seq: i,
+                run_id,
+                prog_hash,
+                timestamp_ms: ts,
+                prev_hash: prev.clone(),
+                entry_hash: entry_hash.clone(),
+            };
+            store.append(&e).unwrap();
+            entries.push(e);
+            prev = entry_hash;
+        }
+        (store, entries, prev)
+    }
+
+    /// Rewrite the chain file to only its first `keep` entries — the exact
+    /// attack an operator hiding a run would perform.
+    fn truncate_to(path: &Path, entries: &[ChainEntry], keep: usize) {
+        let body: String = entries[..keep]
+            .iter()
+            .map(|e| format!("{}\n", serde_json::to_string(e).unwrap()))
+            .collect();
+        std::fs::write(path, body).unwrap();
+    }
+
+    /// AUDIT T31 (findings OSK-P7-H3 / P7-KRN-06 / P6-COV-02). This is a
+    /// CHARACTERIZATION test: it pins the limitation, not a desired property.
+    ///
+    /// Both `chain.rs` and the CLI help claimed "removing / substituting /
+    /// reordering any run is detectable". Removing a SUFFIX is not, and cannot
+    /// be by linkage alone — every prefix of a valid chain is itself a valid
+    /// chain. Only `verify_detects_missing_entry` (INTERIOR deletion) was ever
+    /// tested, which is why the gap survived.
+    ///
+    /// If this test ever starts failing because unpinned verify grew the
+    /// ability to reject a truncation, that is good news — delete it.
+    #[test]
+    fn unpinned_verify_cannot_detect_a_truncated_tail() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chain.jsonl");
+        let (store, entries, _head) = build_chain(&path, 3);
+        assert_eq!(store.verify(GENESIS), Ok(3));
+
+        // Chop the last two runs off, hiding them.
+        truncate_to(&path, &entries, 1);
+        assert_eq!(
+            store.verify(GENESIS),
+            Ok(1),
+            "linkage alone cannot see a truncated tail — this is the limitation"
+        );
+
+        // Erase it entirely: still "fine".
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(
+            store.verify(GENESIS),
+            Ok(0),
+            "an erased chain verifies clean unpinned — the limitation, not a goal"
+        );
+    }
+
+    /// AUDIT T31. Pinning the TIP is what closes it. `--genesis` pins the ROOT,
+    /// which truncation does not move.
+    #[test]
+    fn pinned_verify_detects_a_truncated_tail() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chain.jsonl");
+        let (store, entries, head) = build_chain(&path, 3);
+
+        // Intact chain against its true tip: passes.
+        assert_eq!(
+            store.verify_pinned(GENESIS, Some(&head), Some(3)),
+            Ok(3),
+            "an intact chain must verify against its own head"
+        );
+
+        truncate_to(&path, &entries, 1);
+
+        // Head pin catches it.
+        match store.verify_pinned(GENESIS, Some(&head), None) {
+            Err(ChainVerifyFailure::HeadMismatch { expected, actual }) => {
+                assert_eq!(expected, head);
+                assert_eq!(actual, entries[0].entry_hash);
+            }
+            other => panic!("truncation must be a HeadMismatch, got {other:?}"),
+        }
+
+        // Count pin catches it independently — a relying party that recorded
+        // only "I had seen 3 runs" is still protected.
+        assert_eq!(
+            store.verify_pinned(GENESIS, None, Some(3)),
+            Err(ChainVerifyFailure::CountMismatch {
+                expected: 3,
+                actual: 1
+            })
+        );
+
+        // And a wholesale erase.
+        std::fs::write(&path, "").unwrap();
+        assert!(
+            matches!(
+                store.verify_pinned(GENESIS, Some(&head), None),
+                Err(ChainVerifyFailure::HeadMismatch { .. })
+            ),
+            "an erased chain must fail against a pinned head"
+        );
+        assert_eq!(
+            store.verify_pinned(GENESIS, None, Some(3)),
+            Err(ChainVerifyFailure::CountMismatch {
+                expected: 3,
+                actual: 0
+            })
+        );
+
+        // With no pin supplied, behaviour is unchanged (backwards compatible).
+        assert_eq!(store.verify_pinned(GENESIS, None, None), Ok(0));
+    }
+
+    /// AUDIT T31. The auditor-side export path has the SAME hole: the export's
+    /// `head` field is written by whoever produced the export, so an attacker
+    /// who truncates and re-exports emits a head consistent with the shortened
+    /// entry list and `verify_export`'s internal head check passes.
+    #[test]
+    fn pinned_verify_export_detects_truncate_then_reexport() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chain.jsonl");
+        let (store, entries, head) = build_chain(&path, 3);
+        let full = store.export("vm-1", GENESIS, 42).unwrap();
+        assert_eq!(verify_export(&full), Ok(3));
+
+        // Attacker truncates, then re-exports from the shortened chain.
+        truncate_to(&path, &entries, 1);
+        let forged = store.export("vm-1", GENESIS, 43).unwrap();
+
+        assert_eq!(
+            verify_export(&forged),
+            Ok(1),
+            "the unpinned auditor path signs off on the rewritten chain"
+        );
+        assert!(
+            matches!(
+                verify_export_pinned(&forged, Some(&head), None),
+                Err(ChainVerifyFailure::HeadMismatch { .. })
+            ),
+            "an auditor who knows the real head must reject the forged export"
+        );
+        assert_eq!(
+            verify_export_pinned(&full, Some(&head), Some(3)),
+            Ok(3),
+            "the genuine export must still verify against the same pin"
+        );
     }
 
     /// Case 3: append 3 entries, verify -> Ok(3).
