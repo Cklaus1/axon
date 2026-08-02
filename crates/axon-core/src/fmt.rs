@@ -14,6 +14,55 @@ pub fn format_program(program: &Program) -> String {
     f.finish()
 }
 
+/// Render an `f64` as source text that re-parses to the *same* `f64`.
+///
+/// The formatter is AST-based, so the original lexeme is already gone by the
+/// time we get here (`Literal::Float` holds only the value). That means exact
+/// notation cannot be preserved — but the output must at minimum be valid Axon
+/// that round-trips to an identical value. Two ways the naive `{f}` + `".0"`
+/// rendering broke that:
+///
+///   * Non-finite values printed as the bare word `inf`, and the `.0` suffix
+///     made it `inf.0` — not a literal at all, so `axon fmt` turned a valid
+///     file into one that fails to parse (E0001 `cannot find name inf`).
+///     A literal *can* reach infinity: `1e400` overflows during lexing.
+///   * Large magnitudes expanded to their full decimal form, so `1e100`
+///     became a 103-character literal and `6.02e23` a 26-digit one.
+///
+/// Exponent notation is accepted by the lexer in both the `1.5e2` and bare
+/// `1e100` forms, so it is always a safe target.
+fn format_float_literal(f: f64) -> String {
+    if f.is_nan() {
+        // Unreachable from source: no literal the lexer accepts parses to NaN
+        // (it arises only from arithmetic). Emit a NaN-valued expression rather
+        // than the bare word `NaN`, which would not parse.
+        return "(0.0 / 0.0)".to_string();
+    }
+    if f.is_infinite() {
+        // `1e400` overflows to infinity on parse, so this round-trips exactly.
+        return if f.is_sign_negative() {
+            "-1e400".to_string()
+        } else {
+            "1e400".to_string()
+        };
+    }
+
+    let plain = format!("{f}");
+    // Only reach for exponent form when the plain rendering has blown up well
+    // past any hand-written literal; this keeps ordinary values (`150.0`,
+    // `0.001`, `3.14159`) untouched and the formatter idempotent.
+    if plain.len() > 20 {
+        let exp = format!("{f:e}");
+        if exp.len() < plain.len() {
+            return exp;
+        }
+    }
+    if !plain.contains('.') && !plain.contains('e') {
+        return format!("{plain}.0");
+    }
+    plain
+}
+
 // ── Formatter ─────────────────────────────────────────────────────────────────
 
 struct Formatter {
@@ -881,11 +930,8 @@ impl Formatter {
         match lit {
             Literal::Int(n) => self.write(&n.to_string()),
             Literal::Float(f) => {
-                let s = format!("{f}");
+                let s = format_float_literal(*f);
                 self.write(&s);
-                if !s.contains('.') && !s.contains('e') {
-                    self.write(".0");
-                }
             }
             // R21 — decimal literal: re-emit the canonical form with the `d` suffix.
             Literal::Decimal(m) => {
@@ -953,6 +999,16 @@ impl Formatter {
                     for (i, (fname, fpat)) in fields.iter().enumerate() {
                         if i > 0 {
                             self.write(", ");
+                        }
+                        // Shorthand: `Circle { radius }` parses to the pair
+                        // ("radius", Ident("radius")), so the sugar is
+                        // recoverable — re-emit it rather than expanding every
+                        // pattern to the redundant `radius: radius`. This is a
+                        // canonicalisation (both forms collapse to the short
+                        // one), which is what a formatter is for.
+                        if matches!(fpat, Pattern::Ident(b) if b == fname) {
+                            self.write(fname);
+                            continue;
                         }
                         self.write(fname);
                         self.write(": ");
@@ -1140,6 +1196,119 @@ mod tests {
         assert!(out.ends_with('\n'), "must end with newline");
         let without_last = &out[..out.len() - 1];
         assert!(!without_last.ends_with('\n'), "only one trailing newline");
+    }
+
+    /// Collect every float literal in `src`, in source order, using the real
+    /// lexer — so the test compares what the compiler would actually read back.
+    fn float_literals(src: &str) -> Vec<f64> {
+        crate::lexer::Lexer::tokenize(src)
+            .expect("tokenize")
+            .into_iter()
+            .filter_map(|(t, _)| match t {
+                crate::token::Token::Float(v) => Some(v),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The property the idempotence tests above do NOT check: formatting must
+    /// preserve *values*, and its output must still parse.
+    ///
+    /// `out1 == out2` is satisfied by any stable-but-wrong rendering, which is
+    /// how `1e400 -> inf.0` (unparseable) and `1e100 -> 103 digits` survived.
+    fn assert_float_fidelity(src: &str) {
+        let before = float_literals(src);
+        let prog = crate::parse_source(src).expect("parse");
+        let out = format_program(&prog);
+        // 1. The formatter's own output must be valid Axon.
+        crate::parse_source(&out)
+            .unwrap_or_else(|e| panic!("fmt emitted unparseable source:\n{out}\nerror: {e}"));
+        // 2. Every float must survive with an identical bit pattern.
+        let after = float_literals(&out);
+        assert_eq!(before.len(), after.len(), "literal count changed:\n{out}");
+        for (b, a) in before.iter().zip(after.iter()) {
+            assert_eq!(
+                b.to_bits(),
+                a.to_bits(),
+                "float value changed: {b} -> {a}\nformatted:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn fmt_float_overflow_literal_stays_parseable() {
+        // `1e400` overflows to infinity during lexing. The formatter used to
+        // emit the bare word `inf`, then append `.0`, producing `inf.0` — so
+        // `axon fmt` destroyed a valid file (E0001 `cannot find name inf`).
+        assert_float_fidelity("fn main() {\n    let big = 1e400\n}\n");
+    }
+
+    #[test]
+    fn fmt_large_float_does_not_expand_to_full_decimal() {
+        let src = "fn main() {\n    let huge = 1e100\n    let avogadro = 6.02e23\n}\n";
+        assert_float_fidelity(src);
+        let out = format_program(&crate::parse_source(src).expect("parse"));
+        assert!(
+            out.contains("1e100"),
+            "1e100 should stay in exponent form, got:\n{out}"
+        );
+        assert!(
+            !out.contains("10000000000000000000"),
+            "must not expand to full decimal, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn fmt_ordinary_floats_are_left_alone() {
+        // The exponent path must not churn everyday literals.
+        let src = "fn main() {\n    let a = 150.0\n    let b = 0.001\n    let c = 3.14159\n}\n";
+        assert_float_fidelity(src);
+        let out = format_program(&crate::parse_source(src).expect("parse"));
+        for want in ["150.0", "0.001", "3.14159"] {
+            assert!(out.contains(want), "expected {want} verbatim in:\n{out}");
+        }
+    }
+
+    #[test]
+    fn fmt_struct_pattern_keeps_shorthand() {
+        // `axon fmt` used to expand every field pattern to `radius: radius`,
+        // rewriting idiomatic source into its noisier equivalent. The sugar is
+        // recoverable from the AST, so it should survive.
+        let src = "enum Shape {\n    Circle { radius: f64 },\n    Rect { w: f64, h: f64 },\n}\n\n\
+                   fn area(s: Shape) -> f64 {\n    match s {\n        \
+                   Shape::Circle { radius } => radius * radius\n        \
+                   Shape::Rect { w, h } => w * h\n    }\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent");
+        assert!(
+            out1.contains("Shape::Circle { radius }"),
+            "shorthand should survive, got:\n{out1}"
+        );
+        assert!(
+            !out1.contains("radius: radius"),
+            "must not expand to redundant form, got:\n{out1}"
+        );
+    }
+
+    #[test]
+    fn fmt_struct_pattern_keeps_renaming_binding() {
+        // The shorthand rule must fire ONLY when binding == field name; a
+        // genuine rename still needs the explicit `field: binding` form.
+        let src = "enum Shape {\n    Circle { radius: f64 },\n}\n\n\
+                   fn area(s: Shape) -> f64 {\n    match s {\n        \
+                   Shape::Circle { radius: r } => r * r\n        _ => 0.0\n    }\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent");
+        assert!(
+            out1.contains("radius: r"),
+            "rename must stay explicit, got:\n{out1}"
+        );
+    }
+
+    #[test]
+    fn fmt_float_fidelity_on_examples_floats_fixture() {
+        // The file that surfaced this: examples/floats.ax uses `1.5e2`/`1.0e-3`.
+        assert_float_fidelity(include_str!("../../../examples/floats.ax"));
     }
 
     fn round_trip(src: &str) -> (String, String) {

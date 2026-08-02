@@ -46,6 +46,23 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | **T26** | `—` | `axon-os kill` trips every live latch — `--killable --monitor` polled nothing while printing "🛑 kill tripped" (OSK-P4-H6) |
 | **T27** | `—` | compliance monitor drains the ledger before exiting — violations in the last ~100 ms were reported as a clean run (OSK-P4-H5) |
 
+### Formatter — found the same way (running the tool, not reading it)
+
+| task | commit | what |
+|---|---|---|
+| **T28** | `—` | `axon fmt` no longer emits source it cannot re-parse. `1e400` overflows to infinity at lex time; the renderer wrote the bare word `inf`, then appended `.0`, producing `inf.0` — so formatting a VALID file produced one that fails `E0001 cannot find name 'inf'`, in place, exit 0. Also `1e100` → a 103-char literal. (O021) |
+
+The four `examples/*.ax` files dirty at session start were not an edit — `axon fmt`
+on a clean checkout reproduced them byte-for-byte. Restored to committed state.
+
+**The test gap matters more than the bug.** `fmt.rs` already had five round-trip
+tests; every one asserts `out1 == out2` — idempotence only, never comparing
+against the input. A stable-but-wrong rendering passes all five. Added
+`assert_float_fidelity` (output must parse; every float must survive with an
+identical bit pattern). Third data-loss bug in this one tool — `emit_program`
+still carries the `AUDIT T9` note about `mod` declarations having been silently
+DELETED — which argues the AST-based architecture is the problem, not any arm.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -64,7 +81,7 @@ show, so it can be rebuilt from `git log` if this file is lost.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Seventeen fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Eighteen fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

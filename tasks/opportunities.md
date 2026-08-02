@@ -714,3 +714,59 @@ thread and `run_bounded`'s poll all key on these paths, so it wants one coherent
 change plus tests for each flag combination.
 
 **Execution re-triage scorecard: 8 findings, 8 answers changed.**
+
+---
+
+## O021 — `axon fmt` emitted source it could not re-parse (FIXED)
+
+**Found by executing, not reading.** The four `examples/*.ax` files dirty in the
+working tree at session start were not somebody's edit — running `axon fmt` on a
+pristine checkout reproduced the diff byte-for-byte. `fmt` was the author.
+
+That prompted a look at the float renderer (`fmt.rs::emit_literal`), which was:
+
+```rust
+let s = format!("{f}");
+self.write(&s);
+if !s.contains('.') && !s.contains('e') { self.write(".0"); }
+```
+
+Two defects, both demonstrated end-to-end against the real binary:
+
+1. **Source destruction.** `1e400` overflows to `f64::INFINITY` during lexing.
+   `format!("{}", inf)` is `inf`, which contains neither `.` nor `e`, so the
+   suffix fired and the formatter wrote `inf.0`. `axon check` on the
+   formatter's *own output* then failed:
+   `E0001 cannot find name 'inf' in this scope`. A valid file in, an
+   unparseable file out, exit 0, written in place.
+2. **Unbounded expansion.** `1e100` was written as a 103-character literal and
+   `6.02e23` as 26 digits.
+
+Fixed in `fmt.rs::format_float_literal`: non-finite values emit `1e400`
+(which re-parses to infinity exactly), NaN emits `(0.0 / 0.0)` (defensive — no
+literal the lexer accepts yields NaN), and plain renderings over 20 chars fall
+back to exponent form when that is shorter. Ordinary literals are untouched.
+
+**The test gap is the real lesson.** `fmt.rs` already had five round-trip tests.
+Every one asserts `out1 == out2` — *idempotence only*, never comparing against
+the input. A stable-but-wrong rendering satisfies that, which is exactly how
+both defects survived. Added `assert_float_fidelity`, which asserts the two
+properties that were missing: the output must parse, and every float must
+survive with an identical bit pattern. Verified fails-before: the two
+bug-targeting tests fail against the old renderer, the two guard tests pass in
+both states.
+
+Same class as the golden-IR shape-vs-content gap and the vacuous-pass coverage
+guard: a test that checks a property adjacent to the one that matters.
+
+**Still open (needs a design call, not a fix).** The formatter is AST-based, and
+`Literal::Float` holds only an `f64`, so the original lexeme is gone before
+`fmt` runs. Three losses therefore remain and cannot be fixed here:
+`1.5e2` -> `150.0`, `Circle { radius }` -> `Circle { radius: radius }`, and
+blank lines inside function bodies dropped entirely. None changes program
+meaning; all degrade the source. Exact preservation needs either a
+lexeme-carrying `Literal::Float(f64, String)` (16 match sites across 12 files)
+or a token/span-based formatter. Worth noting `emit_program` carries an
+`AUDIT T9` comment about `mod` declarations having been silently *deleted* by
+this same tool — that is three data-loss bugs in one formatter, which argues
+the architecture is the problem rather than any individual arm.
