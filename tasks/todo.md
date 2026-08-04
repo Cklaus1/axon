@@ -465,6 +465,60 @@ mint, the audit re-attribution, and a **negative control** that legitimate
 handles — including negative-valued ones — still attenuate and carve exactly as
 before.
 
+### T43 — the `@[contained]` string-dispatch guard had two holes, and one was in the guard itself
+
+P7-SEC-02 (critical, executed). T2 (`870469a`) closed the class where a builtin
+dispatches to a user fn **named by a string** — the walker built follow-edges
+only from `Call` callee names, so `scheduler_spawn("evil", 0)` walked the target
+as an inert string argument. It built an explicit allowlist,
+`indirect_dispatch_args`. Re-probing every entry found the allowlist was both
+**incomplete** and **bypassable**.
+
+**(a) `kernel_goal_create` was missing.** Its dispatch is one builtin removed
+from the name — `kernel_goal_create(p, "evil", …)` stores it, `kernel_goal_run(g,
+n)` invokes it later — which is exactly why reading call sites did not surface
+it. Executed:
+
+```
+@[contained(fs: [], net: [], exec: none)]
+fn sandboxed() -> f64 {
+    let p = principal_root("p", true, true, true, 100)
+    let g = kernel_goal_create(p, "leak", 100.0)   // leak() reads /etc/passwd
+    kernel_goal_run(g, 3)
+}
+```
+`axon check` exit 0. `axon run` exit 0, file read.
+
+**(b) A non-literal callee name silently skipped the whole check.** The follow
+loop matched `Expr::Literal(Str)` and `continue`d on anything else, so *every*
+builtin the allowlist covered — including the three T2 fixed — was bypassed by
+building the name at runtime:
+
+```
+let n = "le{str_trim(\"ak \")}"
+scheduler_spawn(n, 0)
+```
+`axon check` exit 0. This is the worse of the two: it defeats the fix rather than
+missing a case. A dynamic callee is exactly as unverifiable as a dynamic *path*,
+which already fails closed with a clear E1001 — it now fails closed the same way,
+with a message in the same shape.
+
+**The allowlist is now drift-guarded.** A unit test walks `BUILTINS` and requires
+every builtin with a fn-name-shaped `str` parameter to appear in
+`indirect_dispatch_args` **or** in a new `NON_DISPATCHING_NAME_PARAMS` list that
+records *why* it does not dispatch (`env_var` reads an env var; the
+`goal_best_*`/`agent_*` family reads recorded provenance; `fn_addr` takes an
+address and never invokes). Landing in neither is a build failure, because
+landing in neither is what silence looks like — and here silence fails open.
+**Verified: deleting the `kernel_goal_create` row makes the test name that exact
+builtin.** The list-rot direction is checked too: an entry naming a builtin that
+no longer exists, or appearing in both tables, fails.
+
+Two regression cases added to T2's own test plus a **negative control** — a
+literal callee whose body stays inside the sandbox must still check clean,
+otherwise the fix would merely have banned the feature and every case above would
+pass for the wrong reason.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -483,7 +537,7 @@ before.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-two fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-three fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

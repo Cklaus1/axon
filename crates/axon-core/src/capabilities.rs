@@ -358,9 +358,49 @@ fn indirect_dispatch_args(builtin: &str) -> &'static [usize] {
         | "goal_run_multistart"
         | "goal_continue"
         | "goal_eval" => &[0],
+        // AUDIT T43 (P7-SEC-02). MISSED by T2's original list: the name is
+        // stored at create time and the fn is invoked later by
+        // `kernel_goal_run(g, n)` — the dispatch is one builtin removed from the
+        // name, which is exactly why reading the call sites did not surface it.
+        // kernel_goal_create(principal, fn_name, target)
+        "kernel_goal_create" => &[1],
         _ => &[],
     }
 }
+
+/// Builtins that take a `str` parameter called `name`/`fn_name` but do NOT
+/// dispatch to a user fn — so their absence from [`indirect_dispatch_args`] is
+/// a decision, not an oversight.
+///
+/// AUDIT T43. `indirect_dispatch_args` is an allowlist, and an allowlist that
+/// nobody rechecks drifts: T2 built it and `kernel_goal_create` was already
+/// missing, which was a total `@[contained]` escape for a year of commits. The
+/// drift test below fails when a builtin gains a fn-name-shaped parameter and
+/// appears in neither table, so the next one has to be classified deliberately
+/// instead of defaulting to "not followed".
+#[cfg(test)]
+const NON_DISPATCHING_NAME_PARAMS: &[(&str, &str)] = &[
+    ("env_var", "reads an environment variable, not a fn"),
+    ("principal_root", "the principal's own display name"),
+    ("principal_mint", "the child principal's display name"),
+    (
+        "fn_addr",
+        "R17: takes the ADDRESS of a fn; never invokes it",
+    ),
+    // The goal read-back family: these query recorded provenance for a fn that
+    // some earlier `goal_run*` already invoked. They never call it themselves,
+    // and the invoking builtin is followed.
+    ("goal_best_input", "reads recorded provenance"),
+    ("goal_best_inputs", "reads recorded provenance"),
+    ("goal_best_inputs_f64", "reads recorded provenance"),
+    ("goal_best_score", "reads recorded provenance"),
+    ("goal_count", "reads recorded provenance"),
+    ("goal_history", "reads recorded provenance"),
+    ("goal_clear", "clears recorded provenance"),
+    ("agent_detect_loop", "reads recorded provenance"),
+    ("agent_uncertainty", "reads recorded provenance"),
+    ("agent_trace_len", "reads recorded provenance"),
+];
 
 pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
     classify_call(name).map(|k| cap_label(&k))
@@ -679,9 +719,38 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                 // closed twice here (R6 taint, @[contained] helpers): a guard
                 // that inspects only the immediate call is escapable one hop out.
                 for &idx in indirect_dispatch_args(name) {
-                    let Some(Expr::Literal(crate::ast::Literal::Str(target))) = args.get(idx)
-                    else {
-                        continue;
+                    // AUDIT T43 (P7-SEC-02, second vector). This used to
+                    // `continue` on a NON-LITERAL name, silently walking nothing
+                    // — so the whole T2 fix was bypassed by building the callee
+                    // name at runtime. Executed against the pre-fix build:
+                    //
+                    //   @[contained(fs: [], net: [], exec: none)]
+                    //   fn sandboxed() -> i64 {
+                    //       let n = "le{str_trim(\"ak \")}"
+                    //       scheduler_spawn(n, 0)          // -> reads /etc/passwd
+                    //       scheduler_run()
+                    //   }
+                    //
+                    // `axon check` exit 0. A dynamic callee is exactly as
+                    // unverifiable as a dynamic PATH, which already fails closed
+                    // with E1001, so it now fails closed the same way.
+                    let target = match args.get(idx) {
+                        Some(Expr::Literal(crate::ast::Literal::Str(t))) => t,
+                        None => continue,
+                        Some(_) => {
+                            ctx.errors.push(CapabilityError::new(
+                                E1001,
+                                format!(
+                                    "`{name}(<dynamic function name>)` is not permitted by \
+                                     @[contained]\n  help: a callee chosen at runtime cannot be \
+                                     checked against the sandbox (it could name any function in \
+                                     the program, including one that reads or writes outside the \
+                                     allowlist); pass a string literal"
+                                ),
+                                Span::dummy(),
+                            ));
+                            continue;
+                        }
                     };
                     if let Some(helper) = ctx.fn_map.get(target.as_str()) {
                         // `ctx.visited` keys on &str borrowed from the fn_map key,
@@ -1906,5 +1975,59 @@ mod tests {
             "second: {}",
             errs[1].message
         );
+    }
+
+    #[test]
+    fn every_fn_name_parameter_is_classified_as_dispatching_or_not_t43() {
+        // AUDIT T43 (P7-SEC-02). `indirect_dispatch_args` is the allowlist that
+        // makes the @[contained] walker follow a callee named by a string. T2
+        // wrote it by reading call sites and MISSED `kernel_goal_create` —
+        // whose dispatch happens one builtin later, in `kernel_goal_run` — so a
+        // sandbox declaring `fs: []` read /etc/passwd with `axon check` exit 0.
+        //
+        // This test makes the next omission a build failure instead of an
+        // escape: any builtin with a fn-name-shaped `str` parameter must appear
+        // in ONE of the two tables. Landing in neither is what silence looks
+        // like, and silence here fails open.
+        let mut unclassified: Vec<&str> = Vec::new();
+        for b in crate::builtins::BUILTINS {
+            let has_name_param = b
+                .params
+                .iter()
+                .any(|(pname, pty)| *pty == "str" && (*pname == "name" || *pname == "fn_name"));
+            if !has_name_param {
+                continue;
+            }
+            let dispatches = !indirect_dispatch_args(b.name).is_empty();
+            let acknowledged = NON_DISPATCHING_NAME_PARAMS
+                .iter()
+                .any(|(n, _)| *n == b.name);
+            if !dispatches && !acknowledged {
+                unclassified.push(b.name);
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "these builtins take a fn-name-shaped `str` parameter but are in neither \n\
+             `indirect_dispatch_args` nor `NON_DISPATCHING_NAME_PARAMS`: {unclassified:?}.\n\
+             If the builtin INVOKES the named fn, add its argument index to \n\
+             `indirect_dispatch_args` — otherwise a @[contained] fn launders any effect \n\
+             through it. If it only reads the name, add it to \n\
+             `NON_DISPATCHING_NAME_PARAMS` with the reason."
+        );
+
+        // The acknowledgement list must not rot either: an entry naming a
+        // builtin that no longer exists is a stale exemption that could silently
+        // cover a future builtin re-using the name.
+        for (n, _) in NON_DISPATCHING_NAME_PARAMS {
+            assert!(
+                crate::builtins::BUILTINS.iter().any(|b| b.name == *n),
+                "`{n}` is exempted as non-dispatching but is not a builtin any more"
+            );
+            assert!(
+                indirect_dispatch_args(n).is_empty(),
+                "`{n}` is in BOTH tables — it cannot be dispatching and not"
+            );
+        }
     }
 }

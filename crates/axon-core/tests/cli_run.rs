@@ -2715,6 +2715,40 @@ fn contained_is_not_launderable_through_string_named_dispatch() {
              fn scorer() -> i64 { let _ = goal_run(\"evil\", 0, 10, 3)\n  0 }\n\
              fn main() -> i64 { scorer() }\n",
         ),
+        // AUDIT T43 (P7-SEC-02): the two vectors T2's list did NOT cover.
+        //
+        // (a) `kernel_goal_create` stores the callee name and `kernel_goal_run`
+        // invokes it LATER — the dispatch is one builtin removed from the name,
+        // which is why reading call sites missed it. Executed pre-fix: a
+        // @[contained(fs: [], net: [], exec: none)] fn read /etc/passwd with
+        // `axon check` exit 0.
+        (
+            "kernel_goal_create",
+            "@[adaptive]\n\
+             fn evil(x: i64) -> i64 { match exec(\"echo\", [\"p\"]) { Ok(_) => 1  Err(_) => 0 } }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> f64 {\n\
+               let p = principal_root(\"p\", false, false, false, 100)\n\
+               let g = kernel_goal_create(p, \"evil\", 100.0)\n\
+               kernel_goal_run(g, 3)\n\
+             }\n\
+             fn main() -> i64 { let _ = scorer()\n  0 }\n",
+        ),
+        // (b) A callee name built at RUNTIME. The walker followed string
+        // LITERALS only and silently skipped anything else, so the entire T2 fix
+        // was bypassed by interpolating the name. A dynamic callee is exactly as
+        // unverifiable as the dynamic PATH that already fails closed.
+        (
+            "dynamic_callee_name",
+            "fn evil(x: i64) -> i64 { match exec(\"echo\", [\"p\"]) { Ok(_) => 1  Err(_) => 0 } }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 {\n\
+               let n = \"ev{str_trim(\\\"il \\\")}\"\n\
+               let _ = scheduler_spawn(n, 0)\n\
+               0\n\
+             }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
     ];
     for (label, src) in cases {
         let dir = std::env::temp_dir().join(format!("axon_t2_{label}"));
@@ -2742,6 +2776,44 @@ fn contained_is_not_launderable_through_string_named_dispatch() {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+#[test]
+fn string_named_dispatch_to_a_permitted_callee_still_checks_clean_t43() {
+    // NEGATIVE CONTROL for the T43 tightening. Failing closed on a dynamic
+    // callee is only correct if a LITERAL callee whose body stays inside the
+    // sandbox still passes — otherwise the fix would just ban the feature, and
+    // every test above would pass for the wrong reason.
+    let src = "fn worker(x: i64) -> i64 { println(\"working\")\n  x + 1 }\n\
+               @[contained(fs: [], net: [], exec: none)]\n\
+               fn scorer() -> i64 {\n\
+                 let _ = scheduler_spawn(\"worker\", 0)\n\
+                 scheduler_run()\n\
+               }\n\
+               fn main() -> i64 { scorer() }\n";
+    let dir = std::env::temp_dir().join(format!("axon_t43_ok_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("prog.ax");
+    std::fs::write(&path, src).unwrap();
+    let out = axon()
+        .args(["check", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a literal callee that stays inside the sandbox must still check clean: {msg}"
+    );
+    assert!(
+        !msg.contains("E1001"),
+        "no containment violation expected: {msg}"
+    );
 }
 
 #[test]
