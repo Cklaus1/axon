@@ -312,6 +312,14 @@ only the first is supported.
 
 ### O012 — [high] F062: native codegen ignores the PER-CALL `tier:` on `ai_*` calls
 
+**RESOLVED in T46.** The blocker below was real and was addressed head-on: a
+reusable exhaustive `walk_expr` now exists in `codegen/mod.rs`, `expr_calls` is
+rebuilt on top of it, and the per-call tier scan uses it. The original note is
+kept for the reasoning, which held up — and note the walker's `_ => false`
+catch-all turned out to be dropping `Select` and `WithHandler` already, so the
+"next walker-missed-an-arm bug" it warned about had in fact already happened.
+
+
 Verified in code, attempted, and **deliberately not fixed** — the correct fix is
 larger than it looks and I would not ship a hasty version of a safety refusal.
 

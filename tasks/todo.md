@@ -621,6 +621,60 @@ Also confirmed already-fixed and needing no work: **INTERP-H01** (the four
 `host_await*` builtins absent from `is_impure_builtin` / `builtin_effect_row`)
 is the same finding as P4-INT-02, closed by T29 — both tables now list them.
 
+### T46 — the per-call AI tier was dropped natively, and the walker beneath the check had a hole
+
+F062 / O012 (high, executed) — the item this run explicitly **deferred** rather
+than rush, because the fix needed a real expression walker first. That judgement
+held, and the walker turned out to be hiding a second defect.
+
+**The finding.** `codegen/mod.rs` refuses (E0910) when a fn's ATTRIBUTES request
+a non-`balanced` AI tier, because the native runtime routes every call to the
+default model. R3b also allows the per-call form, and the interpreter gives it
+**top** priority. Codegen dropped it under a comment asserting *"native AI calls
+aren't in the codegen path"* — false; `ai_complete` is fully lowered in
+`codegen/builtins.rs`. Reproduced:
+
+```
+ai_complete("say hi", tier: "cheap")
+  axon build  → exit 0, no diagnostic
+  axon trace --ai → [cheap anthropic:claude-haiku]  $0.000000
+```
+
+The attribute path was closed and the per-call path, with the identical hazard,
+was wide open. The refusal now fires for **any** `Some(tier)`, not just
+non-`balanced`: an unknown tier name is E1302/exit 5 in the interpreter, which
+native cannot replicate either, so `"balanced"` is the only value that would
+need a carve-out and it buys nothing.
+
+**The walker.** `expr_calls` was a bespoke ~70-line recursion ending in
+`_ => false`. The deferral note predicted that copy-pasting it would produce
+"the next walker-missed-an-arm bug". It had already produced one: that
+catch-all silently dropped `Select` and `WithHandler`, so **no** scan in
+`codegen/mod.rs` — every one of them a sound-by-refusal E0910 gate — ever looked
+inside an effect handler or a select arm. A per-call tier inside a `with
+handler` body built clean.
+
+`walk_expr` now visits every sub-expression, and its match is **exhaustive on
+purpose — there is no `_` arm**. Adding a variant to `ast::Expr` is a compile
+error here, which is the only mechanism that reliably keeps a walker complete;
+leaf variants are listed explicitly so "has no children" is a decision on the
+record rather than an omission. `expr_calls` is now four lines over it.
+
+One implementation note worth keeping: the callback must be `&mut dyn
+FnMut(&ast::Expr)`, not a generic. A generic re-wraps its own closure type at
+every recursion level, and rustc does not diagnose that — it **segfaults**
+(`SIGSEGV`, "cycle encountered after 3 frames with period 4").
+
+Tests: unit tests that the walk reaches a handler body, a handler *arm*, and the
+root expression (**verified to FAIL** when the two arms are stubbed back to
+`{}`); and an end-to-end refusal test whose second case is the `with handler`
+body — the case that proves the walk rather than just the check — plus a
+negative control that an `ai_complete` with no `tier:` still builds.
+
+Also confirmed already-fixed, no work needed: **P4-INT-04** (`run_suspendable_values`
+using a default-stack `scope.spawn`) is the same code as INTERP-H03, closed by
+T16 — it now uses `stack_size_for_depth(resolve_max_depth())`.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -639,17 +693,18 @@ is the same finding as P4-INT-02, closed by T29 — both tables now list them.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-five fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-six fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
 
 ## Not done, deliberately
 
-- **O012 / F062** — verified real, fix reverted rather than rushed: it needs a
-  generic `walk_expr` extracted first, because copy-pasting `expr_calls`'
-  70-line recursion is how the "walker missed an arm" class recurs (already
-  fixed 3x here: R6 taint, `@[contained]` helpers, T2 string dispatch).
+- ~~**O012 / F062**~~ — **now done (T46)**. It was deferred for needing a generic
+  `walk_expr` first, on the grounds that copy-pasting `expr_calls`' 70-line
+  recursion is how the "walker missed an arm" class recurs. Extracting it
+  revealed that recursion's `_ => false` had already dropped `Select` and
+  `WithHandler` from every refusal scan in `codegen/mod.rs`.
 - **The execution re-triage result (the most useful thing to carry forward).** 8 code-read-only
   findings were re-checked by RUNNING them: 8 answers changed — 2 false (OSK-L03 `--latest`,
   INTERP-H04 budget bypass), 2 true-but-understated, 1 true-and-mis-attributed, 3 true as written.

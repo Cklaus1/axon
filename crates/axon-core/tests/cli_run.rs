@@ -8296,6 +8296,77 @@ fn build_refuses_non_balanced_ai_tier_e0910_r3() {
 }
 
 #[test]
+fn build_refuses_per_call_ai_tier_e0910_f062() {
+    // F062 / O012 (I-2, sound-by-refusal). The fn-ATTRIBUTE tier was refused
+    // (E0910) because the native runtime routes every call to the default model
+    // — but R3b also allows a PER-CALL tier, `ai_complete("hi", tier: "cheap")`,
+    // and the interpreter gives that form TOP priority. codegen dropped it under
+    // a comment asserting "native AI calls aren't in the codegen path", which
+    // was false: ai_complete is fully lowered in codegen/builtins.rs.
+    //
+    // Reproduced: `axon build` exit 0, no diagnostic, while `axon trace --ai`
+    // shows the interpreter routing the same call to `[cheap anthropic:
+    // claude-haiku]` at $0.000000. The attribute path was closed and the
+    // per-call path, with the identical hazard, was wide open.
+    let codegen_absent = |m: &str| m.contains("requires building axon with the `codegen` feature");
+    let build = |src: &str, tag: &str| {
+        let f = std::env::temp_dir().join(format!("axon_{tag}_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["build", f.to_str().unwrap(), "-o"])
+            .arg(std::env::temp_dir().join(format!("axon_{tag}_{}.bin", std::process::id())))
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), msg)
+    };
+
+    // (1) The reproduction, verbatim.
+    let (ok, msg) = build(
+        "fn ask() -> i64 { let a = ai_complete(\"say hi\", tier: \"cheap\")\n  1 }\nfn main() -> i64 { ask() }\n",
+        "tiercall",
+    );
+    if codegen_absent(&msg) {
+        eprintln!("codegen feature absent — per-call AI tier refusal test skipped");
+        return;
+    }
+    assert!(!ok, "a per-call AI tier must FAIL the native build:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("tier") && msg.contains("ask"),
+        "must refuse with E0910 naming the fn and the tier:\n{msg}"
+    );
+
+    // (2) Inside a `with handler` body — the arm the pre-T46 walker's `_ => false`
+    // catch-all silently dropped. Without the exhaustive walker this case builds
+    // clean, so it is the one that proves the walk, not just the check.
+    let (ok2, msg2) = build(
+        "fn ask() -> i64 {\n  with handler { on Net(p) => resume(0) } {\n             let a = ai_complete(\"hi\", tier: \"strong\")\n    1\n  }\n}\n         fn main() -> i64 { ask() }\n",
+        "tierhandler",
+    );
+    assert!(
+        !ok2 && msg2.contains("E0910"),
+        "a per-call tier inside a `with handler` body must refuse too:\n{msg2}"
+    );
+
+    // (3) NEGATIVE CONTROL — no `tier:` argument, so nothing to diverge on. It
+    // must still build, or the refusal would just be "ai_complete is banned".
+    let (ok3, msg3) = build(
+        "fn ask() -> i64 { let a = ai_complete(\"say hi\")\n  1 }\nfn main() -> i64 { ask() }\n",
+        "tiernone",
+    );
+    assert!(
+        ok3,
+        "an ai_complete with no per-call tier must still build:\n{msg3}"
+    );
+}
+
+#[test]
 fn build_refuses_ai_call_budget_e0910_f141() {
     // F141 / P6-EXIT-04 (I-2, sound-by-refusal). REPRODUCED before the fix:
     //

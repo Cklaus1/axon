@@ -86,76 +86,161 @@ fn program_calls_goal_run(item: &ast::Item) -> bool {
     body_of(item).into_iter().any(expr_calls_goal_run)
 }
 
-/// Recursively: does `e` (or any sub-expression) call the builtin named `target`?
-fn expr_calls(e: &ast::Expr, target: &str) -> bool {
+/// Visit `e` and EVERY sub-expression, calling `f` on each.
+///
+/// AUDIT T46. Before this existed, each scan in this file rolled its own
+/// ~70-line recursion (`expr_calls`), and that recursion ended in a `_ => false`
+/// catch-all — so `Select`, `WithHandler` and `InlineAsm` bodies were silently
+/// never walked. A check is only as good as the walk beneath it, and this file
+/// is where the sound-by-refusal E0910 scans live: a missed arm there is a
+/// program compiled instead of refused.
+///
+/// The match below is **exhaustive on purpose** — there is no `_` arm. Adding a
+/// variant to `ast::Expr` is therefore a compile error here, which is the only
+/// mechanism that reliably keeps a walker complete. Leaf variants are listed
+/// explicitly rather than swept up, so "has no children" is a decision on the
+/// record instead of an omission.
+/// (The callback is a `dyn` trait object, not a generic: the walker recurses
+/// through nested closures, and a generic callback would re-wrap its own type at
+/// every level — an infinite monomorphization that segfaults rustc rather than
+/// producing a diagnostic. Learned the hard way.)
+pub(crate) fn walk_expr(e: &ast::Expr, f: &mut dyn FnMut(&ast::Expr)) {
     use ast::Expr;
-    if let Expr::Call { callee, .. } = e {
-        if let Expr::Ident(name) = callee.as_ref() {
-            if name == target {
-                return true;
-            }
+    f(e);
+    fn walk_stmts(ss: &[ast::Stmt], f: &mut dyn FnMut(&ast::Expr)) {
+        for s in ss {
+            walk_expr(&s.expr, f);
         }
     }
-    // Walk the structural children that can hold nested calls.
     match e {
-        Expr::BinOp { left, right, .. } => expr_calls(left, target) || expr_calls(right, target),
-        Expr::UnaryOp { operand, .. } => expr_calls(operand, target),
+        Expr::BinOp { left, right, .. } => {
+            walk_expr(left, f);
+            walk_expr(right, f);
+        }
+        Expr::UnaryOp { operand, .. } => walk_expr(operand, f),
         Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
-            expr_calls(value, target)
+            walk_expr(value, f)
         }
         Expr::Call { callee, args, .. } => {
-            expr_calls(callee, target) || args.iter().any(|a| expr_calls(a, target))
+            walk_expr(callee, f);
+            for a in args {
+                walk_expr(a, f);
+            }
         }
         Expr::MethodCall { receiver, args, .. } => {
-            expr_calls(receiver, target) || args.iter().any(|a| expr_calls(a, target))
+            walk_expr(receiver, f);
+            for a in args {
+                walk_expr(a, f);
+            }
         }
         Expr::Question(b) | Expr::Spawn(b) | Expr::Comptime(b) | Expr::Lambda { body: b, .. } => {
-            expr_calls(b, target)
+            walk_expr(b, f)
         }
-        Expr::Return(inner) => inner
-            .as_ref()
-            .map(|b| expr_calls(b, target))
-            .unwrap_or(false),
-        Expr::FieldAccess { receiver, .. } => expr_calls(receiver, target),
+        Expr::Return(inner) => {
+            if let Some(b) = inner {
+                walk_expr(b, f);
+            }
+        }
+        Expr::FieldAccess { receiver, .. } => walk_expr(receiver, f),
         Expr::Index { receiver, index } => {
-            expr_calls(receiver, target) || expr_calls(index, target)
+            walk_expr(receiver, f);
+            walk_expr(index, f);
         }
         Expr::If { cond, then, else_ } => {
-            expr_calls(cond, target)
-                || expr_calls(then, target)
-                || else_
-                    .as_ref()
-                    .map(|b| expr_calls(b, target))
-                    .unwrap_or(false)
+            walk_expr(cond, f);
+            walk_expr(then, f);
+            if let Some(b) = else_ {
+                walk_expr(b, f);
+            }
         }
         Expr::Match { subject, arms } => {
-            expr_calls(subject, target) || arms.iter().any(|a| expr_calls(&a.body, target))
+            walk_expr(subject, f);
+            for a in arms {
+                walk_expr(&a.body, f);
+            }
         }
-        Expr::Tuple(xs) | Expr::Array(xs) => xs.iter().any(|x| expr_calls(x, target)),
-        Expr::Block(stmts) => stmts.iter().any(|s| expr_calls(&s.expr, target)),
+        Expr::Tuple(xs) | Expr::Array(xs) => {
+            for x in xs {
+                walk_expr(x, f);
+            }
+        }
+        Expr::Block(stmts) => walk_stmts(stmts, f),
         Expr::While { cond, body } => {
-            expr_calls(cond, target) || body.iter().any(|s| expr_calls(&s.expr, target))
+            walk_expr(cond, f);
+            walk_stmts(body, f);
         }
         Expr::WhileLet { expr, body, .. } => {
-            expr_calls(expr, target) || body.iter().any(|s| expr_calls(&s.expr, target))
+            walk_expr(expr, f);
+            walk_stmts(body, f);
         }
         Expr::For {
             start, end, body, ..
         } => {
-            expr_calls(start, target)
-                || expr_calls(end, target)
-                || body.iter().any(|s| expr_calls(&s.expr, target))
+            walk_expr(start, f);
+            walk_expr(end, f);
+            walk_stmts(body, f);
         }
-        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => expr_calls(b, target),
-        Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_calls(v, target)),
-        Expr::Assign { value, .. } => expr_calls(value, target),
-        Expr::AssignTo { place, value } => expr_calls(place, target) || expr_calls(value, target),
-        Expr::FmtStr { parts } => parts.iter().any(|p| match p {
-            ast::FmtPart::Expr(e) => expr_calls(e, target),
-            _ => false,
-        }),
-        _ => false,
+        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => walk_expr(b, f),
+        Expr::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                walk_expr(v, f);
+            }
+        }
+        Expr::Assign { value, .. } => walk_expr(value, f),
+        Expr::AssignTo { place, value } => {
+            walk_expr(place, f);
+            walk_expr(value, f);
+        }
+        Expr::FmtStr { parts } => {
+            for p in parts {
+                if let ast::FmtPart::Expr(inner) = p {
+                    walk_expr(inner, f);
+                }
+            }
+        }
+        // ── Arms the old `_ => false` catch-all silently dropped (T46) ───────
+        Expr::Select(arms) => {
+            for a in arms {
+                walk_expr(&a.recv, f);
+                walk_expr(&a.body, f);
+            }
+        }
+        Expr::WithHandler { handler, body } => {
+            if let ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for a in arms {
+                    walk_expr(&a.body, f);
+                }
+                if let Some(ra) = return_arm {
+                    walk_expr(&ra.body, f);
+                }
+            }
+            walk_expr(body, f);
+        }
+        // Leaves — no sub-expressions. Listed rather than swept into a `_` arm
+        // so the exhaustiveness check above keeps doing its job.
+        Expr::Ident(_)
+        | Expr::Literal(_)
+        | Expr::None
+        | Expr::Break
+        | Expr::Continue
+        | Expr::InlineAsm { .. } => {}
     }
+}
+
+/// Recursively: does `e` (or any sub-expression) call the builtin named `target`?
+fn expr_calls(e: &ast::Expr, target: &str) -> bool {
+    use ast::Expr;
+    let mut found = false;
+    walk_expr(e, &mut |x| {
+        if let Expr::Call { callee, .. } = x {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name == target {
+                    found = true;
+                }
+            }
+        }
+    });
+    found
 }
 
 /// Recursively: does `e` (or any sub-expression) call `goal_run`?
@@ -991,6 +1076,44 @@ impl<'ctx> Codegen<'ctx> {
             // `ai_complete` in this fn's own body is metered. A call made from an
             // un-budgeted helper is unmetered in the interpreter too, so refusing
             // it would reject a program the two backends already agree on.
+
+            // ── R3b/F062: the PER-CALL `tier:` (AUDIT T46). ──────────────────
+            // The scan above resolves the tier from fn ATTRIBUTES only. R3b also
+            // allows `ai_complete("hi", tier: "cheap")`, carried on
+            // `Expr::Call { tier }` — and the interpreter gives that form TOP
+            // priority (`current_ai_tier` step 1). Codegen dropped it under a
+            // comment asserting "native AI calls aren't in the codegen path",
+            // which was false. So the attribute path was refused and the
+            // per-call path, with the identical hazard, was wide open:
+            //
+            //   ai_complete("say hi", tier: "cheap")  ->  axon build exit 0
+            //   interp routes it to haiku ($0.000000); the binary calls sonnet.
+            //
+            // ANY `Some(tier)` refuses, not just non-`balanced`: an unknown tier
+            // name is E1302 (exit 5) in the interpreter, which native cannot
+            // replicate either, so "balanced" is the only value that would need
+            // a carve-out and it buys nothing.
+            let mut refusals: Vec<String> = Vec::new();
+            walk_expr(&f.body, &mut |x| {
+                if let ast::Expr::Call { tier: Some(t), .. } = x {
+                    let msg = format!(
+                        "codegen error [E0910]: native codegen cannot honor the per-call AI \
+                         tier `tier: \"{t}\"` in `{mangled}` — the native runtime routes every \
+                         call to the default (balanced/sonnet) model, so this call would \
+                         silently reach the wrong model and be metered at the wrong rate. Run \
+                         this program under the interpreter (`axon run`), which routes the \
+                         per-call tier correctly, or drop the `tier:` argument."
+                    );
+                    if !refusals.contains(&msg) {
+                        refusals.push(msg);
+                    }
+                }
+            });
+            for msg in refusals {
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
+                }
+            }
             //
             // `Some(Err(_))` — a MALFORMED budget — deliberately does not match:
             // the interpreter warns (W1311) and runs the fn unmetered, so the two
@@ -2042,3 +2165,95 @@ impl<'ctx> Codegen<'ctx> {
 
 // (TestResult moved to codegen/output.rs in Phase 2.6 — re-exported above
 // via `pub use output::TestResult` for backwards-compatible path access.)
+
+#[cfg(test)]
+mod walk_expr_tests {
+    use super::*;
+
+    /// Parse a program and return the body of its first fn.
+    fn body_of(src: &str) -> ast::Expr {
+        let prog = crate::parse_source(src).expect("fixture must parse");
+        for item in &prog.items {
+            if let ast::Item::FnDef(f) = item {
+                return f.body.clone();
+            }
+        }
+        panic!("no fn in fixture");
+    }
+
+    fn calls_in(src: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        walk_expr(&body_of(src), &mut |e| {
+            if let ast::Expr::Call { callee, .. } = e {
+                if let ast::Expr::Ident(n) = callee.as_ref() {
+                    names.push(n.clone());
+                }
+            }
+        });
+        names
+    }
+
+    #[test]
+    fn walk_expr_reaches_arms_the_old_catch_all_dropped_t46() {
+        // AUDIT T46. `expr_calls` ended in `_ => false`, so `Select` and
+        // `WithHandler` sub-expressions were never visited. Every E0910
+        // sound-by-refusal scan in this file is built on that walk, so an
+        // unwalked arm is a program COMPILED where it should have been REFUSED.
+        // These two shapes are the ones the catch-all swallowed.
+        let with_handler = "fn f() -> i64 {\n\
+                              with handler { on Net(p) => resume(0) } {\n\
+                                let a = marker_in_body(1)\n\
+                                0\n\
+                              }\n\
+                            }\n";
+        assert!(
+            calls_in(with_handler).iter().any(|n| n == "marker_in_body"),
+            "walk must descend into a `with handler` BODY"
+        );
+
+        let handler_arm = "fn f() -> i64 {\n\
+                             with handler { on Net(p) => marker_in_arm(1) } {\n\
+                               0\n\
+                             }\n\
+                           }\n";
+        assert!(
+            calls_in(handler_arm).iter().any(|n| n == "marker_in_arm"),
+            "walk must descend into a handler ARM — an effect handler body is \
+             ordinary code and can call anything"
+        );
+    }
+
+    #[test]
+    fn walk_expr_visits_the_root_and_nests_arbitrarily_deep_t46() {
+        // The callback must see the root expression itself (a scan looking for a
+        // top-level call would otherwise miss it), and nesting must not bottom
+        // out early.
+        let deep = "fn f() -> i64 {\n\
+                      if outer(1) > 0 {\n\
+                        match inner(2) { Ok(v) => arm_call(v)  Err(e) => 0 }\n\
+                      } else {\n\
+                        let xs = [elem_call(3)]\n\
+                        0\n\
+                      }\n\
+                    }\n";
+        let names = calls_in(deep);
+        for want in ["outer", "inner", "arm_call", "elem_call"] {
+            assert!(
+                names.iter().any(|n| n == want),
+                "missed `{want}` in {names:?}"
+            );
+        }
+
+        let mut saw_root = false;
+        let root = body_of("fn f() -> i64 { 1 }\n");
+        walk_expr(&root, &mut |e| {
+            if std::ptr::eq(e, &root) {
+                saw_root = true;
+            }
+        });
+        assert!(
+            saw_root,
+            "walk_expr must call the visitor on the root itself"
+        );
+    }
+}

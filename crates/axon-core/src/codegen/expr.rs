@@ -385,8 +385,16 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── Function call ─────────────────────────────────────────────────
-            // R3b: codegen ignores the per-call `tier:` (it's an interp-side AI
-            // routing concern; native AI calls aren't in the codegen path).
+            // R3b: codegen drops the per-call `tier:`. The old comment here said
+            // this was safe because "native AI calls aren't in the codegen path"
+            // — which was simply false: `ai_complete` is fully lowered in
+            // codegen/builtins.rs. Dropping the tier meant a `tier: "cheap"` call
+            // silently routed to the default (sonnet) natively while the
+            // interpreter routed it to haiku (AUDIT T46 / F062).
+            //
+            // Dropping it here is now sound only because the refusal scan in
+            // mod.rs REFUSES (E0910) any fn whose body carries a per-call
+            // `tier:`, so no such program reaches this point.
             ast::Expr::Call { callee, args, .. } => self.emit_call(callee, args, fn_val),
 
             // ── Method call — dispatches to mangled `TypeName__method` fn ──────
