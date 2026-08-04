@@ -212,6 +212,38 @@ means the guarantee is "a program that says where it will connect cannot be
 redirected", not "AI traffic cannot be redirected". Same shape as O026; the two
 want deciding together.
 
+### The parity gate — the I-2 soundness mechanism could pass while asserting nothing
+
+| task | commit | what |
+|---|---|---|
+| **T36** | `—` | `parity_all.sh` had **no floor on `$pass` anywhere in the file** — the only decision was `if [ "$fail" -ne 0 ]`. An all-SKIP run printed `0 passed, 49 skipped, 0 failed` and then `PASS — no interp↔codegen / AOT-wasm divergence ✓`, exit 0. Proved with a before/after against an identical stub tree: the HEAD script says PASS, the fixed one says FAILED (GATE-01) |
+| **T36** | `—` | `wasm_parity.sh` counted a row as OK when BOTH legs failed with identical empty output — zero parity evidence dressed as coverage. Verified by planting a program that fails on both: pre-fix logic gives `OK (exit 101)`, now `NO-COVERAGE … both legs failed silently`, exit 1 (GATE-02, remaining half) |
+
+`EXPECT_MIN_PASS` defaults to 40, below the observed healthy count (**44 passed /
+5 skipped of 49**, 2026-08-04; the 5 need an Android NDK or headless Chrome), so
+a box missing a toolchain or two still passes while "nothing ran" and "half the
+suite vanished" cannot. The no-coverage test is *empty stdout AND non-zero*, not
+merely non-zero — `examples/sum_types.ax` legitimately exits 47 (its computed
+total), and the finding's suggested "reject any non-zero exit" would have
+silently deleted real rows.
+
+**Two thirds of GATE-02 were already fixed and the finding was stale on them** —
+`HOST_BUILTINS` now includes `http_*`/`env_var` (T14) and the suite is green with
+`ANTHROPIC_API_KEY` set, where the finding recorded it as live-red. Only the
+both-legs-failed half survived. Worth noting as evidence the audit's own findings
+decay.
+
+**GATE-03 is only half closed, deliberately.** The default gate's test stage is
+`--no-default-features`, so every codegen parity wrapper reports `ok` while
+asserting nothing, and `parity_all.sh` runs under `--strict` only — a non-strict
+run proves nothing about I-2 and still prints `✅ gate PASSED`. The fix sketch
+says to promote `parity_all.sh` into the default path; **measured, that costs
+7m49s**, not the ~2 min the sketch assumed. Changing gate latency by 4× is a
+decision, not a bug fix, so instead the non-strict run now REFUSES TO BE SILENT:
+it lists every skipped harness from `target/harness-skips.log`, states plainly
+that I-2 was not verified, and names the three commands that would verify it.
+Making it fatal is the existing `AXON_HARNESS_STRICT=1` needs-human item.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -230,7 +262,7 @@ want deciding together.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty-four fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty-six fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

@@ -90,7 +90,7 @@ for f in examples/*.ax; do
 done
 echo "wasm_parity: ${#CORPUS[@]} pure-compute examples auto-discovered"
 
-pass=0; fail=0
+pass=0; fail=0; nocov=0; nocov_names=""
 for name in "${CORPUS[@]}"; do
   f="examples/$name"
   [ -f "$f" ] || continue
@@ -98,6 +98,21 @@ for name in "${CORPUS[@]}"; do
   n_out="$("$NATIVE" "$f" 2>/dev/null)"; n_code=$?
   # wasm (wasmtime needs an absolute path and a dir grant to read the file).
   w_out="$("$WASMRT" --dir / "$WASM" "$ROOT/$f" 2>/dev/null)"; w_code=$?
+
+  # AUDIT T36 (finding GATE-02). Two legs that BOTH fail before producing any
+  # output "agree" trivially — identical empty stdout, identical non-zero exit —
+  # and were counted as a pass. That is zero parity evidence dressed as coverage:
+  # if a builtin became unsupported on both sides tomorrow, its row would keep
+  # printing OK. Note the test is empty-stdout AND non-zero, not merely non-zero:
+  # examples/sum_types.ax legitimately exits 47 (its computed total) after
+  # printing, and rejecting every non-zero exit would silently delete real rows.
+  if [ "$n_code" -ne 0 ] && [ "$w_code" -ne 0 ] && [ -z "$n_out" ] && [ -z "$w_out" ]; then
+    echo "  NO-COVERAGE $name (both legs failed with no output: native=$n_code wasm=$w_code)"
+    nocov=$((nocov+1))
+    nocov_names="$nocov_names $name"
+    continue
+  fi
+
   if [ "$n_code" = "$w_code" ] && [ "$n_out" = "$w_out" ]; then
     echo "  OK   $name (exit $n_code)"
     pass=$((pass+1))
@@ -109,7 +124,11 @@ for name in "${CORPUS[@]}"; do
   fi
 done
 
-echo "wasm_parity: $pass passed, $fail differ"
+echo "wasm_parity: $pass passed, $fail differ, $nocov no-coverage"
 [ "$fail" -eq 0 ] || exit 1
 [ "$pass" -gt 0 ] || { echo "wasm_parity: no corpus files ran"; exit 1; }
+if [ "$nocov" -ne 0 ]; then
+  echo "wasm_parity: FAILED —$nocov_names produced no parity evidence (both legs failed silently)"
+  exit 1
+fi
 echo "wasm_parity: native and wasm interpreters agree on the pure-compute corpus ✓"

@@ -947,6 +947,40 @@ currently grants everything.
 
 ---
 
+## O028 — the default gate takes 4× longer if it actually verifies I-2 (needs a call)
+
+Measured while fixing T36/GATE-03, so the tradeoff is on record rather than
+guessed at.
+
+`scripts/parity_all.sh` — the aggregator that enforces the two-engine invariant
+I-2 — takes **7m49s** on this box (2026-08-04: 44 passed, 5 skipped, 0 failed, of
+49 harnesses; the 5 skips need an Android NDK or headless Chrome). It runs under
+`gate.sh --strict` only. GATE-03's fix sketch proposed promoting it into the
+default gate and estimated ~2 min; the real number is nearly four times that.
+
+So the default `./scripts/gate.sh` proves nothing about I-2 — its test stage is
+`--no-default-features`, which makes every codegen parity wrapper in `cli_run.rs`
+report `ok` while asserting nothing — and it still prints `✅ gate PASSED`.
+T36 made that non-silent (the run now lists every skipped harness and says
+outright that parity was not verified) but did not change what runs.
+
+The actual decision, which is yours:
+
+- **(a) Promote it.** Every gate run verifies I-2, and every gate run costs ~8
+  minutes more. Honest, slow, and likely to get bypassed by developers in a tight
+  loop — which is how ad-hoc parity running caused #27/#36/#38/#39 in the first
+  place.
+- **(b) Leave it in `--strict`, make CI use `--strict` + `AXON_HARNESS_STRICT=1`.**
+  Local loops stay fast; the merge gate is the one that must be honest. This is
+  the existing needs-human item #4 and probably the right answer, but it means
+  accepting that a local green gate is not evidence of I-2.
+- **(c) Split it.** A fast subset (the ~10 harnesses that need no exotic
+  toolchain) in the default gate, the full suite under `--strict`. More work, and
+  someone has to own which harnesses are in the fast set and why.
+
+Related: the wrappers already call `note_harness_skip`, so the counting
+machinery (O006b) is built and waiting on the policy decision.
+
 ## O027 — the AI endpoint pin only binds programs that declared a net grant
 
 Shipped as part of T35 (RT-02) and worth stating as a limitation rather than

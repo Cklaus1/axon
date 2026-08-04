@@ -49,6 +49,12 @@ fi
 
 fail() { echo ""; echo "❌ gate FAILED at: $1"; exit 1; }
 
+# The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
+# at the end of this script would otherwise report skips from previous runs as if
+# they had happened now. Truncate it so the notice describes THIS run only.
+SKIPLOG="target/harness-skips.log"
+mkdir -p target && : > "$SKIPLOG"
+
 # Fast doc-focus check first (pure text over VISION.md, no build) — keeps the
 # north-star doc short/legible the same way the *_parity.sh harnesses keep the
 # compiler honest. Cheap enough to run on every gate, codegen or not.
@@ -155,6 +161,35 @@ if [ "$STRICT" = 1 ]; then
   else
     echo "── gate: smt feature SKIPPED (libz3 not found; install to enable) ─"
   fi
+fi
+
+echo ""
+
+# AUDIT T36 (finding GATE-03). The default gate's test stage runs
+# --no-default-features, so every codegen-dependent parity wrapper in cli_run.rs
+# reports `ok` while asserting nothing ("codegen unavailable — parity skipped"),
+# and parity_all.sh runs under --strict only. A non-strict run therefore proves
+# NOTHING about invariant I-2 while printing "✅ gate PASSED" — the same vacuous-
+# pass shape this repo has now hit three times.
+#
+# Deliberately NOT silently changed: promoting parity_all.sh into the default
+# path costs 7m49s on this box (measured 2026-08-04: 44 passed / 5 skipped of
+# 49). That is a real decision about gate latency, not one to make as a side
+# effect of a bug fix. What this does is refuse to let the vacuity be silent.
+# ($SKIPLOG is truncated at the top of this script so this reflects THIS run.)
+if [ "$STRICT" != 1 ]; then
+  echo "── gate: coverage notice ───────────────────────────────────────────"
+  if [ -s "$SKIPLOG" ]; then
+    n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
+    echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
+    sort -u "$SKIPLOG" | sed 's/^/    · /'
+  fi
+  echo "  This run did NOT verify interp↔codegen / AOT-wasm parity (invariant I-2)."
+  echo "  The test stage is --no-default-features, so the codegen parity wrappers"
+  echo "  cannot assert. To actually check I-2:"
+  echo "      ./scripts/gate.sh --strict      # full gate incl. the parity suite"
+  echo "      ./scripts/parity_all.sh         # parity suite alone (~8 min)"
+  echo "      AXON_HARNESS_STRICT=1 ...       # make any skipped harness FATAL"
 fi
 
 echo ""

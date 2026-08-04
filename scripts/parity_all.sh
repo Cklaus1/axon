@@ -88,5 +88,27 @@ if [ "$fail" -ne 0 ]; then
   echo "parity_all: FAILED —$failed_names"
   exit 1
 fi
-echo "parity_all: PASS — no interp↔codegen / AOT-wasm divergence ✓"
+
+# AUDIT T36 (finding GATE-01). The only decision used to be `$fail -ne 0`, with
+# no floor on $pass anywhere in this file — so an all-SKIP run printed
+# "0 passed, 49 skipped, 0 failed" and then "PASS ✓". A box with no LLVM, or a
+# breakage that made every harness bail early, was byte-indistinguishable from a
+# green suite. This is the aggregator gate.sh relies on for invariant I-2, and
+# gate.sh's own comment names ad-hoc parity running as how bugs
+# #27/#36/#38/#39/parse_*_or reached main.
+#
+# The floor is deliberately below the observed healthy count (44 passed / 5
+# skipped of 49 on 2026-08-04; the 5 are android + browser/wasm-browser, which
+# need an NDK or headless Chrome) so an ordinary box missing a couple of
+# toolchains still passes — but "nothing ran" and "half the suite vanished"
+# cannot.
+EXPECT_MIN_PASS="${EXPECT_MIN_PASS:-40}"
+if [ "$pass" -lt "$EXPECT_MIN_PASS" ]; then
+  echo "parity_all: FAILED — only $pass harness(es) actually PASSED, expected >= $EXPECT_MIN_PASS"
+  echo "parity_all: a suite that skips everything is not a green suite. If this box"
+  echo "            genuinely lacks toolchains, set EXPECT_MIN_PASS explicitly and say why."
+  exit 1
+fi
+
+echo "parity_all: PASS — no interp↔codegen / AOT-wasm divergence ✓ ($pass harnesses asserted)"
 exit 0
