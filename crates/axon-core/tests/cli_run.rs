@@ -2817,6 +2817,84 @@ fn string_named_dispatch_to_a_permitted_callee_still_checks_clean_t43() {
 }
 
 #[test]
+fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
+    // SECURITY (audit T45, finding INTERP-H02). `eval_native_call` handles
+    // `native::M::*` DIRECTLY off `Expr::Call` and returns before `eval_call`,
+    // so it never reached `call_builtin` — the sole site of the F5 runtime
+    // sandbox gate, the R4 @[agent] action log and the R28 audit ledger. Every
+    // native module therefore bypassed all three.
+    //
+    // Reproduced with `gfx`, which declares `effects: &["IO"]`, under
+    // `sandbox_create(p, "")` — an EMPTY ceiling. Before the fix
+    // window_open/surface/clear/present/frame_count all ran and `frame_count`
+    // returned 2, so the process exited 2: proof both present() calls executed
+    // inside a sandbox that permitted nothing.
+    //
+    // Note the static @[contained(gfx: any)] grant is SATISFIED here. The
+    // runtime sandbox is a separate, stricter layer, and it is the one that saw
+    // nothing at all.
+    let run = |src: &str, tag: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_h02_{tag}_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let tool = "use native::gfx\n\
+                @[contained(gfx: any)]\n\
+                fn tool(x: i64) -> i64 {\n\
+                  let w = gfx::window_open(64, 64, \"t\")\n\
+                  let s = gfx::surface(w)\n\
+                  gfx::present(s)\n\
+                  gfx::present(s)\n\
+                  gfx::frame_count(s)\n\
+                }\n";
+
+    // (1) Empty ceiling ⇒ the FIRST native call is refused (exit 8), not the
+    // whole module run to completion.
+    let (code, err) = run(
+        &format!(
+            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"\")\n  sandbox_run(sb, \"tool\", 1)\n}}\n"
+        ),
+        "deny",
+    );
+    assert_eq!(
+        code, 8,
+        "a native module under an empty ceiling must be a SandboxViolation (exit 8), \
+         not a completed render: {err}"
+    );
+    assert!(
+        err.contains("gfx::window_open") && err.contains("IO"),
+        "the violation must name the native op and the effect it needed: {err}"
+    );
+
+    // (2) NEGATIVE CONTROL — a ceiling that GRANTS IO must still run the module
+    // to completion. Without this the fix could just be "native calls always
+    // fail", and (1) would pass for the wrong reason. Two present() calls ⇒
+    // frame_count 2 ⇒ exit 2.
+    let (code2, err2) = run(
+        &format!(
+            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"IO\")\n  sandbox_run(sb, \"tool\", 1)\n}}\n"
+        ),
+        "allow",
+    );
+    assert_eq!(
+        code2, 2,
+        "an IO-granting ceiling must still permit the native module (2 frames): {err2}"
+    );
+
+    // (3) NEGATIVE CONTROL — outside any sandbox the module is unaffected.
+    let (code3, err3) = run(&format!("{tool}fn main() -> i64 {{ tool(1) }}\n"), "free");
+    assert_eq!(
+        code3, 2,
+        "outside any sandbox the native module must be unaffected: {err3}"
+    );
+}
+
+#[test]
 fn sandbox_io_grant_does_not_imply_process_spawn_exit_8() {
     // SECURITY (audit T8, finding P6-COV-01). `builtin_effect_row` puts `exec`
     // in the SAME "IO" bucket as println/read_file/env_var/exit, so a sandbox

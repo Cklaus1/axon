@@ -198,6 +198,119 @@ impl<'p> Interp<'p> {
         Ok(completed)
     }
 
+    /// The single pre-effect gate every effectful operation must pass (AUDIT
+    /// T45 / INTERP-H02).
+    ///
+    /// Three controls used to sit inline at the head of `call_builtin`: the R4
+    /// `@[agent]` action log, the F5 runtime sandbox ceiling, and the R28 audit
+    /// ledger. That was sound only while `call_builtin` was the sole way to
+    /// reach an effect — and it was not. `eval_native_call` handles
+    /// `native::M::*` directly off `Expr::Call` and returns before `eval_call`,
+    /// so every native module bypassed all three. Reproduced with the `gfx`
+    /// module (which declares `effects: &["IO"]`) under `sandbox_create(p, "")`
+    /// — an EMPTY ceiling: window_open/surface/clear/present/frame_count all
+    /// ran to completion, and `frame_count` came back 2, proving both
+    /// `present()` calls executed. No violation, no ledger row, no agent-log
+    /// entry.
+    ///
+    /// Parameters are supplied by the caller rather than derived from `op_name`
+    /// so that native modules — whose effects come from `native::Module`, not
+    /// from the builtin tables — go through exactly the same code.
+    ///
+    /// `scope_args`: `Some(args)` enables the T3 per-argument SCOPE check
+    /// (a `fs: [write("./out/")]` grant means "may write ./out/", not "may
+    /// write somewhere"). `None` for native calls, whose arguments are handles
+    /// and scalars with no path/host to scope.
+    pub(super) fn pre_effect_gate(
+        &self,
+        op_name: &str,
+        effects: &[&str],
+        cap: Option<&str>,
+        ledger_kind: Option<axon_audit::EffectKind>,
+        scope_args: Option<&[Value]>,
+    ) -> Result<(), Flow> {
+        // R4 §4.3 — mandatory `@[agent]` action log (I-13). When a capability-
+        // bearing operation is performed from inside an `@[agent]` fn, inject one
+        // `agent_action` audit record naming the tool and the capability it
+        // exercises. Injected at the call site, so an agent cannot act on the
+        // world (fs/net/exec) without the action being logged — the highest-trust
+        // zone's un-opt-out-able audit trail. Pure operations (no capability) are
+        // not logged; non-agent callers are unaffected.
+        if let Some(cap) = cap {
+            if let Some(agent_fn) = self.current_agent_fn() {
+                // F3 (Phase 9): map the raw cap kind to its effect-row tag and
+                // include the current principal name for audit attribution.
+                let effect_row = cap_to_effect_row(cap);
+                let principal = self.current_principal_name();
+                append_agent_action_jsonl(&agent_fn, op_name, cap, effect_row, &principal);
+            }
+        }
+
+        // F5 (Phase 9): runtime sandbox enforcement. If there is an active
+        // sandbox AND this operation has a non-empty effect row, check that every
+        // effect it requires is in the sandbox's allowed set. Any effect outside
+        // the ceiling is refused (SandboxViolation, exit 8) before the real call.
+        // Pure operations (empty row) are always allowed — this check costs
+        // nothing for the common case. sandbox_create/sandbox_run themselves are
+        // exempt (they manage sandbox state; exempting them avoids infinite
+        // regress).
+        {
+            let sb_handle = self.active_sandbox.get();
+            if sb_handle >= 0 && op_name != "sandbox_create" && op_name != "sandbox_run" {
+                // `builtin_effect_row` puts process spawning in the SAME `IO`
+                // bucket as `println`/`read_file`/`env_var`, so a sandbox
+                // granting `IO` for console output also granted arbitrary
+                // process spawn. The fine-grained classification already exists
+                // (`capability_of_builtin`, single-sourced with the @[contained]
+                // checker) and the audit layer already records exec as its own
+                // `Exec` kind — only enforcement was coarse. Require an explicit
+                // `Exec` grant, so `IO` never implies spawn.
+                let requires_exec = cap == Some("exec");
+                let extra: &[&str] = if requires_exec { &["Exec"] } else { &[] };
+                if !effects.is_empty() || requires_exec {
+                    let sbs = self.sandboxes.borrow();
+                    if let Some(sb) = sbs.get(sb_handle as usize) {
+                        for &eff in effects.iter().chain(extra) {
+                            if !sb.allowed.contains(eff) {
+                                return Err(crate::interp::Flow::SandboxViolation(format!(
+                                    "builtin `{op_name}` requires effect `{eff}` which is not \
+                                     in the active sandbox's allowed set {:?} \
+                                     (principal handle {})",
+                                    sb.allowed, sb.principal
+                                )));
+                            }
+                        }
+                        // AUDIT T3: the effect is permitted — now check its
+                        // SCOPE. A grant of `fs: [write("./out/")]` must mean
+                        // "may write ./out/", not "may write somewhere".
+                        if let Some(args) = scope_args {
+                            if let Some(v) = scope_violation(op_name, args, sb) {
+                                return Err(crate::interp::Flow::SandboxViolation(v));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // R28: append one capability-audit-ledger entry for this call when
+        // AXON_AUDIT_LEDGER is set and the operation exercises a ledger
+        // capability class. Logged before dispatch (same precedent as the F3
+        // agent-action log above) so it records the attempt even if the call
+        // itself later errors. `ai_complete` is excluded: it already logs a
+        // richer entry (with the prompt's SHA-256) via `append_ai_call` at its
+        // own call site further below — this generic hook would otherwise
+        // double-log it.
+        if op_name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
+            if let Some(kind) = ledger_kind {
+                let principal = self.current_principal_name();
+                let _ = axon_audit::append_global(&principal, kind, op_name);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Dispatch a builtin call. Returns `Ok(Some(v))` if `name` is a builtin,
     /// `Ok(None)` if it is not (caller should try user functions).
     pub(super) fn call_builtin(&self, name: &str, args: &[Value]) -> Result<Option<Value>, Flow> {
@@ -218,83 +331,20 @@ impl<'p> Interp<'p> {
             };
         }
 
-        // R4 §4.3 — mandatory `@[agent]` action log (I-13). When a capability-
-        // bearing builtin is called from inside an `@[agent]` fn, inject one
-        // `agent_action` audit record naming the tool and the capability it
-        // exercises. Compiler-injected at the call site, so an agent cannot act
-        // on the world (fs/net/exec) without the action being logged — the
-        // highest-trust zone's un-opt-out-able audit trail. Pure builtins
-        // (no capability) are not logged; non-agent callers are unaffected.
-        if let Some(cap) = crate::capabilities::capability_of_builtin(name) {
-            if let Some(agent_fn) = self.current_agent_fn() {
-                // F3 (Phase 9): map the raw cap kind to its effect-row tag and
-                // include the current principal name for audit attribution.
-                let effect_row = cap_to_effect_row(cap);
-                let principal = self.current_principal_name();
-                append_agent_action_jsonl(&agent_fn, name, cap, effect_row, &principal);
-            }
-        }
-
-        // F5 (Phase 9): runtime sandbox enforcement. If there is an active
-        // sandbox AND this builtin has a non-empty effect row, check that every
-        // effect it requires is in the sandbox's allowed set. Any effect outside
-        // the ceiling is refused (SandboxViolation, exit 8) before the real call.
-        // Pure builtins (empty row) are always allowed — this check costs nothing
-        // for the common case. sandbox_create/sandbox_run themselves are exempt
-        // (they manage sandbox state; exempting them avoids infinite regress).
-        {
-            let sb_handle = self.active_sandbox.get();
-            if sb_handle >= 0 && name != "sandbox_create" && name != "sandbox_run" {
-                let row = crate::builtins::builtin_effect_row(name);
-                // `builtin_effect_row` puts process spawning in the SAME `IO`
-                // bucket as `println`/`read_file`/`env_var`, so a sandbox
-                // granting `IO` for console output also granted arbitrary
-                // process spawn. The fine-grained classification already exists
-                // (`capability_of_builtin`, single-sourced with the @[contained]
-                // checker) and the audit layer already records exec as its own
-                // `Exec` kind — only enforcement was coarse. Require an explicit
-                // `Exec` grant, so `IO` never implies spawn.
-                let requires_exec =
-                    crate::capabilities::capability_of_builtin(name) == Some("exec");
-                let extra: &[&str] = if requires_exec { &["Exec"] } else { &[] };
-                if !row.is_empty() || requires_exec {
-                    let sbs = self.sandboxes.borrow();
-                    if let Some(sb) = sbs.get(sb_handle as usize) {
-                        for &eff in row.iter().chain(extra) {
-                            if !sb.allowed.contains(eff) {
-                                return Err(crate::interp::Flow::SandboxViolation(format!(
-                                    "builtin `{name}` requires effect `{eff}` which is not \
-                                     in the active sandbox's allowed set {:?} \
-                                     (principal handle {})",
-                                    sb.allowed, sb.principal
-                                )));
-                            }
-                        }
-                        // AUDIT T3: the effect is permitted — now check its
-                        // SCOPE. A grant of `fs: [write("./out/")]` must mean
-                        // "may write ./out/", not "may write somewhere".
-                        if let Some(v) = scope_violation(name, args, sb) {
-                            return Err(crate::interp::Flow::SandboxViolation(v));
-                        }
-                    }
-                }
-            }
-        }
-
-        // R28: append one capability-audit-ledger entry for this builtin call
-        // when AXON_AUDIT_LEDGER is set and the builtin exercises a ledger
-        // capability class. Logged before dispatch (same precedent as the F3
-        // agent-action log above) so it records the attempt even if the call
-        // itself later errors. `ai_complete` is excluded: it already logs a
-        // richer entry (with the prompt's SHA-256) via `append_ai_call` at
-        // its own call site further below — this generic hook would
-        // otherwise double-log it.
-        if name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
-            if let Some(kind) = audit_effect_kind(name) {
-                let principal = self.current_principal_name();
-                let _ = axon_audit::append_global(&principal, kind, name);
-            }
-        }
+        // AUDIT T45 (INTERP-H02). The @[agent] action log, the F5 runtime
+        // sandbox gate and the R28 audit ledger used to be written inline here.
+        // They now live in `pre_effect_gate` because `call_builtin` is NOT the
+        // only way to perform an effect: `eval_native_call` dispatches
+        // `native::M::*` straight from `Expr::Call` and never reaches this
+        // function, so a native module ran with NO gate, NO agent log and NO
+        // ledger entry. One gate, called from every effect entry point.
+        self.pre_effect_gate(
+            name,
+            crate::builtins::builtin_effect_row(name),
+            crate::capabilities::capability_of_builtin(name),
+            audit_effect_kind(name),
+            Some(args),
+        )?;
 
         // Phase 6 (multi-shot resume): if we are REPLAYING a continuation to
         // service a `resume(v)`, the handled effect's op is FED the resume value

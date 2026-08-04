@@ -575,6 +575,52 @@ Regression test drives the real CLI over four cases — type error, syntax error
 to FAIL against the old terminal-else**, reproducing `✓ completed (value=2)`
 exactly.
 
+### T45 — every `native::M::*` call bypassed the runtime sandbox, the agent log and the audit ledger
+
+INTERP-H02 (high, executed). Three controls sat inline at the head of
+`call_builtin`: the R4 `@[agent]` action log, the F5 runtime sandbox ceiling,
+and the R28 audit ledger. That is sound only if `call_builtin` is the sole way
+to reach an effect. It was not — `eval_native_call` handles `native::M::*`
+directly off `Expr::Call` and returns before `eval_call`, so native modules
+never touched any of the three.
+
+Reproduced with `gfx`, which declares `effects: &["IO"]`, under
+`sandbox_create(p, "")` — an **empty** ceiling:
+
+```
+window_open / surface / clear / present / present / frame_count
+→ process exit 2
+```
+
+Exit 2 *is* `frame_count`, so both `present()` calls executed inside a sandbox
+that permitted nothing. No violation raised. With `AXON_AUDIT_LEDGER` set, the
+hash-chained ledger recorded **zero** rows for the run; it now records four.
+
+Worth being precise about which layer failed: the static
+`@[contained(gfx: any)]` grant was satisfied, and E1004 correctly refuses the
+program without it. The **runtime** sandbox is a separate and stricter layer —
+`sandbox_run` under an explicit ceiling — and that is the one that saw nothing.
+
+Fixed by extracting the three blocks into one `pre_effect_gate(op_name,
+effects, cap, ledger_kind, scope_args)` and calling it from both entry points.
+Its parameters are supplied by the caller rather than derived from the op name,
+because a native module's effects come from `native::Module`, not from the
+builtin tables — deriving them would have forced a second, divergent
+classification path, which is how this class recurs in the first place. The call
+sits above the `modbus`/`fhir`/`fix` branch, so the domain modules
+(`effects: &["Net"]`) are covered by the same gate rather than a second one.
+`scope_args` is `None` for native calls: their arguments are handles and
+scalars, with no path or host for the T3 scope check to constrain.
+
+Regression test has the deny case plus **two** negative controls — an
+IO-granting ceiling must still run the module to completion, and no sandbox at
+all must be unaffected. Without them "native calls always fail" would satisfy
+the deny case. **Verified to FAIL with the gate removed**, reproducing exit 2.
+
+Also confirmed already-fixed and needing no work: **INTERP-H01** (the four
+`host_await*` builtins absent from `is_impure_builtin` / `builtin_effect_row`)
+is the same finding as P4-INT-02, closed by T29 — both tables now list them.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -593,7 +639,7 @@ exactly.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-four fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-five fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

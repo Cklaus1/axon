@@ -46,6 +46,21 @@ fn coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
     }
 }
 
+/// R28 ledger class for a native module's declared effect row (AUDIT T45).
+/// Native modules carry an effect row rather than a builtin name, so the
+/// name-keyed `audit_effect_kind` does not apply to them.
+fn native_ledger_kind(effects: &[&str]) -> Option<axon_audit::EffectKind> {
+    effects.iter().find_map(|&tag| match tag {
+        "FS" => Some(axon_audit::EffectKind::FS),
+        "Net" => Some(axon_audit::EffectKind::Net),
+        "AI" => Some(axon_audit::EffectKind::AI),
+        "Exec" => Some(axon_audit::EffectKind::Exec),
+        "Random" => Some(axon_audit::EffectKind::Random),
+        "IO" => Some(axon_audit::EffectKind::IO),
+        _ => None,
+    })
+}
+
 impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
@@ -677,6 +692,31 @@ impl<'p> Interp<'p> {
             Some(pair) => pair,
             None => return panic(format!("call to unknown native function `{qualified}`")),
         };
+        // AUDIT T45 (INTERP-H02). This function is reached DIRECTLY from
+        // `Expr::Call` (see the `is_native_call` arm above) and returns without
+        // ever entering `eval_call`/`call_builtin` — which was the only place
+        // the F5 sandbox ceiling, the R4 @[agent] action log and the R28 audit
+        // ledger were applied. So every `native::M::*` call bypassed all three.
+        //
+        // Reproduced with the `gfx` module, which declares `effects: &["IO"]`,
+        // under `sandbox_create(p, "")` — an EMPTY ceiling:
+        // window_open/surface/clear/present/frame_count ran to completion and
+        // frame_count returned 2, proving both present() calls executed. No
+        // violation raised, no ledger row, no agent-log entry.
+        //
+        // Placed here, above the modbus/fhir/fix branch, so the domain modules
+        // (`effects: &["Net"]`) are gated by the same call — a second gate at a
+        // second site is how this class recurs.
+        //
+        // `scope_args: None`: native arguments are handles and scalars, with no
+        // path or host for the T3 scope check to constrain.
+        self.pre_effect_gate(
+            qualified,
+            module.effects,
+            Some(module.capability),
+            native_ledger_kind(module.effects),
+            None,
+        )?;
         // R22: the domain-interop modules (`modbus`/`fhir`/`fix`) marshal through
         // a richer DomainArg/DomainValue layer (str + [i64] returns), so they
         // take a separate path. `gfx` keeps the original GfxArg path below.
