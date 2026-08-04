@@ -419,6 +419,25 @@ enum Command {
         /// executable). Only consulted when `--quorum-dir` is given.
         #[arg(long, value_name = "PATH")]
         axon_vm_bin: Option<PathBuf>,
+
+        /// Read the pipeline gate functions (simulate / stress / redteam_check /
+        /// assert_deployable) from this .ax file instead of from the artifact
+        /// being deployed.
+        ///
+        /// A program cannot be its own red team. By default the gates live in
+        /// the very file under review, so an author who writes no gates — or
+        /// writes ones that pass — is reviewed by nobody. `--gates` lets the
+        /// DEPLOYING operator supply them.
+        #[arg(long, value_name = "PATH")]
+        gates: Option<PathBuf>,
+
+        /// Permit a Risk >= High deploy to proceed with pipeline gates missing.
+        ///
+        /// At Risk >= High a missing gate BLOCKS the deploy: an absent red team
+        /// is not a passed red team. This flag restores the old open-gate
+        /// behaviour for that tier, and prints a warning every time.
+        #[arg(long)]
+        allow_missing_gates: bool,
     },
 
     /// Run the red-team check on a .ax program.
@@ -761,8 +780,20 @@ fn dispatch(command: Command) {
             json,
             quorum_dir,
             quorum_n,
+            gates,
+            allow_missing_gates,
             axon_vm_bin,
-        } => cmd_deploy(file, gate, risk, json, quorum_dir, quorum_n, axon_vm_bin),
+        } => cmd_deploy(
+            file,
+            gate,
+            risk,
+            json,
+            quorum_dir,
+            quorum_n,
+            axon_vm_bin,
+            gates,
+            allow_missing_gates,
+        ),
         Command::Redteam { file, json } => cmd_redteam(file, json),
     }
 }
@@ -5238,49 +5269,66 @@ fn build_axmeta_manifest(
 ///   net + fs_write present    → High (2)
 ///   net OR fs_write present   → Medium (1)
 ///   pure (empty row)          → Low (0)
+/// Derive the deploy risk level (0=low .. 3=critical) for a program.
+///
+/// Risk is the MAX of what the program actually does and what it declares.
+///
+/// It used to be derived from declarations ALONE — effect rows and `@[contained]`
+/// args on top-level `Item::FnDef`s. That inverted the incentive exactly: a
+/// program that really spawns a shell and writes files, declaring nothing,
+/// derived `low` and deployed with no gates; a program declaring `| {Exec}` and
+/// doing nothing derived `critical`. Both were executed and confirmed
+/// (P7-SEC-06). Declaring your effects honestly made you look dangerous; hiding
+/// them made you look safe.
+///
+/// `capabilities::program_capabilities` already computed the right answer and
+/// was not consulted. It follows impl-method bodies, string-dispatch call sites
+/// and module-level comptime initializers — the laundering routes the old
+/// item-walk missed by construction.
 fn derive_risk_from_ast(program: &axon_core::ast::Program) -> i64 {
-    let mut has_exec = false;
-    let mut has_net = false;
-    let mut has_fs_write = false;
+    // ── What the program ACTUALLY does ──────────────────────────────────────
+    let caps = axon_core::capabilities::program_capabilities(program);
+    let mut has_exec = caps.iter().any(|c| c == "exec" || c.starts_with("native:"));
+    let mut has_net = caps.iter().any(|c| c == "net");
+    let mut has_fs_write = caps.iter().any(|c| c == "fs:write");
+    // Reading the filesystem or the ambient environment is not free either:
+    // both are how data leaves a boundary it was never granted.
+    let mut has_fs_read = caps.iter().any(|c| c == "fs:read" || c == "env");
 
+    // ── What it DECLARES ────────────────────────────────────────────────────
+    // Taken as a floor, never a ceiling: a declaration can only RAISE risk.
+    // Walk impl methods too — the old version looked only at top-level fns, so
+    // an effect row on a trait method was invisible.
+    let mut note_row = |row: &Option<axon_core::ast::EffectRow>| {
+        if let Some(row) = row {
+            for eff in &row.effects {
+                match eff.to_lowercase().as_str() {
+                    "exec" => has_exec = true,
+                    "net" => has_net = true,
+                    "fs" => has_fs_write = true,
+                    "io" | "env" => has_fs_read = true,
+                    _ => {}
+                }
+            }
+        }
+    };
     for item in &program.items {
-        if let axon_core::ast::Item::FnDef(f) = item {
-            // Walk declared effect rows
-            if let Some(row) = &f.effect_row {
-                for eff in &row.effects {
-                    match eff.to_lowercase().as_str() {
-                        "exec" => has_exec = true,
-                        "net" => has_net = true,
-                        "fs" | "io" => has_fs_write = true,
-                        _ => {}
-                    }
+        match item {
+            axon_core::ast::Item::FnDef(f) => note_row(&f.effect_row),
+            axon_core::ast::Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    note_row(&m.effect_row);
                 }
             }
-            // Also scan @[contained] attribute args for net/exec/write caps
-            for attr in &f.attrs {
-                if attr.name == "contained" {
-                    for arg in &attr.args {
-                        let a = arg.to_lowercase();
-                        if a.contains("exec") {
-                            has_exec = true;
-                        }
-                        if a.contains("net") {
-                            has_net = true;
-                        }
-                        if a.contains("write") {
-                            has_fs_write = true;
-                        }
-                    }
-                }
-            }
+            _ => {}
         }
     }
 
     if has_exec {
         3
-    } else if has_net && has_fs_write {
+    } else if has_net && (has_fs_write || has_fs_read) {
         2
-    } else if has_net || has_fs_write {
+    } else if has_net || has_fs_write || has_fs_read {
         1
     } else {
         0
@@ -5289,10 +5337,17 @@ fn derive_risk_from_ast(program: &axon_core::ast::Program) -> i64 {
 
 /// `axon deploy` — run a .ax program through the risk-gated safety pipeline.
 ///
-/// Phase 11: risk is derived from effect rows; `--risk LEVEL` may only raise it.
+/// Phase 11: risk is derived from what the program DOES and what it declares,
+/// whichever is higher; `--risk LEVEL` may only raise it further.
 /// Risk >= High triggers: simulate → stress → redteam_check → assert_deployable → main.
 /// Risk < High runs:     redteam_check → assert_deployable → main.
 /// Any gate function that returns false/non-zero blocks the deploy.
+///
+/// At Risk >= High a MISSING gate also blocks (P7-SEC-07) — an absent red team
+/// is not a passed red team. `--gates PATH` supplies gates from outside the
+/// artifact; `--allow-missing-gates` restores the old open-gate behaviour with
+/// a warning.
+#[allow(clippy::too_many_arguments)]
 fn cmd_deploy(
     file: PathBuf,
     gate: Option<String>,
@@ -5301,6 +5356,8 @@ fn cmd_deploy(
     quorum_dir: Option<PathBuf>,
     quorum_n: Option<usize>,
     axon_vm_bin: Option<PathBuf>,
+    gates_file: Option<PathBuf>,
+    allow_missing_gates: bool,
 ) {
     validate_ax_extension(&file);
     let src = read_source(&file);
@@ -5459,15 +5516,36 @@ fn cmd_deploy(
         LOW_RISK_GATES
     };
 
+    // A program cannot be its own red team (P7-SEC-07). `--gates PATH` lets the
+    // DEPLOYING operator supply the gate functions; without it they are read from
+    // the artifact under review, which is the historical — and self-refereeing —
+    // behaviour.
+    let gate_program = match &gates_file {
+        None => None,
+        Some(path) => {
+            validate_ax_extension(path);
+            let gsrc = read_source(path);
+            match parse_source(&gsrc) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    eprintln!("error: --gates {}: {e}", path.display());
+                    process::exit(2);
+                }
+            }
+        }
+    };
+    let gate_source = gate_program.as_ref().unwrap_or(&program);
+
     let mut stages_run: Vec<String> = Vec::new();
     let mut failed_gate: Option<(String, i32)> = None;
+    let mut missing_gates: Vec<&str> = Vec::new();
 
     for &gate_fn in gates {
         if failed_gate.is_some() {
             break;
         }
-        match axon_core::interp::run_named_fn_as_bool(&program, gate_fn) {
-            None => {} // function not present — gate is open
+        match axon_core::interp::run_named_fn_as_bool(gate_source, gate_fn) {
+            None => missing_gates.push(gate_fn),
             Some(0) => {
                 stages_run.push(gate_fn.to_string());
             }
@@ -5475,6 +5553,41 @@ fn cmd_deploy(
                 stages_run.push(gate_fn.to_string());
                 failed_gate = Some((gate_fn.to_string(), code));
             }
+        }
+    }
+
+    // Fail closed at Risk >= High. Below High the historical open-gate convention
+    // is kept: this finding is about the tier where the pipeline is claimed to be
+    // mandatory, and where `stages_run:[]` with exit 0 was the whole defect —
+    // a Critical deploy that ran no gate at all and reported success.
+    if requires_full_pipeline && !missing_gates.is_empty() && failed_gate.is_none() {
+        if allow_missing_gates {
+            eprintln!(
+                "warning: --allow-missing-gates: {} risk deploy proceeding with no {} gate(s) — \
+                 an absent gate is NOT a passed gate",
+                risk_level_name(risk),
+                missing_gates.join(", ")
+            );
+        } else {
+            failed_gate = Some((format!("missing:{}", missing_gates.join(",")), 1));
+            eprintln!(
+                "error: risk is {} and the pipeline gate(s) {} are not defined{} — \
+                 an absent red team is not a passed red team.",
+                risk_level_name(risk),
+                missing_gates.join(", "),
+                match &gates_file {
+                    Some(p) => format!(" in {}", p.display()),
+                    None => " in the program (a program cannot be its own red team — see --gates)"
+                        .to_string(),
+                }
+            );
+            eprintln!(
+                "  supply them with:  axon deploy {} --gates <gates.ax>",
+                file.display()
+            );
+            eprintln!(
+                "  or override with:  --allow-missing-gates (prints a warning, deploys anyway)"
+            );
         }
     }
 

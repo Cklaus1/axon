@@ -300,8 +300,16 @@ fi
 
 HELLO_AX="$REPO_ROOT/examples/hello.ax"
 
+# These checks exercise the R33 QUORUM gate, not the Phase-11 pipeline-gate
+# policy. hello.ax defines no simulate/stress/redteam_check/assert_deployable,
+# and since T33 (P7-SEC-07) a missing pipeline gate BLOCKS at Risk >= High —
+# correctly, but it would mask what this section is actually measuring.
+# --allow-missing-gates keeps the pipeline-gate question out of the way and
+# leaves the quorum outcome as the only variable.
+DEPLOY_FLAGS=(--allow-missing-gates)
+
 # 10a. Backward compat: no --quorum-dir → gate is open, no "quorum" field.
-NOQUORUM_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --json 2>/dev/null)
+NOQUORUM_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --json 2>/dev/null)
 if echo "$NOQUORUM_OUT" | grep -q '"status":"deployed"' && ! echo "$NOQUORUM_OUT" | grep -q '"quorum"'; then
     pass "no --quorum-dir → deploy succeeds, no quorum field (100% backward compatible)"
 else
@@ -321,7 +329,7 @@ for i in 1 2 3; do
 done
 
 set +e
-DEPLOY_SP_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_SP_DIR" --quorum-n 3 --json 2>/dev/null)
+DEPLOY_SP_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_SP_DIR" --quorum-n 3 --json 2>/dev/null)
 DEPLOY_SP_RC=$?
 set -e
 
@@ -347,7 +355,7 @@ for i in 1 2 3; do
 done
 
 set +e
-DEPLOY_OK_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" --quorum-n 3 --json 2>/dev/null)
+DEPLOY_OK_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" --quorum-n 3 --json 2>/dev/null)
 DEPLOY_OK_RC=$?
 set -e
 
@@ -360,7 +368,7 @@ fi
 # 10d. Missing axon-vm binary + explicit --quorum-dir → hard error (exit 2),
 #      never a silently-open gate (I-9).
 set +e
-MISSING_BIN_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" \
+MISSING_BIN_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" \
     --axon-vm-bin /nonexistent/axon-vm --json 2>&1)
 MISSING_BIN_RC=$?
 set -e
@@ -376,8 +384,8 @@ fi
 #      audit flagged this as the highest-risk choice in the whole R33.S4
 #      integration (a silent false-sense-of-security failure mode), so a
 #      visible stderr warning is now required, not just a silent skip.
-CRITICAL_NO_QUORUM_ERR=$("$AXON_BIN" deploy "$HELLO_AX" --risk critical --json 2>&1 >/dev/null)
-CRITICAL_NO_QUORUM_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk critical --json 2>/dev/null)
+CRITICAL_NO_QUORUM_ERR=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk critical --json 2>&1 >/dev/null)
+CRITICAL_NO_QUORUM_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk critical --json 2>/dev/null)
 if echo "$CRITICAL_NO_QUORUM_ERR" | grep -qi "quorum gate is NOT enforced"; then
     pass "Risk critical + no --quorum-dir → visible warning that the quorum gate is unenforced"
 else

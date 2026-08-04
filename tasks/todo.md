@@ -146,6 +146,36 @@ timeout, not on a denial. The gate now states the grant explicitly. That default
 is logged as **O026** — unfixed, because closing it changes every unmanifested
 run and is an operator's call, not a bug fix to slip into an unrelated commit.
 
+### Deploy risk + gates — the incentive was inverted and the gates were open
+
+| task | commit | what |
+|---|---|---|
+| **T34** | `—` | `derive_risk_from_ast` read only DECLARED effect rows and `@[contained]` args on top-level fns. Executed: a program that really `exec`s a shell and `write_file`s, declaring nothing, derived `risk:"low"` and deployed (both side-effect files appeared on disk); a program declaring `\| {Exec}` that does nothing derived `critical`. **Declaring your effects honestly made you look dangerous; hiding them made you look safe** (P7-SEC-06) |
+| **T34** | `—` | at Risk ≥ High a MISSING pipeline gate counted as a passed one, and the gates were read from the very file under review. A Critical-risk deploy ran with `stages_run:[]`, exit 0, and executed the program. `main.rs`'s own comment conceded the open gate. A program cannot be its own red team (P7-SEC-07) |
+
+Risk is now the **max** of what the program does — via
+`capabilities::program_capabilities`, which already had the right answer and was
+never consulted — and what it declares. That walker follows impl-method bodies,
+string-dispatch call sites and comptime initializers, i.e. exactly the laundering
+routes the old top-level item-walk missed by construction. A declaration can
+still only RAISE. The dead `@[contained]` attr-arg scan (parsed into `f.contained`,
+never left in `attrs`) is gone.
+
+At Risk ≥ High a missing gate now BLOCKS (exit 1, `blocked_gate`,
+`missing:<names>`), and the blocked deploy does not run the program — verified by
+its absent side-effect file. `--gates <path>` lets the DEPLOYING operator supply
+gates from outside the artifact; `--allow-missing-gates` restores the old
+behaviour with a warning on every run, the same single-explicit-bypass shape as
+`--no-attest` in T32. Below High the open-gate convention is unchanged — the
+finding is about the tier where the pipeline is claimed to be mandatory.
+
+**Two existing tests encoded the defect as expected behaviour** and had to be
+corrected, not worked around: my own T30 test asserted `--risk high` deploys
+exit 0, and `r33_acceptance_gate.sh` deploys `hello.ax` at `--risk high`
+expecting success. Both now pass `--allow-missing-gates`, because both are
+measuring something else (risk-level parsing; the quorum gate) and would
+otherwise be measuring this instead.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -164,7 +194,7 @@ run and is an operator's call, not a bug fix to slip into an unrelated commit.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty-one fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty-two fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

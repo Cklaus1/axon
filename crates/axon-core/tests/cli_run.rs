@@ -1772,9 +1772,20 @@ fn deploy_refuses_an_unparseable_risk_level() {
     let p = dir.join("risk.ax");
     std::fs::write(&p, "fn main() -> i64 { println(\"deployed\") 0 }\n").unwrap();
 
+    // --allow-missing-gates keeps this test about RISK-LEVEL PARSING. Without it
+    // the high/critical rows now block on missing pipeline gates (T33/P7-SEC-07),
+    // which is correct but is a different property, tested separately in
+    // deploy_fails_closed_when_a_high_risk_program_defines_no_gates.
     let run = |level: &str| -> (Option<i32>, String) {
         let out = axon()
-            .args(["deploy", "--json", "--risk", level, p.to_str().unwrap()])
+            .args([
+                "deploy",
+                "--json",
+                "--allow-missing-gates",
+                "--risk",
+                level,
+                p.to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         (
@@ -1808,6 +1819,194 @@ fn deploy_refuses_an_unparseable_risk_level() {
             "--risk {level} must be reported as {level}: {msg}"
         );
     }
+}
+
+#[test]
+fn deploy_risk_is_derived_from_what_a_program_does_not_only_what_it_declares() {
+    // AUDIT T33 (finding P7-SEC-06). derive_risk_from_ast read ONLY declared
+    // effect rows and @[contained] args on top-level fns, so the incentive was
+    // exactly inverted — executed and confirmed before the fix:
+    //
+    //   a program that really exec()s a shell and write_file()s, declaring
+    //   nothing            → risk:"low",      stages_run:[], deployed, exit 0
+    //   a program declaring | {Exec} that does nothing
+    //                      → risk:"critical"
+    //
+    // Declaring your effects honestly made you look dangerous; hiding them made
+    // you look safe. capabilities::program_capabilities already had the right
+    // answer and was not consulted.
+    let dir = std::env::temp_dir().join("axon_t33_risk");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let risk_of = |name: &str, src: &str| -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, src).unwrap();
+        let out = axon()
+            .args([
+                "deploy",
+                "--json",
+                "--allow-missing-gates",
+                p.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    // Undeclared but genuinely dangerous: exec + fs:write.
+    let dangerous = risk_of(
+        "dangerous.ax",
+        "fn main() {\n  match exec(\"sh\", [\"-c\", \"true\"]) { Ok(o) => {} Err(e) => {} }\n}\n",
+    );
+    assert!(
+        dangerous.contains("\"risk\":\"critical\""),
+        "a program that really exec()s must not derive low risk: {dangerous}"
+    );
+
+    // Undeclared network use.
+    let net = risk_of(
+        "net.ax",
+        "fn main() {\n  match http_get(\"https://example.com\") { Ok(o) => {} Err(e) => {} }\n}\n",
+    );
+    assert!(
+        !net.contains("\"risk\":\"low\""),
+        "an undeclared http_get must raise risk above low: {net}"
+    );
+
+    // A declaration still RAISES risk — it may never lower it.
+    let declared = risk_of(
+        "declared.ax",
+        "fn noop() -> i64 | {Exec} { 0 }\nfn main() { println(\"hi\") }\n",
+    );
+    assert!(
+        declared.contains("\"risk\":\"critical\""),
+        "a declared Exec row must still derive critical: {declared}"
+    );
+
+    // A genuinely inert program is still low — the fix must not make
+    // everything critical, which would be its own way of being useless.
+    let inert = risk_of("inert.ax", "fn main() { println(\"hi\") }\n");
+    assert!(
+        inert.contains("\"risk\":\"low\""),
+        "a pure program must still derive low risk: {inert}"
+    );
+}
+
+#[test]
+fn deploy_fails_closed_when_a_high_risk_program_defines_no_gates() {
+    // AUDIT T33 (finding P7-SEC-07). main.rs's own comment conceded "a gate
+    // function that is absent is treated as passed (open gate)" — and the gates
+    // were read from the very file being gated. Executed before the fix: a
+    // Critical-risk deploy completed with stages_run:[] and exit 0, having
+    // actually RUN the program. A program cannot be its own red team.
+    let dir = std::env::temp_dir().join("axon_t33_gates");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let marker = dir.join("ran.txt");
+    let prog = dir.join("prog.ax");
+    std::fs::write(
+        &prog,
+        format!(
+            "fn main() {{\n  match write_file(\"{}\", \"the program ran\") {{ Ok(u) => {{}} Err(e) => {{}} }}\n}}\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+
+    // No gates anywhere: BLOCKED, and the program must not run.
+    let out = axon()
+        .args([
+            "deploy",
+            "--json",
+            "--risk",
+            "critical",
+            prog.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "missing gates must block: {body}"
+    );
+    assert!(
+        body.contains("blocked_gate") && body.contains("missing:"),
+        "must name the missing gates: {body}"
+    );
+    assert!(
+        !marker.exists(),
+        "a blocked deploy must not execute the program"
+    );
+
+    // Operator-supplied gates, outside the artifact: the pipeline actually runs.
+    let gates = dir.join("gates.ax");
+    std::fs::write(
+        &gates,
+        "fn simulate() -> bool { true }\nfn stress() -> bool { true }\n\
+         fn redteam_check() -> bool { true }\nfn assert_deployable() -> bool { true }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args([
+            "deploy",
+            "--json",
+            "--risk",
+            "critical",
+            "--gates",
+            gates.to_str().unwrap(),
+            prog.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let body = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "supplied gates should pass: {body}"
+    );
+    assert!(
+        body.contains("\"simulate\"") && body.contains("\"assert_deployable\""),
+        "every gate must appear in stages_run: {body}"
+    );
+
+    // An operator red team that says NO blocks, even though the artifact itself
+    // defines no gates at all and would previously have sailed through.
+    let reject = dir.join("reject.ax");
+    std::fs::write(
+        &reject,
+        "fn simulate() -> bool { true }\nfn stress() -> bool { true }\n\
+         fn redteam_check() -> bool { false }\nfn assert_deployable() -> bool { true }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args([
+            "deploy",
+            "--json",
+            "--risk",
+            "critical",
+            "--gates",
+            reject.to_str().unwrap(),
+            prog.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let body = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a rejecting red team must block: {body}"
+    );
+    assert!(
+        body.contains("\"gate\":\"redteam_check\""),
+        "must name the gate that refused: {body}"
+    );
 }
 
 #[test]
