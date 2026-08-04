@@ -2777,7 +2777,7 @@ impl<'p> Interp<'p> {
                     .principals
                     .borrow_mut()
                     .root(name, net, fs_write, exec, budget);
-                ok!(Value::Int(h as i64));
+                ok!(Value::Int(h));
             }
 
             // `principal_mint(parent, name, net, fs_write, exec, grant) -> i64` —
@@ -2793,21 +2793,20 @@ impl<'p> Interp<'p> {
                 let fs_write = as_bool(&args[3])?;
                 let exec = as_bool(&args[4])?;
                 let grant = as_int(&args[5])?;
-                if parent < 0 {
-                    return panic(format!(
-                        "[E1601] principal_mint: invalid parent handle {parent} \
-                         (a principal handle comes from principal_root/principal_mint)"
-                    ));
-                }
+                // T42: no `parent < 0` pre-check. A handle is now an unguessable
+                // token drawn from the full i64 range, so a NEGATIVE value is a
+                // perfectly ordinary valid handle. Validity is decided by one
+                // thing only — whether the registry issued this exact token —
+                // which is also what makes a forged handle inert.
                 match self.principals.borrow_mut().mint(
-                    parent as usize,
+                    parent,
                     name,
                     net,
                     fs_write,
                     exec,
                     grant,
                 ) {
-                    Some(h) => ok!(Value::Int(h as i64)),
+                    Some(h) => ok!(Value::Int(h)),
                     None => panic(format!(
                         "[E1601] principal_mint: unknown parent handle {parent} \
                          (no such principal in the kernel registry)"
@@ -2821,13 +2820,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let h = as_int(&args[0])?;
                 let cap = as_str(&args[1])?.to_string();
-                let held = h >= 0
-                    && self
-                        .principals
-                        .borrow()
-                        .get(h as usize)
-                        .map(|p| p.holds(&cap))
-                        .unwrap_or(false);
+                let held = self
+                    .principals
+                    .borrow()
+                    .get(h)
+                    .map(|p| p.holds(&cap))
+                    .unwrap_or(false);
                 ok!(Value::Bool(held));
             }
 
@@ -2836,11 +2834,7 @@ impl<'p> Interp<'p> {
             "principal_budget_remaining" => {
                 want(1)?;
                 let h = as_int(&args[0])?;
-                let rem = if h >= 0 {
-                    self.principals.borrow().budget_remaining(h as usize)
-                } else {
-                    0
-                };
+                let rem = self.principals.borrow().budget_remaining(h);
                 ok!(Value::Int(rem));
             }
 
@@ -2850,11 +2844,7 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let h = as_int(&args[0])?;
                 let amount = as_int(&args[1])?;
-                let rem = if h >= 0 {
-                    self.principals.borrow_mut().spend(h as usize, amount)
-                } else {
-                    0
-                };
+                let rem = self.principals.borrow_mut().spend(h, amount);
                 ok!(Value::Int(rem));
             }
 
@@ -2866,7 +2856,7 @@ impl<'p> Interp<'p> {
                 let n = as_bool(&args[1])?;
                 let f = as_bool(&args[2])?;
                 let e = as_bool(&args[3])?;
-                let ok = h >= 0 && self.principals.borrow().authorize(h as usize, n, f, e);
+                let ok = self.principals.borrow().authorize(h, n, f, e);
                 ok!(Value::Bool(ok));
             }
 
@@ -2880,7 +2870,7 @@ impl<'p> Interp<'p> {
                 let f = as_bool(&args[2])?;
                 let e = as_bool(&args[3])?;
                 let g = as_int(&args[4])?;
-                let ok = h >= 0 && self.principals.borrow().can_mint(h as usize, n, f, e, g);
+                let ok = self.principals.borrow().can_mint(h, n, f, e, g);
                 ok!(Value::Bool(ok));
             }
 
@@ -3079,14 +3069,22 @@ impl<'p> Interp<'p> {
             "principal_activate" => {
                 want(1)?;
                 let h = as_int(&args[0])?;
-                let name = if h >= 0 {
-                    self.principals
-                        .borrow()
-                        .get(h as usize)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| "root".to_string())
-                } else {
-                    "root".to_string()
+                // T42 (P7-SEC-03): an UNKNOWN handle used to fall back to the
+                // name "root" — so a bogus handle did not fail, it re-attributed
+                // the whole audit trail to the most privileged principal in the
+                // registry. That is the same fail-open direction already refused
+                // one builtin over for `kernel_goal_create`. Refuse it here too:
+                // an audit record that names the wrong principal is worse than no
+                // record, because it is believed.
+                let name = match self.principals.borrow().get(h) {
+                    Some(p) => p.name.clone(),
+                    None => {
+                        return panic(format!(
+                            "[E1601] principal_activate: unknown principal handle {h} \
+                             (a handle comes from principal_root/principal_mint; audit \
+                             attribution must not silently fall back to root)"
+                        ))
+                    }
                 };
                 *self.current_principal.borrow_mut() = name;
                 ok!(Value::Tuple(vec![]));
@@ -3469,7 +3467,7 @@ impl<'p> Interp<'p> {
                 let rate = as_int(&args[1])?;
                 let principal = as_int(&args[2])?;
                 let fallback = as_str(&args[3])?.to_string();
-                if principal < 0 || self.principals.borrow().get(principal as usize).is_none() {
+                if self.principals.borrow().get(principal).is_none() {
                     return panic(format!(
                         "[E1604] llm_open: unknown principal handle {principal} \
                          (an LLM gateway must be scoped to a minted principal)"
@@ -3479,7 +3477,7 @@ impl<'p> Interp<'p> {
                 gws.push(crate::kernel::LlmGateway::new(
                     model,
                     rate,
-                    principal as usize,
+                    principal,
                     fallback,
                 ));
                 ok!(Value::Int((gws.len() - 1) as i64));
@@ -3580,7 +3578,7 @@ impl<'p> Interp<'p> {
                 // is the wrong direction to fail; refuse it instead.
                 {
                     let ps = self.principals.borrow();
-                    if principal < 0 || ps.get(principal as usize).is_none() {
+                    if ps.get(principal).is_none() {
                         return panic(format!(
                             "kernel_goal_create: unknown principal handle {principal} \
                              (a goal must be scoped to a principal that exists — an \
@@ -3591,7 +3589,7 @@ impl<'p> Interp<'p> {
                 let mut goals = self.goals.borrow_mut();
                 let handle = goals.len();
                 goals.push(crate::kernel::KernelGoal::new(
-                    principal as usize,
+                    principal,
                     name,
                     target,
                 ));

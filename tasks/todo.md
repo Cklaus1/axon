@@ -409,6 +409,62 @@ produces a binary that dials the live model; and **O032** — a budget is escape
 by moving the call into an un-budgeted helper, which is spec-blessed today but
 contradicts the spec's own stated guarantee.
 
+### T42 — a principal handle was its array index, so `child - 1` was root
+
+P7-SEC-03 (critical, executed). `PrincipalRegistry` stored principals in a
+`Vec` and handed out `len() - 1` as the handle; every `principal_*` builtin took
+it as a bare `i64`. Reproduced against the pre-fix build — a child holding **no
+capabilities** and a budget of **5**:
+
+```
+root handle = 0 / child handle = 1 / child budget = 5
+forged handle = 0                      // child - 1
+forged budget = 999995                 // root's
+forged can exec? true
+escalated can exec? true               // minted itself full capabilities
+audit now attributes to: root
+exit 0, no diagnostic
+```
+
+`kernel.rs`'s own doc comment claimed *"escalation unrepresentable"*. It was one
+subtraction away, and `@[contained]` has no runtime backstop behind a miss here.
+
+A handle is now an unguessable token resolved through a `by_token` map;
+arithmetic on a held handle lands on no principal at all. Lineage links stay
+internal indices, which never move, so the registry is still append-only. Token
+generation uses a **private** xorshift state — deliberately not the interpreter's
+`RNG_STATE`, which `srand(n)` re-seeds from Axon source, so drawing from it would
+have let a program set the seed and enumerate every handle the kernel was about
+to issue.
+
+Reproducibility vs. unguessability is a genuine tension and the code says so
+rather than papering over it: with `AXON_SEED` set (a deliberate deterministic
+run, which `axon trace --replay` depends on) the stream derives from that seed,
+domain-separated from `random_*`; without it, time-seeded and unguessable
+outright. A program that can *read* `AXON_SEED` could recompute tokens — inside
+`@[contained]`, `env_var` is denied (E1001), and outside a sandbox the program
+already holds ambient authority.
+
+Two things fell out while wiring it:
+
+- The `h >= 0` guards on every principal builtin had to go: a token is drawn
+  from the full `i64` range, so a **negative handle is now perfectly valid**.
+  Validity is decided by one thing only — did the registry issue this exact
+  token — which is also what makes a forged handle inert.
+- `principal_activate` on an **unknown** handle fell back to the name `"root"`.
+  So a bogus handle did not fail; it produced a believable audit record naming
+  the most privileged principal in the registry. That is the same fail-open
+  direction already refused one builtin over in `kernel_goal_create` (T20 /
+  F006). Now E1601.
+
+Regression tests: a kernel unit test that walks every arithmetic neighbour of a
+held handle and asserts none of `get`/`budget_remaining`/`authorize`/`can_mint`/
+`mint`/`spend` yields anything (**verified to FAIL** when `issue()` is reverted
+to returning the index), plus a four-case end-to-end test covering the read, the
+mint, the audit re-attribution, and a **negative control** that legitimate
+handles — including negative-valued ones — still attenuate and carve exactly as
+before.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -427,7 +483,7 @@ contradicts the spec's own stated guarantee.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-one fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-two fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

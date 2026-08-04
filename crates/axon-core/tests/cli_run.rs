@@ -881,6 +881,119 @@ fn phase7_kernel_principal_authority() {
 }
 
 #[test]
+fn principal_handle_cannot_be_forged_by_arithmetic_p7_sec_03() {
+    // AUDIT T42 (P7-SEC-03), reproduced end to end before the fix. A handle was
+    // the principal's INDEX, so a child holding no capabilities and a budget of 5
+    // reached root by subtracting one:
+    //
+    //   root handle = 0 / child handle = 1 / child budget = 5
+    //   forged handle = 0
+    //   forged budget = 999995         <- root's
+    //   forged can exec? true
+    //   escalated can exec? true       <- minted itself full capabilities
+    //   audit now attributes to: root
+    //   exit 0, no diagnostic
+    //
+    // The kernel module doc called escalation "unrepresentable". It was one
+    // subtraction away, and @[contained] has no runtime backstop behind it.
+    let run = |src: &str| -> (i32, String, String) {
+        let f = std::env::temp_dir().join(format!(
+            "axon_forge_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // (1) A handle one step off a held one grants nothing — no budget, no caps.
+    // Printed as pass/fail flags rather than raw handles: handle VALUES are
+    // deliberately unstable across runs now, and asserting on them would pin the
+    // very property the fix removes.
+    let (code, out, _) = run("fn main() -> i64 { \
+         let root = principal_root(\"root\", true, true, true, 1000000)\n \
+         let child = principal_mint(root, \"child\", false, false, false, 5)\n \
+         let forged = child - 1\n \
+         println(\"budget={to_str(principal_budget_remaining(forged))}\")\n \
+         println(\"authz={to_str(principal_authorize(forged, true, true, true))}\")\n \
+         println(\"canmint={to_str(principal_can_mint(forged, true, true, true, 1))}\")\n \
+         println(\"holds={to_str(principal_holds(forged, \\\"exec\\\"))}\")\n \
+         0 }");
+    assert_eq!(code, 0, "the probe itself must run cleanly: {out:?}");
+    assert!(
+        out.contains("budget=0"),
+        "a forged handle must expose no budget: {out:?}"
+    );
+    assert!(
+        out.contains("authz=false") && out.contains("canmint=false") && out.contains("holds=false"),
+        "a forged handle must hold no capability: {out:?}"
+    );
+
+    // (2) Minting FROM a forged handle is refused outright (E1601) — this is the
+    // step that turned a read into a privilege escalation.
+    let (code2, _, err2) = run("fn main() -> i64 { \
+         let root = principal_root(\"root\", true, true, true, 1000000)\n \
+         let child = principal_mint(root, \"child\", false, false, false, 5)\n \
+         let escalated = principal_mint(child - 1, \"escalated\", true, true, true, 500)\n \
+         0 }");
+    assert_eq!(
+        code2, 101,
+        "minting from a forged parent must fail: {err2:?}"
+    );
+    assert!(err2.contains("E1601"), "the refusal names E1601: {err2:?}");
+
+    // (3) Activating a forged handle must NOT silently attribute the audit trail
+    // to "root". The unknown-handle path used to fall back to that name, so a
+    // bogus handle did not fail — it produced a believable record naming the
+    // most privileged principal in the registry.
+    let (code3, out3, err3) = run("fn main() -> i64 { \
+         let root = principal_root(\"root\", true, true, true, 1000000)\n \
+         let child = principal_mint(root, \"child\", false, false, false, 5)\n \
+         principal_activate(child - 1)\n \
+         println(\"attributed={principal_current_name()}\")\n \
+         0 }");
+    assert_ne!(
+        (code3, out3.contains("attributed=root")),
+        (0, true),
+        "a forged handle must not re-attribute audit to root: {out3:?}"
+    );
+    assert_eq!(
+        code3, 101,
+        "activating an unknown handle is refused: {err3:?}"
+    );
+    assert!(err3.contains("E1601"), "the refusal names E1601: {err3:?}");
+
+    // (4) NEGATIVE CONTROL: legitimately-held handles keep working. A token is
+    // drawn from the full i64 range, so this also covers the case where a valid
+    // handle happens to be negative — the old `h >= 0` guards would reject it.
+    let (code4, out4, err4) = run("fn main() -> i64 { \
+         let root = principal_root(\"root\", true, true, true, 100)\n \
+         let child = principal_mint(root, \"child\", true, false, true, 40)\n \
+         principal_activate(child)\n \
+         println(\"b={to_str(principal_budget_remaining(child))}\")\n \
+         println(\"net={to_str(principal_holds(child, \\\"net\\\"))}\")\n \
+         println(\"fs={to_str(principal_holds(child, \\\"fs_write\\\"))}\")\n \
+         println(\"who={principal_current_name()}\")\n \
+         println(\"rootleft={to_str(principal_budget_remaining(root))}\")\n \
+         0 }");
+    assert_eq!(code4, 0, "valid handles must still work: {err4:?}");
+    assert!(
+        out4.contains("b=40")
+            && out4.contains("net=true")
+            && out4.contains("fs=false")
+            && out4.contains("who=child")
+            && out4.contains("rootleft=60"),
+        "attenuation and carving must be unchanged: {out4:?}"
+    );
+}
+
+#[test]
 fn phase7_kernel_scheduler() {
     // Phase 7 (R12 Slice 2): the cooperative fiber scheduler fans out N fibers,
     // runs them in a seed-deterministic round-robin, and CATCHES a panicking

@@ -1204,3 +1204,35 @@ Note this does *not* affect the T41 refusal's soundness: the refusal condition
 mirrors the enforcement condition exactly, so both backends agree on the
 laundered case (both unmetered). If the budget becomes enclosing-scoped, the
 refusal must widen to match — transitively, over the call graph.
+
+---
+
+## O033 — sandbox handles are still indices, and `sandbox_run` takes them raw
+
+*Found while fixing P7-SEC-03 (T42).* Lower severity than the principal case;
+worth closing for uniformity.
+
+T42 made **principal** handles unforgeable tokens. **Sandbox** handles
+(`sandbox_create` → an index into `self.sandboxes`, resolved with
+`sbs.get(active as usize)`) were left as indices, so the same
+`handle ± 1` reachability exists there.
+
+Why it is not the same severity: a sandbox is created by the program that then
+runs inside it, and the nesting guard reads `self.active_sandbox` — the
+interpreter's own state — rather than a caller-supplied handle. So the "may only
+narrow" ceiling that T1/T3 enforce is not bypassed by forging a handle. What a
+forged sandbox handle *can* do is name a different sandbox's allowed-effect set
+in a `sandbox_run`, which is worth closing before anything starts trusting a
+sandbox handle as a capability the way `principal_*` did.
+
+The fix is mechanical now that the pattern exists: give `sandboxes` the same
+`by_token` map and `fresh_token()` draw. The one thing to check while doing it is
+`active_sandbox`, which stores `-1` for "none" — that sentinel collides with a
+token space that includes negative values, so it needs to become `Option<i64>`
+first. That sentinel-vs-full-range collision is exactly what forced removing the
+`h >= 0` guards on the principal builtins in T42.
+
+Related, and deliberately left alone: `SandboxEntry.principal` is stored but only
+ever rendered into an error message, never resolved for authority. It is a label,
+not a capability, so a stale value there misleads a human reading a diagnostic
+but does not grant anything.

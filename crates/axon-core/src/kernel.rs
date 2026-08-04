@@ -16,7 +16,10 @@
 //! Q3 (R12 §9): this lives in its own module (not `interp.rs`) so the codegen
 //! build is untouched; the interpreter owns a `RefCell<PrincipalRegistry>` and
 //! the `principal_*` builtins drive it. Handles are plain `i64` so they flow
-//! through the existing value/type machinery with no new `Value` variant.
+//! through the existing value/type machinery with no new `Value` variant — but
+//! they are opaque TOKENS, not indices. See [`PrincipalRegistry`] (AUDIT T42):
+//! when a handle was an index, `child - 1` reached the parent, and the
+//! attenuation this module enforces could be stepped around entirely.
 
 /// A budget: spent-so-far against a cap. Mirrors `budget.ax` / the oracle's
 /// inlined `Budget`. `remaining` clamps at 0 (never negative).
@@ -54,11 +57,12 @@ impl Budget {
 }
 
 /// A live principal in the kernel registry: capabilities + budget + lineage.
-/// `parent` is the handle of the minting principal, or `None` for a root.
+/// `parent` is the handle TOKEN of the minting principal, or `None` for a root.
+/// A token is stable for the life of the run, so lineage links stay valid.
 #[derive(Debug, Clone)]
 pub struct Principal {
     pub name: String,
-    pub parent: Option<usize>,
+    pub parent: Option<i64>,
     pub net: bool,
     pub fs_write: bool,
     pub exec: bool,
@@ -78,19 +82,102 @@ impl Principal {
     }
 }
 
-/// The kernel registry of live principals. Append-only over a run: a handle is an
-/// index that never moves, so lineage links stay valid. Mutating a principal
-/// (budget debit on mint/spend) updates it in place.
+/// Private RNG state for principal handle tokens (AUDIT T42 / P7-SEC-03).
+///
+/// Deliberately NOT the interpreter's `RNG_STATE`: that stream is seeded by
+/// `AXON_SEED` and re-seedable from Axon source via `srand(n)`, so drawing
+/// tokens from it would let a program set the seed and then enumerate every
+/// handle the kernel is about to issue. This state is never exposed to Axon.
+static TOKEN_STATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A fresh, unguessable principal handle.
+///
+/// Reproducibility vs. unguessability is a real tension here, and this resolves
+/// it explicitly rather than silently. When `AXON_SEED` is set the user has
+/// asked for a deterministic run (`axon trace --replay` depends on it), so the
+/// token stream is derived from it — mixed with a domain constant so it does not
+/// coincide with the `random_*` stream. A program that can *read* `AXON_SEED`
+/// could then recompute the tokens; inside `@[contained]`, `env_var` is denied
+/// (E1001), and outside a sandbox the program already holds ambient authority,
+/// so this does not widen the boundary that matters. With no `AXON_SEED` the
+/// stream is time-seeded and the tokens are unguessable outright.
+///
+/// Never returns 0: 0 is a plausible value for a program to try, and reserving
+/// it means the single most likely forged handle is guaranteed to resolve to
+/// nothing.
+fn fresh_token() -> i64 {
+    use std::sync::atomic::Ordering;
+    let mut x = TOKEN_STATE.load(Ordering::Relaxed);
+    if x == 0 {
+        x = match std::env::var("AXON_SEED")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        {
+            // Domain separation: the same AXON_SEED must not make handle tokens
+            // shadow the `random_*` sequence.
+            Some(seed) => seed ^ 0x9E37_79B9_7F4A_7C15,
+            None => {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0x5DEE_CE66_D000_0000)
+                    ^ 0xA076_1D64_78BD_642F
+            }
+        } | 1;
+    }
+    // xorshift64 — same shape as the interpreter's RNG, separate state.
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    TOKEN_STATE.store(x, Ordering::Relaxed);
+    let t = x as i64;
+    if t == 0 {
+        1
+    } else {
+        t
+    }
+}
+
+/// The kernel registry of live principals.
+///
+/// AUDIT T42 (P7-SEC-03). A handle used to be the principal's *index* into
+/// `principals`, and every builtin took it as a bare `i64`. The doc comment on
+/// `mint` claimed escalation was "unrepresentable"; it was one subtraction away.
+/// Executed against the pre-fix build, from a child holding no capabilities and
+/// a budget of 5:
+///
+/// ```text
+/// let child  = principal_mint(root, "child", false, false, false, 5)  // → 1
+/// let forged = child - 1                                              // → 0 = root
+/// principal_budget_remaining(forged)                → 999995
+/// principal_authorize(forged, true, true, true)     → true
+/// principal_mint(forged, "escalated", …)            → full-capability principal
+/// principal_activate(forged)                        → audit says "root"
+/// ```
+///
+/// A handle is now an unguessable token (see [`fresh_token`]) resolved through
+/// `by_token`; arithmetic on one lands, with overwhelming probability, on no
+/// principal at all. Lineage links stay as internal indices, which never move —
+/// the registry is still append-only.
 #[derive(Debug, Default)]
 pub struct PrincipalRegistry {
     principals: Vec<Principal>,
+    /// handle token → index into `principals`. The ONLY way in from Axon.
+    by_token: std::collections::HashMap<i64, usize>,
 }
 
 impl PrincipalRegistry {
     pub fn new() -> Self {
         PrincipalRegistry {
             principals: Vec::new(),
+            by_token: std::collections::HashMap::new(),
         }
+    }
+
+    /// Resolve a handle token to its index. `None` for any value that was not
+    /// issued by `root`/`mint` — which is what makes a forged handle inert.
+    fn index_of(&self, token: i64) -> Option<usize> {
+        self.by_token.get(&token).copied()
     }
 
     /// Register a ROOT principal — the originating authority. Holds exactly the
@@ -103,7 +190,7 @@ impl PrincipalRegistry {
         fs_write: bool,
         exec: bool,
         budget_cap: i64,
-    ) -> usize {
+    ) -> i64 {
         let p = Principal {
             name,
             parent: None,
@@ -113,33 +200,49 @@ impl PrincipalRegistry {
             budget: Budget::new(budget_cap.max(0)),
         };
         self.principals.push(p);
-        self.principals.len() - 1
+        self.issue(self.principals.len() - 1)
+    }
+
+    /// Mint a fresh token for `idx` and record the mapping. Retries on the
+    /// (astronomically unlikely) collision rather than silently aliasing two
+    /// principals onto one handle — an alias would be an escalation.
+    fn issue(&mut self, idx: usize) -> i64 {
+        loop {
+            let t = fresh_token();
+            if let std::collections::hash_map::Entry::Vacant(e) = self.by_token.entry(t) {
+                e.insert(idx);
+                return t;
+            }
+        }
     }
 
     /// MINT an attenuated child of `parent_handle`. ATTENUATION BY CONSTRUCTION
     /// (byte-identical to the oracle's `mint`):
-    ///   • child cap_X = want_X ∧ parent.X      (escalation unrepresentable)
+    ///   • child cap_X = want_X ∧ parent.X      (escalation unrepresentable
+    ///     *given a parent handle you hold* — which is what handle tokens buy;
+    ///     with index handles this guarantee was vacuous, T42)
     ///   • grant = clamp(budget_grant, 0, parent_remaining)  (no over-grant)
     ///   • parent.budget.used += grant          (carved from the parent)
     /// Returns the child's handle, or `None` if `parent_handle` is unknown (a
     /// defense-in-depth guard — the caller surfaces E1601).
     pub fn mint(
         &mut self,
-        parent_handle: usize,
+        parent_handle: i64,
         child_name: String,
         want_net: bool,
         want_fs_write: bool,
         want_exec: bool,
         budget_grant: i64,
-    ) -> Option<usize> {
-        let parent = self.principals.get(parent_handle)?.clone();
+    ) -> Option<i64> {
+        let parent_idx = self.index_of(parent_handle)?;
+        let parent = self.principals.get(parent_idx)?.clone();
         let c_net = want_net && parent.net;
         let c_fs = want_fs_write && parent.fs_write;
         let c_exec = want_exec && parent.exec;
         // clamp(budget_grant, 0, parent_remaining)
         let grant = budget_grant.max(0).min(parent.budget.remaining());
         // Carve the grant from the parent (debit in place).
-        self.principals[parent_handle].budget = parent.budget.spend(grant);
+        self.principals[parent_idx].budget = parent.budget.spend(grant);
         let child = Principal {
             name: child_name,
             parent: Some(parent_handle),
@@ -149,26 +252,26 @@ impl PrincipalRegistry {
             budget: Budget::new(grant),
         };
         self.principals.push(child);
-        Some(self.principals.len() - 1)
+        Some(self.issue(self.principals.len() - 1))
     }
 
     /// Read a principal by handle (None if unknown).
-    pub fn get(&self, handle: usize) -> Option<&Principal> {
-        self.principals.get(handle)
+    pub fn get(&self, handle: i64) -> Option<&Principal> {
+        self.principals.get(self.index_of(handle)?)
     }
 
     /// Remaining budget of a principal (0 if unknown).
-    pub fn budget_remaining(&self, handle: usize) -> i64 {
-        self.principals
-            .get(handle)
-            .map(|p| p.budget.remaining())
-            .unwrap_or(0)
+    pub fn budget_remaining(&self, handle: i64) -> i64 {
+        self.get(handle).map(|p| p.budget.remaining()).unwrap_or(0)
     }
 
     /// Debit `amount` from a principal's own budget; returns its new remaining
     /// (or 0 if unknown). Caps are untouched — only the carved budget is consumed.
-    pub fn spend(&mut self, handle: usize, amount: i64) -> i64 {
-        if let Some(p) = self.principals.get_mut(handle) {
+    pub fn spend(&mut self, handle: i64, amount: i64) -> i64 {
+        let Some(idx) = self.index_of(handle) else {
+            return 0;
+        };
+        if let Some(p) = self.principals.get_mut(idx) {
             p.budget = p.budget.spend(amount.max(0));
             p.budget.remaining()
         } else {
@@ -181,12 +284,12 @@ impl PrincipalRegistry {
     /// oracle's `authorize`. Unknown handle → false.
     pub fn authorize(
         &self,
-        handle: usize,
+        handle: i64,
         needs_net: bool,
         needs_fs_write: bool,
         needs_exec: bool,
     ) -> bool {
-        let Some(p) = self.principals.get(handle) else {
+        let Some(p) = self.get(handle) else {
             return false;
         };
         let caps =
@@ -199,13 +302,13 @@ impl PrincipalRegistry {
     /// `mint` is total and safe without it. Mirrors the oracle's `can_mint`.
     pub fn can_mint(
         &self,
-        parent_handle: usize,
+        parent_handle: i64,
         want_net: bool,
         want_fs_write: bool,
         want_exec: bool,
         budget_grant: i64,
     ) -> bool {
-        let Some(p) = self.principals.get(parent_handle) else {
+        let Some(p) = self.get(parent_handle) else {
             return false;
         };
         let caps_ok =
@@ -587,7 +690,9 @@ pub struct LlmGateway {
     pub model: String,
     pub rate_micro: i64,
     /// The principal whose budget bounds this gateway's spend (Slice 1 handle).
-    pub principal: usize,
+    /// The OWNER's handle token (T42: a token, not an index — see
+    /// [`PrincipalRegistry`]). Stored so budget debits hit the right principal.
+    pub principal: i64,
     pub fallback: String,
     pub halted: bool,
     /// µ$ spent through THIS gateway (for observability; the authoritative cap is
@@ -596,7 +701,7 @@ pub struct LlmGateway {
 }
 
 impl LlmGateway {
-    pub fn new(model: String, rate_micro: i64, principal: usize, fallback: String) -> Self {
+    pub fn new(model: String, rate_micro: i64, principal: i64, fallback: String) -> Self {
         LlmGateway {
             model,
             rate_micro,
@@ -625,7 +730,9 @@ impl LlmGateway {
 /// beyond its principal's grant. See governance/specs/R12b-kernel-goal.md.
 #[derive(Debug, Clone)]
 pub struct KernelGoal {
-    pub principal: usize,
+    /// The OWNER's handle token (T42: a token, not an index — see
+    /// [`PrincipalRegistry`]). Stored so budget debits hit the right principal.
+    pub principal: i64,
     pub name: String,
     pub target: f64,
     pub evals_spent: i64,
@@ -633,7 +740,7 @@ pub struct KernelGoal {
 }
 
 impl KernelGoal {
-    pub fn new(principal: usize, name: String, target: f64) -> Self {
+    pub fn new(principal: i64, name: String, target: f64) -> Self {
         // best_score starts at `target` — the `goal_best_score` convention for a
         // goal with no recorded evaluations yet.
         KernelGoal {
@@ -662,6 +769,51 @@ mod tests {
         assert!(child.exec);
         assert_eq!(child.budget.cap, 40);
         assert_eq!(child.parent, Some(r));
+    }
+
+    #[test]
+    fn principal_handles_are_not_forgeable_by_arithmetic_p7_sec_03() {
+        // AUDIT T42 (P7-SEC-03). Handles were registry INDICES, so a child could
+        // reach its parent — and root — by subtraction, then read root's budget,
+        // mint itself full capabilities, and re-attribute the audit trail. The
+        // module doc called escalation "unrepresentable"; it was one `- 1` away.
+        //
+        // Handles are now unguessable tokens. Every arithmetic neighbourhood of a
+        // legitimately-held handle must resolve to NOTHING.
+        let mut reg = PrincipalRegistry::new();
+        let root = reg.root("root".into(), true, true, true, 1_000_000);
+        let child = reg
+            .mint(root, "child".into(), false, false, false, 5)
+            .unwrap();
+
+        assert_ne!(child, root, "distinct principals need distinct handles");
+        assert_eq!(reg.budget_remaining(child), 5);
+
+        // The exploit, verbatim: walk off the held handle and look for authority.
+        for delta in [-2i64, -1, 1, 2] {
+            let forged = child.wrapping_add(delta);
+            if forged == root || forged == child {
+                continue; // a real collision would be a token-generation bug
+            }
+            assert!(
+                reg.get(forged).is_none(),
+                "a handle {delta:+} from a held one resolved to a live principal"
+            );
+            assert_eq!(reg.budget_remaining(forged), 0);
+            assert!(!reg.authorize(forged, true, true, true));
+            assert!(!reg.can_mint(forged, true, true, true, 1));
+            assert!(reg
+                .mint(forged, "escalated".into(), true, true, true, 500)
+                .is_none());
+            assert_eq!(reg.spend(forged, 10), 0, "a forged handle must not spend");
+        }
+
+        // 0 is the single most likely value to try, and is never issued.
+        assert!(reg.get(0).is_none(), "0 must never be a live handle");
+
+        // Root's budget is untouched by every one of those attempts: only the
+        // 5 carved for the child left it.
+        assert_eq!(reg.budget_remaining(root), 1_000_000 - 5);
     }
 
     #[test]
