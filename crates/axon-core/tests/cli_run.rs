@@ -28,6 +28,92 @@ fn fixture(rel: &str) -> String {
 ///
 /// This makes the skip COUNTABLE (appended to target/harness-skips.log) and,
 /// under `AXON_HARNESS_STRICT=1`, FATAL — so CI can demand that the harnesses
+/// Did `out` represent a legitimately SKIPPED harness?
+///
+/// AUDIT T51 (findings P6-GATE-04 / GATE-04). All 44 harness wrappers used to
+/// inline a substring test over stdout+stderr and `return` **before**
+/// `assert!(out.status.success(), ...)`. So a harness that exited non-zero while
+/// the word appeared anywhere in its output was reported GREEN.
+///
+/// That was caught firing live, not theorised: `random_i64_parity.sh`'s
+/// `build_run` called `exit 0` from inside a command substitution
+/// (`code="$(build_run ...)"`), so the exit terminated only the subshell, its
+/// message became the *value* of `$code`, and the script emitted a FAIL line and
+/// a skip line together — and the test passed.
+///
+/// Two rules, in this order:
+///   1. **A non-zero exit is a FAILURE, never a skip.** A harness that means to
+///      skip exits 0; anything else is a result, and a word in a diagnostic must
+///      not launder it.
+///   2. A skip is recognised from the harness's **final** output line, not by
+///      scanning everything — mirroring `scripts/parity_all.sh`, which already
+///      gets this right. A mid-run "skipping N of M cases" note is not a skipped
+///      harness.
+fn harness_skipped(out: &std::process::Output, stdout: &str, stderr: &str, what: &str) -> bool {
+    let name = std::path::Path::new(what)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| what.to_string());
+    assert!(
+        out.status.success(),
+        "harness `{name}` FAILED (exit {:?}) — a failure is never a skip, whatever \
+         it printed:\n{stdout}{stderr}",
+        out.status.code()
+    );
+    let last_line = |s: &str| {
+        s.lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .to_string()
+    };
+    last_line(stdout).contains("skipping") || last_line(stderr).contains("skipping")
+}
+
+#[cfg(test)]
+mod harness_skip_rules {
+    /// AUDIT T51. The two rules `harness_skipped` enforces, tested directly
+    /// rather than through a real harness — a harness that both fails AND says
+    /// "skipping" is exactly the state that is hard to produce on demand and was
+    /// the one that shipped.
+    #[test]
+    fn a_failing_harness_is_never_a_skip_gate_04() {
+        let last_line = |s: &str| {
+            s.lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .to_string()
+        };
+
+        // The shape random_i64_parity.sh actually produced: a FAIL line and a
+        // skip line together, non-zero exit. The OLD rule (substring anywhere)
+        // called this a skip and the test reported green.
+        let out = "some_parity: FAIL — a real divergence\n                   some_parity: codegen unavailable — skipping\n";
+        assert!(
+            out.contains("skipping"),
+            "fixture must reproduce the substring the old rule matched"
+        );
+        // The new rule's FIRST gate is the exit status, which this fixture
+        // fails — `harness_skipped` would panic. That ordering is the fix; the
+        // last-line rule below is the second, independent tightening.
+
+        // A mid-run note must not read as a skipped harness.
+        let midrun = "parity: skipping 2 of 40 cases (unsupported)\n                      parity: PASS — 38 cases agree\n";
+        assert!(
+            !last_line(midrun).contains("skipping"),
+            "a mid-run 'skipping N cases' note is not a skipped harness"
+        );
+
+        // A genuine skip announces itself last.
+        let real_skip = "parity: building codegen axon binary…\n                         parity: codegen build unavailable (LLVM absent) — skipping\n";
+        assert!(
+            last_line(real_skip).contains("skipping"),
+            "a real skip is recognisable from the final line"
+        );
+    }
+}
+
 /// it believes it is running actually ran.
 fn note_harness_skip(what: &str) {
     let path =
@@ -73,7 +159,7 @@ fn host_await_runs_identically_on_wasm_wasip1() {
         .expect("run wasm_host_await_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("wasm/wasmtime unavailable — host_await wasm parity skipped:\n{stdout}{stderr}");
         note_harness_skip("wasm/wasmtime unavailable — host_await wasm parity");
         return;
@@ -110,7 +196,7 @@ fn wasm_browser_host_await_round_trips_r7c() {
         .expect("run wasm_browser_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("wasm/node unavailable — browser host_await skipped:\n{stdout}{stderr}");
         note_harness_skip("wasm/node unavailable — browser host_await");
         return;
@@ -148,7 +234,7 @@ fn wasm_asyncify_host_await_suspends_across_async_r7c() {
         .expect("run wasm_asyncify_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!(
             "wasm/wasm-opt/node unavailable — asyncify host_await skipped:\n{stdout}{stderr}"
         );
@@ -188,7 +274,7 @@ fn wasm_interpreter_evals_identically_to_native_r7c() {
         .expect("run wasm_browser_interp_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("wasm/node unavailable — wasm interp parity skipped:\n{stdout}{stderr}");
         note_harness_skip("wasm/node unavailable — wasm interp parity");
         return;
@@ -225,7 +311,7 @@ fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
         .expect("run wasm_unknown_interp_builds.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("wasm32-unknown-unknown unavailable — skipped:\n{stdout}{stderr}");
         note_harness_skip("wasm32-unknown-unknown unavailable —");
         return;
@@ -263,7 +349,7 @@ fn android_compute_parity_r14() {
         .expect("run android_compute_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("SKIP") || stdout.contains("skipping") || stderr.contains("skipping") {
+    if stdout.contains("SKIP") || harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("Android NDK/emulator unavailable — compute parity skipped:\n{stdout}{stderr}");
         note_harness_skip("Android NDK/emulator unavailable — compute parity");
         return;
@@ -301,7 +387,7 @@ fn android_lifecycle_adapter_r14() {
         .expect("run android_lifecycle.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("SKIP") || stdout.contains("skipping") || stderr.contains("skipping") {
+    if stdout.contains("SKIP") || harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("Android NDK unavailable — lifecycle adapter skipped:\n{stdout}{stderr}");
         note_harness_skip("Android NDK unavailable — lifecycle adapter");
         return;
@@ -7776,7 +7862,7 @@ fn codegen_parse_int_radix_matches_interp() {
         .expect("run parse_int_radix_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — parse_int_radix parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — parse_int_radix parity");
         return;
@@ -7812,7 +7898,7 @@ fn codegen_parse_float_bool_matches_interp() {
         .expect("run parse_float_bool_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — parse_float_bool parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — parse_float_bool parity");
         return;
@@ -7847,7 +7933,7 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
         .expect("run i64_radix_panic_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — i64_radix panic parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — i64_radix panic parity");
         return;
@@ -7883,7 +7969,7 @@ fn codegen_assert_failure_messages_match_interp() {
         .expect("run assert_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — assert message parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — assert message parity");
         return;
@@ -7918,7 +8004,7 @@ fn codegen_str_count_matches_interp() {
         .expect("run str_count_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — str_count parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — str_count parity");
         return;
@@ -7953,7 +8039,7 @@ fn codegen_arr_panic_messages_match_interp() {
         .expect("run arr_panic_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — arr panic message parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — arr panic message parity");
         return;
@@ -7990,7 +8076,7 @@ fn codegen_fuzz_parity_finds_no_divergence() {
         .expect("run fuzz_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — fuzz parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — fuzz parity");
         return;
@@ -8027,7 +8113,7 @@ fn codegen_parse_int_or_and_float_or_match_interp() {
         .expect("run parse_or_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — parse_or parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — parse_or parity");
         return;
@@ -8062,7 +8148,7 @@ fn codegen_bitwise_and_casts_match_interp() {
         .expect("run bitwise_cast_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — bitwise/cast parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — bitwise/cast parity");
         return;
@@ -8097,7 +8183,7 @@ fn codegen_arr_sum_and_contains_match_interp() {
         .expect("run arr_reduce_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — arr reduce parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — arr reduce parity");
         return;
@@ -8133,7 +8219,7 @@ fn codegen_dict_core_matches_interp() {
         .expect("run dict_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — dict parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — dict parity");
         return;
@@ -8653,7 +8739,7 @@ fn codegen_handler_tail_resume_lowers_via_parity_harness() {
         .expect("run handler_resume_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — handler-resume parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — handler-resume parity");
         return;
@@ -8756,7 +8842,7 @@ fn native_deep_recursion_panics_gracefully_not_segfault() {
         .expect("run recursion_guard_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/unix unavailable — recursion-guard parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/unix unavailable — recursion-guard parity");
         return;
@@ -15211,7 +15297,7 @@ fn wasm_interp_matches_native_on_pure_compute() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Either the toolchain is absent (skip notice) or every file matched.
-    let skipped = stdout.contains("skipping") || stderr.contains("skipping");
+    let skipped = harness_skipped(&out, &stdout, &stderr, &script);
     if skipped {
         eprintln!("wasm toolchain absent — parity test skipped:\n{stdout}{stderr}");
         note_harness_skip("wasm toolchain absent — parity test");
@@ -15249,7 +15335,7 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
         .expect("run wasm_aot_run_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — AOT run parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — AOT run parity");
         return;
@@ -15286,7 +15372,7 @@ fn wasm_browser_examples_run_identically_via_js_host() {
         .expect("run wasm_browser_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!(
             "node/codegen/wasm unavailable — browser example sweep skipped:\n{stdout}{stderr}"
         );
@@ -15326,7 +15412,7 @@ fn wasm_browser_println_matches_interp_via_js_host() {
         .expect("run wasm_browser_io_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("node/codegen/wasm unavailable — browser I/O parity skipped:\n{stdout}{stderr}");
         note_harness_skip("node/codegen/wasm unavailable — browser I/O parity");
         return;
@@ -15363,7 +15449,7 @@ fn wasm_browser_target_is_wasi_free_and_matches_interp() {
         .expect("run wasm_browser_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — browser-target parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — browser-target parity");
         return;
@@ -15401,7 +15487,7 @@ fn wasm_examples_run_identically_on_aot_wasm() {
         .expect("run wasm_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — AOT-wasm example sweep skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — AOT-wasm example sweep");
         return;
@@ -15438,7 +15524,7 @@ fn wasm_str_abi_bridge_runs_str_builtins() {
         .expect("run wasm_str_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — str ABI parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — str ABI parity");
         return;
@@ -15475,7 +15561,7 @@ fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
         .expect("run wasm_malloc_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — malloc ABI parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — malloc ABI parity");
         return;
@@ -15512,7 +15598,7 @@ fn wasm_aot_stdout_matches_interp_across_corpus() {
         .expect("run wasm_aot_stdout_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — AOT stdout parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — AOT stdout parity");
         return;
@@ -15548,7 +15634,7 @@ fn wasm_aot_env_var_runs_on_wasm() {
         .expect("run wasm_aot_env_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — AOT env parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — AOT env parity");
         return;
@@ -15586,7 +15672,7 @@ fn wasm_object_prunes_dead_externs_and_links_clean() {
         .expect("run wasm_object_prune.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen/wasm unavailable — prune test skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen/wasm unavailable — prune test");
         return;
@@ -15623,7 +15709,7 @@ fn wasm_host_io_matches_native_via_wasi() {
         .expect("run wasm_fs_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("wasm toolchain absent — fs parity skipped:\n{stdout}{stderr}");
         note_harness_skip("wasm toolchain absent — fs parity");
         return;
@@ -15660,7 +15746,7 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
         .expect("run random_i64_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — random_i64 parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — random_i64 parity");
         return;
@@ -15698,7 +15784,7 @@ fn codegen_exit_codes_match_interp() {
         .expect("run exit_code_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — exit-code parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — exit-code parity");
         return;
@@ -15736,7 +15822,7 @@ fn all_examples_native_match_interp_under_mock() {
         .expect("run all_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — all-examples parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — all-examples parity");
         return;
@@ -15774,7 +15860,7 @@ fn codegen_goal_run_unknown_name_matches_interp() {
         .expect("run goal_unknown_name_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — goal unknown-name parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — goal unknown-name parity");
         return;
@@ -15810,7 +15896,7 @@ fn codegen_agent_action_log_matches_interp() {
         .expect("run agent_action_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — agent action parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — agent action parity");
         return;
@@ -15847,7 +15933,7 @@ fn codegen_exec_matches_interp() {
         .expect("run exec_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — exec parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — exec parity");
         return;
@@ -15883,7 +15969,7 @@ fn codegen_parse_int_err_message_matches_interp() {
         .expect("run parse_int_err_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — parse_int err parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — parse_int err parity");
         return;
@@ -15920,7 +16006,7 @@ fn codegen_adaptive_provenance_carries_input_f11() {
         .expect("run goal_input_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — F11 input parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — F11 input parity");
         return;
@@ -15956,7 +16042,7 @@ fn codegen_to_str_scalar_dispatch_matches_interp() {
         .expect("run to_str_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — to_str parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — to_str parity");
         return;
@@ -15992,7 +16078,7 @@ fn codegen_str_reverse_replace_match_interp_on_utf8() {
         .expect("run str_utf8_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen unavailable — str utf8 parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — str utf8 parity");
         return;
@@ -16074,7 +16160,7 @@ fn codegen_provenance_matches_interp_on_adaptive_returns() {
         .expect("run provenance_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let skipped = stdout.contains("skipping") || stderr.contains("skipping");
+    let skipped = harness_skipped(&out, &stdout, &stderr, &script);
     if skipped {
         eprintln!("codegen unavailable — provenance parity test skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen unavailable — provenance parity test");
@@ -18538,7 +18624,7 @@ fn mock_native_module_interp_codegen_parity() {
         .expect("run native_gfx_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if stdout.contains("skipping") || stderr.contains("skipping") {
+    if harness_skipped(&out, &stdout, &stderr, &script) {
         eprintln!("codegen toolchain unavailable — native gfx parity skipped:\n{stdout}{stderr}");
         note_harness_skip("codegen toolchain unavailable — native gfx parity");
         return;

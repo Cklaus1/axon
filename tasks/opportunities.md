@@ -1341,3 +1341,52 @@ already exists as a design and the file-based exchange is explicitly a scoped
 stand-in. Until one is chosen, **the responses directory is part of the TCB** —
 now stated in the module header and the CLI help, so an operator reading either
 learns it before relying on the gate rather than after.
+
+---
+
+## O036 — the differential parity harnesses run, or don't, depending on what built `target/debug/axon` last
+
+*Found while fixing GATE-04 (T51).* P6-GATE-03, with its mechanism confirmed and
+its conclusion corrected by execution. **Decision needed.**
+
+`scripts/fuzz_parity.sh` resolves the codegen binary as *"prefer an
+already-built one … if THAT fails (no LLVM / build lock held by a parent cargo),
+skip cleanly"*, then probes whether that binary can actually emit native code —
+a `--no-default-features` build leaves an `axon` that can `run` but not `build`.
+
+So the wrapper's outcome is keyed on a **shared, mutable build artifact**, and
+both outcomes were observed in one session:
+
+```
+run A:  target/harness-skips.log records "codegen unavailable — fuzz parity"
+        (test returns in milliseconds, asserting nothing)
+run B:  codegen_fuzz_parity_finds_no_divergence runs 75s and asserts
+        "fuzz_parity: PASS"
+```
+
+Nothing about the harness or the test changed between them — only which command
+had last written `target/debug/axon`. My own earlier interpretation, that these
+harnesses "never run inside `cargo test`", was wrong: they run whenever the
+binary at that path happens to be codegen-capable. That is worse than never
+running, because it means a green suite carries no information about whether the
+primary I-2 differential guard executed.
+
+T51 makes a *failing* harness impossible to mistake for a skip, and
+`AXON_HARNESS_STRICT=1` turns any skip into a hard failure — so the condition is
+now detectable. It is not yet prevented.
+
+Two ways out:
+
+1. **Delete the in-suite wrappers** and promote `parity_all.sh` from `--strict`
+   into the standard gate. Honest, and it stops the unit suite implying coverage
+   it cannot guarantee — but it moves that coverage out of the loop most
+   contributors actually run.
+2. **Give the harnesses their own binary** — `target/parity/axon`, built once by
+   the gate and resolved via an env var. The feature and lock collisions both
+   disappear, the artifact is not shared with whatever a developer last built,
+   and the wrappers assert deterministically.
+
+(2) keeps the coverage where it is useful and removes the non-determinism, which
+is the actual defect. **Decision needed:** which. This interacts with the pending
+"`AXON_HARNESS_STRICT=1` in CI" decision — under (2) strict mode becomes
+enforceable; under (1) there is nothing in-suite left for it to guard.

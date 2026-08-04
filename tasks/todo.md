@@ -877,6 +877,49 @@ needed a second pass: my own explanatory comment quotes
 code — so the test now strips `//` lines first. A test that can pass or fail on
 prose is not testing anything.
 
+### T51 — a failing harness could report itself as skipped, and 44 tests believed it
+
+P6-GATE-04 / GATE-04 (high). Every one of the 44 harness wrappers in
+`cli_run.rs` inlined the identical check
+
+```rust
+if stdout.contains("skipping") || stderr.contains("skipping") { … return; }
+assert!(out.status.success(), …);      // ← never reached
+```
+
+so a harness that **exited non-zero** while the word "skipping" appeared
+anywhere in its output was reported GREEN.
+
+That was not theoretical. `scripts/random_i64_parity.sh`'s `build_run` called
+`exit 0` from inside a command substitution (`code="$(build_run …)"`), so the
+exit terminated only the subshell, its message became the *value* of `$code`,
+and the script emitted a FAIL line and a skip line together — and the test
+passed. Both halves are fixed: the harness now returns a sentinel the caller
+tests at top level (a subshell cannot end a script, so the decision has to come
+back as data), and the wrappers go through one `harness_skipped` helper with two
+rules in order — **a non-zero exit is a failure, never a skip**, and a skip is
+recognised from the harness's **final** line rather than by scanning everything,
+mirroring `parity_all.sh` which already got this right.
+
+**The last-line rule turned out to matter on its own.** Re-running the suite
+afterwards, `codegen_fuzz_parity_finds_no_divergence` went from returning in
+milliseconds to running **75 seconds** and asserting `fuzz_parity: PASS`.
+
+That led somewhere more interesting than the finding: the parity harnesses
+resolve `target/debug/axon` and skip if it cannot emit native code. Whether they
+run therefore depends on **what built that path last** — and I had observed both
+states in this session without noticing, because a `--no-default-features`
+rebuild during T45/T46 left a codegen-less binary there. A green suite carries no
+information about whether the primary I-2 differential guard executed. Recorded
+as **O036** with two options; I corrected my own first draft of it, which claimed
+the harnesses "never run" — they run whenever that artifact happens to be
+codegen-capable, which is worse.
+
+A direct rule test covers both cases, including the mid-run
+`"skipping 2 of 40 cases"` note that must *not* read as a skipped harness. Suite
+now 443 passing with only the two Android harnesses legitimately skipped, down
+from four.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -895,7 +938,7 @@ prose is not testing anything.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Forty fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Forty-one fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
