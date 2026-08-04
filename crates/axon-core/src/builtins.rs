@@ -276,7 +276,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "sql_query",
         params: &[("template", "str"), ("params", "[str]")],
         ret: "str",
-        doc: "Build a parameterized SQL query. `template` MUST be a string literal — each `?` placeholder is filled, in order, by the next value in `params` (a bound parameter, escaped). User-controlled data goes in `params`, NEVER in `template`: a template built by concatenation or interpolation is a compile error (E1210), so SQL injection is unrepresentable by construction. Interpreter-only (codegen E0910-refused).",
+        doc: "Build a parameterized SQL query STRING. `template` MUST be a string literal — each `?` placeholder is filled, in order, by the next value in `params`, single-quoted with `'` doubled and `\\` doubled. User-controlled data goes in `params`, NEVER in `template`: a template built by concatenation or interpolation is a compile error (E1210), which is what makes the query's STRUCTURE attacker-independent. SCOPE OF THE ESCAPING: it targets MySQL/MariaDB rules (backslash is an escape character). On a standard-conforming dialect (PostgreSQL, SQLite with standard_conforming_strings on) a backslash is a literal, so doubling it CORRUPTS the value — there, bind `params` through your driver instead of rendering them. This builtin renders text; it is not a substitute for driver-side parameter binding, and no amount of escaping is. Interpreter-only (codegen E0910-refused).",
     },
     BuiltinFn {
         name: "http_get",

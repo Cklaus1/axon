@@ -1052,3 +1052,43 @@ Worth considering:
 3. Whether any OTHER build-identity consumer (attestation digests, `.axmeta`,
    the R34 chain) trusts `VERSION` the same way. A stale identity in an
    attestation record is a worse failure than a stale object file.
+
+---
+
+## O030 — `sql_query`'s escaping cannot be correct for every SQL dialect at once
+
+Surfaced by T39 (P5-25) and left as a decision rather than patched over.
+
+The escaping now doubles `\` before doubling `'`, which closes the demonstrated
+MySQL/MariaDB injection. But that fix is **dialect-specific and lossy elsewhere**:
+
+| dialect | `\` in a param | doubling it |
+|---|---|---|
+| MySQL / MariaDB (`NO_BACKSLASH_ESCAPES` off — the default) | escape character | **required** — without it the param escapes its own closing quote |
+| PostgreSQL, SQLite (`standard_conforming_strings` on — the default since PG 9.1) | ordinary literal | **corrupts the value** — one backslash becomes two |
+
+So the builtin now trades a MySQL injection for a Postgres/SQLite data-corruption
+on any parameter containing a backslash. That is the right trade — silent data
+corruption is much less bad than remote SQL execution, and the doc now says so
+explicitly — but it is a trade, not a fix, and it should not stay implicit.
+
+The honest framing is that **rendering a query string is the unsafe pattern**.
+Real safety is driver-side parameter binding, where the value never becomes part
+of the statement text at all. `sql_query` cannot do that because Axon has no
+database sink; it builds a string and hands it to the caller.
+
+Options, none free:
+
+1. **Take a dialect argument** — `sql_query(template, params, dialect)`, or a
+   `@[sql(dialect: postgres)]` attribute. Correct, and an API change.
+2. **Refuse a parameter containing `\`** — dialect-neutral and fail-closed, in
+   keeping with the language's posture, but rejects legitimate values (Windows
+   paths, regexes, LaTeX).
+3. **Emit a placeholder query plus a params array** — `SELECT … WHERE a = $1`
+   and `["…"]`, i.e. stop rendering values into the text entirely and let the
+   eventual driver bind them. This is the only option that is actually safe, and
+   it changes what the builtin returns.
+
+(3) is the correct destination. Until a database sink exists there is nothing
+forcing the choice, which is exactly why it is worth deciding deliberately rather
+than discovering it when the first driver lands.

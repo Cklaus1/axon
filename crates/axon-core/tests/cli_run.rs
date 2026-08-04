@@ -1822,6 +1822,65 @@ fn deploy_refuses_an_unparseable_risk_level() {
 }
 
 #[test]
+fn sql_query_escapes_backslash_so_a_param_cannot_escape_its_own_quote() {
+    // AUDIT T39 (finding P5-25). The escaping was `replace('\'', "''")` and
+    // nothing else, under a comment claiming "Data is never SQL structure" and a
+    // builtin doc claiming SQL injection was "unrepresentable by construction".
+    // On MySQL/MariaDB (NO_BACKSLASH_ESCAPES off by default — and the engine of
+    // this demo's own exemplar CVE-2024-5314, Dolibarr) a backslash escapes the
+    // following quote, so a param of `\` consumed its closing quote:
+    //
+    //   SELECT * FROM t WHERE a = '\' AND b = ' OR 1=1 -- '
+    //                                ^^ string runs on; the tail is SQL structure
+    let dir = std::env::temp_dir().join("axon_t39_sql");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("q.ax");
+    std::fs::write(
+        &p,
+        "fn main() {\n  \
+         let q = sql_query(\"SELECT * FROM t WHERE a = ? AND b = ?\", [\"\\\\\", \" OR 1=1 -- \"])\n  \
+         println(q)\n}\n",
+    )
+    .unwrap();
+
+    let out = axon().args(["run", p.to_str().unwrap()]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    // The exact pre-fix rendering must not reappear.
+    assert!(
+        !stdout.contains(r"a = '\' AND"),
+        "a lone backslash must not be able to escape its closing quote: {stdout}"
+    );
+    // Backslash doubled, so MySQL reads it as one literal backslash and the
+    // quote that follows genuinely closes the string.
+    assert!(
+        stdout.contains(r"a = '\\' AND"),
+        "backslash must be doubled: {stdout}"
+    );
+    // The injection payload stays INSIDE the quoted parameter — it is data.
+    assert!(
+        stdout.contains("b = ' OR 1=1 -- '"),
+        "the payload must remain a quoted value: {stdout}"
+    );
+
+    // Quote-doubling still works, and is not itself re-escaped by the backslash
+    // rule (order matters: backslash first, then quote).
+    let p2 = dir.join("q2.ax");
+    std::fs::write(
+        &p2,
+        "fn main() {\n  println(sql_query(\"SELECT ?\", [\"o'brien\"]))\n}\n",
+    )
+    .unwrap();
+    let out2 = axon().args(["run", p2.to_str().unwrap()]).output().unwrap();
+    let s2 = String::from_utf8_lossy(&out2.stdout).to_string();
+    assert!(
+        s2.contains("SELECT 'o''brien'"),
+        "quote doubling must still apply: {s2}"
+    );
+}
+
+#[test]
 fn deploy_risk_is_derived_from_what_a_program_does_not_only_what_it_declares() {
     // AUDIT T33 (finding P7-SEC-06). derive_risk_from_ast read ONLY declared
     // effect rows and @[contained] args on top-level fns, so the incentive was

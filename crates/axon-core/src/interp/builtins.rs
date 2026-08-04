@@ -504,7 +504,26 @@ impl<'p> Interp<'p> {
             "sql_query" => {
                 // Parameterized query: each `?` in the (compile-time-literal,
                 // E1210-enforced) template is filled by the next bound param,
-                // single-quoted and `'`-escaped. Data is never SQL structure.
+                // single-quoted and escaped.
+                //
+                // AUDIT T39 (finding P5-25). The escaping was `replace('\'', "''")`
+                // and NOTHING ELSE, under a comment claiming "Data is never SQL
+                // structure." On MySQL/MariaDB — where NO_BACKSLASH_ESCAPES is off
+                // by default, and which is the engine of this demo's own exemplar
+                // CVE-2024-5314 (Dolibarr) — a backslash escapes the following
+                // quote, so a param of `\` consumed the closing quote and handed
+                // the rest of the query to the attacker:
+                //
+                //   sql_query("… a = ? AND b = ?", ["\\", " OR 1=1 -- "])
+                //   → SELECT * FROM t WHERE a = '\' AND b = ' OR 1=1 -- '
+                //                                  ^^ quote escaped, string runs on
+                //
+                // Backslash is now doubled, BEFORE quote-doubling (order matters:
+                // escaping quotes first would then re-escape the backslashes the
+                // quote rule introduced). See the doc note in builtins.rs for the
+                // dialects this is valid for — it is NOT dialect-neutral, and the
+                // real fix for a caller with a live database is driver-side
+                // parameter binding, not any amount of rendering.
                 want(2)?;
                 let template = as_str(&args[0])?.to_string();
                 let params: Vec<String> = match &args[1] {
@@ -528,7 +547,9 @@ impl<'p> Interp<'p> {
                     if ch == '?' {
                         if pi < params.len() {
                             rendered.push('\'');
-                            rendered.push_str(&params[pi].replace('\'', "''"));
+                            rendered.push_str(
+                                &params[pi].replace('\\', "\\\\").replace('\'', "''"),
+                            );
                             rendered.push('\'');
                             pi += 1;
                         } else {

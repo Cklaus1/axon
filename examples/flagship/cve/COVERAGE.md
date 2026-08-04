@@ -24,7 +24,7 @@ claims to stop everything is not credible; one that draws its own edges is.
 | SSRF / outbound (918/610) | 3 | **PREVENTED** | host-pinned `net: ["host"]` — seccomp cannot express this |
 | XXE → file/SSRF (611) | 1 | **PREVENTED** | `fs`/`net` deny — the external-entity fetch has no authority |
 | Memory corruption (122) | 1 | **PREVENTED** | memory-safe runtime — class eliminated |
-| **SQL injection (89)** | **9** | **PREVENTED** | **`sql_query` requires a literal template (E1210); user data is a bound param — injection is a compile error.** See `CVE-2024-5314/`. |
+| **SQL injection (89)** | **9** | **PREVENTED (structure) / escaped (data)** | **`sql_query` requires a literal template (E1210), so the query's STRUCTURE cannot be attacker-controlled — that half is a compile error.** The bound-parameter DATA is escaped at render time, and until 2026-08-04 that escaping doubled `'` only: a param of `\` consumed its closing quote on MySQL/MariaDB and handed the rest of the query to the attacker (P5-25 / T39, reproduced). Backslash is now doubled too. Note the escaping targets MySQL rules and is NOT dialect-neutral — see the `sql_query` doc. See `CVE-2024-5314/`. |
 | Missing authorization (862) | 2 | **CONTAINED** | Axon doesn't add the missing check, but a `@[contained]` handler that escalates still can't exfiltrate. Modeling authz as a capability is future work. |
 | Hardcoded-secret / property injection → RCE (798/74) | 2 | **CONTAINED** | the RCE sink is killed by `exec: none`; the hardcoded-credential / auth-bypass logic itself is not detected |
 | Post-RCE privilege gain (863) | 1 | **CONTAINED** | Axon prevents the *precondition* (the arbitrary code execution); the escalation logic isn't modeled |
@@ -46,7 +46,13 @@ Two distinct guarantees do the work, and it's worth keeping them separate:
 1. **Confinement** (`@[contained]`) — *"this code may only touch what it declared."*
    Makes RCE/file/SSRF/XXE impact unreachable, and caps the blast radius of everything else.
 2. **Unrepresentability** (`sql_query`/E1210) — *"the unsafe construction does not
-   typecheck."* Makes SQL injection a compile error rather than a discipline.
+   typecheck."* Makes the *structural* half of SQL injection a compile error rather than a
+   discipline: a template built by concatenation or interpolation does not compile, so an
+   attacker cannot supply query STRUCTURE. The remaining half — escaping the bound DATA —
+   is ordinary, dialect-specific string handling, and it was wrong until T39 (a lone `'`
+   doubling let a backslash escape its own closing quote on MySQL). Worth stating plainly:
+   unrepresentability is a real and strong property, but it covered less of this CWE than
+   the single word "PREVENTED" implied.
 
 And where neither applies — a logic bug the compiler can't see — **confinement still
 caps the blast radius**: [`CVE-2024-2771/`](CVE-2024-2771/) makes this concrete, a

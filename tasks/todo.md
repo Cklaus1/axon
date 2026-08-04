@@ -286,6 +286,40 @@ Gated by the new `scripts/closure_ret_parity.sh` (9 cases, compares STDOUT not
 just exit codes, and includes BOTH lambda emission orders since the original bug
 depended on order). Parity suite: 45 passed / 5 skipped / 0 failed of 50.
 
+### SQL escaping — the guarantee was broader in the docs than in the code
+
+| task | commit | what |
+|---|---|---|
+| **T39** | `—` | `sql_query`'s escaping was `replace('\'', "''")` and nothing else, under a code comment reading "Data is never SQL structure" and a builtin doc claiming SQL injection was "**unrepresentable by construction**". On MySQL/MariaDB — `NO_BACKSLASH_ESCAPES` off by default, and the engine of this demo's own exemplar CVE-2024-5314 (Dolibarr) — a backslash escapes the following quote, so a param of `\` consumed its own closing quote and handed the tail of the query to the attacker (P5-25) |
+
+Reproduced byte-for-byte before the fix:
+
+```
+sql_query("SELECT * FROM t WHERE a = ? AND b = ?", ["\\", " OR 1=1 -- "])
+→ SELECT * FROM t WHERE a = '\' AND b = ' OR 1=1 -- '
+                              ^^ quote escaped; the tail is now SQL structure
+```
+
+Backslash is doubled now, before quote-doubling (order matters — doubling quotes
+first would then re-escape the backslashes that rule introduced). The regression
+test uses the exact payload and was verified to FAIL against the old escaping.
+
+**The doc claim was the bigger defect.** E1210 makes the query's *structure*
+attacker-independent — a template built by concatenation doesn't compile — and
+that is a real, strong property. But it says nothing about escaping the bound
+*data*, and "unrepresentable by construction" was read as covering both.
+`COVERAGE.md` rated the whole CWE-89 row **PREVENTED** on that basis. Both now
+say which half is which.
+
+**Not fixed, because it can't be (O030):** the new escaping is dialect-specific.
+Doubling `\` is required on MySQL and CORRUPTS the value on PostgreSQL/SQLite,
+where a backslash is an ordinary literal. So this trades a MySQL injection for a
+Postgres data-corruption — the right trade, and now documented, but a trade.
+Rendering values into query text is itself the unsafe pattern; the correct
+destination is returning a placeholder query plus a params array and letting a
+driver bind them. Nothing forces that choice until Axon has a database sink,
+which is precisely why it should be decided deliberately.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -304,7 +338,7 @@ depended on order). Parity suite: 45 passed / 5 skipped / 0 failed of 50.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty-eight fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty-nine fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
