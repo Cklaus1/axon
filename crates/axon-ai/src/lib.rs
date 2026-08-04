@@ -66,7 +66,26 @@ fn load_dotenv_once() {
     DOTENV_ONCE.call_once(|| {
         let path = match std::env::var("AXON_DOTENV").ok().filter(|s| !s.is_empty()) {
             Some(p) => Some(std::path::PathBuf::from(p)),
-            None => find_dotenv_upwards(),
+            // AUDIT T35 (RT-02): the default used to WALK UP to the filesystem
+            // root. A `.env` anywhere above the working directory — including one
+            // written by the program itself under nothing more than an fs:write
+            // grant — was silently loaded into the process environment and could
+            // set AXON_AI_BASE_URL. Reproduced end-to-end: an agent whose
+            // `@[contained(net: ["api.anthropic.com"])]` passes `axon check` with
+            // exit 0 sent its prompt and the real x-api-key to a listener on
+            // 127.0.0.1, from a `.env` one directory ABOVE the program.
+            //
+            // Now: the invocation directory only, and only if AXON_DOTENV_WALK=1
+            // restores the old search. The resolved host is separately pinned
+            // (see `pin_net_allowlist`), so this is defence in depth, not the
+            // whole fix.
+            None if std::env::var("AXON_DOTENV_WALK").as_deref() == Ok("1") => {
+                find_dotenv_upwards()
+            }
+            None => std::env::current_dir()
+                .ok()
+                .map(|d| d.join(".env"))
+                .filter(|p| p.is_file()),
         };
         if let Some(p) = path {
             if let Ok(contents) = std::fs::read_to_string(&p) {
@@ -74,6 +93,70 @@ fn load_dotenv_once() {
             }
         }
     });
+}
+
+// ── T35 / RT-02: pin the resolved endpoint host to the program's net grant ────
+
+/// Hosts the running program is statically permitted to reach, if it declared
+/// any `@[contained(net: [...])]`. `None` = no program-level pin (a program with
+/// no containment annotation is not constrained here).
+static NET_PIN: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Pin the effective net allowlist for this process.
+///
+/// The static checker validates `ai_complete` against the IMPLICIT constant host
+/// `api.anthropic.com`, but `base_url` resolved `AXON_AI_BASE_URL` /
+/// `ANTHROPIC_BASE_URL` at call time — so the host the checker approved and the
+/// host the runtime dialled were entirely independent values. Pinning closes
+/// that gap: an override is honoured only if its host is one the program was
+/// actually granted.
+///
+/// First call wins; later calls are ignored, so a program cannot widen its own
+/// grant mid-run.
+pub fn pin_net_allowlist(hosts: Vec<String>) {
+    let _ = NET_PIN.set(hosts);
+}
+
+/// Does `host` match one of the allowlist entries? Leading-`*` glob, matching
+/// the `@[contained]` checker's own rule.
+fn host_allowed(host: &str, allow: &[String]) -> bool {
+    allow.iter().any(|pat| {
+        if let Some(suffix) = pat.strip_prefix('*') {
+            host.ends_with(suffix)
+        } else {
+            pat == host
+        }
+    })
+}
+
+/// The host part of a base URL, lowercased and without port or credentials.
+fn host_of(base: &str) -> String {
+    let after_scheme = base.split("://").nth(1).unwrap_or(base);
+    let authority = after_scheme.split('/').next().unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    authority
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(authority)
+        .to_ascii_lowercase()
+}
+
+/// `endpoint_url`, refusing a host the program was never granted.
+fn checked_endpoint_url(p: Provider) -> Result<String, String> {
+    let url = endpoint_url(p);
+    if let Some(allow) = NET_PIN.get() {
+        let host = host_of(&base_url(p));
+        if !host_allowed(&host, allow) {
+            return Err(format!(
+                "AI endpoint host `{host}` is not in this program's net allowlist \
+                 ({}) — refusing the call. An AXON_AI_BASE_URL / ANTHROPIC_BASE_URL \
+                 override (including one loaded from a .env file) cannot widen a \
+                 `@[contained(net: [...])]` grant.",
+                allow.join(", ")
+            ));
+        }
+    }
+    Ok(url)
 }
 
 /// Walk from the current directory up to the root looking for a `.env` file.
@@ -329,7 +412,7 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
     };
 
     let client = reqwest::blocking::Client::new();
-    let response = auth_headers(p, client.post(endpoint_url(p)), &key)
+    let response = auth_headers(p, client.post(checked_endpoint_url(p)?), &key)
         .json(&body)
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
@@ -568,6 +651,31 @@ fn complete_structured_inner(
     value_type: &str,
     with_confidence: bool,
 ) -> Result<serde_json::Value, String> {
+    // AUDIT T35 (finding RT-01): this went straight to `api_key(p)?` and a live
+    // billed POST with no mock check anywhere in it or its callers — only the
+    // plain `ai_complete` path honoured AXON_AI_MOCK. Every `ai_extract_*`
+    // builtin routes through here, so `AXON_AI_MOCK=1` diverged from `axon run`
+    // (which short-circuits) and either errored on a missing key or made a real
+    // call. Reproduced: with AXON_AI_MOCK=1 and no key, the interpreter prints
+    // "ok" and this returned "ANTHROPIC_API_KEY … is not set". That is the I-2
+    // interp/native divergence the project gates on.
+    //
+    // The stub values match the interpreter's byte-for-byte
+    // (interp/builtins.rs: i64 -> 1, f64 -> 1.0, bool -> true, confidence 0.9).
+    if ai_mock_enabled() {
+        let value = match value_type {
+            "integer" | "i64" | "int" => serde_json::json!(1),
+            "number" | "f64" | "float" => serde_json::json!(1.0),
+            "boolean" | "bool" => serde_json::json!(true),
+            _ => serde_json::json!(MOCK_AI_COMPLETE),
+        };
+        return Ok(if with_confidence {
+            serde_json::json!({ "value": value, "confidence": 0.9 })
+        } else {
+            serde_json::json!({ "value": value })
+        });
+    }
+
     let p = provider();
     let key = api_key(p)?;
     // The interpreter passes the tier-resolved model via the plain path; the
@@ -594,7 +702,7 @@ fn complete_structured_inner(
     };
 
     let client = reqwest::blocking::Client::new();
-    let response = auth_headers(p, client.post(endpoint_url(p)), &key)
+    let response = auth_headers(p, client.post(checked_endpoint_url(p)?), &key)
         .json(&body)
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
@@ -1021,6 +1129,78 @@ pub extern "C" fn __axon_ai_extract_bool(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── T35 / RT-02: the resolved endpoint host is pinned to the net grant ──
+
+    #[test]
+    fn host_of_extracts_the_bare_host() {
+        assert_eq!(host_of("https://api.anthropic.com"), "api.anthropic.com");
+        assert_eq!(host_of("http://127.0.0.1:8931"), "127.0.0.1");
+        assert_eq!(
+            host_of("https://user:pw@evil.example:8443/v1"),
+            "evil.example"
+        );
+        assert_eq!(host_of("https://API.Anthropic.COM/"), "api.anthropic.com");
+    }
+
+    /// The `@[contained]` checker's own leading-`*` glob rule, so a grant means
+    /// the same thing statically and at dial time.
+    #[test]
+    fn host_allowed_matches_the_contained_glob_rule() {
+        let allow = vec!["api.anthropic.com".to_string(), "*.trusted.io".to_string()];
+        assert!(host_allowed("api.anthropic.com", &allow));
+        assert!(host_allowed("gw.trusted.io", &allow));
+        assert!(!host_allowed("127.0.0.1", &allow));
+        assert!(!host_allowed("trusted.io.evil.com", &allow));
+        // A suffix match must not be satisfied by a lookalike registrable domain.
+        assert!(!host_allowed("nottrusted.io", &allow));
+    }
+
+    // ── T35 / RT-01: AXON_AI_MOCK must reach the structured path too ────────
+
+    /// `complete_structured_inner` went straight to `api_key(p)?` and a live
+    /// POST — no mock check in it or in any caller — so every `ai_extract_*`
+    /// builtin diverged from `axon run` under AXON_AI_MOCK=1. The stub values
+    /// must match the interpreter's exactly (interp/builtins.rs).
+    #[test]
+    fn mock_reaches_the_structured_output_path() {
+        // Same ENV_LOCK discipline as the neighbouring env-touching tests: these
+        // run in one process with a shared environment, and the sibling tests
+        // assert on a MISSING key — leaking AXON_AI_MOCK=1 would silently break
+        // them from a different thread.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let prev_neutral = std::env::var("AXON_AI_API_KEY").ok();
+        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
+        std::env::remove_var("ANTHROPIC_API_KEY"); // prove no key is needed
+        std::env::remove_var("AXON_AI_API_KEY");
+        std::env::set_var("AXON_AI_MOCK", "1");
+
+        assert_eq!(complete_typed_uncertain_i64("q"), Ok((1, 0.9)));
+        assert_eq!(complete_typed_uncertain_f64("q"), Ok((1.0, 0.9)));
+        assert_eq!(complete_typed_i64("q"), Ok(1));
+        assert_eq!(complete_typed_f64("q"), Ok(1.0));
+        assert_eq!(complete_typed_bool("q"), Ok(true));
+
+        // AXON_AI_MOCK=0 must NOT mock — it must fall through to the key check,
+        // exactly as the plain ai_complete path does.
+        std::env::set_var("AXON_AI_MOCK", "0");
+        assert!(
+            complete_typed_uncertain_i64("q").is_err(),
+            "AXON_AI_MOCK=0 must not mock the structured path"
+        );
+
+        match prev_mock {
+            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
+            None => std::env::remove_var("AXON_AI_MOCK"),
+        }
+        if let Some(v) = prev_key {
+            std::env::set_var("ANTHROPIC_API_KEY", v);
+        }
+        if let Some(v) = prev_neutral {
+            std::env::set_var("AXON_AI_API_KEY", v);
+        }
+    }
 
     /// The structured-output request body must declare a single `answer` tool
     /// whose schema requires both `value` and `confidence`, and the tool_choice

@@ -944,3 +944,30 @@ closed) and probably wants deciding alongside it.
 Worth stating plainly: the flagship demo's Layer-2 claim rests on this path. The
 containment story is sound where a manifest exists; where one does not, the VM
 currently grants everything.
+
+---
+
+## O027 — the AI endpoint pin only binds programs that declared a net grant
+
+Shipped as part of T35 (RT-02) and worth stating as a limitation rather than
+leaving it implied by the code.
+
+`pin_net_allowlist` constrains the resolved AI endpoint host only when the
+program declares at least one `@[contained(net: [...])]`. A program with NO
+containment annotation is unpinned, so `AXON_AI_BASE_URL` / `ANTHROPIC_BASE_URL`
+still redirect it anywhere — verified after the fix: an unannotated program
+still reached the 127.0.0.1 sink.
+
+That is deliberate for this slice. An unannotated program made no claim to
+violate, and pinning it would break the self-hosted-gateway workflow that
+`ANTHROPIC_BASE_URL` exists to serve (the trainloop gateway among them). But it
+does mean the guarantee reads: *"a program that says where it will connect
+cannot be redirected"* — not *"AI traffic cannot be redirected."*
+
+Closing the gap properly needs a decision, not a patch: should an AI call from
+an unannotated program be refused outright (deny-by-default, breaking every
+current gateway user), warned about, or left as is? It is the same shape as
+**O026** (the microVM policy defaulting to open when a program has no manifest)
+and the two probably want deciding together — both are "no declaration" mapping
+to "no restriction" in a system whose thesis is that declarations are the
+enforcement surface.

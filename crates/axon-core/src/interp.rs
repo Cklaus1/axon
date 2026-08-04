@@ -1631,6 +1631,72 @@ pub fn run_suspendable_stdio(program: &Program) -> i32 {
     })
 }
 
+/// AUDIT T35 (finding RT-02): tell the AI runtime which hosts this program was
+/// statically permitted to reach.
+///
+/// `axon check` validates `ai_complete` against the IMPLICIT constant host
+/// `api.anthropic.com`, but the runtime resolved `AXON_AI_BASE_URL` /
+/// `ANTHROPIC_BASE_URL` at call time — so the host the checker approved and the
+/// host actually dialled were independent values, bridgeable by any program with
+/// an fs:write grant via a `.env` file. Reproduced end-to-end: a program whose
+/// `@[contained(net: ["api.anthropic.com"])]` passed `axon check` exit 0 sent its
+/// prompt and the real `x-api-key` to `127.0.0.1`.
+///
+/// The union of every declared net allowlist is pinned. A program that declares
+/// no `@[contained]` net grant is not pinned — it never made a claim to violate.
+/// The union of every `@[contained(net: [...])]` host the program declares,
+/// across top-level fns and impl methods. Empty = the program made no net claim.
+///
+/// Always compiled (not feature-gated) so it stays unit-testable in the default
+/// build, where the `asi-runtime` AI runtime it feeds is absent.
+#[cfg_attr(not(feature = "asi-runtime"), allow(dead_code))]
+fn declared_net_hosts(program: &Program) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    let mut push = |c: &Option<crate::ast::ContainedSpec>| {
+        if let Some(c) = c {
+            for h in &c.net_allow {
+                if !hosts.contains(h) {
+                    hosts.push(h.clone());
+                }
+            }
+        }
+    };
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => push(&f.contained),
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    push(&m.contained);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !hosts.is_empty() {
+        // The implicit endpoint every AI builtin contacts is always permitted —
+        // it is exactly what the static checker validated the grant against, so a
+        // program that reaches an AI builtin at all has already been required to
+        // declare it.
+        let implicit = crate::capabilities::ai_implicit_host();
+        if !hosts.iter().any(|h| h == implicit) {
+            hosts.push(implicit.to_string());
+        }
+    }
+    hosts
+}
+
+#[cfg(feature = "asi-runtime")]
+fn pin_ai_net_allowlist(program: &Program) {
+    let hosts = declared_net_hosts(program);
+    if !hosts.is_empty() {
+        axon_ai::pin_net_allowlist(hosts);
+    }
+}
+
+/// Without the `asi-runtime` feature there is no live AI runtime to pin.
+#[cfg(not(feature = "asi-runtime"))]
+fn pin_ai_net_allowlist(_program: &Program) {}
+
 fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -> i32 {
     let mut interp = Interp::build(program).with_discharged(discharged);
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
@@ -1807,6 +1873,7 @@ fn verify_fn_label(fn_name: &str) -> String {
 
 impl<'p> Interp<'p> {
     pub fn build(program: &'p Program) -> Self {
+        pin_ai_net_allowlist(program);
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
         let mut enums = HashMap::new();
@@ -3086,6 +3153,59 @@ mod tests {
     fn run(src: &str) -> i32 {
         let program = crate::parse_source(src).expect("parse failed");
         run_program(&program)
+    }
+
+    /// AUDIT T35 (finding RT-02). The static checker validates `ai_complete`
+    /// against the implicit host `api.anthropic.com`, but the runtime resolved
+    /// AXON_AI_BASE_URL / ANTHROPIC_BASE_URL at call time — two independent
+    /// values. Reproduced end-to-end: a program whose
+    /// `@[contained(net: ["api.anthropic.com"])]` passed `axon check` exit 0 sent
+    /// its prompt and the real x-api-key to a listener on 127.0.0.1, via a `.env`
+    /// one directory ABOVE it. This is the collection half of the pin.
+    #[test]
+    fn declared_net_hosts_collects_every_contained_grant() {
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["api.anthropic.com"])]
+fn ask() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        let hosts = declared_net_hosts(&p);
+        assert_eq!(hosts, vec!["api.anthropic.com".to_string()]);
+    }
+
+    /// A program that declares no net grant is NOT pinned — it never made a
+    /// claim to violate, and pinning it would break legitimate self-hosted
+    /// gateway workflows that rely on ANTHROPIC_BASE_URL.
+    #[test]
+    fn a_program_with_no_net_grant_is_not_pinned() {
+        let p = crate::parse_source(r#"fn main() { println("hi") }"#).expect("parse failed");
+        assert!(
+            declared_net_hosts(&p).is_empty(),
+            "an unannotated program must not be constrained by the pin"
+        );
+    }
+
+    /// The implicit AI host is added so a program that passed the checker can
+    /// still reach the endpoint the checker approved it for.
+    #[test]
+    fn the_implicit_ai_host_is_always_included_once_a_grant_exists() {
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["gw.trusted.io"])]
+fn fetch() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        let hosts = declared_net_hosts(&p);
+        assert!(hosts.contains(&"gw.trusted.io".to_string()));
+        assert!(
+            hosts.contains(&crate::capabilities::ai_implicit_host().to_string()),
+            "the host the checker validates against must be reachable: {hosts:?}"
+        );
     }
 
     #[test]

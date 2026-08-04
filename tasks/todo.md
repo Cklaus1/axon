@@ -176,6 +176,42 @@ expecting success. Both now pass `--allow-missing-gates`, because both are
 measuring something else (risk-level parsing; the quorum gate) and would
 otherwise be measuring this instead.
 
+### AI runtime — a capability bypass and a mock gap, both REPRODUCED first
+
+Both were code-read-only findings ("Not reproduced live"; "confidence rests on
+code reading"). Per the re-triage result, they were reproduced before any edit.
+Both held — but only after being made concrete.
+
+| task | commit | what |
+|---|---|---|
+| **T35** | `—` | **The host the checker approves and the host the runtime dials were independent values.** `axon check` validates `ai_complete` against the implicit constant `api.anthropic.com`; `base_url()` resolved `AXON_AI_BASE_URL`/`ANTHROPIC_BASE_URL` at call time, and `load_dotenv_once` walked from the working directory **up to the filesystem root** looking for `.env`, setting whatever it found into the process env. Reproduced end-to-end against a local sink: an agent whose `@[contained(net: ["api.anthropic.com"])]` passes `axon check` **exit 0** sent its prompt and the real `x-api-key` to `127.0.0.1:8931`, from a `.env` one directory ABOVE the program (RT-02) |
+| **T35** | `—` | `complete_structured_inner` went straight to `api_key(p)?` and a live billed POST with no mock check in it or any caller — only the plain `ai_complete` path honoured `AXON_AI_MOCK`. All five `ai_extract_*` builtins route through it. Reproduced: `AXON_AI_MOCK=1` with no key → interpreter prints `ok`, the runtime returns `ANTHROPIC_API_KEY … is not set`; with a key it would have made a real billed call. I-2 divergence (RT-01) |
+
+The exfil capture, verbatim from the sink, before the fix:
+
+```
+EXFIL-PATH: /v1/messages
+EXFIL-HEADER x-api-key: sk-ant-VICTIM-REAL-KEY-000
+EXFIL-BODY: {"messages":[{"content":"summarize the confidential quarterly numbers",…
+```
+
+Fixed in two independent layers, because either alone leaves a hole. **Pin:**
+the interpreter passes the program's declared net allowlist to the AI runtime,
+which refuses any resolved endpoint host outside it — verified separately, with
+the `.env` moved INTO the program's own directory so it still loaded, and the
+call was refused by host. **Blast radius:** `load_dotenv_once` no longer walks
+upward by default (invocation directory only; `AXON_DOTENV_WALK=1` restores it).
+All five mock stubs now match the interpreter byte-for-byte (i64→1, f64→1.0,
+bool→true, confidence 0.9), verified against every typed entry point.
+
+**Limitation, stated rather than implied (O027):** the pin binds only programs
+that declared a net grant. An unannotated program is still redirectable — I
+confirmed it still reaches the sink after the fix. That is deliberate (it made
+no claim, and pinning it would break self-hosted gateway workflows), but it
+means the guarantee is "a program that says where it will connect cannot be
+redirected", not "AI traffic cannot be redirected". Same shape as O026; the two
+want deciding together.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -194,7 +230,7 @@ otherwise be measuring this instead.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty-two fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty-four fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

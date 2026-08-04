@@ -89,6 +89,13 @@ fn classify_call(name: &str) -> Option<IoKind> {
 /// `@[contained(net: ["api.anthropic.com"])]` grants exactly this.
 const ANTHROPIC_HOST: &str = "api.anthropic.com";
 
+/// The implicit host every AI builtin contacts, and the one the `@[contained]`
+/// checker validates a net grant against. Exposed so the runtime can pin the
+/// resolved endpoint to the same value the checker approved (T35 / RT-02).
+pub fn ai_implicit_host() -> &'static str {
+    ANTHROPIC_HOST
+}
+
 /// For an AI builtin (`ai_complete`, `ai_extract_*`), the network host is FIXED
 /// (the Anthropic endpoint) and the first call argument is the PROMPT, not a
 /// host. Returns the implicit host for those builtins, or `None` for a net
