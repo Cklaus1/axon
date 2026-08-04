@@ -70,10 +70,27 @@ pub enum Value {
     Ok(Box<Value>),
     Err(Box<Value>),
     /// A lambda plus the environment it captured at creation time.
+    ///
+    /// AUDIT T40 (findings F094 / P5-16 / DOC-02). `captured` used to be a plain
+    /// `HashMap<String, Value>` — a fresh clone per call — so an assignment to a
+    /// captured binding inside the lambda was silently DROPPED when the call
+    /// returned. Native codegen heap-allocates the capture and the write
+    /// persists, so the same source printed different answers on the two
+    /// engines with no error from either:
+    ///
+    ///   let n = 0; let bump = || { n = n + 1  n }
+    ///   interp:  call1=1 call2=1 call3=1   outer n=0
+    ///   native:  call1=1 call2=2 call3=3   outer n=0
+    ///
+    /// The Rc/RefCell makes the capture PERSISTENT ACROSS CALLS of this closure
+    /// (matching codegen) while still being a by-value snapshot of the defining
+    /// scope — note `outer n=0` on both engines: the outer binding is not
+    /// aliased. Cloning a closure value shares the same cell, which is what
+    /// makes `let b = bump` observe the same counter.
     Closure {
         params: Vec<String>,
         body: Box<Expr>,
-        captured: HashMap<String, Value>,
+        captured: Rc<RefCell<HashMap<String, Value>>>,
     },
     /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
@@ -1052,14 +1069,15 @@ impl SendValue {
                 body,
                 captured,
             } => {
-                let mut keys: Vec<&String> = captured.keys().collect();
+                let snapshot = captured.borrow();
+                let mut keys: Vec<&String> = snapshot.keys().collect();
                 keys.sort();
                 let cap: Result<Vec<_>, _> = keys
                     .into_iter()
                     .map(|k| {
                         Ok((
                             k.clone(),
-                            Self::from_value_at(&captured[k], format!("{path}.capture[{k}]"))?,
+                            Self::from_value_at(&snapshot[k], format!("{path}.capture[{k}]"))?,
                         ))
                     })
                     .collect();
@@ -1146,10 +1164,16 @@ impl SendValue {
             } => Value::Closure {
                 params,
                 body,
-                captured: captured
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_value()))
-                    .collect(),
+                // A closure that crossed the host boundary gets a FRESH capture
+                // cell: the SendValue path is a deep clone by construction (a
+                // shared cell is exactly what it cannot carry), so the two sides
+                // are independent counters, not aliases (T40 + R15 Slice 2).
+                captured: Rc::new(RefCell::new(
+                    captured
+                        .into_iter()
+                        .map(|(k, v)| (k, v.into_value()))
+                        .collect(),
+                )),
             },
             SendValue::Tuple(xs) => Value::Tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
@@ -2616,16 +2640,33 @@ impl<'p> Interp<'p> {
         }
         let mut env = Env::new();
         // Base scope = captured bindings; a fresh scope holds the parameters.
-        *env.scopes.last_mut().unwrap() = captured;
+        // The base scope is a CLONE of the shared cell's contents so the body
+        // sees plain Values; assignments land in this scope and are written back
+        // below, which is what makes them survive to the next call (T40).
+        *env.scopes.last_mut().unwrap() = captured.borrow().clone();
         env.push();
         for (p, a) in params.iter().zip(args) {
             env.define(p.clone(), a);
         }
-        match self.eval(&body, &mut env) {
+        let out = match self.eval(&body, &mut env) {
             Ok(v) => Ok(v),
             Err(Flow::Return(v)) => Ok(v),
             Err(other) => Err(other),
+        };
+        // Write back only names the closure actually captured. A `let` introduced
+        // inside the body lives in a pushed scope and must not leak into the
+        // capture; a parameter shadowing a captured name must not overwrite it
+        // either, which is why the params live in their own pushed scope above.
+        {
+            let mut cell = captured.borrow_mut();
+            let base = &env.scopes[0];
+            for (k, v) in base.iter() {
+                if cell.contains_key(k) {
+                    cell.insert(k.clone(), v.clone());
+                }
+            }
         }
+        out
     }
 
     // ── goal_run: hill-climb / retrospective best-observed ───────────────────

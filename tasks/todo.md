@@ -320,6 +320,42 @@ destination is returning a placeholder query plus a params array and letting a
 driver bind them. Nothing forces that choice until Axon has a database sink,
 which is precisely why it should be decided deliberately.
 
+### Mutable closure capture — the two engines gave different answers
+
+| task | commit | what |
+|---|---|---|
+| **T40** | `—` | A write to a captured binding inside a lambda was **silently dropped by the interpreter** and persisted natively. Same source, two backends, two answers, no error or warning from either (F094 / P5-16 / DOC-02) |
+
+```
+let n = 0;  let bump = || { n = n + 1  n }
+interp:  call1=1 call2=1 call3=1  outer n=0     ← writes dropped
+native:  call1=1 call2=2 call3=3  outer n=0     ← heap capture
+```
+
+README.md:65 lists "**Closures** — first-class, heap-captured mutable closures"
+as a shipped feature and demonstrates it with this exact code, and
+`fixtures/closures.ax` calls the pattern "the spec §3 make_counter pattern". So
+native was right and **the interpreter — the reference oracle for I-2 — was the
+wrong side**. `Value::Closure.captured` is now an `Rc<RefCell<HashMap<..>>>`:
+persistent across calls of that closure, still a by-value snapshot of the
+defining scope (`outer n=0` on both engines — the outer binding is not aliased).
+A closure crossing the R15 host boundary gets a fresh cell, since the SendValue
+path is a deep clone by construction.
+
+**Nothing anywhere executed this.** `closures_fixture_type_checks_cleanly`
+asserted only that the fixture type-checks; the phase-15 higher-order test
+asserted only that it parses; and `grep -rn closure scripts/*.sh` found no
+parity harness at all. Running `axon run fixtures/closures.ax` panicked with
+`assertion failed: 0 != 1` — the fixture had been self-asserting the right
+answer the whole time, and no test ever called it.
+
+Closed all three gaps: both fixture assertions now EXECUTE (the phase-15 one
+asserts exit code **8**, its pass-count — a bare "didn't panic" check would have
+accepted 7 with the counter test failing), plus three new executed contract
+tests and a new `scripts/closure_capture_parity.sh` (6 cases, compares STDOUT,
+covers independent cells, param shadowing, inner-`let` non-leak, and a counter
+driven inside a fn). Parity suite: 46 passed / 5 skipped / 0 failed of 51.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -338,7 +374,7 @@ which is precisely why it should be decided deliberately.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty-nine fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

@@ -580,7 +580,8 @@ impl<'p> Interp<'p> {
             Expr::Lambda { params, body, .. } => Ok(Value::Closure {
                 params: params.iter().map(|p| p.name.clone()).collect(),
                 body: body.clone(),
-                captured: env.snapshot(),
+                // T40: a SHARED, persistent capture cell — see Value::Closure.
+                captured: std::rc::Rc::new(std::cell::RefCell::new(env.snapshot())),
             }),
 
             Expr::Comptime(inner) => self.eval(inner, env),

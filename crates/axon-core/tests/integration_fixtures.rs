@@ -169,6 +169,70 @@ fn closures_fixture_type_checks_cleanly() {
     );
 }
 
+/// AUDIT T40 (findings F094 / P5-16 / DOC-02). The test above asserts only that
+/// the fixture TYPE-CHECKS — the vacuous-coverage pattern this repo keeps
+/// hitting. closures.ax contains the spec §3 make_counter pattern and asserts
+/// its own results, and under the interpreter it PANICKED
+/// ("assertion failed: 0 != 1") because a write to a captured binding inside a
+/// lambda was silently dropped. Nothing executed it, so nothing noticed.
+#[test]
+fn closures_fixture_actually_runs_and_its_assertions_hold() {
+    let path = fixtures_dir().join("closures.ax");
+    let source = std::fs::read_to_string(&path).expect("read closures.ax");
+    let program = axon_core::parse_source(&source).expect("parse closures.ax");
+    let (code, out) = axon_core::interp::run_program_capturing(&program);
+    assert_eq!(
+        code, 0,
+        "closures.ax must RUN clean, not merely type-check:\n{out}"
+    );
+}
+
+/// The mutable-capture contract itself, stated as an executed assertion rather
+/// than left to a fixture: a closure's write to a captured binding must persist
+/// ACROSS CALLS (matching native codegen), while the OUTER binding stays
+/// untouched. Before T40 the interpreter printed 1,1,1 here and native 1,2,3.
+#[test]
+fn a_closure_write_to_a_captured_binding_persists_across_calls() {
+    let src = r#"
+fn main() {
+    let n = 0
+    let bump = || { n = n + 1  n }
+    println("{to_str(bump())},{to_str(bump())},{to_str(bump())},outer={to_str(n)}")
+}
+"#;
+    let program = axon_core::parse_source(src).expect("parse");
+    let (code, out) = axon_core::interp::run_program_capturing(&program);
+    assert_eq!(code, 0, "program must run: {out}");
+    assert!(
+        out.contains("1,2,3,outer=0"),
+        "capture must persist across calls and not alias the outer binding, got: {out}"
+    );
+}
+
+/// Two closures capturing different bindings must not share a cell, and a
+/// PARAMETER shadowing a captured name must not write through to the capture.
+#[test]
+fn closure_capture_cells_are_per_closure_and_params_shadow_cleanly() {
+    let src = r#"
+fn main() {
+    let a = 0
+    let f = || { a = a + 1  a }
+    let b = 0
+    let g = || { b = b + 10  b }
+    let s = 100
+    let h = |s: i64| { s + 1 }
+    println("{to_str(f())},{to_str(g())},{to_str(f())},{to_str(g())},{to_str(h(5))},{to_str(s)}")
+}
+"#;
+    let program = axon_core::parse_source(src).expect("parse");
+    let (code, out) = axon_core::interp::run_program_capturing(&program);
+    assert_eq!(code, 0, "program must run: {out}");
+    assert!(
+        out.contains("1,10,2,20,6,100"),
+        "closures must own independent cells and params must shadow, got: {out}"
+    );
+}
+
 #[test]
 fn select_fixture_parses_cleanly() {
     let errors = check_fixture("select.ax");
@@ -617,6 +681,24 @@ fn phase15_higher_order_fixture_parses_cleanly() {
         errors.is_empty(),
         "phase15_higher_order.ax should have no errors, got:\n{}",
         errors.join("\n")
+    );
+}
+
+/// AUDIT T40: as above — parsing a make_counter fixture proves nothing about
+/// whether make_counter counts.
+#[test]
+fn phase15_higher_order_fixture_actually_runs() {
+    let path = fixtures_dir().join("phase15_higher_order.ax");
+    let source = std::fs::read_to_string(&path).expect("read phase15_higher_order.ax");
+    let program = axon_core::parse_source(&source).expect("parse phase15_higher_order.ax");
+    // This fixture's `main` returns the NUMBER of sub-tests that passed, so the
+    // meaningful assertion is the full count — 8. A regression in any one of
+    // them (test_counter is the mutable-capture one) shows up as 7, which a
+    // bare "ran without panicking" check would have accepted.
+    let (code, out) = axon_core::interp::run_program_capturing(&program);
+    assert_eq!(
+        code, 8,
+        "all 8 higher-order sub-tests must pass (exit code is the pass count):\n{out}"
     );
 }
 
