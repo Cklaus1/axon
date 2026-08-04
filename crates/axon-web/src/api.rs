@@ -105,7 +105,17 @@ pub fn deploy(body: &str, axon_bin: &str) -> String {
         args.push(r.as_str());
     }
     args.push(&tmp);
-    run_json(axon_bin, &args)
+    // AUDIT T50 (P4-PROD-09). This used `run_json`, which parses stdout as ONE
+    // JSON document and falls back to a `{ok, exit_code, stdout, stderr}`
+    // wrapper otherwise. A deployed program prints its own output before the
+    // report, so the fallback was the normal case and `status` / `approved` /
+    // `failed_reason` never appeared at the top level — leaving the UI nothing
+    // to gate on but `ok`, which is true whenever the CLI ran at all.
+    //
+    // `run_json_merged` (already used by /api/redteam) lifts the report object
+    // and keeps the prose as `run_output`, so the schema's own fields are where
+    // the caller expects them.
+    run_json_merged(axon_bin, &args)
 }
 
 pub fn trace(axon_bin: &str) -> String {
@@ -372,17 +382,40 @@ fn err_json(msg: &str) -> String {
     serde_json::json!({"error": msg}).to_string()
 }
 
+/// Stage `content` at a stable, CONTENT-ADDRESSED temp path.
+///
+/// AUDIT T50 (finding P4-PROD-10). This used to name the file from the current
+/// clock (`subsec_nanos()`), so every request minted a NEW path. `ast approve`
+/// therefore wrote `<tmp-A>.approved` while `deploy` ran `<tmp-B>` and looked
+/// for `<tmp-B>.approved`, which never existed. Reproduced against the running
+/// server:
+///
+/// ```text
+/// POST /api/ast/approve -> "approved_path": "/tmp/axon_web_400484501.ax.approved"
+/// POST /api/deploy      -> "path": "/tmp/axon_web_416046457.ax", "approved": false
+/// ```
+///
+/// Every approval a user clicked was silently discarded, and the deploy pane
+/// still reported success — the UI's sign-off step was decorative.
+///
+/// Hashing the content fixes it without any session plumbing, and gives exactly
+/// the security semantics wanted: the same program text resolves to the same
+/// path (so its approval is found), while text edited after approval resolves
+/// elsewhere (so it is NOT approved). That is the same property `axon ast
+/// approve` enforces internally — T10 made the approval bind the program text
+/// rather than the filename — so the two now agree instead of merely coexisting.
+#[cfg(test)]
+pub(crate) fn stage_for_test(content: &str, ext: &str) -> String {
+    write_temp(content, ext)
+}
+
 fn write_temp(content: &str, ext: &str) -> String {
-    let dir = std::env::temp_dir();
-    let name = format!(
-        "axon_web_{}.{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0),
-        ext
-    );
-    let path = dir.join(name);
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(content.as_bytes());
+    // 32 hex chars (128 bits) keeps the filename readable and is far beyond any
+    // accidental collision for a scratch directory.
+    let hex = format!("{digest:x}");
+    let path = std::env::temp_dir().join(format!("axon_web_{}.{}", &hex[..32], ext));
     fs::write(&path, content).ok();
     path.to_string_lossy().into_owned()
 }

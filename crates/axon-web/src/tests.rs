@@ -177,6 +177,90 @@ fn html_state_machine_lockall_and_unlock() {
     }
 }
 
+/// AUDIT T50 (P4-PROD-09/P4-PROD-10): the approval-flow gates must key on the
+/// fields the CLI schemas actually emit, and staging must be content-addressed.
+#[test]
+fn approval_flow_gates_key_on_real_schema_fields_t50() {
+    let html = crate::html::INDEX_HTML;
+
+    // (1) `axon-ast-review/1` reports `errors` (an ARRAY), never `error`. The
+    // review pane gated on `j.error`, so a program that failed to type-check
+    // set done.reviewed = true and unlocked Approve. Verified against the
+    // running server: reviewing `let x: i64 = "not an int"` returns
+    // `{"errors":["[E0102] ..."]}` with no `error` field at all.
+    assert!(
+        html.contains("Array.isArray(j.errors)"),
+        "review must gate on the `errors` array the schema emits, not `j.error`"
+    );
+
+    // (2) `done.redteamed = true` used to sit OUTSIDE the caught/passed branches,
+    // so a redteam that CAUGHT something still unlocked Deploy — falsifying the
+    // documented Acid-Test-4 gating claim. It must now be set only where the
+    // redteam passed.
+    let redteam_fn = html
+        .split("async function runRedteam")
+        .nth(1)
+        .expect("runRedteam handler must exist");
+    let end = redteam_fn
+        .find("async function")
+        .unwrap_or(redteam_fn.len());
+    let whole = &redteam_fn[..end];
+    // Strip `//` comment lines first: the explanatory comment above the branch
+    // quotes `done.redteamed = true`, and a naive `find` reads the COMMENT
+    // rather than the code — which would make this test pass or fail on prose.
+    let body: String = whole
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let passed_at = body
+        .find("redteam passed")
+        .expect("the pass branch must exist");
+    let flag_at = body
+        .find("done.redteamed = true")
+        .expect("the flag must be set somewhere");
+    assert!(
+        flag_at > passed_at,
+        "done.redteamed must be set INSIDE the pass branch, not after the if/else chain"
+    );
+    let caught_at = body.find("if (caught)").expect("caught branch");
+    assert!(
+        !body[caught_at..passed_at].contains("done.redteamed = true"),
+        "done.redteamed must not be set on the CAUGHT path"
+    );
+
+    // (3) `axon-deploy/1` reports `status`, never `error`. The deploy pane
+    // treated any response without an `error` field as success, so a
+    // gate-blocked deploy rendered as "deployed".
+    assert!(
+        html.contains("j.status === 'deployed'"),
+        "deploy must gate on the `status` field the schema emits"
+    );
+}
+
+/// AUDIT T50 (P4-PROD-10): staging is content-addressed, so `ast approve` and
+/// `deploy` of the same program resolve to the same path — and an edited
+/// program resolves elsewhere, so its approval does NOT carry over.
+#[test]
+fn staging_is_content_addressed_so_approval_binds_t50() {
+    // Reproduced before the fix against the running server: the path came from
+    // `subsec_nanos()`, so approve wrote `/tmp/axon_web_400484501.ax.approved`
+    // while deploy ran `/tmp/axon_web_416046457.ax` and reported
+    // `"approved": false`. Every approval a user clicked was discarded.
+    let a = crate::api::stage_for_test("fn main() -> i64 { 0 }\n", "ax");
+    let b = crate::api::stage_for_test("fn main() -> i64 { 0 }\n", "ax");
+    assert_eq!(
+        a, b,
+        "the same program text must stage to the same path, or its approval is lost"
+    );
+
+    let edited = crate::api::stage_for_test("fn main() -> i64 { 1 }\n", "ax");
+    assert_ne!(
+        a, edited,
+        "edited text must stage elsewhere, so an approval cannot silently carry over"
+    );
+}
+
 /// POST /api/safety/attest returns ok=true in mock mode (AXON_CI_NO_KVM=1 or
 /// no kernel image on disk, which is always the case in CI/unit tests).
 #[test]

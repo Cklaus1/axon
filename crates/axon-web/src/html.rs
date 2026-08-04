@@ -279,7 +279,17 @@ async function reviewAst() {
   try {
     const j = await post('/api/ast/review', {content: axContent});
     show('review-out', JSON.stringify(j, null, 2));
-    if (j.error) { fail('s2', j.error); return; }
+    // AUDIT T50 (P4-PROD-09). This gated on `j.error`, which the
+    // `axon-ast-review/1` schema never emits — it reports `errors`, an ARRAY.
+    // So a program that fails to type-check set done.reviewed = true and the
+    // flow advanced to Approve. Verified against the running server: a review
+    // of `let x: i64 = "not an int"` returns
+    // `{"errors":["[E0102] type mismatch ..."]}` with no `error` field at all.
+    const errs = Array.isArray(j.errors) ? j.errors : [];
+    if (j.error || errs.length > 0) {
+      fail('s2', j.error || (errs.length + ' error(s): ' + errs[0]));
+      return;
+    }
     ok('s2', 'reviewed');
     done.reviewed = true;
   } catch(e) { fail('s2', e.message); }
@@ -339,14 +349,18 @@ async function runRedteam() {
     const reason = j.message || '';
     const display = (caught && reason ? '⚠ REDTEAM CAUGHT: ' + reason + '\n\n' : '') + JSON.stringify(j, null, 2);
     show('redteam-out', display);
+    // AUDIT T50 (P4-PROD-09). `done.redteamed = true` used to sit OUTSIDE this
+    // chain, so it was set even when the redteam CAUGHT something — unlocking
+    // Deploy on exactly the run that was supposed to block it. That directly
+    // falsified the documented Acid-Test-4 gating claim.
     if (caught) {
       fail('s4', 'REDTEAM CAUGHT — ' + (reason || 'adversarial issue detected'));
     } else if (j.ok !== false && !j.error) {
       ok('s4', 'redteam passed — no adversarial issues found');
+      done.redteamed = true;
     } else {
       fail('s4', j.error || 'redteam check error');
     }
-    done.redteamed = true;
   } catch(e) { fail('s4', e.message); }
   finally { unlockByState(); }
 }
@@ -360,9 +374,17 @@ async function runDeploy() {
     if (risk) body.risk = risk;
     const j = await post('/api/deploy', body);
     show('deploy-out', JSON.stringify(j, null, 2));
-    const deployed = j.deployed === true || (j.ok !== false && !j.error);
-    if (deployed) { ok('s5', 'deployed'); }
-    else { fail('s5', j.failed_reason || j.error || 'deploy blocked by gate'); }
+    // AUDIT T50 (P4-PROD-09). `j.ok !== false && !j.error` treated any response
+    // without an `error` field as a success, and `axon-deploy/1` reports
+    // `status` ("deployed" / "blocked" / "blocked_approval"), never `error`. A
+    // deploy refused by a gate therefore rendered as "deployed".
+    const deployed = j.deployed === true || j.status === 'deployed';
+    if (deployed) {
+      ok('s5', 'deployed' + (j.approved === false ? ' (NOT approved)' : ''));
+    } else {
+      const why = j.gate ? ('gate: ' + j.gate) : (j.failed_reason || j.reason || j.status || j.error);
+      fail('s5', why || 'deploy blocked by gate');
+    }
   } catch(e) { fail('s5', e.message); }
   finally { unlockByState(); }
 }

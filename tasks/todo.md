@@ -823,6 +823,60 @@ One regression test deliberately asserts the *residual* hole — mutually-agreei
 forged votes still pass without a pin — so the limit is pinned in the suite
 rather than described in prose that can drift from the code.
 
+### T50 — every approval clicked in the web UI was silently discarded
+
+P4-PROD-10 + P4-PROD-09 (both high), same subsystem and the same class: the
+approval flow's gating was untethered from the artifact it claimed to gate.
+
+**(a) Approve and deploy staged to different files.** `write_temp` named the
+staged program from `subsec_nanos()`, so every request minted a NEW path.
+Reproduced against the running server:
+
+```
+POST /api/ast/approve → "approved_path": "/tmp/axon_web_400484501.ax.approved"
+POST /api/deploy      → "path": "/tmp/axon_web_416046457.ax", "approved": false
+```
+
+`ast approve` wrote `<tmp-A>.approved`; deploy ran `<tmp-B>` and looked for
+`<tmp-B>.approved`, which never existed. Acid Test 2's sign-off step was
+decorative — and the deploy still reported `"status":"deployed"`.
+
+Staging is now **content-addressed** (`sha256(content)[..32]`), which fixes it
+with no session plumbing and gives exactly the right semantics: the same program
+text resolves to the same path so its approval is found, while text edited after
+approval resolves elsewhere so it is **not** approved. Verified both directions.
+That is the same property `axon ast approve` enforces internally (T10 made the
+approval bind the program text, not the filename), so the two layers now agree
+rather than merely coexisting.
+
+**(b) Three UI gates keyed on a field no schema emits.** All three checked
+`j.error`:
+
+| pane | schema actually emits | old behaviour |
+|---|---|---|
+| review | `errors` (an **array**) | a program that fails to type-check set `done.reviewed` and unlocked Approve |
+| redteam | `caught` | `done.redteamed = true` sat **outside** the branches, so a redteam that CAUGHT still unlocked Deploy |
+| deploy | `status` | any response without `error` rendered as "deployed" |
+
+The redteam one directly falsified the documented Acid-Test-4 gating claim.
+
+**The fix sketch was wrong about the deploy pane, and testing caught it.** Gating
+on `j.status` would have *regressed* it: `/api/deploy` used `run_json`, which
+parses stdout as one JSON document and falls back to an `{ok, stdout, …}`
+wrapper otherwise — and a deployed program prints its own output first, so the
+fallback was the normal case and `status` never appeared at the top level. The
+real fix is server-side: `/api/deploy` now uses `run_json_merged` (already used
+by `/api/redteam`), which lifts the report object and keeps prose as
+`run_output`. Confirmed against a gate-blocked deploy: `"status":"blocked_gate"`,
+`"gate":"assert_deployable"` — both now at the top level, and the pane names the
+gate that refused.
+
+Two regression tests, **verified to FAIL against the pre-fix code**. One of them
+needed a second pass: my own explanatory comment quotes
+`done.redteamed = true`, and a naive `find` read the *comment* rather than the
+code — so the test now strips `//` lines first. A test that can pass or fail on
+prose is not testing anything.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -841,7 +895,7 @@ rather than described in prose that can drift from the code.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-nine fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Forty fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
