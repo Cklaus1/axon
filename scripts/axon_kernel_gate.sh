@@ -130,10 +130,20 @@ else
         fi
     fi
 
-    # evil_agent: expect exit 8 (SandboxViolation from syscall gate)
+    # evil_agent: expect exit 8 (SandboxViolation from syscall gate).
+    #
+    # The grant must be stated explicitly. `run` derives the in-guest policy from
+    # the program's .axmeta manifest, and the evil agent CANNOT have one — `axon
+    # check` refuses it outright (3× E1001), so `build --emit-manifest` never
+    # produces a manifest to derive from. With no manifest the policy defaults to
+    # OPEN (all 8 effect bits), so this case previously ran with FS granted and
+    # the deny path was never exercised at all: the check has never once observed
+    # the violation it claims to test. AXON_VM_ALLOWED_EFFECTS states the grant
+    # the demo intends — AI only — so the evil agent's openat is a real breach of
+    # a real ceiling.
     if [[ -f "$EVIL" ]]; then
         EXIT_CODE=0
-        timeout 30 "$AXON_VM" run "$EVIL" \
+        AXON_VM_ALLOWED_EFFECTS=AI timeout 30 "$AXON_VM" run "$EVIL" \
             --kernel "$KERNEL" --initrd "$INITRD" \
             --expect-digest "$KERNEL_DIGEST" \
             --json > /tmp/axon_gate_evil.json 2>&1 || EXIT_CODE=$?

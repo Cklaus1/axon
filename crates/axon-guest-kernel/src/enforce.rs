@@ -242,39 +242,47 @@ fn effect_name(bits: u64) -> &'static str {
 
 /// Hard-exit the guest after a policy violation.
 ///
-/// Writes a sentinel string to COM1 so `axon-vm` can detect the exit code,
-/// then triggers ACPI S5 power-off at I/O port 0x604 (the PM1a control
-/// register as used by Firecracker and QEMU).  Falls back to the ISA
-/// debug-exit device (port 0x501) and finally a `hlt` spin loop.
+/// Writes a sentinel string to COM1 so `axon-vm` can detect the exit code, then
+/// shuts the machine down (see `shutdown`). The sentinel is written FIRST and is
+/// authoritative: the launcher acts on it whether or not the shutdown lands, so a
+/// substrate that ignores every power-off mechanism cannot turn a refused
+/// operation into a reported success.
 #[no_mangle]
 extern "C" fn violation_exit() -> ! {
     kprintln!("[axon-kernel] HALTING: policy violation — exit code 8");
     // Sentinel line parsed by axon-vm from the serial stream.
     crate::serial::write_str("\x1b[K-VIOLATION8\n");
-    unsafe {
-        // ACPI S5 power-off: Firecracker/QEMU PM1a_CNT at I/O port 0x604.
-        // SLP_EN (bit 13) | SLP_TYP S5 (bits[12:10] = 0b111 → 0x1C00) = 0x2000.
-        outw(0x604, 0x2000);
-        // Fallback: QEMU/Firecracker ISA debug-exit device at 0x501.
-        outb(0x501, 0);
-        // Final fallback: spin with HLT.
-        loop {
-            core::arch::asm!("hlt");
-        }
-    }
+    unsafe { shutdown() }
 }
 
 // ── K5: run the Axon program under the gate ───────────────────────────────────
 
-/// Power the VM off (ACPI S5), with the debug-exit device and a HLT spin as fallbacks.
-fn clean_halt() -> ! {
-    unsafe {
-        outw(0x604, 0x2000);
-        outb(0x501, 0);
-        loop {
-            core::arch::asm!("hlt");
-        }
+/// Shut the VM down, in the order most-likely-to-work-here first.
+///
+/// **i8042 reset (port 0x64 ← 0xFE) is what Firecracker actually implements** —
+/// it emulates only the reset pin of the keyboard controller, which is why the
+/// boot args say `reboot=k`. The ACPI S5 write to 0x604 that used to lead here is
+/// a no-op under Firecracker, so every guest reached this function and then span
+/// in `hlt` until the launcher's deadline; a clean run was reported as a 124
+/// timeout (P7-KRN-04). S5 and the ISA debug-exit device are kept as fallbacks
+/// for QEMU, where they do work.
+unsafe fn shutdown() -> ! {
+    // i8042 "pulse reset line" — Firecracker exits, QEMU resets.
+    outb(0x64, 0xFE);
+    // ACPI S5 power-off: PM1a_CNT, SLP_EN | SLP_TYP(S5). QEMU honours this.
+    outw(0x604, 0x2000);
+    // QEMU ISA debug-exit device.
+    outb(0x501, 0);
+    loop {
+        core::arch::asm!("hlt");
     }
+}
+
+/// Power the VM off after a successful run, announcing a clean exit on COM1 first
+/// so the launcher can tell "the guest finished" from "Firecracker went away".
+fn clean_halt() -> ! {
+    crate::serial::write_str("\x1b[K-EXIT0\n");
+    unsafe { shutdown() }
 }
 
 /// K5: launch the Axon program under the active syscall gate.

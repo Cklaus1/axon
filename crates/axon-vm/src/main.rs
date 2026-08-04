@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
@@ -102,7 +102,7 @@ enum Cmd {
         #[arg(long, default_value = "5000")]
         vsock_port: u32,
 
-        /// Emit JSON output (axon-vm-run/1 schema)
+        /// Emit JSON output (axon-vm-run/2 schema)
         #[arg(long)]
         json: bool,
 
@@ -1168,18 +1168,39 @@ fn cmd_run(
 
     let elapsed_ms = start.elapsed().as_millis();
 
+    // `ok` reports what the GUEST did. It used to be `result.is_ok()` — whether the
+    // launcher succeeded in driving the Firecracker API — so a guest that hit its
+    // deadline, or that refused an operation and halted, was reported `ok:true`
+    // (P7-KRN-04). A run is OK only if the guest reached a definite end and exited 0.
+    let exit_code = result.as_ref().map(|r| r.exit_code).unwrap_or(-1);
+    let outcome = result
+        .as_ref()
+        .map(|r| r.outcome.as_str())
+        .unwrap_or("launch-failed");
+    let ok =
+        matches!(result.as_ref(), Ok(r) if matches!(r.outcome, GuestOutcome::Exited(_)))
+            && exit_code == 0;
+
     if json_out {
         let out = serde_json::json!({
-            "schema": "axon-vm-run/1",
-            "ok": result.is_ok(),
+            "schema": "axon-vm-run/2",
+            "ok": ok,
             "run_id": run_id,
-            "exit_code": result.as_ref().map(|r| r.exit_code).unwrap_or(-1),
+            "exit_code": exit_code,
+            "guest_outcome": outcome,
             "elapsed_ms": elapsed_ms,
             "error": result.as_ref().err().map(|e| e.to_string()),
             "principal": principal_name,
             "risk": manifest.risk,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        // `--json` used to print and fall off the end of this function, so
+        // `axon-vm run --json` exited 0 no matter what the guest did — every caller
+        // testing `$?` was reading a constant. Propagate, as the non-JSON path does.
+        match result {
+            Ok(_) => process::exit(exit_code),
+            Err(_) => process::exit(1),
+        }
     } else {
         match result {
             Ok(r) => process::exit(r.exit_code),
@@ -1744,8 +1765,58 @@ fn cmd_quorum_check(responses_dir: PathBuf, n: usize, json_out: bool) {
 
 // ── Firecracker orchestration ─────────────────────────────────────────────────
 
+/// What the GUEST did — as distinct from whether the launcher successfully drove
+/// the Firecracker API, which is all `Result::is_ok` on the launch ever told us
+/// (P7-KRN-04). A run whose guest never reported anything is not a success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuestOutcome {
+    /// The guest signalled a policy violation on the serial console (`-VIOLATION8`).
+    Violation,
+    /// The guest signalled a panic (`-PANIC<n>`).
+    Panic(i32),
+    /// The guest announced a clean exit (`-EXIT<n>`), or Firecracker exited on its
+    /// own and the guest made no distress signal.
+    Exited(i32),
+    /// The deadline passed with no guest signal and no Firecracker exit.
+    Timeout,
+}
+
+impl GuestOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            GuestOutcome::Violation => "violation",
+            GuestOutcome::Panic(_) => "panic",
+            GuestOutcome::Exited(_) => "exited",
+            GuestOutcome::Timeout => "timeout",
+        }
+    }
+}
+
 struct RunResult {
     exit_code: i32,
+    outcome: GuestOutcome,
+}
+
+/// Serial-console sentinels the guest kernel writes immediately before halting.
+/// `axon-vm` had no parser for these at all: the guest correctly announced
+/// "policy violation, exit 8" on COM1 and the host reported `ok:true` (P7-KRN-04).
+fn parse_guest_sentinel(line: &str) -> Option<GuestOutcome> {
+    // The guest prefixes with an ANSI erase-line; match on the tail.
+    let l = line.trim_end();
+    if l.ends_with("-VIOLATION8") {
+        return Some(GuestOutcome::Violation);
+    }
+    if let Some(idx) = l.rfind("-PANIC") {
+        if let Ok(code) = l[idx + "-PANIC".len()..].trim().parse::<i32>() {
+            return Some(GuestOutcome::Panic(code));
+        }
+    }
+    if let Some(idx) = l.rfind("-EXIT") {
+        if let Ok(code) = l[idx + "-EXIT".len()..].trim().parse::<i32>() {
+            return Some(GuestOutcome::Exited(code));
+        }
+    }
+    None
 }
 
 // Pre-existing 9-arg shape, found (not introduced) while adding axon-vm to gate.sh's clippy
@@ -1780,13 +1851,26 @@ fn run_in_firecracker(
     // BLOCKS — a deadlock, since `fc.wait()` can't return until FC exits and FC can't
     // make progress while its stdout pipe is full. Draining also surfaces the guest
     // boot log (set AXON_VM_QUIET=1 to suppress).
+    //
+    // The stdout drain also WATCHES for the guest's exit sentinels. The guest kernel
+    // writes `-VIOLATION8` to COM1 and then attempts an ACPI S5 power-off — which
+    // Firecracker does not implement, so the guest spins in `hlt` and the run would
+    // otherwise be reported as a 124 timeout with `ok:true` (P7-KRN-04). Reading the
+    // sentinel means the guest's own verdict decides the outcome, independent of
+    // whether it manages to power the machine off.
     let quiet = env::var("AXON_VM_QUIET").map(|v| v == "1").unwrap_or(false);
+    let signal: Arc<Mutex<Option<GuestOutcome>>> = Arc::new(Mutex::new(None));
     let mut drains = Vec::new();
     if let Some(out) = fc.stdout.take() {
-        drains.push(std::thread::spawn(move || drain_to_stderr(out, "guest", quiet)));
+        let sig = Arc::clone(&signal);
+        drains.push(std::thread::spawn(move || {
+            drain_to_stderr(out, "guest", quiet, Some(sig))
+        }));
     }
     if let Some(err) = fc.stderr.take() {
-        drains.push(std::thread::spawn(move || drain_to_stderr(err, "fc", quiet)));
+        drains.push(std::thread::spawn(move || {
+            drain_to_stderr(err, "fc", quiet, None)
+        }));
     }
 
     // Wait for Firecracker to create its API socket (typically < 50ms; a fixed 5s margin
@@ -1916,10 +2000,49 @@ fn run_in_firecracker(
         .and_then(|v| v.parse().ok())
         .unwrap_or(45);
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    let exit_code = loop {
+    // A guest that has announced its verdict on the serial console gets a short
+    // grace period to power itself off, then is reaped. Its own verdict stands
+    // either way — a guest that says "policy violation" and then fails to shut
+    // down has still refused the operation, and reporting that as a timeout (or,
+    // before this, as ok:true) inverts the security-relevant result.
+    let sentinel_grace = Duration::from_secs(2);
+    let mut sentinel_seen_at: Option<Instant> = None;
+    let (exit_code, outcome) = loop {
         if let Some(status) = fc.try_wait()? {
-            break status.code().unwrap_or(1);
+            // Firecracker exited. A sentinel, if any, is the more specific answer.
+            let sig = *signal.lock().unwrap();
+            break match sig {
+                Some(GuestOutcome::Violation) => (8, GuestOutcome::Violation),
+                Some(GuestOutcome::Panic(c)) => (c, GuestOutcome::Panic(c)),
+                Some(GuestOutcome::Exited(c)) => (c, GuestOutcome::Exited(c)),
+                _ => {
+                    let c = status.code().unwrap_or(1);
+                    (c, GuestOutcome::Exited(c))
+                }
+            };
         }
+
+        let sig = *signal.lock().unwrap();
+        if let Some(o) = sig {
+            let since = *sentinel_seen_at.get_or_insert_with(Instant::now);
+            if since.elapsed() >= sentinel_grace {
+                let _ = fc.kill();
+                let _ = fc.wait();
+                eprintln!(
+                    "axon-vm: guest signalled {} but did not power off — reaped. \
+                     (The guest's ACPI S5 write is a no-op under Firecracker; the \
+                     guest verdict is authoritative.)",
+                    o.as_str()
+                );
+                break match o {
+                    GuestOutcome::Violation => (8, o),
+                    GuestOutcome::Panic(c) => (c, o),
+                    GuestOutcome::Exited(c) => (c, o),
+                    other => (0, other),
+                };
+            }
+        }
+
         if Instant::now() >= deadline {
             let _ = fc.kill();
             let _ = fc.wait();
@@ -1928,7 +2051,7 @@ fn run_in_firecracker(
                  See the guest log above; the guest image's init must run the program \
                  and then poweroff/reboot for the VM to exit."
             );
-            break 124;
+            break (124, GuestOutcome::Timeout);
         }
         std::thread::sleep(Duration::from_millis(100));
     };
@@ -1941,7 +2064,10 @@ fn run_in_firecracker(
     let _ = fs::remove_file(socket_path);
     let _ = fs::remove_file(&vsock_host_uds);
 
-    Ok(RunResult { exit_code })
+    Ok(RunResult {
+        exit_code,
+        outcome,
+    })
 }
 
 /// Read a single HTTP/1.1 response from a (keep-alive) stream without relying on the
@@ -1982,12 +2108,26 @@ fn read_http_response(stream: &mut UnixStream) -> Result<Vec<u8>, Box<dyn std::e
 /// Copy a child stream (Firecracker stdout = guest serial console, or stderr = FC log)
 /// line-by-line to our stderr with a tag. Prevents the piped-buffer deadlock and surfaces
 /// the guest boot log. `quiet` suppresses the echo but still drains.
-fn drain_to_stderr<R: std::io::Read + Send + 'static>(r: R, tag: &'static str, quiet: bool) {
+/// When `signal` is supplied (the guest serial console), each line is also scanned
+/// for a guest exit sentinel; the FIRST one seen wins and is recorded for the
+/// launcher's wait loop.
+fn drain_to_stderr<R: std::io::Read + Send + 'static>(
+    r: R,
+    tag: &'static str,
+    quiet: bool,
+    signal: Option<Arc<Mutex<Option<GuestOutcome>>>>,
+) {
     use std::io::BufRead;
     let reader = std::io::BufReader::new(r);
     for line in reader.lines() {
         match line {
             Ok(l) => {
+                if let (Some(sig), Some(outcome)) = (&signal, parse_guest_sentinel(&l)) {
+                    let mut g = sig.lock().unwrap();
+                    if g.is_none() {
+                        *g = Some(outcome);
+                    }
+                }
                 if !quiet {
                     eprintln!("[{tag}] {l}");
                 }
@@ -2671,6 +2811,66 @@ mod tests {
     fn echo_handler_empty_request() {
         let h = EchoHandler;
         assert_eq!(h.handle(""), Some(String::new()));
+    }
+
+    // ── P7-KRN-04: guest outcome vs launcher plumbing ───────────────────────
+
+    /// The guest kernel writes its verdict to COM1 prefixed with an ANSI
+    /// erase-line. `axon-vm` had no parser for any of these.
+    #[test]
+    fn guest_exit_sentinels_are_parsed_off_the_serial_console() {
+        assert_eq!(
+            parse_guest_sentinel("\x1b[K-VIOLATION8"),
+            Some(GuestOutcome::Violation)
+        );
+        assert_eq!(
+            parse_guest_sentinel("\x1b[K-EXIT0\n"),
+            Some(GuestOutcome::Exited(0))
+        );
+        assert_eq!(
+            parse_guest_sentinel("\x1b[K-PANIC101"),
+            Some(GuestOutcome::Panic(101))
+        );
+    }
+
+    /// Ordinary guest chatter must not be mistaken for a verdict — in particular
+    /// the kernel's own human-readable line about the violation, which is printed
+    /// immediately before the real sentinel.
+    #[test]
+    fn ordinary_guest_log_lines_are_not_mistaken_for_sentinels() {
+        for line in [
+            "[axon-kernel] HALTING: policy violation — exit code 8",
+            "[axon-kernel] VIOLATION: syscall 257 blocked (FS not in policy)",
+            "Firecracker exiting successfully. exit_code=0",
+            "",
+            "-EXIT",
+            "-PANIC",
+        ] {
+            assert_eq!(
+                parse_guest_sentinel(line),
+                None,
+                "must not read a verdict out of: {line:?}"
+            );
+        }
+    }
+
+    /// `ok` must describe the guest, not the launcher. A violation and a timeout
+    /// are both NOT ok; only a clean guest exit with code 0 is. This encodes the
+    /// mapping cmd_run applies — before the fix `ok` was `result.is_ok()`, which
+    /// is true for every run the launcher managed to start.
+    #[test]
+    fn ok_reflects_the_guest_outcome_not_the_launch() {
+        let cases = [
+            (GuestOutcome::Exited(0), 0, true),
+            (GuestOutcome::Exited(3), 3, false),
+            (GuestOutcome::Violation, 8, false),
+            (GuestOutcome::Panic(101), 101, false),
+            (GuestOutcome::Timeout, 124, false),
+        ];
+        for (outcome, exit_code, expected_ok) in cases {
+            let ok = matches!(outcome, GuestOutcome::Exited(_)) && exit_code == 0;
+            assert_eq!(ok, expected_ok, "wrong ok for {outcome:?}");
+        }
     }
 
     // ── R26 attestation gate tests ──────────────────────────────────────────

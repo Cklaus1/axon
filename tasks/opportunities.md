@@ -872,33 +872,75 @@ the limitation so it cannot silently regress or be silently "fixed" unnoticed.
 
 ---
 
-## O025 — `axon-vm run` has no boot timeout; a halted guest hangs the host command forever
+## O025 — [CORRECTED, folded into T33] guest never powers off; the run is reported as OK
 
-Found while re-running `scripts/axon_kernel_gate.sh` after T32. **Not caused by
-T32** — reproduces identically with `--no-attest`, which is byte-for-byte the
-pre-existing path:
+**Correction (same session).** As first written this entry claimed `axon-vm run`
+"has no boot timeout" and "hangs the host command forever." **That is wrong.**
+`run_in_firecracker` has a bounded wait — `AXON_VM_TIMEOUT_SECS`, default 45s
+(main.rs ~1914) — that kills the child and returns 124 with a clear message. I
+inferred "hangs forever" from a run I had wrapped in an external `timeout 40`,
+which fired 5s BEFORE the internal deadline and so hid the very mechanism I was
+claiming was absent. Measuring with an instrument that preempts the thing being
+measured; the same shape as the earlier `| tail` exit-code masking and the `grep`
+that destroyed a flake's evidence.
+
+What IS real, re-measured without the external timeout:
 
 ```
-timeout 40 axon-vm run examples/flagship/agent_task.ax \
-  --kernel dist/guest/vmlinuz --initrd dist/guest/initramfs.cpio.gz --no-attest
-  → [guest] [axon-kernel] K5: … — halting
-  → exit 124 (killed by the external `timeout`, 40s)
+AXON_VM_TIMEOUT_SECS=12 axon-vm run examples/flagship/agent_task.ax \
+  --kernel dist/guest/vmlinuz --initrd dist/guest/initramfs.cpio.gz --no-attest --json
+  → {"ok": true, "exit_code": 124, "error": null}   and the PROCESS exits 0
 ```
 
-The guest kernel reaches its intended end state and halts, but Firecracker does
-not exit and `axon-vm` waits on it unbounded. Layer 3 of the kernel gate is
-therefore RED on this host (`good_agent.ax exited 124 (expected 0)`,
-`evil_agent.ax exited 124 (expected 8)`) — it is only survivable at all because
-the gate wraps each run in `timeout 30`.
+The guest reaches its intended end state and calls `clean_halt()`, which writes
+ACPI S5 to port 0x604 — **a no-op under Firecracker**, whose guest-initiated
+shutdown is the i8042 reset (hence `reboot=k` in the boot args). So the guest
+spins in `hlt` until the deadline. This is the second sub-cause already recorded
+in **P7-KRN-04**, which this entry duplicates; it is being fixed there as T33,
+along with two things P7-KRN-04 names and one it does not:
 
-Two separable defects:
-1. **No timeout in `axon-vm run` itself.** Any guest that fails to shut down
-   hangs the caller with no diagnostic. A `--boot-timeout` (with a default) that
-   reaps the Firecracker child and reports a distinct outcome is the fix.
-2. **The guest kernel halts instead of shutting the VM down** — it should
-   trigger a Firecracker exit (reboot=k / triple fault path) so the host sees a
-   real exit code rather than silence.
+- `"ok": result.is_ok()` reports whether the launcher drove the Firecracker API,
+  not what the guest did — hence `ok:true` beside `exit_code:124`
+- the `-VIOLATION8` serial sentinel the guest kernel emits has no parser in
+  `axon-vm` at all (`grep VIOLATION crates/axon-vm/src/main.rs` → nothing)
+- **not in the finding:** in `--json` mode `cmd_run` prints and falls off the end
+  of the function, so `axon-vm run --json` exits **0 unconditionally**, whatever
+  the guest did. Only the non-JSON path does `process::exit(r.exit_code)`
+  (verified: same run, no `--json`, exits 124). Every caller that checks `$?`
+  around a `--json` invocation is reading a constant.
 
-Related to `P7-KRN-04` (Firecracker reporting `ok:true` on triple-fault), which
-is the same seam read from the other side: the host cannot currently distinguish
-"guest finished", "guest died", and "guest is wedged".
+---
+
+## O026 — the in-guest effect policy defaults to OPEN when a program has no manifest
+
+Found while fixing T33 — the reason `axon_kernel_gate.sh`'s evil-agent check had
+never once observed the violation it claims to test.
+
+`cmd_run` derives the guest's `allowed_effects` as: `AXON_VM_ALLOWED_EFFECTS`
+override → the program's `.axmeta` `effect_union` → the principal's grant →
+**`None`**. The guest reads `None` as no restriction and prints:
+
+```
+[axon-kernel] enforce: gate active — 8 effect bit(s) allowed (0xff)
+```
+
+So `axon-vm run prog.ax` on any program without a manifest and without a named
+principal boots it with **every effect granted**, including FS, Net and Exec.
+The syscall gate is active and working; its ceiling is just wide open.
+
+That is fail-open on the load-bearing control, and it bites hardest exactly where
+it matters: a program the compiler REFUSES cannot have a manifest at all
+(`axon check examples/flagship/agent_task_evil.ax` → 3× E1001, so
+`build --emit-manifest` produces nothing), so the least trustworthy programs are
+the ones that reach the guest with the widest grant.
+
+Not fixed here: closing it means picking a default (deny-all? IO-only?) and
+deciding what `run` does for a program with no manifest — refuse, or run with a
+minimal grant. Both change the behaviour of every unmanifested run, which is a
+call for the operator, not a bug fix to slip into an unrelated commit. It is
+closely related to **O007** (axon-vm policy delivery before mmds can fail
+closed) and probably wants deciding alongside it.
+
+Worth stating plainly: the flagship demo's Layer-2 claim rests on this path. The
+containment story is sound where a manifest exists; where one does not, the VM
+currently grants everything.

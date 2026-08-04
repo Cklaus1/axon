@@ -113,6 +113,39 @@ than relying on TOFU. That gate is red on this host for an unrelated,
 pre-existing reason (O025: a halted guest hangs `axon-vm run` forever — same
 under `--no-attest`).
 
+### Guest outcome vs launcher plumbing — the microVM reported its own success
+
+| task | commit | what |
+|---|---|---|
+| **T33** | `—` | `axon-vm run`'s `"ok"` was `result.is_ok()` — whether the LAUNCHER drove the Firecracker API, not what the guest did. The headline containment case, an agent whose `openat` the in-guest syscall gate DENIES, reported `{"ok": true, "exit_code": 124}` and **process exit 0**, after burning the full 45s deadline. Three causes: the guest's `-VIOLATION8` serial sentinel had no parser in `axon-vm` at all; the guest's ACPI-S5 power-off (port 0x604) is a no-op under Firecracker, so it span in `hlt` until killed; and `--json` printed and fell off the end of `cmd_run`, so `axon-vm run --json` exited **0 unconditionally** whatever the guest did (P7-KRN-04) |
+
+Before → after on the same command, same image:
+
+```
+BEFORE  {"ok": true,  "exit_code": 124}                    process exit 0   20.2s
+AFTER   {"ok": false, "exit_code": 8, "guest_outcome":     process exit 8    0.16s
+         "violation"}
+```
+
+Fixed on both sides. Host: the serial drain watches for `-VIOLATION8` /
+`-PANIC<n>` / `-EXIT<n>`; the guest's own verdict is authoritative and is acted on
+even if it then fails to power off (a substrate that ignores every shutdown
+mechanism must not be able to turn a refusal into a success); `ok` means the guest
+reached a definite end and exited 0; `--json` propagates the exit code; schema →
+`axon-vm-run/2` with a new `guest_outcome` field. Guest: shut down via **i8042
+reset (0x64 ← 0xFE), which is what Firecracker actually implements** — hence
+`reboot=k` in the boot args — keeping S5 and the ISA debug-exit device as QEMU
+fallbacks. A clean run went from a 45s timeout to 157 ms.
+
+**`axon_kernel_gate.sh` Layer 3 had never once observed the violation it tests.**
+`run` derives the guest policy from the program's `.axmeta`, and the evil agent
+cannot have one — the compiler refuses it (3× E1001), so `build --emit-manifest`
+produces nothing, and with no manifest the policy defaults to OPEN. The check was
+passing FS to an agent whose whole purpose is to be denied FS; it failed on a
+timeout, not on a denial. The gate now states the grant explicitly. That default
+is logged as **O026** — unfixed, because closing it changes every unmanifested
+run and is an operator's call, not a bug fix to slip into an unrelated commit.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -131,7 +164,7 @@ under `--no-attest`).
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty-one fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
