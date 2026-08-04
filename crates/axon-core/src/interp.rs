@@ -2051,24 +2051,19 @@ impl<'p> Interp<'p> {
     fn current_ai_budget(&self) -> Option<u64> {
         let name = self.current_fn.borrow().clone();
         let f = self.fns.get(name.as_str())?;
-        let ai = f.attrs.iter().find(|a| a.name == "ai")?;
-        for arg in &ai.args {
-            if let Some(rest) = arg.strip_prefix("budget:") {
-                let raw = rest.trim();
-                return match raw.parse::<u64>() {
-                    Ok(n) => Some(n),
-                    Err(_) => {
-                        eprintln!(
-                            "warning: [{}] @[ai(policy(budget: {raw}))] on `{name}` is not a \
-                             non-negative integer — ignored (fn runs unmetered)",
-                            crate::error::W1311
-                        );
-                        None
-                    }
-                };
+        // Parsed by the SHARED `budget_from_attrs`, so "is this fn metered?" has
+        // exactly one answer here and in the native codegen refusal (F141).
+        match crate::ai_routing::budget_from_attrs(&f.attrs)? {
+            Ok(n) => Some(n),
+            Err(raw) => {
+                eprintln!(
+                    "warning: [{}] @[ai(policy(budget: {raw}))] on `{name}` is not a \
+                     non-negative integer — ignored (fn runs unmetered)",
+                    crate::error::W1311
+                );
+                None
             }
         }
-        None
     }
 
     /// R4: the name of the currently-executing fn if it is in the `@[agent]`

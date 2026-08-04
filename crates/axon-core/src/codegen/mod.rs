@@ -972,6 +972,43 @@ impl<'ctx> Codegen<'ctx> {
                     self.codegen_errors.push(msg);
                 }
             }
+
+            // ── R3c/F141: native AI *budget* refusal (I-2, sound-by-refusal). ─
+            // `@[ai(policy(budget: N))]` makes the (N+1)th `ai_complete` a fatal
+            // E1301 (exit 5) under the interpreter. The native `ai_complete` ABI
+            // carries no meter at all — `grep E1301` over codegen/ and axon-rt/
+            // returns nothing — so the AOT binary happily ran every call and
+            // exited 0. That is the I-2 violation in the UNSAFE direction: the
+            // binary keeps spending past a policy stop, which defeats the entire
+            // point of declaring a budget. Until the meter exists natively
+            // (a per-activation counter + an `__axon_ai_policy_halt` extern,
+            // mirroring `__axon_verify_panic`), refuse rather than emit a binary
+            // that silently ignores the ceiling.
+            //
+            // The refusal condition mirrors the interpreter's ENFORCEMENT
+            // condition exactly: the meter keys on the fn that is *current* when
+            // the call happens (R3c §3 "per-fn-activation"), so only a DIRECT
+            // `ai_complete` in this fn's own body is metered. A call made from an
+            // un-budgeted helper is unmetered in the interpreter too, so refusing
+            // it would reject a program the two backends already agree on.
+            //
+            // `Some(Err(_))` — a MALFORMED budget — deliberately does not match:
+            // the interpreter warns (W1311) and runs the fn unmetered, so the two
+            // backends already agree and there is nothing to refuse. Refusing it
+            // would make a typo'd budget stricter than a correct one.
+            if let Some(Ok(n)) = crate::ai_routing::budget_from_attrs(&f.attrs) {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen cannot enforce the AI call \
+                     budget `@[ai(policy(budget: {n}))]` on `{mangled}` — the native \
+                     runtime has no call meter, so the binary would run past the budget \
+                     and exit 0 where the interpreter stops with [E1301] and exit 5. Run \
+                     this program under the interpreter (`axon run`), which meters the \
+                     calls, or remove the `budget:` field."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
+                }
+            }
         }
 
         // Evaluate module-level comptime let bindings (in source order so that

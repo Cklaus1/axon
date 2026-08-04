@@ -127,6 +127,29 @@ pub fn tier_from_attrs(attrs: &[crate::ast::Attr]) -> Result<Tier, String> {
     Ok(DEFAULT_TIER)
 }
 
+/// R3c: the `@[ai(policy(budget: N))]` call-count ceiling declared on a fn.
+///
+/// `None` — no `budget:` field: the fn is **unmetered** (back-compat, R3c §3).
+/// `Some(Ok(n))` — a well-formed ceiling: the (n+1)th `ai_complete` is E1301.
+/// `Some(Err(raw))` — a malformed value: the caller warns (W1311) and runs the
+/// fn unmetered. A bad budget must never silently enforce a *wrong* number.
+///
+/// This is the SINGLE source of the policy→budget rule, shared by the
+/// interpreter's meter (`current_ai_budget`) and the native codegen refusal —
+/// so "is this fn metered?" has exactly one answer. If they drifted, codegen
+/// could accept a fn the interpreter meters, which is the F141 hole: the AOT
+/// binary spending past a budget the interpreter treats as fatal.
+pub fn budget_from_attrs(attrs: &[crate::ast::Attr]) -> Option<Result<u64, String>> {
+    let ai = attrs.iter().find(|a| a.name == "ai")?;
+    for arg in &ai.args {
+        if let Some(rest) = arg.strip_prefix("budget:") {
+            let raw = rest.trim();
+            return Some(raw.parse::<u64>().map_err(|_| raw.to_string()));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +162,47 @@ mod tests {
     // test's read window. Serialize the two env-touching tests on this mutex so
     // neither observes the other's transient state.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn budget_from_attrs_distinguishes_absent_wellformed_and_malformed() {
+        // The three cases mean three DIFFERENT things downstream, and conflating
+        // any two reopens F141: `None` is unmetered (both backends agree, build
+        // it), `Some(Ok(n))` is metered by the interpreter only (refuse the
+        // native build), `Some(Err)` is W1311 + unmetered (agree again, build it).
+        let attr = |args: &[&str]| {
+            vec![crate::ast::Attr {
+                name: "ai".to_string(),
+                args: args.iter().map(|s| s.to_string()).collect(),
+            }]
+        };
+        assert_eq!(budget_from_attrs(&[]), None, "no @[ai] at all → unmetered");
+        assert_eq!(
+            budget_from_attrs(&attr(&["tier: cheap"])),
+            None,
+            "a policy with no budget: field → unmetered"
+        );
+        assert_eq!(budget_from_attrs(&attr(&["budget: 2"])), Some(Ok(2)));
+        assert_eq!(
+            budget_from_attrs(&attr(&["budget: 0"])),
+            Some(Ok(0)),
+            "budget: 0 is well-formed — it forbids the FIRST call (R3c §3)"
+        );
+        assert_eq!(
+            budget_from_attrs(&attr(&["tier: cheap", "budget: 5"])),
+            Some(Ok(5)),
+            "budget: must be found alongside other policy fields"
+        );
+        // Malformed must NOT silently enforce some other number.
+        for bad in ["abc", "-1", "1.5", ""] {
+            assert!(
+                matches!(
+                    budget_from_attrs(&attr(&[&format!("budget: {bad}")])),
+                    Some(Err(_))
+                ),
+                "budget: {bad} must be malformed, not a silently-wrong ceiling"
+            );
+        }
+    }
 
     #[test]
     fn tier_roundtrips_through_name() {

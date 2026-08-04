@@ -10,6 +10,13 @@
 #   - a runtime crash (assert / assert_eq mismatch / OOB / div0) → 101 on BOTH
 #   - a clean program                                            → 0  on BOTH
 #   - main's i64 return value                                    → that value, BOTH
+#   - behavior native cannot honor (AI tier/budget policy)       → E0910 REFUSAL,
+#     via `check_refused` — "refuse, never miscompile" is the parity contract
+#     there, and it needs its own assertion shape (see F141 below)
+#
+# The closing summary states exactly which codes are covered and which are not.
+# Do not replace it with a blanket claim — the previous "native==interp on all
+# exit codes" line was false, and it is why the exit-5 divergence went unnoticed.
 #
 # Requires the codegen `axon` binary (LLVM). Skips (exit 0) when codegen can't
 # build, so it is safe in interpreter-only CI.
@@ -40,8 +47,13 @@ check() {
 
   local bin="$WORK/${name}_bin"
   if ! AXON_AI_MOCK=1 "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then
-    echo "exit_code_parity: native build failed for $name — skipping"
-    exit 0
+    # A per-case build failure is a FAILURE, not a skip. This used to `exit 0`,
+    # which meant one un-buildable case silently passed the ENTIRE harness —
+    # and the summary line below still claimed full parity. If the toolchain is
+    # genuinely missing, the `cargo build` above already skipped us out.
+    echo "FAIL [$name]: native build failed (the interpreter exited $i_exit)"
+    fail=1
+    return
   fi
   AXON_AI_MOCK=1 "$bin" >/dev/null 2>&1
   local n_exit=$?
@@ -54,6 +66,43 @@ check() {
     fail=1
   else
     echo "  OK $name: both exit $i_exit"
+  fi
+}
+
+# check_refused <name> <interp_exit> <substr> <src>
+#   For behavior native codegen cannot reproduce, the contract is not "same exit
+#   code" but "REFUSE, never miscompile" (I-2, sound-by-refusal): the interpreter
+#   runs it with the given exit code, and the native BUILD must fail with an
+#   E0910 naming the reason. This exists because F141 shipped: a fn under
+#   @[ai(policy(budget: 1))] exited 5 in the interpreter and 0 natively, with all
+#   three calls dispatched. `check` cannot express that case — it compares the
+#   exits of two binaries, and here there must be no second binary.
+check_refused() {
+  local name="$1" want="$2" substr="$3" src="$4"
+  local prog="$WORK/$name.ax"
+  printf '%s\n' "$src" > "$prog"
+
+  AXON_AI_MOCK=1 "$AXON" run "$prog" >/dev/null 2>&1
+  local i_exit=$?
+
+  local out
+  out="$(AXON_AI_MOCK=1 "$AXON" build "$prog" -o "$WORK/${name}_bin" --no-cache 2>&1)"
+  local b_status=$?
+
+  if [ "$i_exit" != "$want" ]; then
+    echo "FAIL [$name]: interp exited $i_exit but expected $want"
+    fail=1
+  elif [ "$b_status" -eq 0 ]; then
+    echo "FAIL [$name]: native BUILD SUCCEEDED — it must refuse what it cannot honor"
+    fail=1
+  elif ! printf '%s' "$out" | grep -q "E0910"; then
+    echo "FAIL [$name]: native build failed but not with E0910: $out"
+    fail=1
+  elif ! printf '%s' "$out" | grep -qF "$substr"; then
+    echo "FAIL [$name]: E0910 did not mention '$substr': $out"
+    fail=1
+  else
+    echo "  OK $name: interp exits $want, native refuses (E0910)"
   fi
 }
 
@@ -123,9 +172,38 @@ fn neg(x: i64) -> i64 { 0 - x }
 fn main() -> i64 { let p: Pos = neg(0 - 3)
  p }'
 
+# ── AI policy (exit 5) — F141 / P6-EXIT-04 ───────────────────────────────────
+# `@[ai(policy(budget: N))]` makes the (N+1)th ai_complete a fatal E1301/exit 5
+# in the interpreter. The native runtime has no call meter, so the AOT binary
+# used to run every call and exit 0 — I-2 in the unsafe direction (the binary
+# keeps spending past a policy stop). Native now refuses; when a native meter
+# lands, this becomes a plain `check … 5` row.
+check_refused ai_budget 5 'budget: 1' \
+'@[ai(policy(budget: 1))]
+fn ask() -> i64 { let a = ai_complete("one")
+ let b = ai_complete("two")
+ 3 }
+fn main() -> i64 { ask() }'
+
+# A non-`balanced` tier is refused for the same reason (the native ABI carries
+# no model, so cheap/strong would silently call sonnet). The interpreter routes
+# the tier correctly and runs clean, returning 3 from main.
+check_refused ai_tier 3 'balanced' \
+'@[ai(policy(tier: strong))]
+fn ask() -> i64 { let a = ai_complete("one")
+ 3 }
+fn main() -> i64 { ask() }'
+
 if [ "$fail" -ne 0 ]; then
   echo "exit_code_parity: FAIL — interp↔native exit-code divergence"
   exit 1
 fi
-echo "exit_code_parity: native==interp on all exit codes"
+# Scope, stated honestly. This line used to read "native==interp on all exit
+# codes", which was false: every case was 0/101/6 or a plain main return, so
+# codes 3 (verify), 4 (corrigible), 7 (goal-budget) and 8 (sandbox) had ZERO
+# coverage while the summary claimed otherwise. A summary that overstates its
+# own coverage is how F141 shipped — exit 5 was "covered" by a line of prose.
+echo "exit_code_parity: covered — 0, 101 (crash), 6 (refinement), main's return,"
+echo "exit_code_parity:            5 (AI policy, via refusal)"
+echo "exit_code_parity: NOT covered — 3 (verify), 4 (corrigible), 7 (goal-budget), 8 (sandbox)"
 echo "exit_code_parity: PASS"

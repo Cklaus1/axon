@@ -8000,11 +8000,15 @@ fn build_refuses_non_balanced_ai_tier_e0910_r3() {
         "must refuse with E0910 naming the fn and steering to `balanced`/interp, got:\n{msg}"
     );
 
-    // (2) balanced tier → must NOT trigger the tier refusal (matches the interp).
+    // (2) balanced tier → must NOT trigger the tier refusal (matches the interp)
+    // and must actually BUILD. No `budget:` here: a budget is its own refusal
+    // (F141, below), and leaving one in would make this case fail the build for
+    // an unrelated reason while the tier-message assertion still passed — the
+    // test would then no longer witness "a balanced fn builds".
     let g = std::env::temp_dir().join(format!("axon_aibal_{}.ax", std::process::id()));
     std::fs::write(
         &g,
-        "@[ai(policy(tier: balanced, budget: 2))]\nfn summ() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = summ()  0 }\n",
+        "@[ai(policy(tier: balanced))]\nfn summ() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = summ()  0 }\n",
     )
     .unwrap();
     let out2 = axon()
@@ -8021,6 +8025,81 @@ fn build_refuses_non_balanced_ai_tier_e0910_r3() {
     assert!(
         !msg2.contains("cannot honor a non-`balanced` AI tier"),
         "a balanced-tier ai_complete must NOT hit the tier refusal (it matches the interpreter), got:\n{msg2}"
+    );
+    assert!(
+        out2.status.success(),
+        "a balanced-tier ai_complete must still BUILD:\n{msg2}"
+    );
+}
+
+#[test]
+fn build_refuses_ai_call_budget_e0910_f141() {
+    // F141 / P6-EXIT-04 (I-2, sound-by-refusal). REPRODUCED before the fix:
+    //
+    //   @[ai(policy(budget: 1))] fn ask() { three ai_complete calls }
+    //   AXON_AI_MOCK=1 axon run   → [E1301] budget exceeded, exit 5
+    //   AXON_AI_MOCK=1 axon build → exit 0, and the binary ran ALL THREE
+    //                               calls and exited 0
+    //
+    // The native runtime has no call meter at all, so the AOT binary kept
+    // spending past a policy stop the interpreter treats as fatal — the I-2
+    // violation in the unsafe direction, and it defeats the whole point of
+    // declaring a budget. Until the meter exists natively, refuse.
+    let codegen_absent = |m: &str| m.contains("requires building axon with the `codegen` feature");
+    let build = |src: &str, tag: &str| {
+        let f = std::env::temp_dir().join(format!("axon_{tag}_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["build", f.to_str().unwrap(), "-o"])
+            .arg(std::env::temp_dir().join(format!("axon_{tag}_{}.bin", std::process::id())))
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), msg)
+    };
+
+    // (1) budget + a direct ai_complete → refuse, naming the fn and the ceiling.
+    let (ok, msg) = build(
+        "@[ai(policy(budget: 1))]\nfn ask() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = ask()  0 }\n",
+        "aibudget",
+    );
+    if codegen_absent(&msg) {
+        eprintln!("codegen feature absent — AI-budget refusal test skipped");
+        return;
+    }
+    assert!(!ok, "a budgeted ai_complete native build must FAIL:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("budget: 1") && msg.contains("ask"),
+        "must refuse with E0910 naming the fn and the ceiling, got:\n{msg}"
+    );
+
+    // (2) A budget on a fn that makes NO AI call is never consulted by the
+    // interpreter's meter (R3c §3), so there is nothing to diverge on — it must
+    // still build. Over-refusing here would reject sound programs.
+    let (ok2, msg2) = build(
+        "@[ai(policy(budget: 1))]\nfn ask() -> i64 { 7 }\nfn main() -> i64 { ask() }\n",
+        "aibudgetnocall",
+    );
+    assert!(
+        ok2,
+        "a budget on a fn making no AI call must still build:\n{msg2}"
+    );
+
+    // (3) A MALFORMED budget is W1311 + unmetered in the interpreter, so the two
+    // backends already agree — it must build, not refuse. (Refusing here would
+    // make a typo'd budget stricter than a correct one.)
+    let (ok3, msg3) = build(
+        "@[ai(policy(budget: abc))]\nfn ask() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = ask()  0 }\n",
+        "aibudgetbad",
+    );
+    assert!(
+        ok3,
+        "a malformed budget is unmetered in the interpreter, so it must still build:\n{msg3}"
     );
 }
 

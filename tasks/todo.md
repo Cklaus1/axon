@@ -356,6 +356,59 @@ tests and a new `scripts/closure_capture_parity.sh` (6 cases, compares STDOUT,
 covers independent cells, param shadowing, inner-`let` non-leak, and a counter
 driven inside a fn). Parity suite: 46 passed / 5 skipped / 0 failed of 51.
 
+### T41 — a declared AI call budget was enforced only under the interpreter
+
+`@[ai(policy(budget: 1))]` on a fn making three `ai_complete` calls (F141 /
+P6-EXIT-04, both marked REPRODUCED in triage — reproduced again here before
+touching anything):
+
+```
+AXON_AI_MOCK=1 axon run   → [E1301] `ask` exceeded its AI budget of 1 call(s), exit 5
+AXON_AI_MOCK=1 axon build → exit 0, and the binary ran ALL THREE calls, exit 0
+```
+
+`grep -rn 'E1301|ai_budget' crates/axon-core/src/codegen/ crates/axon-rt/src/`
+returns nothing: the native runtime has no call meter at all, so exit 5 does not
+exist natively. The AOT binary kept spending past a policy stop the interpreter
+treats as fatal — I-2 in the unsafe direction, and the exact thing declaring a
+budget is meant to prevent.
+
+Native now **refuses** (E0910), the shape already used for the non-`balanced`
+tier next to it. The refusal condition mirrors the interpreter's *enforcement*
+condition exactly — a direct `ai_complete` in the fn's own body, since the meter
+keys on the current fn (R3c §3) — so it neither under- nor over-refuses. A
+malformed budget is W1311 + unmetered in the interpreter, so it still builds; so
+does a budget on a fn that makes no AI call.
+
+The budget is now parsed by a shared `ai_routing::budget_from_attrs`, matching
+how `tier_from_attrs` already single-sources the tier. Codegen and the
+interpreter cannot drift on "is this fn metered?", which is the drift that made
+the hole possible.
+
+Three findings about the *test surface* fell out, all the same shape as the
+recurring class:
+
+- `scripts/exit_code_parity.sh` closed with `"native==interp on all exit codes"`.
+  Every case in it was 0, 101, 6, or a plain `main` return — codes 3, 4, 5, 7 and
+  8 had **zero** coverage. Exit 5 was "covered" by a line of prose. The summary
+  now enumerates what is and is not covered.
+- Its `check` helper `exit 0`-ed the **entire harness** when one case's native
+  build failed. One un-buildable case silently passed everything. Now a failure.
+- The adjacent tier-refusal test's "must still build" case carried
+  `budget: 2`, so after this change it would fail the build for an unrelated
+  reason while its assertion (tier message absent) still passed. Budget removed
+  and `status.success()` asserted, so the case now witnesses what it claims.
+
+New `check_refused` rows cover the budget and tier refusals; new
+`build_refuses_ai_call_budget_e0910_f141` covers refuse / no-call / malformed.
+
+Two things this turned up that are **not** fixed, both recorded with executed
+evidence: **O031** — native links `axon-ai` unconditionally, so a build without
+`--features asi-runtime` (where `axon run` refuses AI calls with E1300) still
+produces a binary that dials the live model; and **O032** — a budget is escaped
+by moving the call into an un-budgeted helper, which is spec-blessed today but
+contradicts the spec's own stated guarantee.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -374,7 +427,7 @@ driven inside a fn). Parity suite: 46 passed / 5 skipped / 0 failed of 51.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-one fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

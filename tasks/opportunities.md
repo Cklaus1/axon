@@ -1092,3 +1092,115 @@ Options, none free:
 (3) is the correct destination. Until a database sink exists there is nothing
 forcing the choice, which is exactly why it is worth deciding deliberately rather
 than discovering it when the first driver lands.
+
+---
+
+## O031 — native codegen silently upgrades the AI runtime from *offline* to *live*
+
+*Found while reproducing F141 / P6-EXIT-04 (T41).* Needs a decision; not fixed.
+
+`axon-core`'s default feature set does **not** include `asi-runtime`, so the
+interpreter takes the offline branch in `interp/builtins.rs` (~4570): a declared
+`@[ai(policy(fallback: …))]` is returned as `Ok(fallback)`, and with no fallback
+the call is **E1300, a fatal exit 5**. The comment there is explicit: *"a program
+that wants to run offline MUST declare a fallback."*
+
+Native codegen links `axon-ai` **unconditionally** (`codegen/link.rs:333`,
+`build_axon_ai`), so the same compiler binary produces an AOT program that dials
+the real model. Executed, one source file, one `axon` binary:
+
+```
+$ env -u ANTHROPIC_API_KEY -u AXON_AI_MOCK axon run offline.ax
+axon: ai policy: [E1300] `ai_complete` cannot run: no model reachable and no
+      @[ai(policy(fallback: …))] in scope …
+exit=5
+
+$ env -u ANTHROPIC_API_KEY -u AXON_AI_MOCK axon build offline.ax -o off.bin && ./off.bin
+err=ANTHROPIC_API_KEY (or AXON_AI_API_KEY) is not set
+r=2
+exit=0
+```
+
+Native reached the *live dispatch path* and failed only for want of a key. With a
+key present it would have made a real network call to `api.anthropic.com` — in a
+build configuration where `axon run` refuses to make AI calls at all.
+
+Two separate defects fall out of this:
+
+1. **The capability difference is silent.** `--features asi-runtime` is
+   documented as what turns on live `ai_complete`. It does so for the
+   interpreter only. Nothing tells a user that `axon build` ignores the flag.
+2. **`fallback:` is unimplemented natively.** Where the interpreter returns
+   `Ok(fallback)` and stamps `mode:"fallback"` in the audit trail, native returns
+   a live `Err`. Neither the value nor the provenance record matches.
+
+The fix is not a refusal — refusing every `ai_complete` would be far too broad,
+and the divergence is invisible at compile time (it depends on `AXON_AI_MOCK` and
+on whether a key is present at run time). Two workable shapes:
+
+1. **Honor the feature gate natively.** When `axon-core` is built without
+   `asi-runtime`, have codegen tell the linked runtime so — then `ai_complete`
+   natively means: mock if `AXON_AI_MOCK`, else the declared fallback, else halt
+   with E1300 and exit 5. The fallback string is a *compile-time constant* from
+   the attribute, so codegen can pass it down; this is the one policy field
+   native can honor exactly rather than refuse.
+2. **Extend the ABI to carry the policy.** `__axon_ai_complete(prompt, fallback,
+   budget_ptr, budget_n, …)` and move the whole R3 policy table into `axon-ai`,
+   where it is ordinary Rust. This also retires the T41 budget refusal (an
+   `alloca` counter in the fn prologue is per-activation by construction, which
+   is exactly R3c's "per-fn-activation" rule) and the tier refusal with it.
+
+(2) is the destination — it makes one Rust implementation of the policy table
+serve both backends, which is what stopped tier/budget drift in the first place.
+(1) is a smaller step that closes the security-relevant half.
+
+**Decision needed:** whether native `ai_complete` should honor `asi-runtime` at
+all, or whether "native is always live" is intended. If it is intended, it must
+be *documented* and the interpreter's E1300 must stop claiming the program
+"cannot run" — because natively it can, and it will.
+
+---
+
+## O032 — an `@[ai(policy(budget: N))]` is escaped by extracting a helper
+
+*Found while reproducing F141 (T41).* Spec-blessed today; worth revisiting.
+
+The meter keys on the fn that is *current* when the call happens, so an
+`ai_complete` made from an un-budgeted helper is not counted:
+
+```axon
+fn helper() -> i64 { let x = ai_complete("hidden")  1 }
+
+@[ai(policy(budget: 1))]
+fn ask() -> i64 { helper()  helper()  helper()  3 }
+```
+
+Executed: three AI calls, `exit 0`, budget never consulted. Only a `W1310`
+("AI call in `helper` has no @[ai(policy)] — cost is unmetered") marks it, and a
+warning is not a ceiling.
+
+`governance/specs/R3c-ai-budget-meter.md` §3 says the budget "counts the
+`ai_complete` calls made *while that fn is the current fn*", and §"Nested"
+confirms A's budget does not cover B's. So this is **implemented to spec** — but
+it undercuts the spec's own stated value proposition, *"a fn can declare 'I may
+make at most N model calls' and the runtime enforces it"*. A ceiling that an
+`Extract Function` refactor removes is not enforcing much.
+
+Note the contrast with the R4 agent action-log, which deliberately uses the
+**enclosing** fn (`enclosing_agent`, `interp.rs` ~2078) precisely so *"a
+capability builtin called from a helper of an agent is still logged to that
+agent's action trail (the audit can't be escaped by indirection)"*. The budget
+had the same choice available and made the opposite one. This is the same
+transitive-laundering class as the R6 `@[sensitive]` taint and the `@[contained]`
+sandbox, both of which were closed by call-following.
+
+Changing it is a spec amendment, not a bug fix, and it is a real behavior change
+(a program that runs today would start hitting E1301). It is also the safe
+direction — fail-closed, more enforcement. **Decision needed:** should the budget
+cover the callee's dynamic extent (minus nested budgeted fns, which meter
+themselves)?
+
+Note this does *not* affect the T41 refusal's soundness: the refusal condition
+mirrors the enforcement condition exactly, so both backends agree on the
+laundered case (both unmetered). If the budget becomes enclosing-scoped, the
+refusal must widen to match — transitively, over the call graph.
