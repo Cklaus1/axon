@@ -113,17 +113,32 @@ import json, sys
 path = sys.argv[1]
 with open(path) as f:
     d = json.load(f)
-required = ['schema', 'ok', 'stages', 'timestamp']
+# T53 (GATE-05): `complete` and per-stage `status` are REQUIRED. `ok` alone
+# cannot distinguish "ran and passed" from "never ran" — a skipped stage
+# recorded ok:true and the top-level ok never noticed, so a consumer reading
+# this report could not tell whether the gate had validated anything.
+required = ['schema', 'ok', 'complete', 'skipped', 'stages', 'timestamp']
 for k in required:
     assert k in d, f'missing key: {k}'
 assert d['schema'] == 'axon-safety-gate/1', f'wrong schema: {d["schema"]}'
 assert isinstance(d['stages'], list), 'stages must be a list'
 assert len(d['stages']) > 0, 'stages must be non-empty'
+assert isinstance(d['complete'], bool), 'complete must be a bool'
+assert isinstance(d['skipped'], list), 'skipped must be a list of stage names'
 for s in d['stages']:
     assert 'stage' in s, f'stage entry missing "stage": {s}'
     assert 'name' in s,  f'stage entry missing "name": {s}'
     assert 'ok'   in s,  f'stage entry missing "ok": {s}'
-print(f'  schema: {d["schema"]}  ok: {d["ok"]}  stages: {len(d["stages"])}')
+    assert s.get('status') in ('passed', 'skipped', 'failed'), \
+        f'stage entry missing/!bad "status": {s}'
+# The two facts must agree: complete iff nothing was skipped.
+skipped_names = sorted(s['name'] for s in d['stages'] if s['status'] == 'skipped')
+assert sorted(d['skipped']) == skipped_names, \
+    f'top-level skipped {d["skipped"]} disagrees with per-stage status {skipped_names}'
+assert d['complete'] == (not skipped_names), \
+    'complete must be true exactly when no stage was skipped'
+print(f'  schema: {d["schema"]}  ok: {d["ok"]}  complete: {d["complete"]}  '
+      f'stages: {len(d["stages"])}  skipped: {d["skipped"]}')
 PYEOF
     then
         ok "acc_a3_json_output_valid"
@@ -169,7 +184,7 @@ fi
 # failing or ignoring it.  We verify with the structural JSON (acc_a3 output).
 
 echo ""
-echo "── acc_a5: skipped stages have ok:true, skipped:true, and reason ──"
+echo "── acc_a5: skipped stages are DISTINGUISHABLE from passed ones ──"
 JSON_A5="$JSON_A3"
 
 if [[ -f "$JSON_A5" ]]; then
@@ -181,11 +196,21 @@ skipped = [s for s in d['stages'] if s.get('skipped')]
 print(f'  skipped stages: {[s["name"] for s in skipped]}')
 # There must be at least one skipped stage (BUILD is always skipped in structural mode)
 assert len(skipped) >= 1, f'expected at least 1 skipped stage, got {len(skipped)}'
-# Every skipped stage must have ok:true and a non-empty reason
+# T53 (GATE-05). `ok:true` for a skipped stage is CORRECT — a skip is not a
+# failure — but it must not be the ONLY signal, or 'never ran' and 'ran and
+# passed' are indistinguishable in the one artifact meant to answer whether the
+# gate validated this build. Assert the DISTINCTION, not just the boolean.
 for s in skipped:
     assert s['ok'] == True,  f'skipped stage {s["name"]} has ok=false'
     assert 'reason' in s,    f'skipped stage {s["name"]} missing reason'
     assert s['reason'],      f'skipped stage {s["name"]} has empty reason'
+    assert s.get('status') == 'skipped', f'skipped {s["name"]} must carry status=skipped'
+for s in d['stages']:
+    if not s.get('skipped'):
+        assert s.get('status') == 'passed', f'stage {s["name"]} must carry status=passed'
+assert d.get('complete') is False, 'a run with skipped stages must report complete:false'
+assert sorted(d.get('skipped', [])) == sorted(s['name'] for s in skipped), \
+    'top-level skipped[] must name every skipped stage'
 # BUILD must be skipped (SKIP_BUILD=1 is always set in structural mode)
 build_stages = [s for s in d['stages'] if s['name'] == 'BUILD']
 assert build_stages, 'BUILD stage missing from report'

@@ -959,6 +959,56 @@ requirement with `grep -q`. The name was present, the test passed, the gate was
 green, and the CLI path it was named after did nothing. A name-presence check
 cannot distinguish a working gate from a string. **O037**.
 
+### T53 — the safety gate's report could not say whether a stage had run
+
+GATE-05 / P6-GATE-05 (high). `skip_stage` recorded `"ok": true`, the top-level
+`ok` never noticed, and nothing else distinguished the two states. Executed:
+
+```
+$ JSON_OUT=… axon_safety_gate.sh --skip-build
+top-level ok: True     BUILD  ok=True skipped=True     exit 0
+```
+
+A consumer reading that report — or the exit code — cannot tell "the build stage
+ran and passed" from "the build stage never ran". For a gate whose output is
+meant to answer *"is this safe to deploy?"*, that is the one distinction it has
+to carry.
+
+`ok` keeps its meaning (a skip is genuinely not a failure) and the report now
+carries what the boolean could not: per-stage `status` (`passed`/`skipped`/
+`failed`), and top-level `complete` plus `skipped: [names]`. **`ok && complete`**
+is what "the gate validated this build" means; `ok` alone only means nothing that
+ran failed. The human output prints a prominent `⚠ INCOMPLETE: N stage(s)
+SKIPPED` line saying exactly that.
+
+**The gate's own self-test asserted the defect.** `acc_a5` read
+`assert s['ok'] == True` for skipped stages, with nothing else checked — so it
+certified that "never ran" and "ran and passed" look identical. That is the same
+shape as the attest CI-bypass test T32 removed: **a test pinning a hole open**,
+which is strictly worse than no test, because it converts the defect into a
+requirement. It now asserts the distinction, and `r30_acceptance_gate.sh`'s
+schema check requires the new fields and cross-checks that `complete` agrees with
+the per-stage statuses — and its own copy of the acc_a5 assertion, which had the
+same defect, was tightened the same way. Verified the new assertions **reject the
+old report format**. R30 gate: 6/6 pass.
+
+Two self-inflicted detours worth recording, since both cost a red run:
+
+- I wrote the new INCOMPLETE banner with backticks inside a double-quoted bash
+  string, so bash ran `ok` as a command (`line 235: ok: command not found`).
+  `bash -n` does not catch that — it is valid syntax, just wrong.
+- I edited `r30_acceptance_gate.sh` **while it was running**. Bash reads scripts
+  incrementally, so the running gate fell off the end of a heredoc and executed
+  Python as shell. The resulting failure was entirely mine, not the gate's.
+
+A safety-gate run during that window also reported 5 unit-test failures,
+including `native_deep_recursion_panics_gracefully_not_segfault`. A clean re-run
+is **589 + 9 + 443 + 130, zero failures** — they were flakes under contention
+(that run was competing with the R30 gate, which itself runs the whole safety
+gate twice). Recorded rather than glossed over: the repo's own note says to
+confirm gate failures with a clean re-run before treating them as regressions,
+and that is what this was.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -977,7 +1027,7 @@ cannot distinguish a working gate from a string. **O037**.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Forty-two fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Forty-three fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

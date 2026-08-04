@@ -78,18 +78,38 @@ print('  stages:', len(d['stages']))
         SELF_FAIL=$((SELF_FAIL+1))
     fi
 
-    # acc_a5: skipped stages appear with ok:true and skipped:true
+    # acc_a5: a SKIPPED stage must be distinguishable from a PASSED one.
+    #
+    # AUDIT T53 (GATE-05 / P6-GATE-05). This used to assert exactly the defect:
+    # `assert s['ok'] == True` for skipped stages, with nothing else to tell them
+    # apart. So the gate's own self-test certified that "never ran" and "ran and
+    # passed" look identical — a test pinning a hole OPEN, the same shape as the
+    # attest CI-bypass test T32 removed.
     echo ""
-    echo "acc_a5: skipped stages have ok:true and skipped:true..."
+    echo "acc_a5: skipped stages are DISTINGUISHABLE from passed ones..."
     if python3 -c "
 import json
 with open('$SELF_TEST_JSON') as f:
     d = json.load(f)
 skipped = [s for s in d['stages'] if s.get('skipped')]
+passed  = [s for s in d['stages'] if not s.get('skipped')]
 for s in skipped:
+    # ok stays true — a skip is not a failure — but it must no longer be the
+    # ONLY signal, or the report cannot answer 'did this stage run?'.
     assert s['ok'] == True, f'skipped stage {s[\"name\"]} has ok!=true'
     assert 'reason' in s, f'skipped stage {s[\"name\"]} missing reason'
-print('  skipped stages:', [s['name'] for s in skipped])
+    assert s.get('status') == 'skipped', f'skipped stage {s[\"name\"]} must carry status=skipped'
+for s in passed:
+    assert s.get('status') == 'passed', f'passed stage {s[\"name\"]} must carry status=passed'
+assert not (skipped and all(s.get('status') == 'passed' for s in skipped)), 'unreachable guard'
+# The top-level report must say the run was incomplete.
+if skipped:
+    assert d.get('complete') is False, 'a run with skipped stages must report complete:false'
+    assert sorted(d.get('skipped', [])) == sorted(s['name'] for s in skipped), \
+        'top-level skipped[] must name every skipped stage'
+else:
+    assert d.get('complete') is True, 'a run with no skips must report complete:true'
+print('  skipped stages:', [s['name'] for s in skipped], '| complete:', d.get('complete'))
 " 2>&1; then
         echo "acc_a5 PASS"
         SELF_PASS=$((SELF_PASS+1))
@@ -152,12 +172,12 @@ run_stage() {
     echo "━━━ Stage $stage_num: $stage_name ━━━"
     if eval "$cmd" > "$log_file" 2>&1; then
         echo "  PASS"
-        RESULTS+=("{\"stage\":$stage_num,\"name\":\"$stage_name\",\"ok\":true}")
+        RESULTS+=("{\"stage\":$stage_num,\"name\":\"$stage_name\",\"ok\":true,\"status\":\"passed\"}")
     else
         local exit_code=$?
         echo "  FAIL (exit $exit_code)"
         tail -20 "$log_file"
-        RESULTS+=("{\"stage\":$stage_num,\"name\":\"$stage_name\",\"ok\":false}")
+        RESULTS+=("{\"stage\":$stage_num,\"name\":\"$stage_name\",\"ok\":false,\"status\":\"failed\"}")
         OVERALL_OK=false
         emit_report
         echo ""
@@ -166,6 +186,16 @@ run_stage() {
     fi
 }
 
+# AUDIT T53 (findings GATE-05 / P6-GATE-05). A skipped stage recorded
+# `"ok":true` and the report's top-level `ok` never noticed, so a consumer
+# reading either could not tell "this ran and passed" from "this never ran".
+# Executed: `--skip-build` produced BUILD ok=true, top-level ok=true, exit 0.
+#
+# `ok` keeps its meaning (this stage did not FAIL — a skip is not a failure) and
+# a `status` field now carries the distinction the boolean cannot. The report
+# also gains `complete` and `skipped`, so "the gate validated this build" is a
+# question the JSON can actually answer.
+SKIPPED_STAGES=()
 skip_stage() {
     local stage_num="$1"
     local stage_name="$2"
@@ -174,7 +204,8 @@ skip_stage() {
     echo ""
     echo "━━━ Stage $stage_num: $stage_name ━━━"
     echo "  SKIP: $reason"
-    RESULTS+=("{\"stage\":$stage_num,\"name\":\"$stage_name\",\"ok\":true,\"skipped\":true,\"reason\":\"$reason\"}")
+    SKIPPED_STAGES+=("$stage_name")
+    RESULTS+=("{\"stage\":$stage_num,\"name\":\"$stage_name\",\"ok\":true,\"status\":\"skipped\",\"skipped\":true,\"reason\":\"$reason\"}")
 }
 
 emit_report() {
@@ -184,7 +215,25 @@ emit_report() {
     $OVERALL_OK && ok_str="true" || ok_str="false"
     local stages_json
     stages_json="$(IFS=,; printf '%s' "${RESULTS[*]}")"
-    local report="{\"schema\":\"axon-safety-gate/1\",\"timestamp\":\"$timestamp\",\"ok\":$ok_str,\"stages\":[$stages_json]}"
+
+    # T53: `complete` is the fact `ok` could not express — every stage actually
+    # ran. `ok && complete` is what "this build was validated" means; `ok` alone
+    # only means nothing that ran failed.
+    local complete_str skipped_json
+    if [[ ${#SKIPPED_STAGES[@]} -eq 0 ]]; then
+        complete_str="true"; skipped_json=""
+    else
+        complete_str="false"
+        skipped_json="$(printf '"%s",' "${SKIPPED_STAGES[@]}")"
+        skipped_json="${skipped_json%,}"
+    fi
+    local report="{\"schema\":\"axon-safety-gate/1\",\"timestamp\":\"$timestamp\",\"ok\":$ok_str,\"complete\":$complete_str,\"skipped\":[$skipped_json],\"stages\":[$stages_json]}"
+
+    if [[ ${#SKIPPED_STAGES[@]} -gt 0 ]]; then
+        echo ""
+        echo "⚠ INCOMPLETE: ${#SKIPPED_STAGES[@]} stage(s) SKIPPED — ${SKIPPED_STAGES[*]}"
+        echo '  ok below means "nothing that ran failed", NOT "the gate validated this build".'
+    fi
 
     if [[ -n "$JSON_OUT" ]] && [[ "$JSON_OUT" != "/dev/null" ]]; then
         printf '%s\n' "$report" > "$JSON_OUT"
@@ -295,7 +344,7 @@ fi
 
 echo ""
 echo "━━━ Stage 8: REPORT ━━━"
-RESULTS+=("{\"stage\":8,\"name\":\"REPORT\",\"ok\":true}")
+RESULTS+=("{\"stage\":8,\"name\":\"REPORT\",\"ok\":true,\"status\":\"passed\"}")
 emit_report
 
 if [[ -n "$JSON_OUT" ]] && [[ "$JSON_OUT" != "/dev/null" ]]; then
