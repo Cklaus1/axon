@@ -519,6 +519,62 @@ literal callee whose body stays inside the sandbox must still check clean,
 otherwise the fix would merely have banned the feature and every case above would
 pass for the wrong reason.
 
+### T44 — axon-os inferred the verdict from stderr prose, and the prose had drifted
+
+OSK-P4-H2 / P4-OS-21 (high). The sealing verdict was a chain of
+`err.contains(...)` substring tests over the child's stderr with a terminal
+`else => Completed { value: exit_code }` — so any fault whose wording the chain
+did not match sealed as a **success**. The finding called that a future risk. It
+was already happening.
+
+T24 added a `parse error`/`type error` arm for exactly this. But `axon run`
+reports **type** errors as JSON diagnostics (`{"schema":"axon-diag/1",…}`) and
+only **syntax** errors as prose, so the arm caught one and missed its sibling:
+
+```
+syntax error in a job -> "⚠ DENIED: program failed to compile"   axon-os exit 8
+type   error in a job -> "✓ completed (value=2)"                 axon-os exit 0
+```
+
+Same class of job, opposite records, and the wrong one is the silent one. The
+record is hash-chained, so it attests success for a job that executed zero
+statements — durably. That is an attestation-integrity failure, not a cosmetic
+one: the record lies and the chain makes the lie tamper-evident.
+
+**Why it was written that way, and how that is now fixed.** The comment above
+the chain is honest about the constraint: `axon run` propagates `main`'s return
+as the exit code, so a job returning 7 is not budget exhaustion, and the exit
+code alone could not be trusted. That collision is real — and it is the same
+**exit-code semantics** question sitting at the top of the needs-human list. It
+did not have to be answered globally to fix this, because axon-os *generates its
+own wrapper*: the wrapper now prints a nonce-bearing completion marker after the
+job returns. Its presence answers "did the job finish?" separately, so the exit
+code can then be read as the return value. Same shape as the T33 guest-kernel
+`-EXIT0` sentinel.
+
+The classifier now branches on the exit code — 2 malformed, 3 verify, 4 halted,
+5 ai-policy, 6 refine, 7 budget, 8 sandbox, **anything else non-zero → Denied,
+never Completed**. stderr is still read, but only to phrase the human-readable
+`reason`. Exit 0 with no marker is also a denial: it means the wrapper's tail
+never ran, so the outcome is unknown, and "unknown" must not seal as success.
+
+Two details worth recording:
+
+- The first attempt had the marker carry `to_str(__v)`. That panics for the
+  common `fn main()` job, whose renamed entry returns unit — caught by the
+  existing R27 acceptance tests, which is what they are for. The marker now
+  carries only the nonce.
+- The nonce is **not** derived from the job's seed. A job can read `AXON_SEED`
+  from its own environment, so a seed-derived marker would be forgeable by the
+  very code whose completion it attests. Tested: a job that prints two forged
+  markers and then panics is still `Denied`.
+
+Regression test drives the real CLI over four cases — type error, syntax error,
+**a clean job returning 8** (the collision itself: it must record
+`Completed{value: 8}`, not a sandbox denial), and the forgery attempt. **Verified
+to FAIL against the old terminal-else**, reproducing `✓ completed (value=2)`
+exactly.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -537,7 +593,7 @@ pass for the wrong reason.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-three fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-four fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

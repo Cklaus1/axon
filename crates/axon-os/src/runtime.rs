@@ -112,6 +112,10 @@ fn absolutize(p: PathBuf) -> PathBuf {
 /// Outcome of a bounded subprocess: the exit code (None ⇒ killed by timeout).
 struct ProcOutcome {
     code: Option<i32>,
+    /// AUDIT T44: stdout was drained (T25) but DISCARDED. It carries the
+    /// wrapper's result sentinel, which is what lets the verdict be decided by
+    /// the exit code instead of by matching prose in stderr.
+    stdout: String,
     stderr: String,
     timed_out: bool,
     /// R27/R29: true if the process was killed because the kill file latch was
@@ -195,11 +199,12 @@ fn run_bounded(
     };
 
     // Join the drainers: both pipes are at EOF once the child has exited.
-    let _ = out_h.join(); // stdout drained concurrently (see T25 above)
+    let stdout = out_h.join().unwrap_or_default(); // drained concurrently (T25)
     let stderr = err_h.join().unwrap_or_default();
 
     Ok(ProcOutcome {
         code,
+        stdout,
         stderr,
         timed_out: code.is_none(),
         killed_by_latch,
@@ -217,6 +222,14 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
 /// Extract the first `axon:` FAULT line from stderr (the human-facing reason),
 /// skipping the run-id stamp and informational lines (SMT discharge summaries,
 /// the mint certificate-checked notice) that aren't faults; fall back to `default`.
+/// Did the sandbox wrapper run to completion? (AUDIT T44.) True only if stdout
+/// carries the exact marker for THIS run — the nonce makes it unforgeable by the
+/// job, which never sees the generated wrapper.
+fn ran_to_completion(stdout: &str, nonce: &str) -> bool {
+    let expect = format!("{DONE_SENTINEL}{nonce}");
+    stdout.lines().any(|l| l.trim() == expect)
+}
+
 fn first_axon_line(stderr: &str, default: &str) -> String {
     let is_info = |l: &str| {
         l.starts_with("axon: run-id") || l.starts_with("axon: SMT") || l.starts_with("axon: mint")
@@ -343,7 +356,23 @@ fn calls_name(source: &str, name: &str) -> bool {
 /// scan — which a single space (`exec (`) defeats. The interpreter now requires
 /// an explicit `Exec` tag for process spawning, so exec is emitted here only
 /// when the grant actually carries it.
-fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget) -> String {
+/// Prefix of the completion marker the sandbox wrapper prints (AUDIT T44).
+/// Carries a per-run nonce, so a job cannot forge it: the nonce lives only in
+/// the generated wrapper, which is staged outside any granted fs_read prefix.
+const DONE_SENTINEL: &str = "__axon_os_done:";
+
+/// A per-run nonce for the completion marker. Not derived from the job's seed —
+/// the job can read `AXON_SEED` from its own environment, so a seed-derived
+/// marker would be forgeable by the very code whose completion it attests.
+fn done_nonce() -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:x}{:x}", t, std::process::id())
+}
+
+fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
     let ceiling = grant.effect_set();
     let mut tags: Vec<&str> = Vec::new();
     if ceiling.net {
@@ -375,8 +404,22 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget) -> String {
     let renamed = src
         .replace("fn main()", "fn __job_entry(_axon_arg: i64)")
         .replace("fn main ()", "fn __job_entry(_axon_arg: i64)");
+    // AUDIT T44 (OSK-P4-H2 / P4-OS-21). `main` returns the job's value and
+    // `axon run` propagates it as the PROCESS EXIT CODE, so a job returning 8
+    // was indistinguishable from a sandbox violation. That collision is why the
+    // verdict was inferred from stderr PROSE — and the prose drifted (see the
+    // classifier). Emit a completion MARKER after the job returns instead: its
+    // presence says "the job ran to completion", so the exit code can then be
+    // read as main's return value, and its ABSENCE says the run stopped short,
+    // so the exit code is a fault. Same shape as the T33 guest-kernel sentinel.
+    //
+    // The marker carries the job's value only implicitly (via the exit code) —
+    // printing `to_str(__v)` would panic for the common `fn main()` job, whose
+    // renamed entry returns unit.
     format!(
-        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    sandbox_run(__sb, \"__job_entry\", 0)\n}}\n",
+        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    let __r = sandbox_run(__sb, \"__job_entry\", 0)\n    println(\"{sentinel}{nonce}\")\n    __r\n}}\n",
+        sentinel = DONE_SENTINEL,
+        nonce = nonce,
         net = ceiling.net,
         fsw = ceiling.fs_write,
         exec = ceiling.exec,
@@ -429,7 +472,8 @@ impl Runtime for AxonCoreRuntime {
                 }
             }
         };
-        let wrapper_src = wrap_in_sandbox(&src, grant, budget);
+        let nonce = done_nonce();
+        let wrapper_src = wrap_in_sandbox(&src, grant, budget, &nonce);
         let wrapper_path = std::env::temp_dir().join(format!(
             "axon-os-wrap-{}-{}.ax",
             std::process::id(),
@@ -519,7 +563,9 @@ impl Runtime for AxonCoreRuntime {
             // Kill file tripped: R27 operator kill → Halted (exit 4).
             // R29 monitor kill → cmd_run overrides the final exit code to 12
             // via the `containment_violation` flag (checked after supervisor::run).
-            Verdict::Halted { reason: "kill-switch tripped by supervisor".into() }
+            Verdict::Halted {
+                reason: "kill-switch tripped by supervisor".into(),
+            }
         } else if proc.timed_out {
             Verdict::Denied {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
@@ -564,14 +610,86 @@ impl Runtime for AxonCoreRuntime {
             // fault line, so none of the arms above matched and it fell through
             // to Completed. The tamper-evident record then attested success for
             // a job that never ran.
-            Verdict::Denied {
+            Verdict::Malformed {
                 reason: first_axon_line(err, "program failed to compile"),
-                axis: "malformed".into(),
             }
         } else {
-            // No fault diagnostic ⇒ a clean run; the exit code is main's return.
-            Verdict::Completed {
-                value: proc.code.unwrap_or(0) as i64,
+            // AUDIT T44 (OSK-P4-H2 / P4-OS-21). This arm used to be
+            // `Completed { value: exit_code }` unconditionally, so ANY fault
+            // whose wording the chain above did not match sealed as a success.
+            // That is not hypothetical drift — it was live. T24 added the
+            // `parse error`/`type error` arm above, but `axon run` reports TYPE
+            // errors as JSON diagnostics (`{"schema":"axon-diag/1",…}`) and only
+            // SYNTAX errors as prose, so:
+            //
+            //   syntax error in a job -> "⚠ DENIED: program failed to compile", exit 8
+            //   type   error in a job -> "✓ completed (value=2)",                exit 0
+            //
+            // Same class of job, opposite records, and the wrong one is the
+            // silent one. A record that attests success for a job which executed
+            // zero statements is an attestation-integrity failure — the record
+            // lies, and it is hash-chained, so it lies durably.
+            //
+            // The exit code now decides. It is unambiguous because the wrapper
+            // returns 0 and reports the job's value via RESULT_SENTINEL
+            // (see `wrap_in_sandbox`) — the collision that forced the stderr
+            // heuristic in the first place is gone. stderr is still read, but
+            // only to phrase the human-readable `reason`.
+            if ran_to_completion(&proc.stdout, &nonce) {
+                // The wrapper's tail ran, so the job returned normally and the
+                // exit code IS its return value — including values that collide
+                // with carved fault codes, which is exactly what the old stderr
+                // heuristic could not express.
+                Verdict::Completed {
+                    value: proc.code.unwrap_or(0) as i64,
+                }
+            } else {
+                match proc.code.unwrap_or(-1) {
+                    // Exit 0 with no completion marker means the wrapper's own tail
+                    // never ran. Something stopped the job short. Refusing to seal
+                    // that as a success is the whole point of this arm.
+                    0 => Verdict::Denied {
+                        reason: first_axon_line(
+                            err,
+                            "run produced no completion marker — the sandbox wrapper did not \
+                         finish, so the job's outcome is unknown",
+                        ),
+                        axis: "runtime".into(),
+                    },
+                    2 => Verdict::Malformed {
+                        reason: first_axon_line(err, "program failed to compile"),
+                    },
+                    3 => Verdict::Denied {
+                        reason: first_axon_line(err, "@[verify] postcondition failed"),
+                        axis: "verify".into(),
+                    },
+                    4 => Verdict::Halted {
+                        reason: first_axon_line(err, "corrigibility kill-switch tripped"),
+                    },
+                    5 => Verdict::Denied {
+                        reason: first_axon_line(err, "AI policy refused the call"),
+                        axis: "ai-policy".into(),
+                    },
+                    6 => Verdict::RefineViolation {
+                        reason: first_axon_line(err, "refinement contract violated"),
+                    },
+                    7 => Verdict::BudgetExhausted {
+                        axis: "budget".into(),
+                    },
+                    8 => Verdict::Denied {
+                        reason: first_axon_line(err, "runtime capability/sandbox violation"),
+                        axis: "sandbox".into(),
+                    },
+                    // Any other non-zero exit is a fault we have no name for. It is
+                    // NOT a completion. Naming it honestly beats sealing a lie.
+                    other => Verdict::Denied {
+                        reason: first_axon_line(
+                            err,
+                            &format!("interpreter exited {other} with no recognised diagnostic"),
+                        ),
+                        axis: "runtime".into(),
+                    },
+                }
             }
         };
 
@@ -640,8 +758,8 @@ mod runtime_tests {
         let start = std::time::Instant::now();
         let mut cmd = Command::new("sleep");
         cmd.arg("5");
-        let out = run_bounded(&mut cmd, Duration::from_millis(150), None)
-            .expect("spawn sleep (POSIX)");
+        let out =
+            run_bounded(&mut cmd, Duration::from_millis(150), None).expect("spawn sleep (POSIX)");
         assert!(out.timed_out, "runaway must be killed at the timeout");
         assert!(out.code.is_none());
         assert!(

@@ -378,3 +378,130 @@ fn runtime_sandbox_catches_scan_evasion() {
         run.stdout
     );
 }
+
+// ── T44: the verdict must come from the exit code, not from stderr prose ─────
+
+/// Stage a one-off job + manifest in `dir` and run it. Returns (exit, stdout).
+fn run_adhoc_job(dir: &Path, axon: &Path, src: &str) -> (i32, String) {
+    let _ = std::fs::create_dir_all(dir);
+    std::fs::write(dir.join("job.ax"), src).unwrap();
+    std::fs::write(
+        dir.join("job.axjob"),
+        "program = \"job.ax\"\n\
+         intent  = \"t44 verdict classification\"\n\
+         seed    = 42\n\
+         [grant]\n\
+         fs_read   = []\n\
+         fs_write  = [\"./out/\"]\n\
+         net       = []\n\
+         exec      = \"none\"\n\
+         max_label = \"internal\"\n\
+         [grant.budget]\n\
+         calls       = 100\n\
+         tokens      = 50000\n\
+         cost_micro  = 1000000\n",
+    )
+    .unwrap();
+    let job = dir.join("job.axjob");
+    let out = dir.join("rec");
+    let r = os(
+        &["run", job.to_str().unwrap(), "--out", out.to_str().unwrap()],
+        axon,
+        &[],
+    );
+    (r.code, r.stdout)
+}
+
+#[test]
+fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
+    // AUDIT T44 (OSK-P4-H2 / P4-OS-21). The verdict was a chain of
+    // `err.contains(...)` substring tests over the child's stderr with a
+    // terminal `else => Completed { value: exit_code }`. So any fault whose
+    // wording the chain did not match sealed as a SUCCESS.
+    //
+    // That was live, not hypothetical. T24 added a `parse error`/`type error`
+    // arm — but `axon run` reports TYPE errors as JSON diagnostics
+    // (`{"schema":"axon-diag/1",...}`) and only SYNTAX errors as prose:
+    //
+    //   syntax error -> "⚠ DENIED: program failed to compile", axon-os exit 8
+    //   type   error -> "✓ completed (value=2)",               axon-os exit 0
+    //
+    // Same class of job, opposite records, and the wrong one is the silent one.
+    // A hash-chained record that attests success for a job which executed zero
+    // statements is an attestation-integrity failure: the record lies durably.
+    let Some(axon) = axon_bin() else {
+        eprintln!("axon interpreter not built — skipping T44 verdict test");
+        return;
+    };
+    let base = tmp("t44");
+
+    // (1) A type error must NOT seal as completed. This is the case that shipped.
+    let (code, out) = run_adhoc_job(
+        &base.join("typeerr"),
+        &axon,
+        "fn main() {\n    let x: i64 = \"not an integer\"\n    println(\"never runs\")\n}\n",
+    );
+    assert!(
+        !out.contains("completed"),
+        "a job that does not compile must not seal as completed: {out}"
+    );
+    assert_ne!(code, 0, "and axon-os must not exit 0: {out}");
+
+    // (2) A syntax error, the sibling that DID work — still classified, and now
+    // as the same verdict as (1). Two jobs that both failed to compile must not
+    // produce two different verdicts depending on the diagnostic's format.
+    let (code2, out2) = run_adhoc_job(
+        &base.join("syntaxerr"),
+        &axon,
+        "fn main() { let x = (((  }\n",
+    );
+    assert!(
+        out2.contains("malformed") && out.contains("malformed"),
+        "both compile failures must be `malformed`: type={out} syntax={out2}"
+    );
+    assert_eq!(code, code2, "and must agree on the exit code");
+
+    // (3) THE COLLISION THAT FORCED THE HEURISTIC. A clean job returning 8 —
+    // the sandbox-violation code — must be recorded as a completion with
+    // value 8, not as a denial. This is what the completion marker buys: the
+    // exit code can be trusted precisely because "did it finish?" is answered
+    // separately.
+    let (code3, out3) = run_adhoc_job(
+        &base.join("returns8"),
+        &axon,
+        "fn main() -> i64 { println(\"ran\")  8 }\n",
+    );
+    assert_eq!(
+        code3, 0,
+        "a clean job is a clean run whatever it returns: {out3}"
+    );
+    assert!(
+        out3.contains("completed"),
+        "a job returning 8 completed; it did not violate the sandbox: {out3}"
+    );
+    let rec: String =
+        std::fs::read_to_string(base.join("returns8/rec/run.json")).unwrap_or_default();
+    assert!(
+        rec.contains("\"value\":8") || rec.contains("\"value\": 8"),
+        "the record must preserve the returned value: {rec}"
+    );
+
+    // (4) The marker is nonce-bearing, so a job cannot print one to launder a
+    // fault into a success. Forge two and then panic.
+    let (code4, out4) = run_adhoc_job(
+        &base.join("forge"),
+        &axon,
+        "fn main() -> i64 { println(\"__axon_os_done:0\")\n \
+         println(\"__axon_os_done:deadbeefcafe\")\n assert(false)\n 0 }\n",
+    );
+    assert_ne!(
+        code4, 0,
+        "a forged completion marker must not seal success: {out4}"
+    );
+    assert!(
+        !out4.contains("completed"),
+        "a job that panicked after forging the marker must not be completed: {out4}"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
