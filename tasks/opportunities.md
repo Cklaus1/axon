@@ -1390,3 +1390,34 @@ Two ways out:
 is the actual defect. **Decision needed:** which. This interacts with the pending
 "`AXON_HARNESS_STRICT=1` in CI" decision — under (2) strict mode becomes
 enforceable; under (1) there is nothing in-suite left for it to guard.
+
+---
+
+## O037 — `r31_acceptance_gate.sh` greps for test NAMES; it never runs them
+
+*Noticed while fixing P4-OS-11 (T52).* Small, and the same vacuous-gate class as
+GATE-04/GATE-05.
+
+The gate's core loop is:
+
+```bash
+for name in "${REQUIRED_NAMES[@]}"; do
+    if grep -q "$name" "$LIB_SRC" "$VM_SRC" 2>/dev/null; then pass "found: $name"
+```
+
+So a required test is satisfied by its **name appearing anywhere** in either
+file — including in a comment, a doc string, or a `#[ignore]`d body. The gate
+proves the string exists, not that the property holds.
+
+This is exactly how P4-OS-11 survived: `extended_tcb_wired_into_run` was present
+and passing, and the gate was green, while the thing it was named after —
+`--extended-tcb` actually gating the boot — did nothing. The test measured and
+compared a digest *in a unit test*; the CLI path never called `verify_extended`
+at all. A name-presence check cannot tell those apart.
+
+Fix is mechanical: run the tests and assert on the result —
+`cargo test -p axon-vm -p axon-attest -- --exact <name>` per required name, or a
+single `cargo test` run whose output is parsed for each name reporting `ok`.
+That also catches the `#[ignore]` case, which name-grepping cannot. Worth
+sweeping the other `REQUIRED_NAMES`-style gates for the same shape at the same
+time — `grep -l REQUIRED_NAMES scripts/*.sh` finds them.

@@ -48,6 +48,12 @@ const CHAIN_VERIFY_FAIL_EXIT_CODE: i32 = 15;
 /// R31: extended measurement failed — required component missing/unreadable (exit 12).
 const EXTENDED_TCB_MEASURE_FAIL: i32 = 12;
 
+/// R31/T52: the measured extended TCB did not match the pinned expectation, or
+/// no expectation was pinned at all. Shares the attestation exit code (10) with
+/// the kernel-baseline gate — both mean "the software about to run is not the
+/// software that was blessed".
+const EXTENDED_TCB_MISMATCH: i32 = 10;
+
 /// R33: cross-VM safety quorum not met — insufficient approvals (or empty/timeout
 /// in the fuller protocol). Reserved per `governance/specs/R33-cross-vm-safety-quorum.md`
 /// spec-meta; confirmed free of the existing axon-vm exit codes (1, 2, 10, 12) and of
@@ -127,8 +133,18 @@ enum Cmd {
         /// R31: verify the full host safety stack before booting.
         /// Measures kernel + axon-os + axon-audit + monitor and gates boot on
         /// `axtcb1_ext`. Any measure failure → exit 12. Mismatch → exit 10.
+        ///
+        /// AUDIT T52: the mismatch arm used to be unreachable — this measured
+        /// the stack and printed "4/4 components verified" without comparing it
+        /// to anything. Supply the expected digest with `--expect-axtcb1-ext`,
+        /// or pin one via `axon-vm attest --extended-tcb --pin-extended`.
         #[arg(long)]
         extended_tcb: bool,
+
+        /// R31/T52: the expected `axtcb1-ext:` digest for `--extended-tcb`.
+        /// Overrides the pinned baseline in `~/.axon/axtcb1_ext_baseline`.
+        #[arg(long, value_name = "AXTCB1_EXT")]
+        expect_axtcb1_ext: Option<String>,
 
         /// R33: require a cross-VM safety quorum of size N before booting.
         /// Collects `.vote` files from `--quorum-dir`, runs the strict-majority
@@ -258,6 +274,12 @@ enum Cmd {
         /// --repin, so a silent re-baseline cannot happen by accident.
         #[arg(long)]
         pin_baseline: bool,
+
+        /// T52: record the measured `axtcb1-ext:` as the pinned extended-TCB
+        /// baseline (`~/.axon/axtcb1_ext_baseline`), so `run --extended-tcb`
+        /// has something to verify against. Requires --extended-tcb.
+        #[arg(long)]
+        pin_extended: bool,
 
         /// Allow --pin-baseline to overwrite an existing baseline with a different digest.
         #[arg(long)]
@@ -637,10 +659,11 @@ fn main() {
             no_attest,
             expect_digest,
             extended_tcb,
+            expect_axtcb1_ext,
             quorum,
             quorum_dir,
             chain_stamp,
-        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, expect_digest, extended_tcb, quorum, quorum_dir, chain_stamp),
+        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, expect_digest, extended_tcb, expect_axtcb1_ext, quorum, quorum_dir, chain_stamp),
         Cmd::Attest {
             kernel,
             policy,
@@ -653,10 +676,11 @@ fn main() {
             axon_audit,
             verify_axtcb1_ext,
             pin_baseline,
+            pin_extended,
             repin,
         } => cmd_attest(kernel, policy, run_prog, verify_digest, nonce, verify_axtcb1,
                         extended_tcb, axon_os, axon_audit, verify_axtcb1_ext,
-                        pin_baseline, repin),
+                        pin_baseline, pin_extended, repin),
         Cmd::Principal { cmd } => match cmd {
             PrincipalCmd::Add {
                 name,
@@ -713,6 +737,7 @@ fn cmd_attest(
     axon_audit_override: Option<PathBuf>,
     verify_axtcb1_ext: Option<String>,
     pin_baseline: bool,
+    pin_extended: bool,
     repin: bool,
 ) {
     let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
@@ -895,6 +920,36 @@ fn cmd_attest(
         None
     };
 
+    // T52: `--pin-extended` records the measured axtcb1-ext as the baseline that
+    // `run --extended-tcb` verifies against. Deliberately explicit — the same
+    // no-trust-on-first-use rule as the kernel baseline (T32): the ONLY way a
+    // baseline appears is an operator asking for one.
+    if pin_extended {
+        match extended_measurement {
+            Some(ref ext) => {
+                let path = extended_baseline_path();
+                if let Some(dir) = path.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                match fs::write(&path, format!("{}\n", ext.axtcb1_ext)) {
+                    Ok(()) => eprintln!(
+                        "axon-vm attest: pinned extended-TCB baseline {} → {}",
+                        ext.axtcb1_ext,
+                        path.display()
+                    ),
+                    Err(e) => {
+                        eprintln!("axon-vm attest: could not write {}: {e}", path.display());
+                        process::exit(2);
+                    }
+                }
+            }
+            None => {
+                eprintln!("axon-vm attest: --pin-extended requires --extended-tcb");
+                process::exit(2);
+            }
+        }
+    }
+
     // R31: verify extended TCB digest if expected value was provided
     let (ok, reason) = if ok {
         if let Some(ref expected_ext) = verify_axtcb1_ext {
@@ -951,6 +1006,7 @@ fn cmd_run(
     no_attest: bool,
     expect_digest: Option<String>,
     extended_tcb: bool,
+    expect_axtcb1_ext: Option<String>,
     quorum: Option<usize>,
     quorum_dir: Option<PathBuf>,
     chain_stamp: Option<PathBuf>,
@@ -1143,10 +1199,44 @@ fn cmd_run(
         };
         match measure_host_stack(&kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
             Ok(ext) => {
-                eprintln!(
-                    "✓ extended TCB: {} (4/4 components verified)",
-                    ext.axtcb1_ext
-                );
+                // AUDIT T52 (finding P4-OS-11). This printed
+                // "✓ extended TCB: … (4/4 components verified)" and moved on. It
+                // had MEASURED four components and verified none: `verify_extended`
+                // was never called and no expected value existed to call it with.
+                // The flag's own doc promised "Mismatch → exit 10", an arm nothing
+                // could reach.
+                //
+                // Same rule as the T32 kernel baseline: an expectation is
+                // REQUIRED, and its absence is a refusal rather than
+                // trust-on-first-use. TOFU against a user-writable file is not a
+                // gate — an attacker who can swap a TCB component can also delete
+                // the baseline, and the next boot would bless the tampered stack.
+                let expected = expect_axtcb1_ext.clone().or_else(|| {
+                    std::fs::read_to_string(extended_baseline_path())
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                });
+                let Some(expected) = expected else {
+                    eprintln!(
+                        "axon-vm: --extended-tcb requires a pinned expectation. Measured {} \
+                         but have nothing to verify it against.\n                           Pin it once:  axon-vm attest --kernel <path> --extended-tcb --pin-extended\n                           Or pass:      --expect-axtcb1-ext {}",
+                        ext.axtcb1_ext, ext.axtcb1_ext
+                    );
+                    process::exit(EXTENDED_TCB_MISMATCH);
+                };
+                match verify_extended(&ext, &expected) {
+                    Ok(()) => eprintln!(
+                        "✓ extended TCB verified against pin: {} (4/4 components)",
+                        ext.axtcb1_ext
+                    ),
+                    Err(e) => {
+                        eprintln!("axon-vm: EXTENDED TCB MISMATCH: {e}");
+                        eprintln!("  expected {expected}");
+                        eprintln!("  measured {}", ext.axtcb1_ext);
+                        process::exit(EXTENDED_TCB_MISMATCH);
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("axon-vm: extended TCB measurement failed: {e}");
@@ -2598,6 +2688,13 @@ fn sha256_file(path: &Path) -> String {
 // ── R26: kernel attestation gate ─────────────────────────────────────────────
 
 /// Path of the on-disk kernel baseline pin (`~/.axon/kernel_baseline.sha256`).
+/// Where the pinned extended-TCB (`axtcb1-ext:`) baseline lives (AUDIT T52).
+/// Sibling of `kernel_baseline_path`, same no-trust-on-first-use rule.
+fn extended_baseline_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(format!("{}/.axon/axtcb1_ext_baseline", home))
+}
+
 fn kernel_baseline_path() -> PathBuf {
     let home = env::var("HOME").unwrap_or_default();
     PathBuf::from(format!("{}/.axon/kernel_baseline.sha256", home))
@@ -3202,6 +3299,67 @@ mod tests {
     /// R31 §4.4: `axon-vm run --extended-tcb` measures before booting and refuses
     /// on a missing required component (kernel or axon-os).
     /// Tests the `measure_host_stack` → error-path wiring used by cmd_run.
+    /// AUDIT T52 (finding P4-OS-11). `run --extended-tcb` measured the four
+    /// components and printed "✓ extended TCB: … (4/4 components verified)" —
+    /// having verified none. `verify_extended` was never called on that path and
+    /// no expected value existed to call it with, so the flag's own documented
+    /// "Mismatch → exit 10" arm was unreachable. Executed before the fix: a run
+    /// with `--extended-tcb` and nothing pinned printed "verified" and booted.
+    ///
+    /// The gate now requires a pinned expectation and refuses without one — the
+    /// same no-trust-on-first-use rule as the T32 kernel baseline, and for the
+    /// same reason: TOFU against a user-writable file is not a gate, because an
+    /// attacker who can swap a TCB component can also delete the baseline.
+    #[test]
+    fn extended_tcb_run_gate_requires_a_pinned_expectation_p4_os_11() {
+        use axon_attest::{measure_host_stack, verify_extended};
+
+        let tmp = std::env::temp_dir();
+        let pid = std::process::id();
+        let kernel = tmp.join(format!("axon-t52-kernel-{pid}.bin"));
+        let os_bin = tmp.join(format!("axon-t52-os-{pid}.bin"));
+        std::fs::write(&kernel, b"t52-kernel").unwrap();
+        std::fs::write(&os_bin, b"t52-axon-os").unwrap();
+
+        let m = measure_host_stack(&kernel, Some(&os_bin), None).expect("measure");
+
+        // The comparison the run gate now performs. Matching pin → Ok.
+        assert!(
+            verify_extended(&m, &m.axtcb1_ext).is_ok(),
+            "a measurement must verify against its own digest"
+        );
+
+        // A DIFFERENT stack must not satisfy the same pin — otherwise the gate
+        // would accept any measurement and be decorative again.
+        std::fs::write(&os_bin, b"t52-axon-os-TAMPERED").unwrap();
+        let tampered = measure_host_stack(&kernel, Some(&os_bin), None).expect("measure");
+        assert_ne!(
+            tampered.axtcb1_ext, m.axtcb1_ext,
+            "tampering a component must change the extended digest"
+        );
+        assert!(
+            verify_extended(&tampered, &m.axtcb1_ext).is_err(),
+            "a tampered stack must FAIL the pinned expectation (exit 10 at the CLI)"
+        );
+
+        // The baseline path is a sibling of the kernel one, so an operator finds
+        // both in the same place.
+        let base = extended_baseline_path();
+        assert!(
+            base.to_string_lossy().ends_with("axtcb1_ext_baseline"),
+            "unexpected baseline path: {}",
+            base.display()
+        );
+        assert_eq!(
+            base.parent(),
+            kernel_baseline_path().parent(),
+            "the extended baseline must live beside the kernel baseline"
+        );
+
+        let _ = std::fs::remove_file(&kernel);
+        let _ = std::fs::remove_file(&os_bin);
+    }
+
     #[test]
     fn extended_tcb_wired_into_run() {
         use axon_attest::{measure_host_stack, verify_extended};

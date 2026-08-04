@@ -920,6 +920,45 @@ A direct rule test covers both cases, including the mid-run
 now 443 passing with only the two Android harnesses legitimately skipped, down
 from four.
 
+### T52 — `--extended-tcb` announced "4/4 components verified" having verified none
+
+P4-OS-11 (high). The R31 boot gate called `measure_host_stack`, printed
+
+```
+✓ extended TCB: axtcb1-ext:7a9a09b3… (4/4 components verified)
+```
+
+and booted. `verify_extended` was never called on that path, and no expected
+value existed to call it with — so the flag's own documentation, *"Any measure
+failure → exit 12. **Mismatch → exit 10**"*, described an arm nothing could
+reach. It measured four components and verified zero.
+
+Same rule as the T32 kernel baseline: an expectation is **required**, and its
+absence is a refusal rather than trust-on-first-use. TOFU against a
+user-writable file is not a gate — an attacker who can swap a TCB component can
+also delete the baseline, and the next boot would bless the tampered stack.
+`--expect-axtcb1-ext` supplies one inline; `axon-vm attest --extended-tcb
+--pin-extended` records one at `~/.axon/axtcb1_ext_baseline`, deliberately beside
+the kernel baseline so an operator finds both in one place.
+
+Executed, all three paths:
+
+```
+--extended-tcb, nothing pinned   → exit 10, refuses and prints how to pin
+--extended-tcb, matching pin     → exit 0, "verified against pin"
+--expect-axtcb1-ext <wrong>      → exit 10, EXTENDED TCB MISMATCH
+```
+
+The regression test compares a stack against its own digest (must pass) and
+against a *tampered* one (must fail) — without the second half the gate would
+accept any measurement and be decorative again, which is the failure being fixed.
+
+**How this survived is worth recording separately.** `r31_acceptance_gate.sh`
+requires a test named `extended_tcb_wired_into_run` — and satisfies that
+requirement with `grep -q`. The name was present, the test passed, the gate was
+green, and the CLI path it was named after did nothing. A name-presence check
+cannot distinguish a working gate from a string. **O037**.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -938,7 +977,7 @@ from four.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Forty-one fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Forty-two fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
