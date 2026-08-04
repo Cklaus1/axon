@@ -155,7 +155,11 @@ mod tests {
         fs::write(dir.join("notes.txt"), "not a vote").unwrap();
 
         let votes = collect_responses(&dir, 3).expect("collect must succeed");
-        assert_eq!(votes.len(), 3, "must read exactly the 3 .vote files, ignoring notes.txt");
+        assert_eq!(
+            votes.len(),
+            3,
+            "must read exactly the 3 .vote files, ignoring notes.txt"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -181,7 +185,11 @@ mod tests {
             "a malformed vote file must produce Err, not a panic and not a silently-skipped vote"
         );
         let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData, "must be a clear InvalidData error");
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::InvalidData,
+            "must be a clear InvalidData error"
+        );
         assert!(
             err.to_string().contains("voter-1.vote") || err.to_string().contains("malformed"),
             "error must point at the offending file or say 'malformed': {err}"

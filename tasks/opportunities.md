@@ -1289,3 +1289,55 @@ what it grants rather than relying on a default that grants everything.
 policy at all. Note this was invisible while the default was open — the gate
 "passed" by granting full authority, which is exactly what Layer 3 claims to
 test.
+
+---
+
+## O035 — quorum votes are not authenticated, and cannot be without a key decision
+
+*Found while working P4-OS-12 / P7-SEC-04 / P7-KRN-07 (T49).* The remaining half
+of that finding. **Decision needed.**
+
+A `.vote` file carries no signature or MAC. `collect_responses` reads every
+`*.vote` in a directory, and `voter_tcb` is a string the vote declares about
+itself. Executed against the CLI:
+
+```
+$ printf '{"voter_tcb":"axtcb1-ext:0000…","run_id":"deploy-prod",
+           "approved":true,"reason":"forged","lineage_root":"h1"}' > forged1.vote
+   (×3)
+$ axon-vm quorum check --responses-dir . --n 3
+QUORUM MET: 3/3 approvals        exit 0
+```
+
+Anyone who can write that directory is the entire quorum. The module header
+described these as "attested VoteRequest/VoteResponse"; nothing verified either,
+and T49 corrected the claim rather than leave the tool asserting a property it
+does not have.
+
+T49 closed the two holes that need no key material — votes are now bound to the
+run they name (`--run-id`), and the operator can pin the expected identity
+(`--expect-tcb`). Both raise the bar; neither makes a vote authentic. An attacker
+who knows the real run id and the real TCB digest — both of which appear in the
+request file the voters were given — can still forge the whole quorum.
+
+Real authenticity needs each voter to sign its response, which needs a decision
+this module cannot make:
+
+1. **What key?** The R26/R31 attestation path already establishes a per-guest
+   identity. Reusing it binds a vote to an attested TCB, which is the property
+   the design wants — but it couples the quorum to hardware attestation being
+   live, and today the software-TPM stand-in lane is the only one that runs.
+2. **Distributed how?** The aggregator needs each voter's public key, and the
+   binding from key to voter identity is the whole trust question. A file of
+   pinned keys next to the responses directory is the smallest thing that works
+   and is itself a thing an attacker would target.
+3. **Or avoid keys entirely** by making the transport authenticated instead —
+   the R33 vsock path (§5.2.2, not yet built) could carry votes over
+   per-guest channels the host controls, so a vote's provenance comes from the
+   channel rather than from its contents.
+
+(3) is likely the right destination for the microVM fleet, since the transport
+already exists as a design and the file-based exchange is explicitly a scoped
+stand-in. Until one is chosen, **the responses directory is part of the TCB** —
+now stated in the module header and the CLI help, so an operator reading either
+learns it before relying on the gate rather than after.

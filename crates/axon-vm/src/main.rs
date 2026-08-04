@@ -31,7 +31,8 @@ use axon_attest::{
     SOFTWARE_TPM_HW_ROOT,
 };
 
-/// R33: cross-VM safety quorum (attested VoteRequest/Response + strict-majority check).
+/// R33: cross-VM safety quorum (VoteRequest/Response + strict-majority check).
+/// NOTE (T49): votes are NOT authenticated — see `quorum` module header.
 mod quorum;
 
 /// R34: incremental attestation rolling hash chain (ChainStore, compute_entry_hash).
@@ -172,7 +173,13 @@ enum Cmd {
         cmd: ChainCmd,
     },
 
-    /// R33: cross-VM safety quorum — attested VoteRequest/Response + strict-majority check.
+    /// R33: cross-VM safety quorum — VoteRequest/Response + strict-majority check.
+    ///
+    /// Votes are NOT cryptographically authenticated (AUDIT T49): a `.vote` file
+    /// carries no signature, so anyone who can write the responses directory can
+    /// manufacture approvals. `--run-id` binds votes to one proposal and
+    /// `--expect-tcb` pins the expected voter identity; neither is a substitute
+    /// for signing. Treat the responses directory as part of the TCB.
     ///
     /// Scoped file-based exchange (`governance/specs/R33-cross-vm-safety-quorum.md`): a
     /// proposing host writes a VoteRequest, peer hosts vote by writing a VoteResponse,
@@ -540,6 +547,19 @@ enum QuorumCmd {
         #[arg(long)]
         n: usize,
 
+        /// The run this quorum decides. AUDIT T49: required, because votes used
+        /// to aggregate across DIFFERENT runs — approvals collected for a dry-run
+        /// counted toward a production deploy. Votes naming another run are not
+        /// counted.
+        #[arg(long = "run-id")]
+        run_id: String,
+
+        /// Pin the expected voter TCB digest (R31 `axtcb1-ext:`). AUDIT T49:
+        /// without it the check only requires votes to AGREE on an identity they
+        /// declared themselves, which forged votes trivially do.
+        #[arg(long = "expect-tcb")]
+        expect_tcb: Option<String>,
+
         /// Emit JSON output.
         #[arg(long)]
         json: bool,
@@ -652,8 +672,8 @@ fn main() {
                 cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit, broadcast, n, deadline_ms, json),
             QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen } =>
                 cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen),
-            QuorumCmd::Check { responses_dir, n, json } =>
-                cmd_quorum_check(responses_dir, n, json),
+            QuorumCmd::Check { responses_dir, n, run_id, expect_tcb, json } =>
+                cmd_quorum_check(responses_dir, n, &run_id, expect_tcb.as_deref(), json),
         },
         Cmd::Chain { cmd } => match cmd {
             ChainCmd::Stamp { prog, run_id, store, kernel } =>
@@ -1152,7 +1172,9 @@ fn cmd_run(
                 process::exit(2);
             }
         };
-        let result = quorum::logic::check_quorum(&votes, required_n);
+        // T49: bind to THIS run. Previously any `.vote` in the directory counted,
+        // including one written for a different (e.g. benign) proposal.
+        let result = quorum::logic::check_quorum(&votes, required_n, &run_id, None);
         if result.quorum_met {
             eprintln!(
                 "✓ quorum approved: {}/{} approvals — proceeding to boot",
@@ -1671,7 +1693,7 @@ fn cmd_quorum_propose(
 
     eprintln!("broadcasting to {} peer(s), deadline {deadline_ms}ms ...", peers.len());
     let votes = quorum::vsock::broadcast_and_collect(&peers, &req, deadline);
-    let result = quorum::logic::check_quorum(&votes, required_n);
+    let result = quorum::logic::check_quorum(&votes, required_n, &req.run_id, None);
     report_quorum_result(result, required_n, json_out);
 }
 
@@ -1807,7 +1829,13 @@ fn cmd_quorum_vote(
 ///
 /// Exit 0 = QUORUM MET. Exit 13 = QUORUM BLOCKED (insufficient approvals or no
 /// votes at all). Exit 14 = QUORUM BLOCKED (attestation mismatch across voters).
-fn cmd_quorum_check(responses_dir: PathBuf, n: usize, json_out: bool) {
+fn cmd_quorum_check(
+    responses_dir: PathBuf,
+    n: usize,
+    run_id: &str,
+    expect_tcb: Option<&str>,
+    json_out: bool,
+) {
     let votes = match quorum::io::collect_responses(&responses_dir, n) {
         Ok(v) => v,
         Err(e) => {
@@ -1819,7 +1847,7 @@ fn cmd_quorum_check(responses_dir: PathBuf, n: usize, json_out: bool) {
         }
     };
 
-    let result = quorum::logic::check_quorum(&votes, n);
+    let result = quorum::logic::check_quorum(&votes, n, run_id, expect_tcb);
     report_quorum_result(result, n, json_out);
 }
 

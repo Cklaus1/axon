@@ -782,6 +782,47 @@ something to answer silently, so the gate now states `IO,FS` explicitly with the
 reason. Worth being blunt: Layer 3 of that gate was passing by granting full
 authority, which is exactly what it claims to test.
 
+### T49 — the cross-VM quorum counted votes cast for other proposals
+
+P4-OS-12 / P7-SEC-04 / P7-KRN-07 (high; canonical entry for the
+unauthenticated-quorum class). Two distinct holes, executed:
+
+**(a) Votes were not bound to the proposal.** `check_quorum(votes, required_n)`
+did not take the request at all, so `.vote` files naming *different* runs
+aggregated into one decision:
+
+```
+three .vote files naming "benign-dry-run", "some-other-job", "deploy-prod"
+  → QUORUM MET: 3/3 approvals      exit 0
+```
+
+This needs no forgery and no key material to exploit — only a fleet that votes
+on more than one thing. Honest approvals gathered for a dry run authorize a
+production deploy. `check_quorum` now takes the run id and counts only votes
+naming it; "no votes for this run" is reported distinctly from "voted against",
+because those mean different things to an operator. `axon deploy --quorum-dir`
+gained a required `--quorum-run-id` for the same reason — it was counting every
+`.vote` in the directory.
+
+**(b) Identity was self-declared.** The consistency check only required votes to
+*agree* on `voter_tcb`, so three forged votes agreeing on a made-up digest passed
+it. `--expect-tcb` lets the operator pin the expected identity — the same shape
+as the T31/T32 `--expect-digest` / `--pin-baseline` gates.
+
+**What is NOT fixed, and is now stated instead of implied.** A `.vote` file
+carries no signature; three hand-written JSON files still produce
+`QUORUM MET: 3/3`, exit 0. The module header called these "attested
+VoteRequest/VoteResponse" — nothing verified either. That claim is corrected in
+both the header and the CLI help, which now say plainly that votes are
+unauthenticated and the responses directory is part of the TCB. Signing needs a
+key-distribution decision (**O035**, three options sketched) that this module
+cannot make for the operator; asserting a property the code does not have is
+worse than the gap itself.
+
+One regression test deliberately asserts the *residual* hole — mutually-agreeing
+forged votes still pass without a pin — so the limit is pinned in the suite
+rather than described in prose that can drift from the code.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -800,7 +841,7 @@ authority, which is exactly what it claims to test.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-eight fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-nine fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

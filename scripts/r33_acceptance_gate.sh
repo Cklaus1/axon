@@ -139,7 +139,7 @@ else
 fi
 
 set +e
-CHECK1_OUT=$("$BIN" quorum check --responses-dir "$WORK_DIR" --n 3 2>&1)
+CHECK1_OUT=$("$BIN" quorum check --responses-dir "$WORK_DIR" --n 3 --run-id "r33-demo-1" 2>&1)
 CHECK1_RC=$?
 set -e
 
@@ -161,7 +161,7 @@ fi
     2>"$WORK_DIR/vote3.stderr"
 
 set +e
-CHECK2_OUT=$("$BIN" quorum check --responses-dir "$WORK_DIR" --n 3 2>&1)
+CHECK2_OUT=$("$BIN" quorum check --responses-dir "$WORK_DIR" --n 3 --run-id "r33-demo-1" 2>&1)
 CHECK2_RC=$?
 set -e
 
@@ -196,7 +196,7 @@ cat > "$MISMATCH_DIR/v3.vote" <<'EOF'
 EOF
 
 set +e
-MISMATCH_OUT=$("$BIN" quorum check --responses-dir "$MISMATCH_DIR" --n 3 2>&1)
+MISMATCH_OUT=$("$BIN" quorum check --responses-dir "$MISMATCH_DIR" --n 3 --run-id "r33-mismatch" 2>&1)
 MISMATCH_RC=$?
 set -e
 
@@ -232,7 +232,7 @@ for i in 1 2 3; do
 done
 
 set +e
-SOCKPUPPET_OUT=$("$BIN" quorum check --responses-dir "$SOCKPUPPET_DIR" --n 3 2>&1)
+SOCKPUPPET_OUT=$("$BIN" quorum check --responses-dir "$SOCKPUPPET_DIR" --n 3 --run-id "r33-sockpuppet" 2>&1)
 SOCKPUPPET_RC=$?
 set -e
 
@@ -267,7 +267,7 @@ for i in 1 2 3; do
 done
 
 set +e
-DISTINCT_OUT=$("$BIN" quorum check --responses-dir "$DISTINCT_DIR" --n 3 2>&1)
+DISTINCT_OUT=$("$BIN" quorum check --responses-dir "$DISTINCT_DIR" --n 3 --run-id "r33-distinct" 2>&1)
 DISTINCT_RC=$?
 set -e
 
@@ -329,7 +329,7 @@ for i in 1 2 3; do
 done
 
 set +e
-DEPLOY_SP_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_SP_DIR" --quorum-n 3 --json 2>/dev/null)
+DEPLOY_SP_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_SP_DIR" --quorum-n 3 --quorum-run-id "deploy-sockpuppet" --json 2>/dev/null)
 DEPLOY_SP_RC=$?
 set -e
 
@@ -355,7 +355,7 @@ for i in 1 2 3; do
 done
 
 set +e
-DEPLOY_OK_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" --quorum-n 3 --json 2>/dev/null)
+DEPLOY_OK_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" --quorum-n 3 --quorum-run-id "deploy-legit" --json 2>/dev/null)
 DEPLOY_OK_RC=$?
 set -e
 
@@ -369,7 +369,7 @@ fi
 #      never a silently-open gate (I-9).
 set +e
 MISSING_BIN_OUT=$("$AXON_BIN" deploy "${DEPLOY_FLAGS[@]}" "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" \
-    --axon-vm-bin /nonexistent/axon-vm --json 2>&1)
+    --quorum-run-id "deploy-legit" --axon-vm-bin /nonexistent/axon-vm --json 2>&1)
 MISSING_BIN_RC=$?
 set -e
 

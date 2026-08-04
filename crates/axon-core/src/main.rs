@@ -415,6 +415,13 @@ enum Command {
         #[arg(long, value_name = "N")]
         quorum_n: Option<usize>,
 
+        /// The proposal these votes authorize (AUDIT T49). Required with
+        /// `--quorum-dir`: the gate used to count EVERY `.vote` in the
+        /// directory regardless of which run it named, so approvals gathered
+        /// for one action authorized another.
+        #[arg(long, value_name = "RUN_ID")]
+        quorum_run_id: Option<String>,
+
         /// Override path to the `axon-vm` binary (default: sibling of this
         /// executable). Only consulted when `--quorum-dir` is given.
         #[arg(long, value_name = "PATH")]
@@ -780,6 +787,7 @@ fn dispatch(command: Command) {
             json,
             quorum_dir,
             quorum_n,
+            quorum_run_id,
             gates,
             allow_missing_gates,
             axon_vm_bin,
@@ -790,6 +798,7 @@ fn dispatch(command: Command) {
             json,
             quorum_dir,
             quorum_n,
+            quorum_run_id,
             axon_vm_bin,
             gates,
             allow_missing_gates,
@@ -5402,6 +5411,7 @@ fn cmd_deploy(
     json_flag: bool,
     quorum_dir: Option<PathBuf>,
     quorum_n: Option<usize>,
+    quorum_run_id: Option<String>,
     axon_vm_bin: Option<PathBuf>,
     gates_file: Option<PathBuf>,
     allow_missing_gates: bool,
@@ -5657,7 +5667,15 @@ fn cmd_deploy(
                     risk_level_name(risk)
                 );
             } else {
-                match run_quorum_gate(dir, quorum_n, &axon_vm_bin) {
+                let Some(run_id) = quorum_run_id.as_deref() else {
+                    eprintln!(
+                        "error: --quorum-dir requires --quorum-run-id (T49): without it the \
+                         gate counts every .vote in the directory, so approvals gathered for \
+                         another proposal would authorize this deploy"
+                    );
+                    process::exit(2);
+                };
+                match run_quorum_gate(dir, quorum_n, run_id, &axon_vm_bin) {
                     Ok((quorum_met, exit_code, body)) => {
                         quorum_json = Some(body);
                         stages_run.push("quorum".to_string());
@@ -5790,6 +5808,7 @@ fn cmd_deploy(
 fn run_quorum_gate(
     quorum_dir: &Path,
     quorum_n: Option<usize>,
+    run_id: &str,
     axon_vm_bin_override: &Option<PathBuf>,
 ) -> Result<(bool, i32, String), String> {
     let axon_vm_bin = match axon_vm_bin_override {
@@ -5826,6 +5845,8 @@ fn run_quorum_gate(
         .arg(quorum_dir)
         .arg("--n")
         .arg(n.to_string())
+        .arg("--run-id")
+        .arg(run_id)
         .arg("--json")
         .output()
         .map_err(|e| format!("failed to spawn {}: {e}", axon_vm_bin.display()))?;
