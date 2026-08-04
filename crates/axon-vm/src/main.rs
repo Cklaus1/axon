@@ -108,11 +108,20 @@ enum Cmd {
 
         /// Skip kernel attestation before boot (dev/CI mode only — NOT for production).
         ///
-        /// WARNING: disables the mandatory R26 attestation gate. Only use for local
-        /// development or when AXON_CI_NO_KVM=1 is unavailable. In production, kernel
-        /// attestation is always mandatory before any VM boot.
+        /// WARNING: disables the mandatory R26 attestation gate, and is the ONLY way
+        /// to disable it — no environment variable can. It prints a WARNING on every
+        /// run. In production, kernel attestation is mandatory before any VM boot.
         #[arg(long)]
         no_attest: bool,
+
+        /// Expected kernel SHA-256 digest (64 hex chars), supplied by the operator.
+        ///
+        /// Takes precedence over the on-disk baseline in `~/.axon/kernel_baseline.sha256`,
+        /// which is a user-writable file an attacker who can swap the kernel can also
+        /// delete. A mismatch exits 10. This is the strongest form of the R26 gate:
+        /// the expected value comes from outside the machine being attested.
+        #[arg(long)]
+        expect_digest: Option<String>,
 
         /// R31: verify the full host safety stack before booting.
         /// Measures kernel + axon-os + axon-audit + monitor and gates boot on
@@ -232,6 +241,20 @@ enum Cmd {
         /// If provided, verify_extended is called and a mismatch exits 10.
         #[arg(long)]
         verify_axtcb1_ext: Option<String>,
+
+        /// Record this kernel's digest as the trusted boot baseline
+        /// (`~/.axon/kernel_baseline.sha256`), which `axon-vm run` then requires.
+        ///
+        /// This is a deliberate operator action: `run` never establishes a baseline
+        /// on its own, so blessing a kernel is always something a human did, and is
+        /// refused for a mock/absent kernel. Overwriting an existing pin requires
+        /// --repin, so a silent re-baseline cannot happen by accident.
+        #[arg(long)]
+        pin_baseline: bool,
+
+        /// Allow --pin-baseline to overwrite an existing baseline with a different digest.
+        #[arg(long)]
+        repin: bool,
     },
 }
 
@@ -586,11 +609,12 @@ fn main() {
             vsock_port,
             json,
             no_attest,
+            expect_digest,
             extended_tcb,
             quorum,
             quorum_dir,
             chain_stamp,
-        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, extended_tcb, quorum, quorum_dir, chain_stamp),
+        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, expect_digest, extended_tcb, quorum, quorum_dir, chain_stamp),
         Cmd::Attest {
             kernel,
             policy,
@@ -602,8 +626,11 @@ fn main() {
             axon_os,
             axon_audit,
             verify_axtcb1_ext,
+            pin_baseline,
+            repin,
         } => cmd_attest(kernel, policy, run_prog, verify_digest, nonce, verify_axtcb1,
-                        extended_tcb, axon_os, axon_audit, verify_axtcb1_ext),
+                        extended_tcb, axon_os, axon_audit, verify_axtcb1_ext,
+                        pin_baseline, repin),
         Cmd::Principal { cmd } => match cmd {
             PrincipalCmd::Add {
                 name,
@@ -659,8 +686,27 @@ fn cmd_attest(
     axon_os_override: Option<PathBuf>,
     axon_audit_override: Option<PathBuf>,
     verify_axtcb1_ext: Option<String>,
+    pin_baseline: bool,
+    repin: bool,
 ) {
     let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
+
+    // Pinning a boot baseline requires a REAL kernel image. In mock mode the
+    // measurement is of synthetic bytes, so pinning it would bless something that
+    // never boots — worse, it would satisfy the run gate with a fiction.
+    if pin_baseline && !kernel.exists() {
+        eprintln!(
+            "axon-vm attest: --pin-baseline requires a real kernel image; not found: {}",
+            kernel.display()
+        );
+        process::exit(2);
+    }
+    if pin_baseline && ci_no_kvm {
+        eprintln!(
+            "axon-vm attest: --pin-baseline refuses to pin a mock measurement (AXON_CI_NO_KVM=1)"
+        );
+        process::exit(2);
+    }
 
     // Measure the kernel. In CI/mock mode, use synthetic bytes when the real
     // kernel image is unavailable (no hardware, no build yet).
@@ -694,6 +740,41 @@ fn cmd_attest(
             }
         }
     };
+
+    // --pin-baseline: record this digest as the trusted boot baseline. Done here,
+    // in an explicit operator command, precisely so that `run` never has to.
+    if pin_baseline {
+        let digest_hex = hex::encode(measurement.digest);
+        let baseline_path = kernel_baseline_path();
+        if let Ok(existing) = fs::read_to_string(&baseline_path) {
+            let existing = existing.trim().to_string();
+            if existing != digest_hex && !repin {
+                eprintln!("axon-vm attest: refusing to overwrite an existing baseline");
+                eprintln!("  existing: {existing}");
+                eprintln!("  measured: {digest_hex}");
+                eprintln!("  pass --repin if this kernel change is intentional");
+                process::exit(10);
+            }
+        }
+        if let Some(parent) = baseline_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!("axon-vm attest: cannot create {}: {e}", parent.display());
+                process::exit(2);
+            }
+        }
+        if let Err(e) = fs::write(&baseline_path, &digest_hex) {
+            eprintln!(
+                "axon-vm attest: cannot write {}: {e}",
+                baseline_path.display()
+            );
+            process::exit(2);
+        }
+        eprintln!(
+            "[axon-vm] baseline pinned: {} → {}",
+            &digest_hex[..16],
+            baseline_path.display()
+        );
+    }
 
     // Generate a software-TPM ephemeral key (deterministic per-process in CI,
     // fresh per-invocation in production via process id + start time).
@@ -842,6 +923,7 @@ fn cmd_run(
     vsock_port: u32,
     json_out: bool,
     no_attest: bool,
+    expect_digest: Option<String>,
     extended_tcb: bool,
     quorum: Option<usize>,
     quorum_dir: Option<PathBuf>,
@@ -940,10 +1022,11 @@ fn cmd_run(
     };
 
     // R26: mandatory kernel attestation before any VM boot.
-    // Measure the kernel and verify it against the stored baseline.
-    // Exits 10 on attestation failure (tampered kernel or baseline mismatch).
-    // Use --no-attest or AXON_CI_NO_KVM=1 to bypass in dev/CI environments only.
-    if let Err(e) = measure_and_attest(&kernel_path, no_attest) {
+    // Measure the kernel and verify it against a PINNED expected digest —
+    // --expect-digest, else ~/.axon/kernel_baseline.sha256. Exits 10 on mismatch
+    // AND on no pin at all (no trust-on-first-use). --no-attest is the only
+    // bypass; no environment variable can disable this gate.
+    if let Err(e) = measure_and_attest(&kernel_path, no_attest, expect_digest.as_deref()) {
         if json_out {
             let out = serde_json::json!({
                 "schema": "axon-vm-run/1",
@@ -2269,23 +2352,36 @@ fn sha256_file(path: &Path) -> String {
 
 // ── R26: kernel attestation gate ─────────────────────────────────────────────
 
-/// Measure the kernel at `kernel_path` and verify it against the stored baseline
-/// in `~/.axon/kernel_baseline.sha256`.
+/// Path of the on-disk kernel baseline pin (`~/.axon/kernel_baseline.sha256`).
+fn kernel_baseline_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(format!("{}/.axon/kernel_baseline.sha256", home))
+}
+
+/// Measure the kernel at `kernel_path` and verify it against a PINNED expected
+/// digest — either `expect_digest` (operator-supplied, strongest) or the stored
+/// baseline in `~/.axon/kernel_baseline.sha256`.
 ///
-/// - First run: records the kernel's SHA-256 digest as the trusted baseline.
-/// - Subsequent runs: compares the current digest against the baseline; a mismatch
-///   returns `Err` and the caller exits 10 (kernel tampered / wrong image).
+/// - Mismatch: returns `Err`; the caller exits 10 (kernel tampered / wrong image).
+/// - **No pin at all: also a refusal.** There is deliberately no trust-on-first-use
+///   here. TOFU against a user-writable file is not a gate: an attacker who can
+///   swap the kernel can also `rm` the baseline, and the next boot would silently
+///   bless the tampered image as the new baseline (P7-KRN-05). Establish a
+///   baseline explicitly with `axon-vm attest --kernel <path> --pin-baseline`.
 /// - `no_attest = true`: prints a WARNING and short-circuits to `Ok` (dev mode).
-/// - `AXON_CI_NO_KVM=1`: mock mode for CI pipelines without KVM, returns `Ok`.
+///   This is the ONLY bypass. `AXON_CI_NO_KVM=1` used to disable the gate here as
+///   well — an ambient inherited environment variable silently turning off the
+///   TCB check on a production host — and no longer does.
 ///
 /// Uses `axon_attest::measure_kernel` from the R26 attestation crate, so the
 /// digest is byte-identical with what `axon-vm attest` records.
-fn measure_and_attest(kernel_path: &Path, no_attest: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let baseline_path = {
-        let home = env::var("HOME").unwrap_or_default();
-        PathBuf::from(format!("{}/.axon/kernel_baseline.sha256", home))
-    };
-    measure_and_attest_inner(kernel_path, no_attest, &baseline_path)
+fn measure_and_attest(
+    kernel_path: &Path,
+    no_attest: bool,
+    expect_digest: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let baseline_path = kernel_baseline_path();
+    measure_and_attest_inner(kernel_path, no_attest, expect_digest, &baseline_path)
 }
 
 /// Inner implementation of `measure_and_attest`, parameterised over the baseline
@@ -2293,17 +2389,11 @@ fn measure_and_attest(kernel_path: &Path, no_attest: bool) -> Result<(), Box<dyn
 fn measure_and_attest_inner(
     kernel_path: &Path,
     no_attest: bool,
+    expect_digest: Option<&str>,
     baseline_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if no_attest {
         eprintln!("[axon-vm] WARNING: --no-attest: skipping attestation (dev mode only)");
-        return Ok(());
-    }
-
-    // CI without KVM: bypass attestation so the pipeline runs end-to-end without
-    // real hardware (same AXON_CI_NO_KVM=1 gate as cmd_attest).
-    if env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false) {
-        eprintln!("[axon-vm] attestation: mock mode (AXON_CI_NO_KVM=1)");
         return Ok(());
     }
 
@@ -2316,26 +2406,43 @@ fn measure_and_attest_inner(
     let measurement = measure_kernel(kernel_path)?;
     let digest_hex = hex::encode(measurement.digest);
 
-    if let Ok(expected) = fs::read_to_string(baseline_path) {
-        let expected = expected.trim();
-        if expected != digest_hex {
-            eprintln!("[axon-vm] ATTESTATION FAILED: kernel digest mismatch");
-            eprintln!("[axon-vm]   expected: {}", expected);
-            eprintln!("[axon-vm]   got:      {}", digest_hex);
-            return Err("attestation failed: kernel tampered".into());
-        }
-        eprintln!("[axon-vm] attestation OK: digest {}", &digest_hex[..16]);
-    } else {
-        // First run: establish baseline.
-        if let Some(parent) = baseline_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(baseline_path, &digest_hex)?;
-        eprintln!(
-            "[axon-vm] attestation: baseline established ({})",
-            &digest_hex[..16]
-        );
+    // An operator-supplied pin wins over the on-disk baseline: it does not depend
+    // on a file the attacker can reach.
+    let (expected, source) = match expect_digest {
+        Some(d) => (d.trim().to_string(), "--expect-digest"),
+        None => match fs::read_to_string(baseline_path) {
+            Ok(b) => (b.trim().to_string(), "baseline"),
+            Err(_) => {
+                eprintln!("[axon-vm] ATTESTATION FAILED: no pinned kernel baseline");
+                eprintln!("[axon-vm]   measured: {digest_hex}");
+                eprintln!(
+                    "[axon-vm]   expected: (none — {} is absent)",
+                    baseline_path.display()
+                );
+                eprintln!(
+                    "[axon-vm]   pin it explicitly:  axon-vm attest --kernel {} --pin-baseline",
+                    kernel_path.display()
+                );
+                eprintln!("[axon-vm]   or pass:            --expect-digest <sha256>");
+                eprintln!("[axon-vm]   or, for dev only:   --no-attest");
+                return Err(
+                    "attestation failed: no pinned baseline (refusing to trust on first use)"
+                        .into(),
+                );
+            }
+        },
+    };
+
+    if expected != digest_hex {
+        eprintln!("[axon-vm] ATTESTATION FAILED: kernel digest mismatch");
+        eprintln!("[axon-vm]   expected: {expected} ({source})");
+        eprintln!("[axon-vm]   got:      {digest_hex}");
+        return Err("attestation failed: kernel tampered".into());
     }
+    eprintln!(
+        "[axon-vm] attestation OK: digest {} ({source})",
+        &digest_hex[..16]
+    );
 
     Ok(())
 }
@@ -2586,7 +2693,7 @@ mod tests {
         std::fs::write(&kernel_path, b"TAMPERED-KERNEL-DIFFERENT-CONTENT!!").unwrap();
 
         // Attestation must fail.
-        let result = measure_and_attest_inner(&kernel_path, false, &baseline_path);
+        let result = measure_and_attest_inner(&kernel_path, false, None, &baseline_path);
         assert!(result.is_err(), "tampered kernel must fail attestation");
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -2605,26 +2712,144 @@ mod tests {
         let result = measure_and_attest_inner(
             Path::new("/nonexistent/axon-vm-test-kernel-no-attest"),
             true, // no_attest = true
+            None,
             Path::new("/nonexistent/axon-vm-test-baseline-no-attest"),
         );
         assert!(result.is_ok(), "--no-attest must skip all attestation checks");
     }
 
-    /// AXON_CI_NO_KVM=1 returns Ok even with no kernel file present.
+    /// P7-KRN-05: `AXON_CI_NO_KVM=1` must NOT bypass the boot attestation gate.
+    ///
+    /// It used to. An ordinary inherited environment variable — not a flag, not
+    /// anything the operator has to type at the boot site — short-circuited the
+    /// gate to Ok on any host. `--no-attest` is now the only bypass, and it warns.
     #[test]
-    fn test_attest_ci_mock_mode() {
-        // SAFETY: env mutation is safe here — no other test reads AXON_CI_NO_KVM
-        // in the measure_and_attest_inner path, and Rust test threads do not share
-        // env state across processes. If flaky under parallel test execution, run
-        // with RUST_TEST_THREADS=1.
-        unsafe { std::env::set_var("AXON_CI_NO_KVM", "1"); }
-        let result = measure_and_attest_inner(
-            Path::new("/nonexistent/axon-vm-test-kernel-ci"),
-            false, // no_attest = false
-            Path::new("/nonexistent/axon-vm-test-baseline-ci"),
+    fn ci_env_var_cannot_bypass_the_boot_attestation_gate() {
+        let dir = std::env::temp_dir();
+        let id = std::process::id();
+        let kernel_path = dir.join(format!("axon-vm-ci-bypass-kernel-{id}.bin"));
+        let baseline_path = dir.join(format!("axon-vm-ci-bypass-baseline-{id}.sha256"));
+
+        let genuine = b"genuine-kernel-for-ci-bypass-test";
+        std::fs::write(&kernel_path, genuine).unwrap();
+        std::fs::write(
+            &baseline_path,
+            hex::encode(measure_kernel_bytes(genuine).digest),
+        )
+        .unwrap();
+        std::fs::write(&kernel_path, b"TAMPERED-under-AXON_CI_NO_KVM").unwrap();
+
+        // SAFETY: env mutation in a test. Scoped tightly and removed immediately;
+        // run with RUST_TEST_THREADS=1 if this ever proves flaky.
+        unsafe {
+            std::env::set_var("AXON_CI_NO_KVM", "1");
+        }
+        let result = measure_and_attest_inner(&kernel_path, false, None, &baseline_path);
+        unsafe {
+            std::env::remove_var("AXON_CI_NO_KVM");
+        }
+
+        assert!(
+            result.is_err(),
+            "AXON_CI_NO_KVM=1 must not disable the R26 gate — a tampered kernel booted"
         );
-        unsafe { std::env::remove_var("AXON_CI_NO_KVM"); }
-        assert!(result.is_ok(), "AXON_CI_NO_KVM=1 must bypass attestation (CI mock mode)");
+
+        let _ = std::fs::remove_file(&kernel_path);
+        let _ = std::fs::remove_file(&baseline_path);
+    }
+
+    /// P7-KRN-05: a MISSING baseline is a refusal, not trust-on-first-use.
+    ///
+    /// The baseline lives in a predictable, user-writable file. Under TOFU, an
+    /// attacker who could swap the kernel could also `rm` the baseline, and the
+    /// next boot would print "baseline established" and run the tampered image.
+    #[test]
+    fn missing_baseline_refuses_rather_than_trusting_on_first_use() {
+        let dir = std::env::temp_dir();
+        let id = std::process::id();
+        let kernel_path = dir.join(format!("axon-vm-tofu-kernel-{id}.bin"));
+        let baseline_path = dir.join(format!("axon-vm-tofu-baseline-{id}.sha256"));
+        let _ = std::fs::remove_file(&baseline_path);
+
+        std::fs::write(&kernel_path, b"unknown-kernel-never-blessed-by-anyone").unwrap();
+
+        let result = measure_and_attest_inner(&kernel_path, false, None, &baseline_path);
+        assert!(result.is_err(), "an unpinned kernel must not boot");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("no pinned baseline"),
+            "error must name the missing pin: {msg}"
+        );
+        assert!(
+            !baseline_path.exists(),
+            "the run path must never establish a baseline — that is `attest --pin-baseline`'s job"
+        );
+
+        let _ = std::fs::remove_file(&kernel_path);
+    }
+
+    /// An operator-supplied `--expect-digest` pins the gate without depending on
+    /// the on-disk baseline file at all, and still catches a tampered kernel.
+    #[test]
+    fn expect_digest_pins_the_gate_without_the_baseline_file() {
+        let dir = std::env::temp_dir();
+        let id = std::process::id();
+        let kernel_path = dir.join(format!("axon-vm-pin-kernel-{id}.bin"));
+        let absent_baseline = dir.join(format!("axon-vm-pin-absent-{id}.sha256"));
+        let _ = std::fs::remove_file(&absent_baseline);
+
+        let genuine = b"genuine-kernel-for-expect-digest-test";
+        std::fs::write(&kernel_path, genuine).unwrap();
+        let good = hex::encode(measure_kernel_bytes(genuine).digest);
+
+        // Matching pin: boots, with no baseline file anywhere.
+        assert!(
+            measure_and_attest_inner(&kernel_path, false, Some(&good), &absent_baseline).is_ok(),
+            "a matching --expect-digest must satisfy the gate on its own"
+        );
+
+        // Tamper: the same pin now refuses.
+        std::fs::write(&kernel_path, b"TAMPERED-after-pinning").unwrap();
+        let result = measure_and_attest_inner(&kernel_path, false, Some(&good), &absent_baseline);
+        assert!(
+            result.is_err(),
+            "--expect-digest must catch a tampered kernel"
+        );
+
+        let _ = std::fs::remove_file(&kernel_path);
+    }
+
+    /// `--expect-digest` overrides a baseline file that disagrees with it — the
+    /// operator-supplied pin is the authority, not the file on the box.
+    #[test]
+    fn expect_digest_outranks_a_stale_baseline_file() {
+        let dir = std::env::temp_dir();
+        let id = std::process::id();
+        let kernel_path = dir.join(format!("axon-vm-outrank-kernel-{id}.bin"));
+        let baseline_path = dir.join(format!("axon-vm-outrank-baseline-{id}.sha256"));
+
+        let genuine = b"genuine-kernel-for-outrank-test";
+        std::fs::write(&kernel_path, genuine).unwrap();
+        let good = hex::encode(measure_kernel_bytes(genuine).digest);
+
+        // A baseline file blessing something else entirely (attacker-planted).
+        std::fs::write(
+            &baseline_path,
+            hex::encode(measure_kernel_bytes(b"attacker-choice").digest),
+        )
+        .unwrap();
+
+        assert!(
+            measure_and_attest_inner(&kernel_path, false, Some(&good), &baseline_path).is_ok(),
+            "the operator pin must win over a disagreeing baseline file"
+        );
+        assert!(
+            measure_and_attest_inner(&kernel_path, false, None, &baseline_path).is_err(),
+            "without the pin, the planted baseline must still fail against the real kernel"
+        );
+
+        let _ = std::fs::remove_file(&kernel_path);
+        let _ = std::fs::remove_file(&baseline_path);
     }
 
     // ── R31: extended TCB wiring tests ─────────────────────────────────────────

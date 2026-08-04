@@ -869,3 +869,36 @@ them so, which is the most a local fix can do.
 
 A characterization test (`unpinned_verify_cannot_detect_a_truncated_tail`) pins
 the limitation so it cannot silently regress or be silently "fixed" unnoticed.
+
+---
+
+## O025 — `axon-vm run` has no boot timeout; a halted guest hangs the host command forever
+
+Found while re-running `scripts/axon_kernel_gate.sh` after T32. **Not caused by
+T32** — reproduces identically with `--no-attest`, which is byte-for-byte the
+pre-existing path:
+
+```
+timeout 40 axon-vm run examples/flagship/agent_task.ax \
+  --kernel dist/guest/vmlinuz --initrd dist/guest/initramfs.cpio.gz --no-attest
+  → [guest] [axon-kernel] K5: … — halting
+  → exit 124 (killed by the external `timeout`, 40s)
+```
+
+The guest kernel reaches its intended end state and halts, but Firecracker does
+not exit and `axon-vm` waits on it unbounded. Layer 3 of the kernel gate is
+therefore RED on this host (`good_agent.ax exited 124 (expected 0)`,
+`evil_agent.ax exited 124 (expected 8)`) — it is only survivable at all because
+the gate wraps each run in `timeout 30`.
+
+Two separable defects:
+1. **No timeout in `axon-vm run` itself.** Any guest that fails to shut down
+   hangs the caller with no diagnostic. A `--boot-timeout` (with a default) that
+   reaps the Firecracker child and reports a distinct outcome is the fix.
+2. **The guest kernel halts instead of shutting the VM down** — it should
+   trigger a Firecracker exit (reboot=k / triple fault path) so the host sees a
+   real exit code rather than silence.
+
+Related to `P7-KRN-04` (Firecracker reporting `ok:true` on triple-fault), which
+is the same seam read from the other side: the host cannot currently distinguish
+"guest finished", "guest died", and "guest is wedged".

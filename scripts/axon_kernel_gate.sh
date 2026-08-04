@@ -107,11 +107,20 @@ elif ! command -v firecracker &>/dev/null; then
 elif [[ ! -f "$KERNEL" ]] || [[ ! -f "$INITRD" ]]; then
     echo "  [skip] guest image missing — run ./scripts/build-guest-image.sh first"
 else
+    # R26: `axon-vm run` requires a PINNED kernel baseline — it will not
+    # trust-on-first-use (P7-KRN-05). Pin the gate's own freshly-built kernel
+    # explicitly, exactly as an operator would. `--expect-digest` on each run
+    # would work too, but pinning once exercises the intended flow.
+    KERNEL_DIGEST="$(sha256sum "$KERNEL" | cut -d' ' -f1)"
+    "$AXON_VM" attest --kernel "$KERNEL" --pin-baseline --repin >/dev/null 2>&1 \
+        || echo "  [warn] could not pin kernel baseline; runs will use --expect-digest"
+
     # good_agent: expect exit 0
     if [[ -f "$GOOD" ]]; then
         EXIT_CODE=0
         timeout 30 "$AXON_VM" run "$GOOD" \
             --kernel "$KERNEL" --initrd "$INITRD" \
+            --expect-digest "$KERNEL_DIGEST" \
             --json > /tmp/axon_gate_good.json 2>&1 || EXIT_CODE=$?
         ACTUAL=$(python3 -c "import json; d=json.load(open('/tmp/axon_gate_good.json')); print(d.get('exit_code',d.get('ok')))" 2>/dev/null || echo "$EXIT_CODE")
         if [[ "$ACTUAL" == "0" ]] || [[ "$ACTUAL" == "True" ]]; then
@@ -126,6 +135,7 @@ else
         EXIT_CODE=0
         timeout 30 "$AXON_VM" run "$EVIL" \
             --kernel "$KERNEL" --initrd "$INITRD" \
+            --expect-digest "$KERNEL_DIGEST" \
             --json > /tmp/axon_gate_evil.json 2>&1 || EXIT_CODE=$?
         ACTUAL=$(python3 -c "import json; d=json.load(open('/tmp/axon_gate_evil.json')); print(d.get('exit_code'))" 2>/dev/null || echo "$EXIT_CODE")
         if [[ "$ACTUAL" == "8" ]]; then

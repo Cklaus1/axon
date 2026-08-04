@@ -88,6 +88,31 @@ pin has to come from outside, so **nothing yet stores one**: where the tip shoul
 live (R33 quorum state / R28 ledger / external attestation) is on the
 needs-human list, not something a local fix can close.
 
+### Boot attestation — the R26 gate was not actually mandatory
+
+| task | commit | what |
+|---|---|---|
+| **T32** | `—` | `axon-vm run`'s "mandatory kernel attestation" had two bypasses, both reproduced against the built binary against a tampered kernel. **(a) Trust-on-first-use.** A missing `~/.axon/kernel_baseline.sha256` made the CURRENT kernel the baseline — `attestation: baseline established`, exit 0, tampered image booted. The file is user-writable at a predictable path, so anyone who can swap the kernel can `rm` the pin. **(b) An env var.** `AXON_CI_NO_KVM=1` — inherited, not a flag, not typed at the boot site — short-circuited the gate to `Ok` on any host, including with a correct baseline present (P7-KRN-05 / P4-OS-16) |
+
+Fixed by making a missing pin a REFUSAL (exit 10, `no pinned baseline`), removing
+the env bypass entirely so `--no-attest` (which warns) is the only one, adding
+`attest --pin-baseline` as the explicit operator action that blesses a kernel
+(refused for a mock/absent kernel; overwriting needs `--repin`), and adding
+`run --expect-digest <sha256>` so the pin can come from off the box entirely and
+outrank a planted baseline file. `REQUIREMENTS.md:72` claimed "mandatory kernel
+attestation before every boot" throughout; that row now records when it became
+true.
+
+The pattern from T29/T31 again, from a third angle: **the bypass was in the
+same function as the check.** Both `test_attest_ci_mock_mode` and the TOFU branch
+were tested — as features, asserting they returned `Ok`. A test can pin a hole
+open just as easily as it can catch one.
+
+`scripts/axon_kernel_gate.sh` Layer 3 now pins the kernel it just built rather
+than relying on TOFU. That gate is red on this host for an unrelated,
+pre-existing reason (O025: a halted guest hangs `axon-vm run` forever — same
+under `--no-attest`).
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -106,7 +131,7 @@ needs-human list, not something a local fix can close.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Nineteen fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.
