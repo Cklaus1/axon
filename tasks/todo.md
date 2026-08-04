@@ -244,6 +244,48 @@ it lists every skipped harness from `target/harness-skips.log`, states plainly
 that I-2 was not verified, and names the three commands that would verify it.
 Making it fatal is the existing `AXON_HARNESS_STRICT=1` needs-human item.
 
+### Closure ABI miscompilation — and the build cache that hid the fix
+
+| task | commit | what |
+|---|---|---|
+| **T37** | `—` | Closures whose declared param/return type isn't plain i64 were **miscompiled silently**, exit 0, no diagnostic, from a compiler that documents "refuse, never miscompile" (I-2). `\|x: f64\| x * 2.0` applied to 3.0 → interp `6`, native `4618441417868443648` (the i64 reinterpretation of 6.0's bits). `\|x: i32\| min_i32(x, 0-5)` applied to -3 → interp `-5`, native `4294967291` (F061) |
+| **T38** | `—` | `axon build`'s incremental cache served the PREVIOUS compiler's object for unchanged source, so a real codegen fix silently did not take effect. `axon --version` reported `0.1.0 (0718794)` with two modified files in the tree |
+
+**The finding's diagnosis of the i32 half was wrong, and the truth is worse.** It
+blamed a zero-extend where a sign-extend belonged. That was real and is fixed —
+but the actual defect is that the direct-call site built the indirect-call
+signature from the **argument's** LLVM type, emitting
+`call i64 %cfp(ptr, i64 -3)` against a function declared `(ptr, i32)`. That is
+UB, not a wrong extension, and it showed: the same lambda printed `-5` or
+`4294967291` depending purely on whether an unrelated f64 lambda had been
+emitted earlier in the same program. A closure value is a bare
+`{fn_ptr, env_ptr}` pair with no type tag, so the fix records each
+`let f = |…| …` binding's declared signature and uses it to coerce arguments and
+convert the i64-ABI result back.
+
+**The new harness found a third divergence the finding never mentioned:** a
+bool-returning closure printed `1 0` natively where the interpreter prints
+`true false`, because the i64-ABI result reached `to_str` as an integer. Fixed
+by narrowing back to i1 at the call site. Writing the test found more than the
+report did.
+
+**T38 is the one that matters most.** I fixed T37, rebuilt, re-ran the repro, and
+got the old wrong answer — twice. The fix was in the `--emit-llvm` output and
+absent from the linked binary. `build.rs` watched only `.git/HEAD` and
+`.git/index`, and editing a tracked file dirties the tree without touching the
+index, so the embedded sha never refreshed and the cache key was identical
+across a semantically different compiler. For the window this existed, **any
+codegen work verified without committing first could have been checked against a
+stale artifact — including the parity harnesses**, which build from the working
+tree. Logged as O029 with three follow-ups: a gate check that `--version`
+reports `-dirty` iff the tree is dirty, whether parity harnesses should force
+`--no-cache`, and whether attestation/`.axmeta`/R34 trust `VERSION` the same way
+(a stale identity in an attestation record is worse than a stale object).
+
+Gated by the new `scripts/closure_ret_parity.sh` (9 cases, compares STDOUT not
+just exit codes, and includes BOTH lambda emission orders since the original bug
+depended on order). Parity suite: 45 passed / 5 skipped / 0 failed of 50.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -262,7 +304,7 @@ Making it fatal is the existing `AXON_HARNESS_STRICT=1` needs-human item.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Twenty-six fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Twenty-eight fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

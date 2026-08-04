@@ -1,7 +1,7 @@
 # Step 1 — adversarial triage of the 20 CRITICAL findings
 
 4 agents × 5 findings, each instructed to **refute by default**. Per-finding
-evidence in `verdict-1.md` … `verdict-4.md`. Source of record: `.archive/findings.json`.
+evidence in `verdict-1.md` … `verdict-4.md`. Source of record: `raw/findings.json` (rescued 2026-08-04 from the gitignored `.archive/`, where it was not under version control).
 
 ## Outcome
 

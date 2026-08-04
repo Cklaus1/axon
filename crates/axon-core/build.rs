@@ -15,6 +15,17 @@ fn main() {
     // in a tarball, and a missing rerun-if path is simply ignored by cargo.
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/index");
+
+    // AUDIT T38. Editing a tracked source file makes the working tree DIRTY
+    // without touching .git/index (that only moves on `git add`), so with only
+    // the two paths above this script never re-ran and `AXON_GIT_SHA` kept
+    // reporting the last CLEAN sha. `axon --version` then claimed a build
+    // identity it did not have — and, far worse, `axon build`'s incremental
+    // cache is keyed on that string, so a recompiled compiler with different
+    // codegen served the PREVIOUS compiler's cached object. A real codegen fix
+    // silently did not take effect until the .ax source happened to change.
+    // Watching src/ costs two `git` invocations per source edit.
+    println!("cargo:rerun-if-changed=src");
 }
 
 /// `<short-sha>` or `<short-sha>-dirty`, or `unknown` if git isn't available.

@@ -85,7 +85,7 @@ the finding rate is no longer the bottleneck: 49 unresolved criticals are.
 
 Before building a task DAG, all 20 code-side CRITICAL findings (P4–P7) were
 re-checked by 4 agents instructed to **refute by default**. Full evidence:
-`.archive/triage/verdict-{1..4}.md`; summary `.archive/triage/SUMMARY.md`.
+`governance/reviews/2026-08-01-triage/verdict-{1..4}.md`; summary `SUMMARY.md` there (was cited under the gitignored `.archive/`, rescued 2026-08-04).
 **Nothing below is deleted — every finding keeps its section; only its grade moves.**
 
 | verdict | n | ids |
@@ -1088,7 +1088,7 @@ Both the note and its citation are wrong:
   $ ls BUILD_DIAGNOSIS.md
   ls: cannot access 'BUILD_DIAGNOSIS.md': No such file or directory
 
-It was archived to `.archive/superseded-2026-06/` in commit 6cd1c18 ("repo hygiene ... archive superseded docs"), which the .gitignore excludes from the clone. So the CLI points at a file the user cannot open.
+It was archived to `.archive/superseded-2026-06/` in commit 6cd1c18 ("repo hygiene ... archive superseded docs"), which the .gitignore lists — but those seven files were already TRACKED, and .gitignore does not affect tracked files, so they are in HEAD and present in every clone (`git ls-tree -r HEAD .archive/superseded-2026-06/`). Correction 2026-08-04: the "user cannot open it" conclusion was wrong. The real exposure was the UNtracked remainder of `.archive/` — including `findings.json`, which this audit's own SUMMARY.md cited as its source of record while it sat outside version control; rescued to `governance/reviews/2026-08-01-triage/raw/`.
 
 The claim itself is disproven by the repo's own docs and by measurement. BUILD_RESOLVED.md:20 says the stall was "NOT LLVM codegen (BUILD_DIAGNOSIS.md)"; CLAUDE.md line 48 says codegen "builds in ~3s"; STATUS.md's Build Health table marks native codegen green. I measured it: `cargo build -p axon-core` from scratch = 16.40s, and `axon build examples/hello.ax` = 6.1s wall producing a working binary.
 

@@ -20,7 +20,7 @@ that is the exact class of defect this review found (gates that assert nothing).
 completed after this DAG was first drafted (it had been presumed dead; it was
 not). It returned **338 verdicts**: 261 confirmed, 27 wrong-severity, 39
 duplicate, 11 needs-human. Corrected severities: **27 critical**, 114 high,
-113 medium, 84 low. Raw: `.archive/triage/full-185.json`.
+113 medium, 84 low. Raw: `governance/reviews/2026-08-01-triage/full-185.json`.
 
 This supersedes the narrow 20-critical triage for planning, and it moves the
 plan in **both** directions:

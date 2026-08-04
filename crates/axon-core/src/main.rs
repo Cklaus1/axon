@@ -4535,6 +4535,23 @@ fn run_build_pipeline(
             hasher_input.extend_from_slice(triple.as_bytes());
         }
 
+        // AUDIT T38. Belt-and-braces on top of the `-dirty` fix in build.rs: mix
+        // the COMPILER EXECUTABLE's own identity (path + size + mtime) into the
+        // key, so a rebuilt compiler can never serve the previous compiler's
+        // cached object even if the embedded version string is somehow stale.
+        // The version string is a claim about the build; this is the build.
+        if let Ok(exe) = std::env::current_exe() {
+            hasher_input.extend_from_slice(exe.to_string_lossy().as_bytes());
+            if let Ok(md) = std::fs::metadata(&exe) {
+                hasher_input.extend_from_slice(&md.len().to_le_bytes());
+                if let Ok(mtime) = md.modified() {
+                    if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                        hasher_input.extend_from_slice(&d.as_nanos().to_le_bytes());
+                    }
+                }
+            }
+        }
+
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
 

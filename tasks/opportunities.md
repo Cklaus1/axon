@@ -1005,3 +1005,50 @@ current gateway user), warned about, or left as is? It is the same shape as
 and the two probably want deciding together — both are "no declaration" mapping
 to "no restriction" in a system whose thesis is that declarations are the
 enforcement surface.
+
+---
+
+## O029 — `axon build`'s cache made a codegen fix silently not take effect (fixed as T38, but the class is wider)
+
+Found the hard way: I fixed a real codegen bug (T37/F061), rebuilt the compiler,
+re-ran the repro, and got the OLD wrong answer. Twice. The fix was correct and
+present in `--emit-llvm` output; the linked binary was a **cached object from the
+previous compiler**.
+
+Mechanism: `axon build`'s incremental cache key is
+`SHA256(source-path ‖ source-bytes ‖ triple ‖ VERSION)` where `VERSION` is
+`0.1.0 (<git-short-sha>)`, with `-dirty` appended when the tree is dirty. But
+`build.rs` declared only:
+
+```
+cargo:rerun-if-changed=../../.git/HEAD
+cargo:rerun-if-changed=../../.git/index
+```
+
+Editing a tracked source file makes the tree dirty **without** touching
+`.git/index` (that moves only on `git add`), so the build script never re-ran,
+`AXON_GIT_SHA` kept reporting the last CLEAN sha, and the cache key was
+unchanged across a semantically different compiler. `axon --version` printed
+`0.1.0 (0718794)` with two modified files in the tree.
+
+Fixed both layers: `build.rs` now also watches `src`, and the cache key mixes in
+the compiler executable's own path+size+mtime — the version string is a *claim*
+about the build, the executable *is* the build.
+
+**Why this is worth a follow-up rather than just a fix.** For the window this
+existed, any codegen work done without committing first could be verified
+against a stale artifact. That includes the parity harnesses: they build from
+the working tree, so a harness could compare a stale native binary against a
+fresh interpreter and report PASS. I have no way to tell retroactively which
+past "verified" codegen results were affected — the cache lives in
+`~/.cache/axon/` and is keyed by content, not dated.
+
+Worth considering:
+1. A gate check that `axon --version` reports `-dirty` iff `git status
+   --porcelain` is non-empty. One command, catches the whole class.
+2. Whether the parity harnesses should pass `--no-cache` unconditionally. They
+   are measuring the compiler, and a cache is exactly the wrong thing to have in
+   that loop.
+3. Whether any OTHER build-identity consumer (attestation digests, `.axmeta`,
+   the R34 chain) trusts `VERSION` the same way. A stale identity in an
+   attestation record is a worse failure than a stale object file.

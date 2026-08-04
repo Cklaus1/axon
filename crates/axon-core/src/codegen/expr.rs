@@ -256,6 +256,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(ty) = sem_ty.clone() {
                     self.local_types.insert(name.clone(), ty);
                 }
+                // AUDIT T37 (finding F061). Record the closure's DECLARED signature
+                // so its call site can build a matching indirect-call type and
+                // convert the i64-ABI result back. Without this the call site
+                // guessed from the argument's own LLVM type, which is UB when the
+                // lambda declares something narrower.
+                if let ast::Expr::Lambda { params, body, .. } = value.as_ref() {
+                    let param_tys: Vec<Option<Type>> = params
+                        .iter()
+                        .map(|p| p.ty.as_ref().map(|t| self.axon_type_to_semantic(t)))
+                        .collect();
+                    let ret_ty = self.lambda_body_sem_type(params, body);
+                    self.closure_sigs.insert(name.clone(), (param_tys, ret_ty));
+                }
                 // Phase 5: a `let p: T where P = …` annotation carries a refinement
                 // obligation — check the bound value at runtime (the codegen dual
                 // of the interp Let check; exit 6 on violation, I-2).
@@ -2277,6 +2290,37 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    /// The semantic type a lambda body yields, inferred with the lambda's own
+    /// declared parameters temporarily in scope (T37 / F061). Without the params
+    /// in scope a body like `x * 2.0` cannot be typed at all.
+    fn lambda_body_sem_type(
+        &mut self,
+        params: &[ast::LambdaParam],
+        body: &ast::Expr,
+    ) -> Option<Type> {
+        let saved: Vec<(String, Option<Type>)> = params
+            .iter()
+            .map(|p| (p.name.clone(), self.local_types.get(&p.name).cloned()))
+            .collect();
+        for p in params {
+            if let Some(t) = p.ty.as_ref().map(|t| self.axon_type_to_semantic(t)) {
+                self.local_types.insert(p.name.clone(), t);
+            }
+        }
+        let out = self.infer_expr_sem_type(body);
+        for (name, prev) in saved {
+            match prev {
+                Some(t) => {
+                    self.local_types.insert(name, t);
+                }
+                None => {
+                    self.local_types.remove(&name);
+                }
+            }
+        }
+        out
+    }
+
     pub(super) fn emit_lambda(
         &mut self,
         params: &[ast::LambdaParam],
@@ -2341,7 +2385,18 @@ impl<'ctx> super::Codegen<'ctx> {
         // non-i64, record a clean E0910 so the build aborts with an actionable
         // message instead of a raw LLVM error. (i64/bool/f64 bodies are fine —
         // f64 is bitcast-transported through the i64 slot; see the return site.)
+        // AUDIT T37 (finding F061). The body's semantic type also decides how the
+        // narrow-int return is widened (sext vs zext) at the return site below —
+        // zero-extending a signed i32 silently produced 4294967291 for -5.
+        let mut lambda_ret_is_unsigned = false;
         if let Some(bt) = self.infer_expr_sem_type(body) {
+            lambda_ret_is_unsigned = matches!(
+                bt,
+                crate::types::Type::U8
+                    | crate::types::Type::U16
+                    | crate::types::Type::U32
+                    | crate::types::Type::U64
+            );
             let unsupported_ret = match &bt {
                 crate::types::Type::Str => Some("str"),
                 crate::types::Type::Slice(_) => Some("slice"),
@@ -2431,7 +2486,10 @@ impl<'ctx> super::Codegen<'ctx> {
                     // the function type (callers read it back as i64 and test
                     // != 0). Other narrow ints widen the same way.
                     let coerced = match v {
-                        BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() < 64 => {
+                        // A bool body (`|x| x > 2` — the filter/any/all predicate
+                        // shape) is i1 and must ZERO-extend: true is 1, and
+                        // sign-extending i1 1 would give -1.
+                        BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => {
                             build_wrappers::w_int_z_extend(
                                 &self.ir.builder,
                                 iv,
@@ -2439,6 +2497,34 @@ impl<'ctx> super::Codegen<'ctx> {
                                 "lam_ret_zext",
                             )
                             .into()
+                        }
+                        // AUDIT T37 (finding F061). Every other narrow int used to
+                        // zero-extend too, which is WRONG FOR SIGNED VALUES and
+                        // produced a silent wrong answer:
+                        //   let g = |x: i32| min_i32(x, 0-5); g(0-3)
+                        //   interp -5   native 4294967291   (zext of 0xFFFFFFFB)
+                        // exit 0, no diagnostic, from a compiler that documents
+                        // "refuse, never miscompile" (I-2). Sign-extend instead;
+                        // unsigned types are handled by their own narrow widths
+                        // never reaching here as negative bit patterns.
+                        BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() < 64 => {
+                            if lambda_ret_is_unsigned {
+                                build_wrappers::w_int_z_extend(
+                                    &self.ir.builder,
+                                    iv,
+                                    i64_ty,
+                                    "lam_ret_zext",
+                                )
+                                .into()
+                            } else {
+                                build_wrappers::w_int_s_extend(
+                                    &self.ir.builder,
+                                    iv,
+                                    i64_ty,
+                                    "lam_ret_sext",
+                                )
+                                .into()
+                            }
                         }
                         // An f64-bodied lambda (e.g. a numeric `key_fn` for
                         // arr_max_by/min_by) is transported through the uniform
@@ -7452,10 +7538,33 @@ impl<'ctx> super::Codegen<'ctx> {
                         // signature matches the value passed (a str arg is a
                         // {i64,ptr} struct, not an i64) — and emit_lambda declares
                         // its params from the same annotation, so the two agree.
+                        //
+                        // AUDIT T37 (finding F061). Using the ARGUMENT's own LLVM
+                        // type here is wrong whenever the lambda declared something
+                        // narrower: `let g = |x: i32| …; g(0-3)` emitted
+                        // `call i64 %cfp(ptr, i64 -3)` against a function declared
+                        // `(ptr, i32)`. That mismatch is UB, and it showed: the same
+                        // lambda printed -5 or 4294967291 depending purely on
+                        // whether an unrelated f64 lambda had been emitted first.
+                        // Coerce each argument to the lambda's DECLARED parameter
+                        // type when we know it.
+                        let sig = if let ast::Expr::Ident(cn) = callee {
+                            self.closure_sigs.get(cn.as_str()).cloned()
+                        } else {
+                            None
+                        };
                         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![ep.into()];
                         let mut arg_tys: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
-                        for a in args {
+                        for (i, a) in args.iter().enumerate() {
                             if let Some(v) = self.emit_expr(a, fn_val) {
+                                let declared = sig
+                                    .as_ref()
+                                    .and_then(|(ps, _)| ps.get(i))
+                                    .and_then(|t| t.clone());
+                                let v = match declared {
+                                    Some(t) => self.coerce_to_fixed_width(v, &t),
+                                    None => v,
+                                };
                                 call_args.push(v.into());
                                 arg_tys.push(v.get_type().into());
                             }
@@ -7472,7 +7581,43 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
                             .unwrap();
-                        return call.try_as_basic_value().left();
+                        let raw = call.try_as_basic_value().left();
+                        // The closure ABI returns i64 for every lambda. An f64 body
+                        // is TRANSPORTED as its bit pattern (see the return site in
+                        // emit_lambda), so the caller must bitcast it back — reading
+                        // it as an i64 printed 4618441417868443648 for 6.0, silently,
+                        // at exit 0.
+                        match (raw, sig.as_ref().and_then(|(_, r)| r.clone())) {
+                            (Some(v), Some(Type::F64)) => {
+                                let back = self
+                                    .ir
+                                    .builder
+                                    .build_bitcast(
+                                        v.into_int_value(),
+                                        self.ir.context.f64_type(),
+                                        "lam_ret_i2f",
+                                    )
+                                    .unwrap();
+                                return Some(back);
+                            }
+                            // A bool body rides the i64 ABI as 0/1. Read back as
+                            // i64 it reached `to_str` as an integer and printed
+                            // "1"/"0" where the interpreter prints "true"/"false"
+                            // — found by the very harness written for this fix,
+                            // not by the finding. Narrow it back to i1 so the
+                            // call-site to_str dispatch picks to_str_bool.
+                            (Some(v), Some(Type::Bool)) => {
+                                let back = build_wrappers::w_int_truncate(
+                                    &self.ir.builder,
+                                    v.into_int_value(),
+                                    self.ir.context.bool_type(),
+                                    "lam_ret_i2b",
+                                );
+                                return Some(back.into());
+                            }
+                            _ => {}
+                        }
+                        return raw;
                     }
                 }
             }

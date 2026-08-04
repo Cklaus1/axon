@@ -1,7 +1,7 @@
 # Step 0 — environment baseline
 
 Recorded verbatim so every later gate compares against **this**, not against
-"100% green". Full log: `.archive/baseline.txt` (2138 lines).
+"100% green". Full log: `tasks/baseline-2026-07-18-full.txt` (2138 lines; rescued 2026-08-04 from the gitignored `.archive/`).
 
 - **Commit:** `20eb218` · branch `governance-audit-2026-07-18`
 - **Command:** `cargo test --workspace` (19 crates)

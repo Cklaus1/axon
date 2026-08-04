@@ -233,6 +233,16 @@ pub struct Codegen<'ctx> {
     fn_return_types: HashMap<String, Type>,
     /// Tracks inferred Axon semantic types for named locals (for match/field-access dispatch).
     local_types: HashMap<String, Type>,
+    /// AUDIT T37 (finding F061): the DECLARED LLVM parameter types and semantic
+    /// return type of each `let f = |…| …` closure binding, keyed by binding name.
+    ///
+    /// A closure value is a bare `{fn_ptr, env_ptr}` pair carrying no type tag, so
+    /// the direct-call site used to build its indirect-call signature from the
+    /// ARGUMENT's LLVM type and read the result back as a raw i64. Both are wrong
+    /// whenever the lambda's declared types are narrower or non-integer, and the
+    /// resulting mismatch is UB — the observed value depended on the order the
+    /// lambdas happened to be emitted in.
+    closure_sigs: HashMap<String, (Vec<Option<Type>>, Option<Type>)>,
     /// Set when inside a function returning `Result<T,E>`; drives canonical union layout.
     current_result_types: Option<(Type, Type)>,
     /// Set when emitting a value whose target type is `Option<T>`; lets a bare
@@ -406,6 +416,7 @@ impl<'ctx> Codegen<'ctx> {
             struct_whole_refines: HashMap::new(),
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
+            closure_sigs: HashMap::new(),
             current_result_types: None,
             current_option_inner: None,
             lambda_counter: 0,
