@@ -675,6 +675,55 @@ Also confirmed already-fixed, no work needed: **P4-INT-04** (`run_suspendable_va
 using a default-stack `scope.spawn`) is the same code as INTERP-H03, closed by
 T16 — it now uses `stack_size_for_depth(resolve_max_depth())`.
 
+### T47 — the tamper-evident record did not cover its own verdict
+
+P6-EXIT-03 (critical). `record::build`/`verify` hash-chain
+`manifest_digest → events → record_digest` and stop. `run_id`, `seed` and —
+most importantly — `verdict` sit **outside** the chain. Executed against a real
+sealed record:
+
+```
+forge verdict Completed{value:3} → Denied{axis:"sandbox"}   ✓ intact, exit 0
+forge seed    42 → 999                                       ✓ intact, exit 0
+forge run_id  "run" → "someone-elses-run"                    ✓ intact, exit 0
+   ...all three with a BYTE-IDENTICAL digest
+tamper any chained event field                               ✗ TAMPERED, exit 11
+```
+
+So the tamper-evident record was tamper-evident for the fields nobody needs to
+forge, and silent on the one it exists to attest. This lands directly on top of
+T44: the verdict that fix just made *correct* was not covered by the hash that
+is supposed to make it *durable*.
+
+A terminal seal now folds `(run_id, seed, canonical_verdict)` into the chain
+before the head, keeping the chain shape (each link still hashes its
+predecessor) and needing no new schema field. The verdict's **payloads** are
+sealed too, not just the discriminant — a denial whose `reason`/`axis` can be
+rewritten is only half-attested.
+
+`verify` **refuses** a pre-seal `axrec1:` record rather than accepting it. An
+attacker chooses which format to present, so accepting the old one is a free
+downgrade back to an unauthenticated verdict; the refusal says exactly that.
+
+Note on my own probing: my first "control" mutated a field name that does not
+exist in the schema, so it changed nothing and appeared to show that event
+tampering *also* went undetected. Re-run against the real field names
+(`action`/`target`/`label`/`caps_used`), every one correctly gave exit 11. The
+finding was right as written and my first reading of it was wrong.
+
+Why the existing `acc_a6_record_tamper_detected` stayed green throughout: it
+only ever mutated an **event** field. Same shape as the recurring class — the
+test next to the hole checks the neighbouring property. The new
+`acc_a6b_…_p6_exit_03` drives the real CLI over the verdict, the verdict's
+value, the seed, the run_id, the `axrec1` downgrade, and — the case that
+matters — a **real denial laundered into a completion** (`overreach.axjob`,
+which the static gate refuses). **Verified to FAIL against the unsealed chain**,
+reproducing `✓ intact` for a forged verdict.
+
+`governance/specs/R21-axon-os-supervisor.md` §4.3 updated: it documented the
+`axrec1` construction, so leaving it would have made the spec the authority for
+the defect.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -693,7 +742,7 @@ T16 — it now uses `stack_size_for_depth(resolve_max_depth())`.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-six fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-seven fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

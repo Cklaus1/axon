@@ -214,7 +214,7 @@ RunRecord {
     seed:            u64,
     events:          Vec<AuditEvent>,
     verdict:         Verdict,
-    record_digest:   String,        // "axrec1:" + the hash-chain head (see §4.3)
+    record_digest:   String,        // "axrec2:" + the sealed hash-chain head (see §4.3)
 }
 AuditEvent {
     seq:       u64,        // 0,1,2,… monotonic
@@ -284,11 +284,22 @@ tests in §7 possible.
 ### 4.3 Record construction & verification (`record::build` / `record::verify`) — Core
 - `build(run_id, manifest, seed, events, verdict)`:
   `manifest_digest = "axsha256:"+sha256(canonical_manifest_bytes)`; fold events into the chain
-  (`prev_hash` of seq 0 = `manifest_digest`); `record_digest = "axrec1:"+head_hash`.
+  (`prev_hash` of seq 0 = `manifest_digest`); then fold a terminal **seal** over
+  `(run_id, seed, canonical_verdict)`; `record_digest = "axrec2:"+seal_hash`.
 - `verify(record) -> Result<(), VerifyMismatch>`: recompute `manifest_digest` is **not** possible
   without the manifest, so `verify` recomputes the **event chain** from the stored events +
-  `manifest_digest` and asserts every `hash` and the final `record_digest` match. Any mutation
-  (changed field, dropped/reordered/inserted event) → `Err(VerifyMismatch{which})`. **Pure, no I/O.**
+  `manifest_digest`, recomputes the seal, and asserts every `hash` and the final `record_digest`
+  match. Any mutation (changed field, dropped/reordered/inserted event, **or a rewritten
+  run_id / seed / verdict**) → `Err(VerifyMismatch{which})`. **Pure, no I/O.**
+- **AUDIT T47 (finding P6-EXIT-03).** The chain originally stopped at the event head
+  (`"axrec1:"`), leaving `run_id`, `seed` and `verdict` **outside** it. Executed against a real
+  sealed record: rewriting the verdict from `Completed{value:3}` to `Denied{axis:"sandbox"}`,
+  the seed from 42 to 999 and the run_id to another run's id still verified `✓ intact` with a
+  byte-identical digest and exit 0 — while tampering any chained *event* field correctly gave
+  exit 11. The record was tamper-evident for the fields nobody needs to forge and silent on the
+  one it exists to attest. `verify` now **refuses** an `axrec1:` record rather than accepting it:
+  an attacker chooses which format to present, so accepting the pre-seal form is a free
+  downgrade back to an unauthenticated verdict.
 
 ### 4.4 Hermetic isolated execution (`AxonCoreRuntime::run_sandboxed`) — the impure seam (A4)
 - The program runs in a **fresh subprocess** invoking the canonical `axon` entrypoint (resolved once,

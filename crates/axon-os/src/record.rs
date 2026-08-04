@@ -121,8 +121,53 @@ fn event_hash(prev: &str, seq: u64, e: &RawEvent) -> String {
     sha256_hex(format!("{prev}{UNIT}{canon}").as_bytes())
 }
 
+/// The canonical encoding of a verdict for the seal (AUDIT T47). Fixed field
+/// order, every payload field included — a verdict whose `reason`/`axis`/value
+/// can be rewritten without breaking the digest is only half-sealed.
+fn canonical_verdict(v: &Verdict) -> String {
+    match v {
+        Verdict::Completed { value } => format!("Completed{UNIT}{value}"),
+        Verdict::Malformed { reason } => format!("Malformed{UNIT}{reason}"),
+        Verdict::Halted { reason } => format!("Halted{UNIT}{reason}"),
+        Verdict::RefineViolation { reason } => format!("RefineViolation{UNIT}{reason}"),
+        Verdict::BudgetExhausted { axis } => format!("BudgetExhausted{UNIT}{axis}"),
+        Verdict::Denied { reason, axis } => format!("Denied{UNIT}{reason}{UNIT}{axis}"),
+        Verdict::ResourceBound { axis, used, cap } => {
+            format!("ResourceBound{UNIT}{axis}{UNIT}{used}{UNIT}{cap}")
+        }
+        Verdict::CoalitionBound {
+            axis,
+            rollup,
+            ceiling,
+        } => format!("CoalitionBound{UNIT}{axis}{UNIT}{rollup}{UNIT}{ceiling}"),
+        Verdict::VerifyMismatch { detail } => format!("VerifyMismatch{UNIT}{detail}"),
+    }
+}
+
+/// The terminal SEAL of the chain (AUDIT T47, finding P6-EXIT-03).
+///
+/// The chain used to run manifest_digest → events → record_digest, and stop.
+/// `run_id`, `seed` and — most importantly — `verdict` sat OUTSIDE it. Executed
+/// against a real sealed record: rewriting `verdict` from `Completed{value:3}`
+/// to `Denied{axis:"sandbox"}`, `seed` from 42 to 999 and `run_id` to another
+/// run's id still verified `✓ intact` with a byte-identical digest and exit 0,
+/// while tampering any chained EVENT field correctly gave exit 11.
+///
+/// So the tamper-evident record was tamper-evident for the fields nobody needs
+/// to forge, and silent on the one that decides whether the run was allowed.
+/// Folding them in as a terminal pseudo-event keeps the chain shape (each link
+/// still hashes its predecessor) and needs no schema field.
+fn seal_hash(prev: &str, run_id: &str, seed: u64, verdict: &Verdict) -> String {
+    let canon = format!(
+        "seal{UNIT}{run_id}{UNIT}{seed}{UNIT}{}",
+        canonical_verdict(verdict)
+    );
+    sha256_hex(format!("{prev}{UNIT}{canon}").as_bytes())
+}
+
 /// Build a hash-chained record (R21 §4.3). `manifest_digest` seeds the chain
-/// (it is the `prev_hash` of event 0); `record_digest` is the chain head.
+/// (it is the `prev_hash` of event 0); `record_digest` is the chain head, which
+/// since T47 includes a terminal seal over run_id/seed/verdict.
 pub fn build(
     run_id: &str,
     manifest: &JobManifest,
@@ -150,7 +195,11 @@ pub fn build(
         });
         prev = hash;
     }
-    let record_digest = format!("axrec1:{prev}");
+    // T47: seal run_id/seed/verdict into the chain head. The `axrec2:` prefix
+    // marks the change — an `axrec1:` record is REFUSED by `verify` rather than
+    // accepted, because accepting it would be a trivial downgrade: strip the
+    // seal, present the old format, forge the verdict freely.
+    let record_digest = format!("axrec2:{}", seal_hash(&prev, run_id, seed, &verdict));
     RunRecord {
         schema: "axon-os-record/1".to_string(),
         run_id: run_id.to_string(),
@@ -192,9 +241,23 @@ pub fn verify(rec: &RunRecord) -> Result<(), VerifyMismatch> {
         }
         prev = ev.hash.clone();
     }
-    if rec.record_digest != format!("axrec1:{prev}") {
+    // T47: refuse the pre-seal format outright. Verifying it "successfully"
+    // would mean accepting a record whose verdict is unauthenticated, and an
+    // attacker can always choose which format to present.
+    if rec.record_digest.starts_with("axrec1:") {
         return Err(VerifyMismatch {
-            detail: "record_digest does not match the chain head".to_string(),
+            detail: "record uses the pre-seal `axrec1:` digest, whose chain does not cover \
+                     run_id/seed/verdict — re-run the job to seal it (records in that format \
+                     cannot attest their own verdict)"
+                .to_string(),
+        });
+    }
+    let expect_seal = seal_hash(&prev, &rec.run_id, rec.seed, &rec.verdict);
+    if rec.record_digest != format!("axrec2:{expect_seal}") {
+        return Err(VerifyMismatch {
+            detail: "record_digest does not match the chain head (run_id, seed, verdict or an \
+                     event was tampered)"
+                .to_string(),
         });
     }
     Ok(())
@@ -275,7 +338,7 @@ mod tests {
         assert_eq!(rec.events.len(), 2);
         assert_eq!(rec.events[0].prev_hash, rec.manifest_digest);
         assert_eq!(rec.events[1].prev_hash, rec.events[0].hash);
-        assert!(rec.record_digest.starts_with("axrec1:"));
+        assert!(rec.record_digest.starts_with("axrec2:"));
         // JSON round-trips and re-verifies.
         let parsed = from_json(&to_json(&rec)).unwrap();
         assert_eq!(parsed, rec);
@@ -341,8 +404,72 @@ mod tests {
 
         // (f) tamper the record_digest head.
         let mut m = good.clone();
-        m.record_digest = "axrec1:0".into();
+        m.record_digest = "axrec2:0".into();
         assert!(verify(&m).is_err(), "tampered head must be detected");
+
+        // (g) AUDIT T47 (P6-EXIT-03): the head must also seal run_id, seed and
+        // VERDICT. Each of these used to sit outside the chain entirely, so a
+        // record could be rewritten from a denial to a completion and still
+        // verify `✓ intact` with a byte-identical digest.
+        // `good` is Completed{0}; rewrite it to a denial and back the other way,
+        // so neither direction of forgery passes.
+        let mut m = good.clone();
+        m.verdict = Verdict::Denied {
+            reason: "forged".into(),
+            axis: "sandbox".into(),
+        };
+        assert!(
+            verify(&m).is_err(),
+            "a rewritten VERDICT must be detected — this is the field the record exists to attest"
+        );
+
+        // The dangerous direction: a real denial laundered into a completion.
+        let denied = build(
+            "r",
+            &manifest(),
+            42,
+            &events(),
+            Verdict::Denied {
+                reason: "sandbox violation".into(),
+                axis: "sandbox".into(),
+            },
+        );
+        let mut m = denied.clone();
+        m.verdict = Verdict::Completed { value: 0 };
+        assert!(
+            verify(&m).is_err(),
+            "a denial rewritten into a completion must be detected"
+        );
+
+        // Verdict PAYLOADS are sealed too, not just the discriminant.
+        let mut m = denied.clone();
+        if let Verdict::Denied { reason, axis } = &mut m.verdict {
+            *reason = "something harmless".into();
+            *axis = "time".into();
+        }
+        assert!(
+            verify(&m).is_err(),
+            "a rewritten verdict payload must be detected"
+        );
+
+        let mut m = good.clone();
+        m.seed = 999;
+        assert!(verify(&m).is_err(), "a rewritten seed must be detected");
+
+        let mut m = good.clone();
+        m.run_id = "someone-elses-run".into();
+        assert!(verify(&m).is_err(), "a rewritten run_id must be detected");
+
+        // (h) The pre-seal format is REFUSED, not accepted: an attacker chooses
+        // which format to present, so accepting `axrec1:` is a free downgrade.
+        let mut m = good.clone();
+        m.record_digest = format!("axrec1:{}", &good.record_digest[7..]);
+        let e = verify(&m).expect_err("an axrec1 record must be refused");
+        assert!(
+            e.detail.contains("axrec1"),
+            "the refusal must say why: {}",
+            e.detail
+        );
     }
 
     #[test]
@@ -357,7 +484,16 @@ mod tests {
                 axis: "net".into(),
             },
         );
-        assert_eq!(rec.record_digest, format!("axrec1:{}", rec.manifest_digest));
+        // T47: the head is now the SEAL over (manifest_digest, run_id, seed,
+        // verdict) rather than the bare manifest digest — an empty run still has
+        // a verdict, and that verdict must be attested.
+        assert_eq!(
+            rec.record_digest,
+            format!(
+                "axrec2:{}",
+                seal_hash(&rec.manifest_digest, "r", 42, &rec.verdict)
+            )
+        );
         assert!(verify(&rec).is_ok());
     }
 }

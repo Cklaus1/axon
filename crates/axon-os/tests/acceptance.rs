@@ -338,6 +338,131 @@ fn acc_a6_record_tamper_detected() {
     assert!(v.stdout.contains("TAMPERED"));
 }
 
+#[test]
+fn acc_a6b_verdict_seed_and_run_id_are_sealed_into_the_chain_p6_exit_03() {
+    // AUDIT T47 (P6-EXIT-03). The chain ran manifest_digest → events →
+    // record_digest and stopped. `run_id`, `seed` and — most importantly —
+    // `verdict` sat OUTSIDE it. Executed against a real sealed record before the
+    // fix: rewriting the verdict, the seed and the run_id all left it verifying
+    // `✓ intact` with a byte-identical digest and exit 0, while tampering any
+    // chained EVENT field correctly gave exit 11.
+    //
+    // So the tamper-evident record was tamper-evident for the fields nobody
+    // needs to forge, and silent on the one it exists to attest. acc_a6 above
+    // only ever mutated an event field, which is why it stayed green throughout.
+    let Some(axon) = axon_bin() else {
+        eprintln!("axon interpreter not built — skipping seal test");
+        return;
+    };
+    let store = tmp("a6b");
+    os(
+        &[
+            "run",
+            "examples/jobs/summarize.axjob",
+            "--run-id",
+            "t",
+            "--out",
+            store.to_str().unwrap(),
+        ],
+        &axon,
+        &[],
+    );
+    let rec_path = store.join("t.json");
+    let original = std::fs::read_to_string(&rec_path).unwrap();
+
+    // Baseline: untouched, it must verify.
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 0,
+        "the freshly sealed record must verify: {}",
+        v.stdout
+    );
+
+    // Each of the three previously-unchained fields, forged one at a time. The
+    // substitutions are chosen to appear only in the field being targeted.
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "verdict",
+            "\"verdict\":{\"kind\":\"Completed\",\"value\":0}",
+            "\"verdict\":{\"kind\":\"Denied\",\"reason\":\"forged\",\"axis\":\"net\"}",
+        ),
+        ("verdict value", "\"value\":0}", "\"value\":7}"),
+        ("seed", "\"seed\":42", "\"seed\":999"),
+        ("run_id", "\"run_id\":\"t\"", "\"run_id\":\"z\""),
+    ];
+    for (label, from, to) in cases {
+        if !original.contains(from) {
+            panic!("fixture shape changed — `{from}` not found in the record:\n{original}");
+        }
+        std::fs::write(&rec_path, original.replace(from, to)).unwrap();
+        let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+        assert_eq!(
+            v.code, 11,
+            "[{label}] a forged {label} must fail verification (exit 11), got {}: {}",
+            v.code, v.stdout
+        );
+        assert!(
+            v.stdout.contains("TAMPERED"),
+            "[{label}] and must say so: {}",
+            v.stdout
+        );
+    }
+
+    // THE DANGEROUS DIRECTION: a real DENIAL rewritten into a completion. The
+    // cases above forge a completion into a denial, which no attacker wants;
+    // this is the one that matters. `overreach.axjob` is refused by the static
+    // gate, so its record carries a Denied verdict.
+    let deny_store = tmp("a6b-deny");
+    os(
+        &[
+            "run",
+            "examples/jobs/overreach.axjob",
+            "--run-id",
+            "d",
+            "--out",
+            deny_store.to_str().unwrap(),
+        ],
+        &axon,
+        &[],
+    );
+    let deny_path = deny_store.join("d.json");
+    let denied = std::fs::read_to_string(&deny_path).unwrap();
+    assert!(
+        denied.contains("\"kind\":\"Denied\""),
+        "fixture must be a denial: {denied}"
+    );
+    let laundered = {
+        let start = denied.find("\"verdict\":").expect("verdict field");
+        let end = denied[start..].find('}').expect("verdict object") + start + 1;
+        format!(
+            "{}\"verdict\":{{\"kind\":\"Completed\",\"value\":0}}{}",
+            &denied[..start],
+            &denied[end..]
+        )
+    };
+    std::fs::write(&deny_path, &laundered).unwrap();
+    let v = os(&["verify", deny_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 11,
+        "a DENIAL laundered into a completion must fail verification: {}",
+        v.stdout
+    );
+    let _ = std::fs::remove_dir_all(&deny_store);
+
+    // The pre-seal `axrec1:` format is REFUSED, not accepted. An attacker picks
+    // which format to present, so accepting the old one is a free downgrade back
+    // to an unauthenticated verdict.
+    std::fs::write(&rec_path, original.replace("axrec2:", "axrec1:")).unwrap();
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 11,
+        "a pre-seal record must be refused, not accepted: {}",
+        v.stdout
+    );
+
+    let _ = std::fs::remove_dir_all(&store);
+}
+
 // ── The spec-aware adversarial test (from the ASI-alignment review): an effect
 // the STATIC source scan misses must still be REFUSED by the RUNTIME sandbox. ──
 #[test]
