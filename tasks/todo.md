@@ -724,6 +724,64 @@ reproducing `✓ intact` for a forged verdict.
 `axrec1` construction, so leaving it would have made the spec the authority for
 the defect.
 
+### T48 — the guest kernel granted every effect by default, and the policy path had never connected
+
+OSK-P7-C3 (critical), plus three defects found by fixing it. `R36 §2` already
+documents this as four fail-open policy-provenance sites and calls closing them
+S0 work; §9 clause (f) gates each negatively. It had not been done.
+
+**(1) The guest kernel failed open.** Six paths returned `EffectSet(0xFF)` —
+IO+FS+Net+AI+Exec+Random: absent key, non-array value, no `boot_params`, no
+cmdline pointer, absent `axon.policy=`, and `POLICY_READY == false`. The static
+default was `0xFF` too. Every one now denies, and a base64 value that decodes to
+nothing is refused explicitly rather than relying on the static happening to be
+right.
+
+**(2) It had never been tested — it could not be.** `axon-guest-kernel` is
+`test = false` (bare-metal `no_std`, cannot link the std harness), so the parser
+deciding what a confined guest may do had **zero** tests. The pure helpers are
+now in `mmds_parse.rs`, `include!`d by both the kernel and a host-side test in
+`axon-vm` — the same text, not a copy that can drift. Four tests, **verified to
+FAIL against the original `0xFF` returns**.
+
+**(3) The `.axmeta` policy path had never connected.** `axon build
+--emit-manifest` wrote the sidecar beside the **binary** (default: the current
+directory); `axon-vm` reads it beside the **source**. They never met. Invisible
+because a missing manifest meant `allowed_effects: null` meant `0xFF` — the
+disconnected path failed *open*, so nothing complained. `axon_kernel_gate.sh`
+even has a `[[ -f "$META" ]]` check against the source-adjacent path that has
+been silently false — printing neither ok nor fail — the whole time.
+
+**(4) And when it did connect, it did not parse.** `AxonManifest.risk` was
+declared `Option<String>`; the producer emits `"risk": 0`, a number. So *every*
+manifest failed to deserialise and `unwrap_or_default()` silently substituted an
+empty one. A sidecar that exists but cannot be parsed is now an error — a corrupt
+policy file must not read as "no restrictions".
+
+**(5) `effect_union` was derived from declarations.** Only from declared
+`| {IO, Net}` rows, so `agent_task.ax` — whose `main` prints twice — emitted
+`"effect_union": []`. Same shape as the T34 risk derivation. It is now seeded
+from `capabilities::program_effect_rows` (what the program actually calls, via
+`builtin_effect_row` — the same table the runtime gate enforces), with
+declarations able to widen but never shrink it.
+
+Producer side: `axon-vm` now **refuses to launch** with no grant at all rather
+than sending `null`, naming the three ways to supply one.
+
+The T46 walker moved from `codegen/mod.rs` to `ast.rs` so `capabilities` could
+reuse it. I had started writing a third private traversal for
+`program_effect_rows` before catching myself — codegen is behind a feature flag,
+and a walker every safety check depends on must not be.
+
+**What closing the default surfaced.** With `0xFF` gone, `good_agent.ax` died in
+the microVM: `VIOLATION: syscall 257 blocked (FS not in policy)`. The guest runs
+the *interpreter*, which must `openat` the program before any Axon executes — so
+the grant a guest needs is the program's effects ∪ what the substrate requires,
+and those have different owners. That is a design question (**O034**), not
+something to answer silently, so the gate now states `IO,FS` explicitly with the
+reason. Worth being blunt: Layer 3 of that gate was passing by granting full
+authority, which is exactly what it claims to test.
+
 ### R16 Axon UI spec (design work, no code)
 
 | section | what |
@@ -742,7 +800,7 @@ the defect.
 | §9.0 | cross-slice acceptance obligations; every criterion must execute and assert an artifact |
 | §11a | §3d(b)(c)(d) need three types the language **does not have** |
 
-**Thirty-seven fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
+**Thirty-eight fixes landed; all four confirmed sandbox-escape CRITICALs are closed** (F013, F041, F153,
 plus OSK-P4-C2 which triage rated critical). Each has a regression test verified
 to FAIL before the fix — no fix landed against a test that would have passed
 anyway, which is the defect class this audit exists to document.

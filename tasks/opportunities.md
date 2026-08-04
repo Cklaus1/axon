@@ -1244,3 +1244,48 @@ Related, and deliberately left alone: `SandboxEntry.principal` is stored but onl
 ever rendered into an error message, never resolved for authority. It is a label,
 not a capability, so a stale value there misleads a human reading a diagnostic
 but does not grant anything.
+
+---
+
+## O034 — the guest substrate needs FS, and that is not the program's authority
+
+*Found while closing OSK-P7-C3 (T48).* Needs a decision; the gate states the
+grant explicitly meanwhile.
+
+Closing the guest kernel's fail-open defaults surfaced a modeling question the
+`EffectSet(0xFF)` default had been hiding. `examples/flagship/agent_task.ax` has
+an honest effect union of `["IO"]` — it only prints. Run it in the microVM with
+exactly that grant and it dies:
+
+```
+VIOLATION: syscall 257 blocked (FS not in policy)
+```
+
+Syscall 257 is `openat`. The guest runs the **interpreter**, which must open
+`/axon/program.ax` before a single line of Axon executes. So the effective grant
+a guest needs is *the program's effects ∪ what the substrate itself requires*,
+and those are different things with different owners.
+
+Three ways to resolve it, none free:
+
+1. **axon-vm unions a documented substrate baseline** (`FS`) into any
+   manifest-derived grant. Simple, and it makes the common case work — but every
+   guest then holds FS, so a program that declares no file access can still read
+   any file the guest can see. The capability story would be weaker than the
+   `@[contained]` story one layer up, which *does* scope by path.
+2. **Load the program before installing the gate**, so the substrate's own I/O
+   happens outside the policy. Correct in principle; it moves the trust boundary
+   and needs the loader to be part of the TCB rather than gated code.
+3. **Scope FS at the syscall gate by path**, so the substrate may open
+   `/axon/program.ax` and nothing else. Strongest, and the most work: the gate
+   currently classifies by syscall number, not argument.
+
+(2) or (3) is the destination — (1) trades away the property the microVM exists
+to provide. Until then `scripts/axon_kernel_gate.sh` passes `IO,FS` explicitly
+for the good-agent case with a comment saying why, so the gate is honest about
+what it grants rather than relying on a default that grants everything.
+
+**Decision needed:** whether the substrate's own syscalls belong inside the
+policy at all. Note this was invisible while the default was open — the gate
+"passed" by granting full authority, which is exactly what Layer 3 claims to
+test.

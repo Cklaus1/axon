@@ -308,6 +308,67 @@ struct CapCtx<'a, 'e> {
 /// i.e. the transform introduced a capability the original program lacked
 /// (I-12 — self-modification cannot widen the trusted surface). Reuses
 /// `classify_call` so the capability taxonomy stays single-sourced.
+/// The union of the EFFECT ROWS of every builtin the program actually calls
+/// (AUDIT T48). Uses `builtin_effect_row` — the same table the runtime sandbox
+/// gate and the guest kernel enforce against — so a manifest built from this is
+/// expressed in the vocabulary that will be checked.
+///
+/// Exists because `axon build --emit-manifest` derived `effect_union` from
+/// DECLARED `| {IO, Net}` rows alone. A fn that calls `println` without
+/// annotating it contributed nothing, so `examples/flagship/agent_task.ax` —
+/// whose `main` prints twice — emitted `"effect_union": []`. Same shape as the
+/// T34 risk derivation: a safety property computed from what the program SAYS
+/// rather than from what it DOES. Callers should union this with the declared
+/// rows and take the wider result; a declaration can add to the demand set (an
+/// un-called capability the author intends to use) but must never shrink it.
+pub fn program_effect_rows(program: &Program) -> std::collections::BTreeSet<String> {
+    let mut caps = std::collections::BTreeSet::new();
+    let called = program_builtin_calls(program);
+    for name in called {
+        for eff in crate::builtins::builtin_effect_row(&name) {
+            caps.insert((*eff).to_string());
+        }
+        // `capability_of_builtin` is the finer-grained classification; `exec` is
+        // its own effect for the sandbox gate (T8) and is NOT implied by IO.
+        if capability_of_builtin(&name) == Some("exec") {
+            caps.insert("Exec".to_string());
+        }
+    }
+    caps
+}
+
+/// Every builtin NAME the program calls, anywhere.
+///
+/// Uses the shared `ast::walk_expr` (T46/T48) rather than a bespoke recursion —
+/// this file has already been bitten twice by a walker that missed an arm
+/// (impl-method bodies, string-named dispatch), and a third private traversal
+/// would just queue up the next one.
+fn program_builtin_calls(program: &Program) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut visit = |e: &Expr| {
+        if let Expr::Call { callee, .. } = e {
+            if let Expr::Ident(n) = callee.as_ref() {
+                if crate::builtins::is_known_builtin(n) {
+                    names.insert(n.clone());
+                }
+            }
+        }
+    };
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => crate::ast::walk_expr(&f.body, &mut visit),
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    crate::ast::walk_expr(&m.body, &mut visit);
+                }
+            }
+            Item::LetDef { value, .. } => crate::ast::walk_expr(value, &mut visit),
+            _ => {}
+        }
+    }
+    names
+}
+
 pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<String> {
     let mut caps = std::collections::BTreeSet::new();
     for item in &program.items {

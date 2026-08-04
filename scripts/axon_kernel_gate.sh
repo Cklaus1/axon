@@ -116,9 +116,22 @@ else
         || echo "  [warn] could not pin kernel baseline; runs will use --expect-digest"
 
     # good_agent: expect exit 0
+    #
+    # AUDIT T48. The grant is stated EXPLICITLY here. It used to be omitted, and
+    # the guest kernel read an absent grant as EffectSet(0xFF) — every effect —
+    # so this case passed by being granted full authority, which is precisely
+    # what Layer 3 claims to be testing. With the fail-open default closed, the
+    # grant has to be real.
+    #
+    # `FS` is here for the SUBSTRATE, not for the program: the guest runs the
+    # interpreter, which must `openat` /axon/program.ax before any Axon code
+    # executes. agent_task.ax's own effect union is `["IO"]` (it only prints).
+    # Whether axon-vm should add that substrate baseline itself — and what it
+    # means that a guest therefore always holds FS — is an open design question,
+    # recorded as O034; stating it here keeps the gate honest meanwhile.
     if [[ -f "$GOOD" ]]; then
         EXIT_CODE=0
-        timeout 30 "$AXON_VM" run "$GOOD" \
+        AXON_VM_ALLOWED_EFFECTS=IO,FS timeout 30 "$AXON_VM" run "$GOOD" \
             --kernel "$KERNEL" --initrd "$INITRD" \
             --expect-digest "$KERNEL_DIGEST" \
             --json > /tmp/axon_gate_good.json 2>&1 || EXIT_CODE=$?

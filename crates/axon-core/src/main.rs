@@ -2986,7 +2986,25 @@ fn cmd_build(
                 }
             }
             if emit_manifest {
-                let manifest_path = output.with_extension("axmeta");
+                // AUDIT T48 (R36 §2 site 2). This was `output.with_extension`,
+                // i.e. next to the emitted BINARY — which defaults to the current
+                // directory. But the consumer, `axon-vm`, reads
+                // `program.with_extension("axmeta")` — next to the SOURCE. So the
+                // two halves never met unless the user happened to `-o` into the
+                // source directory, and the manifest (the policy source of record)
+                // was simply absent for every ordinary build.
+                //
+                // It went unnoticed because a missing manifest used to mean
+                // `effect_union: None` → `allowed_effects: null` → the guest
+                // kernel's `EffectSet(0xFF)`: full authority. The disconnected
+                // path failed OPEN, so nothing ever complained. `axon_kernel_gate`
+                // even has a `[[ -f "$META" ]]` check against the source-adjacent
+                // path that has been silently false — printing neither ok nor
+                // fail — this whole time.
+                //
+                // The manifest describes the PROGRAM, so it belongs beside the
+                // program, which is also the path the consumer already uses.
+                let manifest_path = first.with_extension("axmeta");
                 let json = build_axmeta_manifest(&program, first, &output);
                 match std::fs::write(&manifest_path, json) {
                     Ok(()) => eprintln!("Manifest: {}", manifest_path.display()),
@@ -5168,8 +5186,20 @@ fn build_axmeta_manifest(
         _ => "critical",
     };
 
-    // Collect the union of all declared effects across all functions.
-    let mut effect_union: Vec<String> = Vec::new();
+    // AUDIT T48. `effect_union` used to be the union of DECLARED `| {IO, Net}`
+    // rows alone. A fn that calls `println` without annotating it contributed
+    // nothing, so `examples/flagship/agent_task.ax` — whose `main` prints twice —
+    // emitted `"effect_union": []`. Same shape as the T34 risk derivation: a
+    // safety property computed from what the program SAYS rather than what it
+    // DOES.
+    //
+    // Seed the union from the effects the program actually exercises, then let
+    // declarations ADD to it. A declaration may widen the demand set (an author
+    // reserving a capability) but must never shrink it, which is exactly what
+    // starting from the declarations allowed.
+    let mut effect_union: Vec<String> = axon_core::capabilities::program_effect_rows(program)
+        .into_iter()
+        .collect();
     let mut fn_entries: Vec<String> = Vec::new();
 
     for item in &program.items {

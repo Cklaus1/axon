@@ -38,7 +38,10 @@ static mut JSON_BUF:       [u8; 2048] = [0u8; 2048];
 static mut JSON_LEN:       usize      = 0;
 static mut PRINCIPAL_BUF:  [u8; 128]  = [0u8; 128];
 static mut PRINCIPAL_LEN:  usize      = 0;
-static mut ALLOWED_EFFECTS: EffectSet = EffectSet(0xFF); // open by default
+// AUDIT T48 (finding OSK-P7-C3; R36 §2 site 3). This was `EffectSet(0xFF)` —
+// "open by default" — in the enforcement point of a security boundary. Every
+// ambiguity now denies. See `set_closed_policy`.
+static mut ALLOWED_EFFECTS: EffectSet = EffectSet(0);
 static mut BUDGET_TOKENS:  u64        = 0;
 static mut HAS_BUDGET:     bool       = false;
 static mut POLICY_READY:   bool       = false;
@@ -51,8 +54,8 @@ const CMD_LINE_PTR_OFF: usize = 0x228;
 pub fn init(boot_params_phys: u64) {
     // If no boot_params (PVH / multiboot without Linux params), use open policy.
     if boot_params_phys == 0 {
-        kprintln!("[axon-kernel] K2: no boot_params — open policy");
-        return set_open_policy();
+        kprintln!("[axon-kernel] K2: no boot_params — DENY-ALL policy (T48)");
+        return set_closed_policy();
     }
 
     // SAFETY: boot_params_phys is the identity-mapped physical address provided
@@ -64,8 +67,8 @@ pub fn init(boot_params_phys: u64) {
     };
 
     if cmdline_phys == 0 {
-        kprintln!("[axon-kernel] K2: no cmdline ptr — open policy");
-        return set_open_policy();
+        kprintln!("[axon-kernel] K2: no cmdline ptr — DENY-ALL policy (T48)");
+        return set_closed_policy();
     }
 
     // Copy null-terminated cmdline into CMDLINE_BUF.
@@ -103,8 +106,8 @@ pub fn init(boot_params_phys: u64) {
                 (vs, ve)
             }
             None => {
-                kprintln!("[axon-kernel] K2: axon.policy= absent — open policy");
-                return set_open_policy();
+                kprintln!("[axon-kernel] K2: axon.policy= absent — DENY-ALL policy (T48)");
+                return set_closed_policy();
             }
         }
     };
@@ -123,6 +126,15 @@ pub fn init(boot_params_phys: u64) {
     };
 
     kprintln!("[axon-kernel] K2: policy {} json bytes", json_len);
+
+    // T48: a base64 value that decodes to nothing is an unreadable policy, not
+    // an empty one. It used to fall through and leave ALLOWED_EFFECTS at the
+    // static default, which was 0xFF. Refuse explicitly and say so, rather than
+    // relying on the static happening to be right.
+    if json_len == 0 {
+        kprintln!("[axon-kernel] K2: policy failed to base64-decode — DENY-ALL policy (T48)");
+        return set_closed_policy();
+    }
 
     // Parse JSON fields.
     // SAFETY: JSON_BUF holds the decoded policy; PRINCIPAL_BUF is distinct.
@@ -157,8 +169,11 @@ pub fn read_policy() -> Policy<'static> {
     // SAFETY: statics written only by init(), which runs once before this.
     unsafe {
         if !POLICY_READY {
+            // T48 (OSK-P7-C3, R36 §2 site 4): was EffectSet(0xFF). `read_policy`
+            // before `init` — or after an init path that bailed — must not be
+            // the most permissive answer in the system.
             return Policy {
-                principal: None, allowed_effects: EffectSet(0xFF),
+                principal: None, allowed_effects: EffectSet(0),
                 budget_tokens: None, source_hash: None, run_id: None,
                 seccomp_hint: &[],
             };
@@ -181,114 +196,29 @@ pub fn read_policy() -> Policy<'static> {
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
-fn set_open_policy() {
+/// Install the DENY-EVERYTHING policy (AUDIT T48, finding OSK-P7-C3).
+///
+/// This used to be `set_open_policy`, granting `EffectSet(0xFF)` — every effect —
+/// on three separate boot paths: no boot_params, no cmdline pointer, and an
+/// absent `axon.policy=` tag. Combined with `json_array_effects` returning 0xFF
+/// for an absent/unparseable field and `read_policy` returning 0xFF when
+/// `POLICY_READY` was false, the sequence *sidecar missing → no principal → no
+/// `axon.policy=`* booted a guest with every effect bit set and a green-looking
+/// run. R36 §2 names these as the four fail-open policy-provenance sites and
+/// calls closing them S0 work; §9 clause (f) gates each negatively.
+///
+/// The guest still BOOTS (so the failure is observable on the serial log and the
+/// launcher gets its sentinel) but holds no authority: the syscall gate refuses
+/// the program's first effectful syscall with the ordinary VIOLATION path, exit
+/// 8. That is deliberately louder than halting at boot — a guest that never
+/// starts is easily mistaken for infrastructure flakiness, while a policy
+/// violation is a recorded, attributable refusal.
+fn set_closed_policy() {
     // SAFETY: called only from init() on the single boot path.
-    unsafe { ALLOWED_EFFECTS = EffectSet(0xFF); HAS_BUDGET = false; PRINCIPAL_LEN = 0; POLICY_READY = true; }
+    unsafe { ALLOWED_EFFECTS = EffectSet(0); HAS_BUDGET = false; PRINCIPAL_LEN = 0; POLICY_READY = true; }
 }
 
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() { return Some(0); }
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-fn skip_ws(s: &[u8]) -> &[u8] {
-    &s[s.iter().position(|&b| !matches!(b, b' '|b'\t'|b'\n'|b'\r')).unwrap_or(s.len())..]
-}
-
-/// Decode standard base64 (RFC 4648) in-place. Returns decoded byte count.
-fn base64_decode(input: &[u8], out: &mut [u8]) -> usize {
-    let val = |c: u8| -> u8 {
-        match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,  b'/' => 63,
-            _    => 0,  // '=' padding and unknowns → 0
-        }
-    };
-    let mut oi = 0usize;
-    let mut i  = 0usize;
-    while i + 3 < input.len() {
-        let (a, b, c, d) = (val(input[i]), val(input[i+1]), val(input[i+2]), val(input[i+3]));
-        if oi < out.len() { out[oi] = (a << 2) | (b >> 4); oi += 1; }
-        if input[i+2] != b'=' && oi < out.len() { out[oi] = (b << 4) | (c >> 2); oi += 1; }
-        if input[i+3] != b'=' && oi < out.len() { out[oi] = (c << 6) | d;        oi += 1; }
-        i += 4;
-    }
-    oi
-}
-
-/// Build `"key":` search pattern in a 64-byte stack buffer; return length.
-fn make_key_pat(key: &[u8], buf: &mut [u8; 64]) -> usize {
-    let mut n = 0usize;
-    buf[n] = b'"'; n += 1;
-    for &b in key { if n < 62 { buf[n] = b; n += 1; } }
-    buf[n] = b'"'; n += 1;
-    buf[n] = b':'; n += 1;
-    n
-}
-
-/// Extract `"key":"VALUE"` → VALUE bytes (no escape handling needed).
-fn json_str_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
-    let mut pat = [0u8; 64];
-    let plen = make_key_pat(key, &mut pat);
-    let rest = skip_ws(&json[find_subslice(json, &pat[..plen])? + plen..]);
-    if rest.is_empty() || rest[0] != b'"' { return None; }
-    let inner = &rest[1..];
-    Some(&inner[..inner.iter().position(|&b| b == b'"')?])
-}
-
-/// Extract `"key":NUMBER` → u64.
-fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {
-    let mut pat = [0u8; 64];
-    let plen = make_key_pat(key, &mut pat);
-    let p = find_subslice(json, &pat[..plen])?;
-    let rest = skip_ws(&json[p + plen..]);
-    if rest.is_empty() || !rest[0].is_ascii_digit() { return None; }
-    let mut n: u64 = 0;
-    for &b in rest {
-        if b.is_ascii_digit() { n = n.saturating_mul(10).saturating_add((b - b'0') as u64); }
-        else { break; }
-    }
-    Some(n)
-}
-
-/// Parse `"key":["V1","V2"]` → EffectSet.  Returns 0xFF (open) if field absent.
-fn json_array_effects(json: &[u8], key: &[u8]) -> EffectSet {
-    let mut pat = [0u8; 64];
-    let plen = make_key_pat(key, &mut pat);
-    let after = match find_subslice(json, &pat[..plen]) {
-        Some(p) => p + plen,
-        None    => return EffectSet(0xFF),
-    };
-    let rest = skip_ws(&json[after..]);
-    if rest.is_empty() || rest[0] != b'[' { return EffectSet(0xFF); }
-    let inner = &rest[1..];
-    let end   = inner.iter().position(|&b| b == b']').unwrap_or(inner.len());
-    let inner = &inner[..end];
-
-    let mut effects = EffectSet(0);
-    let mut i = 0usize;
-    while i < inner.len() {
-        if inner[i] == b'"' {
-            i += 1;
-            let start = i;
-            while i < inner.len() && inner[i] != b'"' { i += 1; }
-            effects = effects.union(effect_from_name(&inner[start..i]));
-        }
-        i += 1;
-    }
-    effects
-}
-
-fn effect_from_name(s: &[u8]) -> EffectSet {
-    match s {
-        b"IO"                      => EffectSet::IO,
-        b"FS"                      => EffectSet::FS,
-        b"Net" | b"NET"            => EffectSet::NET,
-        b"AI"                      => EffectSet::AI,
-        b"Exec" | b"EXEC"          => EffectSet::EXEC,
-        b"Random" | b"RANDOM"      => EffectSet::RANDOM,
-        _                          => EffectSet(0),
-    }
-}
+// The pure parsing helpers live in `mmds_parse.rs` and are included here so the
+// kernel compiles them exactly as before. They are a separate file only so a
+// host-side test can `include!` the SAME TEXT — see that file's header (T48).
+include!("mmds_parse.rs");

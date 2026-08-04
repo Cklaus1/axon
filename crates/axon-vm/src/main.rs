@@ -572,7 +572,13 @@ struct AxonManifest {
     binary: Option<String>,
     effect_union: Option<Vec<String>>,
     syscall_hint: Option<Vec<String>>,
-    risk: Option<String>,
+    /// AUDIT T48. This was `Option<String>`, but `axon build --emit-manifest`
+    /// emits `"risk": 0` — a NUMBER — alongside `"risk_label": "low"`. So every
+    /// manifest failed to deserialise, and `load_manifest`'s `unwrap_or_default()`
+    /// silently substituted an empty one. The producer and the consumer of the
+    /// policy source of record had never once agreed, and nothing said so.
+    risk: Option<u8>,
+    risk_label: Option<String>,
     #[serde(default)]
     per_fn: Vec<serde_json::Value>,
 }
@@ -965,7 +971,28 @@ fn cmd_run(
     let source_hash = sha256_file(&program);
 
     // Load the .axmeta manifest (emitted by `axon build --emit-manifest`).
-    let manifest = load_manifest(&program);
+    // T48: a sidecar that EXISTS but cannot be parsed is fatal — it used to be
+    // silently replaced by an empty manifest, which then read as "no effects
+    // declared" and, in the guest, as full authority.
+    let manifest = match load_manifest(&program) {
+        Ok(m) => m.unwrap_or_default(),
+        Err(e) => {
+            if json_out {
+                let out = serde_json::json!({
+                    "schema": "axon-vm-run/1",
+                    "ok": false,
+                    "run_id": run_id,
+                    "exit_code": -1,
+                    "error": e,
+                    "manifest_unparseable": true,
+                });
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            } else {
+                eprintln!("axon-vm: {e}");
+            }
+            process::exit(2);
+        }
+    };
 
     // Resolve the principal.
     let principal = principal_name
@@ -1008,6 +1035,39 @@ fn cmd_run(
             .or_else(|| principal.as_ref().map(|p| p.allowed_effects.clone()))
     };
 
+    // AUDIT T48 (finding OSK-P7-C3; R36 §2 site 1). `allowed_effects: None`
+    // serialises as `null`, and the guest kernel used to read an absent/non-array
+    // field as EffectSet(0xFF) — EVERY effect. That is not an exotic path: it is
+    // what this function emits for any program with no `.axmeta` manifest and no
+    // `--principal`, i.e. the DEFAULT run. The guest now denies on ambiguity, but
+    // launching with no grant at all is still a producer-side defect: it would
+    // boot a guest that can do nothing and report it as a policy violation,
+    // blaming the program for the launcher's omission. Refuse here and say which
+    // of the three sources to supply.
+    let Some(allowed_effects) = allowed_effects else {
+        let msg = concat!(
+            "no effect grant: the program has no `.axmeta` manifest ",
+            "(`axon build --emit-manifest`), no `--principal` was given, and ",
+            "AXON_VM_ALLOWED_EFFECTS is unset. Refusing to launch rather than ",
+            "sending a null policy to the guest"
+        );
+        if json_out {
+            let out = serde_json::json!({
+                "schema": "axon-vm-run/1",
+                "ok": false,
+                "run_id": run_id,
+                "exit_code": -1,
+                "error": msg,
+                "principal": principal_name,
+                "no_effect_grant": true,
+            });
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            eprintln!("axon-vm: {msg}");
+        }
+        process::exit(2);
+    };
+
     let budget_tokens = principal.as_ref().map(|p| p.budget_tokens);
 
     // Construct the MMDS payload.
@@ -1015,7 +1075,7 @@ fn cmd_run(
         schema: "axon-vm-mmds/1".to_string(),
         run_id: run_id.clone(),
         principal: principal_name.clone(),
-        allowed_effects,
+        allowed_effects: Some(allowed_effects),
         budget_tokens,
         source_hash: Some(source_hash),
         seccomp_bpf_b64: seccomp_b64,
@@ -2470,15 +2530,32 @@ static SYSCALL_TABLE: &[(&str, u32)] = &[
 
 // ── Manifest loading ──────────────────────────────────────────────────────────
 
-fn load_manifest(program: &Path) -> AxonManifest {
+/// Load the `.axmeta` policy sidecar next to `program`.
+///
+/// AUDIT T48 (R36 §2 site 2). `unwrap_or_default()` turned an unreadable or
+/// unparseable sidecar into an EMPTY manifest — indistinguishable from having no
+/// manifest at all. Combined with the guest kernel reading an absent grant as
+/// `EffectSet(0xFF)`, a corrupt policy file granted full authority. And because
+/// the `risk` field's type disagreed between producer and consumer, EVERY
+/// manifest took that path.
+///
+/// A sidecar that exists but cannot be read is now an error the caller must
+/// handle. Absent stays `Ok(None)` — that is a real, distinct state ("no policy
+/// declared"), and the caller refuses on it separately.
+fn load_manifest(program: &Path) -> Result<Option<AxonManifest>, String> {
     let meta_path = program.with_extension("axmeta");
     if !meta_path.exists() {
-        return AxonManifest::default();
+        return Ok(None);
     }
-    match fs::read_to_string(&meta_path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-        Err(_) => AxonManifest::default(),
-    }
+    let text = fs::read_to_string(&meta_path)
+        .map_err(|e| format!("cannot read manifest {}: {e}", meta_path.display()))?;
+    serde_json::from_str(&text).map(Some).map_err(|e| {
+        format!(
+            "manifest {} is present but unparseable: {e}. Refusing to fall back to an empty \
+             policy — a corrupt policy file must not read as 'no restrictions'",
+            meta_path.display()
+        )
+    })
 }
 
 // ── Helper: sha256 a file ─────────────────────────────────────────────────────
@@ -2770,10 +2847,50 @@ mod tests {
     }
 
     #[test]
-    fn manifest_default_when_missing() {
-        let m = load_manifest(Path::new("/nonexistent/program.ax"));
-        assert!(m.syscall_hint.is_none());
-        assert!(m.effect_union.is_none());
+    fn manifest_absent_is_none_and_corrupt_is_an_error_t48() {
+        // AUDIT T48 (R36 §2 site 2). This asserted only that a MISSING manifest
+        // yields an empty one — the neighbouring property. The dangerous case is
+        // a manifest that is PRESENT but unparseable: `unwrap_or_default()` made
+        // it indistinguishable from "no manifest", which the guest then read as
+        // EffectSet(0xFF), i.e. full authority. A corrupt policy file must never
+        // read as "no restrictions".
+        //
+        // And it was not hypothetical: `risk` was declared `Option<String>` here
+        // while the producer emits `"risk": 0` (a number), so EVERY manifest took
+        // the silent-default path.
+        let absent = load_manifest(Path::new("/nonexistent/program.ax"))
+            .expect("an absent manifest is not an error");
+        assert!(
+            absent.is_none(),
+            "absent must be None, not an empty manifest"
+        );
+
+        let dir = std::env::temp_dir().join(format!("axon_t48_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let prog = dir.join("p.ax");
+        std::fs::write(&prog, "fn main() -> i64 { 0 }\n").unwrap();
+
+        std::fs::write(dir.join("p.axmeta"), "{ this is not json").unwrap();
+        let err = load_manifest(&prog).expect_err("a corrupt manifest must be an error");
+        assert!(err.contains("unparseable"), "the error must say why: {err}");
+
+        // The REAL producer shape must round-trip — `risk` as a number next to
+        // `risk_label`. This is the assertion that would have caught the type
+        // disagreement on the day it was introduced.
+        std::fs::write(
+            dir.join("p.axmeta"),
+            r#"{"schema":"axon-manifest/1","source":"p.ax","binary":"p","risk":0,
+                "risk_label":"low","effect_union":["IO"],"syscall_hint":["write"],"fns":[]}"#,
+        )
+        .unwrap();
+        let m = load_manifest(&prog)
+            .expect("the real producer shape must parse")
+            .expect("and be present");
+        assert_eq!(m.effect_union.as_deref(), Some(&["IO".to_string()][..]));
+        assert_eq!(m.risk, Some(0));
+        assert_eq!(m.risk_label.as_deref(), Some("low"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

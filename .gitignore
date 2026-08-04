@@ -10,7 +10,10 @@ axon_out_*
 /tmp/axon_*
 # `axon build` flagship output + its manifest
 /agent_task
-/agent_task.axmeta
+# Build artifacts from `axon build --emit-manifest`. T48 moved the sidecar to sit
+# beside the SOURCE (where `axon-vm` reads it) instead of beside the binary, so
+# it now lands in the example directories rather than the repo root.
+*.axmeta
 # Compiled Rust library archives left in tree by build scripts
 *.rlib
 # Guest VM build outputs (initramfs.cpio + vmlinuz)
