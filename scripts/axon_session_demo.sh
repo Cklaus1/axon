@@ -79,10 +79,10 @@ else
 fi
 
 echo "7. a binding with no literal form is REPORTED, not silently dropped"
-printf 'type P = { x: i64 }\nlet p = P { x: 7 }\nlet keep = 5\n' > "$S/v3.ax"
+printf 'let f = |x: i64| x + 1\nlet keep = 5\n' > "$S/v3.ax"
 python3 "$ROOT/scripts/axon_session.py" eval "$SESS2" "$S/v3.ax" >/dev/null 2>&1
 SHOWN="$(python3 "$ROOT/scripts/axon_session.py" show "$SESS2" 2>&1)"
-if echo "$SHOWN" | grep -q "SKIPPED p"; then
+if echo "$SHOWN" | grep -q "SKIPPED f"; then
   ok "unserializable binding reported in the skip list"
 elif echo "$SHOWN" | grep -q "let keep = 5"; then
   bad "a binding vanished with no skip note: $SHOWN"

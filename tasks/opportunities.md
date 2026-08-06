@@ -1671,3 +1671,36 @@ One thing that IS safely fixable without the decision: nothing about the current
 behaviour is stated where a user would see it. `axon build --help` and the AI
 docs could say that a native build makes live AI calls regardless of
 `asi-runtime`, which is true today under every option above.
+
+## O-SESS-01 — `arr_push` is `[i64]`-only, so a list of records cannot be BUILT (proposed: HIGH — blocks the RLM head-to-head)
+
+Found trying to port `atlas/spikes/rlm-engine/src/stateful.rs`'s chain fixture to
+Axon for the head-to-head against CPython.
+
+`arr_push` is `params: [("xs", "[i64]"), ("x", "i64")], ret: "[i64]"`
+(`builtins.rs:402`), and its own doc says why: *"Concrete-typed for i64 today;
+generic [T] form waits on Phase 8."* The whole `arr_*` family is the same shape.
+
+The consequence is sharper than a missing convenience. Axon can **represent** a
+list of records — `let rows = [Rec { id: 1, region: "north", amount: 120 }, …]`
+round-trips through the session's literal store correctly, verified — but it
+cannot **construct** one from parsed input of unknown length. There is no
+`arr_push` that accepts a `Rec`.
+
+`stateful.rs`'s chain step 1 is "parse the dataset into a list of records". So
+the fixture is **not expressible in Axon today**, and the harness's own rule
+applies: *"the chain fixture is not expressible on this engine, so a reuse rate
+or a token ratio from it would be a measurement of the harness."*
+
+This is therefore the gate on the entire stateful head-to-head, which is the
+measurement the RLM thread has been aimed at. Generic `[T]` for the `arr_*`
+family is Phase 8 work per the doc; a narrower unblock would be a generic
+`arr_push` alone.
+
+## O-SESS-02 — the session has no `axon session` verb (proposed: MEDIUM)
+
+Cell splitting and module composition live in `scripts/axon_session.py`, using
+brace counting rather than the parser — so a `{` inside a string literal or a
+comment will mis-split a cell. The value persistence is real and in the
+interpreter; the ergonomics are a shell script. Moving the driver into the CLI
+and giving it the real parser is the slice that makes this a feature.

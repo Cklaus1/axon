@@ -869,6 +869,20 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
             }
             Ok(format!("[{}]", out.join(", ")))
         }
+        // A record. Needed because the very first binding in a realistic session
+        // is a list of records — `rows` in `stateful.rs`'s chain fixture — and
+        // skipping structs means the session cannot carry its own headline case.
+        // Field order is sorted so the emitted literal is deterministic; a
+        // HashMap's iteration order would make the session file differ run to run.
+        Value::Struct { name, fields } => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            let mut parts = Vec::with_capacity(keys.len());
+            for k in keys {
+                parts.push(format!("{k}: {}", value_as_literal(&fields[k])?));
+            }
+            Ok(format!("{name} {{ {} }}", parts.join(", ")))
+        }
         Value::Unit => Err("unit has no binding form".to_string()),
         // Struct/Enum/Tuple/Dict/Closure/Chan/Handle/… — a session can carry a
         // value only if it can write it down, and these cannot be written as a
