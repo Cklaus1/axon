@@ -13,7 +13,6 @@
 
 use crate::intent::Intent;
 use axon_os::gate::DeclaredEffects;
-use axon_os::grant::{EffectSet, Label};
 
 /// The synthesizer's output: the candidate program + the confidence inputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,34 +76,25 @@ pub fn strip_fences(src: &str) -> (String, bool) {
     (src.to_string(), false)
 }
 
-/// Over-approximate a program's declared effects by scanning for capability-
-/// bearing builtins (mirrors R21's `AxonCoreRuntime::scan_effects`). Sound as an
-/// over-approximation: any ambiguity widens the set, never narrows it.
-pub fn scan_effects(source: &str) -> DeclaredEffects {
-    let net = [
-        "http_get",
-        "http_post",
-        "http_sse",
-        "ai_complete",
-        "ai_extract",
-    ]
-    .iter()
-    .any(|m| source.contains(m));
-    let fs_read = ["read_file", "read_line"]
-        .iter()
-        .any(|m| source.contains(m));
-    let fs_write = source.contains("write_file");
-    let exec = source.contains("exec(") || source.contains("spawn_proc");
-    DeclaredEffects {
-        row: EffectSet {
-            fs_read,
-            fs_write,
-            net,
-            exec,
-        },
-        max_label: Label::Internal,
-    }
-}
+/// Over-approximate a program's declared effects.
+///
+/// AUDIT T54 (finding P4-OS-03). This was a SECOND, independent copy of
+/// `axon_os::runtime::scan_effects` — and it had drifted badly. It still read
+/// `source.contains("exec(")`, the exact substring test T4 replaced in the
+/// axon-os copy because `exec (name, args)` — one space — parses identically and
+/// evades it. It also omitted `env_var` from `fs_read` and the entire
+/// `goal_run*` family from `net`, and had no handling for `mod` imports, so a
+/// program whose effects lived in an imported module scanned as "no effects".
+///
+/// That matters here because this result is load-bearing: `pipeline.rs` infers
+/// the GRANT from it and then `prove_admissible` checks the program against that
+/// grant. An under-approximating scan yields an admissibility proof for a
+/// program that performs effects the proof says it does not — the runtime would
+/// still refuse it, but the gateway would have told the operator it was fine.
+///
+/// `axon-intent` already depends on `axon-os`, so the duplication bought
+/// nothing. Now there is one implementation and one place to fix.
+pub use axon_os::runtime::scan_effects;
 
 /// The concrete file paths a program writes — the first string literal argument
 /// of each `write_file(...)` call. Used to cross-check against the intent's
@@ -604,6 +594,34 @@ Summarize ./data/report.txt into ./out/summary.txt.
     fn scan_effects_finds_fs_axes() {
         let d = scan_effects("read_file(x); write_file(y)");
         assert!(d.row.fs_read && d.row.fs_write && !d.row.net && !d.row.exec);
+    }
+
+    #[test]
+    fn scan_effects_here_is_the_axon_os_scanner_not_a_second_copy() {
+        // AUDIT T54 (P4-OS-03). This crate used to keep its own copy of the
+        // scanner, and that copy still had the pre-T4 `source.contains("exec(")`
+        // test — which `exec (…)`, one space, parses identically and evades.
+        // These four assertions all FAIL against the old local copy and pass
+        // against the axon-os implementation, so they pin the dedup itself:
+        // re-introducing a local scanner reverts them.
+        assert!(
+            scan_effects("fn f() { exec (\"id\", []) }").row.exec,
+            "whitespace-separated exec must be detected (the T4 evasion)"
+        );
+        assert!(
+            scan_effects("fn f() { env_var(\"HOME\") }").row.fs_read,
+            "env_var is an ambient read the local copy omitted"
+        );
+        assert!(
+            scan_effects("fn f() { goal_run(\"m\", 0, 10) }").row.net,
+            "goal_run re-calls @[adaptive] metrics, which may ai_complete"
+        );
+        let imported = scan_effects("mod helper\nfn f() -> i64 { helper::go() }");
+        assert!(
+            imported.row.exec && imported.row.net && imported.row.fs_write,
+            "a mod import puts the effects in a file we did not read — the honest \
+             answer is the full set, not `none found here`"
+        );
     }
 
     #[test]

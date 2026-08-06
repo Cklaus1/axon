@@ -245,7 +245,14 @@ fn first_axon_line(stderr: &str, default: &str) -> String {
 /// capability-bearing builtins (deny-by-default: a read error or any ambiguity
 /// yields the FULL set). A fully sound extractor uses `axon ast review`; this
 /// conservative scanner is sound *as a lower bound made safe by over-approx*.
-fn scan_effects(source: &str) -> Decl {
+/// AUDIT T54 (finding P4-OS-03). Made `pub` so `axon-intent` can call THIS
+/// implementation instead of keeping its own. There were two copies of this
+/// security scanner, and T4's whitespace-evasion fix landed in only one — the
+/// `axon-intent` copy still read `source.contains("exec(")`, which
+/// `exec (name, args)` evades, and additionally omitted `env_var` and the whole
+/// `goal_run*` family and had no `mod`-import handling at all. Duplicated
+/// security logic does not stay in sync; the fix is to have one copy.
+pub fn scan_effects(source: &str) -> Decl {
     // AUDIT T4 (finding OSK-P4-H1). The previous implementation tested
     // `source.contains("exec(")`, which `exec (name, args)` — one space — parses
     // identically and evades. That is an UNDER-approximation, the opposite of
