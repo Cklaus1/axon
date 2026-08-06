@@ -52,6 +52,44 @@ OUT4="$(python3 "$ROOT/scripts/axon_session.py" eval "$SESS" "$S/c4.ax" 2>&1)"
 [ "$(echo "$OUT4" | tail -1)" = "10" ] && ok "session intact after a refusal" \
   || bad "session corrupted by the refused cell: $OUT4"
 
-[ "$FAIL" = "0" ] && echo "axon_session_demo: PASS — all four properties hold" \
+echo "5. VALUES persist, and their computation does not repeat"
+SESS2="$(dirname "$SESS")/valsession.ax"
+python3 "$ROOT/scripts/axon_session.py" new "$SESS2"
+printf 'fn expensive() -> i64 { println("EXPENSIVE RAN")  42 }\nlet v = expensive()\n' > "$S/v1.ax"
+V1="$(python3 "$ROOT/scripts/axon_session.py" eval "$SESS2" "$S/v1.ax" 2>&1)"
+echo "$V1" | grep -q "EXPENSIVE RAN" && ok "cell 1 computed the value" \
+  || bad "cell 1 did not run the computation: $V1"
+printf 'println(to_str(v + 1))\n' > "$S/v2.ax"
+V2="$(python3 "$ROOT/scripts/axon_session.py" eval "$SESS2" "$S/v2.ax" 2>&1)"
+[ "$(echo "$V2" | tail -1)" = "43" ] && ok "cell 2 read the persisted VALUE" \
+  || bad "value did not persist: $V2"
+if echo "$V2" | grep -q "EXPENSIVE RAN"; then
+  bad "the computation re-ran — values are being recomputed, not persisted"
+else
+  ok "the computation did not repeat"
+fi
+
+echo "6. read is a LOOKUP: it returns the value and executes nothing"
+R="$(python3 "$ROOT/scripts/axon_session.py" read "$SESS2" v 2>&1)"
+[ "$R" = "42" ] && ok "read returned the stored value" || bad "read returned: $R"
+if echo "$R" | grep -q "EXPENSIVE RAN"; then
+  bad "read executed the binding — the declarations-only blocker is back"
+else
+  ok "read fired no side effect (Engine::read is now honest)"
+fi
+
+echo "7. a binding with no literal form is REPORTED, not silently dropped"
+printf 'type P = { x: i64 }\nlet p = P { x: 7 }\nlet keep = 5\n' > "$S/v3.ax"
+python3 "$ROOT/scripts/axon_session.py" eval "$SESS2" "$S/v3.ax" >/dev/null 2>&1
+SHOWN="$(python3 "$ROOT/scripts/axon_session.py" show "$SESS2" 2>&1)"
+if echo "$SHOWN" | grep -q "SKIPPED p"; then
+  ok "unserializable binding reported in the skip list"
+elif echo "$SHOWN" | grep -q "let keep = 5"; then
+  bad "a binding vanished with no skip note: $SHOWN"
+else
+  bad "neither skipped nor kept — the skip path was not exercised: $SHOWN"
+fi
+
+[ "$FAIL" = "0" ] && echo "axon_session_demo: PASS — all properties hold" \
   || echo "axon_session_demo: FAIL"
 exit "$FAIL"

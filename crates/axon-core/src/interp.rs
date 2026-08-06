@@ -826,6 +826,58 @@ pub fn run_program(program: &Program) -> i32 {
 /// Phase 5 §4: run with a set of SMT-discharged obligations installed, so the
 /// interpreter elides the runtime checks Z3 proved ∀-inputs. Identical to
 /// [`run_program`] with an empty set.
+/// Render a value as an Axon **literal**, or explain why it cannot be.
+///
+/// `AXON_FOR_RLM.md` §5, the values-persisting session. A session restores a
+/// prior cell's bindings by emitting `let name = <literal>` — a literal, never
+/// the original expression, because re-evaluating `let rows = expensive()`
+/// would re-run `expensive()` on every subsequent cell. That side-effect replay
+/// is the failure the declarations-only spike avoided by having no values at
+/// all, and it is the one this must not reintroduce.
+///
+/// `Err(reason)` is not a failure path: an open channel or a closure is a
+/// perfectly normal binding that simply cannot be written down. The caller
+/// reports it as `skipped`, which is what `Engine::Snapshot` models and what
+/// CPython's `dill` does.
+pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
+    match v {
+        Value::Int(n) => Ok(n.to_string()),
+        Value::SizedInt { val, .. } => Ok(val.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Float(f) => {
+            // `1` would re-parse as an i64 and silently change the binding's type.
+            if f.fract() == 0.0 && f.is_finite() {
+                Ok(format!("{f:.1}"))
+            } else if f.is_finite() {
+                Ok(format!("{f:?}"))
+            } else {
+                Err("non-finite float has no literal form".to_string())
+            }
+        }
+        Value::Str(st) => {
+            let esc = st
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\t', "\\t");
+            Ok(format!("\"{esc}\""))
+        }
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(value_as_literal(it)?);
+            }
+            Ok(format!("[{}]", out.join(", ")))
+        }
+        Value::Unit => Err("unit has no binding form".to_string()),
+        // Struct/Enum/Tuple/Dict/Closure/Chan/Handle/… — a session can carry a
+        // value only if it can write it down, and these cannot be written as a
+        // literal today. Reported by name so the caller can say WHICH binding
+        // was dropped, which is the whole contract of a skip list.
+        other => Err(format!("{other:?} has no literal form")),
+    }
+}
+
 pub fn run_program_with_discharged(
     program: &Program,
     discharged: crate::verify::Discharged,
@@ -1733,6 +1785,23 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
         return 2;
     }
     let outcome = interp.init_globals().and_then(|()| interp.run_main());
+    // §5: hand the session its bindings back, as literals. Written after
+    // `run_main` so a cell's own top-level `let`s are included at their final
+    // values. Only on success — a cell that failed must not mutate the session.
+    if outcome.is_ok() {
+        if let Ok(path) = std::env::var("AXON_DUMP_BINDINGS") {
+            let mut lines = String::new();
+            let mut names: Vec<&String> = interp.globals.keys().collect();
+            names.sort(); // deterministic output; the session file is diffed
+            for name in names {
+                match value_as_literal(&interp.globals[name]) {
+                    Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
+                    Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),
+                }
+            }
+            let _ = std::fs::write(path, lines);
+        }
+    }
     match outcome {
         Ok(Value::Int(n)) => n as i32,
         Ok(_) => 0,
