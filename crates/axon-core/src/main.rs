@@ -947,6 +947,10 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
         Ok(p) => p,
         Err((msg, offset)) => {
             let (line, col) = axon_core::span::SourceMap::new(src.clone()).line_col(offset);
+            // AXON_FOR_RLM §1: a fix hint keyed on the token actually seen.
+            // Measured: 100% of a model's failures here were parse errors, and
+            // this tier was the one carrying no `help` at all.
+            let help = axon_core::parse_help::parse_help(&msg, &src, offset);
             let diag = axon_core::PipelineDiagnostic {
                 // Parse errors use the E0000 catch-all (same as lib::check_pipeline).
                 code: "E0000".to_string(),
@@ -958,7 +962,7 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
                 caret: String::new(),
                 expected: None,
                 found: None,
-                help: None,
+                help,
             };
             if use_json_early {
                 eprintln!("{}", diag.json());

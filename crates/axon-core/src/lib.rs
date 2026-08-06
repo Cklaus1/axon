@@ -30,6 +30,7 @@ pub mod mobile;
 /// R13 native FFI: the curated native-module registry (single source of truth
 /// shared by resolver/infer/checker/borrow/effects/codegen/interp).
 pub mod native;
+pub mod parse_help;
 pub mod parser;
 pub mod resolver;
 /// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
@@ -853,20 +854,26 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     let source_map = span::SourceMap::new(source.to_string());
     let mut out: Vec<PipelineDiagnostic> = Vec::new();
 
-    let mut program = match parse_source(source) {
+    // AXON_FOR_RLM §1/§2: parse with the LOCATED variant so a parse error
+    // resolves to a line:col and can carry a fix hint. The unlocated
+    // `parse_source` was why this diagnostic reported line 0 with no help — the
+    // offset it needs for both was thrown away one call earlier.
+    let mut program = match parse_source_located(source) {
         Ok(p) => p,
-        Err(e) => {
+        Err((msg, offset)) => {
+            let (line, col) = source_map.line_col(offset);
+            let help = parse_help::parse_help(&msg, source, offset);
             out.push(PipelineDiagnostic {
                 code: "E0000".into(),
-                message: e.to_string(),
+                message: msg,
                 file: file.to_string(),
-                line: 0,
-                col: 0,
+                line: line as u32,
+                col: col as u32,
                 severity: "error".into(),
                 caret: String::new(),
                 expected: None,
                 found: None,
-                help: None,
+                help,
             });
             return out;
         }
