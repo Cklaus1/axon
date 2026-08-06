@@ -1280,3 +1280,246 @@ test codegen_fuzz_parity_finds_no_divergence ... FAILED
 test wasm_asyncify_host_await_suspends_across_async_r7c ... ok
 test wasm_browser_examples_run_identically_via_js_host ... ok
 test wasm_browser_host_await_round_trips_r7c ... ok
+test wasm_browser_println_matches_interp_via_js_host ... ok
+test wasm_browser_target_is_wasi_free_and_matches_interp ... ok
+test wasm_examples_run_identically_on_aot_wasm ... ok
+test wasm_host_io_matches_native_via_wasi ... ok
+test wasm_interp_matches_native_on_pure_compute ... ok
+test wasm_interpreter_evals_identically_to_native_r7c ... ok
+test wasm_malloc_abi_bridge_runs_array_and_to_str ... ok
+test wasm_object_prunes_dead_externs_and_links_clean ... ok
+test wasm_str_abi_bridge_runs_str_builtins ... ok
+
+failures:
+
+---- build_refuses_ai_call_budget_e0910_f141 stdout ----
+
+thread 'build_refuses_ai_call_budget_e0910_f141' (734300) panicked at crates/axon-core/tests/cli_run.rs:8511:5:
+must refuse with E0910 naming the fn and the ceiling, got:
+Compiling /tmp/axon_aibudget_734031.ax...
+error: [E0910] this program makes AI calls, but this `axon` was built without `asi-runtime`, so `axon run` would refuse them (E1300) while a native build would dial the model live. Refusing rather than letting the two disagree — rebuild with `--features asi-runtime` to make AI calls available to both.
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- build_refuses_non_balanced_ai_tier_e0910_r3 stdout ----
+
+thread 'build_refuses_non_balanced_ai_tier_e0910_r3' (734301) panicked at crates/axon-core/tests/cli_run.rs:8362:5:
+must refuse with E0910 naming the fn and steering to `balanced`/interp, got:
+Compiling /tmp/axon_aitier_734031.ax...
+error: [E0910] this program makes AI calls, but this `axon` was built without `asi-runtime`, so `axon run` would refuse them (E1300) while a native build would dial the model live. Refusing rather than letting the two disagree — rebuild with `--features asi-runtime` to make AI calls available to both.
+
+
+---- build_refuses_per_call_ai_tier_e0910_f062 stdout ----
+
+thread 'build_refuses_per_call_ai_tier_e0910_f062' (734303) panicked at crates/axon-core/tests/cli_run.rs:8441:5:
+must refuse with E0910 naming the fn and the tier:
+Compiling /tmp/axon_tiercall_734031.ax...
+error: [E0910] this program makes AI calls, but this `axon` was built without `asi-runtime`, so `axon run` would refuse them (E1300) while a native build would dial the model live. Refusing rather than letting the two disagree — rebuild with `--features asi-runtime` to make AI calls available to both.
+
+
+---- codegen_handler_tail_resume_lowers_via_parity_harness stdout ----
+
+thread 'codegen_handler_tail_resume_lowers_via_parity_harness' (734550) panicked at crates/axon-core/tests/cli_run.rs:8766:5:
+expected PASS line:
+handler_resume_parity: building codegen axon binary…
+  OK resume_value: native==interp (exit 7)
+handler_resume_parity: native build/link unavailable for resume_midexpr — skipping
+  error: `axon build` (native codegen) requires building axon with the `codegen` feature.
+note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).
+
+
+---- codegen_exit_codes_match_interp stdout ----
+
+thread 'codegen_exit_codes_match_interp' (734457) panicked at crates/axon-core/tests/cli_run.rs:57:5:
+harness `exit_code_parity.sh` FAILED (exit Some(1)) — a failure is never a skip, whatever it printed:
+exit_code_parity: building codegen axon binary…
+  OK assert_false: both exit 101
+FAIL [assert_eq_bad]: native build failed (the interpreter exited 101)
+FAIL [div_zero]: native build failed (the interpreter exited 101)
+FAIL [oob_index]: native build failed (the interpreter exited 101)
+FAIL [clean_zero]: native build failed (the interpreter exited 0)
+FAIL [return_seven]: native build failed (the interpreter exited 7)
+FAIL [refine_neg]: native build failed (the interpreter exited 6)
+FAIL [refine_div0]: native build failed (the interpreter exited 6)
+FAIL [refine_strlen]: native build failed (the interpreter exited 6)
+FAIL [refine_ok]: native build failed (the interpreter exited 120)
+FAIL [refine_ret_bad]: native build failed (the interpreter exited 6)
+FAIL [refine_ret_ok]: native build failed (the interpreter exited 105)
+FAIL [refine_field_bad]: native build failed (the interpreter exited 6)
+FAIL [refine_struct_bad]: native build failed (the interpreter exited 6)
+FAIL [refine_struct_ok]: native build failed (the interpreter exited 10)
+FAIL [refine_let_bad]: native build failed (the interpreter exited 6)
+FAIL [refine_let_ok]: native build failed (the interpreter exited 3)
+FAIL [ai_budget]: native build failed but not with E0910: error: `axon build` (native codegen) requires building axon with the `codegen` feature.
+note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).
+hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed.
+FAIL [ai_tier]: native build failed but not with E0910: error: `axon build` (native codegen) requires building axon with the `codegen` feature.
+note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).
+hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed.
+exit_code_parity: FAIL — interp↔native exit-code divergence
+
+
+---- build_aborts_on_handler_that_intercepts_a_builtin_e0910 stdout ----
+
+thread 'build_aborts_on_handler_that_intercepts_a_builtin_e0910' (734291) panicked at crates/axon-core/tests/cli_run.rs:8665:5:
+indirect interception must be refused, not silently erased:
+error: `axon build` (native codegen) requires building axon with the `codegen` feature.
+note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).
+hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed.
+
+
+---- all_examples_native_match_interp_under_mock stdout ----
+
+thread 'all_examples_native_match_interp_under_mock' (734076) panicked at crates/axon-core/tests/cli_run.rs:57:5:
+harness `all_examples_parity.sh` FAILED (exit Some(1)) — a failure is never a skip, whatever it printed:
+all_examples_parity: locating codegen axon binary…
+all_examples_parity: 1/39 match, 0 differ, 36 build-fail, 2 interp-only-refused (E0910)
+all_examples_parity: interp-only (codegen soundly refuses, runs under `axon run`):
+  REFUSED (interp-only, E0910): adaptive_summarize
+  REFUSED (interp-only, E0910): ai_complete
+all_examples_parity: FAIL
+  BUILD-FAIL: anthropic_stream
+  BUILD-FAIL: calculator
+  BUILD-FAIL: closures_demo
+  BUILD-FAIL: comprehensive
+  BUILD-FAIL: effects
+  BUILD-FAIL: enums
+  BUILD-FAIL: error_handling
+  BUILD-FAIL: escapes
+  BUILD-FAIL: feature_tour
+  BUILD-FAIL: fibonacci
+  BUILD-FAIL: file_roundtrip
+  BUILD-FAIL: floats
+  BUILD-FAIL: hello
+  BUILD-FAIL: http_get
+  BUILD-FAIL: http_sse
+  BUILD-FAIL: interpolation
+  BUILD-FAIL: logical_ops
+  BUILD-FAIL: math
+  BUILD-FAIL: math_builtins
+  BUILD-FAIL: modulo
+  BUILD-FAIL: options
+  BUILD-FAIL: parse_int
+  BUILD-FAIL: refinement_attenuation
+  BUILD-FAIL: refinements
+  BUILD-FAIL: sensitive_data
+  BUILD-FAIL: slices
+  BUILD-FAIL: stdlib_tests
+  BUILD-FAIL: structs
+  BUILD-FAIL: sum_types
+  BUILD-FAIL: temporal_decay
+  BUILD-FAIL: trainloop_stream
+  BUILD-FAIL: traits_demo
+  BUILD-FAIL: traits_methods
+  BUILD-FAIL: tuples
+  BUILD-FAIL: uncertain_propagation
+  BUILD-FAIL: while
+
+
+---- codegen_fuzz_parity_finds_no_divergence stdout ----
+
+thread 'codegen_fuzz_parity_finds_no_divergence' (734476) panicked at crates/axon-core/tests/cli_run.rs:57:5:
+harness `fuzz_parity.sh` FAILED (exit Some(1)) — a failure is never a skip, whatever it printed:
+fuzz_parity: seed=42, up to 40 random + edge inputs per builtin
+  OK   abs_i64: 49 inputs, interp==native (exit 0)
+  FAIL abs_i32: native build failed
+  FAIL sign_i64: native build failed
+  OK   min_i64: 49 inputs, interp==native (exit 0)
+  FAIL max_i64: native build failed
+  FAIL min_i32: native build failed
+  OK   max_i32: 49 inputs, interp==native (exit 0)
+  OK   clamp_i64: 49 inputs, interp==native (exit 0)
+  OK   add_i64: 49 inputs, interp==native (exit 0)
+  FAIL sub_i64: native build failed
+  FAIL cmp_lt: native build failed
+  FAIL cmp_eq: native build failed
+  FAIL bit_and: native build failed
+  FAIL bit_or: native build failed
+  FAIL bit_xor: native build failed
+  FAIL bit_not: native build failed
+  FAIL pow_i64: native build failed
+  FAIL shl_i64: native build failed
+  FAIL shr_i64: native build failed
+  FAIL mod_i64: native build failed
+  FAIL abs_f64: native build failed
+  FAIL floor_f64: native build failed
+  FAIL ceil_f64: native build failed
+  FAIL min_f64: native build failed
+  FAIL max_f64: native build failed
+  FAIL f2i: native build failed
+  FAIL exp_f64: native build failed
+  FAIL ln_f64: native build failed
+  FAIL log10_f64: native build failed
+  FAIL str_len: native build failed
+  FAIL str_contains: native build failed
+  FAIL str_starts: native build failed
+  FAIL str_ends: native build failed
+  FAIL str_index: native build failed
+  FAIL str_split_n: native build failed
+  FAIL str_split_el: native build failed
+  FAIL str_join_rt: native build failed
+  FAIL str_digits: native build failed
+  FAIL str_upper: native build failed
+  FAIL str_lower: native build failed
+  FAIL str_trim: native build failed
+  FAIL str_trim_s: native build failed
+  FAIL str_trim_e: native build failed
+  FAIL str_reverse: native build failed
+  FAIL str_repeat: native build failed
+  FAIL str_replace: native build failed
+  FAIL str_slice_s: native build failed
+  FAIL char_at_s: native build failed
+  FAIL round_f64: native build failed
+  FAIL clamp_f64: native build failed
+  FAIL i64_to_f64: native build failed
+  FAIL as_f64_cast: native build failed
+  FAIL as_i64_cast: native build failed
+  FAIL radix_hex: native build failed
+  FAIL radix_bin: native build failed
+  FAIL radix_36: native build failed
+  FAIL nan_sqrt_neg: native build failed
+  FAIL nan_zero_div: native build failed
+  FAIL inf_pos: native build failed
+  FAIL inf_neg: native build failed
+  FAIL mul_i64: native build failed
+  FAIL div_i64: native build failed
+  FAIL rem_i64: native build failed
+  FAIL f2i_sat: native build failed
+  FAIL ovf_add: native build failed
+  FAIL ovf_sub: native build failed
+  FAIL ovf_mul: native build failed
+  FAIL ovf_neg: native build failed
+  FAIL div_zero: native build failed
+  FAIL mod_zero: native build failed
+  FAIL arr_oob: native build failed
+  FAIL arr_neg: native build failed
+  FAIL arr_sum_ovf: native build failed
+  FAIL arr_sum_ovfneg: native build failed
+  FAIL arr_sum_ok: native build failed
+  FAIL arr_max_empty: native build failed
+  FAIL arr_min_empty: native build failed
+  FAIL arr_argmax_empty: native build failed
+  FAIL arr_maxf_empty: native build failed
+  FAIL arr_argminf_empty: native build failed
+fuzz_parity: FAIL — interp↔codegen divergence found
+
+
+
+failures:
+    all_examples_native_match_interp_under_mock
+    build_aborts_on_handler_that_intercepts_a_builtin_e0910
+    build_refuses_ai_call_budget_e0910_f141
+    build_refuses_non_balanced_ai_tier_e0910_r3
+    build_refuses_per_call_ai_tier_e0910_f062
+    codegen_exit_codes_match_interp
+    codegen_fuzz_parity_finds_no_divergence
+    codegen_handler_tail_resume_lowers_via_parity_harness
+
+test result: FAILED. 446 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 475.54s
+
+error: test failed, to rerun pass `-p axon-core --test cli_run`
+
+real	7m52.273s
+user	7m56.806s
+sys	1m57.802s
+EXIT=101
