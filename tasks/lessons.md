@@ -179,3 +179,39 @@ the shared artifact path means a fast local build and the full suite are
 fighting over one file. Prefer `cargo build -p axon-core --bin axon` (default
 features) before any full-suite run, or accept that the run is measuring
 whatever was built last.
+
+---
+
+# Lessons — the HIGH-tier loop (2026-08-06)
+
+## L015 — an opportunity entry can be stale in the CLOSED direction
+
+**Mistake:** Carried O026 ("the in-guest effect policy defaults to OPEN — a
+fail-open capability boundary") into a spec as a live `needs-human` decision,
+with options and a recommendation. It was already fixed: AUDIT T48
+(`axon-vm/src/main.rs:1114`) makes the launcher refuse rather than emit a null
+policy, and its comment records that the guest denies on ambiguity too. I would
+have handed someone a decision they had already made.
+
+The loop did read every source entry's **text** carefully — that is what caught
+six "decision needed" markers the one-line summaries had lost. What it did not
+do was check whether the **code** had moved under the entry since it was written.
+
+**Rule:** A backlog entry states what was true when someone wrote it. Before
+planning from one, re-verify the defect against current code — the same
+verify-first rule already applied to done-claims, in the other direction. Cheap
+test: grep for the specific mechanism the entry describes and confirm it still
+behaves as described. Applied to the other five here, four were still live and
+one was not, so the check is not ceremonial.
+
+## L016 — a gate's own expectations can go stale when the behaviour is deliberately changed
+
+**Observed, not a mistake this run:** `r34_acceptance_gate.sh` fails at HEAD
+because its chain-stamp section expects a run that T48 *intentionally* made
+refuse. The gate is not detecting a regression; it is asserting the pre-fix
+behaviour and calling the fix a failure.
+
+**Rule:** When a fix changes a refusal boundary, grep the gate scripts for the
+old behaviour in the same commit. A test suite is searched for this
+automatically; `scripts/*.sh` is not, and a gate that fails for a stale reason
+trains everyone to ignore it — which is how a real failure gets missed later.
