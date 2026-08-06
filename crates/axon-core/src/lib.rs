@@ -1007,9 +1007,16 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
             col,
             severity: severity.into(),
             caret,
-            expected: None,
-            found: None,
-            help: None,
+            // O-RLM-12, second drift. A checker `Diagnostic` carries
+            // `expected`/`found`/`fix`; all three were dropped here while the
+            // CLI's `run_check_pipeline_located` carried them, so E0307 reached
+            // a library consumer with no help and no typed fields and reached a
+            // CLI user with both. Found by making the pipeline-agreement test
+            // bidirectional — the one-way version missed it, because it only
+            // asked whether the CLI had what the library had.
+            expected: e.expected.clone(),
+            found: e.found.clone(),
+            help: e.fix.clone(),
         });
     }
 

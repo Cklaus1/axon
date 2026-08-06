@@ -260,3 +260,72 @@ fn python_logical_operators_are_named() {
         assert!(help.contains(word) && help.contains(op), "{help}");
     }
 }
+
+#[test]
+fn the_library_and_cli_check_pipelines_agree_on_a_corpus() {
+    // O-RLM-12. `lib::check_pipeline` and `main::run_check_pipeline_located` run
+    // the same passes and carry a code comment saying they must stay in sync.
+    // They had drifted: `check_pipeline` dropped every resolver diagnostic's
+    // `fix`, so library consumers saw no help where the CLI showed it. A comment
+    // is not a test, and the drift was found by accident.
+    //
+    // The CLI half is exercised through the binary (the library cannot call
+    // `main`), and the comparison is on the fields both are supposed to carry.
+    let corpus: &[(&str, &str)] = &[
+        ("mut", "fn main() -> i64 {\n    let mut c = 0\n    0\n}\n"),
+        ("type-err", "fn f() -> i64 { \"s\" }\nfn main() -> i64 { 0 }\n"),
+        ("unknown", "fn main() -> i64 {\n    nope()\n}\n"),
+        ("const", "fn main() -> i64 {\n    const c = 0\n    0\n}\n"),
+        (
+            "arity",
+            "fn f(a: i64) -> i64 { a }\nfn main() -> i64 { f(1, 2) }\n",
+        ),
+    ];
+
+    let mut compared = 0usize;
+    for (name, src) in corpus {
+        let lib: Vec<(String, Option<String>)> = check_pipeline(src, "probe.ax")
+            .iter()
+            .filter(|d| d.severity == "error")
+            .map(|d| (d.code.clone(), d.help.clone()))
+            .collect();
+        if lib.is_empty() {
+            continue;
+        }
+
+        let f = std::env::temp_dir().join(format!("axon_pipe_{name}_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
+            .arg("check")
+            .arg(&f)
+            .output()
+            .expect("spawn axon check");
+        let _ = std::fs::remove_file(&f);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+
+        for (code, help) in &lib {
+            assert!(
+                stderr.contains(&format!("\"code\":\"{code}\"")),
+                "{name}: the library reports {code} and the CLI does not:\n{stderr}"
+            );
+            // BOTH directions. A one-way assertion ("the CLI must carry what
+            // the library carries") does not catch the drift that actually
+            // happened, which was the library dropping help the CLI had —
+            // mutation-testing this caught the test, not the code.
+            let cli_line = stderr
+                .lines()
+                .find(|l| l.contains(&format!("\"code\":\"{code}\"")))
+                .unwrap_or("");
+            let cli_has_help = cli_line.contains("\"help\":");
+            assert_eq!(
+                help.is_some(),
+                cli_has_help,
+                "{name}: library help for {code} = {}, CLI help = {cli_has_help}. \
+                 The two check pipelines have drifted.\n{stderr}",
+                help.is_some()
+            );
+        }
+        compared += 1;
+    }
+    assert!(compared >= 4, "corpus matched too little to prove anything: {compared}");
+}

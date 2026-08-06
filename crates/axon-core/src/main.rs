@@ -4525,38 +4525,6 @@ fn run_build_pipeline(
     output: &Path,
     opts: &BuildOptions,
 ) -> Result<(), String> {
-    // O031: refuse rather than let the two execution paths disagree about a
-    // CAPABILITY.
-    //
-    // `axon-core`'s default features do NOT include `asi-runtime`, so the
-    // interpreter takes the offline branch: an `ai_complete` with a declared
-    // `@[ai(policy(fallback: …))]` returns the fallback, and one without is a
-    // fatal E1300. Native codegen linked `axon-ai` unconditionally, so the SAME
-    // compiler binary produced an AOT program that dialled the real model —
-    // reproduced end to end: `axon run` exited 5 refusing to make the call while
-    // the built binary reached live dispatch and failed only for want of an API
-    // key. With a key present it would have made a real network call in a build
-    // configuration where `axon run` refuses to make AI calls at all.
-    //
-    // Refusing is the repo's established answer to "native cannot faithfully
-    // reproduce the interpreter here" (the E0910 class), and it is the only one
-    // that cannot silently escalate a capability: a build that would behave
-    // differently from `axon run` does not happen.
-    #[cfg(not(feature = "asi-runtime"))]
-    {
-        let rows = axon_core::capabilities::program_effect_rows(program);
-        if rows.contains("AI") {
-            return Err(
-                "[E0910] this program makes AI calls, but this `axon` was built \
-                 without `asi-runtime`, so `axon run` would refuse them (E1300) \
-                 while a native build would dial the model live. Refusing rather \
-                 than letting the two disagree — rebuild with \
-                 `--features asi-runtime` to make AI calls available to both."
-                    .to_string(),
-            );
-        }
-    }
-
     // Check first, fail fast on errors.
     let (errors, mut infer_ctx) = check_program_located(program, source_path);
     if !errors.is_empty() {

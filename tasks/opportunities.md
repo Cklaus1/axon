@@ -1631,3 +1631,43 @@ they already made is its own kind of wrong answer.
 
 Sweep the rest of `opportunities.md` against current code before the next loop
 plans from it.
+
+## O-HI-03 — H2/O031 reclassified: native AI builds are an INTENDED capability (proposed: HIGH — decision, not code)
+
+Attempted on the "fix all" instruction and **reverted**, because implementation
+revealed what the opportunity entry could not.
+
+O031 frames it as a defect: `axon-core`'s default features exclude
+`asi-runtime`, so the interpreter refuses `ai_complete` (E1300), while codegen
+links `axon-ai` unconditionally and produces a binary that dials the model live.
+That divergence is real and reproducible.
+
+But the repo has **three tests asserting AI programs must build natively** —
+`build_refuses_non_balanced_ai_tier_e0910_r3` explicitly requires that "a
+balanced-tier ai_complete must still BUILD", and the other two assert that only
+*specific* shapes (per-call tier, `@[ai(policy(budget: N))]`) are refused. So
+native AI is a supported, tested capability with a deliberately drawn refusal
+boundary, not an oversight.
+
+Gating the native link on `asi-runtime` therefore **removes a capability people
+rely on**. That is a product decision with external-behaviour exposure, which is
+the definition of `needs-human` — and it is why the attempt was reverted rather
+than shipped behind a flag.
+
+The choice, restated with what is now known:
+
+1. **Gate native on `asi-runtime`** — the two paths agree; native AI builds stop
+   working for anyone not passing the feature, and three tests change.
+2. **Make the interpreter live too** — the paths agree in the other direction;
+   `axon run` starts making network calls in the default build, which is a much
+   larger blast radius.
+3. **Document the divergence** and keep both — cheapest, and leaves a capability
+   difference decided by execution path rather than by grant.
+
+No recommendation is adopted. Worth noting (1) is still my suggestion, but it is
+a capability removal and belongs to whoever owns that contract.
+
+One thing that IS safely fixable without the decision: nothing about the current
+behaviour is stated where a user would see it. `axon build --help` and the AI
+docs could say that a native build makes live AI calls regardless of
+`asi-runtime`, which is true today under every option above.
