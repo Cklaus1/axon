@@ -4197,6 +4197,16 @@ fn run_check_pipeline_located(
                 severity: &str,
                 line: u32,
                 col: u32| {
+        // AXON_FOR_RLM §2b. Several checkers (capabilities/E1001 most visibly)
+        // write their fix hint into the message as a `help:` line. This closure
+        // used to hard-code `help: None`, so that hint reached the wire buried
+        // inside `message` and a consumer reading the `help` key saw nothing —
+        // on precisely the diagnostic a containment host must show its caller.
+        // `diag_schema::split_help` is the existing implementation of that
+        // convention (the string path has always applied it); using it here
+        // makes the typed and string representations agree instead of
+        // introducing a second splitter that could drift from it.
+        let (message, help) = axon_core::diag_schema::split_help(&message);
         diags.push(PipelineDiagnostic {
             code,
             message,
@@ -4207,7 +4217,7 @@ fn run_check_pipeline_located(
             caret: String::new(),
             expected: None,
             found: None,
-            help: None,
+            help: (!help.is_empty()).then_some(help),
         });
     };
     // R8 axon-diag/2: like `push` but carrying the structured type-mismatch +

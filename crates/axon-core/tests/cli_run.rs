@@ -4512,9 +4512,24 @@ fn parse_error_prefix_is_not_doubled() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    // AXON_FOR_RLM §2 changed what this test can assert, and the change is the
+    // point rather than a casualty of it.
+    //
+    // The `parse error: ` prose prefix came from `AxonError::Parse`'s Display,
+    // on the path `run` used and `check` did not — so the two verbs disagreed
+    // about this prefix exactly as they disagreed about `help`, `line` and
+    // `col`. `run` now emits the same structured diagnostic `check` does, which
+    // has never carried the prefix, so requiring it would be requiring the
+    // divergence back.
+    //
+    // Nothing is lost: the error's CLASS now travels as `code: E0000`, which a
+    // consumer can read without matching prose, and the human-facing form
+    // renders it as `error[E0000]`. Bug #7 was about the prefix appearing
+    // TWICE, and that is still what is guarded below — a re-wrapping regression
+    // would produce a doubled prefix here just as it did then.
     assert!(
-        msg.contains("parse error:"),
-        "should still have one prefix: {msg}"
+        msg.contains("\"code\":\"E0000\"") || msg.contains("error[E0000]"),
+        "the parse-error class must still be identifiable: {msg}"
     );
     assert!(
         !msg.contains("parse error: parse error:"),
@@ -18894,5 +18909,57 @@ fn run_and_check_emit_identical_diagnostics_across_a_corpus() {
     assert!(
         compared >= 7,
         "expected at least the 7 hand-written cases to be compared, got {compared}"
+    );
+}
+
+// ── AXON_FOR_RLM.md §2b — the containment refusal's own help ────────────────
+
+/// A `@[contained]` function reading outside its allowlist: the E1001 refusal
+/// an RLM host shows a model when the compiler stops it.
+const CONTAINED_SRC: &str = concat!(
+    "@[contained(fs: [read(\"./data/\")], net: [], exec: none)]\n",
+    "fn leak() -> i64 {\n",
+    "    match read_file(\"/etc/passwd\") {\n",
+    "        Ok(s) => { println(s) }\n",
+    "        Err(e) => { println(e) }\n",
+    "    }\n",
+    "    0\n",
+    "}\n",
+    "fn main() -> i64 { leak() }\n",
+);
+
+#[test]
+fn the_containment_refusal_puts_its_help_in_the_help_field() {
+    // §2b. E1001 carried its fix hint INSIDE `message` as a `help:` line, so a
+    // consumer reading the `help` key — the entire point of the versioned
+    // schema — saw no help on the one diagnostic containment exists to produce.
+    let f = tmp_ax("contained_help", CONTAINED_SRC);
+    let out = axon().arg("check").arg(&f).output().expect("spawn check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("\"code\":\"E1001\""))
+        .unwrap_or_else(|| panic!("expected an E1001 diagnostic: {stderr}"));
+
+    assert!(
+        line.contains("\"help\":"),
+        "E1001 must expose `help` as a first-class field: {line}"
+    );
+    assert!(
+        line.contains("Add `read("),
+        "the hint itself must survive: {line}"
+    );
+    // And it must no longer be duplicated inside `message`: a consumer that
+    // renders both would print the hint twice.
+    let msg_start = line.find("\"message\":").expect("message field");
+    let msg_end = line[msg_start..]
+        .find("\",\"")
+        .map(|i| msg_start + i)
+        .unwrap_or(line.len());
+    assert!(
+        !line[msg_start..msg_end].contains("help:"),
+        "help must be moved out of `message`, not copied: {line}"
     );
 }

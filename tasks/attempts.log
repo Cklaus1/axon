@@ -2,3 +2,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-06T17:34:50Z  T-R1  attempt 1  closed-table parse_help keyed on (parse message, source, offset); mut first
 2026-08-06T17:43:26Z  T-R2  attempt 1  cmd_run: parse_source_located + PipelineDiagnostic(E0000) with help, honouring the same tty/JSON switch as cmd_check
 2026-08-06T17:45:13Z  T-R3  attempt 1  cmd_run: run_check_pipeline_located(src) + typed emit; delete the flattening wrapper if callerless
+2026-08-06T17:48:30Z  T-R4  attempt 1  move E1001 inline 'help:' prose into PipelineDiagnostic.help

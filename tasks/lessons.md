@@ -102,3 +102,27 @@ about code contains backticks by nature. Always
 substitution entirely. And after any commit whose message was assembled by a
 shell, read it back with `git log -1 --format=%B` before moving on — a mangled
 message is silent.
+
+---
+
+## L011 — a test can encode the very divergence you are removing
+
+**Mistake:** T-R2/T-R3 made `axon run` emit the same diagnostics as `axon check`.
+The tier-1 full-suite gate then failed `parse_error_prefix_is_not_doubled`, which
+asserted `run`'s output contains `parse error:`. That prefix came from
+`AxonError::Parse`'s Display, on the path `run` used and `check` did not — so the
+test was pinning one of the divergences the task existed to remove. Per-task
+tests all passed; only the full suite saw it.
+
+The trap is that the obvious readings are both wrong. "It's just a stale test,
+update it" risks deleting a real regression signal. "It's a regression, restore
+the prefix" would have restored the divergence and quietly undone the task.
+
+**Rule:** When a pre-existing test fails after a unification change, separate the
+test's *intent* from the *incidental behaviour it happens to observe*. Here the
+intent was bug #7 — the prefix appearing TWICE — and that is still assertable and
+still asserted. What changed is only where the error's class is carried: prose
+`parse error:` became `code: E0000`, which is strictly more machine-readable.
+Rewrite the assertion to the intent, and say in the test why the observation
+moved. If you cannot state the intent separately from the observation, treat it
+as a real regression, not a stale test.
