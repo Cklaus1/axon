@@ -927,7 +927,14 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
             caret,
             expected: None,
             found: None,
-            help: None,
+            // A resolver diagnostic's `fix` is its help text — the "did you
+            // mean" suggestion and (since the foreign-keyword table) the
+            // `const`/`var` hints. This dropped it, so every library consumer of
+            // `check_pipeline` saw resolver diagnostics with no help while the
+            // CLI's `run_check_pipeline_located` carried it. The two are
+            // documented as needing to stay in sync and had drifted, which is
+            // the same class of divergence this whole spec exists to close.
+            help: d.fix.clone(),
         });
     }
 

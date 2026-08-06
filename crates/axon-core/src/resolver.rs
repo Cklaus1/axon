@@ -280,6 +280,36 @@ impl SymbolTable {
     }
 }
 
+/// Fix text for a declaration keyword borrowed from another language, or `None`.
+///
+/// `AXON_FOR_RLM.md` §1 names `const` and `var` among the habits models bring.
+/// Unlike `mut`, they lex as ordinary identifiers, so they never reach the
+/// parser as an error and `parse_help` is never called for them — they surface
+/// as `E0001 cannot find name`, one tier lower. Same defect, different tier.
+///
+/// Kept as a closed table for the same reason as `parse_help`'s: a compiler hint
+/// must be deterministic and offline, and one table is auditable.
+fn foreign_keyword_help(name: &str) -> Option<String> {
+    let (lang, fix) = match name {
+        "const" => ("Rust/JS", "`let NAME = …` — Axon bindings are immutable by default"),
+        "var" => ("JS/Go", "`let NAME = …`"),
+        "let" => ("(shadowed)", "`let NAME = …`"),
+        "def" | "func" | "fun" => ("Python/Go", "`fn NAME(arg: i64) -> i64 { … }`"),
+        "function" => ("JS", "`fn NAME(arg: i64) -> i64 { … }`"),
+        "elif" => ("Python", "`else if`"),
+        "null" | "nil" | "None" => ("Python/JS/Go", "`Option`: `None` is written as the `Option` variant, and a missing value is `Option<T>` rather than a null"),
+        "true_" | "True" => ("Python", "`true`"),
+        "False" => ("Python", "`false`"),
+        // Deliberately NOT listed: `print`, `len` and friends are real Axon
+        // builtins. A row here for a name that resolves would be unreachable;
+        // a row for one that does not would tell the reader something false.
+        _ => return None,
+    };
+    Some(format!(
+        "`{name}` is not an Axon keyword (it is {lang}) — write {fix}"
+    ))
+}
+
 impl Default for SymbolTable {
     fn default() -> Self {
         Self::new()
@@ -915,7 +945,19 @@ impl<'a> Resolver<'a> {
                     )
                     .with_file(self.file)
                     .with_span(self.current_span);
-                    if let Some(s) = suggestion {
+                    // A foreign declaration keyword is checked FIRST, ahead of
+                    // the spelling suggestion, because the spelling suggestion
+                    // actively misleads here: `const` is 3 edits from several
+                    // real builtins, so a reader who wrote `const x = 0` was
+                    // told "did you mean `cos`?" rather than that `const` is not
+                    // an Axon keyword.
+                    //
+                    // These reach the RESOLVE tier, not the parse tier, because
+                    // they lex as ordinary identifiers — which is why
+                    // `parse_help` cannot serve them and this arm exists.
+                    if let Some(fix) = foreign_keyword_help(name) {
+                        d = d.with_fix(fix);
+                    } else if let Some(s) = suggestion {
                         d = d.with_fix(format!(
                             "a name with a similar spelling exists — did you mean `{s}`?"
                         ));

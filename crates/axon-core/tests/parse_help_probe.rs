@@ -134,6 +134,40 @@ fn const_and_var_do_not_reach_the_parse_tier() {
 }
 
 #[test]
+fn const_and_var_get_foreign_keyword_help_at_the_resolve_tier() {
+    // The other half of `const_and_var_do_not_reach_the_parse_tier`: they are
+    // not parse errors, so `parse_help` cannot serve them, but they are just as
+    // unrepairable and `AXON_FOR_RLM.md` §1 names both.
+    //
+    // The keyword check runs AHEAD of the spelling suggestion because the
+    // suggestion actively misleads: `const` is within 3 edits of real builtins,
+    // so the reader used to be told "did you mean `cos`?".
+    for (src, kw) in [
+        ("fn main() -> i64 {\n    const c = 0\n    0\n}\n", "const"),
+        ("fn main() -> i64 {\n    var c = 0\n    0\n}\n", "var"),
+    ] {
+        let diags = check_pipeline(src, "probe.ax");
+        let d = diags
+            .iter()
+            .find(|d| d.code == "E0001")
+            .unwrap_or_else(|| panic!("`{kw}` must produce E0001: {diags:?}"));
+        let help = d
+            .help
+            .as_ref()
+            .unwrap_or_else(|| panic!("`{kw}` must carry a fix hint"));
+        assert!(
+            help.contains(&format!("`{kw}` is not an Axon keyword")),
+            "{help}"
+        );
+        assert!(help.contains("let NAME"), "must show the Axon form: {help}");
+        assert!(
+            !help.contains("did you mean"),
+            "the misleading spelling suggestion must not win: {help}"
+        );
+    }
+}
+
+#[test]
 fn a_valid_program_produces_no_parse_help() {
     let diags = check_pipeline(
         "fn main() -> i64 {\n    let count = 0\n    count\n}\n",
