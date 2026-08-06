@@ -943,27 +943,11 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // line:col (previously span-less). The byte offset → (line,col) via the
     // SourceMap, emitted as a structured PipelineDiagnostic JSON.
     let use_json_early = json_flag || !std::io::stderr().is_terminal();
-    let mut program = match axon_core::parse_source_located(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err((msg, offset)) => {
-            let (line, col) = axon_core::span::SourceMap::new(src.clone()).line_col(offset);
-            // AXON_FOR_RLM §1: a fix hint keyed on the token actually seen.
-            // Measured: 100% of a model's failures here were parse errors, and
-            // this tier was the one carrying no `help` at all.
-            let help = axon_core::parse_help::parse_help(&msg, &src, offset);
-            let diag = axon_core::PipelineDiagnostic {
-                // Parse errors use the E0000 catch-all (same as lib::check_pipeline).
-                code: "E0000".to_string(),
-                message: msg,
-                file: file.display().to_string(),
-                line: line as u32,
-                col: col as u32,
-                severity: "error".to_string(),
-                caret: String::new(),
-                expected: None,
-                found: None,
-                help,
-            };
+        Err(diag) => {
+            // `--json` forces JSON even on a tty; otherwise this is exactly
+            // `emit_pipeline_diag`'s rule, which `run` also uses.
             if use_json_early {
                 eprintln!("{}", diag.json());
             } else {
@@ -3601,10 +3585,15 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     axon_core::interp::set_provenance_source(file.display().to_string());
 
     let src = read_source(&file);
-    let mut program = match parse_source(&src) {
+    // AXON_FOR_RLM §2. This used the unlocated `parse_source` and printed bare
+    // prose — no schema, no code, no line, no help — while `check` on the same
+    // file emitted a located, structured diagnostic. The parse tier is where
+    // 100% of a model's measured failures land, so the run-and-see loop every
+    // other RLM engine uses was the one loop getting nothing back.
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: {e}");
+        Err(diag) => {
+            emit_pipeline_diag(&diag);
             // Fix 8: exit 2 for compile errors.
             process::exit(2);
         }
@@ -3612,11 +3601,19 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
 
     // Type-check before running, so type errors are reported up front rather
     // than surfacing as interpreter runtime panics.
-    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    //
+    // AXON_FOR_RLM §2. This called `run_check_pipeline`, whose whole body is
+    // `format!("[{code}] {message}")` over the typed diagnostics — because it
+    // passes `""` as the source, so no span can resolve. `emit_error` then
+    // re-derived JSON from that string by regex, recovering only what happened
+    // to be inside `message`. `help`, `file`, `line`, `col`, `expected` and
+    // `found` were all dropped, so a model in a run-and-see loop was told
+    // neither what was wrong nor where. The located variant differs only in
+    // being handed `src`.
+    let (errors, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
-        let use_json = !std::io::stderr().is_terminal();
         for err in &errors {
-            emit_error(err, use_json);
+            emit_pipeline_diag(err);
         }
         process::exit(2);
     }
@@ -4771,6 +4768,53 @@ fn read_source(file: &PathBuf) -> String {
         // Fix 8: exit 1 for I/O errors.
         process::exit(1);
     })
+}
+
+/// Parse for a CLI verb, returning a fully-populated parse diagnostic on error.
+///
+/// AXON_FOR_RLM §2. `check` and `run` each used to build this diagnostic
+/// themselves, and they built *different* ones: `check` located the error and
+/// (after §1) attached a fix hint; `run` printed `error: parse error: …` with
+/// no code, no location and no hint. Two call sites constructing the same
+/// diagnostic is how they came to disagree, so there is now one.
+/// The error is boxed because `PipelineDiagnostic` is much larger than a
+/// `Program` handle, and clippy's `result_large_err` is right that every
+/// success path would otherwise pay for the error's size.
+fn parse_source_located_cli(
+    src: &str,
+    file: &Path,
+) -> Result<axon_core::ast::Program, Box<axon_core::PipelineDiagnostic>> {
+    axon_core::parse_source_located(src).map_err(|(msg, offset)| {
+        let (line, col) = axon_core::span::SourceMap::new(src.to_string()).line_col(offset);
+        Box::new(axon_core::PipelineDiagnostic {
+            // Parse errors use the E0000 catch-all (same as lib::check_pipeline).
+            code: "E0000".to_string(),
+            // §1: a fix hint keyed on the token actually seen.
+            help: axon_core::parse_help::parse_help(&msg, src, offset),
+            message: msg,
+            file: file.display().to_string(),
+            line: line as u32,
+            col: col as u32,
+            severity: "error".to_string(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+        })
+    })
+}
+
+/// Emit a typed diagnostic, JSON when stderr is not a terminal.
+///
+/// The tty check is the same one `cmd_check` uses, so a piped `run` and a piped
+/// `check` produce the same bytes and an interactive one produces the same
+/// prose. Keeping the switch here rather than at each call site is what stops
+/// the two drifting again.
+fn emit_pipeline_diag(diag: &axon_core::PipelineDiagnostic) {
+    if !std::io::stderr().is_terminal() {
+        eprintln!("{}", diag.json());
+    } else {
+        eprintln!("error: {}", diag.display());
+    }
 }
 
 fn emit_error(msg: &str, as_json: bool) {

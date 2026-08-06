@@ -18685,3 +18685,214 @@ fn r21_decimal_exact_arithmetic_and_overdraft() {
         bad.status.code()
     );
 }
+
+// ── AXON_FOR_RLM.md §2 — `axon run` must carry what `axon check` carries ─────
+//
+// Measured: `run` carried no `help` at any tier. The cause was not a policy
+// choice but a lossy string round-trip — `cmd_run` flattened typed diagnostics
+// to `[CODE] message` and `emit_error` re-derived JSON by regex, so `help`,
+// `file`, `line`, `col`, `expected` and `found` were all dropped. And at the
+// PARSE tier `run` emitted bare prose with no JSON at all, which is the tier
+// where 100% of a model's measured failures land.
+//
+// These tests assert on the `run` path specifically. `parse_help_probe.rs`
+// covers the same ground for `check`; the point here is that the two agree.
+
+/// A temp `.ax` file unique to this process AND this test name, so tests that
+/// run concurrently in the same process cannot collide on the path. (The
+/// project has a recorded flake class from tests sharing a fixed `/tmp` path.)
+fn tmp_ax(name: &str, src: &str) -> std::path::PathBuf {
+    let f = std::env::temp_dir().join(format!("axon_rlm_{}_{}.ax", name, std::process::id()));
+    std::fs::write(&f, src).expect("write temp source");
+    f
+}
+
+const MUT_SRC: &str = "fn main() -> i64 {\n    let mut count = 0\n    0\n}\n";
+
+#[test]
+fn run_emits_a_structured_parse_diagnostic_with_help() {
+    let f = tmp_ax("run_parse_help", MUT_SRC);
+    let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+
+    assert_eq!(out.status.code(), Some(2), "parse error exits 2: {stderr}");
+    // Before this change `run` printed `error: parse error: unexpected token…`
+    // — prose, no code, no location, no help.
+    assert!(
+        stderr.contains("\"schema\":\"axon-diag/1\""),
+        "run must emit the versioned schema at the parse tier: {stderr}"
+    );
+    assert!(stderr.contains("\"code\":\"E0000\""), "{stderr}");
+    assert!(
+        stderr.contains("\"line\":2"),
+        "must locate the error: {stderr}"
+    );
+    assert!(
+        stderr.contains("`mut` is not an Axon keyword"),
+        "must carry the fix hint: {stderr}"
+    );
+}
+
+#[test]
+fn run_and_check_agree_on_the_parse_diagnostic() {
+    // The round-trip equivalence gate. Any field one path carries and the other
+    // drops shows up here, which is what a per-field assertion cannot promise.
+    let f = tmp_ax("run_check_parse_parity", MUT_SRC);
+
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let check = axon().arg("check").arg(&f).output().expect("spawn check");
+    let _ = std::fs::remove_file(&f);
+
+    // `run` stamps `axon: run-id …` on stderr before anything else; that line is
+    // the replay handle and is not a diagnostic. Compare the diagnostic lines.
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .collect()
+    };
+    let run_diags = diag_lines(&String::from_utf8_lossy(&run.stderr));
+    let check_diags = diag_lines(&String::from_utf8_lossy(&check.stderr));
+
+    assert!(!run_diags.is_empty(), "run emitted no diagnostic JSON");
+    assert_eq!(
+        run_diags, check_diags,
+        "run and check must emit byte-identical diagnostic JSON"
+    );
+}
+
+/// A type error whose diagnostic carries a `help` — E0307 is the one
+/// `AXON_FOR_RLM.md` §2 cites as what the type tier already does well.
+const TYPE_ERR_SRC: &str = "fn f() -> i64 { \"hello\" }\nfn main() -> i64 { 0 }\n";
+
+#[test]
+fn run_carries_help_and_location_at_the_check_tier() {
+    let f = tmp_ax("run_check_tier_help", TYPE_ERR_SRC);
+    let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    // Previously `run` flattened this to `[E0307] return type mismatch…` and
+    // re-derived JSON from the string, so all four of these were absent.
+    assert!(stderr.contains("\"code\":\"E0307\""), "{stderr}");
+    assert!(stderr.contains("\"help\":"), "help must survive: {stderr}");
+    assert!(
+        stderr.contains("\"line\":1"),
+        "location must survive: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"expected\":\"i64\"") && stderr.contains("\"found\":\"str\""),
+        "the typed fields must survive: {stderr}"
+    );
+}
+
+#[test]
+fn run_and_check_agree_at_the_check_tier() {
+    // The critical-path gate, at the tier T-R3 changes. Byte equality over the
+    // whole diagnostic set, so a field carried by one path and dropped by the
+    // other cannot hide behind a passing per-field assertion.
+    let f = tmp_ax("run_check_tier_parity", TYPE_ERR_SRC);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let check = axon().arg("check").arg(&f).output().expect("spawn check");
+    let _ = std::fs::remove_file(&f);
+
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .collect()
+    };
+    let run_diags = diag_lines(&String::from_utf8_lossy(&run.stderr));
+    let check_diags = diag_lines(&String::from_utf8_lossy(&check.stderr));
+
+    assert!(!run_diags.is_empty(), "run emitted no diagnostic JSON");
+    assert_eq!(
+        run_diags, check_diags,
+        "run and check must emit byte-identical diagnostic JSON at the check tier"
+    );
+}
+
+#[test]
+fn run_and_check_emit_identical_diagnostics_across_a_corpus() {
+    // The critical-path extra gate for T-R3 (`tasks/build-loop-rlm.md`).
+    //
+    // Per-field assertions prove the fields someone thought to name survive.
+    // This proves ALL of them do, over every diagnostic-producing program in
+    // the tree — which is the only form of the claim that a partial fix cannot
+    // satisfy. It is the invariant the flattening broke.
+    //
+    // `run` EXECUTES a valid program, so the corpus is filtered by asking
+    // `check` first and comparing only where `check` already refuses. That also
+    // keeps the test hermetic: nothing here ever runs a program body.
+    let mut corpus: Vec<(String, String)> = vec![
+        ("mut".into(), MUT_SRC.into()),
+        ("type-err".into(), TYPE_ERR_SRC.into()),
+        (
+            "walrus".into(),
+            "fn main() -> i64 {\n    let c := 0\n    0\n}\n".into(),
+        ),
+        ("def".into(), "def main():\n    return 0\n".into()),
+        (
+            "unknown-name".into(),
+            "fn main() -> i64 {\n    nope()\n}\n".into(),
+        ),
+        (
+            "arity".into(),
+            "fn f(a: i64) -> i64 { a }\nfn main() -> i64 { f(1, 2) }\n".into(),
+        ),
+        (
+            "bad-arg-type".into(),
+            "fn main() -> i64 {\n    println(1)\n    0\n}\n".into(),
+        ),
+    ];
+
+    // Plus every example in the tree that fails `check` — programs nobody wrote
+    // for this test, which is where an unanticipated diagnostic shape would be.
+    let ex_dir = format!("{}/../../examples", env!("CARGO_MANIFEST_DIR"));
+    if let Ok(entries) = std::fs::read_dir(&ex_dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("ax") {
+                if let Ok(src) = std::fs::read_to_string(&p) {
+                    let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                    corpus.push((format!("example:{name}"), src));
+                }
+            }
+        }
+    }
+
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .collect()
+    };
+
+    let mut compared = 0usize;
+    for (name, src) in &corpus {
+        let safe: String = name.chars().filter(|c| c.is_alphanumeric()).collect();
+        let f = tmp_ax(&format!("corpus_{safe}"), src);
+
+        let check = axon().arg("check").arg(&f).output().expect("spawn check");
+        if check.status.code() != Some(2) {
+            let _ = std::fs::remove_file(&f);
+            continue; // `check` accepts it — `run` would execute it.
+        }
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let _ = std::fs::remove_file(&f);
+
+        let c = diag_lines(&String::from_utf8_lossy(&check.stderr));
+        let r = diag_lines(&String::from_utf8_lossy(&run.stderr));
+        assert_eq!(r, c, "run/check diagnostics diverge on `{name}`");
+        compared += 1;
+    }
+
+    // A corpus that silently matched nothing would pass this test while proving
+    // nothing — the vacuous-pass failure mode.
+    assert!(
+        compared >= 7,
+        "expected at least the 7 hand-written cases to be compared, got {compared}"
+    );
+}
