@@ -1278,3 +1278,5 @@ test wasm_object_prunes_dead_externs_and_links_clean has been running for over 6
 test wasm_str_abi_bridge_runs_str_builtins has been running for over 60 seconds
 test codegen_fuzz_parity_finds_no_divergence ... FAILED
 test wasm_asyncify_host_await_suspends_across_async_r7c ... ok
+test wasm_browser_examples_run_identically_via_js_host ... ok
+test wasm_browser_host_await_round_trips_r7c ... ok

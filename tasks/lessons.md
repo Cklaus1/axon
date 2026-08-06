@@ -215,3 +215,37 @@ behaviour and calling the fix a failure.
 old behaviour in the same commit. A test suite is searched for this
 automatically; `scripts/*.sh` is not, and a gate that fails for a stale reason
 trains everyone to ignore it — which is how a real failure gets missed later.
+
+## L017 — a one-way agreement assertion misses the drift that actually happened
+
+**Mistake:** Wrote a test pinning two check pipelines together as "if the
+library carries help, the CLI must too". Mutation-testing it — re-introducing
+the exact historical drift — **passed**. The drift ran the other way: the
+LIBRARY dropped help the CLI had, so `help.is_some()` was false and the
+assertion never fired.
+
+Made bidirectional (`assert_eq!(lib_has, cli_has)`), it failed immediately and
+exposed a SECOND, live drift nobody knew about: the checker pass was dropping
+`expected`/`found`/`fix` too, not just the resolver pass U5 had fixed.
+
+**Rule:** For any "these two must agree" test, assert equality in both
+directions, never implication in one. An implication is satisfied whenever its
+antecedent is false, which is exactly the state a regression puts you in. And
+when a mutation survives, suspect the test's PREMISE before its assertions —
+here the premise was a direction, and it was the wrong one.
+
+## L018 — "fix the defect" can be a capability removal in disguise
+
+**Mistake:** Took O031 (native codegen links the AI runtime unconditionally, so
+`axon build` makes live calls `axon run` refuses) as a defect to fix, on a
+"fix all" instruction, and implemented the refusal. Three existing tests then
+failed — and reading them showed they assert that AI programs MUST build
+natively, with a deliberately drawn boundary around which shapes are refused.
+
+So the "fix" removed a supported, tested capability. Reverted.
+
+**Rule:** Before fixing a divergence between two paths, check whether the
+behaviour on either side is *asserted by a test*. A test asserting the current
+behaviour is a contract, and changing it is a product decision however
+defect-shaped the divergence looks. The tests are where the intent lives when
+the opportunity entry only records the observation.
