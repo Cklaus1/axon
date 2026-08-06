@@ -1421,3 +1421,79 @@ single `cargo test` run whose output is parsed for each name reporting `ok`.
 That also catches the `#[ignore]` case, which name-grepping cannot. Worth
 sweeping the other `REQUIRED_NAMES`-style gates for the same shape at the same
 time — `grep -l REQUIRED_NAMES scripts/*.sh` finds them.
+
+---
+
+# Opportunities — build-loop over `AXON_FOR_RLM.md` (2026-08-06)
+
+Deferred work found during the RLM build. Logged, not acted on.
+
+## O-RLM-01 — ten more verbs still throw their diagnostics away (proposed: HIGH)
+
+T-R3 fixed `run`. `run_check_pipeline` — whose entire body flattens typed
+diagnostics to `[CODE] message`, dropping `help`/`file`/`line`/`col`/`expected`/
+`found` — has **eleven** callers, and the other ten are untouched:
+`main.rs:2354, 2447, 2526, 3032, 3136, 3974, 4519, 5014, 5485, 5936` (`test`,
+`deploy`, `ast review`, `doc`, `redteam`, and others).
+
+So `axon test` and `axon deploy` report the same location-free, help-free
+diagnostics `run` did. Decision D2 assumed this wrapper had one caller and could
+simply be deleted; it is shared, not obsolete. Converting the remaining ten is a
+mechanical but real task, and the corpus equivalence test from T-R3 generalises
+to it directly — one `verb × corpus` matrix asserting every verb agrees with
+`check`.
+
+## O-RLM-02 — `const` and `var` get no help, at the resolve tier (proposed: MEDIUM)
+
+`AXON_FOR_RLM.md` §1 names both. Probing showed they lex as ordinary identifiers
+and fail at name resolution (`cannot find name \`const\` in this scope`), not at
+the parse tier, so `parse_help` is never called for them and cannot be. They are
+exactly as unrepairable as `let mut` was. The fix is the same shape one tier
+down: a help row on the unresolved-name diagnostic when the name is a known
+foreign keyword. Pinned as a negative test today
+(`parse_help_probe.rs::const_and_var_do_not_reach_the_parse_tier`) so the
+tier fact is not re-discovered.
+
+## O-RLM-03 — repo-wide `cargo fmt` is red, and it blocks the project's own gate (proposed: MEDIUM)
+
+~40 files under `crates/axon-core/src/` are unformatted at HEAD (`builtins.rs`,
+`capabilities.rs`, `checker.rs`, `codegen/*`, …), pre-existing and from the
+parallel R21/R23 track. Recorded as O005 by the previous build loop and still
+open, so this is its second sighting.
+
+The practical cost this run: `cargo fmt -- --check` cannot be used as a gate at
+all, so each task had to diff its own files against HEAD to prove it added no
+formatting debt. A one-shot `cargo fmt` would fix it and collide with whatever
+that track has in flight — which is why it was declined before and is declined
+again, not because it is hard.
+
+## O-RLM-04 — the clippy gate is an allowlist, and six crates are outside it (proposed: MEDIUM)
+
+`scripts/gate.sh` lints `axon-core` (under `--no-default-features` only) plus
+`axon-rt/ai/surface/gfx-mock/domain/vm/attest/ledger`. Not linted:
+**`axon-intent`, `axon-os`, `axon-web`, `axon-audit`, `axon-certcheck`,
+`axon-signal`**. `axon-os` currently carries ~11 warnings including a dead
+`append_entry` (`monitor.rs:287`).
+
+This is the third recorded instance of the same class. The fix is one line in
+`gate.sh`; the reason it keeps recurring is that a green gate reads as coverage.
+
+## O-RLM-05 — the audit ledger cannot detect tail truncation (proposed: HIGH)
+
+`crates/axon-audit/src/lib.rs:349` `verify_chain` walks entries checking
+`seq`/`prev_hash`/`entry_hash`, but nothing anchors the tip or the expected
+length. `Ledger::open` reads whatever lines are present, so deleting the last N
+lines of the JSONL yields a chain that verifies **clean** — an audited program
+can erase its own trailing FS/Exec records. Found by reading the code during the
+pre-build survey; independently reproduced three times by the 2026-08-01 triage
+as finding P6-COV-02, which is still open. Needs an externally-anchored tip or a
+signed entry count.
+
+## O-RLM-06 — `axon-web` has no auth and `Access-Control-Allow-Origin: *` (proposed: MEDIUM)
+
+`crates/axon-web/src/server.rs:70`. Every `POST /api/*` shells attacker-supplied
+program text into the interpreter. It binds loopback only, which is the
+mitigation, but there is no Origin check and no CSRF token — and a `fetch` with a
+default `text/plain` body is a CORS *simple* request, so no preflight blocks it.
+Any page the user visits while the server is up can drive it, and `ACAO: *` lets
+that page read the results. Triage finding P4-PROD-11, still open.
