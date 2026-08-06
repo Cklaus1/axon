@@ -1497,3 +1497,33 @@ mitigation, but there is no Origin check and no CSRF token — and a `fetch` wit
 default `text/plain` body is a CORS *simple* request, so no preflight blocks it.
 Any page the user visits while the server is up can drive it, and `ACAO: *` lets
 that page read the results. Triage finding P4-PROD-11, still open.
+
+## O-RLM-07 — the repair round is unprimed, so the diagnostics are measured through a channel that discards them (proposed: HIGH — and cheap)
+
+Found by the T-R5 gate measurement. `repair_prompt`
+(`atlas/spikes/rlm-engine/src/axon_engine.rs`) takes **no primer**: every repair
+call in R9 is zero-shot, whatever the generation arm was given.
+
+The consequence is measured, not theorised. Post-repair was 5/8 against a
+first-try of 5/8 — **+0** — and on the vowel task the *first* generation wrote
+`let i = 0` correctly while the *repair* introduced `let mut i`. The language
+card suppressed the habit and the unprimed repair round put it back, faster than
+the diagnostic could correct it.
+
+So the headline conclusion "better diagnostics did not improve repair" is not
+supported by this run, in either direction: the experiment cannot see it. The
+fix is to pass the primer into `repair_prompt` and re-run — one afternoon, ~24
+model calls — and it is the measurement that would say whether Axon's ceiling
+with a card is 5/8 or higher. It should be run **before** any decision about
+§4/§5, because the gate D6 asks about is exactly that ceiling.
+
+Do it as a fourth arm rather than by changing `run_arms`, so the published
+zero-shot-repair numbers stay comparable.
+
+## O-RLM-08 — the remaining 3 failures are three more table rows, not a new problem (proposed: MEDIUM)
+
+With the card, `mut` is gone from first generation. What fails instead:
+`or`/`and` where Axon wants `||`/`&&`; method syntax on arrays (`v.max()`,
+`s.len()`); and one lexer-level rejection (`unexpected character`). The first two
+are exactly the shape `parse_help` already handles and would be two more rows
+plus two probe cases. The third needs a look at what the model actually emitted.

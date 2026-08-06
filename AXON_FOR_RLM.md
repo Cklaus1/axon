@@ -339,3 +339,64 @@ nobody has decided to turn on is built-but-uncalled code, not a partial win.
 *language* — containment defaulting to on for untrusted source — that does not depend on the RLM
 verdict at all. A reader may well want it whatever the gate says. That is precisely why it is a
 decision and not an inference.
+
+---
+
+## The gate result — measured 2026-08-06, reported not decided
+
+Step 2 of the sequencing, run after §1/§2/§2b/§3 landed. Harness:
+`atlas/spikes/rlm-engine/src/bin/axon_card.rs`, transcripts in that repo's
+`spikes/rlm-engine/results/`. Per D5: three runs, spread shown, never averaged.
+
+| arm | result |
+|---|---|
+| **LLM-shaped language card, first try** | **5/8 · 5/8 · 5/8 — stable** (and replicated: a second independent set of three runs also gave 5/8 · 5/8 · 5/8) |
+| README primer, first try (same gateway, same day) | 3/8 |
+| language card, post-repair (a) run-and-see | 5/8 — **+0** |
+| language card, post-repair (b) check-then-run | 5/8 — **+0** |
+| `check`/`run` diagnostics differed | **0 task-runs** |
+| `check` carried `help` | 3 task-runs |
+
+**The card is worth +2 tasks, stably.** 3/8 → 5/8, with zero spread across six
+runs. That is a real move and not a sample: the card differs from the README
+primer by negating the specific priors by name before describing anything, and
+by leading with a worked program of the exact task shape.
+
+**The repair round is worth nothing, and the reason is structural rather than a
+verdict on the diagnostics.** `repair_prompt` takes no primer — by construction
+every repair call is zero-shot — so the model reverts to Rust between the two
+calls, measurably: on the vowel task the *first* generation wrote `let i = 0`
+correctly and the *repair* introduced `let mut i`. The card suppressed the habit
+and the unprimed repair put it back. **Whether better diagnostics repair better
+cannot be answered through a channel that discards the card first.** Logged as
+`tasks/opportunities.md` O-RLM-07; it is the single highest-value follow-up
+measurement, and it is cheap.
+
+**§1's mechanism works.** `check` carried `help` on 3 task-runs with exactly the
+text the spec's dominant failure calls for (``​`mut` is not an Axon keyword …
+write `let i = …` ``). The hint fires, is correct, and reaches the wire.
+
+**The check-then-run question is now answered, by being dissolved.** The original
+spike could not test it because at the parse tier `check` knew nothing `run` did
+not. It is untestable again for the opposite reason: after §2, the two emit
+byte-identical JSON, so `diag_differed` is 0 and arms (a) and (b) are handed the
+same text. Whatever `check` is worth, **it is no longer worth more diagnostic
+information** — its remaining advantage is that it does not execute the program,
+which matters for side effects, not for what the model is told.
+
+### What this does and does not settle
+
+It does not clear or fail the gate, because **the bar is still unset — that is
+D6, and it is the human's call.** What is now on the table that was not before:
+
+- 5/8 stable is the honest number for a *primed, unrepaired* Axon, against Lua's
+  6/8 and Rhai's 1/8.
+- The 3/8 the spec reports for the README primer is confirmed contemporaneously,
+  so the +2 is attributable to the card and not to the diagnostics work.
+- The remaining 3 failures are **not** `mut` — the card fixed that on first
+  generation. They are `or`/`||`, methods on arrays, and one lexer-level
+  rejection. Those are different rows in the same table, i.e. more of the same
+  cheap work, not a new category of problem.
+- Before spending §4/§5 effort, the O-RLM-07 measurement (prime the repair round)
+  is the one that would tell you whether the ceiling is 5/8 or higher, and it
+  costs one afternoon.
