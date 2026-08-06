@@ -18996,10 +18996,7 @@ fn every_type_checking_verb_agrees_with_check_on_diagnostics() {
         ("type-err", TYPE_ERR_SRC),
         ("mut", MUT_SRC),
         ("contained", CONTAINED_SRC),
-        (
-            "unknown-name",
-            "fn main() -> i64 {\n    nope()\n}\n",
-        ),
+        ("unknown-name", "fn main() -> i64 {\n    nope()\n}\n"),
         (
             "arity",
             "fn f(a: i64) -> i64 { a }\nfn main() -> i64 { f(1, 2) }\n",
@@ -19073,10 +19070,7 @@ fn the_did_you_mean_suggestion_is_deterministic_across_processes() {
     // beyond this test: it makes diagnostics irreproducible, makes any test
     // asserting on help text flaky, and — for the RLM host this work is for —
     // means the model is told different things about the same program.
-    let f = tmp_ax(
-        "suggest_determinism",
-        "fn main() -> i64 {\n    nope()\n}\n",
-    );
+    let f = tmp_ax("suggest_determinism", "fn main() -> i64 {\n    nope()\n}\n");
     let mut seen = std::collections::BTreeSet::new();
     for _ in 0..16 {
         let out = axon().arg("check").arg(&f).output().expect("spawn check");

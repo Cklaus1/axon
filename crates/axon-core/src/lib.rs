@@ -105,8 +105,28 @@ pub fn parse_source(src: &str) -> Result<ast::Program, AxonError> {
 /// where the parser stopped, so a caller can resolve it to `line:col` (parse
 /// errors are otherwise span-less). On a lexer error the offset is 0 (the lexer
 /// reports its own position in the message). `Ok` returns just the program.
+/// Recover the byte offset from a lexer error message of the form
+/// `… at 60..61`. Returns `None` when the message has no such span, in which
+/// case the caller falls back to 0 — the previous behaviour for every message.
+fn lex_error_offset(msg: &str) -> Option<usize> {
+    let at = msg.rfind(" at ")? + 4;
+    let rest = &msg[at..];
+    let end = rest.find("..")?;
+    rest[..end].trim().parse::<usize>().ok()
+}
+
 pub fn parse_source_located(src: &str) -> Result<ast::Program, (String, usize)> {
-    let raw = Lexer::tokenize_with_newlines(src).map_err(|e| (e.to_string(), 0usize))?;
+    // A lex error's offset used to be discarded (`0usize`), so every
+    // lexer-tier diagnostic reported line 1 column 1 no matter where the bad
+    // character was — the same "a hint that cannot say where is half a repair"
+    // defect AXON_FOR_RLM §2 fixed at the parse tier, one tier lower. The
+    // message already carries the span as `… at 60..61`, so the offset is
+    // recoverable without changing the lexer's error type.
+    let raw = Lexer::tokenize_with_newlines(src).map_err(|e| {
+        let msg = e.to_string();
+        let offset = lex_error_offset(&msg).unwrap_or(0);
+        (msg, offset)
+    })?;
     let mut tokens = Vec::with_capacity(raw.len());
     let mut spans = Vec::with_capacity(raw.len());
     let mut newlines = Vec::with_capacity(raw.len());

@@ -256,8 +256,7 @@ impl SymbolTable {
                     let better = match best {
                         None => true,
                         Some((prev_dist, prev_key)) => {
-                            dist < prev_dist
-                                || (dist == prev_dist && key.as_str() < prev_key)
+                            dist < prev_dist || (dist == prev_dist && key.as_str() < prev_key)
                         }
                     };
                     if better {

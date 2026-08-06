@@ -144,3 +144,52 @@ fn a_valid_program_produces_no_parse_help() {
         "{diags:?}"
     );
 }
+
+#[test]
+fn a_character_literal_is_named_and_pointed_at_str_eq() {
+    // Measured 2026-08-06: this single construct caused ALL THREE remaining
+    // failures in the RLM fluency gate, in six of six runs, in both repair arms.
+    // It is a LEXER rejection, so it reaches `parse_help` with no `expected …`
+    // clause — the arm keys on the message instead.
+    let (code, help) = first_diag(
+        "fn main() -> i64 {\n    let c = char_at(\"ab\", 0)\n    if c == ' ' { 1 } else { 0 }\n}\n",
+    );
+    assert_eq!(code, "E0000");
+    let help = help.expect("a character literal must carry a fix hint");
+    assert!(help.contains("Axon has no character literals"), "{help}");
+    assert!(help.contains("str_eq"), "must name the replacement: {help}");
+}
+
+#[test]
+fn a_lexer_error_now_reports_the_real_line() {
+    // The lexer's offset was discarded, so every lexer-tier diagnostic claimed
+    // line 1 col 1 wherever the bad character actually was. Same "a hint that
+    // cannot say where is half a repair" defect as the parse tier, one tier down.
+    let diags = check_pipeline(
+        "fn main() -> i64 {\n    let c = char_at(\"ab\", 0)\n    if c == ' ' { 1 } else { 0 }\n}\n",
+        "probe.ax",
+    );
+    let d = diags.first().unwrap();
+    assert_eq!(d.line, 3, "the quote is on line 3, got line {}", d.line);
+}
+
+#[test]
+fn python_logical_operators_are_named() {
+    for (src, word, op) in [
+        (
+            "fn main() -> i64 {\n    let a = true\n    if a or a { 1 } else { 0 }\n}\n",
+            "or",
+            "||",
+        ),
+        (
+            "fn main() -> i64 {\n    let a = true\n    if a and a { 1 } else { 0 }\n}\n",
+            "and",
+            "&&",
+        ),
+    ] {
+        let (code, help) = first_diag(src);
+        assert_eq!(code, "E0000", "{word} must still be a parse error");
+        let help = help.unwrap_or_else(|| panic!("`{word}` must carry a fix hint"));
+        assert!(help.contains(word) && help.contains(op), "{help}");
+    }
+}

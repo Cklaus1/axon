@@ -143,6 +143,44 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
         );
     }
 
+    // `if c == ' '` — a single-quoted character literal.
+    //
+    // Measured 2026-08-06: this one construct caused **all three** of the
+    // remaining failures in the RLM fluency gate, in every one of six runs and
+    // in both repair arms. All three tasks iterate a string (count vowels,
+    // reverse it, count words), which is what invites a char comparison, and
+    // Axon has no character type — `char_at` returns a one-character `str`.
+    //
+    // Keyed on the message rather than the line because this is a LEXER
+    // rejection: the lexer stops at the quote, so there is no token stream and
+    // no `expected …` clause to match on.
+    if msg.contains("unexpected character '''") {
+        return Some(
+            "Axon has no character literals — `'a'` is not valid. Characters are \
+             one-character strings: `char_at(s, i)` returns a `str`, so compare \
+             with `str_eq(c, \" \")` (and write string literals with double \
+             quotes)"
+                .to_string(),
+        );
+    }
+
+    // `if a or b` / `if a and b` — Python/Ruby spellings of the logical operators.
+    if msg.contains("unexpected token: Ident") {
+        let seen = if line.contains(" or ") {
+            Some(("or", "||"))
+        } else if line.contains(" and ") {
+            Some(("and", "&&"))
+        } else {
+            None
+        };
+        if let Some((word, op)) = seen {
+            return Some(format!(
+                "`{word}` is not an Axon operator — write `{op}`. Axon spells the \
+                 logical operators `&&`, `||` and `!`"
+            ));
+        }
+    }
+
     // `def f():` / `function f() {` at item position.
     if msg.contains("expected item") {
         if let Some(seen) = w.first() {
