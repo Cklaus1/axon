@@ -661,7 +661,13 @@ pub fn report_to_json_extended(report: &AttestationReport, ext: &ExtendedMeasure
 ///
 /// RFC 2104: HMAC(K, m) = H((K ⊕ opad) ‖ H((K ⊕ ipad) ‖ m))
 /// Block size B = 64 bytes for SHA-256.
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+/// HMAC-SHA256, hand-rolled over `sha2` (the workspace has no `hmac` crate and
+/// this avoids adding one for ~20 lines of RFC 2104).
+///
+/// **Exported** so `axon-audit` can key its ledger chain with the same
+/// primitive rather than growing a second copy — duplicated crypto is how the
+/// T54 class of defect starts, and this crate is the natural owner.
+pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     const BLOCK: usize = 64;
     // Normalise key: hash if longer than block size, zero-pad if shorter.
     let mut k = [0u8; BLOCK];

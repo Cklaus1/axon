@@ -12,6 +12,9 @@ path = "src/lib.rs"
 
 [dependencies]
 sha2 = "0.10"
+# For `hmac_sha256` — the ledger chain is keyed with the same primitive the
+# attestation path already uses, rather than a second implementation.
+axon-attest = { path = "../axon-attest" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
