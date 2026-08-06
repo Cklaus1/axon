@@ -154,12 +154,19 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
     // Keyed on the message rather than the line because this is a LEXER
     // rejection: the lexer stops at the quote, so there is no token stream and
     // no `expected …` clause to match on.
+    // The advice below was WRONG on first writing — it claimed `char_at` returns
+    // a `str`. It returns the BYTE VALUE as an `i64` (`builtins.rs`), so a model
+    // that followed the hint got a fresh type error, which is worse than no hint
+    // at all. Caught only by running the repaired program the model produced.
+    // Any text here is advice a reader will act on; it is verified by
+    // `parse_help_probe::the_character_literal_advice_actually_compiles`.
     if msg.contains("unexpected character '''") {
         return Some(
-            "Axon has no character literals — `'a'` is not valid. Characters are \
-             one-character strings: `char_at(s, i)` returns a `str`, so compare \
-             with `str_eq(c, \" \")` (and write string literals with double \
-             quotes)"
+            "Axon has no character literals — `'a'` is not valid, and string \
+             literals use double quotes. `char_at(s, i)` returns the BYTE VALUE \
+             as an `i64`, so compare it numerically (`char_at(s, i) == 32` for a \
+             space); to compare as text, take a one-character slice instead: \
+             `str_eq(str_slice(s, i, i + 1), \" \")`"
                 .to_string(),
         );
     }

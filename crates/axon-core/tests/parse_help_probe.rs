@@ -157,7 +157,40 @@ fn a_character_literal_is_named_and_pointed_at_str_eq() {
     assert_eq!(code, "E0000");
     let help = help.expect("a character literal must carry a fix hint");
     assert!(help.contains("Axon has no character literals"), "{help}");
-    assert!(help.contains("str_eq"), "must name the replacement: {help}");
+    assert!(
+        help.contains("char_at"),
+        "must name the replacement: {help}"
+    );
+}
+
+#[test]
+fn the_character_literal_advice_actually_compiles() {
+    // The strongest test in this file, and the one whose absence let WRONG
+    // advice ship. The first version of that help said `char_at` returns a `str`
+    // and told the reader to write `str_eq(c, " ")`. `char_at` returns the byte
+    // value as an `i64`, so a reader who followed the advice got a fresh type
+    // error — worse than no advice. Every assertion in the test above still
+    // passed, because they only checked which WORDS appeared.
+    //
+    // A fix hint is advice someone will act on, so the test is: write the code
+    // the hint recommends, and require it to type-check.
+    for (label, src) in [
+        (
+            "numeric comparison",
+            "fn main() -> i64 {\n    let s = \"a b\"\n    if char_at(s, 1) == 32 { println(\"sp\") }\n    0\n}\n",
+        ),
+        (
+            "one-character slice",
+            "fn main() -> i64 {\n    let s = \"a b\"\n    if str_eq(str_slice(s, 1, 2), \" \") { println(\"sp\") }\n    0\n}\n",
+        ),
+    ] {
+        let diags = check_pipeline(src, "advice.ax");
+        let errors: Vec<_> = diags.iter().filter(|d| d.severity == "error").collect();
+        assert!(
+            errors.is_empty(),
+            "the hint recommends `{label}`, which must compile: {errors:?}"
+        );
+    }
 }
 
 #[test]

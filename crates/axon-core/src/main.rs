@@ -2351,10 +2351,10 @@ fn cmd_target_mobile(file: &Path, triple: &str) {
             process::exit(2);
         }
     };
-    let (errors, _infer) = run_check_pipeline(&mut program, file);
+    let (errors, _infer) = check_program_located(&mut program, file);
     if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         process::exit(2);
     }
@@ -2444,7 +2444,7 @@ fn mobile_emit_object(
 ) -> Result<String, String> {
     let instantiations = {
         // Re-run inference to get instantiations for monomorphisation.
-        let (_e, mut infer) = run_check_pipeline(program, file);
+        let (_e, mut infer) = check_program_located(program, file);
         infer.drain_instantiations()
     };
     let mono = axon_core::mono::monomorphise(program, instantiations);
@@ -2523,10 +2523,10 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     };
 
     // Type-check before codegen (same gate as native build).
-    let (errors, mut infer_ctx) = run_check_pipeline(&mut program, file);
+    let (errors, mut infer_ctx) = check_program_located(&mut program, file);
     if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         process::exit(2);
     }
@@ -3029,10 +3029,10 @@ fn cmd_build_bpf(
     // allowlist E2300, the kind check E2302) AND the auto-implied @[total]
     // (E1208) / @[no_alloc] (E1704) gates, so an unbounded loop / heap touch /
     // un-granted helper is refused BEFORE codegen.
-    let (errors, _infer) = run_check_pipeline(program, source_path);
+    let (errors, _infer) = check_program_located(program, source_path);
     if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         return Err(format!("{} error(s); BPF build aborted", errors.len()));
     }
@@ -3133,11 +3133,10 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
     };
 
     // Type-check before running.
-    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _infer_ctx) = check_program_located(&mut program, &file);
     if !errors.is_empty() {
-        let use_json = !std::io::stderr().is_terminal();
-        for err in &errors {
-            emit_error(err, use_json);
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         process::exit(2);
     }
@@ -3979,10 +3978,10 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
     // Abort on type errors before running any tests.
     let primary_file = &files[0];
-    let (type_errors, _infer_ctx) = run_check_pipeline(&mut program, primary_file);
+    let (type_errors, _infer_ctx) = check_program_located(&mut program, primary_file);
     if !type_errors.is_empty() {
-        for err in &type_errors {
-            eprintln!("error: {err}");
+        for d in &type_errors {
+            emit_pipeline_diag(d);
         }
         eprintln!("error: {} type error(s); tests aborted", type_errors.len());
         process::exit(2);
@@ -4137,32 +4136,15 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
-/// Run the type-checking pipeline and return a list of error messages.
-///
-/// Back-compat string view over [`run_check_pipeline_located`]: each located
-/// diagnostic is rendered `[CODE] message` (message already folds in any
-/// expected/found detail). Callers that only need to count/print strings use
-/// this; the `--json` path (R8 typed end-to-end) consumes the located form so
-/// `file`/`line`/`col` survive to the consumer.
-fn run_check_pipeline(
-    program: &mut axon_core::ast::Program,
-    source_path: &Path,
-) -> (Vec<String>, axon_core::infer::InferCtx) {
-    // Source text is only needed to resolve spans → (line,col); the string view
-    // doesn't carry locations, so an empty SourceMap (dummy spans → line 0) is
-    // fine here. The JSON callers pass the real source via the `_src` variant.
-    let (diags, ctx) = run_check_pipeline_located(program, "", source_path);
-    let strings = diags
-        .iter()
-        .map(|d| format!("[{}] {}", d.code, d.message))
-        .collect();
-    (strings, ctx)
-}
-
 /// R8 typed end-to-end: run the pipeline and return **located** diagnostics
 /// (`code`/`message`/`file`/`line`/`col`), resolving each typed error's
 /// byte-offset span against `src` via [`axon_core::span::SourceMap`]. This is
-/// the source of truth; [`run_check_pipeline`] is the flattened string view.
+/// the only form. A flattened `[CODE] message` string view existed alongside it
+/// until 2026-08-06 and was what made ten CLI verbs report diagnostics with no
+/// location and no help: it passed `""` as the source, so no span could resolve.
+/// Two functions differing only in how much they discard is how that happened,
+/// so there is now one. `flat_diag` renders the flattened form at the two call
+/// sites that publish it inside a JSON schema.
 ///
 // NOTE: this must stay in sync with `lib::check_pipeline` re: the safety passes
 // it runs (resolve → infer → check → borrow → capabilities → verify). The two
@@ -4534,13 +4516,13 @@ fn run_build_pipeline(
     opts: &BuildOptions,
 ) -> Result<(), String> {
     // Check first, fail fast on errors.
-    let (errors, mut infer_ctx) = run_check_pipeline(program, source_path);
+    let (errors, mut infer_ctx) = check_program_located(program, source_path);
     if !errors.is_empty() {
         // Print each diagnostic, not just the count — otherwise `axon build` on a
         // program with a type/name error showed only "N error(s); build aborted",
         // forcing the user to re-run `axon check` to see WHAT was wrong.
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
@@ -4813,6 +4795,37 @@ fn parse_source_located_cli(
     })
 }
 
+/// Type-check and return TYPED diagnostics, for call sites that do not already
+/// hold the source text.
+///
+/// `run_check_pipeline_located` needs the source only to turn spans into
+/// `(line, col)`. Sites that already read the file pass their own copy — that is
+/// the source that was actually parsed, and re-reading could in principle pick
+/// up a different file. Sites that never read it (they were handed a `&Program`)
+/// use this, which reads it here. A read failure degrades to an empty string,
+/// which resolves every span to line 0 — exactly the old flattened behaviour,
+/// so the fallback is never worse than what it replaces.
+fn check_program_located(
+    program: &mut axon_core::ast::Program,
+    source_path: &Path,
+) -> (
+    Vec<axon_core::PipelineDiagnostic>,
+    axon_core::infer::InferCtx,
+) {
+    let src = std::fs::read_to_string(source_path).unwrap_or_default();
+    run_check_pipeline_located(program, &src, source_path)
+}
+
+/// The `[CODE] message` string form, for the two JSON reports that publish
+/// diagnostics inside a schema (`axon-deploy/1`, `axon-redteam/1`).
+///
+/// Those payloads are a contract with `axon-web`, so their shape is preserved
+/// verbatim while the *diagnostics* those verbs print gain location and help.
+/// This is the one place the flattened form survives on purpose.
+fn flat_diag(d: &axon_core::PipelineDiagnostic) -> String {
+    format!("[{}] {}", d.code, d.message)
+}
+
 /// Emit a typed diagnostic, JSON when stderr is not a terminal.
 ///
 /// The tty check is the same one `cmd_check` uses, so a piped `run` and a piped
@@ -5015,15 +5028,15 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     validate_ax_extension(&file);
     let src = read_source(&file);
 
-    let mut program = match parse_source(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: parse failed: {e}");
+        Err(diag) => {
+            emit_pipeline_diag(&diag);
             process::exit(2);
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
 
     // Collect top-level function items for the review report.
     let fns: Vec<_> = program
@@ -5041,7 +5054,7 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     if json_flag {
         let errors_json = errors
             .iter()
-            .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+            .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(",");
         let fns_json = fns.iter().map(|f| {
@@ -5111,8 +5124,11 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
         println!("  no type errors");
     } else {
         println!("  {} error(s):", errors.len());
-        for e in &errors {
-            println!("    {e}");
+        for d in &errors {
+            // The human review report keeps its indented stdout layout; it now
+            // shows the location too, which is the point of carrying the typed
+            // diagnostic this far.
+            println!("    {}", d.display());
         }
         process::exit(2);
     }
@@ -5477,10 +5493,13 @@ fn cmd_deploy(
     validate_ax_extension(&file);
     let src = read_source(&file);
 
-    let mut program = match parse_source(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            let msg = format!("parse failed: {e}");
+        Err(diag) => {
+            // The typed diagnostic goes to stderr like every other verb's;
+            // the schema's prose `message` field is preserved for axon-web.
+            emit_pipeline_diag(&diag);
+            let msg = format!("parse failed: {}", diag.message);
             if json_flag {
                 println!(
                     "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"error\",\"message\":{}}}",
@@ -5494,12 +5513,14 @@ fn cmd_deploy(
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
         if json_flag {
+            // The `errors` array is part of the published schema that axon-web
+            // parses, so it keeps the flattened form byte-for-byte.
             let errs = errors
                 .iter()
-                .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+                .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
@@ -5508,8 +5529,8 @@ fn cmd_deploy(
                 errs,
             );
         } else {
-            for e in &errors {
-                eprintln!("error: {e}");
+            for d in &errors {
+                emit_pipeline_diag(d);
             }
         }
         process::exit(2);
@@ -5928,10 +5949,13 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
     validate_ax_extension(&file);
     let src = read_source(&file);
 
-    let mut program = match parse_source(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            let msg = format!("parse failed: {e}");
+        Err(diag) => {
+            // The typed diagnostic goes to stderr like every other verb's;
+            // the schema's prose `message` field is preserved for axon-web.
+            emit_pipeline_diag(&diag);
+            let msg = format!("parse failed: {}", diag.message);
             if json_flag {
                 println!(
                     "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"error\",\"message\":{}}}",
@@ -5945,12 +5969,14 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
         if json_flag {
+            // The `errors` array is part of the published schema that axon-web
+            // parses, so it keeps the flattened form byte-for-byte.
             let errs = errors
                 .iter()
-                .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+                .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
@@ -5959,8 +5985,8 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
                 errs,
             );
         } else {
-            for e in &errors {
-                eprintln!("error: {e}");
+            for d in &errors {
+                emit_pipeline_diag(d);
             }
         }
         process::exit(2);

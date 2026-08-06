@@ -126,3 +126,34 @@ still asserted. What changed is only where the error's class is carried: prose
 Rewrite the assertion to the intent, and say in the test why the observation
 moved. If you cannot state the intent separately from the observation, treat it
 as a real regression, not a stale test.
+
+## L012 — a fix hint is advice someone will act on, so test that it compiles
+
+**Mistake:** Shipped a `parse_help` row telling the reader that `char_at(s, i)`
+returns a `str` and to compare with `str_eq(c, " ")`. It returns the BYTE VALUE
+as an `i64`. A model that followed the hint got a fresh type error — strictly
+worse than no hint, because it spent the repair round going the wrong way.
+
+Every test passed. They asserted which WORDS the help contained
+(`contains("str_eq")`), never that the advice was true. It was caught only by
+reading a program the model produced *after* being given the hint, in a
+measurement run that happened to exist.
+
+**Rule:** Help text is code, not prose. For any hint that recommends a concrete
+construct, add a test that writes that construct and asserts it type-checks —
+`the_character_literal_advice_actually_compiles`. A word-presence assertion
+tests the wording; only compiling the recommendation tests the advice. And
+verify a builtin's signature in `builtins.rs` before describing it, however
+obvious the return type seems: I was most confident about the row I was most
+wrong about.
+
+## L013 — `git checkout <file>` to undo a mutation destroys uncommitted work
+
+**Mistake:** Reverted a mutation with `git checkout <file>` while that same file
+held a NEW, uncommitted test. The checkout restored HEAD, taking the test with
+it. Nothing warned; the test count silently dropped from 11 to 10.
+
+**Rule:** To undo a mutation, invert the exact edit (a scripted replace back, or
+`git apply -R` of a saved patch — see L004), never `git checkout <file>`. The
+mutation is a small known change; the file may contain large unknown ones. Same
+family as L004: a coarse git command aimed at a fine-grained undo.
