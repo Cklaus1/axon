@@ -1575,3 +1575,21 @@ and carry a code comment saying they must stay in sync. They had drifted:
 saw no help where the CLI showed it (fixed in U5). The comment is not a test.
 The same corpus trick the verb matrix uses would work here: run both over the
 refused-programs corpus and assert they produce identical diagnostics.
+
+## O-RLM-13 — the containment refusal (E1001) has no line number, in any verb (proposed: MEDIUM)
+
+Found by loop 2's smoke test, which asked `axon deploy` on a containment
+violation to show file, line and help. It shows file and help; there is no line,
+and `axon check` has none either — so this is not a delivery gap that U2 missed
+but a **pre-existing** one in the capability checker, which emits its diagnostic
+with a dummy span. `PipelineDiagnostic::json` correctly omits `line`/`col` when
+they are 0 rather than faking them.
+
+E1001 is the diagnostic a containment host shows a model when the compiler
+refuses its code, so "which call was refused" is exactly the question a reader
+has. The message names the call (`read_file("/etc/passwd")`), which is why this
+is MEDIUM rather than HIGH — the information is recoverable by searching, just
+not by jumping.
+
+Fix: carry the offending call's span through `capabilities::check_capabilities`
+into its `Diagnostic`, the same way the resolver already does.
