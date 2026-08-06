@@ -7,10 +7,10 @@ use axon_os::corrigible::{
     check_kill, coalition_bound_verdict, r27_tcb_modules_present, resource_bound_verdict,
     COALITION_BOUND_EXIT_CODE, HALTED_EXIT_CODE, RESOURCE_BOUND_EXIT_CODE,
 };
-use axon_os::coalition::{Coalition, CoalitionBound, CoalitionCeiling};
-use axon_os::killchan::{test_kill_channel, write_kill_state, FileKillChannel};
+use axon_os::coalition::{Coalition, CoalitionCeiling};
+use axon_os::killchan::{test_kill_channel, FileKillChannel};
 use axon_os::latch::{Latch, LatchState};
-use axon_os::ledger::{Carve, ResourceBound, ResourceLedger};
+use axon_os::ledger::{Carve, ResourceLedger};
 use axon_os::killchan::KillChannel;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -296,6 +296,11 @@ fn contained_code_cannot_disable_latch() {
 // ── R2: no resource acquisition beyond grant ──────────────────────────────────
 
 #[test]
+// The `_R20`/`_R25` suffixes are required VERBATIM by
+// `scripts/r27_acceptance_gate.sh`, which now runs these tests by name.
+// Renaming them to satisfy the lint would break the gate, so the lint is
+// silenced instead of the name changed.
+#[allow(non_snake_case)]
 fn mint_beyond_grant_refused_R20() {
     // R2: a carve that exceeds the budget cap is refused with ResourceBound.
     // The ledger sum is conserved (no creation).
@@ -336,6 +341,11 @@ fn budget_acquisition_blocked() {
 // ── R3: weight exfil (R25-gated) ─────────────────────────────────────────────
 
 #[test]
+// The `_R20`/`_R25` suffixes are required VERBATIM by
+// `scripts/r27_acceptance_gate.sh`, which now runs these tests by name.
+// Renaming them to satisfy the lint would break the gate, so the lint is
+// silenced instead of the name changed.
+#[allow(non_snake_case)]
 fn weight_exfil_egress_denied_R25() {
     // R27-owned halves (not R25-gated):
 
@@ -358,6 +368,11 @@ fn weight_exfil_egress_denied_R25() {
 // The egress-label assertion (R25 info-flow monitor) cannot pass before R25 ships.
 #[test]
 #[ignore = "R25 info-flow monitor not yet shipped"]
+// The `_R20`/`_R25` suffixes are required VERBATIM by
+// `scripts/r27_acceptance_gate.sh`, which now runs these tests by name.
+// Renaming them to satisfy the lint would break the gate, so the lint is
+// silenced instead of the name changed.
+#[allow(non_snake_case)]
 fn weight_exfil_egress_label_denied_R25() {
     // BLOCKED: R25 label-propagation egress proof not yet shipped.
     // When R25 lands: verify that a confidential label on model-controlled state

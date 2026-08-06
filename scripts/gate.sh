@@ -99,7 +99,15 @@ cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clip
 # gated; 2 mechanical clippy fixes (a ?-operator rewrite, a redundant &) made
 # it clean, no behavior change.
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
-cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest -p axon-ledger --all-targets -- -D warnings \
+# O-RLM-04: this list is an ALLOWLIST, not the workspace, so a crate absent from
+# it is simply unlinted — and a green gate reads as coverage. Six crates were
+# outside it (axon-intent, axon-os, axon-web, axon-audit, axon-certcheck,
+# axon-signal); axon-os alone carried ~11 warnings including a dead function.
+# Third recorded sighting of this class, so the fix is the list AND this note.
+# Adding a new crate to the workspace? Add it here in the same commit.
+cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain \
+  -p axon-vm -p axon-attest -p axon-ledger -p axon-intent -p axon-os -p axon-web \
+  -p axon-audit -p axon-certcheck -p axon-signal --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 if [ "$STRICT" = 1 ]; then

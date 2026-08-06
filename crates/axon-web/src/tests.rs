@@ -33,7 +33,7 @@ fn get(port: u16, path: &str) -> (u16, String) {
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let body = resp.splitn(2, "\r\n\r\n").nth(1).unwrap_or("").to_string();
+    let body = resp.split_once("\r\n\r\n").map(|x| x.1).unwrap_or("").to_string();
     (status, body)
 }
 
@@ -52,7 +52,7 @@ fn post_json(port: u16, path: &str, body: &str) -> (u16, String) {
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let resp_body = resp.splitn(2, "\r\n\r\n").nth(1).unwrap_or("").to_string();
+    let resp_body = resp.split_once("\r\n\r\n").map(|x| x.1).unwrap_or("").to_string();
     (status, resp_body)
 }
 

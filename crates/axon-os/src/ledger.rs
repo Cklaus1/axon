@@ -89,6 +89,11 @@ mod tests {
     use super::*;
 
     #[test]
+    // The `_R20`/`_R25` suffixes are required VERBATIM by
+    // `scripts/r27_acceptance_gate.sh`, which now runs these tests by name.
+    // Renaming them to satisfy the lint would break the gate, so the lint is
+    // silenced instead of the name changed.
+    #[allow(non_snake_case)]
     fn mint_beyond_grant_refused_R20() {
         let ledger = ResourceLedger::new("root", 100, 50, 1024);
         let r = ledger.carve(Carve { compute: 0, budget: 51, persist_bytes: 0 });

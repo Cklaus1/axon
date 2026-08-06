@@ -6,7 +6,7 @@
 
 use axon_os::monitor::{ComplianceMonitor, MonitorResult, CONTAINMENT_VIOLATION_EXIT_CODE};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -22,7 +22,7 @@ fn tmp(tag: &str) -> PathBuf {
 }
 
 fn make_monitor(
-    dir: &PathBuf,
+    dir: &Path,
     tag: &str,
     allowed: &[&str],
     stop: Arc<AtomicBool>,
@@ -206,7 +206,7 @@ fn acc_a5_deterministic_detection() {
     // Both must be fast; and within 500ms of each other.
     assert!(t1 < Duration::from_secs(2), "first run must detect quickly");
     assert!(t2 < Duration::from_secs(2), "second run must detect quickly");
-    let diff = if t1 > t2 { t1 - t2 } else { t2 - t1 };
+    let diff = t1.abs_diff(t2);
     assert!(
         diff < Duration::from_millis(500),
         "detection latency must be deterministic within 500ms (diff={diff:?})"

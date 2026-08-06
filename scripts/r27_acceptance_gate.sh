@@ -8,6 +8,26 @@ ok()   { echo "PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # ── §-Gate step 1: presence check — every named check must exist ──────────────
+
+# ── S2 (O037), extended sweep: require each named test to RUN and PASS ────────
+# The original loop grepped the source for the NAME, which a comment, a
+# docstring or an `#[ignore]`d body satisfies. One suite run is parsed for every
+# name (not one cargo per name — nested cargo contends on the build lock that
+# makes the parity harnesses flaky, O036).
+require_named_tests_pass() {
+    local log="$1"; shift
+    local name
+    for name in "$@"; do
+        if grep -qE "^test .*${name}.* \.\.\. ok$" "$log"; then
+            ok "ran and passed: $name"
+        elif grep -qE "^test .*${name}.* \.\.\. ignored" "$log"; then
+            fail "IGNORED (not run): $name — a name-grep would have called this green"
+        else
+            fail "did not run: $name (not present in the suite output)"
+        fi
+    done
+}
+
 CHECKS=(
   acc_a1_smoke_kill_journey
   acc_a2_example_agent_killed_and_overreach_denied
@@ -28,13 +48,10 @@ SRC="$ROOT/crates/axon-os/tests/r27_acceptance.rs"
 if [[ ! -f "$SRC" ]]; then
   echo "FAIL: r27_acceptance.rs not found at $SRC"; FAIL=$((FAIL+1))
 else
-  for check in "${CHECKS[@]}"; do
-    if grep -q "fn $check" "$SRC"; then
-      ok "presence: $check"
-    else
-      fail "presence: $check (fn $check not found in $SRC)"
-    fi
-  done
+  S2_LOG="$(mktemp)"
+  cargo test -p axon-os 2>&1 | tee "$S2_LOG" | tail -3
+  require_named_tests_pass "$S2_LOG" "${CHECKS[@]}"
+  rm -f "$S2_LOG"
 fi
 
 # ── §-Gate step 2: anti-stub check ────────────────────────────────────────────

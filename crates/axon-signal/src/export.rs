@@ -351,7 +351,7 @@ mod tests {
         };
 
         let common_goal = "complete the remaining roadmap requirements";
-        let make_session = |id: &str, ts: u64, score_hint: u64, files: &[&str]| -> LedgerRecord {
+        let make_session = |id: &str, ts: u64, _score_hint: u64, files: &[&str]| -> LedgerRecord {
             let path = make_jsonl(id);
             LedgerRecord {
                 id: id.to_string(),

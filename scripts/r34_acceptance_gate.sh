@@ -232,7 +232,12 @@ PYEOF
 KERNEL_DEFAULT="$REPO_ROOT/dist/guest/vmlinuz"
 INITRD_DEFAULT="$REPO_ROOT/dist/guest/initramfs.cpio"
 if [ -f "$KERNEL_DEFAULT" ] && { [ -f "$INITRD_DEFAULT" ] || [ -f "$INITRD_DEFAULT.gz" ]; }; then
-    RUN_OUT="$("$AXON_VM_BIN" run "$PROG" --chain-stamp "$CHAIN_FILE" --no-attest 2>&1)"
+    # O-HI-01: AUDIT T48 made the launcher REFUSE a run with no effect grant
+    # rather than send a null policy to the guest, so without one this check
+    # never reached the chain logic it exists to test — it failed with "no
+    # effect grant" and read as a chain regression. Supply the grant explicitly
+    # so the chain verifier is what decides the outcome.
+    RUN_OUT="$(AXON_VM_ALLOWED_EFFECTS="IO" "$AXON_VM_BIN" run "$PROG" --chain-stamp "$CHAIN_FILE" --no-attest 2>&1)"
     RUN_EXIT=$?
     if [ "$RUN_EXIT" = "$CHAIN_VERIFY_FAIL_EXIT_CODE" ] && echo "$RUN_OUT" | grep -q "CHAIN BROKEN"; then
         pass "run --chain-stamp refused a broken chain before VM launch, exit $RUN_EXIT"
