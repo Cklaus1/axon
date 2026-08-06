@@ -8,3 +8,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-06T18:39:57Z  U2  attempt 1  convert 10 run_check_pipeline callers to the located variant + emit_pipeline_diag
 2026-08-06T18:47:03Z  U5  attempt 1  foreign-keyword help on the E0001 unresolved-name diagnostic (const/var)
 2026-08-06T20:24:00Z  S1a  attempt 1  live Ledger compares file line count against self.entries; no on-disk format change
+2026-08-06T20:28:04Z  S2  attempt 1  r31/r33/r34: parse one cargo test run per crate; require each name to report ok

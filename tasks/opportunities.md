@@ -1593,3 +1593,41 @@ not by jumping.
 
 Fix: carry the offending call's span through `capabilities::check_capabilities`
 into its `Diagnostic`, the same way the resolver already does.
+
+---
+
+# Opportunities — the HIGH-tier loop, 2026-08-06
+
+## O-HI-01 — `r34_acceptance_gate.sh` asserts behaviour that T48 deliberately removed (proposed: MEDIUM)
+
+`r34` fails at HEAD, before and after this loop's changes, in a section this loop
+did not touch:
+
+```
+✗ run --chain-stamp → exit 2, output: 'axon-vm: no effect grant: … Refusing to
+  launch rather than sending a null policy to the guest' (expected CHAIN BROKEN, exit 15)
+```
+
+The gate expects a run that T48 **intentionally** made refuse. So the gate is not
+detecting a regression; it is asserting the pre-T48 behaviour. Fix is to give the
+chain-stamp case an explicit grant (`AXON_VM_ALLOWED_EFFECTS` or a manifest) so
+it reaches the chain logic it means to test.
+
+Pre-existing and unrelated to S2 — verified by running the HEAD version of the
+script, which fails identically.
+
+## O-HI-02 — O026 was already fixed, and the opportunity entry did not say so (proposed: MEDIUM — process)
+
+O026 ("the in-guest effect policy defaults to OPEN") was carried into this
+spec's `needs-human` set as a live decision. It is **closed**: AUDIT T48
+(`axon-vm/src/main.rs:1114`) makes the launcher refuse rather than emit a null
+policy, and the comment records that the guest now denies on ambiguity too.
+
+The process lesson is the one worth keeping: this loop carefully re-read every
+source entry's *text* — which is what caught six "decision needed" markers — but
+did not check whether the *code* had moved since the entry was written. An
+opportunity can be stale in the CLOSED direction, and handing someone a decision
+they already made is its own kind of wrong answer.
+
+Sweep the rest of `opportunities.md` against current code before the next loop
+plans from it.
