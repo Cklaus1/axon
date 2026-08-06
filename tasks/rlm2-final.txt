@@ -1,0 +1,1130 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/cklaus/projects/axon/crates/axon-guest-kernel/Cargo.toml
+workspace: /home/cklaus/projects/axon/Cargo.toml
+   Compiling axon-core v0.1.0 (/home/cklaus/projects/axon/crates/axon-core)
+warning: function `append_entry` is never used
+   --> crates/axon-os/src/monitor.rs:287:8
+    |
+287 |     fn append_entry(ledger: &PathBuf, seq: u64, effect: &str, operation: &str) {
+    |        ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `mint_beyond_grant_refused_R20` should have a snake case name
+  --> crates/axon-os/src/ledger.rs:92:8
+   |
+92 |     fn mint_beyond_grant_refused_R20() {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `mint_beyond_grant_refused_r20`
+   |
+   = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `axon-os` (lib test) generated 2 warnings
+   Compiling hyper-rustls v0.27.9
+warning: unused import: `CoalitionBound`
+  --> crates/axon-os/tests/r27_acceptance.rs:10:37
+   |
+10 | use axon_os::coalition::{Coalition, CoalitionBound, CoalitionCeiling};
+   |                                     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `write_kill_state`
+  --> crates/axon-os/tests/r27_acceptance.rs:11:44
+   |
+11 | use axon_os::killchan::{test_kill_channel, write_kill_state, FileKillChannel};
+   |                                            ^^^^^^^^^^^^^^^^
+
+warning: unused import: `ResourceBound`
+  --> crates/axon-os/tests/r27_acceptance.rs:13:30
+   |
+13 | use axon_os::ledger::{Carve, ResourceBound, ResourceLedger};
+   |                              ^^^^^^^^^^^^^
+
+warning: function `mint_beyond_grant_refused_R20` should have a snake case name
+   --> crates/axon-os/tests/r27_acceptance.rs:299:4
+    |
+299 | fn mint_beyond_grant_refused_R20() {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `mint_beyond_grant_refused_r20`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: function `weight_exfil_egress_denied_R25` should have a snake case name
+   --> crates/axon-os/tests/r27_acceptance.rs:339:4
+    |
+339 | fn weight_exfil_egress_denied_R25() {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `weight_exfil_egress_denied_r25`
+
+warning: function `weight_exfil_egress_label_denied_R25` should have a snake case name
+   --> crates/axon-os/tests/r27_acceptance.rs:361:4
+    |
+361 | fn weight_exfil_egress_label_denied_R25() {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `weight_exfil_egress_label_denied_r25`
+
+warning: `axon-os` (test "r27_acceptance") generated 6 warnings (run `cargo fix --test "r27_acceptance" -p axon-os` to apply 3 suggestions)
+warning: unused variable: `score_hint`
+   --> crates/axon-signal/src/export.rs:354:48
+    |
+354 |         let make_session = |id: &str, ts: u64, score_hint: u64, files: &[&str]| -> LedgerRecord {
+    |                                                ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_score_hint`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `axon-signal` (lib test) generated 1 warning (run `cargo fix --lib -p axon-signal --tests` to apply 1 suggestion)
+   Compiling reqwest v0.12.28
+   Compiling axon-domain v0.1.0 (/home/cklaus/projects/axon/crates/axon-domain)
+   Compiling axon-ai v0.1.0 (/home/cklaus/projects/axon/crates/axon-ai)
+   Compiling axon-wasm v0.1.0 (/home/cklaus/projects/axon/crates/axon-wasm)
+warning: static `ORACLE` is never used
+ --> crates/axon-wasm/tests/oracle.rs:4:8
+  |
+4 | static ORACLE: &[(&str, &str, i32, &str)] = &[
+  |        ^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `axon-wasm` (test "oracle") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.76s
+     Running unittests src/lib.rs (target/debug/deps/axon_ai-83789810f5378cec)
+
+running 29 tests
+test tests::ai_complete_honors_axon_ai_mock ... ok
+test tests::dotenv_does_not_override_existing_env ... ok
+test tests::complete_with_usage_returns_deterministic_token_estimate_under_mock ... ok
+test tests::extract_bridge_rejects_null_prompt ... ok
+test tests::dotenv_parser_handles_comments_quotes_and_export ... ok
+test tests::endpoint_and_base_url_per_provider ... ok
+test tests::extract_bridges_report_missing_api_key_and_tolerate_nulls ... ok
+test tests::flat_extract_bridges_report_missing_api_key_and_tolerate_nulls ... ok
+test tests::flat_response_missing_value_field_is_error ... ok
+test tests::flat_response_projection_bool_ok ... ok
+test tests::flat_response_projection_f64_ok ... ok
+test tests::flat_response_projection_i64_ok ... ok
+test tests::host_allowed_matches_the_contained_glob_rule ... ok
+test tests::host_of_extracts_the_bare_host ... ok
+test tests::mock_reaches_the_structured_output_path ... ok
+test tests::openai_flat_tool_body_omits_confidence ... ok
+test tests::openai_plain_body_has_chat_completions_shape ... ok
+test tests::openai_tool_body_nests_schema_under_function ... ok
+test tests::parse_openai_tool_args_decodes_arguments_string ... ok
+test tests::parse_openai_tool_args_errors_without_answer_call ... ok
+test tests::parse_tool_use_input_errors_when_missing ... ok
+test tests::parse_tool_use_input_finds_answer_block ... ok
+test tests::parse_tool_use_input_skips_other_tools ... ok
+test tests::provider_defaults_to_anthropic_and_reads_env ... ok
+test tests::typed_body_f64_uses_number_for_value ... ok
+test tests::typed_body_i64_has_required_shape ... ok
+test tests::typed_flat_body_bool_uses_boolean ... ok
+test tests::typed_flat_body_f64_uses_number ... ok
+test tests::typed_flat_body_i64_has_required_shape ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/axon_attest-01a5681a8c7cc575)
+
+running 23 tests
+test hw_root_verification_tests::a_forged_hardware_root_claim_is_refused ... ok
+test tests::acc_a2_byte_identical_across_runs ... ok
+test tests::acc_a1_smoke_extended_tcb_journey ... ok
+test tests::acc_a1_smoke_boot_attest_run_journey ... ok
+test tests::acc_a3_quickstart_commands_execute ... ok
+test tests::acc_a4_device_surface_minimal_and_isolated ... ok
+test tests::acc_a3_extended_tcb_quickstart_commands_execute ... ok
+test tests::acc_a5_measurement_and_record_byte_identical ... ok
+test tests::acc_a2_guest_image_runs_real_job ... ok
+test tests::acc_a5_tampered_component_detected ... ok
+test tests::acc_a6_attestation_mandatory_and_chained ... ok
+test tests::acc_a6_chaining_order_canonical ... ok
+test tests::attestation_mismatch_fails_closed ... ok
+test tests::axtcb1_digest_chained_to_measurement ... ok
+test tests::hmac_sha256_deterministic ... ok
+test tests::component_version_in_report ... ok
+test tests::missing_component_zero_fill_is_auditable ... ok
+test tests::missing_component_fails_closed ... ok
+test tests::tampered_guest_image_fails_attestation ... ok
+test tests::verify_extended_catches_prefix_and_monitor_invariants ... ok
+test tests::r26_baseline_backward_compatible ... ok
+test tests::vm_without_attestation_is_refused ... ok
+test tests::acc_a4_hermetic_isolated_timeout ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/axon_audit-98eec8aa965f905e)
+
+running 8 tests
+test tests::acc_a5_deterministic_byte_identical ... ok
+test tests::chain_second_entry_prev_hash_matches_first_entry_hash ... ok
+test tests::chain_first_entry_has_zero_prev_hash ... ok
+test tests::open_existing_ledger_continues_chain ... ok
+test tests::ai_call_entry_carries_prompt_hash ... ok
+test tests::ledger_tamper_fails_verification ... ok
+test tests::missing_entry_fails_verification ... ok
+test tests::ledger_export_and_reimport_verified ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r28_gate.rs (target/debug/deps/r28_gate-0eccf26be67ad84b)
+
+running 5 tests
+test acc_a4_hermetic_isolated_timeout ... ok
+test acc_a3_quickstart_commands_execute ... ok
+test acc_a2_all_capability_classes_recorded ... ok
+test acc_a6_ledger_mandatory_and_chained ... ok
+test acc_a1_smoke_audit_journey ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/axon_certcheck-66e7fb71dd495910)
+
+running 41 tests
+test checker::tests::wrong_obligation_binding ... ok
+test certificate::tests::node_count_counts_the_tree ... ok
+test checker::tests::mutated_cert_digest_is_invalid ... ok
+test checker::tests::negative_coeff_is_invalid ... ok
+test checker::tests::eval_coeff_overflow_is_caught ... ok
+test checker::tests::nonexhaustive_split_substituting_a_bogus_leaf_is_invalid ... ok
+test checker::tests::unsupported_is_failclosed ... ok
+test checker::tests::valid_carve_cert_is_accepted ... ok
+test checker::tests::boolean_attenuation_tautology_is_valid ... ok
+test cli::tests::explain_renders_a_claim ... ok
+test checker::tests::wrong_obligation_binding_is_invalid ... ok
+test checker::tests::forged_boolean_cert_is_invalid ... ok
+test cli::tests::fmt_formula_is_readable ... ok
+test certificate::tests::wrong_schema_is_rejected ... ok
+test certificate::tests::cert_roundtrips_and_digest_is_stable ... ok
+test cli::tests::help_text_lists_check ... ok
+test eval::tests::cmp_lowers_to_le_form ... ok
+test eval::tests::farkas_detects_real_contradiction ... ok
+test eval::tests::farkas_overflow_is_caught ... ok
+test eval::tests::farkas_rejects_negative_coeff ... ok
+test eval::tests::farkas_rejects_non_contradiction ... ok
+test eval::tests::farkas_sum_to_zero_is_not_a_contradiction ... ok
+test eval::tests::farkas_strict_zero_is_a_contradiction ... ok
+test eval::tests::lincomb_arith_is_checked ... ok
+test eval::tests::nnf_negates_comparisons ... ok
+test eval::tests::nnf_pushes_through_and_or ... ok
+test eval::tests::nonlinear_term_is_rejected ... ok
+test obligation::tests::malformed_json_is_a_parse_error ... ok
+test obligation::tests::rejects_sort_mismatch ... ok
+test obligation::tests::parse_roundtrips_and_digests_stably ... ok
+test obligation::tests::rejects_undeclared_variable ... ok
+test obligation::tests::wrong_schema_rejected ... ok
+test obligations::tests::shipped_obligations_match_the_code_lowering ... ok
+test policy::tests::require_certificates_fails_closed ... ok
+test policy::tests::unsupported_obligation_fails_closed_under_flag ... ok
+test synth::tests::false_obligation_cannot_synthesize ... ok
+test synth::tests::synthesize_carve_is_checker_valid ... ok
+test synth::tests::synthesis_is_byte_deterministic ... ok
+test synth::tests::synthesize_mint_o2_is_valid ... ok
+test checker::tests::oversize_cert_is_invalid ... ok
+test checker::tests::oversize_by_node_count_is_invalid ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+
+     Running unittests src/main.rs (target/debug/deps/certcheck-48e78effe01bb496)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (target/debug/deps/acceptance-1a26900ada9df605)
+
+running 10 tests
+test require_certificates_fails_closed ... ok
+test lying_solver_is_caught_by_checker ... ok
+test false_obligation_has_no_valid_certificate ... ok
+test valid_certificate_accepted ... ok
+test acc_a5_certificate_byte_identical ... ok
+test acc_a3_quickstart_commands_execute ... ok
+test acc_a1_smoke_prove_check_verify ... ok
+test acc_a2_example_obligations_certified ... ok
+test acc_a6_checker_rejects_forged_and_mutated ... ok
+test acc_a4_checker_is_solver_free ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/debug/deps/axon_core-66e771193329c1bc)
+
+running 598 tests
+test ai_routing::tests::api_model_honors_env_override ... ok
+test ai_routing::tests::api_model_is_tier_specific_and_distinct ... ok
+test ai_routing::tests::budget_from_attrs_distinguishes_absent_wellformed_and_malformed ... ok
+test ai_routing::tests::cost_rates_are_monotonic_by_tier ... ok
+test ai_routing::tests::default_tier_is_balanced ... ok
+test ai_routing::tests::each_tier_maps_to_a_distinct_model ... ok
+test ai_routing::tests::cost_micro_scales_with_tokens ... ok
+test ai_routing::tests::tier_from_attrs_resolves_policy_or_default ... ok
+test ai_routing::tests::tier_roundtrips_through_name ... ok
+test ai_routing::tests::unknown_tier_is_none ... ok
+test audit::tests::pure_module_is_clear ... ok
+test audit::tests::declared_containment_is_clear ... ok
+test audit::tests::audit_is_deterministic ... ok
+test audit::tests::undeclared_exec_is_denied ... ok
+test audit::tests::undeclared_fs_is_flagged ... ok
+test audit::tests::undeclared_net_is_denied ... ok
+test audit::tests::verdict_token_roundtrips ... ok
+test borrow::tests::test_clean_let_no_errors ... ok
+test borrow::tests::test_copy_types_not_moved ... ok
+test borrow::tests::test_copy_used_repeatedly_no_error ... ok
+test borrow::tests::test_empty_function_no_error ... ok
+test borrow::tests::test_move_detected ... ok
+test borrow::tests::test_move_while_borrowed ... ok
+test borrow::tests::test_own_binding_then_consume_no_error ... ok
+test borrow::tests::test_ref_binding_no_error ... ok
+test builtins::tests::all_builtins_have_docs ... ok
+test builtins::tests::all_builtins_have_non_empty_names ... ok
+test builtins::tests::browser_incompatible_set_is_tight_and_real ... ok
+test builtins::tests::builtin_effect_row_agrees_with_impurity ... ok
+test builtins::tests::deferred_attrs_non_empty_and_no_duplicates ... ok
+test builtins::tests::known_attrs_present ... ok
+test builtins::tests::builtin_sig_param_and_ret_roundtrip ... ok
+test builtins::tests::builtin_sigs_covers_all_builtins ... ok
+test builtins::tests::r17_heap_alloc_classifier_is_sound_for_hal_and_strings ... ok
+test builtins::tests::r17_fn_addr_is_hal_impure_alloc_free ... ok
+test builtins::tests::r19_fixed_width_as_casts_are_known_pure_general_purpose ... ok
+test builtins::tests::r23_bpf_helper_ids_are_consistent ... ok
+test builtins::tests::r17_atomics_carry_hal_effect_and_are_impure ... ok
+test builtins::tests::r25_zephyr_console_putc_is_hal_impure_alloc_free ... ok
+test builtins::tests::r23_bpf_helpers_are_known_impure_and_carry_bpf_effect ... ok
+test builtins::tests::r23_bpf_kind_sections ... ok
+test capabilities::tests::allowed_read_produces_no_error ... ok
+test capabilities::tests::ai_complete_denied_without_anthropic_grant ... ok
+test capabilities::tests::contained_fn_cannot_launder_via_spawn_body ... ok
+test capabilities::tests::contained_fn_cannot_launder_via_lambda_body ... ok
+test capabilities::tests::contained_fn_cannot_launder_via_method_dispatch ... ok
+test capabilities::tests::disallowed_write_produces_e1001 ... ok
+test capabilities::tests::dynamic_arg_with_empty_allowlist_fails_closed ... ok
+test capabilities::tests::env_read_outside_then_passed_into_contained_fn_is_allowed ... ok
+test capabilities::tests::env_var_outside_contained_is_allowed ... ok
+test capabilities::tests::impl_method_with_own_contained_is_enforced ... ok
+test capabilities::tests::import_widening_capabilities_is_rejected ... ok
+test capabilities::tests::contained_fn_cannot_read_env_var ... ok
+test capabilities::tests::import_within_grant_is_allowed ... ok
+test capabilities::tests::ai_complete_checks_implicit_host_not_prompt ... ok
+test capabilities::tests::every_fn_name_parameter_is_classified_as_dispatching_or_not_t43 ... ok
+test capabilities::tests::lambda_body_within_grant_is_allowed ... ok
+test capabilities::tests::method_dispatch_recursion_terminates ... ok
+test capabilities::tests::never_read_produces_e1004 ... ok
+test capabilities::tests::method_dispatch_within_grant_is_allowed ... ok
+test capabilities::tests::non_literal_arg_with_nonempty_allowlist_fails_closed ... ok
+test capabilities::tests::multiple_widenings_each_reported_deterministically ... ok
+test checker::tests::e0305_message_names_function_and_signature ... ok
+test capabilities::tests::contained_fn_cannot_launder_via_with_handler_body ... ok
+test checker::tests::e0306_message_names_arg_index_and_types ... ok
+test checker::tests::e0307_return_mismatch_suggests_ok_wrap ... ok
+test checker::tests::e0501_unknown_trait ... ok
+test checker::tests::e0502_missing_method ... ok
+test checker::tests::e0503_param_count_mismatch ... ok
+test checker::tests::e0504_bound_not_satisfied ... ok
+test capabilities::tests::program_capabilities_sees_impl_method_bodies ... ok
+test capabilities::tests::impl_method_cannot_launder_capability_past_import_ceiling ... ok
+test capabilities::tests::dir_prefix_extracts_directory ... ok
+test capabilities::tests::import_edge_sees_capability_inside_a_with_block ... ok
+test capabilities::tests::uncontained_importer_has_no_ceiling ... ok
+test capabilities::tests::imported_env_read_widens_a_contained_importer_e1203 ... ok
+test checker::tests::fix4_modulo_on_bool_errors ... ok
+test checker::tests::generic_fn_type_param_not_flagged_as_unknown ... ok
+test checker::tests::e0301_message_names_inner_type ... ok
+test capabilities::tests::http_get_still_checks_first_arg_as_host ... ok
+test checker::tests::r01_option_in_binop ... ok
+test checker::tests::r01_option_used_as_value ... ok
+test checker::tests::r02_assigned_result_not_ignored ... ok
+test checker::tests::r02_result_ignored ... ok
+test checker::tests::r06_i32_to_i64_widening_is_ok ... ok
+test checker::tests::e0504_bound_satisfied_no_error ... ok
+test checker::tests::fix4_arithmetic_on_numeric_ok ... ok
+test checker::tests::r06_wrong_arg_type ... ok
+test checker::tests::r07_return_type_mismatch ... ok
+test checker::tests::fix4_arithmetic_on_str_errors ... ok
+test checker::tests::r08_unknown_type ... ok
+test checker::tests::r11_field_access_on_non_struct ... ok
+test checker::tests::r12_deferred_type_silent ... ok
+test checker::tests::r03_question_in_result_fn_ok ... ok
+test cert_gate::tests::pinned_artifacts_parse_and_check_solver_free ... ok
+test codegen::builtin_externs::drift_tests::every_str_out_row_matches_a_known_builtin_with_the_same_arity ... ok
+test codegen::builtin_externs::drift_tests::every_extern_row_matches_a_known_builtin_with_the_same_arity ... ok
+test checker::tests::valid_impl_produces_no_trait_errors ... ok
+test checker::tests::span_propagates_to_e0305_when_stmt_has_span ... ok
+test checker::tests::r03_question_in_unit_fn ... ok
+test checker::tests::r04_match_option_missing_none ... ok
+test checker::tests::r04_match_result_missing_err ... ok
+test cert_gate::tests::default_off_is_ok_and_silent ... ok
+test checker::tests::r06_bool_to_i64_no_widening ... ok
+test codegen::ir_inkwell::tests::build_const_return_via_inherent_api ... ok
+test codegen::walk_expr_tests::walk_expr_reaches_arms_the_old_catch_all_dropped_t46 ... ok
+test codegen::walk_expr_tests::walk_expr_visits_the_root_and_nests_arbitrarily_deep_t46 ... ok
+test checker::tests::e0303_message_mentions_result_and_actual_return_type ... ok
+test complexity::tests::bigger_literals_cost_more ... ok
+test complexity::tests::adding_a_node_strictly_increases_bits ... ok
+test complexity::tests::empty_program_is_zero ... ok
+test complexity::tests::deterministic ... ok
+test checker::tests::r06_enum_variant_struct_lit_no_false_positive ... ok
+test complexity::tests::format_invariant ... ok
+test complexity::tests::nesting_increases_depth ... ok
+test comptime::tests::test_abs_i64_builtin ... ok
+test complexity::tests::per_function_breakdown ... ok
+test comptime::tests::test_bool_or_true ... ok
+test codegen::builtin_externs::drift_tests::no_duplicate_extern_registry_rows ... ok
+test comptime::tests::test_builtin_arity_error ... ok
+test comptime::tests::test_div_by_zero ... ok
+test codegen::builtin_externs::drift_tests::no_duplicate_str_out_registry_rows ... ok
+test comptime::tests::test_i64_to_str_builtin ... ok
+test comptime::tests::test_if_false_branch ... ok
+test codegen::builtin_externs::drift_tests::str_out_and_builtin_externs_never_name_the_same_builtin ... ok
+test comptime::tests::test_if_true_branch ... ok
+test checker::tests::r05_wrong_arg_count ... ok
+test complexity::tests::longer_names_cost_more ... ok
+test comptime::tests::test_nested_via_env ... ok
+test comptime::tests::test_not_bool ... ok
+test comptime::tests::test_str_concat_builtin ... ok
+test comptime::tests::test_bool_and_false ... ok
+test comptime::tests::test_str_eq_builtin ... ok
+test decimal::tests::mul_exact ... ok
+test decimal::tests::mul_rounds_half_even ... ok
+test comptime::tests::test_int_arith ... ok
+test decimal::tests::negative_half_even ... ok
+test decimal::tests::overflow_is_error_not_wrap ... ok
+test decimal::tests::parse_and_format_round_trip ... ok
+test decimal::tests::parse_rejects_excess_precision ... ok
+test comptime::tests::test_max_i64_builtin ... ok
+test comptime::tests::test_min_i64_builtin ... ok
+test diag_schema::tests::diagnostic_json_escapes_and_stays_single_line ... ok
+test comptime::tests::test_mul ... ok
+test diag_schema::tests::diagnostic_json_handles_help_and_no_code ... ok
+test comptime::tests::test_if_with_computed_cond ... ok
+test diag_schema::tests::diagnostic_json_is_deterministic ... ok
+test diag_schema::tests::diagnostic_json_is_versioned_and_structured ... ok
+test diag_schema::tests::non_code_bracket_prefix_is_not_mistaken_for_a_code ... ok
+test comptime::tests::test_str_len_builtin ... ok
+test diag_schema::tests::severity_maps_from_code_letter ... ok
+test decimal::tests::abs_and_neg ... ok
+test decimal::tests::add_sub_exact ... ok
+test doc::tests::doc_basic_fn ... ok
+test doc::tests::doc_no_comments_produces_placeholder ... ok
+test doc::tests::doc_fn_signature_includes_effect_row ... ok
+test decimal::tests::exact_point_one_plus_point_two ... ok
+test doc::tests::doc_paragraph_break_in_comment ... ok
+test effects::tests::callback_effect_is_not_launderable_through_a_forwarder ... ok
+test effects::tests::collect_called_builtins_follows_helpers ... ok
+test effects::tests::contained_annotation_emits_e1316_in_strict_mode ... ok
+test effects::tests::defined_named_handler_discharge_is_transitive_consistent ... ok
+test effects::tests::contained_capability_contributes_effects ... ok
+test effects::tests::defined_named_handler_discharges ... ok
+test effects::tests::leak_through_nested_call_position ... ok
+test effects::tests::main_escape_hatch_admits_everything ... ok
+test doc::tests::doc_preserves_doc_comment_above_attributes ... ok
+test effects::tests::no_contained_annotation_emits_no_e1316 ... ok
+test doc::tests::doc_type_alias ... ok
+test effects::tests::no_row_clause_is_open_during_migration ... ok
+test effects::tests::callback_effect_is_admitted_when_the_row_includes_it ... ok
+test decimal::tests::div_rounding_modes ... ok
+test effects::tests::open_row_caller_admits_anything ... ok
+test effects::tests::pure_callback_through_a_forwarder_is_clean ... ok
+test effects::tests::pure_calling_pure_is_clean ... ok
+test effects::tests::row_variable_propagates_through_map_style_forwarder ... ok
+test effects::tests::discharge_is_transitive_consistent ... ok
+test effects::tests::subset_is_allowed_superset_leaks ... ok
+test effects::tests::explicit_empty_row_fn_calling_io_builtin_leaks ... ok
+test effects::tests::transitive_declared_row_is_satisfiable ... ok
+test effects::tests::fn_declaring_the_effect_is_ok ... ok
+test effects::tests::handler_arm_body_does_not_self_discharge ... ok
+test effects::tests::inline_handler_discharges_its_arm_effect ... ok
+test effects::tests::io_inside_a_for_loop_body_is_fine_when_row_admits_it ... ok
+test effects::tests::io_inside_a_for_loop_body_still_leaks ... ok
+test error::tests::axon_error_display_with_expected_found ... ok
+test error::tests::axon_error_display_with_location ... ok
+test error::tests::axon_error_fix_shown ... ok
+test effects::tests::io_inside_spawn_select_comptime_still_leaks ... ok
+test fmt::tests::fmt_for_in_collection_resugars ... ok
+test fmt::tests::fmt_for_loop_preserved ... ok
+test error::tests::axon_error_display_basic ... ok
+test effects::tests::transitive_effect_is_not_launderable ... ok
+test fmt::tests::fmt_idempotent ... ok
+test effects::tests::undefined_named_handler_does_not_discharge ... ok
+test effects::tests::transitive_effect_through_two_hops ... ok
+test fmt::tests::fmt_large_float_does_not_expand_to_full_decimal ... ok
+test effects::tests::io_inside_a_with_handler_body_still_leaks ... ok
+test fmt::tests::fmt_method_call_preserved ... ok
+test fmt::tests::fmt_ordinary_floats_are_left_alone ... ok
+test fmt::tests::fmt_phase6_effect_row_preserved ... ok
+test fmt::tests::fmt_question_op_preserved ... ok
+test error::tests::axon_error_severity_prefix ... ok
+test error::tests::error_codes_are_unique ... ok
+test fmt::tests::fmt_attr_on_own_line ... ok
+test fmt::tests::fmt_binop_spaces ... ok
+test fmt::tests::fmt_field_access_preserved ... ok
+test fmt::tests::fmt_float_overflow_literal_stays_parseable ... ok
+test fmt::tests::fmt_simple_fn ... ok
+test fmt::tests::fmt_struct_pattern_keeps_renaming_binding ... ok
+test fmt::tests::fmt_round_trip_structs ... ok
+test host::tests::nested_override_restores_the_outer_host ... ok
+test host::tests::now_ms_returns_epoch_ms ... ok
+test host::tests::scoped_restore_returns_to_default ... ok
+test host::tests::sse_done_sentinel_is_preserved_verbatim ... ok
+test host::tests::sse_empty_stream_returns_no_events ... ok
+test host::tests::sse_joins_multiline_event_data ... ok
+test host::tests::sse_parses_two_simple_events ... ok
+test host::tests::sse_skips_event_id_retry_fields ... ok
+test host::tests::sse_trailing_data_without_blank_line_flushed ... ok
+test fmt::tests::fmt_float_fidelity_on_examples_floats_fixture ... ok
+test improve::tests::ai_discovery_is_deterministic ... ok
+test improve::tests::ai_discovery_proposes_a_valid_template ... ok
+test improve::tests::ai_discovery_proposes_nothing_without_opportunities ... ok
+test fmt::tests::fmt_trailing_newline ... ok
+test fmt::tests::fmt_struct_pattern_keeps_shorthand ... ok
+test improve::tests::ai_discovery_rejects_unknown_template_e1407 ... ok
+test improve::tests::bool_simplify_folds_literals_and_double_negation ... ok
+test fmt::tests::fmt_round_trip_error_patterns ... ok
+test fmt::tests::fmt_type_alias ... ok
+test fmt::tests::fmt_round_trip_match_patterns ... ok
+test fmt::tests::fmt_round_trip_comprehensive ... ok
+test host::tests::default_host_http_sse_denied_without_asi_runtime ... ok
+test improve::tests::constant_fold_pass_folds_nested_and_preserves_behavior ... ok
+test host::tests::default_host_matches_std_behavior ... ok
+test improve::tests::count_bool_simplify_sites_matches_the_pass ... ok
+test improve::tests::count_constant_fold_sites_agrees_with_the_pass ... ok
+test improve::tests::count_compare_fold_sites_agrees_with_the_pass ... ok
+test improve::tests::count_redundant_branch_sites_matches_the_pass ... ok
+test improve::tests::discover_finds_arith_identities_and_counts_them ... ok
+test improve::tests::discover_proposes_nothing_on_a_clean_corpus ... ok
+test host::tests::host_seam_routes_file_io_through_axonhost ... ok
+test improve::tests::fold_pass_removes_identities_and_preserves_behavior ... ok
+test improve::tests::perf_gate_does_not_falsely_claim_faster_for_identity ... ignored, timing-sensitive: wall-clock noise under parallel test load; run with --ignored
+test improve::tests::discover_recurses_into_nested_exprs ... ok
+test fmt::tests::fmt_round_trip_traits_in_practice ... ok
+test improve::tests::redundant_branch_fold_collapses_constant_conditions ... ok
+test improve::tests::capability_adding_pass_is_rejected_i12 ... ok
+test improve::tests::fold_pass_is_a_noop_on_a_clean_program ... ok
+test improve::tests::perf_gate_skipped_when_correctness_fails ... ok
+test improve::tests::redteam_stdout_only_change_is_rejected_g1 ... ok
+test improve::tests::redteam_unsound_dsl_path_pass_is_rejected_by_g1 ... ok
+test improve::tests::redteam_exec_injection_is_rejected_g2 ... ok
+test improve::tests::redteam_panic_erasure_is_rejected_g1 ... ok
+test improve::tests::rewrite_spec_validation_is_fail_closed ... ok
+test improve::tests::redteam_drop_left_logical_fold_is_rejected_by_g1 ... ok
+test improve::tests::ai_selected_template_pass_clears_the_gates ... ok
+test improve::tests::bool_simplify_pass_clears_the_gates_and_preserves_behavior ... ok
+test improve::tests::try_fold_int_matches_checked_arithmetic ... ok
+test improve::tests::redundant_branch_fold_does_not_erase_a_panic_in_the_taken_branch ... ok
+test improve::tests::constant_fold_pass_clears_the_gates_and_does_not_fold_panics ... ok
+test improve::tests::compare_fold_pass_folds_literals_and_clears_the_gates ... ok
+test improve::tests::regression_breaking_pass_is_rejected ... ok
+test improve::tests::sound_dsl_constant_fold_preserves_the_panic_and_clears_g1 ... ok
+test improve::tests::overfit_pass_passing_on_one_member_is_caught ... ok
+test improve::tests::fold_pass_verifies_correct_and_safe ... ok
+test improve_templates::tests::registry_is_stable_and_closed ... ok
+test improve_templates::tests::get_pass_resolves_known_and_rejects_unknown ... ok
+test infer::tests::block_type_is_last_expr ... ok
+test infer::tests::bool_literal_infers_bool ... ok
+test improve::tests::perf_gate_is_opt_in_and_defaults_unmeasured ... ok
+test improve_templates::tests::every_template_has_a_detector_and_pass ... ok
+test infer::tests::builtin_sigs_registered ... ok
+test infer::tests::chan_does_not_unify_with_different_inner ... ok
+test infer::tests::binop_add_i32_str_is_type_error ... ok
+test infer::tests::binop_add_i64_i64_is_i64 ... ok
+test infer::tests::chan_unifies_with_same_inner ... ok
+test infer::tests::chan_resolve_from_ast_type ... ok
+test improve::tests::redundant_branch_fold_clears_the_gates_and_preserves_behavior ... ok
+test infer::tests::dyn_trait_method_call_infers_return_type ... ok
+test infer::tests::drain_instantiations_deduplicates ... ok
+test improve::tests::fold_comparison_literal_rule_clears_the_firewall ... ok
+test improve::tests::fold_logical_rule_clears_the_firewall ... ok
+test infer::tests::float_literal_infers_f64 ... ok
+test infer::tests::impl_block_method_registered_with_mangled_name ... ok
+test infer::tests::generic_fn_instantiates_without_error ... ok
+test improve::tests::regression_gate_passes_for_outcome_preserving_pass ... ok
+test infer::tests::i64_to_i32_narrowing_produces_error ... ok
+test infer::tests::i32_to_i64_widening_does_not_produce_error ... ok
+test infer::tests::integer_literal_infers_i64 ... ok
+test improve::tests::identity_pass_verifies_and_output_changing_pass_is_rejected ... ok
+test infer::tests::let_annotation_mismatch_reports_annotation_as_expected ... ok
+test improve::tests::fold_bound_builtin_rule_clears_the_firewall ... ok
+test infer::tests::let_binding_propagates_type ... ok
+test infer::tests::logical_and_int_operand_is_error ... ok
+test infer::tests::logical_or_infers_bool ... ok
+test infer::tests::modulo_infers_same_type_as_operands ... ok
+test infer::tests::none_gets_fresh_var_unified_by_usage ... ok
+test infer::tests::some_wraps_inner_type ... ok
+goal: Goal: Find the input that maximizes a deterministic objective — searching variants...
+best score: 100 (target 100)
+deploy gate: passed
+test infer::tests::match_arms_must_agree ... ok
+test infer::tests::logical_and_infers_bool ... ok
+hi
+test infer::tests::question_unwraps_result ... ok
+test infer::tests::occurs_check_prevents_infinite_type ... ok
+test infer::tests::str_literal_infers_str ... ok
+test infer::tests::parse_int_builtin_returns_result ... ok
+test interp::tests::a_program_with_no_net_grant_is_not_pinned ... ok
+test interp::tests::declared_net_hosts_collects_every_contained_grant ... ok
+test interp::tests::fmt_g_matches_c_printf_six_g ... ok
+test interp::tests::enum_match ... ok
+test interp::tests::max_depth_clamps_to_ceiling ... ok
+test interp::tests::closures_capture ... ok
+test interp::tests::for_loop_break_continue ... ok
+test interp::tests::dict_to_str_newline_value_returns_err_not_panic ... ok
+test interp::tests::arithmetic_and_while ... ok
+test interp::tests::extended_math_builtins ... ok
+test interp::tests::max_depth_defaults_when_unset_or_malformed ... ok
+test interp::tests::goal_run_errors_on_unknown_name ... ok
+test interp::tests::max_depth_honors_valid_value_and_trims ... ok
+test interp::tests::dict_to_str_bad_key_returns_err_not_panic ... ok
+goal: Goal: Tune summary length using shared scoring helpers — searching variants...
+test interp::tests::dict_to_str_clean_dict_round_trips ... ok
+test interp::tests::goal_run_hill_climbs_adaptive_fn ... ok
+test interp::tests::goal_run_retrospective_picks_closest ... ok
+best score: 100 (target 100)
+deploy gate: passed
+test interp::tests::goal_run_retrospective_lookup_still_works ... ok
+test interp::tests::main_returns_exit_code ... ok
+test interp::tests::hello_runs_and_exits_zero ... ok
+test interp::tests::ai_mock_mode_returns_ok ... ok
+test interp::tests::r15_slice2_send_value_round_trip_is_lossless ... ok
+ok
+test interp::tests::more_builtins_coverage ... ok
+test interp::tests::parse_int_radix_prefix_errs_with_hint ... ok
+goal: Goal: Deploy a tuned parameter only if it clears the safety bar — searching variants...
+test interp::tests::numeric_conversions ... ok
+best score: 60 (target 70)
+test interp::tests::r15_host_await_collapses_eof_to_empty_string ... ok
+test interp::tests::r15_host_await_opt_none_at_eof_terminates_loop ... ok
+test interp::tests::r15_host_await_without_host_errors_cleanly ... ok
+test interp::tests::r15_slice2_chan_payload_is_refused_not_corrupted ... ok
+test interp::tests::stack_grows_with_depth_but_never_below_floor ... ok
+test interp::tests::r15_slice2_str_form_still_works_through_value_substrate ... ok
+goal: Goal: Deploy a ranker only if it survives the injection redteam — searching variants...
+best score: 91 (target 90)
+REDTEAM FAILED: blocking deploy
+test interp::tests::parse_int_still_trims_and_parses_decimal ... ok
+test interp::tests::r15_no_await_runs_unchanged ... ok
+test interp::tests::r15_slice2_dict_payload_round_trips ... ok
+test interp::tests::the_implicit_ai_host_is_always_included_once_a_grant_exists ... ok
+test interp::tests::r15_host_await_effects_fire_once_not_per_resume ... ok
+test interp::tests::r15_host_await_single_roundtrip ... ok
+test interp::tests::r15_panic_mid_suspend_does_not_hang ... ok
+test interp::tests::r15_host_await_loop_n_times ... ok
+test interp::tests::r15_slice2_enum_and_tuple_payload_round_trip ... ok
+test interp::tests::random_i64_valid_bounds_stay_in_range ... ok
+test interp::tests::result_match_and_question ... ok
+test interp::tests::random_i64_inverted_bounds_is_panic ... ok
+test interp::tests::r15_slice2_struct_payload_round_trips ... ok
+test interp::tests::run_suspendable_hypercall_no_host_await_exits_zero ... ok
+test interp::tests::sandbox_create_and_run_pure_fn_f5 ... ok
+test interp::tests::uncertain_construction_and_field_access ... ok
+test interp::tests::struct_field_access ... ok
+test interp::tests::verify_label_hides_generated_deploy_gate_name ... ok
+test interp::tests::verify_gate_passes_when_confident ... ok
+test interp::tests::sandbox_run_enforces_effect_ceiling_at_runtime_f5 ... ok
+test interp::tests::verify_label_keeps_author_named_functions ... ok
+test kernel::tests::kernel_chain_stays_attenuated ... ok
+test kernel::tests::kernel_budget_is_carved_from_parent ... ok
+test interp::tests::verify_gate_panics_when_underconfident ... ok
+test kernel::tests::kernel_authorize_and_can_mint_gates ... ok
+test interp::tests::recursion ... ok
+test interp::tests::goal_demos_pure_outcomes ... ok
+test kernel::tests::kernel_mint_cannot_escalate ... ok
+test kernel::tests::kernel_no_cap_root_seals_the_floor ... ok
+test kernel::tests::kernel_overgrant_is_clamped ... ok
+test kernel::tests::kernel_mint_matches_oracle_subset ... ok
+test kernel::tests::llm_cost_scales_with_tokens ... ok
+test kernel::tests::llm_gateway_spend_against_principal_budget ... ok
+test kernel::tests::kernel_unknown_handle_is_safe ... ok
+test kernel::tests::principal_handles_are_not_forgeable_by_arithmetic_p7_sec_03 ... ok
+test kernel::tests::restart_set_matches_oracle ... ok
+test kernel::tests::scheduler_fanout_collect_and_failure_is_observable ... ok
+test kernel::tests::scheduler_round_robin_is_seed_deterministic ... ok
+test kernel::tests::store_at_least_once_keeps_no_version ... ok
+test kernel::tests::store_linearizable_version_is_total_order ... ok
+test improve::tests::verify_record_is_deterministic ... ok
+test kernel::tests::store_retry_diverges_by_consistency ... ok
+test kernel::tests::scheduler_suspend_parks_off_queue_and_resume_requeues ... ok
+test kernel::tests::supervisor_max_intensity_halts_and_latches ... ok
+test kernel::tests::supervisor_on_failure_counts_and_maps_to_fiber_ids ... ok
+test lexer::tests::test_block_comment_newline_sets_pending ... ok
+test lexer::tests::test_block_comment_skipped ... ok
+test lexer::tests::test_comment_skipped ... ok
+test lexer::tests::test_escape_sequences_in_strings ... ok
+test lexer::tests::test_float_scientific_notation ... ok
+test lexer::tests::test_fn_decl ... ok
+test lexer::tests::test_integer_overflow_error ... ok
+test lexer::tests::test_let_binding ... ok
+test lexer::tests::test_logical_and_or ... ok
+test lexer::tests::test_percent_operator ... ok
+test lexer::tests::test_question_operator ... ok
+test lexer::tests::test_ownership ... ok
+test lexer::tests::test_single_line_block_comment_no_pending ... ok
+test lexer::tests::test_unexpected_char_error ... ok
+test lexer::tests::test_string_literal ... ok
+test lockfile::tests::caps_array_roundtrips_including_empty ... ok
+test lockfile::tests::hash_is_axh1_tagged_and_stable ... ok
+test lockfile::tests::malformed_lockfile_is_e1205 ... ok
+test lockfile::tests::lockfile_roundtrips_deterministically ... ok
+test lockfile::tests::write_is_sorted_regardless_of_input_order ... ok
+test lockfile::tests::hash_differs_on_a_one_byte_change ... ok
+test manifest::tests::corpus_hash_is_order_sensitive_and_stable ... ok
+test mobile::tests::android_toolchain_via_ndk_env ... ok
+test manifest::tests::manifest_roundtrips_deterministically ... ok
+test mobile::tests::android_triples_recognised ... ok
+test mobile::tests::ios_toolchain_absent_is_e1710_body ... ok
+test manifest::tests::malformed_manifest_is_e1405 ... ok
+test mobile::tests::ios_toolchain_present_passes ... ok
+test manifest::tests::manifest_membership_is_execution_permission ... ok
+test mobile::tests::ios_triples_recognised ... ok
+test mobile::tests::jni_abi_mapping ... ok
+test mobile::tests::kotlin_shim_is_byte_stable ... ok
+test manifest::tests::proposed_by_roundtrips_and_defaults_to_static ... ok
+test manifest::tests::graduation_requires_multisig ... ok
+test mobile::tests::wrapper_is_byte_stable_golden ... ok
+test native::tests::handle_key_roundtrip ... ok
+test native::tests::platform_headless_stub_is_clean_refusal ... ok
+test native::tests::platform_registered ... ok
+test mobile::tests::simulator_flag_correct ... ok
+test native::tests::resolve_known_call ... ok
+test mobile::tests::swift_shim_honours_custom_entries ... ok
+test native::tests::resource_handle_is_not_copy ... ok
+test native::tests::unknown_call_not_native ... ok
+test mobile::tests::swift_shim_is_byte_stable ... ok
+test parse_help::tests::a_plain_missing_eq_gets_no_help ... ok
+test parse_help::tests::a_real_type_annotation_is_not_mistaken_for_a_walrus ... ok
+test parse_help::tests::an_unrecognised_parse_error_yields_none_not_a_guess ... ok
+test mobile::tests::missing_entries_emit_null_lambdas ... ok
+test mobile::tests::unknown_triple_probe_errs ... ok
+test parse_help::tests::arrow_in_a_let_points_at_the_colon_form ... ok
+test native::tests::ffi_repr_accepts_allowed_set ... ok
+test parse_help::tests::def_and_function_are_pointed_at_fn ... ok
+test parse_help::tests::offsets_past_the_end_and_mid_codepoint_are_total ... ok
+test parse_help::tests::walrus_is_named ... ok
+test parse_help::tests::mut_is_refused_by_name_and_echoes_the_binding ... ok
+test native::tests::ffi_repr_rejects_disallowed ... ok
+test parser::tests::asi_assign_eq_newline_not_assignment ... ok
+test parser::tests::asi_assign_same_line_is_assignment ... ok
+test improve::tests::a_compiled_rewrite_spec_clears_the_four_gates ... ok
+test native::tests::gfx_mock_bad_handle_is_graceful_err_not_panic ... ok
+test native::tests::gfx_mock_roundtrip ... ok
+test native::tests::gfx_mock_use_after_consume_is_graceful_err ... ok
+test mobile::tests::shims_are_under_80_lines ... ok
+test parser::tests::asi_binary_op_end_of_line_is_continuation ... ok
+test parser::tests::asi_binary_op_newline_is_not_continuation ... ok
+test parser::tests::asi_block_comment_newline_prevents_call ... ok
+test native::tests::gfx_registered ... ok
+test parser::tests::asi_bracket_suppresses_newline_guard ... ok
+test parser::tests::asi_call_newline_not_continuation ... ok
+test parser::tests::asi_comparison_newline_is_not_continuation ... ok
+test parser::tests::asi_index_newline_not_continuation ... ok
+test parser::tests::asi_dot_chain_same_effective_line_ok ... ok
+test parser::tests::asi_inline_block_comment_does_not_prevent_call ... ok
+test parser::tests::asi_logical_and_newline_is_not_continuation ... ok
+test parser::tests::asi_return_same_line_has_value ... ok
+test parser::tests::asi_paren_suppresses_newline_guard_on_binop ... ok
+test parser::tests::parse_attr_at_test ... ok
+test parser::tests::parse_attr_hash_adaptive ... ok
+test parser::tests::parse_attr_hash_test ... ok
+test parser::tests::parse_exclusive_range_for ... ok
+test parser::tests::asi_return_newline_no_value ... ok
+test parser::tests::parse_generic_fn_with_multiple_bounds ... ok
+test parser::tests::parse_generic_fn_with_single_bound ... ok
+test parser::tests::parse_generic_struct_with_bound ... ok
+test parser::tests::parse_attr_hash_with_arg ... ok
+test parser::tests::parse_impl_with_bound ... ok
+test parser::tests::parse_negative_int_pattern_in_match ... ok
+test parser::tests::parse_paren_pattern_not_tuple ... ok
+test parser::tests::parse_bool_pattern_in_match ... ok
+test parser::tests::parse_phase6_effect_row_clause ... ok
+test parser::tests::parse_phase6_named_handler_def_desugars_to_inline ... ok
+test parser::tests::parse_phase6_surface_marker_gates_rows ... ok
+test parser::tests::parse_phase6_with_handler ... ok
+test parser::tests::parse_single_type_is_not_a_union ... ok
+test parser::tests::parse_inclusive_range_for ... ok
+test parser::tests::parse_string_escape_backslash ... ok
+test parser::tests::parse_tuple_pattern_nested ... ok
+test parser::tests::parse_tuple_pattern_two_elems ... ok
+test parser::tests::parse_tuple_type_return ... ok
+test parser::tests::parse_tuple_type_three_elems ... ok
+test parser::tests::parse_multiple_attrs_mixed_sigils ... ok
+test parser::tests::parse_union_in_result_ok_branch ... ok
+test parser::tests::parse_union_param_three_members ... ok
+test parser::tests::parse_union_param_two_members ... ok
+test parser::tests::parse_string_escape_newline ... ok
+test parser::tests::parse_union_round_trip_via_fmt ... ok
+test parser::tests::test_assign_rebind ... ok
+test parser::tests::parse_string_escape_quote ... ok
+test parser::tests::test_chained_comparison_errors ... ok
+test parser::tests::parse_string_escape_tab ... ok
+test parser::tests::test_empty_struct_literal ... ok
+test parser::tests::parse_string_no_escape ... ok
+test parser::tests::test_enum_def ... ok
+test parser::tests::test_fmt_str_unclosed_brace_errors ... ok
+test parser::tests::parse_unit_type_not_tuple ... ok
+test parser::tests::test_fn_def ... ok
+test parser::tests::test_lambda ... ok
+test parser::tests::parse_where_clause_if_applicable ... ok
+test parser::tests::test_let_binding ... ok
+test parser::tests::test_arrow_lambda_zero_params ... ok
+test parser::tests::test_logical_or ... ok
+test parser::tests::test_match_expr ... ok
+test parser::tests::test_mod_and_use ... ok
+test parser::tests::test_modulo_operator ... ok
+test parser::tests::test_enum_variant_with_fields ... ok
+test parser::tests::test_fmt_str_double_brace_escapes ... ok
+test parser::tests::test_arrow_lambda_one_param ... ok
+test parser::tests::test_nested_path_errors ... ok
+test parser::tests::test_paren_expr_not_lambda ... ok
+test parser::tests::test_ownership_modes ... ok
+test parser::tests::test_precedence_logical_vs_comparison ... ok
+test parser::tests::test_question_operator ... ok
+test parser::tests::test_unary_not ... ok
+test parser::tests::test_while_let_some ... ok
+test parser::tests::test_arrow_lambda_with_block_body ... ok
+test parser::tests::test_logical_and ... ok
+test parser::tests::test_while_loop ... ok
+test resolver::tests::deferred_attr_produces_i0001 ... ok
+test resolver::tests::distinct_fn_names_produce_no_e0002 ... ok
+test resolver::tests::duplicate_fn_name_produces_e0002 ... ok
+test resolver::tests::levenshtein_completely_different_exceeds_cutoff ... ok
+test resolver::tests::levenshtein_exact_match_is_zero ... ok
+test parser::tests::test_result_type ... ok
+test resolver::tests::levenshtein_single_insertion ... ok
+test resolver::tests::fill_captures_does_not_capture_own_params ... ok
+test resolver::tests::params_are_in_scope_in_body ... ok
+test resolver::tests::shadowing_let_produces_w0002 ... ok
+test resolver::tests::use_known_module_produces_no_e0003 ... ok
+test resolver::tests::known_attr_test_produces_no_w0001 ... ok
+test resolver::tests::let_binding_available_after_definition ... ok
+test resolver::tests::let_binding_not_available_before_definition ... ok
+test resolver::tests::let_rhs_does_not_see_own_binding ... ok
+test resolver::tests::use_unknown_module_produces_e0003 ... ok
+test resolver::tests::fill_captures_identifies_outer_variable ... ok
+test rewrite_dsl::tests::compiled_constant_fold_spec_folds_arithmetic ... ok
+test rewrite_dsl::tests::compiled_fold_logical_spec_preserves_behavior_on_a_real_program ... ok
+test rewrite_dsl::tests::compiled_multi_rule_spec_composes ... ok
+test rewrite_dsl::tests::compiled_spec_preserves_a_would_panic_division ... ok
+test resolver::tests::test_attr_does_not_produce_i0001 ... ok
+test rewrite_dsl::tests::fold_bound_builtin_folds_min_max_abs ... ok
+test rewrite_dsl::tests::fold_bound_builtin_preserves_abs_i64_min_overflow ... ok
+test resolver::tests::underscore_let_does_not_produce_w0002 ... ok
+test rewrite_dsl::tests::fold_comparison_literal_composes_arith_then_branch ... ok
+test rewrite_dsl::tests::fold_comparison_literal_is_capability_free ... ok
+test rewrite_dsl::tests::fold_comparison_literal_folds_int_comparisons ... ok
+test rewrite_dsl::tests::fold_logical_folds_only_short_circuit_sound_cases ... ok
+test resolver::tests::undefined_name_e0001_includes_suggestion ... ok
+test rewrite_dsl::tests::fold_logical_refuses_the_drop_left_unsound_cases ... ok
+test rewrite_dsl::tests::parse_rejects_unknown_rule_e1504 ... ok
+test resolver::tests::unknown_attr_produces_w0001 ... ok
+test resolver::tests::undefined_name_produces_e0001 ... ok
+test types::tests::apply_ground_type_unchanged ... ok
+test rewrite_dsl::tests::closed_vocabulary_cannot_express_a_capability ... ok
+test rewrite_dsl::tests::fold_bound_builtin_is_capability_free ... ok
+test types::tests::apply_handles_cycle_without_infinite_loop ... ok
+test types::tests::apply_recurses_into_compound ... ok
+test rewrite_dsl::tests::validate_rejects_empty_and_oversized ... ok
+test types::tests::chan_apply_recurses ... ok
+test rewrite_dsl::tests::vocabulary_lists_every_rule_and_round_trips ... ok
+test types::tests::chan_display ... ok
+test types::tests::chan_occurs_check ... ok
+test types::tests::comparable_and_ordered ... ok
+test types::tests::display_compound ... ok
+test types::tests::display_primitives ... ok
+test types::tests::apply_follows_chain ... ok
+test types::tests::from_name_primitives ... ok
+test types::tests::insert_checked_prevents_direct_cycle ... ok
+test resolver::tests::all_deferred_attrs_produce_i0001 ... ok
+test types::tests::insert_checked_prevents_indirect_cycle ... ok
+test types::tests::numeric_classification ... ok
+test types::tests::occurs_check_nested ... ok
+test types::tests::apply_resolves_var ... ok
+test types::tests::int_width ... ok
+test types::tests::occurs_check_simple ... ok
+test types::tests::scalar_classification ... ok
+test types::tests::insert_checked_allows_non_cycle ... ok
+test kernel::tests::r20_mint_obligations_hold_on_the_real_impl_over_a_grid ... ok
+test verify::tests::ai_extract_generic_uncertain_is_runtime_silent ... ok
+test verify::tests::ai_source_combined_with_known_via_binop ... ok
+test verify::tests::ai_source_combined_with_unknown_is_unknown ... ok
+test verify::tests::decode_conjunction_rejects_disjunction_and_non_atoms ... ok
+test types::tests::signed_unsigned_classification ... ok
+test verify::tests::ai_source_is_runtime_silent ... ok
+test verify::tests::decode_conjunction_single_atom_is_one_element ... ok
+test verify::tests::deterministic_meets_any_threshold_below_one ... ok
+test verify::tests::lattice_min_rules ... ok
+test verify::tests::decode_conjunction_flattens_and_chain ... ok
+test verify::tests::pass_when_uncertain_new_meets_threshold ... ok
+test verify::tests::uncertain_dyn_f64_classifies_as_runtime ... ok
+test verify::tests::if_else_takes_min_of_branches ... ok
+test verify::tests::inter_procedural_verify_bound_propagates ... ok
+test verify::tests::uncertain_dyn_i64_classifies_as_runtime ... ok
+test verify::tests::unknown_predicate_form_is_silent ... ok
+test verify::tests::fail_when_uncertain_new_below_threshold ... ok
+test interp::tests::all_example_ax_files_parse ... ok
+test resolver::tests::builtin_names_resolve_successfully ... ok
+test improve::tests::every_registry_pass_holds_across_a_diverse_corpus ... ok
+
+test result: ok. 597 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src/main.rs (target/debug/deps/axon-665a1ec60f86409e)
+
+running 9 tests
+test tests::constant_series_is_flat ... ok
+test tests::dip_then_recover_above_start_is_improving ... ok
+test tests::improvement_with_equal_endpoints_is_not_flat_by_endpoints ... ok
+test tests::monotonic_climb_is_improving ... ok
+test tests::monotonic_decline_is_regressing ... ok
+test tests::noisy_but_net_upward_is_improving ... ok
+test tests::peaked_then_collapsed_is_not_improving ... ok
+test tests::r25_zephyr_target_alias_expands_to_thumbv7m ... ok
+test tests::single_and_empty_series_are_flat ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/axon-run.rs (target/debug/deps/axon_run-6961f1046b8f2ee3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli_run.rs (target/debug/deps/cli_run-dfb82b2cb193b9ca)
+
+running 452 tests
+test agent_metacognition_reads_its_own_trace ... ok
+test ai_complete_appends_an_ai_call_provenance_record ... ok
+test agent_goal_runs_within_its_grant ... ok
+test agent_evil_goal_is_refused ... ok
+test ai_call_without_policy_warns_w1310 ... ok
+test ai_budget_zero_blocks_first_call ... ok
+test agent_action_log_is_not_escapable_through_a_helper ... ok
+test ai_cost_meter_accumulates_real_per_token_cost ... ok
+test ai_tier_routing_pins_real_model_in_provenance ... ok
+test a_legacy_format_approval_record_is_not_treated_as_tampering ... ok
+test ai_policy_prints_resolved_policy_json ... ok
+test ai_budget_halts_third_call_e1301 ... ok
+test ai_budget_malformed_warns_w1311_and_runs_unmetered ... ok
+test ad_optimizer_flagship_demo_runs_the_full_stack ... ok
+test ai_budget_absent_is_unmetered ... ok
+test allocate_knapsack_maximizes_within_budget ... ok
+test agent_actions_are_mandatorily_logged ... ok
+test agent_stdlib_module_tests_pass ... ok
+test android_compute_parity_r14 ... ok
+test abs_and_pow_overflow_panic_gracefully_with_a_clean_message ... ok
+test as_cast_operator_lowers_to_polymorphic_builtins ... ok
+test android_lifecycle_adapter_r14 ... ok
+test array_f64_reductions_sum_max_min ... ok
+test ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts ... ok
+test array_repeat_concat_flatten_compose ... ok
+test array_helpers_range_push_sum_max_min ... ok
+test array_chunk_unique_index_of_find ... ok
+test array_reverse_take_drop_polymorphic ... ok
+test ast_review_reports_diagnostics_with_their_location ... ok
+test array_any_all_count_zip_with_close_the_functional_gap ... ok
+test adaptive_returning_an_uncertain_or_temporal_is_optimized ... ok
+test array_higher_order_ops_accept_heterogeneous_element_types ... ok
+test asi_constrained_goal_demo_holds_the_feasible_boundary ... ok
+test array_numeric_stats_mean_std_argmax_argmin ... ok
+test arr_enumerate_partition_dict_merge ... ok
+test arr_max_by_min_by_take_drop_while_dict_each ... ok
+test asi_categorical_goal_demo_finds_the_best_strategy ... ok
+test arr_std_f64_on_small_arrays_is_zero_not_a_panic ... ok
+test array_stdlib_fold_sort_zip_contains_compose ... ok
+test array_functional_pipeline_filter_then_map_then_sum ... ok
+test ai_replay_reproduces_a_recorded_run_without_the_live_model_f2 ... ok
+test ai_policy_conditions_exit_5_not_101 ... ok
+test block_expressions_as_operands ... ok
+test borrow_violation_rejected_by_check ... ok
+test build_aborts_on_codegen_unsupported_builtin_e0910 ... ok
+test build_prints_the_actual_check_error_not_just_a_count ... ok
+test audit_event_stdlib_module_tests_pass ... ok
+test chan_type_as_function_parameter ... ok
+test bandit_stdlib_module_tests_pass ... ok
+test build_aborts_with_e0910_on_result_interpolation_not_ir_crash ... ok
+test channel_try_recv_and_len_enable_drain_patterns ... ok
+test causal_stdlib_module_tests_pass ... ok
+test axon_seed_env_var_makes_runs_reproducible ... ok
+test check_json_parse_error_carries_line_col ... ok
+test check_json_emits_versioned_schema ... ok
+test budget_stdlib_module_tests_pass ... ok
+test check_json_splits_expected_found_into_typed_fields ... ok
+test byte_identical_diagnostics_are_collapsed_to_one ... ok
+test closure_accepts_explicit_return_type_annotation ... ok
+test check_json_includes_source_location ... ok
+test array_out_of_bounds_index_panics_gracefully_not_garbage ... ok
+test annotated_option_local_compiles_and_matches_on_both_engines ... ok
+test bare_sum_type_argument_sized_from_declared_param_type ... ok
+test annotated_result_local_compiles_and_matches_on_both_engines ... ok
+test asi_demo_replay_and_audit_commands_work_end_to_end ... ok
+test bandit_ucb_demo_converges_to_best_arm ... ok
+test asi_hello_goal_acid_test_loop_runs_end_to_end ... ok
+test checked_integer_arithmetic_panics_gracefully_not_silently ... ok
+test calling_a_data_field_as_a_method_is_e0403 ... ok
+test complexity_command_reports_mdl_metric ... ok
+test concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_panic ... ok
+test constant_fold_reduces_complexity_with_identical_behavior ... ok
+test contained_capability_contradicting_a_too_small_row_is_e1310 ... ok
+test contained_capability_sandbox_is_enforced_by_check ... ok
+test contained_error_messages_suggest_fix ... ok
+test contained_is_not_launderable_through_string_named_dispatch ... ok
+test contained_sandbox_is_enforced_transitively_through_helpers ... ok
+test contained_sandbox_rejects_dynamic_path_fails_closed_e1001 ... ok
+test contained_sandbox_rejects_path_traversal_e1001 ... ok
+test contained_scorer_demo_runs_and_blocks_exfiltration ... ok
+test contained_violation_demo_is_rejected_by_check ... ok
+test corrigible_call_after_halt_is_refused_fail_closed ... ok
+test corrigible_kill_switch_latches_and_freezes_the_body ... ok
+test cross_run_improves_with_continuation ... ok
+test deep_recursion_fails_gracefully_not_aborts ... ok
+test deliberative_agent_picks_best_permitted ... ok
+test denied_audit_blocks_import_e1204 ... ok
+test deploy_approval_binds_the_program_text_not_the_filename ... ok
+test deploy_fails_closed_when_a_high_risk_program_defines_no_gates ... ok
+test deploy_gate_accepts_both_nullary_and_one_arg_signatures ... ok
+test deploy_refuses_an_unparseable_risk_level ... ok
+test asi_demo_set_runs_without_crashing ... ok
+test dict_filter_to_pairs_from_pairs ... ok
+test deploy_risk_is_derived_from_what_a_program_does_not_only_what_it_declares ... ok
+test dict_get_or_and_dict_inc_compress_idioms ... ok
+test dict_from_str_malformed_is_recoverable_not_a_panic ... ok
+test dict_string_keyed_map_full_lifecycle ... ok
+test divergent_builtins_are_excluded_from_the_wasm_pure_corpus ... ok
+test dict_to_str_round_trips ... ok
+test doc_multifile_preserves_doc_comments ... ok
+test axon_max_depth_raises_recursion_limit ... ok
+test effect_stdlib_module_tests_pass ... ok
+test duplicate_match_arm_warns_but_does_not_fail_check_w0004 ... ok
+test every_emitted_error_code_is_registered ... ok
+test duplicate_names_in_definitions_are_rejected ... ok
+test exec_builtin_runs_and_is_capability_gated ... ok
+test experiment_records_survive_axon_trace_and_stay_out_of_best ... ok
+test experiment_zone_is_distinct_from_adaptive ... ok
+test f3_ai_call_audit_record_carries_principal_and_effect_row ... ok
+test every_goal_example_compiles_and_runs ... ok
+test f3_principal_activate_sets_audit_context_and_principal_current_name_reads_it ... ok
+test f64_multi_arg_no_single_dim_monopolizes_budget ... ok
+test f64_adaptive_finds_continuous_peak ... ok
+test feature_tour_tests_pass ... ok
+test flagship_evil_agent_is_refused_on_all_three_vectors ... ok
+test f64_to_i64_saturates_on_overflow_and_nan ... ok
+test flagship_good_agent_checks_clean_and_runs ... ok
+test flagship_secrets_agent_cannot_read_env_via_granted_net ... ok
+test flagship_subtle_agent_cannot_abuse_a_granted_capability ... ok
+test fmt_processes_all_files_not_just_until_first_error ... ok
+test fmt_refuses_to_delete_comments ... ok
+test fmt_still_formats_comment_free_files ... ok
+test for_in_collection_iterates ... ok
+test fmt_preserves_mod_declarations_and_the_program_still_runs ... ok
+test every_type_checking_verb_agrees_with_check_on_diagnostics ... ok
+test for_in_nested_over_same_collection ... ok
+test function_can_return_an_enum ... ok
+test forall_property_test_passes_and_shrinks ... ok
+test goal_attribute_holdout_misses_target ... ok
+test goal_attribute_trains_and_gates_on_holdout ... ok
+test goal_best_input_returns_the_winning_probe ... ok
+test generic_fn_returning_sum_type_resolves_concrete_layout ... ok
+test goal_best_score_and_goal_count_are_pure_reads ... ok
+test goal_continue_warm_starts_from_in_memory_best ... ok
+test goal_eval_held_out_does_not_pollute_provenance ... ok
+test goal_history_returns_the_full_input_score_trace ... ok
+test goal_metric_must_be_adaptive_e1500 ... ok
+test goal_optimize_deploys ... ok
+test goal_iterate_converges ... ok
+test goal_run_categorical_rejects_a_nonpositive_choice_count ... ok
+test goal_run_categorical_exhaustively_finds_the_best_unordered_choice ... ok
+test goal_run_constrained_holds_the_search_inside_the_feasible_region ... ok
+test goal_run_constrained_rejects_an_undefined_constraint ... ok
+test goal_optimizer_builtins_are_impure_e1207 ... ok
+test goal_run_multistart_nails_the_global_optimum ... ok
+test goal_run_optimizes_a_mixed_i64_f64_metric_f1 ... ok
+test goal_run_random_finds_global_optimum_on_multimodal ... ok
+test goal_run_typod_name_errors_not_silent_success ... ok
+test goal_stdlib_module_tests_pass ... ok
+test goal_test_set_list_literal_gates_on_worst_point ... ok
+test goal_test_set_non_integer_element_is_e1503 ... ok
+test goal_unknown_strategy_is_e1505 ... ok
+test harness_skip_rules::a_failing_harness_is_never_a_skip_gate_04 ... ok
+test goal_with_missing_sections_lists_them_all ... ok
+test harness_success_assertions_are_strings_their_scripts_can_emit ... ok
+test hill_climb_exact_landing_on_a_modest_peak ... ok
+test goal_strategy_attribute_dispatches_all_five ... ok
+test hill_climb_stops_early_when_target_is_reached ... ok
+test all_examples_typecheck_clean ... ok
+test host_seam_routes_file_io_through_axonhost ... ok
+test hill_climb_finds_diverse_peaks_in_a_small_budget ... ok
+test import_widening_capabilities_is_rejected_e1203 ... ok
+test impl_method_call_arity_is_checked_statically_e0305 ... ok
+test imported_module_capability_violation_is_caught_across_the_edge ... ok
+test improve_discover_proposes_arith_identities ... ok
+test improve_discover_proposes_nothing_on_clean_corpus ... ok
+test improve_graduate_requires_multisig_e1404 ... ok
+test improve_list_and_revert_roundtrip ... ok
+test improve_verify_passes_over_a_pure_compute_corpus ... ok
+test improve_verify_runs_the_real_fold_pass_through_the_gates ... ok
+test improve_verify_spec_runs_a_rewrite_spec_dsl_pass_through_the_firewall ... ok
+test deeply_nested_input_fails_gracefully_not_aborts ... ok
+test indexing_a_non_array_is_a_clean_compile_error_e0402 ... ok
+test inline_refinement_on_a_struct_field ... ok
+test inline_anonymous_refinement_on_a_parameter ... ok
+test integer_overflow_panics_not_silently_wraps ... ok
+test host_await_worker_has_a_deep_stack_not_the_default_2mib ... ok
+test interp_random_i64_inverted_bounds_fails_loudly ... ok
+test interpolation_allows_nested_braces ... ok
+test invalid_radix_fails_fast ... ok
+test kernel_goal_builtins_are_codegen_refused_e0910 ... ok
+test integer_division_by_literal_zero_is_e0407 ... ok
+test kernel_goal_refuses_an_unknown_principal_instead_of_defaulting_to_root ... ok
+test kernel_goal_is_principal_budget_scoped_r12b ... ok
+test learn_linear_demo_fits_y_equals_3x_plus_1 ... ok
+test len_works_on_arrays ... ok
+test invariant_i9_no_silent_success_on_degenerate_input ... ok
+test llm_cache_demo_memoizes_repeated_prompts ... ok
+test llm_gateway_stdlib_module_tests_pass ... ok
+test local_search_reaches_optimum ... ok
+test literal_pattern_typed_against_wrong_subject_is_e0405 ... ok
+test logical_and_binds_tighter_than_or ... ok
+test match_arm_tail_is_not_compared_to_fn_return_type_e0307 ... ok
+test locked_mode_enforces_axon_lock ... ok
+test missing_module_error_hints_axon_path_when_unset ... ok
+test learn_linear_f64_demo_recovers_weights ... ok
+test multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks ... ok
+test multi_objective_demo_picks_pareto_optimal_policy ... ok
+test multiplication_overflow_also_panics ... ok
+test named_refinement_type_is_usable_and_erases_to_its_base ... ok
+test moderate_recursion_works ... ok
+test native_module_calls_pass_the_runtime_sandbox_gate_interp_h02 ... ok
+test build_refuses_non_balanced_ai_tier_e0910_r3 ... ok
+test build_refuses_per_call_ai_tier_e0910_f062 ... ok
+test nested_place_assignment_mutates ... ok
+test nested_sandbox_cannot_widen_the_active_ceiling_exit_8 ... ok
+test no_main_function_is_a_clean_error_exit_2 ... ok
+test non_corrigible_fns_run_normally_after_halt ... ok
+test non_sensitive_type_into_ai_call_is_allowed ... ok
+test non_sensitive_write_file_is_allowed ... ok
+test non_struct_field_access_e0401_has_no_found_wart ... ok
+test normal_arithmetic_unaffected_by_overflow_check ... ok
+test nested_field_access_on_non_struct_is_caught_at_check_time ... ok
+test offline_ai_complete_with_policy_fallback_returns_fallback ... ok
+test offline_ai_complete_without_fallback_errors_e1300 ... ok
+test or_patterns_in_match ... ok
+test ordinary_user_fn_name_does_not_warn_w0003 ... ok
+test pareto_frontier_excludes_dominated ... ok
+test parse_error_prefix_is_not_doubled ... ok
+test parse_int_error_message_is_specific ... ok
+test parse_int_or_float_or_bool_or_fold_result_match ... ok
+test parenthesized_inline_refinement_on_return_and_param ... ok
+test parse_int_radix_parses_and_errs_recoverably ... ok
+test parse_int_rejects_trailing_garbage_reference_for_codegen_37 ... ok
+test per_call_tier_overrides_policy ... ok
+test per_call_tier_accepts_a_string_literal_value ... ok
+test persistent_learner_demo_carries_state_across_invocations ... ok
+test persistent_bandit_demo_accumulates_across_runs ... ok
+test phase5_features_compose_pure_total_refinement_verify ... ok
+test phase6_effect_row_subsumption_is_enforced_by_check ... ok
+test phase6_handler_arm_bodies_are_name_resolved ... ok
+test phase6_multishot_resume ... ok
+test phase6_handler_resume_semantics ... ok
+test phase6_with_handler_runs_and_intercepts_io ... ok
+test phase7_kernel_durable_store ... ok
+test phase6_verification_checklist ... ok
+test phase7_kernel_llm_gateway ... ok
+test phase7_kernel_principal_authority ... ok
+test phase7_kernel_scheduler ... ok
+test phase7_kernel_supervisor ... ok
+test host_await_runs_identically_on_wasm_wasip1 ... ok
+test place_assignment_mutates_array_and_field ... ok
+test planner_prunes_unsafe_path ... ok
+test phase8_surface_search_keywords ... ok
+test principal_mint_stdlib_module_tests_pass ... ok

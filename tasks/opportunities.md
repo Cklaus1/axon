@@ -1527,3 +1527,51 @@ With the card, `mut` is gone from first generation. What fails instead:
 `s.len()`); and one lexer-level rejection (`unexpected character`). The first two
 are exactly the shape `parse_help` already handles and would be two more rows
 plus two probe cases. The third needs a look at what the model actually emitted.
+
+---
+
+# Opportunities — loop 2 (the two follow-up specs), 2026-08-06
+
+## O-RLM-09 — `axon test`'s PARSE tier still flattens (proposed: MEDIUM)
+
+U2 converted every `run_check_pipeline` caller, but `axon test` reaches the
+parse tier through `parse_source_files` (`lib.rs:380`), a **public API returning
+`Vec<String>`** with four callers. Converting it to typed diagnostics is a
+public-interface change and was out of U2's scope.
+
+Visible, not hidden: `cli_run.rs`'s verb matrix carries
+`TEST_VERB_PARSE_TIER_IS_A_KNOWN_GAP` and skips exactly those cases, so the hole
+is in the test source rather than in a silently-passing assertion.
+
+## O-RLM-10 — the language card does not mention character literals (proposed: HIGH)
+
+The measured cause of all three remaining fluency failures is `c == ' '`. The
+compiler now names it (U6), but the **card** still does not, so the model writes
+it on first generation every time and spends its one repair round recovering.
+Adding one line to `LANGUAGE_CARD` is the obvious next measurement — and it must
+be measured ALONE, since changing the card and the diagnostic together is what
+A2b was written to prevent.
+
+## O-RLM-11 — the diagnostic did not repair, even when correct and primed (proposed: HIGH — research)
+
+The most interesting negative result of the loop. With the card in the repair
+prompt AND a correct, specific diagnostic naming the construct and its
+replacement, the score stayed 5/8 and the same three tasks failed. `check`
+carried `help` on 9 task-runs, up from 3, so the mechanism fired three times more
+often and moved nothing.
+
+Note this was measured with the FIRST version of the char-literal hint, which
+was wrong (it claimed `char_at` returns a `str`). The corrected hint has not
+been measured — the atlas working tree moved to another branch mid-run. So the
+honest status is: *unmeasured with correct advice*. That single re-run is the
+cheapest experiment on this list and the one that decides whether the diagnostic
+work pays at all.
+
+## O-RLM-12 — two type-checking entry points that must agree, and no test that they do (proposed: MEDIUM)
+
+`lib::check_pipeline` and `main::run_check_pipeline_located` run the same passes
+and carry a code comment saying they must stay in sync. They had drifted:
+`check_pipeline` dropped every resolver diagnostic's `fix`, so library consumers
+saw no help where the CLI showed it (fixed in U5). The comment is not a test.
+The same corpus trick the verb matrix uses would work here: run both over the
+refused-programs corpus and assert they produce identical diagnostics.
