@@ -18963,3 +18963,131 @@ fn the_containment_refusal_puts_its_help_in_the_help_field() {
         "help must be moved out of `message`, not copied: {line}"
     );
 }
+
+// ── Diagnostic delivery: every type-checking verb agrees with `check` ────────
+//
+// T-R3 proved `run` and `check` emit byte-identical diagnostic JSON. Eight other
+// verbs still call the flattening `run_check_pipeline`, so they print
+// `error: [E0102] …` prose with no location, no help, and no schema — the exact
+// defect §2 fixed for `run`.
+//
+// This is the generalisation, and it is the gate for the conversion: no partial
+// conversion satisfies it.
+
+/// Verbs that type-check a `.ax` file and should therefore report the same
+/// diagnostics `check` does. `fmt` and `doc` are absent because they do not
+/// type-check at all; `build`/`target` are absent because they need codegen,
+/// which this test binary is built without.
+const TYPE_CHECKING_VERBS: &[&[&str]] = &[
+    &["run"],
+    &["test"],
+    &["ast", "review"],
+    &["deploy"],
+    &["redteam"],
+];
+
+#[test]
+fn every_type_checking_verb_agrees_with_check_on_diagnostics() {
+    // Programs that `check` REFUSES. Comparing only on refused programs is what
+    // keeps this test hermetic: `deploy`, `test` and friends execute a program
+    // that type-checks, and a diagnostics test must never run arbitrary code as
+    // a side effect. A refused program stops at the diagnostic stage everywhere.
+    let corpus: &[(&str, &str)] = &[
+        ("type-err", TYPE_ERR_SRC),
+        ("mut", MUT_SRC),
+        ("contained", CONTAINED_SRC),
+        (
+            "unknown-name",
+            "fn main() -> i64 {\n    nope()\n}\n",
+        ),
+        (
+            "arity",
+            "fn f(a: i64) -> i64 { a }\nfn main() -> i64 { f(1, 2) }\n",
+        ),
+    ];
+
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.trim_start().starts_with('{') && l.contains("axon-diag/1"))
+            .map(str::to_string)
+            .collect()
+    };
+
+    let mut compared = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (name, src) in corpus {
+        let f = tmp_ax(&format!("verbmatrix_{name}"), src);
+
+        let check = axon().arg("check").arg(&f).output().expect("spawn check");
+        if check.status.code() != Some(2) {
+            let _ = std::fs::remove_file(&f);
+            continue;
+        }
+        let expect = diag_lines(&String::from_utf8_lossy(&check.stderr));
+        assert!(!expect.is_empty(), "`check` produced no JSON for {name}");
+
+        for verb in TYPE_CHECKING_VERBS {
+            let out = axon()
+                .args(*verb)
+                .arg(&f)
+                .output()
+                .unwrap_or_else(|e| panic!("spawn {verb:?}: {e}"));
+            let got = diag_lines(&String::from_utf8_lossy(&out.stderr));
+            if got != expect {
+                failures.push(format!(
+                    "  {:<12} on {name}: expected {} diagnostic(s), got {}",
+                    verb.join(" "),
+                    expect.len(),
+                    got.len()
+                ));
+            }
+            compared += 1;
+        }
+        let _ = std::fs::remove_file(&f);
+    }
+
+    // Guard against a corpus that silently matched nothing: a vacuous pass here
+    // would read as "every verb agrees" while proving nothing at all.
+    assert!(
+        compared >= TYPE_CHECKING_VERBS.len() * 4,
+        "expected the corpus to exercise every verb several times, got {compared} comparisons"
+    );
+    assert!(
+        failures.is_empty(),
+        "verbs disagree with `check` on diagnostics:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn the_did_you_mean_suggestion_is_deterministic_across_processes() {
+    // Found by the verb×check matrix: `run` and `check` disagreed on an
+    // unknown-name diagnostic with the SAME count but different text. Cause:
+    // `SymbolTable::suggest` iterates a HashMap and, on a Levenshtein tie, kept
+    // whichever candidate it happened to see first — so the answer depended on
+    // the per-process hash seed. Measured before the fix: 12 runs of the same
+    // command on the same file gave `exp` 7 times and `pow` 5 times.
+    //
+    // A compiler that gives different advice for identical input is a problem
+    // beyond this test: it makes diagnostics irreproducible, makes any test
+    // asserting on help text flaky, and — for the RLM host this work is for —
+    // means the model is told different things about the same program.
+    let f = tmp_ax(
+        "suggest_determinism",
+        "fn main() -> i64 {\n    nope()\n}\n",
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..16 {
+        let out = axon().arg("check").arg(&f).output().expect("spawn check");
+        seen.insert(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        seen.len(),
+        1,
+        "`axon check` gave {} different outputs for one unchanged file:\n{}",
+        seen.len(),
+        seen.iter().cloned().collect::<Vec<_>>().join("\n---\n")
+    );
+}

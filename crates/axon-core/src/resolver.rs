@@ -232,18 +232,36 @@ impl SymbolTable {
     /// ≤ 3) to `name`, or `None` if no such name exists.
     ///
     /// Used to generate "did you mean …?" suggestions in E0001 diagnostics.
+    ///
+    /// **Ties break lexicographically, and that is load-bearing.** `scope.keys()`
+    /// iterates a `HashMap`, whose order depends on a per-process random seed.
+    /// The previous implementation kept whichever equidistant candidate it saw
+    /// first, so the suggestion for an unchanged file changed between runs —
+    /// measured at 12 invocations of one `axon check` yielding `exp` seven times
+    /// and `pow` five. That makes diagnostics irreproducible, makes any test
+    /// asserting on help text flaky, and tells an AI caller different things
+    /// about the same program on successive attempts. Found by the
+    /// verb-vs-`check` equivalence matrix, which caught `run` and `check`
+    /// disagreeing on a diagnostic neither of them was doing anything wrong to.
+    ///
+    /// Lexicographic order is chosen because any total order fixes the bug and
+    /// this one is the cheapest to state, to test, and to predict when reading
+    /// the diagnostic.
     pub fn suggest(&self, name: &str) -> Option<String> {
         let mut best: Option<(usize, &str)> = None;
         for scope in &self.scopes {
             for key in scope.keys() {
                 let dist = levenshtein(name, key);
                 if dist <= 3 {
-                    match best {
-                        None => best = Some((dist, key)),
-                        Some((prev_dist, _)) if dist < prev_dist => {
-                            best = Some((dist, key));
+                    let better = match best {
+                        None => true,
+                        Some((prev_dist, prev_key)) => {
+                            dist < prev_dist
+                                || (dist == prev_dist && key.as_str() < prev_key)
                         }
-                        _ => {}
+                    };
+                    if better {
+                        best = Some((dist, key));
                     }
                 }
             }

@@ -3,3 +3,5 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-06T17:43:26Z  T-R2  attempt 1  cmd_run: parse_source_located + PipelineDiagnostic(E0000) with help, honouring the same tty/JSON switch as cmd_check
 2026-08-06T17:45:13Z  T-R3  attempt 1  cmd_run: run_check_pipeline_located(src) + typed emit; delete the flattening wrapper if callerless
 2026-08-06T17:48:30Z  T-R4  attempt 1  move E1001 inline 'help:' prose into PipelineDiagnostic.help
+2026-08-06T18:31:03Z  U1  attempt 1  parameterise run_arms with repair_primer; old bin passes ""; prove byte-identical vs committed transcript; 3 trials
+2026-08-06T18:35:08Z  U2a  attempt 1  did-you-mean suggestion is nondeterministic (HashSet iteration); add deterministic tie-break
