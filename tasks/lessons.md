@@ -81,3 +81,24 @@ That is idempotent, names the exact change, and cannot collide with an unrelated
 stash. Corollary: `git stash list` before any pop in a shared/long-lived repo,
 and treat a conflict in a file you never edited as a signal to STOP and inspect
 rather than resolve.
+
+---
+
+# Lessons — build-loop over `AXON_FOR_RLM.md` (2026-08-06)
+
+## L010 — `git commit -m "…"` with backticks executes them
+
+**Mistake:** Committed a Step-1 review message written as `git commit -m "…the
+\`help\` field…"`. Bash ran `help` and `message` as commands inside the
+double-quoted string and spliced its own builtin-help table into the middle of
+the commit message. The commit succeeded, so nothing failed loudly — the damage
+was only visible by reading the message back. The one visible signal was a
+stray `bash: message: command not found` in the tool output, easily read as
+noise from an unrelated step.
+
+**Rule:** Never pass a prose commit message via `-m` in double quotes. Prose
+about code contains backticks by nature. Always
+`git commit -F - <<'MSGEOF' … MSGEOF` with the delimiter QUOTED, which disables
+substitution entirely. And after any commit whose message was assembled by a
+shell, read it back with `git log -1 --format=%B` before moving on — a mangled
+message is silent.
