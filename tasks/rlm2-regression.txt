@@ -1339,3 +1339,119 @@ test wasm_str_abi_bridge_runs_str_builtins has been running for over 60 seconds
 test codegen_dict_core_matches_interp ... ok
 test codegen_arr_sum_and_contains_match_interp ... ok
 test codegen_fuzz_parity_finds_no_divergence ... FAILED
+test wasm_asyncify_host_await_suspends_across_async_r7c ... ok
+test wasm_browser_host_await_round_trips_r7c ... ok
+test wasm_browser_examples_run_identically_via_js_host ... ok
+test wasm_browser_println_matches_interp_via_js_host ... ok
+test wasm_browser_target_is_wasi_free_and_matches_interp ... ok
+test wasm_examples_run_identically_on_aot_wasm ... ok
+test wasm_host_io_matches_native_via_wasi ... ok
+test wasm_interp_matches_native_on_pure_compute ... ok
+test wasm_interpreter_evals_identically_to_native_r7c ... ok
+test wasm_malloc_abi_bridge_runs_array_and_to_str ... ok
+test wasm_object_prunes_dead_externs_and_links_clean ... ok
+test wasm_str_abi_bridge_runs_str_builtins ... ok
+
+failures:
+
+---- codegen_fuzz_parity_finds_no_divergence stdout ----
+
+thread 'codegen_fuzz_parity_finds_no_divergence' (607255) panicked at crates/axon-core/tests/cli_run.rs:57:5:
+harness `fuzz_parity.sh` FAILED (exit Some(1)) — a failure is never a skip, whatever it printed:
+fuzz_parity: seed=42, up to 40 random + edge inputs per builtin
+  OK   abs_i64: 49 inputs, interp==native (exit 0)
+  OK   abs_i32: 49 inputs, interp==native (exit 0)
+  OK   sign_i64: 49 inputs, interp==native (exit 0)
+  OK   min_i64: 49 inputs, interp==native (exit 0)
+  OK   max_i64: 49 inputs, interp==native (exit 0)
+  OK   min_i32: 49 inputs, interp==native (exit 0)
+  OK   max_i32: 49 inputs, interp==native (exit 0)
+  OK   clamp_i64: 49 inputs, interp==native (exit 0)
+  OK   add_i64: 49 inputs, interp==native (exit 0)
+  OK   sub_i64: 49 inputs, interp==native (exit 0)
+  OK   cmp_lt: 49 inputs, interp==native (exit 0)
+  OK   cmp_eq: 49 inputs, interp==native (exit 0)
+  OK   bit_and: 49 inputs, interp==native (exit 0)
+  OK   bit_or: 49 inputs, interp==native (exit 0)
+  OK   bit_xor: 49 inputs, interp==native (exit 0)
+  OK   bit_not: 49 inputs, interp==native (exit 0)
+  OK   pow_i64: 47 inputs, interp==native (exit 0)
+  OK   shl_i64: 47 inputs, interp==native (exit 0)
+  OK   shr_i64: 47 inputs, interp==native (exit 0)
+  OK   mod_i64: 47 inputs, interp==native (exit 0)
+  OK   abs_f64: 56 inputs, interp==native (exit 0)
+  OK   floor_f64: 56 inputs, interp==native (exit 0)
+  OK   ceil_f64: 56 inputs, interp==native (exit 0)
+  OK   min_f64: 56 inputs, interp==native (exit 0)
+  OK   max_f64: 56 inputs, interp==native (exit 0)
+  OK   f2i: 56 inputs, interp==native (exit 0)
+  OK   exp_f64: 56 inputs, interp==native (exit 0)
+  OK   ln_f64: 56 inputs, interp==native (exit 0)
+  OK   log10_f64: 56 inputs, interp==native (exit 0)
+  OK   str_len: 13 inputs, interp==native (exit 0)
+  OK   str_contains: 13 inputs, interp==native (exit 0)
+  OK   str_starts: 13 inputs, interp==native (exit 0)
+  OK   str_ends: 13 inputs, interp==native (exit 0)
+  OK   str_index: 13 inputs, interp==native (exit 0)
+  OK   str_split_n: 13 inputs, interp==native (exit 0)
+  OK   str_split_el: 13 inputs, interp==native (exit 0)
+  OK   str_join_rt: 13 inputs, interp==native (exit 0)
+  OK   str_digits: 13 inputs, interp==native (exit 0)
+  OK   str_upper: 13 inputs, interp==native (exit 0)
+  OK   str_lower: 13 inputs, interp==native (exit 0)
+  OK   str_trim: 13 inputs, interp==native (exit 0)
+  OK   str_trim_s: 13 inputs, interp==native (exit 0)
+  OK   str_trim_e: 13 inputs, interp==native (exit 0)
+  OK   str_reverse: 13 inputs, interp==native (exit 0)
+  OK   str_repeat: 13 inputs, interp==native (exit 0)
+  OK   str_replace: 13 inputs, interp==native (exit 0)
+  OK   str_slice_s: 13 inputs, interp==native (exit 0)
+  OK   char_at_s: 13 inputs, interp==native (exit 0)
+  OK   round_f64: 56 inputs, interp==native (exit 0)
+  OK   clamp_f64: 56 inputs, interp==native (exit 0)
+  OK   i64_to_f64: 49 inputs, interp==native (exit 0)
+  OK   as_f64_cast: 49 inputs, interp==native (exit 0)
+  OK   as_i64_cast: 56 inputs, interp==native (exit 0)
+  OK   radix_hex: 49 inputs, interp==native (exit 0)
+  FAIL radix_bin: native build failed
+  FAIL radix_36: native build failed
+  FAIL nan_sqrt_neg: native build failed
+  FAIL nan_zero_div: native build failed
+  FAIL inf_pos: native build failed
+  FAIL inf_neg: native build failed
+  FAIL mul_i64: native build failed
+  FAIL div_i64: native build failed
+  FAIL rem_i64: native build failed
+  FAIL f2i_sat: native build failed
+  FAIL ovf_add: native build failed
+  FAIL ovf_sub: native build failed
+  FAIL ovf_mul: native build failed
+  FAIL ovf_neg: native build failed
+  FAIL div_zero: native build failed
+  FAIL mod_zero: native build failed
+  FAIL arr_oob: native build failed
+  FAIL arr_neg: native build failed
+  FAIL arr_sum_ovf: native build failed
+  FAIL arr_sum_ovfneg: native build failed
+  FAIL arr_sum_ok: native build failed
+  FAIL arr_max_empty: native build failed
+  FAIL arr_min_empty: native build failed
+  FAIL arr_argmax_empty: native build failed
+  FAIL arr_maxf_empty: native build failed
+  FAIL arr_argminf_empty: native build failed
+fuzz_parity: FAIL — interp↔codegen divergence found
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    codegen_fuzz_parity_finds_no_divergence
+
+test result: FAILED. 451 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 425.95s
+
+error: test failed, to rerun pass `-p axon-core --test cli_run`
+
+real	7m13.849s
+user	11m22.447s
+sys	3m27.513s
+EXIT=101

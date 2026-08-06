@@ -157,3 +157,25 @@ it. Nothing warned; the test count silently dropped from 11 to 10.
 `git apply -R` of a saved patch — see L004), never `git checkout <file>`. The
 mutation is a small known change; the file may contain large unknown ones. Same
 family as L004: a coarse git command aimed at a fine-grained undo.
+
+## L014 — rebuilding `axon` with `--no-default-features` poisons the shared test binary
+
+**Mistake:** Throughout the loop I rebuilt the CLI with
+`cargo build -p axon-core --no-default-features --bin axon` for fast smoke
+checks. That writes `target/debug/axon` — the SAME path the parity harnesses
+invoke. `scripts/fuzz_parity.sh` needs the codegen build, so it reported
+`FAIL … native build failed` for ~20 cases and the full suite went red.
+
+It read exactly like a regression from the 10-caller conversion I had just made,
+and `axon build` was one of the converted call sites — the most plausible
+possible culprit. It was not: `axon build` worked when run directly, and the
+harness passed in isolation.
+
+**Rule:** Before treating a `*_parity.sh` failure as a regression, check which
+`axon` binary is on disk (`axon build` on a trivial program: if codegen is
+missing it fails immediately). The standing "isolated rerun first" rule for this
+repo's harnesses exists for flakes; this is a second, sharper reason for it —
+the shared artifact path means a fast local build and the full suite are
+fighting over one file. Prefer `cargo build -p axon-core --bin axon` (default
+features) before any full-suite run, or accept that the run is measuring
+whatever was built last.
