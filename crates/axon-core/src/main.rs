@@ -3664,7 +3664,17 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
         axon_core::interp::run_program_with_discharged(&program, discharged)
     };
     // R28: flush the capability audit ledger before exiting.
-    let _ = axon_audit::flush_ledger();
+    //
+    // O-RLM-05: the flush now also confirms the file still holds every entry
+    // this process appended, and the result is no longer discarded. A ledger
+    // that lost records during the run is an integrity event — the audit exists
+    // so capability use is detectable, and silence there means the erasure
+    // worked. Reported loudly on stderr; whether it should also change the exit
+    // code is a policy call (every code 0–8 is already assigned) and is logged
+    // rather than decided here.
+    if let Err(e) = axon_audit::flush_ledger() {
+        eprintln!("error: audit ledger integrity check failed: {e}");
+    }
     process::exit(code);
 }
 

@@ -19122,3 +19122,47 @@ fn the_did_you_mean_suggestion_is_deterministic_across_processes() {
         seen.iter().cloned().collect::<Vec<_>>().join("\n---\n")
     );
 }
+
+#[test]
+fn a_truncated_audit_ledger_is_reported_at_end_of_run() {
+    // O-RLM-05, end to end. `verify_against_file` having tests is not the same
+    // as it being WIRED: the caller check found it had no production caller, and
+    // `flush_ledger`'s result was being discarded at the call site with `let _`.
+    // This test exercises the real CLI so both halves have to be connected.
+    //
+    // The program erases the ledger's tail itself, which is the threat as
+    // stated: an audited program deleting its own trailing records.
+    let ledger =
+        std::env::temp_dir().join(format!("axon_ledger_trunc_{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&ledger);
+
+    let prog = format!(
+        "fn main() -> i64 {{\n    \
+             let _a = write_file(\"{}\", \"x\")\n    \
+             let _b = write_file(\"{}\", \"\")\n    \
+             0\n\
+         }}\n",
+        std::env::temp_dir().join("axon_trunc_probe.txt").display(),
+        ledger.display(),
+    );
+    let f = tmp_ax("ledger_trunc", &prog);
+
+    let out = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AUDIT_LEDGER", &ledger)
+        .output()
+        .expect("spawn axon run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&ledger);
+
+    assert!(
+        stderr.contains("audit ledger integrity check failed"),
+        "the run erased the ledger's records and nothing said so:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("truncated") || stderr.contains("unreadable"),
+        "the report must name what happened: {stderr}"
+    );
+}

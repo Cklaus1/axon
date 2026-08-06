@@ -91,16 +91,10 @@ pub struct LedgerEntry {
     /// Human-readable operation description.
     pub operation: String,
     /// SHA-256 of the previous entry (64 hex chars), or 64 zeros for the first.
-    #[serde(
-        serialize_with = "ser_hash",
-        deserialize_with = "deser_hash"
-    )]
+    #[serde(serialize_with = "ser_hash", deserialize_with = "deser_hash")]
     pub prev_hash: [u8; 32],
     /// SHA-256 commitment over this entry's content + prev_hash.
-    #[serde(
-        serialize_with = "ser_hash",
-        deserialize_with = "deser_hash"
-    )]
+    #[serde(serialize_with = "ser_hash", deserialize_with = "deser_hash")]
     pub entry_hash: [u8; 32],
 }
 
@@ -240,12 +234,7 @@ impl Ledger {
     }
 
     /// Append one entry to the ledger. Returns the new entry's `seq`.
-    pub fn append(
-        &mut self,
-        principal: &str,
-        effect: EffectKind,
-        op: &str,
-    ) -> Result<u64, String> {
+    pub fn append(&mut self, principal: &str, effect: EffectKind, op: &str) -> Result<u64, String> {
         let seq = self.entries.len() as u64;
         let ts_ms = now_ms();
         let prev_hash: [u8; 32] = self
@@ -270,8 +259,7 @@ impl Ledger {
             .append(true)
             .open(&self.path)
             .map_err(|e| format!("cannot open ledger for append: {e}"))?;
-        let line =
-            serde_json::to_string(&entry).map_err(|e| format!("serialize error: {e}"))?;
+        let line = serde_json::to_string(&entry).map_err(|e| format!("serialize error: {e}"))?;
         writeln!(file, "{line}").map_err(|e| format!("write error: {e}"))?;
         file.flush().map_err(|e| format!("flush error: {e}"))?;
 
@@ -280,8 +268,64 @@ impl Ledger {
     }
 
     /// Verify the complete hash chain of all entries.
+    ///
+    /// **This cannot detect truncation, and that is a property of the chain, not
+    /// an oversight.** [`compute_entry_hash`] is an unkeyed SHA-256, so a prefix
+    /// of a valid chain is itself a valid chain: a reader with no key and no
+    /// memory of what was written has nothing to compare a short ledger
+    /// against. Use [`Ledger::verify_against_file`] while the ledger is open,
+    /// or see spec item S1b for the keyed/append-only options that would close
+    /// the post-hoc case.
     pub fn verify(&self) -> Result<(), String> {
         verify_chain(&self.entries)
+    }
+
+    /// Verify the chain **and** that the backing file still holds every entry
+    /// this ledger appended (O-RLM-05, triage P6-COV-02).
+    ///
+    /// The threat is an audited program erasing its own trailing FS/Exec
+    /// records. `verify()` cannot see it — a truncated chain is a valid chain —
+    /// and no anchor written *into the file* would help, because the adversary
+    /// who deletes the last K lines can equally edit a stored count: there is no
+    /// key protecting either.
+    ///
+    /// What the running auditor has that the adversary does not is **its own
+    /// memory of what it appended**. So the check is a comparison against
+    /// `self.entries`, which needs no key, no sidecar, and no change to the
+    /// on-disk format.
+    ///
+    /// Scope, stated because the narrowness is the point: this detects
+    /// truncation *while the ledger is open*. It says nothing about a file
+    /// tampered with after the process exits.
+    pub fn verify_against_file(&self) -> Result<(), String> {
+        verify_chain(&self.entries)?;
+        let on_disk = match std::fs::read_to_string(&self.path) {
+            Ok(s) => s.lines().filter(|l| !l.trim().is_empty()).count(),
+            Err(e) => {
+                return Err(format!(
+                    "ledger {} is unreadable, so its {} entr(ies) cannot be \
+                     confirmed on disk: {e}",
+                    self.path.display(),
+                    self.entries.len()
+                ))
+            }
+        };
+        let expected = self.entries.len();
+        if on_disk < expected {
+            return Err(format!(
+                "ledger truncated: {expected} entr(ies) were appended, {on_disk} \
+                 remain in {}",
+                self.path.display()
+            ));
+        }
+        if on_disk > expected {
+            return Err(format!(
+                "ledger has unexpected extra records: {expected} entr(ies) were \
+                 appended, {on_disk} present in {}",
+                self.path.display()
+            ));
+        }
+        Ok(())
     }
 
     /// Export all entries as a JSON string with schema `axon-ledger/1`.
@@ -319,8 +363,7 @@ impl Ledger {
             .open(path)
             .map_err(|e| format!("cannot create ledger at {}: {e}", path.display()))?;
         for entry in &imported.entries {
-            let line =
-                serde_json::to_string(entry).map_err(|e| format!("serialize error: {e}"))?;
+            let line = serde_json::to_string(entry).map_err(|e| format!("serialize error: {e}"))?;
             writeln!(file, "{line}").map_err(|e| format!("write error: {e}"))?;
         }
         file.flush().map_err(|e| format!("flush error: {e}"))?;
@@ -430,9 +473,18 @@ pub fn flush_ledger() -> Result<(), String> {
     // The Ledger writes and flushes on each append; this is a semantic flush
     // to mark the end of a run. We just drop the ledger so the file handle is
     // closed cleanly.
+    //
+    // O-RLM-05: this is also the last moment the process still holds its own
+    // record of what it appended, so it is the only place a key-free truncation
+    // check can be made. Once the ledger is dropped, a short file and a
+    // truthfully-short file are indistinguishable to any reader without a key.
     let mut guard = global().lock().expect("ledger mutex poisoned");
+    let verdict = match guard.as_ref() {
+        Some(ledger) => ledger.verify_against_file(),
+        None => Ok(()),
+    };
     *guard = None;
-    Ok(())
+    verdict
 }
 
 // ---------------------------------------------------------------------------
@@ -464,15 +516,22 @@ mod tests {
         let path = temp_path();
         let (hash0, hash1) = {
             let mut l = Ledger::open(&path).unwrap();
-            l.append("root", EffectKind::AI, "ai_complete:sha256:aabbcc").unwrap();
+            l.append("root", EffectKind::AI, "ai_complete:sha256:aabbcc")
+                .unwrap();
             l.append("root", EffectKind::FS, "read:/tmp/foo").unwrap();
             (l.entries[0].entry_hash, l.entries[1].entry_hash)
         };
 
         // Re-open: the stored hashes must be identical to what was written.
         let l2 = Ledger::open(&path).unwrap();
-        assert_eq!(l2.entries[0].entry_hash, hash0, "entry_hash must be stable across reopen");
-        assert_eq!(l2.entries[1].entry_hash, hash1, "entry_hash must be stable across reopen");
+        assert_eq!(
+            l2.entries[0].entry_hash, hash0,
+            "entry_hash must be stable across reopen"
+        );
+        assert_eq!(
+            l2.entries[1].entry_hash, hash1,
+            "entry_hash must be stable across reopen"
+        );
 
         // Verify the chain is intact.
         l2.verify().unwrap();
@@ -481,8 +540,14 @@ mod tests {
         let json = l2.export_json().unwrap();
         let import_path = temp_path();
         let l3 = Ledger::import_json(&json, &import_path).unwrap();
-        assert_eq!(l3.entries[0].entry_hash, hash0, "hash must survive export/import");
-        assert_eq!(l3.entries[1].entry_hash, hash1, "hash must survive export/import");
+        assert_eq!(
+            l3.entries[0].entry_hash, hash0,
+            "hash must survive export/import"
+        );
+        assert_eq!(
+            l3.entries[1].entry_hash, hash1,
+            "hash must survive export/import"
+        );
         l3.verify().unwrap();
     }
 
@@ -493,8 +558,10 @@ mod tests {
         let path = temp_path();
         reset_det_counter();
         let mut l = Ledger::open(&path).unwrap();
-        l.append("root", EffectKind::AI, "ai_complete:sha256:abc").unwrap();
-        l.append("root", EffectKind::Net, "http_get:api.example.com").unwrap();
+        l.append("root", EffectKind::AI, "ai_complete:sha256:abc")
+            .unwrap();
+        l.append("root", EffectKind::Net, "http_get:api.example.com")
+            .unwrap();
 
         // Tamper the first entry's operation field.
         let jsonl = std::fs::read_to_string(&path).unwrap();
@@ -516,9 +583,11 @@ mod tests {
         let path = temp_path();
         reset_det_counter();
         let mut l = Ledger::open(&path).unwrap();
-        l.append("root", EffectKind::AI, "ai_complete:sha256:aaa").unwrap();
+        l.append("root", EffectKind::AI, "ai_complete:sha256:aaa")
+            .unwrap();
         l.append("root", EffectKind::FS, "read:/tmp/a").unwrap();
-        l.append("root", EffectKind::Net, "http_get:example.com").unwrap();
+        l.append("root", EffectKind::Net, "http_get:example.com")
+            .unwrap();
 
         // Delete the second line (seq=1).
         let jsonl = std::fs::read_to_string(&path).unwrap();
@@ -572,9 +641,12 @@ mod tests {
         let path = temp_path();
         reset_det_counter();
         let mut l = Ledger::open(&path).unwrap();
-        l.append("root", EffectKind::AI, "ai_complete:sha256:abc").unwrap();
-        l.append("alice", EffectKind::FS, "write:/out/result.txt").unwrap();
-        l.append("root", EffectKind::Net, "http_get:api.example.com").unwrap();
+        l.append("root", EffectKind::AI, "ai_complete:sha256:abc")
+            .unwrap();
+        l.append("alice", EffectKind::FS, "write:/out/result.txt")
+            .unwrap();
+        l.append("root", EffectKind::Net, "http_get:api.example.com")
+            .unwrap();
         l.verify().unwrap();
 
         let json = l.export_json().unwrap();
@@ -621,9 +693,91 @@ mod tests {
         {
             let mut l = Ledger::open(&path).unwrap();
             assert_eq!(l.len(), 1);
-            l.append("root", EffectKind::Net, "http_get:example.com").unwrap();
+            l.append("root", EffectKind::Net, "http_get:example.com")
+                .unwrap();
             assert_eq!(l.len(), 2);
             l.verify().unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn temp_path() -> PathBuf {
+        let f = NamedTempFile::new().unwrap();
+        let path = f.path().to_path_buf();
+        drop(f);
+        path
+    }
+
+    /// O-RLM-05 / triage P6-COV-02. The named threat is an audited program
+    /// erasing its own trailing FS/Exec records — while it is running, under the
+    /// auditor that appended them.
+    #[test]
+    fn a_live_ledger_detects_truncation_of_its_own_file() {
+        let path = temp_path();
+        let mut led = Ledger::open(&path).unwrap();
+        led.append("root", EffectKind::FS, "write_file:/tmp/a")
+            .unwrap();
+        led.append("root", EffectKind::Exec, "exec:rm").unwrap();
+        led.append("root", EffectKind::FS, "write_file:/tmp/b")
+            .unwrap();
+        led.verify_against_file()
+            .expect("an untouched ledger must verify");
+
+        // The program erases its last two records.
+        let kept: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .take(1)
+            .map(str::to_string)
+            .collect();
+        std::fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
+
+        let err = led
+            .verify_against_file()
+            .expect_err("truncation must be detected");
+        assert!(err.contains("truncat"), "must name the failure: {err}");
+        assert!(
+            err.contains('3') && err.contains('1'),
+            "must report expected vs actual: {err}"
+        );
+    }
+
+    /// The honest limit, asserted so nobody mistakes the guarantee for a wider
+    /// one. `compute_entry_hash` is an UNKEYED SHA-256, so a prefix of a valid
+    /// chain is itself a valid chain and a POST-HOC reader — one that did not
+    /// write the entries and has no key — cannot tell a truncated ledger from a
+    /// short one. Closing that needs a MAC or an append-only medium, which is a
+    /// key-management decision (spec item S1b, with O035).
+    #[test]
+    fn a_post_hoc_reader_still_cannot_detect_truncation_and_that_is_documented() {
+        let path = temp_path();
+        let mut led = Ledger::open(&path).unwrap();
+        for i in 0..3 {
+            led.append("root", EffectKind::FS, &format!("write_file:/tmp/{i}"))
+                .unwrap();
+        }
+        drop(led);
+
+        let kept: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .take(1)
+            .map(str::to_string)
+            .collect();
+        std::fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
+
+        // Re-opening reads a 1-entry chain that is internally consistent.
+        let reopened = Ledger::open(&path).expect("a truncated chain is still a valid chain");
+        assert_eq!(reopened.len(), 1);
+        assert!(
+            reopened.verify().is_ok(),
+            "an unkeyed chain cannot detect its own truncation post-hoc — if this \
+             ever fails, the guarantee widened and S1b may be closed"
+        );
     }
 }
