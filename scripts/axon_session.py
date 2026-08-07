@@ -53,6 +53,44 @@ AXON = Path(__file__).resolve().parent.parent / "target" / "debug" / "axon"
 DECL_KEYWORDS = ("fn ", "type ", "enum ", "trait ", "impl ", "mod ", "use ", "handler ")
 
 
+def brace_delta(line: str) -> int:
+    """Net brace depth of one line, IGNORING braces inside string literals and
+    after `//`.
+
+    `line.count("{") - line.count("}")` is not merely imprecise, it mis-parses
+    ordinary code. A line as plain as
+
+        let end = str_index_of(json, "}", start)
+
+    carries a lone `}` in a string literal, which closes the enclosing block one
+    line early; everything after it is reclassified and `compose` then splices a
+    second `fn main` into the middle of the first. That produced a parse error on
+    15 of 16 cells in a measurement run before the composed source was read.
+    A splitter that mis-parses the language it splits measures itself.
+    """
+    depth, in_str, esc = 0, False, False
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "/" and i + 1 < len(line) and line[i + 1] == "/":
+            break  # a comment ends the line for brace purposes
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return depth
+
+
 def split_cell(src: str):
     """Return (declarations, statements) for one cell.
 
@@ -70,11 +108,11 @@ def split_cell(src: str):
             i += 1
             continue
         if any(stripped.startswith(k) for k in DECL_KEYWORDS):
-            block, depth = pending + [line], line.count("{") - line.count("}")
+            block, depth = pending + [line], brace_delta(line)
             i += 1
             while i < len(lines) and depth > 0:
                 block.append(lines[i])
-                depth += lines[i].count("{") - lines[i].count("}")
+                depth += brace_delta(lines[i])
                 i += 1
             decls.extend(block)
             pending = []
@@ -134,17 +172,17 @@ def split_lets(stmts: str):
         line = lines[i]
         if depth == 0 and line.startswith("let "):
             block = [line]
-            d = line.count("{") - line.count("}")
+            d = brace_delta(line)
             i += 1
             # Keep taking lines while the `let` is still open.
             while i < len(lines) and d > 0:
                 block.append(lines[i])
-                d += lines[i].count("{") - lines[i].count("}")
+                d += brace_delta(lines[i])
                 i += 1
             lets.extend(block)
             continue
         rest.append(line)
-        depth += line.count("{") - line.count("}")
+        depth += brace_delta(line)
         i += 1
     return "\n".join(lets), "\n".join(rest)
 
