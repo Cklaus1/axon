@@ -87,16 +87,32 @@ def split_cell(src: str):
 
 
 def compose(bindings: str, decls: str, cell_lets: str, cell_stmts: str) -> str:
-    """bindings (literals) + declarations + this cell's new lets + its statements.
+    """declarations + `main` { bindings (literals) + this cell's lets + statements }.
 
-    `cell_lets` are emitted as MODULE-level items, not inside `main`, so their
-    values land in the interpreter's globals and survive the dump. A `let` left
-    inside `main` would be a local and vanish with the frame.
+    N1 INVERTED this. Bindings used to be emitted at MODULE level so their values
+    reached the interpreter's globals, which the dump read — but a module-level
+    binding registers as `Symbol::Fn` and cannot be reassigned, so the accumulator
+    every model writes (`rows = rows + [r]`) was refused with E0001.
+
+    They now go INSIDE `main`, where they are ordinary locals and mutation is
+    legal. Persistence still works because the interpreter snapshots `main`'s
+    environment into the dump instead of only its globals.
     """
-    body = cell_stmts if cell_stmts.strip() else ""
-    parts = [p for p in (bindings.strip(), decls.strip(), cell_lets.strip()) if p]
-    parts.append("fn main() -> i64 {\n" + body + "\n    0\n}")
+    # N1. Bindings and this cell's `let`s go INSIDE `main`, not at module scope.
+    #
+    # Module-level bindings register as `Symbol::Fn` and cannot be reassigned, so
+    # the accumulator every model writes (`rows = rows + [r]`) was refused with
+    # E0001. Inside a function they are ordinary locals and mutation is legal.
+    # Persistence still works because the interpreter now snapshots `main`'s
+    # environment into the dump (AXON_DUMP_BINDINGS).
+    inner = "\n".join(p for p in (bindings.strip(), cell_lets.strip(), body_of(cell_stmts)) if p)
+    parts = [p for p in (decls.strip(),) if p]
+    parts.append("fn main() -> i64 {\n" + inner + "\n    0\n}")
     return "\n\n".join(parts) + "\n"
+
+
+def body_of(cell_stmts: str) -> str:
+    return cell_stmts if cell_stmts.strip() else ""
 
 
 def split_lets(stmts: str):
@@ -174,8 +190,16 @@ def cmd_eval(session: Path, cell_src: str) -> int:
     new_binds = session.with_suffix(".next.ax")
     out = run_axon("run", tmp, dump=new_binds)
     sys.stdout.write(out.stdout)
+    # A persisted binding this cell does not use is genuinely unused, so W0006 is
+    # CORRECT — the noise is a property of how we compose cells, not a compiler
+    # defect. So it is filtered here rather than taught to the compiler: one
+    # warning per unused binding, per cell, would grow with the session and bury
+    # real diagnostics in model-facing stderr.
+    out_err = "\n".join(
+        l for l in out.stderr.splitlines() if '"code":"W0006"' not in l
+    )
     if out.returncode != 0:
-        sys.stderr.write(out.stderr)
+        sys.stderr.write(out_err)
         tmp.unlink(missing_ok=True)
         new_binds.unlink(missing_ok=True)
         return 2

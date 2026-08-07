@@ -520,6 +520,10 @@ pub struct Interp<'p> {
     /// evaluated with `_` bound to the argument and a violation raises
     /// [`Flow::RefineViolation`]. Empty when the program has no refinements.
     refine_preds: HashMap<String, &'p Expr>,
+    /// PROTOTYPE (RLM session option 2): `main`'s final top-level locals,
+    /// captured after its body evaluates so AXON_DUMP_BINDINGS can persist a
+    /// cell's mutated locals. Only populated when the env var is set.
+    main_locals: RefCell<HashMap<String, Value>>,
     /// Phase 5 §4: obligations an SMT prover discharged for ALL inputs, so the
     /// matching runtime check is provably dead and may be elided. Empty by
     /// default (and always, unless `Interp::with_discharged` is used by a
@@ -1853,10 +1857,18 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
     if outcome.is_ok() {
         if let Ok(path) = std::env::var("AXON_DUMP_BINDINGS") {
             let mut lines = String::new();
-            let mut names: Vec<&String> = interp.globals.keys().collect();
-            names.sort(); // deterministic output; the session file is diffed
+            // PROTOTYPE (RLM session option 2): main's final top-level locals
+            // override globals of the same name — a cell that mutated a local
+            // persists the mutated value.
+            let locals = interp.main_locals.borrow();
+            let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
+            for (k, v) in locals.iter() {
+                merged.insert(k, v);
+            }
+            let mut names: Vec<&&String> = merged.keys().collect();
+            names.sort();
             for name in names {
-                match value_as_literal(&interp.globals[name]) {
+                match value_as_literal(merged[*name]) {
                     Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
                     Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),
                 }
@@ -2109,6 +2121,7 @@ impl<'p> Interp<'p> {
             sandboxes: RefCell::new(Vec::new()),
             active_sandbox: Cell::new(-1),
             refine_preds,
+            main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
             gfx_mock: RefCell::new(crate::native::GfxMock::new()),
             #[cfg(not(target_arch = "wasm32"))]
@@ -2491,7 +2504,38 @@ impl<'p> Interp<'p> {
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
         env.define("goal_met".into(), Value::Int(goal_met));
-        let mut result = match self.eval(&f.body, &mut env) {
+        // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
+        // top-level statements WITHOUT the extra block scope (eval_block pops
+        // its scope before returning, discarding the locals), then capture the
+        // frame's final locals for the dump.
+        let capture = f.name == "main"
+            && self.call_depth.get() == 1
+            && std::env::var("AXON_DUMP_BINDINGS").is_ok();
+        let body_result = if capture {
+            if let Expr::Block(stmts) = &f.body {
+                let mut last = Ok(Value::Unit);
+                for stmt in &stmts[..] {
+                    match self.eval(&stmt.expr, &mut env) {
+                        Ok(v) => last = Ok(v),
+                        Err(e) => {
+                            last = Err(e);
+                            break;
+                        }
+                    }
+                }
+                last
+            } else {
+                self.eval(&f.body, &mut env)
+            }
+        } else {
+            self.eval(&f.body, &mut env)
+        };
+        if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
+            let mut snap = env.snapshot();
+            snap.remove("goal_met"); // injected by call_fn, not a user binding
+            *self.main_locals.borrow_mut() = snap;
+        }
+        let mut result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
             Err(other) => return Err(other),

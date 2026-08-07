@@ -5934,11 +5934,16 @@ fn wrong_arg_type_e0306_message_is_not_double_printed() {
 
 #[test]
 fn byte_identical_diagnostics_are_collapsed_to_one() {
-    // `"a" + "b"` runs the checker's non-numeric-operand check on BOTH operands;
+    // A binary op runs the checker's non-numeric-operand check on BOTH operands;
     // each produced an E0102 with the SAME code/message/line/col, so the user
     // saw the identical line twice. The pipeline now drops exact duplicates.
+    //
+    // The fixture was `"a" + "b"` until N2a made string concatenation LEGAL —
+    // the test then failed because there was no diagnostic left to collapse.
+    // Its subject was the collapsing, never string concat, so it moves to
+    // `true + false`, which still puts a non-numeric type on both sides.
     let f = std::env::temp_dir().join(format!("axon_dupdiag_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() { let x = \"a\" + \"b\" }\n").unwrap();
+    std::fs::write(&f, "fn main() { let x = true + false }\n").unwrap();
     let out = axon()
         .args(["check", f.to_str().unwrap()])
         .output()
@@ -5950,7 +5955,7 @@ fn byte_identical_diagnostics_are_collapsed_to_one() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        msg.matches("non-numeric type str").count(),
+        msg.matches("non-numeric type bool").count(),
         1,
         "the identical non-numeric E0102 must be reported exactly once: {msg}"
     );
