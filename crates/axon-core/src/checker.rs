@@ -1869,9 +1869,7 @@ impl CheckCtx {
     /// construction — the verifier rejects unbounded loops, so Axon enforces
     /// `@[total]` up front to refuse them BEFORE codegen).
     fn fn_is_total(f: &FnDef) -> bool {
-        f.attrs
-            .iter()
-            .any(|a| a.name == "total" || a.name == "bpf")
+        f.attrs.iter().any(|a| a.name == "total" || a.name == "bpf")
     }
 
     /// R23 eBPF: a fn is treated as `@[no_alloc]` if explicitly annotated OR it
@@ -2595,7 +2593,10 @@ impl CheckCtx {
         if let Expr::Call { callee, args, .. } = expr {
             if let Expr::Ident(name) = callee.as_ref() {
                 if name == "sql_query"
-                    && !matches!(args.first(), Some(Expr::Literal(crate::ast::Literal::Str(_))))
+                    && !matches!(
+                        args.first(),
+                        Some(Expr::Literal(crate::ast::Literal::Str(_)))
+                    )
                 {
                     *out += 1;
                 }
