@@ -451,3 +451,40 @@ fn a_stale_mut_note_does_not_leak_into_the_next_parse() {
         "a note leaked from the previous failed parse: {clean:?}"
     );
 }
+
+#[test]
+fn string_plus_string_concatenates() {
+    // N2a. `interp/value.rs:681` has implemented `(Add, Str, Str)` all along —
+    // only the CHECKER refused it, so the evaluator arm was unreachable. This is
+    // "stop refusing string concat", not "add string concat".
+    //
+    // It matters because `result = result + ch` is the accumulator every model
+    // writes, and it is the wall behind `let mut` in the one R9 task that still
+    // fails.
+    let src = "fn main() -> i64 {\n    let a = \"a\"\n    let b = a + \"b\"\n    \
+               println(b)\n    0\n}\n";
+    let errs: Vec<_> = check_pipeline(src, "probe.ax")
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    assert!(errs.is_empty(), "`str + str` must type-check: {errs:?}");
+}
+
+#[test]
+fn plus_still_refuses_mixed_and_nonsense_operands() {
+    // The permission must be narrow. A `+` that accepts anything is not
+    // concatenation, it is an untyped operator, and that would be a soundness
+    // regression rather than a feature.
+    for (label, src) in [
+        ("str + int", "fn main() -> i64 {\n    let x = \"a\" + 1\n    0\n}\n"),
+        ("int + str", "fn main() -> i64 {\n    let x = 1 + \"a\"\n    0\n}\n"),
+        ("str - str", "fn main() -> i64 {\n    let x = \"a\" - \"b\"\n    0\n}\n"),
+        ("bool + bool", "fn main() -> i64 {\n    let x = true + false\n    0\n}\n"),
+    ] {
+        let errs: Vec<_> = check_pipeline(src, "probe.ax")
+            .into_iter()
+            .filter(|d| d.severity == "error")
+            .collect();
+        assert!(!errs.is_empty(), "{label} must still be refused");
+    }
+}

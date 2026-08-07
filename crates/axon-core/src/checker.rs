@@ -3324,8 +3324,33 @@ impl CheckCtx {
                     // which short-circuits on Deferred (handles are Deferred).
                     self.check_handle_not_arithmetic(&lty, &lpath, "used in arithmetic");
                     self.check_handle_not_arithmetic(&rty, &rpath, "used in arithmetic");
-                    self.check_numeric_operand(&lty, &lpath);
-                    self.check_numeric_operand(&rty, &rpath);
+                    // N2a: `str + str` is CONCATENATION, and the interpreter has
+                    // implemented it all along (`interp/value.rs:681`
+                    // `(Add, Str(a), Str(b)) => Ok(Str(a + &b))`). Only this
+                    // check refused it, so the evaluator arm was unreachable —
+                    // the checker being more restrictive than the reference
+                    // oracle, which is the same shape as M4 in the opposite
+                    // direction.
+                    //
+                    // Deliberately narrow: BOTH sides must be `str`, and only
+                    // for `Add`. `"a" - "b"` stays refused here.
+                    //
+                    // The `rty` half is belt-and-braces, and mutation-testing
+                    // showed why that is worth saying rather than assuming:
+                    // loosening this to `lty == Str` alone did NOT fail the
+                    // mixed-operand test, because INFER already refuses
+                    // `"a" + 1` by unification ("type mismatch in arithmetic
+                    // operands"), a different E0102 from this one. So that test
+                    // covers infer, not this clause. The clause stays because it
+                    // makes this check's intent independent of another pass —
+                    // if unification ever loosened, `str + int` must not become
+                    // silently legal here.
+                    let str_concat =
+                        matches!(op, BinOp::Add) && lty == Type::Str && rty == Type::Str;
+                    if !str_concat {
+                        self.check_numeric_operand(&lty, &lpath);
+                        self.check_numeric_operand(&rty, &rpath);
+                    }
                 }
                 // Integer division/remainder by a divisor that CONSTANT-FOLDS to
                 // zero always panics at runtime ("integer division by zero").
