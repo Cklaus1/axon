@@ -88,7 +88,7 @@ fn safe_halve(n: i64) -> Option<i64> {
 
 fn test_and_then_some() -> bool {
     // 8 is even, safe_halve(8) = Some(4)
-    match option_and_then(Some(8), safe_halve) {
+    match option_and_then(Some(8), |x| safe_halve(x)) {
         Some(v) => v == 4,
         None    => false,
     }
@@ -96,14 +96,14 @@ fn test_and_then_some() -> bool {
 
 fn test_and_then_inner_none() -> bool {
     // 7 is odd, safe_halve(7) = None
-    match option_and_then(Some(7), safe_halve) {
+    match option_and_then(Some(7), |x| safe_halve(x)) {
         Some(_) => false,
         None    => true,
     }
 }
 
 fn test_and_then_outer_none() -> bool {
-    match option_and_then(None, safe_halve) {
+    match option_and_then(None, |x| safe_halve(x)) {
         Some(_) => false,
         None    => true,
     }
@@ -131,7 +131,7 @@ fn test_option_or_none() -> bool {
 fn find_double_halve(start: i64, end: i64) -> Option<i64> {
     let found = find_first_even(start, end)
     let doubled = option_map_double(found)
-    option_and_then(doubled, safe_halve)
+    option_and_then(doubled, |x| safe_halve(x))
 }
 
 fn test_full_chain() -> bool {

@@ -88,7 +88,7 @@ fn is_even(x: i64) -> bool {
 
 fn test_count_where_even() -> bool {
     // evens in 0..10: 0,2,4,6,8 = 5
-    count_where(0, 10, is_even) == 5
+    count_where(0, 10, |x| is_even(x)) == 5
 }
 
 fn test_count_where_gt5() -> bool {

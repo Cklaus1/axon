@@ -4009,6 +4009,50 @@ impl CheckCtx {
             // Option/Result/Unit). A generic *value* slot (`dict_set`'s `v: T`)
             // is `Type::TypeParam`, NOT deferred — so legitimately storing an
             // `Option` as a dict value is unaffected.
+            // M4: a NAMED function passed where a closure is expected.
+            //
+            // `arr_map([1,2,3], double)` passed `axon check` and then PANICKED at
+            // run with "undefined identifier `double`" — a check/run soundness
+            // divergence, and the interpreter is this project's reference oracle,
+            // so the checker accepting it is the bug. Passing a named fn to a
+            // higher-order builtin is the first thing a model writes.
+            //
+            // Refused rather than supported: making the interpreter resolve
+            // fn-names-as-values would oblige native codegen to match or create
+            // an interp/native divergence (invariant I-2), which is a language
+            // feature, not a fix. The diagnostic names the working form instead,
+            // so the reader is one edit away rather than stuck.
+            // NOTE the type test: `parse_type_str` (infer.rs:167) has no `fn(`
+            // arm, so a builtin's `fn(T) -> U` parameter lands as
+            // `Type::Deferred("fn(T) -> U")`, not `Type::Fn`. Matching on
+            // `Type::Fn` here compiled and silently never fired — the same
+            // deferred-swallows-the-check class this function already documents
+            // for `Dict`.
+            let param_is_fn = matches!(param_ty, Type::Fn(..))
+                || matches!(param_ty, Type::Deferred(n) if n.starts_with("fn("));
+            if param_is_fn {
+                if let Expr::Ident(callee) = arg {
+                    let is_local = scope.contains_key(callee);
+                    if !is_local && self.fn_sigs.contains_key(callee) {
+                        let file = self.file.clone();
+                        self.errors.push(
+                            CheckError::new(
+                                E0306,
+                                format!(
+                                    "argument {i} of `{name}` is the function \
+                                     `{callee}` passed by name, which Axon cannot \
+                                     evaluate as a value"
+                                ),
+                            )
+                            .node(&arg_path)
+                            .at(&file, 0, 0)
+                            .fix(format!("wrap it in a lambda — `|x| {callee}(x)`")),
+                        );
+                        continue;
+                    }
+                }
+            }
+
             let arg_is_concrete_wrapper =
                 matches!(arg_ty, Type::Unit | Type::Option(_) | Type::Result(_, _));
             // Only an *opaque* deferred param (Dict/Uncertain/Temporal/Goal)

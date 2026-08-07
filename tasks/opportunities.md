@@ -1717,3 +1717,20 @@ the language card should state: **define reusable helpers with `fn`, not
 `let f = |x| …`**. Unlike a card line targeting one benchmark task, this
 describes a genuine constraint a model will otherwise hit repeatedly. Add it when
 the card is next revised, and measure the card change alone (A2b).
+
+## O-RLM2-02 — three fixtures asserted "parses cleanly" for programs that panic at run (proposed: MEDIUM)
+
+M4's checker guard turned `phase36_iterator_patterns`, `phase44_option_chaining`
+and `phase47_closure_composition` red. Investigating showed the guard was right
+and the fixtures were wrong: each passed a named function to a function-typed
+parameter, which the interpreter cannot evaluate — verified by disabling the
+guard and running one, which panicked with `undefined identifier is_even`.
+
+So three fixtures had been asserting, for as long as they existed, that a
+program *parses* — while that program could not *run*. A `*_parses_cleanly` test
+is exactly as strong as its name and no stronger, and nothing else covered these.
+
+Fixed here by converting them to the lambda form, which runs. The wider question
+is whether other `*_parses_cleanly` fixtures are in the same position: a sweep
+would be `axon run` (or `axon test`) over every fixture that currently only has
+its parse asserted.

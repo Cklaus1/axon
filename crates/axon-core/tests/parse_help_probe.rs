@@ -329,3 +329,38 @@ fn the_library_and_cli_check_pipelines_agree_on_a_corpus() {
     }
     assert!(compared >= 4, "corpus matched too little to prove anything: {compared}");
 }
+
+#[test]
+fn a_named_fn_passed_to_a_higher_order_builtin_is_refused_at_check() {
+    // M4. `arr_map([1,2,3], double)` passed `axon check` and then PANICKED at
+    // run with "undefined identifier `double`" — a check/run soundness
+    // divergence, and the interpreter is this project's reference oracle, so the
+    // checker accepting it was the bug. Passing a named fn to a higher-order
+    // builtin is the first thing a model writes.
+    let src = "fn double(x: i64) -> i64 { x * 2 }\n\
+               fn main() -> i64 {\n    let ys = arr_map([1, 2, 3], double)\n    \
+               println(to_str(ys[0]))\n    0\n}\n";
+    let diags = check_pipeline(src, "probe.ax");
+    let d = diags
+        .iter()
+        .find(|d| d.code == "E0306")
+        .unwrap_or_else(|| panic!("must be refused at check time: {diags:?}"));
+    assert!(d.message.contains("passed by name"), "{}", d.message);
+    let help = d.help.as_ref().expect("must name the working form");
+    assert!(help.contains("|x| double(x)"), "{help}");
+}
+
+#[test]
+fn the_lambda_form_is_still_accepted() {
+    // The refusal must not over-reach: wrapping in a lambda is the documented
+    // fix, so it has to keep compiling. Without this, M4's guard could refuse
+    // every higher-order call and still pass its own test.
+    let src = "fn double(x: i64) -> i64 { x * 2 }\n\
+               fn main() -> i64 {\n    let ys = arr_map([1, 2, 3], |x| double(x))\n    \
+               println(to_str(ys[0]))\n    0\n}\n";
+    let errs: Vec<_> = check_pipeline(src, "probe.ax")
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    assert!(errs.is_empty(), "the lambda form must still compile: {errs:?}");
+}

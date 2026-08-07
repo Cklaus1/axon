@@ -12,3 +12,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-07T02:14:28Z  M1  attempt 1  escape { and } in value_as_literal string rendering
 2026-08-07T02:17:39Z  M2  attempt 1  value_as_literal for Option/Result/Tuple/Enum
 2026-08-07T02:20:04Z  M3  attempt 1  brace-count let capture in split_lets so multi-line lets are not torn apart
+2026-08-07T02:21:18Z  M4  attempt 1  named fn passed to higher-order builtin: check passes, run panics
