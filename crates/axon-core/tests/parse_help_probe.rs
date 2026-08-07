@@ -488,3 +488,35 @@ fn plus_still_refuses_mixed_and_nonsense_operands() {
         assert!(!errs.is_empty(), "{label} must still be refused");
     }
 }
+
+#[test]
+fn array_plus_array_concatenates() {
+    // N2b. Unlike `str + str` (N2a, which the interpreter already implemented),
+    // `[T] + [T]` was unimplemented everywhere — no `Add` arm in
+    // `eval_binop_vals`. It is the other half of the accumulator the model
+    // writes: `rows = rows + [record]`.
+    let src = "fn main() -> i64 {\n    let xs = [1, 2]\n    let ys = xs + [3]\n    \
+               println(to_str(len(ys)))\n    0\n}\n";
+    let errs: Vec<_> = check_pipeline(src, "probe.ax")
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    assert!(errs.is_empty(), "`[T] + [T]` must type-check: {errs:?}");
+}
+
+#[test]
+fn array_plus_refuses_mismatched_and_nonsense() {
+    // Narrow, like N2a. A `+` that joins an array to anything is not
+    // concatenation.
+    for (label, src) in [
+        ("arr + int", "fn main() -> i64 {\n    let x = [1] + 2\n    0\n}\n"),
+        ("arr + str", "fn main() -> i64 {\n    let x = [1] + \"a\"\n    0\n}\n"),
+        ("arr - arr", "fn main() -> i64 {\n    let x = [1] - [2]\n    0\n}\n"),
+    ] {
+        let errs: Vec<_> = check_pipeline(src, "probe.ax")
+            .into_iter()
+            .filter(|d| d.severity == "error")
+            .collect();
+        assert!(!errs.is_empty(), "{label} must still be refused");
+    }
+}

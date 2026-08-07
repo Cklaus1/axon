@@ -3347,7 +3347,13 @@ impl CheckCtx {
                     // silently legal here.
                     let str_concat =
                         matches!(op, BinOp::Add) && lty == Type::Str && rty == Type::Str;
-                    if !str_concat {
+                    // N2b: same permission for `[T] + [T]`. Element types must
+                    // already agree — infer unifies them — so this only has to
+                    // stop the numeric check from firing on two arrays.
+                    let arr_concat = matches!(op, BinOp::Add)
+                        && matches!(lty, Type::Slice(_))
+                        && matches!(rty, Type::Slice(_));
+                    if !str_concat && !arr_concat {
                         self.check_numeric_operand(&lty, &lpath);
                         self.check_numeric_operand(&rty, &rpath);
                     }

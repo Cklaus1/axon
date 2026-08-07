@@ -679,6 +679,15 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
 
         // String concat
         (Add, Str(a), Str(b)) => Ok(Str(a + &b)),
+        // N2b: `[T] + [T]` is concatenation. Unlike the string arm above — which
+        // existed all along and was only refused by the checker — this had no
+        // implementation anywhere. Copy semantics, matching `arr_push`: the
+        // operands are unaffected and a fresh array is returned.
+        (Add, Value::Array(a), Value::Array(b)) => {
+            let mut out = a;
+            out.extend(b);
+            Ok(Value::Array(out))
+        }
         // Integer comparisons
         (Eq, Int(a), Int(b)) => Ok(Bool(a == b)),
         (NotEq, Int(a), Int(b)) => Ok(Bool(a != b)),

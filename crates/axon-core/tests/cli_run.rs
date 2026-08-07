@@ -19320,3 +19320,67 @@ fn arr_push_non_i64_elements_are_e0910_refused_natively() {
         );
     }
 }
+
+#[test]
+fn concat_plus_is_refused_natively_rather_than_miscompiled() {
+    // N2a/N2b, invariant I-2. `emit_binop` matches on integer/float value kinds;
+    // a str or slice operand fell through to a path that yields the LEFT
+    // operand. So before the guard, native BUILT these and printed the wrong
+    // answer: `"a" + "b"` → `a`, and `[1,2] + [3]` → length 2.
+    //
+    // A wrong answer from a successful build is the worst failure mode available
+    // — nothing tells the caller. Refusing is what arr_push and the
+    // effect-handler shapes already do when native cannot reproduce the
+    // interpreter, and it is what this asserts.
+    for (label, src, interp_expects) in [
+        (
+            "str",
+            "fn main() -> i64 {\n    println(\"a\" + \"b\")\n    0\n}\n",
+            "ab",
+        ),
+        (
+            "array",
+            "fn main() -> i64 {\n    let xs = [1, 2] + [3]\n    println(to_str(len(xs)))\n    0\n}\n",
+            "3",
+        ),
+    ] {
+        let f = tmp_ax(&format!("concat_native_{label}"), src);
+        let out_bin = std::env::temp_dir()
+            .join(format!("axon_concat_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&out_bin);
+
+        // The interpreter is the oracle and must be right.
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(
+            stdout.lines().next_back().unwrap_or(""),
+            interp_expects,
+            "{label}: interpreter must concatenate"
+        );
+
+        // Native must refuse, and leave nothing behind.
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .output()
+            .expect("spawn build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            continue; // codegen absent in this build — nothing to assert
+        }
+        assert_ne!(build.status.code(), Some(0), "{label}: must not build: {msg}");
+        assert!(msg.contains("E0910"), "{label}: must be the refusal class: {msg}");
+        assert!(
+            !out_bin.exists(),
+            "{label}: a refused build must leave no binary"
+        );
+        let _ = std::fs::remove_file(&out_bin);
+    }
+}

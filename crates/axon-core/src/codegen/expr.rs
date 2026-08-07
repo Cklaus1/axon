@@ -691,7 +691,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let val = i8_ty.const_int(marker as u64, false);
         self.ir
             .builder
-            .build_indirect_call(outb_fn_ty, outb_asm, &[port.into(), val.into()], "trap_outb")
+            .build_indirect_call(
+                outb_fn_ty,
+                outb_asm,
+                &[port.into(), val.into()],
+                "trap_outb",
+            )
             .unwrap();
         self.ir.builder.build_unconditional_branch(halt).unwrap();
 
@@ -1325,6 +1330,33 @@ impl<'ctx> super::Codegen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> BasicValueEnum<'ctx> {
+        // N2a/N2b: `str + str` and `[T] + [T]` are CONCATENATION, and this
+        // function cannot lower either — the value arms below match on integer
+        // and float kinds, and a str/slice operand falls through to a path that
+        // silently yields the LEFT operand.
+        //
+        // Measured before this guard existed: `"a" + "b"` built and printed `a`,
+        // and `[1,2] + [3]` built and printed length 2. Both are WRONG ANSWERS
+        // from a successful build — an I-2 violation, and the worst possible
+        // failure mode, because nothing tells the caller. Refuse instead: an
+        // honest E0910 is what `arr_push` and the effect-handler shapes above
+        // already do when native cannot reproduce the interpreter.
+        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str | Type::Slice(_)) {
+            let what = if matches!(ty, Type::Str) {
+                "string"
+            } else {
+                "array"
+            };
+            let msg = format!(
+                "codegen error [E0910]: native codegen does not lower {what} concatenation                  (`+`). The interpreter supports it; run under `axon run`, or use                  str_join/arr_concat which do lower."
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                eprintln!("{msg}");
+                self.codegen_errors.push(msg);
+            }
+            return lhs;
+        }
+
         // True when the semantic type is an unsigned integer.
         let is_unsigned = matches!(ty, Type::U8 | Type::U16 | Type::U32 | Type::U64);
 
