@@ -893,6 +893,44 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
             }
             Ok(format!("{name} {{ {} }}", parts.join(", ")))
         }
+        // Option / Result / Tuple / Enum all HAVE literal syntax, and a realistic
+        // session binds them constantly — `let o = parse_int(s)` is a `Result`.
+        // Leaving them in the catch-all meant the most ordinary binding a model
+        // writes could not cross a cell boundary.
+        Value::Some(inner) => Ok(format!("Some({})", value_as_literal(inner)?)),
+        Value::None => Ok("None".to_string()),
+        Value::Ok(inner) => Ok(format!("Ok({})", value_as_literal(inner)?)),
+        Value::Err(inner) => Ok(format!("Err({})", value_as_literal(inner)?)),
+        Value::Tuple(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(value_as_literal(it)?);
+            }
+            // A 1-tuple needs the trailing comma or it re-parses as a
+            // parenthesised expression and silently changes type.
+            if out.len() == 1 {
+                Ok(format!("({},)", out[0]))
+            } else {
+                Ok(format!("({})", out.join(", ")))
+            }
+        }
+        Value::Enum {
+            enum_name,
+            variant,
+            fields,
+        } => {
+            if fields.is_empty() {
+                Ok(format!("{enum_name}::{variant}"))
+            } else {
+                let mut keys: Vec<&String> = fields.keys().collect();
+                keys.sort(); // deterministic, as for structs
+                let mut parts = Vec::with_capacity(keys.len());
+                for k in keys {
+                    parts.push(format!("{k}: {}", value_as_literal(&fields[k])?));
+                }
+                Ok(format!("{enum_name}::{variant} {{ {} }}", parts.join(", ")))
+            }
+        }
         Value::Unit => Err("unit has no binding form".to_string()),
         // Struct/Enum/Tuple/Dict/Closure/Chan/Handle/… — a session can carry a
         // value only if it can write it down, and these cannot be written as a
@@ -4219,6 +4257,55 @@ mod literal_escape_tests {
             lit.contains("{{") && lit.contains("}}"),
             "both braces must be doubled for the interpolating lexer: {lit}"
         );
+    }
+
+    /// M2. Option/Result/Tuple/Enum all HAVE literal syntax, and a session binds
+    /// them constantly — `let o = parse_int(s)` is a `Result`. They used to fall
+    /// into the catch-all and be reported as unserialisable, so the most
+    /// ordinary binding a model writes could not cross a cell boundary.
+    #[test]
+    fn option_result_tuple_and_enum_have_literal_forms() {
+        let cases: Vec<(Value, &str)> = vec![
+            (Value::Some(Box::new(Value::Int(2))), "Some(2)"),
+            (Value::None, "None"),
+            (Value::Ok(Box::new(Value::Int(5))), "Ok(5)"),
+            (
+                Value::Err(Box::new(Value::Str("bad".into()))),
+                "Err(\"bad\")",
+            ),
+            (
+                Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
+                "(1, 2)",
+            ),
+            // A 1-tuple needs the trailing comma, or it re-parses as a
+            // parenthesised expression and silently changes type.
+            (Value::Tuple(vec![Value::Int(7)]), "(7,)"),
+        ];
+        for (v, want) in cases {
+            assert_eq!(
+                value_as_literal(&v).expect("must have a literal form"),
+                want
+            );
+        }
+        // A fieldless enum variant renders bare; a fielded one renders with
+        // sorted fields, as structs do.
+        let mut f = HashMap::new();
+        f.insert("r".to_string(), Value::Float(2.0));
+        let e = Value::Enum {
+            enum_name: "Shape".into(),
+            variant: "Circle".into(),
+            fields: f,
+        };
+        assert_eq!(
+            value_as_literal(&e).unwrap(),
+            "Shape::Circle { r: 2.0 }"
+        );
+        let bare = Value::Enum {
+            enum_name: "Shape".into(),
+            variant: "Point".into(),
+            fields: HashMap::new(),
+        };
+        assert_eq!(value_as_literal(&bare).unwrap(), "Shape::Point");
     }
 
     /// The round trip is the real requirement: what comes back must equal what
