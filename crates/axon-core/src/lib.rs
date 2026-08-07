@@ -878,6 +878,9 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     // resolves to a line:col and can carry a fix hint. The unlocated
     // `parse_source` was why this diagnostic reported line 0 with no help — the
     // offset it needs for both was thrown away one call earlier.
+    // M5: the parser records where it accepted a foreign `mut`. Clear first, so
+    // a previous parse's notes cannot leak into this one's diagnostics.
+    parser::clear_accepted_mut();
     let mut program = match parse_source_located(source) {
         Ok(p) => p,
         Err((msg, offset)) => {
@@ -898,6 +901,29 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
             return out;
         }
     };
+
+    // M5: surface each accepted `mut` as an INFO. The parser no longer refuses
+    // it — accepting asserts nothing false, since Axon locals are already
+    // reassignable — but a human reading the code should still learn that the
+    // keyword did nothing, so the note is emitted rather than the program
+    // silently compiling as if `mut` had never been written.
+    for offset in parser::take_accepted_mut() {
+        let (line, col) = source_map.line_col(offset);
+        out.push(PipelineDiagnostic {
+            code: error::I0002.to_string(),
+            message: "`mut` is not an Axon keyword and was ignored — bindings are \
+                      already reassignable"
+                .to_string(),
+            file: file.to_string(),
+            line: line as u32,
+            col: col as u32,
+            severity: "note".into(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: Some("drop it: `let x = …`, then assign with `x = …`".to_string()),
+        });
+    }
 
     let resolve_result = resolver::resolve_program(&program, file);
     for d in &resolve_result.errors {

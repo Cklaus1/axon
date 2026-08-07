@@ -211,6 +211,7 @@ pub const W1310: &str = "W1310"; // live AI call by a fn with no @[ai(policy)] (
 
 // Info codes
 pub const I0001: &str = "I0001"; // deferred attribute (AI annotations)
+pub const I0002: &str = "I0002"; // a foreign keyword was accepted as a no-op (`let mut x`)
 
 // ── Severity ──────────────────────────────────────────────────────────────────
 

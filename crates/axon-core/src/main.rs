@@ -995,6 +995,10 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // JSON a tool/agent consumes carries file/line/col (resolved from each
     // typed diagnostic's byte-span against the source), not just code+message.
     let (located, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    // M5: accepted-`mut` notes ride on the same channel and schema as every
+    // other diagnostic, so a host parsing axon-diag/1 sees them without a
+    // special case.
+    let located: Vec<_> = located.into_iter().chain(mut_notes(&src, &file)).collect();
     // Import-cap (E1203) and lock (E1201/E1202/W1210) errors are file-level
     // strings with no span — they keep the string emit path.
     let mut string_errors = import_cap_errors;
@@ -3610,6 +3614,11 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // neither what was wrong nor where. The located variant differs only in
     // being handed `src`.
     let (errors, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    // M5: notes are emitted even when the program is otherwise clean — `run`
+    // must not be the quiet path again (that was §2's whole defect).
+    for note in mut_notes(&src, &file) {
+        emit_pipeline_diag(&note);
+    }
     if !errors.is_empty() {
         for err in &errors {
             emit_pipeline_diag(err);
@@ -4786,6 +4795,9 @@ fn parse_source_located_cli(
     src: &str,
     file: &Path,
 ) -> Result<axon_core::ast::Program, Box<axon_core::PipelineDiagnostic>> {
+    // M5: clear the accepted-`mut` sink so a previous parse cannot leak notes
+    // into this one. Drained by `mut_notes` after the check pipeline runs.
+    axon_core::parser::clear_accepted_mut();
     axon_core::parse_source_located(src).map_err(|(msg, offset)| {
         let (line, col) = axon_core::span::SourceMap::new(src.to_string()).line_col(offset);
         Box::new(axon_core::PipelineDiagnostic {
@@ -4834,6 +4846,36 @@ fn check_program_located(
 /// This is the one place the flattened form survives on purpose.
 fn flat_diag(d: &axon_core::PipelineDiagnostic) -> String {
     format!("[{}] {}", d.code, d.message)
+}
+
+/// M5: turn each accepted foreign `mut` into an I0002 note.
+///
+/// The parser no longer refuses `let mut x` — accepting it asserts nothing false,
+/// since Axon locals are already reassignable — but a reader should still learn
+/// the keyword did nothing, so this is emitted rather than the program silently
+/// compiling as though `mut` had never been written.
+fn mut_notes(src: &str, file: &Path) -> Vec<axon_core::PipelineDiagnostic> {
+    let map = axon_core::span::SourceMap::new(src.to_string());
+    axon_core::parser::take_accepted_mut()
+        .into_iter()
+        .map(|offset| {
+            let (line, col) = map.line_col(offset);
+            axon_core::PipelineDiagnostic {
+                code: "I0002".to_string(),
+                message: "`mut` is not an Axon keyword and was ignored — bindings \
+                          are already reassignable"
+                    .to_string(),
+                file: file.display().to_string(),
+                line: line as u32,
+                col: col as u32,
+                severity: "note".to_string(),
+                caret: String::new(),
+                expected: None,
+                found: None,
+                help: Some("drop it: `let x = …`, then assign with `x = …`".to_string()),
+            }
+        })
+        .collect()
 }
 
 /// Emit a typed diagnostic, JSON when stderr is not a terminal.

@@ -45,10 +45,7 @@ fn the_parse_diagnostic_now_carries_a_real_line_and_column() {
     // §1's sibling defect: this diagnostic reported line 0 because the pipeline
     // parsed with the unlocated `parse_source`. A hint that cannot say *where*
     // is only half a repair.
-    let diags = check_pipeline(
-        "fn main() -> i64 {\n    let c := 0\n    0\n}\n",
-        "probe.ax",
-    );
+    let diags = check_pipeline("fn main() -> i64 {\n    let c := 0\n    0\n}\n", "probe.ax");
     let d = diags.first().unwrap();
     assert_eq!(d.line, 2, "the bad token is on line 2, got {}", d.line);
     assert!(d.col > 0, "column must be resolved, got {}", d.col);
@@ -58,10 +55,7 @@ fn the_parse_diagnostic_now_carries_a_real_line_and_column() {
 fn help_survives_into_the_emitted_json() {
     // The whole point is that a machine consumer can read it. Assert on the
     // wire format, not just the struct field.
-    let diags = check_pipeline(
-        "fn main() -> i64 {\n    let c := 0\n    0\n}\n",
-        "probe.ax",
-    );
+    let diags = check_pipeline("fn main() -> i64 {\n    let c := 0\n    0\n}\n", "probe.ax");
     let json = diags.first().unwrap().json();
     assert!(json.contains("\"schema\":\"axon-diag/1\""), "{json}");
     assert!(json.contains("\"code\":\"E0000\""), "{json}");
@@ -275,7 +269,10 @@ fn the_library_and_cli_check_pipelines_agree_on_a_corpus() {
     // `main`), and the comparison is on the fields both are supposed to carry.
     let corpus: &[(&str, &str)] = &[
         ("mut", "fn main() -> i64 {\n    let mut c = 0\n    0\n}\n"),
-        ("type-err", "fn f() -> i64 { \"s\" }\nfn main() -> i64 { 0 }\n"),
+        (
+            "type-err",
+            "fn f() -> i64 { \"s\" }\nfn main() -> i64 { 0 }\n",
+        ),
         ("unknown", "fn main() -> i64 {\n    nope()\n}\n"),
         ("const", "fn main() -> i64 {\n    const c = 0\n    0\n}\n"),
         (
@@ -329,7 +326,10 @@ fn the_library_and_cli_check_pipelines_agree_on_a_corpus() {
         }
         compared += 1;
     }
-    assert!(compared >= 4, "corpus matched too little to prove anything: {compared}");
+    assert!(
+        compared >= 4,
+        "corpus matched too little to prove anything: {compared}"
+    );
 }
 
 #[test]
@@ -364,7 +364,10 @@ fn the_lambda_form_is_still_accepted() {
         .into_iter()
         .filter(|d| d.severity == "error")
         .collect();
-    assert!(errs.is_empty(), "the lambda form must still compile: {errs:?}");
+    assert!(
+        errs.is_empty(),
+        "the lambda form must still compile: {errs:?}"
+    );
 }
 
 #[test]
@@ -392,5 +395,59 @@ fn a_binding_actually_named_mut_still_works() {
         .into_iter()
         .filter(|d| d.severity == "error")
         .collect();
-    assert!(errs.is_empty(), "a binding named `mut` must still parse: {errs:?}");
+    assert!(
+        errs.is_empty(),
+        "a binding named `mut` must still parse: {errs:?}"
+    );
+}
+
+#[test]
+fn accepting_mut_still_tells_the_reader_it_did_nothing() {
+    // M5's INFO. Accepting `let mut` silently would leave a reader believing the
+    // keyword meant something. It compiles, and says so — severity `note`, so a
+    // host filtering on errors is unaffected while a human still learns.
+    let diags = check_pipeline(
+        "fn main() -> i64 {\n    let mut count = 0\n    count = count + 1\n    0\n}\n",
+        "probe.ax",
+    );
+    let note = diags
+        .iter()
+        .find(|d| d.code == "I0002")
+        .unwrap_or_else(|| panic!("accepting `mut` must emit a note: {diags:?}"));
+    assert_eq!(note.severity, "note", "must not be an error or a warning");
+    assert_eq!(
+        note.line, 2,
+        "must point at the `mut`, got line {}",
+        note.line
+    );
+    assert!(note.help.is_some(), "must say what to write instead");
+    // And it must not have become an error by accident.
+    assert!(
+        !diags.iter().any(|d| d.severity == "error"),
+        "the program must still compile: {diags:?}"
+    );
+}
+
+#[test]
+fn a_stale_mut_note_does_not_leak_into_the_next_parse() {
+    // The premise matters, and the first version of this test got it wrong: on
+    // the SUCCESS path the pipeline drains the sink, so a missing clear changes
+    // nothing and the mutation survived. The clear is only load-bearing when a
+    // parse ACCEPTS a `mut` and then FAILS later — the drain never runs, and the
+    // note is left stranded for whatever parses next on this thread.
+    //
+    // So: parse a program that does exactly that, then a clean one, and require
+    // the clean one to carry no note. Removing the clear fails this.
+    let poisoned = "fn main() -> i64 {\n    let mut c = 0\n    let d := 1\n    0\n}\n";
+    let first = check_pipeline(poisoned, "poisoned.ax");
+    assert!(
+        first.iter().any(|d| d.code == "E0000"),
+        "fixture must fail to parse AFTER the mut: {first:?}"
+    );
+
+    let clean = check_pipeline("fn main() -> i64 {\n    let c = 0\n    c\n}\n", "clean.ax");
+    assert!(
+        !clean.iter().any(|d| d.code == "I0002"),
+        "a note leaked from the previous failed parse: {clean:?}"
+    );
 }
