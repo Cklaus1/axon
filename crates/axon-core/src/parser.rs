@@ -45,6 +45,33 @@ fn push_stmt_or_splice_destructure(stmts: &mut Vec<Stmt>, expr: Expr, span: Span
     stmts.push(Stmt { expr, span });
 }
 
+thread_local! {
+    /// Byte offsets where a foreign `mut` was accepted and skipped (M5).
+    ///
+    /// A thread-local rather than a field on `Program`, which has 48 construction
+    /// sites — this matches the pattern the interpreter's provenance and the
+    /// audit ledger already use. Drained by the check pipeline, which turns each
+    /// into an I-code so a human still learns even though the compiler no longer
+    /// refuses.
+    static ACCEPTED_MUT: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Record that a foreign `mut` was accepted at `offset`.
+fn note_accepted_mut(offset: usize) {
+    ACCEPTED_MUT.with(|v| v.borrow_mut().push(offset));
+}
+
+/// Drain the accepted-`mut` offsets recorded by the most recent parse.
+pub fn take_accepted_mut() -> Vec<usize> {
+    ACCEPTED_MUT.with(|v| std::mem::take(&mut *v.borrow_mut()))
+}
+
+/// Clear the sink before a parse, so a previous parse's notes cannot leak into
+/// this one's diagnostics.
+pub fn clear_accepted_mut() {
+    ACCEPTED_MUT.with(|v| v.borrow_mut().clear());
+}
+
 fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
     // Fast path: no braces at all.
     if !raw.contains('{') && !raw.contains('}') {
@@ -2069,7 +2096,28 @@ impl Parser {
             }
             return Ok(Expr::Block(stmts));
         }
-        let name = self.expect_ident()?;
+        // M5: accept `let mut x` as a no-op.
+        //
+        // Rust's `mut` claims "this binding is reassignable". Every Axon local
+        // ALREADY is, with no marker — so accepting it asserts nothing false
+        // about Axon, unlike `def` or `const`, which name things Axon does not
+        // have. `AXON_FOR_RLM.md` §3 rejected this on the grounds that accepting
+        // a foreign keyword teaches the wrong model of the language; that was
+        // decided before three other channels were MEASURED to fail on this same
+        // defect (a perfect diagnostic not applied in either repair arm; a card
+        // naming `mut` numerically that did not generalise to a string
+        // accumulator). The parser is the only channel left that needs zero
+        // cooperation from the writer.
+        //
+        // Guarded on a following identifier, so a binding legitimately NAMED
+        // `mut` (`let mut = 5`) still parses as itself rather than being eaten.
+        let mut name = self.expect_ident()?;
+        if name == "mut" {
+            if let Some(Token::Ident(_)) = self.peek() {
+                note_accepted_mut(self.span_at(self.pos).start);
+                name = self.expect_ident()?;
+            }
+        }
         let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;

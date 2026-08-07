@@ -1734,3 +1734,28 @@ Fixed here by converting them to the lambda form, which runs. The wider question
 is whether other `*_parses_cleanly` fixtures are in the same position: a sweep
 would be `axon run` (or `axon test`) over every fixture that currently only has
 its parse asserted.
+
+## O-RLM2-03 — 8/8 needs `str_concat` awareness too, not just `mut` (proposed: HIGH)
+
+Found finishing M5. The last fluency failure was `let mut result = ""` in a
+string accumulator, and M5 makes the `mut` parse. But the same task then does
+`result = result + ch`, and **Axon has no `+` for strings** — concatenation is
+`str_concat(a, b)`. So that task hits TWO walls and M5 only removed one.
+
+Two ways to close it, and they are different in kind:
+
+1. **Card line** — "concatenate with `str_concat(a, b)`, not `a + b`". Cheap.
+   Arguably not overfitting: string building is universal, not benchmark-shaped.
+   But it is another card line, and the card is at diminishing returns.
+2. **Make `+` concatenate strings** — a language change, in the same family as
+   M5 and with a stronger claim to being right (every neighbouring language does
+   this, and `+` on two strings has no other meaning in Axon so nothing is
+   ambiguous). Bigger blast radius: typing, codegen, and the i64/f64 operand
+   checks.
+
+Recommend measuring (1) first, since it is a card change that can be measured
+alone per A2b, and it tells you whether the ceiling is actually at 8/8 before
+anyone changes the language a second time.
+
+**Do not assume M5 alone reaches 8/8.** It has not been measured, and this is a
+concrete reason to expect it will not.

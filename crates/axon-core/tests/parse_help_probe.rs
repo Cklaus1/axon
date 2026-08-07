@@ -24,17 +24,19 @@ fn first_diag(src: &str) -> (String, Option<String>) {
 }
 
 #[test]
-fn mut_still_reaches_the_parse_tier_and_still_gets_help() {
-    // The measured dominant failure. If this test fails, either the parser
-    // reworded its message or `let mut` started parsing — check which before
-    // touching parse_help.rs.
-    let (code, help) = first_diag("fn main() -> i64 {\n    let mut count = 0\n    0\n}\n");
-    assert_eq!(code, "E0000", "must still be a PARSE error");
-    let help = help.expect("`let mut` must carry a fix hint through the real pipeline");
-    assert!(help.contains("`mut` is not an Axon keyword"), "{help}");
+fn mut_no_longer_reaches_the_parse_tier_at_all() {
+    // Was `mut_still_reaches_the_parse_tier_and_still_gets_help`. M5 made
+    // `let mut` COMPILE, so the parse error this pinned no longer exists — the
+    // test correctly went red and is retargeted rather than deleted, so the
+    // history of the decision stays visible. `parse_help`'s `mut` row is now
+    // unreachable from real source and is kept only for a hand-fed message.
+    let diags = check_pipeline(
+        "fn main() -> i64 {\n    let mut count = 0\n    0\n}\n",
+        "probe.ax",
+    );
     assert!(
-        help.contains("let count = "),
-        "must echo the real name: {help}"
+        !diags.iter().any(|d| d.code == "E0000"),
+        "`let mut` must no longer be a parse error: {diags:?}"
     );
 }
 
@@ -44,7 +46,7 @@ fn the_parse_diagnostic_now_carries_a_real_line_and_column() {
     // parsed with the unlocated `parse_source`. A hint that cannot say *where*
     // is only half a repair.
     let diags = check_pipeline(
-        "fn main() -> i64 {\n    let mut count = 0\n    0\n}\n",
+        "fn main() -> i64 {\n    let c := 0\n    0\n}\n",
         "probe.ax",
     );
     let d = diags.first().unwrap();
@@ -57,7 +59,7 @@ fn help_survives_into_the_emitted_json() {
     // The whole point is that a machine consumer can read it. Assert on the
     // wire format, not just the struct field.
     let diags = check_pipeline(
-        "fn main() -> i64 {\n    let mut count = 0\n    0\n}\n",
+        "fn main() -> i64 {\n    let c := 0\n    0\n}\n",
         "probe.ax",
     );
     let json = diags.first().unwrap().json();
@@ -363,4 +365,32 @@ fn the_lambda_form_is_still_accepted() {
         .filter(|d| d.severity == "error")
         .collect();
     assert!(errs.is_empty(), "the lambda form must still compile: {errs:?}");
+}
+
+#[test]
+fn let_mut_is_accepted_as_a_no_op() {
+    // M5. Rust's `mut` claims a binding is reassignable; every Axon local
+    // already is. Accepting it asserts nothing false, unlike `def` or `const`.
+    // Authorised by the user, overturning AXON_FOR_RLM §3 on evidence §3 did not
+    // have: three other channels are MEASURED failures on this defect.
+    let src = "fn main() -> i64 {\n    let mut count = 0\n    count = count + 1\n    \
+               println(to_str(count))\n    0\n}\n";
+    let errs: Vec<_> = check_pipeline(src, "probe.ax")
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    assert!(errs.is_empty(), "`let mut` must now compile: {errs:?}");
+}
+
+#[test]
+fn a_binding_actually_named_mut_still_works() {
+    // The acceptance is guarded on a FOLLOWING identifier, so `let mut = 5`
+    // binds a variable called `mut` rather than being silently eaten. Without
+    // the guard this program would lose its binding and fail on the use.
+    let src = "fn main() -> i64 {\n    let mut = 5\n    println(to_str(mut))\n    0\n}\n";
+    let errs: Vec<_> = check_pipeline(src, "probe.ax")
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    assert!(errs.is_empty(), "a binding named `mut` must still parse: {errs:?}");
 }
