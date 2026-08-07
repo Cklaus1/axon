@@ -90,6 +90,24 @@ else
   bad "neither skipped nor kept — the skip path was not exercised: $SHOWN"
 fi
 
+echo "8. a MULTI-LINE let is not torn apart (models write these constantly)"
+SESS3="$(dirname "$SESS")/multiline.ax"
+python3 "$ROOT/scripts/axon_session.py" new "$SESS3"
+printf 'let f = |x: i64| {\n    x + 1\n}\nprintln(to_str(f(1)))\n' > "$S/m1.ax"
+M1OUT="$(python3 "$ROOT/scripts/axon_session.py" eval "$SESS3" "$S/m1.ax" 2>&1)"
+[ "$(echo "$M1OUT" | tail -1)" = "2" ] && ok "multi-line let evaluated" \
+  || bad "multi-line let was torn apart: $M1OUT"
+
+echo "9. a value with braces does not wedge the session (M1)"
+SESS4="$(dirname "$SESS")/braces.ax"
+python3 "$ROOT/scripts/axon_session.py" new "$SESS4"
+printf 'let j = chr(123)\n' > "$S/b1.ax"
+python3 "$ROOT/scripts/axon_session.py" eval "$SESS4" "$S/b1.ax" >/dev/null 2>&1
+printf 'println("still alive")\n' > "$S/b2.ax"
+B2="$(python3 "$ROOT/scripts/axon_session.py" eval "$SESS4" "$S/b2.ax" 2>&1)"
+[ "$(echo "$B2" | tail -1)" = "still alive" ] && ok "session survived a braced value" \
+  || bad "a single brace bricked the session: $B2"
+
 [ "$FAIL" = "0" ] && echo "axon_session_demo: PASS — all properties hold" \
   || echo "axon_session_demo: FAIL"
 exit "$FAIL"

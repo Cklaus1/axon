@@ -102,16 +102,34 @@ def compose(bindings: str, decls: str, cell_lets: str, cell_stmts: str) -> str:
 def split_lets(stmts: str):
     """Separate a cell's top-level `let` statements from its other statements.
 
-    Only unindented `let`s at the cell's top level are promoted; anything nested
-    inside a block belongs to that block and is left alone.
+    Brace-counted, like `split_cell`. The line-based version tore a MULTI-LINE
+    `let` apart — it promoted the opening line to module level and left the body
+    behind in `main`, producing garbage the parser rejected at the line after the
+    `let`. Models write multi-line closures constantly, so this was not an edge
+    case; it refused ordinary cells.
+
+    Only `let`s at the cell's own top level are promoted; one nested inside a
+    block belongs to that block and is left alone.
     """
-    lets, rest, depth = [], [], 0
-    for line in stmts.splitlines():
-        if depth == 0 and line.lstrip().startswith("let ") and line == line.lstrip():
-            lets.append(line)
-        else:
-            rest.append(line)
+    lets, rest = [], []
+    lines = stmts.splitlines()
+    i, depth = 0, 0
+    while i < len(lines):
+        line = lines[i]
+        if depth == 0 and line.startswith("let "):
+            block = [line]
+            d = line.count("{") - line.count("}")
+            i += 1
+            # Keep taking lines while the `let` is still open.
+            while i < len(lines) and d > 0:
+                block.append(lines[i])
+                d += lines[i].count("{") - lines[i].count("}")
+                i += 1
+            lets.extend(block)
+            continue
+        rest.append(line)
         depth += line.count("{") - line.count("}")
+        i += 1
     return "\n".join(lets), "\n".join(rest)
 
 

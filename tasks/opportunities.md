@@ -1704,3 +1704,16 @@ brace counting rather than the parser — so a `{` inside a string literal or a
 comment will mis-split a cell. The value persistence is real and in the
 interpreter; the ergonomics are a shell script. Moving the driver into the CLI
 and giving it the real parser is the slice that makes this a feature.
+
+## O-RLM2-01 — closures cannot persist, so a model must use `fn` for reusable helpers (proposed: MEDIUM — card content)
+
+Found building M3. `let f = |x: i64| { x + 1 }` evaluates fine within a cell, but
+a closure has no literal form, so it is correctly SKIPPED from the dump and `f`
+is gone in the next cell. `fn f(x: i64) -> i64 { … }` persists, because it is a
+declaration.
+
+This is a real property of the session, not a bug, and it is the kind of thing
+the language card should state: **define reusable helpers with `fn`, not
+`let f = |x| …`**. Unlike a card line targeting one benchmark task, this
+describes a genuine constraint a model will otherwise hit repeatedly. Add it when
+the card is next revised, and measure the card change alone (A2b).
