@@ -855,11 +855,21 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
             }
         }
         Value::Str(st) => {
+            // Braces MUST be doubled. Axon string literals interpolate, so a
+            // value containing `{` dumped verbatim produces a literal the lexer
+            // rejects (`unclosed \u{7b} in interpolated string`) — and since the
+            // dump becomes the next cell's prelude, that bricks the session
+            // permanently: even `let n = 1` is then refused. A model building a
+            // JSON-ish string hits this immediately. `{{` → `{` is the parser's
+            // own convention (`parser.rs:96-101`); `}}` is doubled with it so
+            // the escaping is the parser's exact inverse rather than nearly so.
             let esc = st
                 .replace('\\', "\\\\")
                 .replace('"', "\\\"")
                 .replace('\n', "\\n")
-                .replace('\t', "\\t");
+                .replace('\t', "\\t")
+                .replace('{', "{{")
+                .replace('}', "}}");
             Ok(format!("\"{esc}\""))
         }
         Value::Array(items) => {
@@ -4189,5 +4199,58 @@ fn main() { }
         // so unix_socket_roundtrip is never invoked.
         let code = super::run_suspendable_hypercall(&prog);
         assert_eq!(code, 0);
+    }
+}
+
+#[cfg(test)]
+mod literal_escape_tests {
+    use super::*;
+
+    /// M1. A value containing `{` used to be dumped un-escaped, and since Axon
+    /// strings interpolate, the dumped `let j = "{"` was itself unlexable. Every
+    /// subsequent cell then died on `unclosed \`{\` in interpolated string` — the
+    /// session was permanently bricked with no recovery path, and a model that
+    /// builds a JSON-ish string does this immediately.
+    #[test]
+    fn braces_in_a_dumped_string_are_escaped_for_re_parsing() {
+        let v = Value::Str("{\"a\": 1}".to_string());
+        let lit = value_as_literal(&v).expect("a string always has a literal form");
+        assert!(
+            lit.contains("{{") && lit.contains("}}"),
+            "both braces must be doubled for the interpolating lexer: {lit}"
+        );
+    }
+
+    /// The round trip is the real requirement: what comes back must equal what
+    /// went in. Escaping that is not the parser's inverse would corrupt values
+    /// silently, which is worse than the wedge it replaces.
+    #[test]
+    fn a_braced_string_round_trips_through_the_parser() {
+        for original in [
+            "{",
+            "}",
+            "{\"k\": [1, 2]}",
+            "a{b}c",
+            "{{already doubled}}",
+            "quote\" and \\ and \ttab",
+        ] {
+            let lit = value_as_literal(&Value::Str(original.to_string())).unwrap();
+            let src = format!("let x = {lit}\nfn main() -> i64 {{ 0 }}\n");
+            let prog = crate::parse_source(&src)
+                .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
+            let mut interp = Interp::build(&prog);
+            interp.init_globals().expect("globals initialise");
+            let got = interp.globals.get("x").expect("let x must be bound");
+            // Value has no PartialEq; compare the rendered form, which is what
+            // the session actually round-trips anyway.
+            let got_s = match got {
+                Value::Str(t) => t.clone(),
+                other => panic!("expected a Str, got {other:?}"),
+            };
+            assert_eq!(
+                got_s, original,
+                "round trip changed the value: {original:?} -> {lit}"
+            );
+        }
     }
 }

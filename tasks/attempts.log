@@ -9,3 +9,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-06T18:47:03Z  U5  attempt 1  foreign-keyword help on the E0001 unresolved-name diagnostic (const/var)
 2026-08-06T20:24:00Z  S1a  attempt 1  live Ledger compares file line count against self.entries; no on-disk format change
 2026-08-06T20:28:04Z  S2  attempt 1  r31/r33/r34: parse one cargo test run per crate; require each name to report ok
+2026-08-07T02:14:28Z  M1  attempt 1  escape { and } in value_as_literal string rendering
