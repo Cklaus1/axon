@@ -400,9 +400,9 @@ pub const BUILTINS: &[BuiltinFn] = &[
     },
     BuiltinFn {
         name: "arr_push",
-        params: &[("xs", "[i64]"), ("x", "i64")],
-        ret: "[i64]",
-        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. (Concrete-typed for i64 today; generic [T] form waits on Phase 8.)",
+        params: &[("xs", "[T]"), ("x", "T")],
+        ret: "[T]",
+        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. Element type is deferred, so `arr_push(rows, Rec { .. })` builds a `[Rec]`; `T` must be consistent between the array and the pushed element (a mixed push is E0306). Native codegen lowers the `[i64]` case only — other element types are E0910-refused (interpreter-only).",
     },
     BuiltinFn {
         name: "arr_sum_i64",

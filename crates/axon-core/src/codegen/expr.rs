@@ -8807,13 +8807,25 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             // arr_push(&a, x) → a ++ [x] (fresh array; input untouched).
+            //
+            // `arr_push` is GENERIC at the source level (`[T], T -> [T]`), but
+            // this lowering is the 8-byte-stride i64 one. Anything else — a
+            // struct/str/array element (StructValue), an f64 (FloatValue), or a
+            // BOOL (an i1 IntValue, which would be stored into an i64 slot and
+            // read back as garbage) — must fall through to the E0910 refusal
+            // below rather than miscompile (invariant I-2: native either matches
+            // the interpreter or refuses honestly). Narrow *signed* ints
+            // (i8/i16/i32) keep the pre-generic behaviour: they widened to the
+            // old `x: i64` parameter and lower correctly.
             if name == "arr_push" && args.len() == 2 {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(x))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
                 ) {
-                    if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
-                        return Some(r);
+                    if x.get_type().get_bit_width() > 1 {
+                        if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
+                            return Some(r);
+                        }
                     }
                 }
             }

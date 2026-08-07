@@ -165,6 +165,53 @@ fn type_contains_unresolved(ty: &Type) -> bool {
     }
 }
 
+/// True when a builtin signature's `Type::Deferred(name)` is a *type parameter*
+/// slot (`T`, `U`, `V`, `K`, `E`) rather than an opaque deferred type (`Dict`,
+/// `Uncertain<…>`) or a closure slot (`fn(T) -> U`).
+///
+/// `parse_type_str` (infer.rs) has no type-variable arm, so every one of these
+/// lands as `Deferred`; the name is the only thing that tells them apart.
+fn is_builtin_type_param_name(n: &str) -> bool {
+    !n.starts_with("fn(")
+        && !DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
+        && !n.is_empty()
+        && n.len() <= 2
+        && n.starts_with(|c: char| c.is_ascii_uppercase())
+        && n.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+/// Structurally match a builtin's declared parameter type against a concrete
+/// argument type, recording every `T ↦ concrete` binding it implies.
+///
+/// Used to keep a *generic* builtin from degrading into an *untyped* one: a
+/// signature that names `T` twice (`arr_push([T], T)`, `arr_contains`,
+/// `arr_concat`) means the two slots must agree. Unresolved argument types
+/// (empty-array literals, inference variables) bind nothing — silence, not a
+/// guess.
+fn collect_builtin_type_param_bindings(param: &Type, arg: &Type, out: &mut Vec<(String, Type)>) {
+    match (param, arg) {
+        (Type::Deferred(n), a) if is_builtin_type_param_name(n) => {
+            if !type_contains_unresolved(a) {
+                out.push((n.clone(), a.clone()));
+            }
+        }
+        (Type::Slice(p), Type::Slice(a))
+        | (Type::Option(p), Type::Option(a))
+        | (Type::Chan(p), Type::Chan(a)) => collect_builtin_type_param_bindings(p, a, out),
+        (Type::Result(po, pe), Type::Result(ao, ae)) => {
+            collect_builtin_type_param_bindings(po, ao, out);
+            collect_builtin_type_param_bindings(pe, ae, out);
+        }
+        (Type::Tuple(ps), Type::Tuple(as_)) if ps.len() == as_.len() => {
+            for (p, a) in ps.iter().zip(as_.iter()) {
+                collect_builtin_type_param_bindings(p, a, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn is_integer_widening(from: &Type, to: &Type) -> bool {
     let rank = |t: &Type| match t {
         Type::I8 => Some(0u8),
@@ -3983,9 +4030,63 @@ impl CheckCtx {
         }
 
         // R06 — argument types.
+        // Bindings for the type parameters a builtin signature names more than
+        // once (`arr_push([T], T)`, `arr_contains`, `arr_index_of`,
+        // `arr_concat`): tp name → (arg index that bound it, concrete type).
+        let mut tp_bindings: HashMap<String, (usize, Type)> = HashMap::new();
         for (i, (arg, param_ty)) in args.iter().zip(sig.params.iter()).enumerate() {
             let arg_path = format!("{node_path}.arg_{i}");
             let arg_ty = self.resolve_expr_type(arg, &arg_path, scope);
+
+            // A generic slot accepts ANY type — but the same `T` in two slots
+            // must be the SAME type, or "generic" would just mean "untyped".
+            // `arr_push([1, 2], "str")` binds T=i64 then T=str: refuse.
+            let mut bindings: Vec<(String, Type)> = Vec::new();
+            collect_builtin_type_param_bindings(param_ty, &arg_ty, &mut bindings);
+            let mut conflicted = false;
+            for (tp, bound) in bindings {
+                match tp_bindings.get(&tp) {
+                    Option::Some((first_i, first_ty)) => {
+                        if *first_ty != bound
+                            && !is_integer_widening(&bound, first_ty)
+                            && !is_integer_widening(first_ty, &bound)
+                        {
+                            let file = self.file.clone();
+                            let span = self.current_span;
+                            let first_disp = first_ty.display();
+                            let bound_disp = bound.display();
+                            let first_i = *first_i;
+                            self.errors.push(
+                                CheckError::new(
+                                    E0306,
+                                    format!(
+                                        "argument {i} of `{name}` has the wrong type — the \
+                                         element type `{tp}` was already fixed to \
+                                         `{first_disp}` by argument {first_i}"
+                                    ),
+                                )
+                                .node(&arg_path)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .expected(first_disp.clone())
+                                .found(bound_disp)
+                                .fix(format!(
+                                    "`{name}` is generic but not heterogeneous — every `{tp}` \
+                                     slot must be the same type; pass a `{first_disp}` here, or \
+                                     make argument {first_i} match"
+                                )),
+                            );
+                            conflicted = true;
+                        }
+                    }
+                    Option::None => {
+                        tp_bindings.insert(tp, (i, bound));
+                    }
+                }
+            }
+            if conflicted {
+                continue;
+            }
 
             // A *concrete wrapper* arg (`()`, `Option<_>`, `Result<_,_>`) can
             // never satisfy a *deferred opaque* parameter (`Dict`, `Uncertain`,

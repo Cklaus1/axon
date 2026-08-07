@@ -19170,3 +19170,148 @@ fn a_truncated_audit_ledger_is_reported_at_end_of_run() {
     );
 }
 
+// ── M6: generic `arr_push` ───────────────────────────────────────────────────
+
+/// Headline: build a `[Rec]` by appending records.
+///
+/// `arr_push` was declared `([i64], i64) -> [i64]`, so Axon could REPRESENT a
+/// list of records but could not BUILD one — `arr_push(rows, Rec { … })` died
+/// with E0102/E0306 "expected i64, found Rec". That blocked the RLM stateful
+/// measurement, whose model-natural idiom is `rows = arr_push(rows, record)`.
+#[test]
+fn arr_push_is_generic_over_element_type() {
+    let src = "type Rec = { id: i64, region: str }\n\
+        fn main() -> i64 {\n  \
+            let rows = []\n  \
+            let rows2 = arr_push(rows, Rec { id: 1, region: \"north\" })\n  \
+            let rows3 = arr_push(rows2, Rec { id: 2, region: \"south\" })\n  \
+            println(\"n={to_str(len(rows3))} r0={rows3[0].region} id1={to_str(rows3[1].id)}\")\n  \
+            len(rows3)\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_pushrec_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "pushing a struct should build a [Rec]: stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("n=2 r0=north id1=2"),
+        "the pushed records must survive intact: {stdout}"
+    );
+}
+
+/// A generic `arr_push` must not regress the i64 path it used to be pinned to.
+#[test]
+fn arr_push_still_works_for_i64_arrays() {
+    let src = "fn main() -> i64 {\n  \
+        let a = [1, 2, 3]\n  \
+        let b = arr_push(&a, 4)\n  \
+        println(\"len={to_str(len(b))} last={to_str(b[3])} src={to_str(len(a))}\")\n  \
+        arr_sum_i64(&b)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pushi64_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(10), "1+2+3+4 = 10: {stdout}");
+    assert!(
+        stdout.contains("len=4 last=4 src=3"),
+        "copy semantics must hold: {stdout}"
+    );
+}
+
+/// Generic is not untyped: the element type must still be CONSISTENT. Pushing
+/// a `str` onto a `[i64]` binds `T` twice to two different concrete types and
+/// must be refused at check time, not silently accepted.
+#[test]
+fn arr_push_refuses_a_mixed_element_type() {
+    let src = "fn main() -> i64 {\n  \
+        let a = [1, 2]\n  \
+        let b = arr_push(a, \"str\")\n  \
+        len(b)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pushmix_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "a mixed-type push must not type-check: {all}"
+    );
+    assert!(
+        all.contains("E0306"),
+        "the refusal should be an argument-type error: {all}"
+    );
+}
+
+/// I-2: native codegen lowers only the `[i64]` element case of `arr_push`
+/// (8-byte stride, i64 slots). Making the builtin generic must NOT open an
+/// interp/native divergence — a struct or bool element has to abort the build
+/// with E0910, never silently compute a wrong value.
+///
+/// The bool case is the sharp one: a `bool` is an *i1* IntValue, so it matched
+/// the old i64 lowering's pattern and was stored into (and read back from) an
+/// i64 slot — it built cleanly and returned the wrong element.
+#[test]
+fn arr_push_non_i64_elements_are_e0910_refused_natively() {
+    let pid = std::process::id();
+    for (label, src) in [
+        (
+            "struct",
+            "type Rec = { id: i64 }\n\
+             fn main() -> i64 { let rows = []\n let r = arr_push(rows, Rec { id: 1 })\n len(r) }\n",
+        ),
+        (
+            "bool",
+            "fn main() -> i64 { let a = [true, false]\n let b = arr_push(&a, true)\n \
+             if b[2] { 1 } else { 0 } }\n",
+        ),
+        (
+            "f64",
+            "fn main() -> i64 { let a = [1.5]\n let b = arr_push(&a, 2.5)\n len(b) }\n",
+        ),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let bin = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.bin"));
+        let out = axon()
+            .args(["build", f.to_str().unwrap(), "-o"])
+            .arg(&bin)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let _ = std::fs::remove_file(&bin);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if msg.contains("requires building axon with the `codegen` feature") {
+            eprintln!("codegen feature absent — arr_push E0910 case `{label}` skipped");
+            continue;
+        }
+        assert!(
+            msg.contains("E0910") && msg.contains("arr_push"),
+            "a {label}-element arr_push must abort the native build with E0910, got:\n{msg}"
+        );
+        assert!(
+            !out.status.success(),
+            "build must FAIL (not exit 0) on the {label} case:\n{msg}"
+        );
+    }
+}
