@@ -18722,7 +18722,10 @@ fn tmp_ax(name: &str, src: &str) -> std::path::PathBuf {
     f
 }
 
-const MUT_SRC: &str = "fn main() -> i64 {\n    let mut count = 0\n    0\n}\n";
+// Was `let mut count = 0`, until M5 made that COMPILE. These tests need *a*
+// parse error to check that the parse tier's diagnostic survives to each verb —
+// the specific error was never the subject. `:=` is still one.
+const MUT_SRC: &str = "fn main() -> i64 {\n    let c := 0\n    0\n}\n";
 
 #[test]
 fn run_emits_a_structured_parse_diagnostic_with_help() {
@@ -18744,7 +18747,7 @@ fn run_emits_a_structured_parse_diagnostic_with_help() {
         "must locate the error: {stderr}"
     );
     assert!(
-        stderr.contains("`mut` is not an Axon keyword"),
+        stderr.contains("`:=` is not Axon"),
         "must carry the fix hint: {stderr}"
     );
 }
