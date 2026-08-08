@@ -15814,6 +15814,55 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
     );
 }
 
+/// The deterministic virtual clock (`AXON_CLOCK`) — determinism, exact values,
+/// monotonicity, and interp/native parity.
+///
+/// Delegates to `scripts/clock_parity.sh`. That harness is picked up
+/// automatically by `parity_all.sh` (which globs `scripts/*_parity.sh`), but
+/// `parity_all.sh` only runs under `gate.sh --strict`, so without this wrapper the
+/// clock would go unverified on every ordinary test run — the vacuous-coverage
+/// shape this repo has hit repeatedly.
+///
+/// The clock logic exists TWICE (`axon-core/src/clock.rs` and a `vclock` module in
+/// `axon-rt`) because axon-core does not depend on axon-rt, so there is no shared
+/// home for it. Duplicated logic is exactly what a parity harness is for.
+#[test]
+fn virtual_clock_is_deterministic_and_matches_native() {
+    let script = format!(
+        "{}/../../scripts/clock_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("clock_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run clock_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if harness_skipped(&out, &stdout, &stderr, &script) {
+        eprintln!("clock parity skipped:\n{stdout}{stderr}");
+        note_harness_skip("codegen unavailable — clock parity");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "the virtual clock must be deterministic and match native (I-2):\n{stdout}{stderr}"
+    );
+    // Assert on the explicit PASS line, which the script emits ONLY when checks
+    // actually ran — a harness that verified nothing also exits 0, so success
+    // alone is not evidence. (An earlier version of this asserted the absence of
+    // "0 passed"; `harness_success_assertions_are_strings_their_scripts_can_emit`
+    // correctly rejected that, since a string the script never literally prints
+    // can only be reached vacuously.)
+    assert!(
+        stdout.contains("clock_parity: PASS"),
+        "expected the PASS line, which is only printed when checks ran:\n{stdout}{stderr}"
+    );
+}
+
 #[test]
 fn codegen_exit_codes_match_interp() {
     // I-2 covers observable behavior, and the PROCESS EXIT CODE is observable —

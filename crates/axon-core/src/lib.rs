@@ -5,6 +5,7 @@ pub mod ai_routing;
 pub mod ast;
 pub mod builtins;
 pub mod checker;
+pub mod clock;
 #[cfg(feature = "codegen")]
 pub mod codegen;
 /// R21 — exact base-10 fixed-point `Decimal` arithmetic (money-safe, i128-backed).

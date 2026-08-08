@@ -40,6 +40,57 @@ use axon_audit;
 /// which can contain the very dict being serialized — a stack overflow rather
 /// than an error message. Any diagnostic naming an arbitrary value needs a tag,
 /// not a rendering.
+/// The time a PROGRAM observes — the single resolution point for every builtin
+/// that reads a clock.
+///
+/// There are two clocks in this crate and they are not interchangeable:
+///
+///   * `interp::now_ms()` (private) is the REAL clock. It stamps the provenance
+///     log's `ts_ms` and seeds the RNG, and it must stay real — a log that lies
+///     about when it was written is useless for an audit.
+///   * this function is the program's view, which a virtual clock (`AXON_CLOCK`,
+///     or `trace --replay` anchoring to a recorded run) may override so a program
+///     that reads the time is replayable.
+///
+/// Every builtin exposing time to Axon code MUST come through here. `temporal_now`,
+/// `temporal_new` and `temporal_is_valid` originally called the private helper
+/// directly, which had two consequences: a program using `Temporal<T>` was not
+/// replayable, and — worse — mixing `now_ms()` with `temporal_*` gave the program
+/// TWO DISAGREEING TIMELINES, since one was virtual and the other real. A
+/// `created_ms` from the real clock compared against a virtual `now_ms()` is
+/// arbitrary garbage, and nothing would have reported it.
+/// Rebuild an `Uncertain<T>` from a replay-cache entry written as `"<value>|<confidence>"`.
+///
+/// A malformed entry is an `Err` VALUE, not a panic: the cache is a file a user can
+/// hand-edit or truncate, and a corrupt line must not take the program down. It is
+/// also not silently ignored — falling through to a live call would turn a broken
+/// replay into an unreproducible run, which is the failure this whole path exists
+/// to prevent, so the error names the cache and the key.
+fn replay_uncertain(cached: &str, who: &str, as_float: bool) -> Value {
+    let parsed = cached.split_once('|').and_then(|(v, c)| {
+        let conf = c.trim().parse::<f64>().ok()?;
+        if as_float {
+            Some((Value::Float(v.trim().parse::<f64>().ok()?), conf))
+        } else {
+            Some((Value::Int(v.trim().parse::<i64>().ok()?), conf))
+        }
+    });
+    match parsed {
+        Some((v, c)) => Value::Ok(Box::new(make_uncertain(v, c))),
+        None => Value::Err(Box::new(Value::Str(format!(
+            "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"<value>|<confidence>\") \
+             — delete the cache to re-record rather than replaying a corrupt one"
+        )))),
+    }
+}
+
+fn program_now_ms() -> i64 {
+    if let Some(t) = crate::clock::now_ms() {
+        return t;
+    }
+    crate::host::with_host(|h| h.now_ms())
+}
+
 fn value_type_tag(v: &Value) -> &'static str {
     match v {
         Value::Int(_) | Value::SizedInt { .. } => "i64",
@@ -3247,11 +3298,17 @@ impl<'p> Interp<'p> {
             }
             "now_ms" => {
                 want(0)?;
-                ok!(Value::Int(crate::host::with_host(|h| h.now_ms())));
+                ok!(Value::Int(program_now_ms()));
             }
             "sleep_ms" => {
                 want(1)?;
                 let ms = as_int(&args[0])?.max(0) as u64;
+                // Under a virtual clock, advance the timeline instead of really
+                // sleeping: the program still observes `ms` elapsed, and a replay
+                // of a run that slept for ten seconds is instant.
+                if crate::clock::advance(ms as i64) {
+                    ok!(Value::Unit);
+                }
                 crate::host::with_host(|h| h.sleep_ms(ms));
                 ok!(Value::Unit);
             }
@@ -3341,7 +3398,7 @@ impl<'p> Interp<'p> {
             // Represented as `Temporal { value, horizon_ms, decay, created_ms }`.
             "temporal_now" => {
                 want(0)?;
-                ok!(Value::Int(now_ms()));
+                ok!(Value::Int(program_now_ms()));
             }
             "temporal_new" => {
                 want(3)?;
@@ -3350,7 +3407,7 @@ impl<'p> Interp<'p> {
                     1.0, // confidence starts full at creation; decays via temporal_at
                     as_int(&args[1])?,
                     as_float(&args[2])?,
-                    now_ms(),
+                    program_now_ms(),
                 ));
             }
             "temporal_at" => {
@@ -3409,7 +3466,7 @@ impl<'p> Interp<'p> {
                     Value::Struct { fields, .. } => {
                         let horizon = fields.get("horizon_ms").and_then(as_int_opt).unwrap_or(0);
                         let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
-                        ok!(Value::Bool(now_ms() <= created + horizon));
+                        ok!(Value::Bool(program_now_ms() <= created + horizon));
                     }
                     _ => panic("temporal_is_valid: expected a Temporal value"),
                 }
@@ -5446,11 +5503,24 @@ impl<'p> Interp<'p> {
                 if ai_mock_enabled() {
                     ok!(Value::Ok(Box::new(make_uncertain(Value::Int(1), 0.9))));
                 }
+                // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
+                // typed extract made a live, unrecorded model call even under a
+                // replay cache — silently defeating the reproducibility the flag
+                // promises. Found in review. The cache is keyed by
+                // sha256(model \0 prompt), so passing the BUILTIN NAME as the model
+                // keeps an extract's entry distinct from an `ai_complete` for the
+                // same prompt.
+                if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
+                    ok!(replay_uncertain(&cached, name, false));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(
                         match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
-                            Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Int(v), c))),
+                            Ok((v, c)) => {
+                                ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
+                                Value::Ok(Box::new(make_uncertain(Value::Int(v), c)))
+                            }
                             Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }
                     );
@@ -5465,11 +5535,18 @@ impl<'p> Interp<'p> {
                 if ai_mock_enabled() {
                     ok!(Value::Ok(Box::new(make_uncertain(Value::Float(1.0), 0.9))));
                 }
+                // Same replay bypass as the i64 variant above.
+                if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
+                    ok!(replay_uncertain(&cached, name, true));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(
                         match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
-                            Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Float(v), c))),
+                            Ok((v, c)) => {
+                                ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
+                                Value::Ok(Box::new(make_uncertain(Value::Float(v), c)))
+                            }
                             Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }
                     );

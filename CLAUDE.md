@@ -63,6 +63,7 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 |---|---|
 | `AXON_SEED` | Seed the RNG (`u64`) for reproducible `random_*` runs |
 | `AXON_MAX_DEPTH` | Raise the recursion-depth ceiling (default 6000, clamped to 1,000,000). The interpreter thread stack scales with it, so the graceful "recursion limit" panic always fires before a real stack overflow |
+| `AXON_CLOCK` | Deterministic virtual clock: `<start_ms>` or `<start_ms>:<tick_ms>` (tick default 1, may be 0). `now_ms()` returns the current virtual time then advances by `tick`; `sleep_ms(n)` advances by `n` **without really sleeping**. Monotonic, NOT frozen — so `read/sleep/read` still strictly increases and elapsed-time logic keeps working. Closes the last hole in replay: a program reading the clock used to reproduce nothing. `axon trace --replay` sets it automatically from the recorded run's `ts_ms`. Honoured by interp AND native (`clock_parity.sh`) |
 | `AXON_AI_MOCK` | Use deterministic stub AI responses instead of live calls |
 | `AXON_AI_REPLAY` | Path to an LLM-call replay cache: every `ai_complete` is memoized by `(prompt, model)` — a first run records `(response, tokens)`, a re-run replays it verbatim (no live call / mock / API key) so an AI run is exactly reproducible (ROADMAP §9.5 F2) |
 | `AXON_PATH` | Colon-separated module search path for `mod` imports |

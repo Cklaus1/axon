@@ -3524,13 +3524,25 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
         }
     };
     eprintln!(
-        "axon: replaying run-id {rid} (seed={seed}, src={src})",
+        "axon: replaying run-id {rid} (seed={seed}, clock={ts}, src={src})",
         rid = rec.run_id,
         seed = rec.seed,
+        ts = rec.ts_ms,
         src = rec.src,
     );
     // Fix the seed so the re-run is deterministic.
     std::env::set_var("AXON_SEED", rec.seed.to_string());
+    // ...and fix the CLOCK, which used to be the hole in "deterministic for every
+    // run": a program calling `now_ms()` reproduced nothing, because the seed says
+    // nothing about time. The `run_start` record already carries the original
+    // run's wall-clock `ts_ms`, so the replay is anchored to the moment being
+    // reproduced rather than to the moment of replay. No record-format change was
+    // needed — the anchor was already being written.
+    //
+    // An explicit AXON_CLOCK wins, so a user can re-anchor a replay deliberately.
+    if std::env::var(axon_core::clock::ENV_VAR).is_err() {
+        axon_core::clock::set(rec.ts_ms as i64, 1);
+    }
     let source_path = PathBuf::from(&rec.src);
     cmd_run(source_path, false, vec![]);
 }

@@ -1861,6 +1861,11 @@ pub extern "C" fn __axon_write_file(
 /// Suspend the current thread for at least `ms` milliseconds.
 #[no_mangle]
 pub extern "C" fn __axon_sleep_ms(ms: i64) {
+    // Under a virtual clock, advance the timeline rather than blocking — the
+    // program still observes `ms` elapsed. Matches the interpreter.
+    if vclock::advance(ms) {
+        return;
+    }
     if ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
     }
@@ -1869,11 +1874,81 @@ pub extern "C" fn __axon_sleep_ms(ms: i64) {
 /// Return the current wall-clock time as milliseconds since the Unix epoch.
 #[no_mangle]
 pub extern "C" fn __axon_now_ms() -> i64 {
+    // Honour the virtual clock so a native binary replays like the interpreter
+    // does (I-2). This duplicates `axon-core`'s `clock.rs` because axon-core does
+    // not depend on axon-rt; `scripts/clock_parity.sh` is what keeps the two
+    // honest. Precedent: native silently ignored AXON_AI_MOCK until that was
+    // found and fixed the same way.
+    if let Some(t) = vclock::now_ms() {
+        return t;
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Deterministic virtual clock for the NATIVE runtime — the mirror of
+/// `axon-core`'s `clock.rs`. See that module for the full rationale; the short
+/// version is that a monotonic virtual clock (not a frozen one) is what lets a
+/// run that reads the time be replayed without changing what the program
+/// computes.
+///
+/// `AXON_CLOCK=<start_ms>` or `<start_ms>:<tick_ms>`; tick defaults to 1 and may
+/// be 0 for a clock that only moves when `sleep_ms` advances it.
+mod vclock {
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static INITIALIZED: AtomicBool = AtomicBool::new(false);
+    static CURRENT: AtomicI64 = AtomicI64::new(0);
+    static TICK: AtomicI64 = AtomicI64::new(1);
+
+    fn init_from_env() {
+        if INITIALIZED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let Ok(raw) = std::env::var("AXON_CLOCK") else {
+            return;
+        };
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return;
+        }
+        let (start, tick) = match raw.split_once(':') {
+            Some((s, t)) => (s.trim().parse::<i64>(), t.trim().parse::<i64>().ok()),
+            None => (raw.parse::<i64>(), None),
+        };
+        // Malformed input leaves the clock OFF rather than inventing a timeline.
+        if let Ok(start) = start {
+            CURRENT.store(start, Ordering::SeqCst);
+            TICK.store(tick.unwrap_or(1).max(0), Ordering::SeqCst);
+            ENABLED.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn enabled() -> bool {
+        init_from_env();
+        ENABLED.load(Ordering::SeqCst)
+    }
+
+    /// The virtual "now", advancing by `tick`. `None` → use the real clock.
+    pub fn now_ms() -> Option<i64> {
+        if !enabled() {
+            return None;
+        }
+        Some(CURRENT.fetch_add(TICK.load(Ordering::SeqCst), Ordering::SeqCst))
+    }
+
+    /// Advance by `ms`. `false` → the caller should really sleep.
+    pub fn advance(ms: i64) -> bool {
+        if !enabled() {
+            return false;
+        }
+        CURRENT.fetch_add(ms.max(0), Ordering::SeqCst);
+        true
+    }
 }
 
 // ── Phase 10: i64_to_str_radix ────────────────────────────────────────────────
