@@ -1899,3 +1899,32 @@ concrete reason to expect it will not.
 - **[low] Checkpoint/resume for long agent runs.** Replaying a ten-hour run is useless if review costs
   ten hours. `host_await` + `FiberState::Suspended` already exist; replay-to-prefix + resume and durable
   checkpoints are the natural extension.
+- **[HIGH] Replay-diff: report the first divergence between TWO journals, not just journal-vs-run.**
+  `AXON_REPLAY` now names the first point where a live run departs from its journal (exit 11). The
+  remaining half is journal-vs-journal: record run A and run B, then report the first event where they
+  differ. That is the question an auditor actually asks ("what changed?"), it needs no new mechanism —
+  two `Vec<HostEvent>` and a walk — and the sequential matching already in place is what makes it
+  possible. Note `axon-os/src/replay.rs` answers a coarser version (whole-record hash equality) and
+  would compose: it says *whether*, this says *where*.
+- **[HIGH] Gate the replay column: fail CI when a new host effect has no replay story.** The
+  `ai_extract_uncertain_*` bypass survived because nothing enumerated "effects that can reach the
+  world". Now that `AxonHost` is the single seam, that set IS enumerable — the trait's method list.
+  A test asserting every `AxonHost` method appears in both `RecordingHost` and `ReplayHost` (and that
+  no interp builtin calls `std::fs`/`stdin`/`Command` directly) turns the discipline into a mechanism.
+  This is the one genuinely gateable metric from the three proposed in WHY_REPLAY_MATTERS.md §5.
+- **[med] `axon replay <journal>` as a first-class verb, not an env var.** `AXON_RECORD`/`AXON_REPLAY`
+  match the existing `AXON_*` family, but a journal is an artifact a user hands to a reviewer, and a
+  verb can carry `--diff`, `--show` (render a journal as a readable transcript), and `--verify`.
+  Env-var-only also means the web UI and `axon deploy` cannot offer it without setting process env.
+- **[med] Wire the journal into `axon trace --replay` and `run_start`.** The run-start record already
+  carries the seed and `ts_ms`; it should also carry the journal path when one was recorded, so
+  `axon trace --replay <run-id>` restores entropy, time AND environment from one handle instead of
+  requiring the operator to remember which journal went with which run.
+- **[med] Record/replay for `goal`/`test`/`deploy`, not just `run`.** `install_from_env` is wired into
+  `cmd_run` only. The optimizer (`axon goal`) is the path where reproducibility matters most — score
+  deltas are meaningless if the environment moves under them — and it is currently the one path that
+  cannot be journaled.
+- **[low] Repo-wide `cargo fmt` drift.** `cargo fmt -p axon-core` reformats 13 files nobody is editing
+  (builtins/capabilities/codegen/decimal/error/interp/regex/resolver). Any commit that runs fmt sweeps
+  in unrelated churn, so everyone avoids fmt, so the drift grows. Needs one coordinated sweep commit
+  (the parallel-dev track already has a held fmt-fix PR) plus `cargo fmt --check` in the gate.

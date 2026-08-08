@@ -390,3 +390,27 @@ the opportunity entry only records the observation.
   the property's surface and check every member, because the draft's own table was where both live bugs
   were hiding. Two real code bugs were found by reviewing prose, which is a good argument for writing
   the prose.
+- **"The seam already exists, just wrap it" — verify the seam is REACHABLE, not just present.** A
+  review handed me a clean design: every environmental effect funnels through `AxonHost`, so one
+  `RecordingHost` closes the whole column. The trait was real (15 methods, save/restore guard,
+  `dir_list` already sorted for reproducibility) and the conclusion was still wrong in two ways I
+  found only by running code. (1) `HOST` was a `thread_local!` while `interp::on_deep_stack` runs
+  every program on a freshly-spawned thread — so an installed host was invisible to the program it
+  was installed for, and the seam **had never worked for its actual use case**. A 15-line probe
+  printed `REAL-HOST-ERR` instead of the fake host's answer. Nothing caught it because every existing
+  test called `with_host` on the installing thread; the shape that matters, "install a host, then run
+  a program", had no test. (2) `read_line` called `std::io::stdin()` directly from the builtin, so
+  "every effect goes through one trait" was false by one member — and stdin is exactly the channel an
+  interactive agent run depends on. **Rules:** for any "just wire it up" premise, write the smallest
+  program that exercises the END-TO-END path before designing on top of it; and when a doc claims a
+  seam is universal, grep for the underlying primitive (`stdin`, `std::fs`, `Command::new`) rather
+  than trusting the trait's method list. Sixth instance of this class.
+- **A test that HANGS on regression is worse than one that fails.** My first version of the
+  seam-reaches-the-program test probed `read_line`. With the seam broken, `DefaultHost::read_line`
+  blocks on the real stdin — so the test wedged a `cargo test` run for ten minutes and looked like a
+  slow suite rather than a caught bug. I initially misread it as host contention. Rewrote it to probe
+  `read_file` (missing path → immediate Err → clean failure in 0.00s) and moved stdin coverage to the
+  gate script, which replays with stdin CLOSED and is therefore strictly stronger AND hang-free.
+  **Rule:** when choosing what a regression test probes, ask what the BROKEN path does — if the
+  fallback blocks, waits, or retries, pick a different probe. Verify by mutating the source and
+  confirming the failure is fast and specific.
