@@ -1961,6 +1961,25 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
                 matches!(v, Value::Dict(d) if seen.get(&(Rc::as_ptr(d) as *const ())).copied().unwrap_or(0) > 1)
             };
             for name in names {
+                // A binding that SHADOWS A BUILTIN must not persist. It is legal
+                // Axon inside one cell — `let len = 5` merely warns (W0002) —
+                // but once it reaches the prelude, every later cell that calls
+                // `len(xs)` dies with E0306 "cannot call non-function value",
+                // and the session never recovers. Measured: one task naming a
+                // variable `len` poisoned 14 of the following cells in a
+                // tasks_hard run, which scored as Axon failing tasks it can
+                // actually do.
+                //
+                // Skipping loses the value, which is why it is REPORTED — the
+                // alternative is a session that silently breaks a builtin for
+                // every cell after this one.
+                if crate::builtins::is_known_builtin(name) {
+                    lines.push_str(&format!(
+                        "// SKIPPED {name}: shadows the builtin `{name}`; persisting it would \
+                         break every later call to it\n"
+                    ));
+                    continue;
+                }
                 if is_aliased(merged[*name]) {
                     lines.push_str(&format!(
                         "// SKIPPED {name}: dict is shared with another binding; writing it out \

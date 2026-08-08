@@ -1,0 +1,16 @@
+// A cell that names a variable after a builtin.
+//
+// Legal inside one cell — it only warns (W0002). But if the session dump
+// persists it, the binding becomes part of every later cell's prelude and every
+// later call to `len(..)` fails with E0306 "cannot call non-function value".
+// Measured: one task doing this poisoned 14 of the following cells in a
+// tasks_hard run, which scored as Axon failing tasks it can do.
+
+fn main() -> i64 {
+    // Shadows a builtin — must NOT persist.
+    let len = 5
+    // Shadows nothing — must persist.
+    let keep = 7
+    println(to_str(len + keep))
+    0
+}

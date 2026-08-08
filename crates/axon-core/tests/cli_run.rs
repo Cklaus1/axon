@@ -19504,3 +19504,55 @@ fn dicts_round_trip_through_a_dump_and_aliases_are_refused() {
         String::from_utf8_lossy(&again.stderr)
     );
 }
+
+/// A binding that shadows a builtin must not survive a session dump.
+///
+/// `let len = 5` is legal in one cell and only warns. Persisted into the next
+/// cell's prelude it makes `len(xs)` fail with E0306 for the rest of the
+/// session, and the session cannot recover. This is the largest single cause of
+/// failure found in a `tasks_hard` run: one task naming a variable `len`
+/// poisoned 14 of the cells after it.
+#[test]
+fn a_binding_that_shadows_a_builtin_does_not_persist() {
+    let dump = std::env::temp_dir().join("axon_test_dump_shadow.ax");
+    let _ = std::fs::remove_file(&dump);
+    let out = axon()
+        .arg("run")
+        .arg(fixture("dump_shadow_builtin.ax"))
+        .env("AXON_DUMP_BINDINGS", &dump)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    let dumped = std::fs::read_to_string(&dump).expect("dump file should exist");
+
+    assert!(
+        dumped.contains("// SKIPPED len: shadows the builtin"),
+        "`len` must be skipped WITH a reason, not silently dropped:\n{dumped}"
+    );
+    assert!(!dumped.contains("let len ="), "`len` must not persist:\n{dumped}");
+    // And the skip is targeted — an ordinary binding in the same cell survives.
+    assert!(dumped.contains("let keep = 7"), "non-shadowing bindings must persist:\n{dumped}");
+
+    // The point of all of it: a following cell can still CALL the builtin.
+    let next = std::env::temp_dir().join("axon_test_dump_shadow_next.ax");
+    std::fs::write(
+        &next,
+        format!(
+            "fn main() -> i64 {{\n{}\n    let xs = [1, 2, 3]\n    println(to_str(len(xs) + keep))\n    0\n}}\n",
+            dumped
+                .lines()
+                .filter(|l| l.starts_with("let "))
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )
+    .unwrap();
+    let again = axon().arg("run").arg(&next).output().unwrap();
+    let so = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        again.status.success() && so.contains("10"),
+        "the next cell must be able to call `len` (expected 3 + 7):\n{so}{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}
