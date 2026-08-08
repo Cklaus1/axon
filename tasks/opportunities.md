@@ -1970,3 +1970,16 @@ concrete reason to expect it will not.
   + timestamp) written by the gate and read by `claims_gate.sh` would make "the gate is green" a
   checkable claim rather than an assumption. Pairs with the item above: a status row could then cite a
   gate run instead of a script name.
+- **[HIGH — needs one human decision] Finish the toolchain/fmt fix: unset the rustup override, then
+  ONE sweep.** Root cause found 2026-08-08 and it is NOT what PR #4 addresses: a machine-local
+  `rustup override` pinned this working tree to *rolling* `nightly`, which **beats
+  `rust-toolchain.toml` silently** (rustup precedence: CLI > RUSTUP_TOOLCHAIN > directory override >
+  file > default). So local rustfmt changed on every `rustup update` while CI ran `@stable` — the drift
+  regenerated continuously and no CI-side pin could stop it. `rust-toolchain.toml` now pins
+  `nightly-2026-07-11` (the verified-green toolchain) and `claims_gate.sh` check 6 WARNS when an
+  override shadows it. Remaining, in order: (1) each developer runs `rustup override unset` here —
+  a one-time ~1GB install of the dated nightly, which is why it was not done unilaterally; (2) CI drops
+  `dtolnay/rust-toolchain@stable` in favour of the file (5 workflow sites, untestable from here);
+  (3) ONE `cargo fmt --all` sweep commit, no logic — must come AFTER (1)/(2) or the next differing
+  rustfmt re-dirties it; (4) add `cargo fmt --all --check` to `gate.sh`. **Supersede PR #4:** its
+  5-file format is a subset of the 38, and its CI-only pin cannot fix a local rolling channel.

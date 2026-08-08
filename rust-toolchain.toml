@@ -1,0 +1,49 @@
+# One toolchain, for CI and for every developer.
+#
+# WHY THIS FILE EXISTS.
+#
+# `cargo fmt` reformatted 38 files that nobody was editing. That is not drift in
+# the code — it is CI and local machines running different rustfmt versions, so
+# each side "fixes" what the other just did. The visible symptom is that every
+# commit must choose between skipping fmt and sweeping in a dozen unrelated files,
+# so everyone skips it and the drift grows.
+#
+# PR #4 pinned CI (`dtolnay/rust-toolchain@1.95.0`) and left local unpinned, which
+# fixes half of a disagreement: the moment a developer runs `cargo fmt` on their
+# own toolchain the repo re-dirties. A pin is only a fix if BOTH sides read the
+# same number, which is what a toolchain file does — cargo and rustup honour it
+# automatically, so agreement stops depending on anyone remembering.
+#
+# WHY NIGHTLY, and why that costs nothing here.
+#
+# Nothing in this workspace uses a nightly LANGUAGE feature — there is not a single
+# `#![feature(...)]` — so this is not a dependency on unstable Rust. It is a
+# dependency on two unstable CARGO flags: `scripts/build-guest-image.sh` builds the
+# freestanding guest kernel with `-Z build-std=core,compiler_builtins` and
+# `-Z json-target-spec` against a custom target JSON. Those are nightly-only and
+# have no stable equivalent.
+#
+# Pinning stable would therefore not remove nightly from the project; it would
+# leave the R17/axon-vm kernel path needing a DIFFERENT toolchain from everything
+# else — reintroducing the two-toolchains problem this file exists to end, just
+# moved somewhere less visible. One nightly for everything is simpler and strictly
+# more consistent. (CI never builds the guest kernel, so CI could run stable — but
+# "CI and local differ" is the bug, not a design.)
+#
+# LLVM 17 does NOT constrain this choice. `inkwell`'s `llvm17-0` feature resolves
+# through `llvm-sys` to the SYSTEM LLVM (`/usr/lib/llvm-17`), which is independent
+# of the LLVM rustc bundles. An earlier note claimed the codegen LLVM pin limited
+# the Rust version; that was wrong and should not be repeated.
+#
+# WHY THIS EXACT DATE.
+#
+# It is the toolchain the full suite is verified green on (1856 passed / 0 failed).
+# Pin what is known good, not what is newest. Bumping it is a deliberate act: change
+# the date, run the full suite, and re-run `cargo fmt --all` in the SAME commit,
+# because a rustfmt change across toolchains is exactly what produced the drift.
+
+[toolchain]
+channel = "nightly-2026-07-11"
+# rustfmt/clippy are required by the gate; rust-src by `-Z build-std` for the
+# freestanding guest kernel.
+components = ["rustfmt", "clippy", "rust-src"]

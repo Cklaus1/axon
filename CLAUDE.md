@@ -102,6 +102,23 @@ language card did it.
 | `AXON_INTENT_GEN` | `axon intent compile` fills TODO stubs via a live model (needs `--features asi-runtime`) |
 | `AXON_KILL_FILE` | Path whose existence trips the `@[corrigible]` kill-switch latch |
 
+## Toolchain
+
+Pinned by `rust-toolchain.toml` to `nightly-2026-07-11` — the toolchain the full
+suite is verified green on. **Nightly is required only for two cargo flags**, not
+for any language feature (there is no `#![feature(...)]` in the workspace):
+`scripts/build-guest-image.sh` builds the freestanding guest kernel with
+`-Z build-std` + `-Z json-target-spec`. LLVM 17 is orthogonal — `inkwell`'s
+`llvm17-0` resolves through `llvm-sys` to the **system** LLVM, independent of the
+one rustc bundles.
+
+**If you have a `rustup override` on this directory, remove it** —
+`rustup override unset` — because a directory override BEATS `rust-toolchain.toml`
+silently. That state is what produced ~38 files of `cargo fmt` drift: the override
+followed *rolling* `nightly`, so local rustfmt changed on every `rustup update`
+while CI ran `@stable`. `scripts/claims_gate.sh` warns (does not fail) when a
+shadowing override is present.
+
 ## Compiler Pipeline
 
 ```

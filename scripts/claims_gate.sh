@@ -42,9 +42,14 @@ cd "$(dirname "$0")/.."
 AXON="${AXON:-./target/debug/axon}"
 DOC="CLAUDE.md"
 
-pass=0; fail=0
+pass=0; fail=0; warned=0
 ok()  { echo "  OK $1"; pass=$((pass+1)); }
 bad() { echo "FAIL [$1]: $2"; fail=$((fail+1)); }
+# Loud, but NOT a failure. For conditions the REPO cannot control — a developer's
+# local rustup state. A gate that fails on someone's machine configuration blocks
+# work for the wrong reason (and CI, which has no such state, would pass anyway),
+# but staying silent is what let the shadowed toolchain persist unnoticed.
+warn() { echo "WARN [$1]: $2"; warned=$((warned+1)); }
 
 if [ ! -f "$DOC" ]; then
   echo "claims_gate: SKIP — no $DOC"
@@ -177,7 +182,43 @@ else
   ok "no false completeness claims (the RLM card's 3-of-8-task mistake)"
 fi
 
-echo "claims_gate: $pass passed, $fail failed"
+# ── 6: nothing may silently SHADOW the pinned toolchain ─────────────────────
+#
+# `rust-toolchain.toml` is only a pin if it is the thing actually in force, and it
+# is NOT the top of rustup's precedence list. A `rustup override set` on the
+# directory, or a `RUSTUP_TOOLCHAIN` in the environment, BEATS the file — silently,
+# with no warning from cargo.
+#
+# That is exactly the state this repo was found in: a machine-local override
+# pinned the working tree to ROLLING `nightly`, so local rustfmt changed on every
+# `rustup update` while CI ran `@stable`. The result was 38 files of formatting
+# drift that regenerated faster than anyone would sweep it, and a `cargo fmt --check`
+# in CI that could not stay green. PR #4 pinned CI and could not have fixed it,
+# because the other half of the disagreement was invisible and not in the repo.
+#
+# A pin nobody honours is decoration. This makes "the toolchain is pinned" a
+# checkable claim rather than an assumption.
+if [ -f rust-toolchain.toml ]; then
+  want="$(grep -E '^channel' rust-toolchain.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+  if [ -z "$want" ]; then
+    bad toolchain_parse "rust-toolchain.toml has no parseable channel"
+  elif ! command -v rustup >/dev/null 2>&1; then
+    ok "toolchain: pinned to $want (rustup absent — cannot check for a shadowing override)"
+  else
+    active="$(rustup show active-toolchain 2>/dev/null | head -1)"
+    if [ -n "${RUSTUP_TOOLCHAIN:-}" ]; then
+      warn toolchain_env "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN overrides rust-toolchain.toml ($want) — unset it, or the pin does nothing"
+    elif echo "$active" | grep -q "directory override"; then
+      warn toolchain_override "a rustup DIRECTORY OVERRIDE is shadowing rust-toolchain.toml: active is '$active' but the repo pins '$want'. Run \`rustup override unset\` in this directory. This is the state that produced 38 files of fmt drift: the override followed ROLLING nightly, so local rustfmt changed on every \`rustup update\` while CI ran a different toolchain entirely."
+    elif echo "$active" | grep -q "$want"; then
+      ok "toolchain: rust-toolchain.toml ($want) is the toolchain actually in force"
+    else
+      bad toolchain_mismatch "rust-toolchain.toml pins '$want' but the active toolchain is '$active' — something is shadowing the pin"
+    fi
+  fi
+fi
+
+echo "claims_gate: $pass passed, $fail failed, $warned warning(s)"
 [ "$fail" -eq 0 ] || exit 1
 # A run that checked NOTHING also has zero failures and must not read as a pass.
 if [ "$pass" -eq 0 ]; then
