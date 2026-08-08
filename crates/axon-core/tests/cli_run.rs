@@ -131,7 +131,11 @@ mod harness_skip_rules {
 /// The lesson generalises: a capability probe must exercise the capability, not
 /// something adjacent to it that happens to be cheaper to check.
 fn build_output_or_skip(fixture_name: &str) -> Option<String> {
-    let out = axon().arg("build").arg(fixture(fixture_name)).output().unwrap();
+    let out = axon()
+        .arg("build")
+        .arg(fixture(fixture_name))
+        .output()
+        .unwrap();
     let all = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -15863,6 +15867,47 @@ fn virtual_clock_is_deterministic_and_matches_native() {
     );
 }
 
+/// The host journal: a run reproduces with its environment DELETED, and every
+/// way of faking that is refused. See `scripts/replay_host_gate.sh` for why each
+/// of the ten checks exists — the negative ones carry the weight.
+///
+/// No codegen dependency (the journal is an interpreter facility), so unlike the
+/// clock gate this one has no skip path: if it cannot run, that is a failure.
+#[test]
+fn host_journal_records_and_replays_without_the_environment() {
+    let script = format!(
+        "{}/../../scripts/replay_host_gate.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "replay_host_gate.sh must exist — the record/replay claim is unverified without it"
+    );
+    let out = Command::new("bash")
+        .arg(&script)
+        // Point the script at THIS test run's binary rather than letting it fall
+        // back to `./target/debug/axon`. Two reasons: the script SKIPs when that
+        // path is missing (and a skip has no PASS line, so the assertion below
+        // would fail confusingly), and a stale binary on disk would mean this
+        // test and its siblings are checking different builds.
+        .env("AXON", env!("CARGO_BIN_EXE_axon"))
+        .output()
+        .expect("run replay_host_gate.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a recorded run must replay byte-for-byte with its environment removed, \
+         and every way of faking that must be refused:\n{stdout}{stderr}"
+    );
+    // The PASS line is printed ONLY when checks ran — a harness that verified
+    // nothing also exits 0.
+    assert!(
+        stdout.contains("replay_host_gate: PASS"),
+        "expected the PASS line, which is only printed when checks ran:\n{stdout}{stderr}"
+    );
+}
+
 #[test]
 fn codegen_exit_codes_match_interp() {
     // I-2 covers observable behavior, and the PROCESS EXIT CODE is observable —
@@ -19474,21 +19519,29 @@ fn concat_plus_is_refused_natively_rather_than_miscompiled() {
 /// the very first line of this output. `io_builtins.ax` cannot catch that.
 #[test]
 fn append_file_extends_and_file_size_counts_bytes() {
-    let out = axon().arg("run").arg(fixture("fs_append_size.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("fs_append_size.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(
         lines,
         vec![
-            "onetwo", // append extended rather than truncated
-            "6",      // bytes
-            "2",      // "é" is ONE character but TWO bytes
-            "created",// append created the file's content
-            "ERR",    // an unreadable path errs rather than reporting 0
+            "onetwo",  // append extended rather than truncated
+            "6",       // bytes
+            "2",       // "é" is ONE character but TWO bytes
+            "created", // append created the file's content
+            "ERR",     // an unreadable path errs rather than reporting 0
         ],
         "unexpected output:\n{stdout}"
     );
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Native codegen must refuse the two new fs builtins rather than emit a binary
@@ -19528,7 +19581,11 @@ fn dicts_round_trip_through_a_dump_and_aliases_are_refused() {
         .env("AXON_DUMP_BINDINGS", &dump)
         .output()
         .unwrap();
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let dumped = std::fs::read_to_string(&dump).expect("dump file should exist");
 
     assert!(
@@ -19593,16 +19650,26 @@ fn a_binding_that_shadows_a_builtin_does_not_persist() {
         .env("AXON_DUMP_BINDINGS", &dump)
         .output()
         .unwrap();
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let dumped = std::fs::read_to_string(&dump).expect("dump file should exist");
 
     assert!(
         dumped.contains("// SKIPPED len: shadows the builtin"),
         "`len` must be skipped WITH a reason, not silently dropped:\n{dumped}"
     );
-    assert!(!dumped.contains("let len ="), "`len` must not persist:\n{dumped}");
+    assert!(
+        !dumped.contains("let len ="),
+        "`len` must not persist:\n{dumped}"
+    );
     // And the skip is targeted — an ordinary binding in the same cell survives.
-    assert!(dumped.contains("let keep = 7"), "non-shadowing bindings must persist:\n{dumped}");
+    assert!(
+        dumped.contains("let keep = 7"),
+        "non-shadowing bindings must persist:\n{dumped}"
+    );
 
     // The point of all of it: a following cell can still CALL the builtin.
     let next = std::env::temp_dir().join("axon_test_dump_shadow_next.ax");
@@ -19636,7 +19703,11 @@ fn a_binding_that_shadows_a_builtin_does_not_persist() {
 /// non-ASCII input. Loud beats wrong.
 #[test]
 fn str_slice_refuses_a_range_that_splits_a_utf8_character() {
-    let out = axon().arg("run").arg(fixture("utf8_slice_boundary.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("utf8_slice_boundary.ax"))
+        .output()
+        .unwrap();
     let all = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -19660,7 +19731,11 @@ fn str_slice_refuses_a_range_that_splits_a_utf8_character() {
 /// correct slicing would be a worse bug than the one it replaced.
 #[test]
 fn str_slice_still_slices_on_character_boundaries() {
-    let out = axon().arg("run").arg(fixture("utf8_slice_aligned.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("utf8_slice_aligned.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert!(out.status.success(), "aligned slices must work: {stdout}");
@@ -19678,20 +19753,41 @@ fn str_slice_still_slices_on_character_boundaries() {
 /// proves nothing about the thing this slice adds.
 #[test]
 fn character_access_is_indexed_by_character_not_byte() {
-    let out = axon().arg("run").arg(fixture("char_access.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("char_access.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines,
         vec![
-            "5", "4",           // str_len (bytes) vs str_len_chars (characters)
-            "é", "195", "",     // char index reaches é; byte index gives its first byte
-            "caf", "é", "café", // character slicing, including a clamp
-            "4", "c-a-f-é", "4",// str_chars -> array work
-            "233", "é",         // char_code / chr round trip
-            "ERR-multi", "ERR-empty",
-            "true", "false", "true", "true", "false",
+            "5",
+            "4", // str_len (bytes) vs str_len_chars (characters)
+            "é",
+            "195",
+            "", // char index reaches é; byte index gives its first byte
+            "caf",
+            "é",
+            "café", // character slicing, including a clamp
+            "4",
+            "c-a-f-é",
+            "4", // str_chars -> array work
+            "233",
+            "é", // char_code / chr round trip
+            "ERR-multi",
+            "ERR-empty",
+            "true",
+            "false",
+            "true",
+            "true",
+            "false",
         ],
         "unexpected output:\n{stdout}"
     );
@@ -19704,7 +19800,10 @@ fn native_refuses_the_character_builtins_rather_than_diverging() {
     let Some(all) = build_output_or_skip("char_access.ax") else {
         return;
     };
-    assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
+    assert!(
+        all.contains("E0910"),
+        "expected an E0910 refusal, got:\n{all}"
+    );
 }
 
 /// R42 T5 — the measured `tasks_hard` json failure, as a regression test.
@@ -19714,23 +19813,31 @@ fn native_refuses_the_character_builtins_rather_than_diverging() {
 /// array's length so it could not be looped, and nothing returned a numeric leaf.
 #[test]
 fn json_arrays_and_numeric_leaves_are_reachable() {
-    let out = axon().arg("run").arg(fixture("json_arrays.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("json_arrays.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         stdout.lines().collect::<Vec<_>>(),
         vec![
-            "10",        // THE measured task: arr_sum_i64(json_arr_i64(a)) + json_path_i64(b.c)
-            "3",         // json_len — an array can be looped at all
-            "2",         // json_at(arr, 1)
-            "a,b",       // json_keys
-            "{\"c\":4}", // json_get_json returns a composable sub-document
-            "3",         // json_path_i64 with a numeric path component
-            "4",         // json_path_f64 widens an integer leaf
-            "x|y",       // json_arr_str
-            "ERR-elem",  // one bad element fails the WHOLE call, not silently short
-            "ERR-parse", // E2201 malformed
-            "ERR-scalar",// a scalar has no length
+            "10",         // THE measured task: arr_sum_i64(json_arr_i64(a)) + json_path_i64(b.c)
+            "3",          // json_len — an array can be looped at all
+            "2",          // json_at(arr, 1)
+            "a,b",        // json_keys
+            "{\"c\":4}",  // json_get_json returns a composable sub-document
+            "3",          // json_path_i64 with a numeric path component
+            "4",          // json_path_f64 widens an integer leaf
+            "x|y",        // json_arr_str
+            "ERR-elem",   // one bad element fails the WHOLE call, not silently short
+            "ERR-parse",  // E2201 malformed
+            "ERR-scalar", // a scalar has no length
         ],
         "unexpected output:\n{stdout}"
     );
@@ -19741,19 +19848,33 @@ fn json_arrays_and_numeric_leaves_are_reachable() {
 /// contract; "what we wrote can be read back" is.
 #[test]
 fn json_construction_round_trips_through_the_readers() {
-    let out = axon().arg("run").arg(fixture("json_write.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("json_write.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         stdout.lines().collect::<Vec<_>>(),
         vec![
-            "[1,2,3]", "6",                        // array out, summed back in
-            "[\"x\",\"y\"]", "x|y",                // string array round trip
-            "{\"a\":[1,2,3],\"n\":7,\"s\":\"hi\"}",// object from pre-encoded values
-            "7", "3", "hi",                        // read back by path
-            "{\"we\\\"ird\":1}", "1",              // a quote in a KEY is escaped
-            "{\"k\":42}", "42",                    // dict_to_json round trip
-            "ERR-nojson",                          // a closure value is an Err, not a dropped key
+            "[1,2,3]",
+            "6", // array out, summed back in
+            "[\"x\",\"y\"]",
+            "x|y",                                  // string array round trip
+            "{\"a\":[1,2,3],\"n\":7,\"s\":\"hi\"}", // object from pre-encoded values
+            "7",
+            "3",
+            "hi", // read back by path
+            "{\"we\\\"ird\":1}",
+            "1", // a quote in a KEY is escaped
+            "{\"k\":42}",
+            "42",         // dict_to_json round trip
+            "ERR-nojson", // a closure value is an Err, not a dropped key
         ],
         "unexpected output:\n{stdout}"
     );
@@ -19762,19 +19883,32 @@ fn json_construction_round_trips_through_the_readers() {
 /// R42 T7 — filesystem beyond a single known path.
 #[test]
 fn filesystem_ops_create_probe_copy_rename_and_list() {
-    let out = axon().arg("run").arg(fixture("fs_ops.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("fs_ops.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         stdout.lines().collect::<Vec<_>>(),
         vec![
-            "mkdir-ok", "true",   // dir_create makes parents
-            "false",              // a missing path reports false, not an error
-            "true",               // the written file exists
-            "copy-ok", "true", "hello", // copy leaves the SOURCE in place
-            "rename-ok", "false", "true", // rename DESTROYS the source
-            "moved.txt,src.txt",  // dir_list: names, sorted
-            "ERR-nodir",          // not-a-directory is an Err, not an empty list
+            "mkdir-ok",
+            "true",  // dir_create makes parents
+            "false", // a missing path reports false, not an error
+            "true",  // the written file exists
+            "copy-ok",
+            "true",
+            "hello", // copy leaves the SOURCE in place
+            "rename-ok",
+            "false",
+            "true",              // rename DESTROYS the source
+            "moved.txt,src.txt", // dir_list: names, sorted
+            "ERR-nodir",         // not-a-directory is an Err, not an empty list
         ],
         "unexpected output:\n{stdout}"
     );
@@ -19786,7 +19920,10 @@ fn native_refuses_the_filesystem_builtins() {
     let Some(all) = build_output_or_skip("fs_ops.ax") else {
         return;
     };
-    assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
+    assert!(
+        all.contains("E0910"),
+        "expected an E0910 refusal, got:\n{all}"
+    );
 }
 
 /// R42 T8 — base64 / hex. These are builtins because hand-rolled base64 goes
@@ -19795,19 +19932,39 @@ fn native_refuses_the_filesystem_builtins() {
 /// passes any test that only round-trips its own output.
 #[test]
 fn base64_and_hex_encode_decode_including_padding() {
-    let out = axon().arg("run").arg(fixture("encoding.ax")).output().unwrap();
+    let out = axon()
+        .arg("run")
+        .arg(fixture("encoding.ax"))
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         stdout.lines().collect::<Vec<_>>(),
         vec![
-            "YWJj", "YQ==", "YWI=", "",   // padding: 0, 2, 1 `=` — the failure mode
-            "abc", "a", "ab",             // round trips through each padding case
-            "café",                       // multi-byte UTF-8 survives
-            "aGVsbG8gd29ybGQ=", "hello world", // known-good vector, both ways
-            "616263", "abc", "café", "HELLO",  // hex, incl. uppercase input
-            "ERR-b64-len", "ERR-b64-char", "ERR-hex-odd", "ERR-hex-digit",
-            "ERR-not-utf8",               // valid base64, invalid UTF-8 bytes
+            "YWJj",
+            "YQ==",
+            "YWI=",
+            "", // padding: 0, 2, 1 `=` — the failure mode
+            "abc",
+            "a",
+            "ab",   // round trips through each padding case
+            "café", // multi-byte UTF-8 survives
+            "aGVsbG8gd29ybGQ=",
+            "hello world", // known-good vector, both ways
+            "616263",
+            "abc",
+            "café",
+            "HELLO", // hex, incl. uppercase input
+            "ERR-b64-len",
+            "ERR-b64-char",
+            "ERR-hex-odd",
+            "ERR-hex-digit",
+            "ERR-not-utf8", // valid base64, invalid UTF-8 bytes
         ],
         "unexpected output:\n{stdout}"
     );
@@ -19832,7 +19989,10 @@ fn date_stdlib_module_tests_pass() {
     // <= 0 — a pre-EPOCH date (1969) leaves the shifted year positive and does
     // not reach the branch at all, which is how an earlier version of that test
     // passed while both branches were broken.
-    let out = axon().args(["test", &ex("stdlib/date.ax")]).output().unwrap();
+    let out = axon()
+        .args(["test", &ex("stdlib/date.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "date.ax tests should pass: {out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
@@ -19846,7 +20006,10 @@ fn set_stdlib_module_tests_pass() {
     // capability the language lacks. Members are STRINGS because dicts are
     // string-keyed — `test_numeric_members_go_through_to_str` pins the
     // consequence that `1` and `"1"` are the same member.
-    let out = axon().args(["test", &ex("stdlib/set.ax")]).output().unwrap();
+    let out = axon()
+        .args(["test", &ex("stdlib/set.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "set.ax tests should pass: {out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
@@ -19861,7 +20024,10 @@ fn path_stdlib_module_tests_pass() {
     // output, say — would reconstruct the sandbox escape downstream of a check
     // that already exists. `path_normalize` therefore returns "" for a path that
     // climbs above its own root, and `path_join` normalizes its result.
-    let out = axon().args(["test", &ex("stdlib/path.ax")]).output().unwrap();
+    let out = axon()
+        .args(["test", &ex("stdlib/path.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "path.ax tests should pass: {out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
@@ -19911,9 +20077,16 @@ fn r42_smoke_scenario_runs_end_to_end() {
         let _ = e.read_to_string(&mut stderr);
     }
 
-    assert!(status.success(), "smoke scenario failed (exit {:?}):\n{stderr}", status.code());
+    assert!(
+        status.success(),
+        "smoke scenario failed (exit {:?}):\n{stderr}",
+        status.code()
+    );
     assert_eq!(
-        stdout.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>(),
+        stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>(),
         vec![
             "6",      // Slice 3: json_get_json -> json_arr_i64 -> arr_sum_i64
             "4",      // Slices 2+4: 4 CHARACTERS of "café" (5 bytes) via a file
@@ -19935,31 +20108,41 @@ fn r42_smoke_scenario_runs_end_to_end() {
 fn regex_is_leftmost_first_and_refuses_backtracking_constructs() {
     let out = axon().arg("run").arg(fixture("regex.ax")).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         stdout.lines().collect::<Vec<_>>(),
         vec![
-            "a", "ab",              // leftmost-FIRST: alternation order is priority
-            "<a><b>", "<a>",        // greedy vs lazy
-            "NONE",                 // no match is None, not an error
-            "true", "1,22,333",     // is_match, find_all
-            "a|b|c",                // re_split
-            "12-345/12/345",        // captures: 0 is the whole match
-            "nocap:",               // no match -> empty capture array
-            "a[1]b[22]", "a$b",     // $1 references and $$ literal
-            "ERR-badgroup",         // $2 against a one-group pattern is REFUSED,
-                                    // not silently expanded to ""
-            "<>",                   // ...but a group that exists and did not
-                                    // participate does expand to ""
-            "a<1>b",                // $0 is the whole match
-            "a0",                   // $10 with 2 groups = group 1 then literal "0"
-            "ERR-ambiguous",        // $10 with 10 groups is REFUSED, not guessed
-            "ERR-backref", "ERR-lookahead", "ERR-lookbehind",
-            "ERR-blowup",           // {1,100000} expansion refused
-            "aaa",                  // an ordinary counted repetition still works
+            "a",
+            "ab", // leftmost-FIRST: alternation order is priority
+            "<a><b>",
+            "<a>",  // greedy vs lazy
+            "NONE", // no match is None, not an error
+            "true",
+            "1,22,333",      // is_match, find_all
+            "a|b|c",         // re_split
+            "12-345/12/345", // captures: 0 is the whole match
+            "nocap:",        // no match -> empty capture array
+            "a[1]b[22]",
+            "a$b",          // $1 references and $$ literal
+            "ERR-badgroup", // $2 against a one-group pattern is REFUSED,
+            // not silently expanded to ""
+            "<>", // ...but a group that exists and did not
+            // participate does expand to ""
+            "a<1>b",         // $0 is the whole match
+            "a0",            // $10 with 2 groups = group 1 then literal "0"
+            "ERR-ambiguous", // $10 with 10 groups is REFUSED, not guessed
+            "ERR-backref",
+            "ERR-lookahead",
+            "ERR-lookbehind",
+            "ERR-blowup", // {1,100000} expansion refused
+            "aaa",        // an ordinary counted repetition still works
             "ERR-malformed",
-            "false",                // (a+)+$ returns PROMPTLY — would hang on a
-                                    // backtracking engine
+            "false", // (a+)+$ returns PROMPTLY — would hang on a
+                     // backtracking engine
         ],
         "unexpected output:\n{stdout}"
     );

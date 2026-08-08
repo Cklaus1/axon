@@ -157,7 +157,10 @@ enum Command {
         /// risk level, and a conservative syscall hint list.  A microVM launcher
         /// (e.g. `axon-vm`) reads this sidecar to generate seccomp policies and
         /// cgroup budgets without re-parsing the source.
-        #[arg(long, help = "Emit <binary>.axmeta capability manifest (axon-manifest/1)")]
+        #[arg(
+            long,
+            help = "Emit <binary>.axmeta capability manifest (axon-manifest/1)"
+        )]
         emit_manifest: bool,
     },
 
@@ -3650,6 +3653,18 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // (no output, byte-unchanged); under AXON_REQUIRE_CERTS it fails closed.
     axon_core::cert_gate::enforce_or_exit();
 
+    // Record or replay every host interaction (AXON_RECORD / AXON_REPLAY).
+    // Installed here — after the checks, immediately before execution — so the
+    // journal contains the PROGRAM's host calls and none of the compiler's.
+    // A bad journal fails the run now rather than halfway through.
+    let replay_mode = match axon_core::replay::install_from_env() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+
     // Phase 5 §4: when built with the `smt` feature, statically discharge the
     // refinement-return / scalar-`@[verify]` obligations Z3 can prove ∀-inputs,
     // and run with those checks elided. Without the feature this is an empty set
@@ -3698,6 +3713,25 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // rather than decided here.
     if let Err(e) = axon_audit::flush_ledger() {
         eprintln!("error: audit ledger integrity check failed: {e}");
+    }
+
+    // A replay that diverged is not the run it claims to be, and saying so must
+    // not depend on the program's cooperation: the program may have caught the
+    // error from the host and exited 0. So the code is decided from state the
+    // program cannot reach. This is the "partial replay is worse than none"
+    // guard — an auditor must never be handed a transcript of a run that did
+    // not happen, with a clean exit to vouch for it.
+    if let Some(d) = axon_core::replay::finish() {
+        if !d.already_reported {
+            eprintln!("axon: replay divergence: {}", d.report);
+        }
+        process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+    }
+    if replay_mode == axon_core::replay::Mode::Recording {
+        eprintln!(
+            "axon: recorded host journal to {}",
+            std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
+        );
     }
     process::exit(code);
 }
@@ -5265,42 +5299,87 @@ fn risk_level_name(r: i64) -> &'static str {
 fn syscalls_for_effects(effects: &[String]) -> Vec<&'static str> {
     // Baseline syscalls every Axon binary needs regardless of effects.
     let mut set: Vec<&'static str> = vec![
-        "read", "write", "exit", "exit_group", "brk", "mmap", "munmap",
-        "mprotect", "arch_prctl", "set_tid_address", "set_robust_list",
-        "rseq", "futex", "sigaltstack", "rt_sigaction", "rt_sigprocmask",
+        "read",
+        "write",
+        "exit",
+        "exit_group",
+        "brk",
+        "mmap",
+        "munmap",
+        "mprotect",
+        "arch_prctl",
+        "set_tid_address",
+        "set_robust_list",
+        "rseq",
+        "futex",
+        "sigaltstack",
+        "rt_sigaction",
+        "rt_sigprocmask",
     ];
     for eff in effects {
         match eff.to_lowercase().as_str() {
             "io" | "fs" => {
                 for s in &[
-                    "openat", "close", "lseek", "fstat", "newfstatat", "getdents64",
-                    "mkdir", "mkdirat", "unlink", "unlinkat", "rename", "renameat2",
-                    "dup", "dup2", "fcntl", "ioctl",
+                    "openat",
+                    "close",
+                    "lseek",
+                    "fstat",
+                    "newfstatat",
+                    "getdents64",
+                    "mkdir",
+                    "mkdirat",
+                    "unlink",
+                    "unlinkat",
+                    "rename",
+                    "renameat2",
+                    "dup",
+                    "dup2",
+                    "fcntl",
+                    "ioctl",
                 ] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             "net" | "ai" => {
                 for s in &[
-                    "socket", "connect", "sendto", "recvfrom", "sendmsg", "recvmsg",
-                    "setsockopt", "getsockopt", "getpeername", "getsockname",
-                    "poll", "epoll_create1", "epoll_ctl", "epoll_wait",
+                    "socket",
+                    "connect",
+                    "sendto",
+                    "recvfrom",
+                    "sendmsg",
+                    "recvmsg",
+                    "setsockopt",
+                    "getsockopt",
+                    "getpeername",
+                    "getsockname",
+                    "poll",
+                    "epoll_create1",
+                    "epoll_ctl",
+                    "epoll_wait",
                     "close",
                 ] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             "exec" => {
                 for s in &[
-                    "execve", "execveat", "fork", "clone", "clone3",
-                    "waitpid", "wait4", "kill", "pipe2", "dup2",
+                    "execve", "execveat", "fork", "clone", "clone3", "waitpid", "wait4", "kill",
+                    "pipe2", "dup2",
                 ] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             "random" => {
                 for s in &["getrandom", "openat"] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             _ => {}
@@ -5353,7 +5432,9 @@ fn build_axmeta_manifest(
     let mut fn_entries: Vec<String> = Vec::new();
 
     for item in &program.items {
-        let axon_core::ast::Item::FnDef(f) = item else { continue };
+        let axon_core::ast::Item::FnDef(f) = item else {
+            continue;
+        };
 
         let fn_effects: Vec<String> = f
             .effect_row
@@ -5980,7 +6061,12 @@ fn run_quorum_gate(
         None => std::fs::read_dir(quorum_dir)
             .map_err(|e| format!("cannot read --quorum-dir {}: {e}", quorum_dir.display()))?
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|ext| ext == "vote").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "vote")
+                    .unwrap_or(false)
+            })
             .count(),
     };
 

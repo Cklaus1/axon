@@ -6,7 +6,7 @@
 //! active host is `DefaultHost` which wraps std exactly as today, so native
 //! behavior is byte-identical.
 
-use std::cell::RefCell;
+use std::sync::{Arc, OnceLock, RwLock};
 // Only the native clock path + the test mock use SystemTime; the wasm now_ms is
 // a fixed 0 (no clock there), so the import is native/test-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,6 +27,18 @@ pub trait AxonHost {
     fn env_var(&self, key: &str) -> Option<String>;
     fn now_ms(&self) -> i64;
     fn sleep_ms(&self, ms: u64);
+
+    /// Read one line from standard input, newline stripped. `Ok("")` at EOF.
+    ///
+    /// This method exists because `read_line` was the one environmental effect
+    /// that went STRAIGHT TO `std::io::stdin()` from the builtin, bypassing this
+    /// trait entirely — so "every host effect funnels through one seam" was not
+    /// true, and stdin could not be virtualised, recorded, or replayed. Defaults
+    /// to **denied**, matching `exec`/`http_*`: a host that does not grant stdin
+    /// refuses it rather than inheriting the process's real one.
+    fn read_line(&self) -> Result<String, String> {
+        Err("stdin is not permitted by the active host".to_string())
+    }
     // ── R42 Slice 4: filesystem beyond a single known path ───────────────────
     //
     // ALL DEFAULT-DENY, following the `exec`/`http_*` precedent immediately
@@ -164,6 +176,22 @@ impl AxonHost for DefaultHost {
         std::env::var(key).ok()
     }
 
+    fn read_line(&self) -> Result<String, String> {
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            // Strip the trailing newline exactly as the builtin used to, so
+            // moving stdin behind the seam is behaviour-preserving. EOF reads 0
+            // bytes and yields `Ok("")`.
+            Ok(_) => {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                Ok(line)
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     fn file_exists(&self, path: &str) -> bool {
         std::path::Path::new(path).exists()
     }
@@ -187,7 +215,9 @@ impl AxonHost for DefaultHost {
     }
 
     fn file_copy(&self, from: &str, to: &str) -> Result<(), String> {
-        std::fs::copy(from, to).map(|_| ()).map_err(|e| e.to_string())
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     fn file_rename(&self, from: &str, to: &str) -> Result<(), String> {
@@ -336,24 +366,78 @@ impl AxonHost for DefaultHost {
     }
 }
 
-// ── Thread-local host storage ────────────────────────────────────────────────
+// ── Host storage ─────────────────────────────────────────────────────────────
+//
+// PROCESS-WIDE, not thread-local, and that is load-bearing.
+//
+// This was a `thread_local!` and the seam DID NOT WORK. The interpreter does not
+// run on the caller's thread: `interp::on_deep_stack` spawns a dedicated thread
+// with a stack sized to `AXON_MAX_DEPTH` (so the recursion guard trips before a
+// real overflow). A thread-local host is therefore invisible to the program it
+// was installed for — the freshly-spawned interpreter thread initialises its own
+// copy to `DefaultHost` and goes to the real filesystem.
+//
+// Nothing caught this because nothing used it: `DefaultHost` was the only impl,
+// and the unit tests below called `with_host` on the SAME thread that installed
+// the override, which works. The one shape that matters — install a host, then
+// run a program — was never exercised. See the regression test
+// `host_override_reaches_the_interpreted_program`, which runs actual `.ax`
+// source and asserts the override is observed; it fails on a thread-local.
+//
+// This is also why `clock.rs` uses process-wide atomics: same thread boundary,
+// same requirement.
+pub type SharedHost = Arc<dyn AxonHost + Send + Sync>;
 
-thread_local! {
-    static HOST: RefCell<Box<dyn AxonHost>> = RefCell::new(Box::new(DefaultHost));
+static HOST: OnceLock<RwLock<SharedHost>> = OnceLock::new();
+
+fn host_cell() -> &'static RwLock<SharedHost> {
+    HOST.get_or_init(|| RwLock::new(Arc::new(DefaultHost)))
 }
 
-/// Borrow the thread-local host and call `f` on it.
+/// Serialises tests that install a host. The host is process-wide, so two
+/// concurrent tests would otherwise see each other's override — and `cargo test`
+/// runs a binary's tests in parallel threads. Lives here rather than in `mod
+/// tests` because `replay.rs`'s tests need the same lock: they install hosts too,
+/// and a per-module lock would not actually serialise them against each other.
+#[cfg(test)]
+pub(crate) fn tests_host_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Borrow the active host and call `f` on it.
+///
+/// The lock is released before `f` runs: a host method may re-enter the seam
+/// (a `RecordingHost` delegating to its inner host does exactly this), and
+/// holding a read guard across that call would deadlock on a writer or, worse,
+/// depend on `RwLock`'s reentrancy — which is not guaranteed.
 pub fn with_host<R>(f: impl FnOnce(&dyn AxonHost) -> R) -> R {
-    HOST.with(|h| f(h.borrow().as_ref()))
+    let host: SharedHost = current_host();
+    f(host.as_ref())
 }
 
-/// Replace the thread-local host unconditionally.
-pub fn set_host(h: Box<dyn AxonHost>) {
-    HOST.with(|cell| *cell.borrow_mut() = h);
+/// Clone the `Arc` for the active host. Cheap, and the way to hold onto the
+/// current host across a call — e.g. a `RecordingHost` capturing the host it
+/// must delegate to.
+pub fn current_host() -> SharedHost {
+    // A poisoned lock must not silently swap in a different host: recovering the
+    // inner value keeps a panic in one test from turning an unrelated run's
+    // filesystem into a fake one.
+    match host_cell().read() {
+        Ok(g) => Arc::clone(&g),
+        Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+    }
 }
 
-/// Scoped guard that resets the thread-local host to `DefaultHost` on drop,
-/// discarding whatever was installed during its lifetime.
+/// Replace the active host unconditionally.
+pub fn set_host(h: SharedHost) {
+    match host_cell().write() {
+        Ok(mut g) => *g = h,
+        Err(poisoned) => *poisoned.into_inner() = h,
+    }
+}
+
+/// Scoped guard that restores the previously-active host on drop.
 ///
 /// Mirrors the `FnNameGuard` / `OUTPUT_SINK` save-and-restore pattern used
 /// elsewhere in the interpreter: it captures the host that was active when it
@@ -361,14 +445,15 @@ pub fn set_host(h: Box<dyn AxonHost>) {
 /// `DefaultHost`. This makes nested overrides correct (an inner guard restores
 /// the outer override, not the global default).
 pub struct HostGuard {
-    prev: Option<Box<dyn AxonHost>>,
+    prev: Option<SharedHost>,
 }
 
 impl HostGuard {
     /// Install `h` as the current host, capturing the previous host so it can be
     /// restored on drop. Returns the guard.
-    pub fn install(h: Box<dyn AxonHost>) -> Self {
-        let prev = HOST.with(|cell| cell.replace(h));
+    pub fn install(h: SharedHost) -> Self {
+        let prev = current_host();
+        set_host(h);
         Self { prev: Some(prev) }
     }
 }
@@ -376,14 +461,19 @@ impl HostGuard {
 impl Drop for HostGuard {
     fn drop(&mut self) {
         if let Some(prev) = self.prev.take() {
-            HOST.with(|cell| *cell.borrow_mut() = prev);
+            set_host(prev);
         }
     }
 }
 
 /// Run `f` with a custom host for its duration. On return (or panic), the
 /// previous host is automatically restored.
-pub fn with_host_override<R>(h: Box<dyn AxonHost>, f: impl FnOnce() -> R) -> R {
+///
+/// NOTE: the host is process-wide (see above), so an override is visible to
+/// every thread for its duration. That is exactly what makes it reach the
+/// interpreter thread, and it means concurrent tests that install hosts must
+/// serialise — `tests::host_test_lock` is what they take.
+pub fn with_host_override<R>(h: SharedHost, f: impl FnOnce() -> R) -> R {
     let _guard = HostGuard::install(h);
     f()
 }
@@ -395,6 +485,20 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    /// The active host is PROCESS-WIDE (that is what makes it reach the
+    /// interpreter's spawned thread), so two tests installing overrides at once
+    /// would see each other's host. `cargo test` runs tests in parallel threads
+    /// within one binary, so every test that installs a host takes this lock
+    /// first. Without it these tests are flaky-by-construction — a class this
+    /// repo has been bitten by repeatedly.
+    ///
+    /// Returns the guard rather than a `()` so the borrow lives for the test
+    /// body. A poisoned lock is recovered: one failing test must not cascade
+    /// into spurious failures in every other host test.
+    pub(super) fn host_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::host::tests_host_lock()
+    }
 
     /// In-memory host backed by a simple string map — files live in a
     /// `HashMap<String, String>`.  Env vars are read from a separate map.
@@ -487,6 +591,7 @@ mod tests {
     /// Installing a TestHost via with_host_override intercepts all I/O.
     #[test]
     fn host_seam_routes_file_io_through_axonhost() {
+        let _serial = host_test_lock();
         let host = TestHost::new();
 
         // Pre-seed env.
@@ -495,7 +600,7 @@ mod tests {
             .unwrap()
             .insert("MY_KEY".into(), "my_val".into());
 
-        with_host_override(Box::new(host.clone()), || {
+        with_host_override(Arc::new(host.clone()), || {
             // write_file goes to the in-memory map.
             assert!(with_host(|h| h.write_file("/a", "aaa")).is_ok());
 
@@ -524,19 +629,83 @@ mod tests {
     /// again — no leakage across tests.
     #[test]
     fn scoped_restore_returns_to_default() {
+        let _serial = host_test_lock();
         let test_host = TestHost::new();
         let pre_key = format!("PRESET_HOST_KEY_{}", std::process::id());
 
         // Set a real env var so DefaultHost can read it.
         std::env::set_var(&pre_key, "preset_value");
 
-        with_host_override(Box::new(test_host), || {
+        with_host_override(Arc::new(test_host), || {
             // Inside, env_var hits the test host (empty map).
             assert!(with_host(|h| h.env_var(&pre_key)).is_none());
         });
 
         // After restore, env_var goes to real std::env.
         assert_eq!(with_host(|h| h.env_var(&pre_key)).unwrap(), "preset_value");
+    }
+
+    /// An installed host must be observed by the INTERPRETED PROGRAM — not just
+    /// by `with_host` calls on the installing thread.
+    ///
+    /// This is the test whose absence let the seam be broken for its entire
+    /// existence. `HOST` was a `thread_local!`, and `interp::on_deep_stack` runs
+    /// every program on a freshly-spawned thread (stack sized to
+    /// `AXON_MAX_DEPTH`), so the program's thread initialised its own host to
+    /// `DefaultHost` and went to the real filesystem. Every existing test passed
+    /// because they all called `with_host` on the installing thread — the one
+    /// shape that matters, "install a host, then run a program", was never
+    /// exercised. Reverting the storage to a thread-local fails HERE and nowhere
+    /// else.
+    ///
+    /// It probes `read_file` rather than `read_line` deliberately. A `read_line`
+    /// version of this test HANGS instead of failing when the seam breaks —
+    /// `DefaultHost::read_line` blocks on the real stdin — and a test that hangs
+    /// on regression is worse than one that fails, because it looks like a slow
+    /// suite rather than a bug (verified: it wedged a `cargo test` run for ten
+    /// minutes). Stdin routing is covered by `scripts/replay_host_gate.sh`
+    /// check 2, which replays with stdin CLOSED: a `read_line` that bypassed the
+    /// seam would return `""` there instead of the recorded input, so that check
+    /// is strictly stronger AND cannot hang.
+    #[test]
+    fn host_override_reaches_the_interpreted_program() {
+        let _serial = host_test_lock();
+        struct FakeFs;
+        impl AxonHost for FakeFs {
+            fn read_file(&self, _p: &str) -> Result<String, String> {
+                Ok("FROM-FAKE-HOST".into())
+            }
+            fn write_file(&self, _p: &str, _d: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn env_var(&self, _k: &str) -> Option<String> {
+                None
+            }
+            fn now_ms(&self) -> i64 {
+                0
+            }
+            fn sleep_ms(&self, _m: u64) {}
+        }
+        // The path does not exist, so `DefaultHost` would take the Err branch.
+        let src = r#"fn main() -> i64 {
+            match read_file("/definitely/not/a/real/path") {
+                Ok(s) => println(s)
+                Err(e) => println("REAL-HOST-ERR")
+            }
+            0
+        }"#;
+        let program = crate::parse_source(src).expect("fixture must parse");
+        let (code, out) = with_host_override(Arc::new(FakeFs), || {
+            crate::interp::run_program_capturing(&program)
+        });
+        assert_eq!(code, 0);
+        assert_eq!(
+            out.trim(),
+            "FROM-FAKE-HOST",
+            "the installed host must reach the program's thread; got {out:?} — \
+             `REAL-HOST-ERR` means the seam is thread-local again and every \
+             recording/replay/virtual host is silently bypassed"
+        );
     }
 
     /// Now_ms from DefaultHost is a reasonable epoch value.
@@ -553,6 +722,7 @@ mod tests {
     /// which would clobber an enclosing override — broken composition.)
     #[test]
     fn nested_override_restores_the_outer_host() {
+        let _serial = host_test_lock();
         let outer = {
             let h = TestHost::new();
             h.files.lock().unwrap().insert("/k".into(), "OUTER".into());
@@ -563,9 +733,9 @@ mod tests {
             h.files.lock().unwrap().insert("/k".into(), "INNER".into());
             h
         };
-        with_host_override(Box::new(outer), || {
+        with_host_override(Arc::new(outer), || {
             assert_eq!(with_host(|h| h.read_file("/k")).unwrap(), "OUTER");
-            with_host_override(Box::new(inner), || {
+            with_host_override(Arc::new(inner), || {
                 assert_eq!(with_host(|h| h.read_file("/k")).unwrap(), "INNER");
             });
             // After the inner guard drops, the OUTER host must be active again

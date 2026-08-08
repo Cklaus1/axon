@@ -130,9 +130,7 @@ fn json_walk<'a>(
                         ))
                     }
                 },
-                Err(_) => {
-                    return Err(format!("{who}: array requires numeric index, got {key:?}"))
-                }
+                Err(_) => return Err(format!("{who}: array requires numeric index, got {key:?}")),
             },
             _ => return Err(format!("{who}: cannot index into scalar at key {key:?}")),
         }
@@ -567,14 +565,12 @@ impl<'p> Interp<'p> {
             }
             "read_line" => {
                 want(0)?;
-                let mut line = String::new();
-                match std::io::stdin().read_line(&mut line) {
-                    Ok(_) => {
-                        while line.ends_with('\n') || line.ends_with('\r') {
-                            line.pop();
-                        }
-                        ok!(Value::Str(line));
-                    }
+                // Through the host seam, not `std::io::stdin()` directly — stdin
+                // is an environmental effect like any other, and a bypass here
+                // means a run that reads input cannot be recorded or replayed.
+                // The `<read error: …>` shape is preserved verbatim.
+                match crate::host::with_host(|h| h.read_line()) {
+                    Ok(line) => ok!(Value::Str(line)),
                     Err(e) => ok!(Value::Str(format!("<read error: {e}>"))),
                 }
             }
