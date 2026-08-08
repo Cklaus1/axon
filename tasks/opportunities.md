@@ -1784,3 +1784,15 @@ concrete reason to expect it will not.
   over scalars (i64/f64/bool)". Same class as above: doc/impl disagreement, low blast radius.
 - **[low] R42 §9 Q3/Q4 remain needs-human.** `file_remove`'s capability policy (irreversible deletion,
   R11 risk integration) and hashing ownership (R28 vs R33 vs R42) are both unresolved by design.
+- **[HIGH] String interpolation silently DROPS content after a valid expression inside `{...}`.**
+  `"a{2,3}"` lexes as the string `a2`: interpolation evaluates `2` and discards `,3` with no
+  diagnostic. Compare `"a{}"` and other malformed forms, which DO error (`unclosed \u{7b} in
+  interpolated string`). Found via R42's regex surface, where it is severe: every counted-repetition
+  pattern a model writes (`re_find("a{2,3}", s)`) silently becomes a search for a different literal
+  string and returns no match. Worked around by documenting `{{n,m}}` in all six `re_*` doc strings and
+  the fixture, but the underlying behaviour is a silent-wrong-answer in the LEXER and deserves its own
+  fix: `{2,3}` should be a parse error, or literal, never "evaluate the prefix and drop the rest".
+  Same family as the `str_slice` UTF-8 bug this spec opened with.
+- **[med] Native lowering for the regex + encoding builtins.** All 10 are interp-only (E0910-refused).
+  The Pike VM is pure Rust in `interp/regex.rs` and could move to `axon-rt`, but its `[str]`-returning
+  functions need array-out synthesis that does not exist yet (same blocker as `str_chars`).

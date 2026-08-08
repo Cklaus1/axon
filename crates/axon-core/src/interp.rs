@@ -3439,6 +3439,12 @@ fn eval_unary(op: &UnaryOp, v: Value) -> R {
 /// (`asi.rs::emit_binop_uncertain`) so the interpreter and native agree.
 // Value formatting + value-level ops extracted to interp/value.rs (R0 slice 2).
 mod value;
+
+/// R42 Slice 5: the Pike VM regex engine. Its own module because it is a real
+/// compiler+VM rather than a builtin body, and because its refusals
+/// (backreferences, lookaround, oversized counted repetition) are a security
+/// boundary worth reading in one place.
+mod regex;
 use value::*;
 
 // ── R19 Slice B — interp.rs-level coercion helpers ───────────────────────────

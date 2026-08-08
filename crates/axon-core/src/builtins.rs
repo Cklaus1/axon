@@ -278,6 +278,56 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<i64, str>",
         doc: "The size of `path` in BYTES (not characters — a multi-byte UTF-8 character counts once per byte). Returns Ok(n), or Err(message) if the file cannot be read. Note this READS the file to measure it, so it costs O(size) and requires valid UTF-8: it is not a `stat`, and a binary file reports an error rather than a size.",
     },
+    // ── R42 Slice 5: pattern matching, LINEAR TIME ONLY ──────────────────────
+    //
+    // WRITING A PATTERN LITERAL: `{` opens string INTERPOLATION in Axon, so a
+    // counted repetition must DOUBLE its braces — `"a{{2,3}}"`, not `"a{2,3}"`.
+    // The single-brace form does not error; it silently lexes as `a2`, and the
+    // regex then searches for THAT. This is the sharpest trap on the surface.
+    //
+    // A Pike VM (`interp/regex.rs`): no backtracking, ever. That is a containment
+    // requirement rather than a performance goal — Axon runs model-authored code
+    // under capability sandboxes and per-principal budgets, so an unbounded-time
+    // builtin would let sandboxed code burn arbitrary CPU with NO capability at
+    // all. Backreferences and lookaround are refused (E2203) because they require
+    // backtracking; so is a counted repetition that expands the program past its
+    // instruction budget. This matches RE2 and Rust's `regex`.
+    BuiltinFn {
+        name: "re_is_match",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<bool, str>",
+        doc: "Does `pattern` match anywhere in `s`? Result-returning because a pattern is DATA and may be malformed — a panic would be wrong for something a model composes at runtime. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_find",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<Option<str>, str>",
+        doc: "The leftmost match, or None. **Leftmost-FIRST (Perl/PCRE), not leftmost-longest:** `re_find(\"a|ab\", \"ab\")` is `\"a\"`, because alternation order is priority. Lazy quantifiers (`.*?`) therefore work as models expect. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_find_all",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<[str], str>",
+        doc: "Every non-overlapping match, left to right. An empty match advances one character so the scan always terminates. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_captures",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<[str], str>",
+        doc: "Capture groups of the leftmost match: element 0 is the whole match, 1.. are the groups. Empty array when there is no match. A group that did not PARTICIPATE is reported as the empty string — indistinguishable from a group that matched empty, a documented limitation rather than a `[Option<str>]` return that complicates the common case to serve the rare one. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_replace_all",
+        params: &[("pattern", "str"), ("s", "str"), ("with", "str")],
+        ret: "Result<str, str>",
+        doc: "Replace every non-overlapping match. `with` interprets `$1`..`$9` as capture references and `$$` as a literal `$` — specified rather than left open, because two implementations would otherwise disagree later. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_split",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<[str], str>",
+        doc: "Split `s` on every match of `pattern`. Adjacent matches yield empty fields, like every other split; a pattern that matches empty is refused rather than looping forever. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
     // ── R42 Slice 6: encoding ─────────────────────────────────────────────────
     //
     // Builtins rather than userland because hand-rolled base64 goes wrong quietly

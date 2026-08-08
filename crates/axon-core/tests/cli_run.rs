@@ -19760,10 +19760,13 @@ fn base64_and_hex_encode_decode_including_padding() {
     );
 }
 
-/// R42 T9 — the userland `date.ax` module. Gated here because `examples/stdlib`
-/// is NOT glob-swept: a module's `@[test]`s only run in CI if a test like this
-/// invokes them, and asserting the COUNT is what stops the module silently
-/// becoming untested if its tests are renamed away.
+/// R42 T9 — the userland `date.ax` module.
+///
+/// `examples/stdlib` IS glob-swept by `stdlib_module_acceptance_suites_pass`,
+/// which I initially believed it was not — that sweep requires every module to
+/// report at least one passing test. This per-module test adds what the sweep
+/// cannot: an assertion on the exact COUNT, so the module cannot quietly shrink
+/// from 8 tests to 1 and still look gated.
 #[test]
 fn date_stdlib_module_tests_pass() {
     // Civil calendar arithmetic in userland rather than as builtins, per R42's
@@ -19864,5 +19867,40 @@ fn r42_smoke_scenario_runs_end_to_end() {
             "onetwo", // Slice 4: write, then append, then read back
         ],
         "unexpected smoke output:\n{stdout}"
+    );
+}
+
+/// R42 T12 — the regex surface. What matters here is SEMANTICS and REFUSALS.
+///
+/// Leftmost-FIRST (Perl), not leftmost-longest: `a|ab` on "ab" is "a". Get that
+/// wrong and lazy quantifiers become meaningless, which is most of what models
+/// write. And backreferences/lookaround are refused because they need
+/// backtracking — the linear-time bound is a containment property here, not a
+/// performance preference: sandboxed model-authored code must not be able to burn
+/// unbounded CPU with no capability at all.
+#[test]
+fn regex_is_leftmost_first_and_refuses_backtracking_constructs() {
+    let out = axon().arg("run").arg(fixture("regex.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "a", "ab",              // leftmost-FIRST: alternation order is priority
+            "<a><b>", "<a>",        // greedy vs lazy
+            "NONE",                 // no match is None, not an error
+            "true", "1,22,333",     // is_match, find_all
+            "a|b|c",                // re_split
+            "12-345/12/345",        // captures: 0 is the whole match
+            "nocap:",               // no match -> empty capture array
+            "a[1]b[22]", "a$b",     // $1 references and $$ literal
+            "ERR-backref", "ERR-lookahead", "ERR-lookbehind",
+            "ERR-blowup",           // {1,100000} expansion refused
+            "aaa",                  // an ordinary counted repetition still works
+            "ERR-malformed",
+            "false",                // (a+)+$ returns PROMPTLY — would hang on a
+                                    // backtracking engine
+        ],
+        "unexpected output:\n{stdout}"
     );
 }

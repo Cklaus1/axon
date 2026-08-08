@@ -16,6 +16,44 @@
 //                                          (Slices 2 + 4 + append)
 // onetwo = write then APPEND then read                      (Slice 4)
 
+@[test]
+fn test_the_r42_pipeline_composes() {
+    // The same pipeline as `main`, as an assertion — so this module is
+    // self-checking under `axon test` and satisfies the stdlib acceptance sweep,
+    // which requires every module in examples/stdlib to have at least one passing
+    // test (a module reporting "0 passed" is indistinguishable from one whose
+    // tests silently vanished).
+    let doc = "{{\"xs\": [1, 2, 3], \"label\": \"café\"}}"
+    let total = match json_get_json(doc, "xs") {
+        Ok(arr) => match json_arr_i64(arr) { Ok(xs) => arr_sum_i64(xs)  Err(e) => 0 - 1 }
+        Err(e) => 0 - 2
+    }
+    assert_eq(total, 6)
+
+    // 4 CHARACTERS, 5 bytes — the Slice-2 distinction, through a file.
+    let dir = "/tmp/axon_r42_smoke_test"
+    let f = "/tmp/axon_r42_smoke_test/label.txt"
+    let mk = dir_create(dir)
+    let label = match json_path_str(doc, "label") { Ok(v) => v  Err(e) => "?" }
+    let w = write_file(f, label)
+    match read_file(f) {
+        Ok(s) => {
+            assert_eq(str_len_chars(s), 4)
+            assert_eq(str_len(s), 5)
+        }
+        Err(e) => assert(false)
+    }
+
+    // write + APPEND + read.
+    let g = "/tmp/axon_r42_smoke_test/app.txt"
+    let w2 = write_file(g, "one")
+    let a2 = append_file(g, "two")
+    match read_file(g) {
+        Ok(s) => assert(str_eq(s, "onetwo"))
+        Err(e) => assert(false)
+    }
+}
+
 fn main() -> i64 {
     // ── Slice 3: a JSON array, extracted typed and summed ───────────────────
     let doc = "{{\"xs\": [1, 2, 3], \"label\": \"café\"}}"

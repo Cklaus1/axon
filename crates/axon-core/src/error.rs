@@ -149,6 +149,17 @@ pub const E1504: &str = "E1504"; // #[goal] fn must have zero params
 pub const E1505: &str = "E1505"; // unknown #[goal(strategy: …)] — not hill_climb|random|multistart|tournament|bayesian
 pub const E1900: &str = "E1900"; // R19: integer literal out of range for its fixed-width/unsigned annotation
 
+// R42 stdlib gaps. E2200 appears in a runtime PANIC message and E2201/E2202/E2204
+// as prefixes inside `Err` strings — every JSON/encoding builtin returns `Result`,
+// so those failures are VALUES, not diagnostics, and there is no diagnostic for a
+// code to attach to. They are registered here anyway so the code space stays
+// single-sourced and nothing else can claim them.
+pub const E2200: &str = "E2200"; // str_slice byte range splits a UTF-8 character (runtime panic text)
+pub const E2201: &str = "E2201"; // malformed JSON where a document was required (Err-string prefix)
+pub const E2202: &str = "E2202"; // JSON type mismatch at a path/element (Err-string prefix)
+pub const E2203: &str = "E2203"; // regex construct requiring backtracking, or a pattern too large once counted repetitions expand
+pub const E2204: &str = "E2204"; // base64/hex decode: invalid input, or bytes that are not valid UTF-8
+
 // R17 freestanding substrate / HAL errors
 pub const E1700: &str = "E1700"; // raw pointer `*T`, volatile_*, ptr_from_addr, or @[hal] used in a `surface` file
 pub const E1701: &str = "E1701"; // @[hal] fn body calls hardware primitive without the Hal capability minted to its Principal
@@ -367,7 +378,7 @@ mod tests {
             E1306, E1310, E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409,
             E1411, E1412, E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704,
             E1706, E1707, E1710, E1711, E1712, E1800, E1801, E1802, E1803, E1810, E1900, E2300, E2301,
-            E2302, W0001, W0002, W0003, W0004, W0005, W0006, W0701, W0913, W1103, W1210, W1310,
+            E2302, E2200, E2201, E2202, E2203, E2204, W0001, W0002, W0003, W0004, W0005, W0006, W0701, W0913, W1103, W1210, W1310,
             W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();

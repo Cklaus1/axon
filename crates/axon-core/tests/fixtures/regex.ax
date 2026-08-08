@@ -1,0 +1,57 @@
+// R42 T12 — the regex surface.
+//
+// The two things worth pinning are SEMANTICS and REFUSALS, not "does it match":
+//
+//   * leftmost-FIRST, not leftmost-longest. `a|ab` on "ab" is "a". Get this wrong
+//     and lazy quantifiers become meaningless, which is most of what models write.
+//   * backreferences and lookaround are REFUSED (E2203), because they need
+//     backtracking and this engine's linear-time bound is a containment property,
+//     not a performance preference.
+
+fn main() -> i64 {
+    // ── Leftmost-first: alternation order is PRIORITY ───────────────────────
+    match re_find("a|ab", "ab") { Ok(m) => match m { Some(v) => println(v)  None => println("-") }  Err(e) => println(e) }
+    match re_find("ab|a", "ab") { Ok(m) => match m { Some(v) => println(v)  None => println("-") }  Err(e) => println(e) }
+
+    // ── Greedy vs lazy ─────────────────────────────────────────────────────
+    match re_find("<.*>", "<a><b>") { Ok(m) => match m { Some(v) => println(v)  None => println("-") }  Err(e) => println(e) }
+    match re_find("<.*?>", "<a><b>") { Ok(m) => match m { Some(v) => println(v)  None => println("-") }  Err(e) => println(e) }
+
+    // ── No match is None, not an error ─────────────────────────────────────
+    match re_find("zzz", "abc") { Ok(m) => match m { Some(v) => println(v)  None => println("NONE") }  Err(e) => println(e) }
+
+    // ── is_match, find_all, split ──────────────────────────────────────────
+    match re_is_match("\\d+", "ab12") { Ok(b) => println(to_str_bool(b))  Err(e) => println(e) }
+    match re_find_all("\\d+", "a1b22c333") { Ok(xs) => println(str_join(xs, ","))  Err(e) => println(e) }
+    match re_split(",\\s*", "a, b,c") { Ok(xs) => println(str_join(xs, "|"))  Err(e) => println(e) }
+
+    // ── Captures: element 0 is the whole match ─────────────────────────────
+    match re_captures("(\\d+)-(\\d+)", "x 12-345 y") { Ok(cs) => println(str_join(cs, "/"))  Err(e) => println(e) }
+    match re_captures("zzz", "abc") { Ok(cs) => println("nocap:" + str_join(cs, ","))  Err(e) => println(e) }
+
+    // ── Replacement, with $1 references and $$ for a literal dollar ────────
+    match re_replace_all("(\\d+)", "a1b22", "[$1]") { Ok(s) => println(s)  Err(e) => println(e) }
+    match re_replace_all("x", "axb", "$$") { Ok(s) => println(s)  Err(e) => println(e) }
+
+    // ── The refusals. Each must be E2203 and say WHY ───────────────────────
+    match re_is_match("(a)\\1", "aa") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-backref") }
+    match re_is_match("(?=a)", "a") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-lookahead") }
+    match re_is_match("(?<=a)b", "ab") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-lookbehind") }
+    // A counted repetition that would expand the program past its budget.
+    //
+    // NOTE THE DOUBLED BRACES, and they are not optional: `{` opens string
+    // INTERPOLATION in Axon, so `"a{1,100000}"` is not the pattern you wrote —
+    // it lexes as the string `a1`, and the regex then searches for that. `{{`
+    // is the parser's escape for a literal brace. Any counted repetition in a
+    // pattern literal must be written this way.
+    match re_is_match("a{{1,100000}}", "aaa") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-blowup") }
+    // And the ordinary case, doubled, matching correctly.
+    match re_find("a{{2,3}}", "aaaa") { Ok(m) => match m { Some(v) => println(v)  None => println("NONE") }  Err(e) => println(e) }
+    // A malformed pattern is an Err value, never a panic.
+    match re_is_match("(", "a") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-malformed") }
+
+    // ── The catastrophic pattern. On a backtracking engine this HANGS; here it
+    // returns promptly, which is the whole point of the design.
+    match re_is_match("(a+)+$", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaab") { Ok(b) => println(to_str_bool(b))  Err(e) => println(e) }
+    0
+}

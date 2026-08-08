@@ -574,6 +574,148 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
+            // ── R42 Slice 5: pattern matching (Pike VM, linear time) ─────────
+            "re_is_match" | "re_find" | "re_find_all" | "re_captures" | "re_split" => {
+                want(2)?;
+                let pat = as_str(&args[0])?.to_string();
+                let subject: Vec<char> = as_str(&args[1])?.chars().collect();
+                let prog = match crate::interp::regex::compile(&pat) {
+                    Ok(p) => p,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let span = |sl: &[usize], i: usize| -> String {
+                    // A group that did not participate has usize::MAX slots; it
+                    // reads as empty (documented, see the builtin's doc).
+                    let (a, b) = (sl[i * 2], sl[i * 2 + 1]);
+                    if a == usize::MAX || b == usize::MAX || b < a {
+                        String::new()
+                    } else {
+                        subject[a..b].iter().collect()
+                    }
+                };
+                match name {
+                    "re_is_match" => {
+                        let hit = crate::interp::regex::find_from(&prog, &subject, 0).is_some();
+                        ok!(Value::Ok(Box::new(Value::Bool(hit))));
+                    }
+                    "re_find" => {
+                        match crate::interp::regex::find_from(&prog, &subject, 0) {
+                            Some(sl) => ok!(Value::Ok(Box::new(Value::Some(Box::new(
+                                Value::Str(span(&sl, 0))
+                            ))))),
+                            None => ok!(Value::Ok(Box::new(Value::None))),
+                        }
+                    }
+                    "re_captures" => {
+                        match crate::interp::regex::find_from(&prog, &subject, 0) {
+                            Some(sl) => {
+                                let mut out = Vec::with_capacity(prog.groups + 1);
+                                for g in 0..=prog.groups {
+                                    out.push(Value::Str(span(&sl, g)));
+                                }
+                                ok!(Value::Ok(Box::new(Value::Array(out))));
+                            }
+                            None => ok!(Value::Ok(Box::new(Value::Array(Vec::new())))),
+                        }
+                    }
+                    "re_find_all" => {
+                        let mut out: Vec<Value> = Vec::new();
+                        let mut from = 0usize;
+                        while from <= subject.len() {
+                            match crate::interp::regex::find_from(&prog, &subject, from) {
+                                Some(sl) => {
+                                    out.push(Value::Str(span(&sl, 0)));
+                                    // An EMPTY match must still advance, or this
+                                    // loops forever on a pattern like `a*`.
+                                    from = if sl[1] > sl[0] { sl[1] } else { sl[1] + 1 };
+                                }
+                                None => break,
+                            }
+                        }
+                        ok!(Value::Ok(Box::new(Value::Array(out))));
+                    }
+                    _ => {
+                        // re_split
+                        let mut out: Vec<Value> = Vec::new();
+                        let mut from = 0usize;
+                        let mut last = 0usize;
+                        while from <= subject.len() {
+                            match crate::interp::regex::find_from(&prog, &subject, from) {
+                                Some(sl) => {
+                                    if sl[1] == sl[0] {
+                                        // A pattern matching empty would split
+                                        // between every character forever; refuse
+                                        // rather than emit an unbounded array.
+                                        ok!(Value::Err(Box::new(Value::Str(format!(
+                                            "re_split: E2203 pattern {pat:?} matches the empty \
+                                             string, which has no well-defined split"
+                                        )))));
+                                    }
+                                    out.push(Value::Str(
+                                        subject[last..sl[0]].iter().collect::<String>(),
+                                    ));
+                                    last = sl[1];
+                                    from = sl[1];
+                                }
+                                None => break,
+                            }
+                        }
+                        out.push(Value::Str(subject[last..].iter().collect::<String>()));
+                        ok!(Value::Ok(Box::new(Value::Array(out))));
+                    }
+                }
+            }
+            "re_replace_all" => {
+                want(3)?;
+                let pat = as_str(&args[0])?.to_string();
+                let subject: Vec<char> = as_str(&args[1])?.chars().collect();
+                let with = as_str(&args[2])?.to_string();
+                let prog = match crate::interp::regex::compile(&pat) {
+                    Ok(p) => p,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let mut out = String::new();
+                let mut from = 0usize;
+                let mut last = 0usize;
+                while from <= subject.len() {
+                    let sl = match crate::interp::regex::find_from(&prog, &subject, from) {
+                        Some(sl) => sl,
+                        None => break,
+                    };
+                    out.push_str(&subject[last..sl[0]].iter().collect::<String>());
+                    // `$1`..`$9` are capture references, `$$` a literal `$`.
+                    let wc: Vec<char> = with.chars().collect();
+                    let mut i = 0;
+                    while i < wc.len() {
+                        if wc[i] == '$' && i + 1 < wc.len() {
+                            let nxt = wc[i + 1];
+                            if nxt == '$' {
+                                out.push('$');
+                                i += 2;
+                                continue;
+                            }
+                            if let Some(d) = nxt.to_digit(10) {
+                                let g = d as usize;
+                                if g <= prog.groups {
+                                    let (a, b) = (sl[g * 2], sl[g * 2 + 1]);
+                                    if a != usize::MAX && b != usize::MAX && b >= a {
+                                        out.push_str(&subject[a..b].iter().collect::<String>());
+                                    }
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        }
+                        out.push(wc[i]);
+                        i += 1;
+                    }
+                    last = sl[1];
+                    from = if sl[1] > sl[0] { sl[1] } else { sl[1] + 1 };
+                }
+                out.push_str(&subject[last.min(subject.len())..].iter().collect::<String>());
+                ok!(Value::Ok(Box::new(Value::Str(out))));
+            }
+
             // ── R42 Slice 6: encoding ────────────────────────────────────────
             //
             // Pure, no host contact. Hand-written rather than pulling a crate for

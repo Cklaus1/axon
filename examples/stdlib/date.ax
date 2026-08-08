@@ -17,8 +17,12 @@
 //
 //     let era = if y >= 0 { y / 400 } else { (y - 399) / 400 }
 //
-// Delete that branch and every pre-1970 date is silently wrong — which is why
-// `test_pre_epoch_round_trip` exists and asserts a 1969 date specifically.
+// Delete that branch and dates in proleptic years (<= 0) are silently wrong.
+// `test_floor_division_for_proleptic_years` is the test that catches it, and the
+// input matters: a PRE-EPOCH date like 1969 does NOT reach the else-branch (`ys`
+// is 1969, positive), so an earlier version of that test passed with both branches
+// broken. Pick the input from the branch's CONDITION, not from the domain concept
+// you associate with it.
 //
 // ── What is deliberately NOT here ───────────────────────────────────────────
 //
