@@ -156,7 +156,7 @@ pub(super) fn append_agent_action_jsonl(
 /// Hex SHA-256 of `s` — the `prompt_hash`/`params_hash` scheme for R3's
 /// `ai_call` provenance. Hashing (not the raw text) is what lands in the log,
 /// so a replay can key on the exact prompt without the log leaking it verbatim.
-pub(super) fn sha256_hex(s: &str) -> String {
+pub(crate) fn sha256_hex(s: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(s.as_bytes());

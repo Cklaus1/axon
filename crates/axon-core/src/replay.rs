@@ -705,6 +705,308 @@ impl AxonHost for ReplayHost {
     }
 }
 
+// ── Human-readable transcript ────────────────────────────────────────────────
+//
+// WHY THIS EXISTS, AND WHY IT IS NOT COSMETIC.
+//
+// A journal is hex. It is exactly what a replaying engine needs and exactly what
+// a PERSON cannot read — so the machine half of auditability was built and the
+// human half was not. "The run is reproducible" is worth little to a reviewer who
+// cannot see what the run DID; they end up trusting the agent's own account of
+// itself, which is the thing an audit exists to avoid.
+//
+// So the transcript is the reviewable artifact: one line per interaction, in
+// order, in plain language. It answers "what did this agent touch?" without
+// running anything.
+
+/// How much of a payload to show inline before truncating. A file's contents can
+/// be megabytes; a transcript that dumps them is not reviewable either.
+const PREVIEW_LEN: usize = 68;
+
+/// Options for rendering a transcript.
+#[derive(Default)]
+pub struct RenderOpts {
+    /// Show payload VALUES. **Defaults to `false`, and that is a security
+    /// decision rather than a formatting preference.**
+    ///
+    /// A journal contains every file the run read, every HTTP body, and the VALUE
+    /// of every env var it looked up — including an API key, if the program read
+    /// one. The transcript's whole purpose is to be handed to a reviewer, and a
+    /// format that leaks credentials by default is a format people learn not to
+    /// share, which defeats the purpose.
+    ///
+    /// Redacted rendering still shows each payload's size and a content digest, so
+    /// a reviewer can see the SHAPE of what happened and can still tell two runs
+    /// apart — which is what makes a redacted diff useful instead of merely safe.
+    /// `--show-values` is there for when the payloads themselves are the point.
+    pub show_values: bool,
+}
+
+fn digest8(s: &str) -> String {
+    // Short content fingerprint: enough to tell "same bytes" from "different
+    // bytes" at a glance without disclosing the bytes.
+    crate::interp::sha256_hex(s).chars().take(8).collect()
+}
+
+fn preview(s: &str, opts: &RenderOpts) -> String {
+    if !opts.show_values {
+        return format!("<{} bytes, {}>", s.len(), digest8(s));
+    }
+    let one_line: String = s.chars().map(|c| if c == '\n' { '⏎' } else { c }).collect();
+    if one_line.chars().count() <= PREVIEW_LEN {
+        format!("{one_line:?}")
+    } else {
+        let head: String = one_line.chars().take(PREVIEW_LEN).collect();
+        format!("{head:?}… ({} bytes total)", s.len())
+    }
+}
+
+impl HostEvent {
+    /// One human-readable line: what was asked, and what came back.
+    pub fn describe(&self, opts: &RenderOpts) -> String {
+        let arg = |i: usize| self.args.get(i).cloned().unwrap_or_default();
+        let pay0 = self.payload.first().cloned().unwrap_or_default();
+        let failed = self.status == "err";
+        // The outcome half. An `err` is rendered with its message even when values
+        // are redacted: an error string is what a reviewer most needs and is not
+        // the channel secrets travel on.
+        let outcome = match (self.method.as_str(), self.status.as_str()) {
+            (_, "err") => format!("FAILED: {pay0}"),
+            ("env_var", "none") => "not set".to_string(),
+            ("env_var", "some") => format!("= {}", preview(&pay0, opts)),
+            ("file_exists", _) => {
+                if pay0 == "true" {
+                    "exists".to_string()
+                } else {
+                    "does not exist".to_string()
+                }
+            }
+            ("now_ms", _) => format!("= {pay0}"),
+            ("sleep_ms", _) => "ok".to_string(),
+            ("dir_list" | "http_sse" | "http_sse_post", _) => {
+                format!("{} item(s)", self.payload.len())
+            }
+            ("write_file" | "dir_create" | "file_copy" | "file_rename", _) => "ok".to_string(),
+            _ => format!("→ {}", preview(&pay0, opts)),
+        };
+        let action = match self.method.as_str() {
+            "read_file" => format!("read file {}", arg(0)),
+            "write_file" => format!("WRITE file {} ({})", arg(0), preview(&arg(1), opts)),
+            "read_line" => "read a line from stdin".to_string(),
+            "env_var" => format!("read env {}", arg(0)),
+            "now_ms" => "read the clock".to_string(),
+            "sleep_ms" => format!("slept {}ms", arg(0)),
+            "file_exists" => format!("checked whether {} exists", arg(0)),
+            "dir_create" => format!("CREATE dir {}", arg(0)),
+            "dir_list" => format!("listed dir {}", arg(0)),
+            "file_copy" => format!("COPY {} → {}", arg(0), arg(1)),
+            "file_rename" => format!("MOVE {} → {}", arg(0), arg(1)),
+            "exec" => format!("EXEC `{}` {:?}", arg(0), &self.args[1..]),
+            "http_get" => format!("HTTP GET {}", arg(0)),
+            "http_post" => format!("HTTP POST {} ({})", arg(0), preview(&arg(2), opts)),
+            "http_sse" => format!("HTTP STREAM {}", arg(0)),
+            "http_sse_post" => format!("HTTP STREAM-POST {}", arg(0)),
+            other => format!("{other}({})", self.args.join(", ")),
+        };
+        // A leading marker so the effects that CHANGE the world, and the ones that
+        // failed, are findable by eye in a long transcript rather than having to
+        // be read for.
+        let marker = if failed {
+            "!"
+        } else if matches!(
+            self.method.as_str(),
+            "write_file" | "exec" | "http_post" | "dir_create" | "file_copy" | "file_rename"
+        ) {
+            "*"
+        } else {
+            " "
+        };
+        format!("{marker} {:>4}  {action}  {outcome}", self.seq)
+    }
+}
+
+/// Render a whole journal as a reviewable transcript, with a summary.
+///
+/// Values are REDACTED unless `opts.show_values` — see [`RenderOpts`].
+pub fn render_transcript(events: &[HostEvent], opts: &RenderOpts) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("{} host interaction(s)\n\n", events.len()));
+    if !opts.show_values {
+        out.push_str(
+            "  values redacted (sizes + digests shown); pass --show-values to see them\n\n",
+        );
+    }
+    out.push_str("  *=changes the world  !=failed\n\n");
+    for ev in events {
+        out.push_str(&ev.describe(opts));
+        out.push('\n');
+    }
+    // The summary is what a reviewer reads FIRST: the question is usually "did
+    // this run touch anything it should not have", not "what was event 34".
+    let mut mutating: Vec<&str> = Vec::new();
+    let mut failures = 0usize;
+    let mut reads: Vec<&str> = Vec::new();
+    let mut net: Vec<&str> = Vec::new();
+    for ev in events {
+        if ev.status == "err" {
+            failures += 1;
+        }
+        match ev.method.as_str() {
+            "write_file" | "dir_create" | "file_copy" | "file_rename" => {
+                mutating.push(ev.args.first().map(String::as_str).unwrap_or(""))
+            }
+            "exec" => mutating.push(ev.args.first().map(String::as_str).unwrap_or("")),
+            "read_file" => reads.push(ev.args.first().map(String::as_str).unwrap_or("")),
+            "http_get" | "http_post" | "http_sse" | "http_sse_post" => {
+                net.push(ev.args.first().map(String::as_str).unwrap_or(""))
+            }
+            _ => {}
+        }
+    }
+    let uniq = |mut v: Vec<&str>| -> Vec<String> {
+        v.sort_unstable();
+        v.dedup();
+        v.into_iter().map(String::from).collect()
+    };
+    out.push_str("\n── summary ───────────────────────────────────────────────\n");
+    let m = uniq(mutating);
+    let r = uniq(reads);
+    let n = uniq(net);
+    out.push_str(&format!(
+        "  changed the world : {}\n",
+        if m.is_empty() {
+            "nothing".to_string()
+        } else {
+            m.join(", ")
+        }
+    ));
+    out.push_str(&format!(
+        "  read              : {}\n",
+        if r.is_empty() {
+            "nothing".to_string()
+        } else {
+            r.join(", ")
+        }
+    ));
+    out.push_str(&format!(
+        "  network           : {}\n",
+        if n.is_empty() {
+            "none".to_string()
+        } else {
+            n.join(", ")
+        }
+    ));
+    out.push_str(&format!("  failed calls      : {failures}\n"));
+    out
+}
+
+// ── Journal diff ─────────────────────────────────────────────────────────────
+
+/// Where two runs stopped being the same run.
+pub struct JournalDiff {
+    /// How many leading events were identical.
+    pub common_prefix: usize,
+    /// `None` when one journal is simply a prefix of the other.
+    pub first_difference: Option<(Option<HostEvent>, Option<HostEvent>)>,
+    pub len_a: usize,
+    pub len_b: usize,
+}
+
+/// Compare two journals and report the FIRST point at which they differ.
+///
+/// This is the question a reviewer actually asks — "what changed between these
+/// two runs?" — and the reason `ReplayHost` matches sequentially rather than by
+/// key: sequential order makes "first divergence" a well-defined position instead
+/// of a set difference. `axon-os`'s `replay` answers the coarser form (are the
+/// whole records equal?); this says WHERE.
+pub fn diff_journals(a: &[HostEvent], b: &[HostEvent]) -> JournalDiff {
+    let mut i = 0usize;
+    // `seq` is excluded from the comparison: it is positional by construction, so
+    // including it would make every event after a divergence "differ" too and bury
+    // the one that matters.
+    let same = |x: &HostEvent, y: &HostEvent| {
+        x.method == y.method && x.args == y.args && x.status == y.status && x.payload == y.payload
+    };
+    while i < a.len() && i < b.len() && same(&a[i], &b[i]) {
+        i += 1;
+    }
+    let first_difference = if i < a.len() || i < b.len() {
+        Some((a.get(i).cloned(), b.get(i).cloned()))
+    } else {
+        None
+    };
+    JournalDiff {
+        common_prefix: i,
+        first_difference,
+        len_a: a.len(),
+        len_b: b.len(),
+    }
+}
+
+impl JournalDiff {
+    pub fn render(&self, opts: &RenderOpts) -> String {
+        let mut out = String::new();
+        match &self.first_difference {
+            None => {
+                out.push_str(&format!(
+                    "IDENTICAL — {} events, every one the same.\n\nThe two runs saw exactly the \
+                     same environment.\n",
+                    self.common_prefix
+                ));
+            }
+            Some((ea, eb)) => {
+                out.push_str(&format!(
+                    "The two runs agree for {} event(s), then DIVERGE at event {}.\n\n",
+                    self.common_prefix, self.common_prefix
+                ));
+                match (ea, eb) {
+                    (Some(x), Some(y)) => {
+                        out.push_str(&format!("  A: {}\n", x.describe(opts).trim_start()));
+                        out.push_str(&format!("  B: {}\n", y.describe(opts).trim_start()));
+                        // Name the axis, so a reviewer does not have to spot the
+                        // difference by comparing two similar lines.
+                        let why = if x.method != y.method {
+                            format!("different operation ({} vs {})", x.method, y.method)
+                        } else if x.args != y.args {
+                            "same operation, DIFFERENT ARGUMENTS".to_string()
+                        } else if x.status != y.status {
+                            format!(
+                                "same call, different outcome ({} vs {})",
+                                x.status, y.status
+                            )
+                        } else {
+                            "same call and outcome, DIFFERENT RESULT DATA".to_string()
+                        };
+                        out.push_str(&format!("\n  what differs: {why}\n"));
+                    }
+                    (Some(x), None) => {
+                        out.push_str(&format!(
+                            "  A: {}\n  B: (nothing — run B stopped here)\n\n  \
+                             run A did MORE: {} extra event(s)\n",
+                            x.describe(opts).trim_start(),
+                            self.len_a - self.common_prefix
+                        ));
+                    }
+                    (None, Some(y)) => {
+                        out.push_str(&format!(
+                            "  A: (nothing — run A stopped here)\n  B: {}\n\n  \
+                             run B did MORE: {} extra event(s)\n",
+                            y.describe(opts).trim_start(),
+                            self.len_b - self.common_prefix
+                        ));
+                    }
+                    (None, None) => unreachable!("a difference with neither side present"),
+                }
+            }
+        }
+        out.push_str(&format!(
+            "\n  A: {} events   B: {} events\n",
+            self.len_a, self.len_b
+        ));
+        out
+    }
+}
+
 // ── CLI wiring ───────────────────────────────────────────────────────────────
 
 /// What [`install_from_env`] set up.
@@ -976,6 +1278,318 @@ mod tests {
         assert!(r.is_err(), "must not read the real file");
         let d = divergence().expect("must latch");
         assert!(d.contains("only 0 events"), "got: {d}");
+    }
+
+    /// EVERY `AxonHost` method must be recorded AND replayed.
+    ///
+    /// This is the gate, not a nicety. `ai_extract_uncertain_*` bypassed
+    /// `AXON_AI_REPLAY` for months because "does this new effect have a replay
+    /// story?" was a question someone had to remember to ask. Now that the seam
+    /// is one trait, the set of effects is ENUMERABLE — so the question can be
+    /// asked mechanically, and a new trait method that either host forgets to
+    /// override fails here instead of silently inheriting a default that goes
+    /// live (recording) or returns a fail-closed stub (replay).
+    ///
+    /// The check reads this file's own source rather than using reflection, which
+    /// Rust does not have. That is crude but it fails in the safe direction: a
+    /// method that is not mentioned in an `impl` block cannot be overridden, so a
+    /// missing name is always a real gap. Adding the name in a comment would
+    /// defeat it, which is why the extraction is scoped to the two `impl AxonHost`
+    /// blocks.
+    #[test]
+    fn every_host_method_is_both_recorded_and_replayed() {
+        let host_src = include_str!("host.rs");
+        let this_src = include_str!("replay.rs");
+
+        // The trait's method list: `fn name(` at four-space indent, inside the
+        // `pub trait AxonHost` block only.
+        let trait_body = {
+            let start = host_src
+                .find("pub trait AxonHost {")
+                .expect("the trait must exist");
+            let rest = &host_src[start..];
+            let end = rest
+                .find("\n// ── SSE parsing")
+                .expect("the trait block must be delimited by the SSE section");
+            &rest[..end]
+        };
+        let methods: Vec<&str> = trait_body
+            .lines()
+            .filter_map(|l| l.strip_prefix("    fn "))
+            .filter_map(|l| l.split('(').next())
+            .collect();
+        assert!(
+            methods.len() >= 16,
+            "expected at least the 16 known host methods, found {}: {methods:?} — if the \
+             extraction broke, this test is passing vacuously",
+            methods.len()
+        );
+
+        // Each host's impl block.
+        let impl_block = |marker: &str| -> &str {
+            let start = this_src
+                .find(marker)
+                .unwrap_or_else(|| panic!("{marker} must exist"));
+            let rest = &this_src[start..];
+            // Ends at the next top-level section comment.
+            let end = rest.find("\n// ──").unwrap_or(rest.len());
+            &rest[..end]
+        };
+        let recording = impl_block("impl AxonHost for RecordingHost {");
+        let replaying = impl_block("impl AxonHost for ReplayHost {");
+
+        let mut missing: Vec<String> = Vec::new();
+        for m in &methods {
+            let sig = format!("fn {m}(");
+            if !recording.contains(&sig) {
+                missing.push(format!("RecordingHost::{m}"));
+            }
+            if !replaying.contains(&sig) {
+                missing.push(format!("ReplayHost::{m}"));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these host effects have no replay story: {missing:?}\n\n\
+             Every AxonHost method must be overridden in BOTH RecordingHost (to journal it) and \
+             ReplayHost (to serve it). A method left to the trait default silently goes LIVE \
+             during recording, or returns a fail-closed stub during replay — either way a run \
+             that touches it is not reproducible, which is exactly how the \
+             ai_extract_uncertain_* replay hole survived for months."
+        );
+    }
+
+    /// No interpreter builtin may reach the world except through the seam.
+    ///
+    /// The companion to the check above: that one proves the seam is complete,
+    /// this one proves nothing routes around it. `read_line` called
+    /// `std::io::stdin()` directly for the whole life of the seam, so "everything
+    /// goes through AxonHost" was false by one member and nothing noticed.
+    #[test]
+    fn no_interp_builtin_reaches_the_world_directly() {
+        let src = include_str!("interp/builtins.rs");
+        // `std::process::Command` is the exec path; `stdin()` is the input path;
+        // `std::fs::` is the filesystem. `std::env::var` is deliberately NOT here:
+        // the interpreter reads its own AXON_* configuration vars, which are not
+        // program-observable effects.
+        let banned = ["std::io::stdin(", "std::fs::", "std::process::Command"];
+
+        // KNOWN, NAMED EXEMPTION — not a way to make the test pass.
+        //
+        // The `dstore_*` builtins (Phase 7 durable `Store<T,C>`) read and write
+        // their own append-only log directly. That IS program-observable
+        // environment: `dstore_open` replays a log written by a PREVIOUS run, so a
+        // replayed run sees whatever the store holds now, which is exactly the
+        // "replay quietly consults live state" hazard.
+        //
+        // It is exempted rather than fixed because closing it needs a
+        // `file_remove` on `AxonHost` (`dstore_clear` deletes the log), and that
+        // method is DELIBERATELY absent: irreversible deletion whose risk
+        // classification is unresolved and tagged needs-human (R42 §9 Q3, see
+        // host.rs). Adding it here to turn this test green would be making a TCB
+        // decision that was explicitly reserved for a person, in order to satisfy
+        // a lint. So the gap is recorded in the open where it can be scheduled,
+        // and the gate keeps its teeth for every other builtin.
+        //
+        // The exemption is by LINE CONTENT, scoped to the dstore log helper, so it
+        // cannot accidentally cover a new unrelated `std::fs::` call.
+        let exempt_dstore = |line: &str| -> bool {
+            line.contains("store_log_path")
+                || line.contains("std::fs::read_to_string(p)")
+                || line.contains("std::fs::create_dir_all(dir)")
+                || line.contains("std::fs::OpenOptions::new()")
+                // `dstore_clear` — and the very call that BLOCKS the fix, since
+                // `AxonHost` has no `file_remove` by deliberate decision.
+                || line.contains("std::fs::remove_file(p)")
+        };
+
+        let mut hits: Vec<String> = Vec::new();
+        let mut exempted = 0usize;
+        for (i, line) in src.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            for b in &banned {
+                if code.contains(b) {
+                    if exempt_dstore(code) {
+                        exempted += 1;
+                        continue;
+                    }
+                    hits.push(format!("interp/builtins.rs:{}: {}", i + 1, line.trim()));
+                }
+            }
+        }
+        // If the exemption stops matching anything, the dstore code was reworked —
+        // re-check whether it still needs exempting rather than leaving a dead
+        // allowlist that quietly covers something else later.
+        assert!(
+            exempted > 0,
+            "the dstore exemption matched nothing — if dstore no longer touches std::fs              directly, DELETE the exemption; a stale allowlist is how a real bypass gets              covered later"
+        );
+        assert!(
+            hits.is_empty(),
+            "these builtins bypass the AxonHost seam:\n{}\n\n\
+             An effect that does not go through the seam cannot be recorded, replayed, \
+             virtualised for wasm/browser, or intercepted by a sandbox. Route it through a \
+             trait method (default-denied, like exec/http_*) instead.",
+            hits.join("\n")
+        );
+    }
+
+    fn ev(seq: usize, m: &str, args: &[&str], status: &str, pay: &[&str]) -> HostEvent {
+        HostEvent {
+            seq,
+            method: m.into(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            status: status.into(),
+            payload: pay.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// A transcript must NOT print payload values by default.
+    ///
+    /// This is the property that makes a transcript shareable, and therefore the
+    /// property that makes human review of an agent run practical at all. A run
+    /// that read an API key has that key in its journal; a default-verbose
+    /// renderer would put it in every pasted transcript.
+    #[test]
+    fn transcript_redacts_values_by_default_and_shows_them_on_request() {
+        let secret = "sk-live-DO-NOT-LEAK-abcdef";
+        let events = vec![ev(0, "env_var", &["TOKEN"], "some", &[secret])];
+
+        let redacted = render_transcript(&events, &RenderOpts::default());
+        assert!(
+            !redacted.contains(secret),
+            "the default transcript must not contain a payload value:\n{redacted}"
+        );
+        assert!(
+            redacted.contains("read env TOKEN"),
+            "it must still say WHAT happened:\n{redacted}"
+        );
+        assert!(
+            redacted.contains(&format!("{} bytes", secret.len())),
+            "a redacted payload should still disclose its size:\n{redacted}"
+        );
+
+        let shown = render_transcript(&events, &RenderOpts { show_values: true });
+        assert!(
+            shown.contains(secret),
+            "--show-values must actually show it:\n{shown}"
+        );
+    }
+
+    /// Redaction must still let a reviewer tell two different payloads apart —
+    /// otherwise a diff under redaction would be useless and they would have to
+    /// un-redact (and paste secrets) to review a change.
+    #[test]
+    fn redacted_payloads_are_still_distinguishable_by_digest() {
+        let a = render_transcript(
+            &[ev(0, "read_file", &["/c"], "ok", &["threshold=5"])],
+            &RenderOpts::default(),
+        );
+        let b = render_transcript(
+            &[ev(0, "read_file", &["/c"], "ok", &["threshold=9"])],
+            &RenderOpts::default(),
+        );
+        assert_ne!(
+            a, b,
+            "two different payloads of the SAME length must render differently \
+             under redaction, or a redacted diff cannot show a content change"
+        );
+    }
+
+    /// World-changing effects and failures must be findable by eye, and the
+    /// summary must lead with what was changed — that is the reviewer's question.
+    #[test]
+    fn transcript_flags_mutating_effects_and_summarises_them() {
+        let events = vec![
+            ev(0, "read_file", &["/in"], "ok", &["data"]),
+            ev(1, "write_file", &["/out", "body"], "ok", &[]),
+            ev(2, "exec", &["rm", "-rf"], "ok", &[""]),
+            ev(3, "read_file", &["/nope"], "err", &["not found"]),
+        ];
+        let t = render_transcript(&events, &RenderOpts::default());
+        assert!(
+            t.contains("* "),
+            "mutating effects must carry a marker:\n{t}"
+        );
+        assert!(t.contains("! "), "failures must carry a marker:\n{t}");
+        assert!(
+            t.contains("changed the world : ") && t.contains("/out"),
+            "the summary must name what was changed:\n{t}"
+        );
+        assert!(
+            t.contains("failed calls      : 1"),
+            "the summary must count failures:\n{t}"
+        );
+        // A pure-read run must say so positively rather than leaving it blank.
+        let ro = render_transcript(
+            &[ev(0, "read_file", &["/in"], "ok", &["x"])],
+            &RenderOpts::default(),
+        );
+        assert!(
+            ro.contains("changed the world : nothing"),
+            "a read-only run must state that it changed nothing:\n{ro}"
+        );
+    }
+
+    /// The diff must report the FIRST divergence and name the axis.
+    #[test]
+    fn diff_reports_the_first_divergence_and_what_differs() {
+        let a = vec![
+            ev(0, "read_file", &["/a"], "ok", &["same"]),
+            ev(1, "read_file", &["/b"], "ok", &["A-side"]),
+            ev(2, "read_file", &["/c"], "ok", &["also differs"]),
+        ];
+        let b = vec![
+            ev(0, "read_file", &["/a"], "ok", &["same"]),
+            ev(1, "read_file", &["/b"], "ok", &["B-side"]),
+            ev(2, "read_file", &["/c"], "ok", &["differs too"]),
+        ];
+        let d = diff_journals(&a, &b);
+        assert_eq!(d.common_prefix, 1, "one leading event was identical");
+        let r = d.render(&RenderOpts::default());
+        assert!(r.contains("DIVERGE at event 1"), "{r}");
+        assert!(
+            r.contains("DIFFERENT RESULT DATA"),
+            "must name the axis, not just show two lines:\n{r}"
+        );
+        // Only the FIRST divergence is reported, even though event 2 differs too.
+        assert!(
+            !r.contains("event 2"),
+            "reporting every later difference buries the one that matters:\n{r}"
+        );
+    }
+
+    /// Identical journals are reported as identical, and a differing ARGUMENT is
+    /// distinguished from differing RESULT DATA — they mean different things
+    /// (the program behaved differently vs the world did).
+    #[test]
+    fn diff_distinguishes_argument_change_from_result_change() {
+        let base = vec![ev(0, "read_file", &["/a"], "ok", &["x"])];
+        assert!(diff_journals(&base, &base).first_difference.is_none());
+
+        let other_arg = vec![ev(0, "read_file", &["/DIFFERENT"], "ok", &["x"])];
+        let r = diff_journals(&base, &other_arg).render(&RenderOpts::default());
+        assert!(r.contains("DIFFERENT ARGUMENTS"), "{r}");
+
+        let other_method = vec![ev(0, "read_line", &[], "ok", &["x"])];
+        let r2 = diff_journals(&base, &other_method).render(&RenderOpts::default());
+        assert!(r2.contains("different operation"), "{r2}");
+    }
+
+    /// One journal being a PREFIX of the other is a divergence with a specific
+    /// meaning: one run did more (or less) than the other.
+    #[test]
+    fn diff_reports_a_prefix_as_one_run_doing_more() {
+        let short = vec![ev(0, "read_file", &["/a"], "ok", &["x"])];
+        let long = vec![
+            ev(0, "read_file", &["/a"], "ok", &["x"]),
+            ev(1, "write_file", &["/b", "y"], "ok", &[]),
+        ];
+        let r = diff_journals(&short, &long).render(&RenderOpts::default());
+        assert!(r.contains("run B did MORE"), "{r}");
+        assert!(r.contains("1 extra event"), "{r}");
+        let r2 = diff_journals(&long, &short).render(&RenderOpts::default());
+        assert!(r2.contains("run A did MORE"), "{r2}");
     }
 
     /// A replay that stops EARLY is also a divergence — visible only from

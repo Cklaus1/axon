@@ -299,6 +299,38 @@ enum Command {
         json: bool,
     },
 
+    /// Read a host journal (`AXON_RECORD`) as a human-reviewable transcript, or
+    /// diff two of them.
+    ///
+    /// The journal itself is hex — the right format for a replaying engine and the
+    /// wrong one for a person. This is the reviewer's view of it: what the run
+    /// touched, in order, in plain language, with a summary that leads on the
+    /// question a reviewer actually has ("did this change anything it should not
+    /// have?").
+    ///
+    /// Values are REDACTED by default (sizes + content digests). A journal holds
+    /// every file the run read and the value of every env var it looked up, so a
+    /// transcript that leaked credentials by default is one people would learn not
+    /// to share — which would defeat the point of having a shareable artifact.
+    Replay {
+        /// The journal to read (written by `AXON_RECORD=<path> axon run …`).
+        #[arg(help = "Path to a host journal")]
+        journal: PathBuf,
+
+        /// A second journal — report the FIRST event at which the two runs differ.
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Diff against a second journal: where did the two runs depart?"
+        )]
+        diff: Option<PathBuf>,
+
+        /// Show payload values instead of sizes + digests. Off by default because
+        /// a journal can contain secrets the run read.
+        #[arg(long, help = "Show payload values (may include secrets the run read)")]
+        show_values: bool,
+    },
+
     /// Summarize the provenance log: per-`@[adaptive]`-fn score trajectory.
     ///
     /// Reads `$XDG_CACHE_HOME/axon/provenance.jsonl` (written by `@[adaptive]`
@@ -765,6 +797,11 @@ fn dispatch(command: Command) {
             jobs,
             json,
         } => cmd_test(files, filter, jobs, json),
+        Command::Replay {
+            journal,
+            diff,
+            show_values,
+        } => cmd_replay(journal, diff, show_values),
         Command::Trace {
             func,
             path,
@@ -3156,8 +3193,55 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
     // input via the persisted provenance log (AXON_GOAL_CONTINUE) — so the
     // best score climbs run-over-run and converges. Autonomous iterate-to-
     // converge, driven by one command (builds on cross-run self-improvement).
+    // Record or replay the environment (AXON_RECORD / AXON_REPLAY), same as
+    // `axon run`.
+    //
+    // This is the path where reproducibility matters MOST and was missing: the
+    // optimizer's whole output is score deltas, and a score delta is meaningless
+    // if the environment moved underneath it. A goal that reads a data file, calls
+    // a model, or shells out was previously un-rerunnable, so "variant 7 scored
+    // 96" could not be checked — only believed.
+    //
+    // ONE journal spans the whole session, including every `--iterate` pass. That
+    // is deliberate: the iterate loop's later passes depend on the earlier ones
+    // (via AXON_GOAL_CONTINUE), so a per-pass journal would record fragments that
+    // cannot be replayed independently anyway.
+    //
+    // HONEST LIMIT, stated because a half-replayable optimizer would be worse than
+    // an unreplayable one: the provenance log is NOT in the journal (it is the
+    // recorder — journaling it would make recording recursive). So a replayed goal
+    // reproduces the program's host interactions exactly, while its cross-run
+    // continuation state still comes from the live log. To make a goal replay
+    // hermetic, point `XDG_CACHE_HOME` at a fresh directory so the log starts empty
+    // — the same way the recording run saw it.
+    let replay_mode = match axon_core::replay::install_from_env() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    // Shared by both the single-run and iterate paths: a divergence must decide the
+    // exit code regardless of what the goal program did with the error.
+    let finish_replay = |code: i32| -> i32 {
+        if let Some(d) = axon_core::replay::finish() {
+            if !d.already_reported {
+                eprintln!("axon: replay divergence: {}", d.report);
+            }
+            return axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE;
+        }
+        if replay_mode == axon_core::replay::Mode::Recording {
+            eprintln!(
+                "axon: recorded host journal to {}",
+                std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
+            );
+        }
+        code
+    };
+
     let Some(n) = iterate else {
-        process::exit(axon_core::interp::run_program(&program));
+        let code = axon_core::interp::run_program(&program);
+        process::exit(finish_replay(code));
     };
     let n = n.max(1);
     let start_ts = std::time::SystemTime::now()
@@ -3204,7 +3288,11 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
             eprintln!("# best: score {}{at}", best.score);
         }
     }
-    process::exit(code);
+    // A diverged replay of an OPTIMIZER run is worth flagging even louder than a
+    // plain one: the "# best: score …" line above is the whole point of the
+    // command, and if the environment moved during a replay that number describes
+    // a search that did not happen.
+    process::exit(finish_replay(code));
 }
 
 // ── trace ─────────────────────────────────────────────────────────────────────
@@ -3583,6 +3671,44 @@ fn effective_seed() -> u64 {
 }
 
 // ── run ───────────────────────────────────────────────────────────────────────
+
+/// `axon replay <journal> [--diff other] [--show-values]`
+///
+/// Reading and diffing only — this never executes anything. Serving a program FROM
+/// a journal is `AXON_REPLAY=<path> axon run …`; keeping the two apart means an
+/// operator inspecting an agent's behaviour cannot accidentally re-run it.
+fn cmd_replay(journal: PathBuf, diff: Option<PathBuf>, show_values: bool) {
+    let opts = axon_core::replay::RenderOpts { show_values };
+    let a = match axon_core::replay::read_journal(&journal) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    match diff {
+        None => {
+            print!("{}", axon_core::replay::render_transcript(&a, &opts));
+        }
+        Some(other) => {
+            let b = match axon_core::replay::read_journal(&other) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(2);
+                }
+            };
+            let d = axon_core::replay::diff_journals(&a, &b);
+            print!("{}", d.render(&opts));
+            // Exit 11 when they differ — the same code a diverging replay uses, so
+            // a script can branch on "these two runs are not the same run" without
+            // parsing prose, and it means the same thing in both places.
+            if d.first_difference.is_some() {
+                process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+            }
+        }
+    }
+}
 
 fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // Fix 5: validate .ax extension.
@@ -4335,7 +4461,39 @@ fn run_check_pipeline_located(
         );
     }
     for warn in &resolve_result.warnings {
-        eprintln!("warning: [{}] {}", warn.code, warn.message);
+        // STRUCTURED, LOCATED, and carrying `help` — not the bare prose this used
+        // to print.
+        //
+        // AXON_FOR_RLM §2 is about `run` being the quiet path; the same defect
+        // lived in the WARNING path of every command. A resolver warning has a
+        // span and (now) a `fix`, and both were dropped on the floor here, so the
+        // most-hit diagnostic in the RLM benchmark — `let x = x + 1`, which cost
+        // 3 of 8 tasks — reached the model as "variable `x` shadows a previous
+        // binding" with no file, no line, and no suggestion. There was nothing in
+        // it to repair toward.
+        //
+        // Warnings are emitted here rather than pushed into `diags`: that list is
+        // the ERROR list — a non-empty one exits 2 and every entry prints with an
+        // `error:` prefix — so putting a warning in it would fail the build on a
+        // shadowed name and mislabel it as an error.
+        let (line, col) = loc(&warn.span);
+        let d = PipelineDiagnostic {
+            code: warn.code.to_string(),
+            message: warn.message.clone(),
+            file: file.clone(),
+            line,
+            col,
+            severity: "warning".to_string(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: warn.fix.clone(),
+        };
+        if !std::io::stderr().is_terminal() {
+            eprintln!("{}", d.json());
+        } else {
+            eprintln!("warning: {}", d.display());
+        }
     }
 
     // Step 1b: fill lambda capture lists (post-resolution pass)

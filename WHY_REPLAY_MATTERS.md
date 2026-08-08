@@ -44,7 +44,7 @@ samples are small — 16 binary outcomes per arm. Two conclusions, and the secon
 matters more: a stdlib percentage cannot see any of this, and neither can a
 3-run sample support a per-commit gate. See §5.
 
-## 3. The four properties where the competition is at zero
+## 3. The six properties where the competition is at zero
 
 ### 3.1 Total replayability
 
@@ -61,9 +61,35 @@ used randomness. Axon can nearly do it today:
 | `now_ms` / `sleep_ms` | `AXON_CLOCK` + `trace --replay` anchoring | **covered 2026-08-08** |
 | `temporal_now` / `temporal_new` / `temporal_is_valid` | routed to the same clock — **fixed 2026-08-08** | covered |
 | `dir_list` **ordering** | results sorted (`read_dir` order is filesystem-dependent) | covered |
-| `dir_list` **contents**, `read_file`, `file_size`, `file_exists` | — | **open** |
-| `read_line`, `env_var`, `http_*`, `exec` | — | **open** |
+| `dir_list` **contents**, `read_file`, `file_size`, `file_exists` | `AXON_RECORD`/`AXON_REPLAY` host journal | **covered 2026-08-08** |
+| `read_line`, `env_var`, `http_*`, `exec` | same host journal (one seam, not per-builtin) | **covered 2026-08-08** |
 | `host_await*` (host replies) | — | **open** |
+
+The last two rows closed together, and the reason is the point of §3.1: they were
+never separate problems. Every environmental effect passes through one trait, so
+one wrapper covers the column and a future builtin cannot forget to opt in —
+there is nowhere else for it to reach the world. A recorded run now reproduces
+byte-for-byte with its files deleted and stdin closed, while the same program
+without the journal produces different output in that same stripped environment.
+
+Two findings from building it are worth recording, because both are the shape this
+paper keeps running into — a claim that was *nearly* true:
+
+* **The seam had never worked for its actual purpose.** The host was stored in a
+  `thread_local!`, and the interpreter runs every program on a freshly-spawned
+  thread, so a host installed *for* a program was invisible *to* it. Every test
+  passed because they all called into the seam on the installing thread; "install
+  a host, then run a program" had no test at all.
+* **`read_line` was not behind the trait**, calling `std::io::stdin()` straight
+  from the builtin — so "every effect funnels through one seam" was false by one
+  member, and that member is what an interactive agent run depends on.
+
+Both were found by running a fifteen-line probe, not by reading the trait's method
+list, which looked complete. That is now gated two ways: a test that runs real
+`.ax` source and fails if the seam stops reaching the program, and a coverage test
+asserting every `AxonHost` method is present in both the recording and replaying
+hosts — the mechanical version of the question nobody remembered to ask about
+`ai_extract_uncertain_*`.
 
 The clock was the sharpest hole, because `axon trace --replay <run-id>` advertised
 a deterministic `(Trace, Seed)` pair "for every run" and that claim was simply
@@ -184,11 +210,46 @@ Most languages write the precondition in a doc comment and hope. Axon can make
 violating it a compile error when the arguments are constant and a clean exit-6
 refusal when they are not.
 
+### 3.5 Per-run cost accounting
+
+No mainstream language can tell you what a run cost. Axon meters AI calls
+per-token and debits them from the calling principal's carved budget, so authority
+and spend are one model rather than two bookkeeping systems that can disagree
+(`crates/axon-core/src/kernel.rs:678-715`). Exhausting a kernel-goal budget stops
+the run with its own exit code (7) rather than a generic failure, so a supervisor
+can distinguish "out of money" from "broken".
+
+This was already built and went unclaimed through this paper's first draft — which
+is its own small lesson about a project whose docs lag its code. For an ASI
+substrate, bounded-cost-by-construction belongs next to bounded-CPU: an agent that
+can spend without limit is unsafe in a way that has nothing to do with memory
+safety. Note the honest boundary — this bounds *spend*, not CPU. `while true {}`
+still burns unbounded compute with no capability at all, and real containment there
+needs fuel metering, which does not exist.
+
+### 3.6 Deterministic concurrency
+
+Scheduler order is a function of spawn order plus `AXON_SEED`: ready fibers run in
+spawn order rotated by the seed (`crates/axon-core/src/kernel.rs:327-400`). So a
+concurrent Axon program is reproducible by default, and concurrency does not
+silently opt a program out of §3.1.
+
+Every mainstream language gives you OS-scheduler nondeterminism the moment you
+spawn anything, which is why concurrency bugs are the canonical
+"unreproducible" class. Getting determinism there normally requires a special
+tool — a deterministic replay debugger, a model checker — rather than being the
+default. It costs nothing to claim here because it is already true.
+
 ## 4. Ranked, for ASI specifically
 
 1. **Replayability** — auditability's foundation.
 2. **Loud failure** — a model cannot repair what it cannot see.
 3. **Capability enforcement** — containment.
+3b. **Cost accounting** (§3.5) and **deterministic concurrency** (§3.6) — both
+   already built, both unclaimed until this revision. They rank here rather than
+   lower because each is a precondition for the ones above being *usable*: an
+   agent with no spend ceiling cannot be contained, and a concurrent program that
+   cannot be replayed cannot be audited.
 4. **Bytes + hashing** — more ASI-relevant than it looks: content-addressed
    hashing is what makes agent memory, caching and dedup possible, and it is
    currently at 0%. Specced as R43.
@@ -209,12 +270,47 @@ gateable, and two of them are not.
 
 | Metric | Target | Now |
 |---|---|---|
-| Builtins with a host/entropy/time/model effect and no replay story | 0 | ~8 (`read_line`, `env_var`, `http_get`, `http_post`, `exec`, file contents, `host_await*`) |
+| Builtins with a host/entropy/time/model effect and no replay story | 0 | **1** (`host_await*`), plus one named exemption (`dstore_*`) |
 
 This one works because the set is *enumerable from the builtin table plus its effect
-rows*. A CI check can walk every builtin whose row includes IO/Net/Exec/Time/Random
-and assert it has a record/replay path. It fails a commit that adds an
-unreplayable builtin. That is a gate.
+rows*. It is now an actual CI check, not a proposal
+(`replay::tests::every_host_method_is_both_recorded_and_replayed` and
+`no_interp_builtin_reaches_the_world_directly`): the first asserts every
+`AxonHost` method is present in both the recording and replaying hosts, the second
+that no interpreter builtin reaches the world around the seam. Both were verified
+non-vacuous by deletion — remove a method and the test names it.
+
+It earned its keep immediately: on its first run it found `dstore_*` (the durable
+`Store`) reading and writing its log directly. That is exempted rather than fixed,
+*in writing and with the reason*, because closing it needs a `file_remove` on the
+trait and that method is deliberately absent pending a human risk decision (R42 §9
+Q3). Turning the test green by adding it would have been making a reserved TCB
+decision to satisfy a lint. The exemption itself asserts it still matches
+something, so a stale allowlist cannot silently cover a future bypass.
+
+**A second real gate, added 2026-08-08 — repair rate:**
+
+| Metric | Target | Now |
+|---|---|---|
+| RLM benchmark: tasks recovered by ONE repair round | rising, per-task | **+1 of 3 failures** (5/8 → 6/8), 3 runs, zero spread |
+
+This was the §7.1 proposal, and it turned out to be measurable and decision-moving
+rather than merely appealing. It is a gate and not a dashboard for one specific
+reason: unlike `tasks_hard`, it is reported **per task with its failure text**, so
+a regression names which task stopped repairing and why. The count alone would have
+the same variance problem.
+
+It also produced the first non-zero repair gain this project has measured. For six
+runs the number was 5/8 → 5/8; after fixing two diagnostics it is 5/8 → 6/8, with
+first-try unchanged — so the gain is attributable to the repair round, not to better
+generation. The task that moved is precisely the one whose diagnostic was fixed.
+
+The mechanism is worth stating because it generalises: the old help for an
+`i64`-where-`str`-expected argument said *"cast with `as str` if compatible"*, and
+there is no such cast — the model was being pointed at a dead end by a diagnostic
+that was **confidently wrong rather than silent**. That is the §3.3 failure mode
+wearing a different hat: a wrong suggestion costs a whole repair round, which for
+an agent is worse than no suggestion.
 
 **Two dashboards, not gates:**
 
@@ -236,7 +332,9 @@ What *is* gateable in its place is the **process** that finds them:
 | Found → closed latency | Measures whether discoveries get fixed, not whether we looked. |
 | Red-team budget spent per release | Makes "we looked" a resourced activity rather than a claim. |
 
-So the honest summary is: one gate, one dashboard, one discipline.
+So the honest summary is: **two** gates, one dashboard, one discipline — the 
+repair-rate metric graduated from proposal to gate on 2026-08-08, and the 
+replay-coverage metric from proposal to CI check.
 
 ## 6. What this implies for the stdlib work that remains
 

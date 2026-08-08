@@ -1053,46 +1053,21 @@ impl<'a> Resolver<'a> {
             Expr::Let { name, value, .. } => {
                 self.resolve_expr(value);
                 // Fix #15: warn when a new binding shadows an existing one.
-                // `_` and `_<rest>` are conventional "ignore" names — Rust
-                // and most ML-family languages treat them specially. We
-                // don't warn on `let _ = …`, `let _unused = …`, etc.
-                if !name.starts_with('_') && self.table.lookup(name).is_some() {
-                    self.emit_warning(
-                        Diagnostic::warning(
-                            "W0002",
-                            format!("variable `{name}` shadows a previous binding"),
-                        )
-                        .with_file(self.file),
-                    );
-                }
+                self.warn_shadowing(name, value);
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
             Expr::Own { name, value, .. } => {
                 self.resolve_expr(value);
-                if !name.starts_with('_') && self.table.lookup(name).is_some() {
-                    self.emit_warning(
-                        Diagnostic::warning(
-                            "W0002",
-                            format!("variable `{name}` shadows a previous binding"),
-                        )
-                        .with_file(self.file),
-                    );
-                }
+                // Fix #15: warn when a new binding shadows an existing one.
+                self.warn_shadowing(name, value);
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
             Expr::RefBind { name, value, .. } => {
                 self.resolve_expr(value);
-                if !name.starts_with('_') && self.table.lookup(name).is_some() {
-                    self.emit_warning(
-                        Diagnostic::warning(
-                            "W0002",
-                            format!("variable `{name}` shadows a previous binding"),
-                        )
-                        .with_file(self.file),
-                    );
-                }
+                // Fix #15: warn when a new binding shadows an existing one.
+                self.warn_shadowing(name, value);
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
@@ -1367,6 +1342,92 @@ impl<'a> Resolver<'a> {
             | Expr::Continue
             | Expr::InlineAsm { .. } => {}
         }
+    }
+
+    /// Warn that `name` shadows an existing binding — and, when the shape says
+    /// the author meant to ASSIGN, say so.
+    ///
+    /// WHY THIS CARRIES A `help`. Measured against the RLM harness, `let x = x +
+    /// 1` was the single most common failure the model produced: 3 of 8 benchmark
+    /// tasks failed on it, each writing `let count = count + 1` inside a nested
+    /// block to increment a counter — a Rust/Python habit. In Axon that declares a
+    /// NEW binding scoped to the block and discards it, so the counter never moves
+    /// and the program prints a wrong answer while exiting 0.
+    ///
+    /// That makes it a silent-wrong-answer path reachable from ordinary code,
+    /// which is the class this language claims to eliminate — so the diagnostic
+    /// must name the fix rather than describe the symptom. "variable `count`
+    /// shadows a previous binding" is true and useless: the reader knows they
+    /// wrote the name twice. What they do not know is that Axon spells
+    /// reassignment without `let`.
+    ///
+    /// Three cases, because one message would be WRONG for one of them:
+    /// shadowing a BUILTIN (where "drop the `let`" is bad advice — assigning to
+    /// `len` is not the repair), re-declaring from the name's own value (the "I
+    /// meant to assign" shape), and plain deliberate shadowing (which gets a
+    /// pointer, not a nag).
+    ///
+    /// Replaces three byte-identical copies of this warning (Let/Own/RefBind).
+    fn warn_shadowing(&mut self, name: &str, value: &Expr) {
+        // `_` and `_<rest>` are conventional "ignore" names — Rust and most
+        // ML-family languages treat them specially, so `let _ = …` never warns.
+        let Some(prev) = self.table.lookup(name) else {
+            return;
+        };
+        if name.starts_with('_') {
+            return;
+        }
+        let shadows_builtin = matches!(prev, Symbol::Builtin { .. });
+        // `walk_expr` is exhaustive with no `_` arm, so this cannot silently miss
+        // a shape the way a hand-rolled matcher would.
+        let mut reads_itself = false;
+        crate::ast::walk_expr(value, &mut |e| {
+            if let Expr::Ident(id) = e {
+                if id == name {
+                    reads_itself = true;
+                }
+            }
+        });
+        let d = if shadows_builtin {
+            Diagnostic::warning(
+                "W0002",
+                format!("`{name}` is the name of a builtin — this binding shadows it"),
+            )
+            .with_fix(format!(
+                "rename the binding (e.g. `{name}_` or a more specific name). Assigning to \
+                 `{name}` is not the fix here — the builtin is not a variable"
+            ))
+        } else if reads_itself {
+            Diagnostic::warning(
+                "W0002",
+                format!(
+                    "`let {name} = …` re-declares `{name}` from its own value — that is a NEW \
+                     binding, so the outer `{name}` is left unchanged"
+                ),
+            )
+            .with_fix(format!(
+                "to update it, drop the `let`: `{name} = …`. Axon bindings are already \
+                 reassignable, so `let` always introduces a new one — and inside a nested block \
+                 that new one disappears at the closing brace"
+            ))
+        } else {
+            Diagnostic::warning(
+                "W0002",
+                format!("variable `{name}` shadows a previous binding"),
+            )
+            .with_fix(format!(
+                "if you meant to update the existing `{name}`, drop the `let`: `{name} = …`"
+            ))
+        };
+        let d = d.with_file(self.file);
+        // `current_span` is the enclosing statement's span, maintained by
+        // `resolve_stmt`; `Expr::Let` itself carries none.
+        let d = if self.current_span.is_dummy() {
+            d
+        } else {
+            d.with_span(self.current_span)
+        };
+        self.emit_warning(d);
     }
 
     fn resolve_stmt(&mut self, stmt: &Stmt) {

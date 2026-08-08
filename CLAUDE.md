@@ -17,6 +17,10 @@ AI-optimized, statically-typed systems language. Compiles to native via LLVM 17.
 
 ## Commands
 
+A SELECTION. `axon --help` is authoritative — there are more verbs than these
+(`fmt`, `doc`, `lsp`, `lock`, `verify`, `improve`, `target`, `cache`, `ai`). Checked by
+`scripts/claims_gate.sh`: every verb named here must exist.
+
 ```bash
 # Build the fast interpreter CLI (no LLVM/codegen — sub-second):
 cargo build -p axon-core --no-default-features --bin axon
@@ -28,6 +32,18 @@ axon check examples/hello.ax              # type-check only
 axon test  examples/tests.ax              # run @[test] functions (in-process interpreter)
 axon parse examples/hello.ax              # print AST as JSON   (needs --features serde-json)
 axon complexity examples/hello.ax         # MDL description-length metric over the AST (per-fn + total; --json → axon-complexity/1)
+axon replay run.journal                   # read a host journal as a HUMAN transcript: what the run
+                                          #   touched, in order, plus a summary leading with what it
+                                          #   CHANGED. Values REDACTED by default (sizes + digests) —
+                                          #   a journal holds every env-var value the run read, so a
+                                          #   default-verbose transcript would leak secrets into every
+                                          #   review. `--show-values` opts in.
+axon replay a.journal --diff b.journal    # where did two runs depart? Reports the FIRST divergence and
+                                          #   names the axis (different operation / different arguments
+                                          #   / different result data). Exit 11 when they differ — the
+                                          #   same code a diverging replay uses. Digests differ under
+                                          #   redaction, so a content change is reviewable without
+                                          #   un-redacting. Never executes anything.
 axon trace                                # summarize the provenance log: per-@[adaptive]-fn score trajectory (--fn NAME, --json)
 axon trace --ai                           # AI-call audit trail: per-fn ai_complete calls, tier→model, mode (live/mock/replay/fallback), metered cost, and the goal each served (--json → axon-ai-audit/1)
 axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
@@ -59,6 +75,14 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 
 ### Interpreter env vars
 
+A SELECTION — the source reads ~54 `AXON_*` vars (VM/TEE/CI/proof-tuning ones are
+not listed). Gated by `scripts/claims_gate.sh`: every var named here must actually
+be read by the code. The omission direction is deliberately not gated (that is a
+judgement call about table length) — which is exactly why this says "a selection"
+rather than implying completeness. A doc that implies completeness turns an omission
+into an apparent absence, and that cost 3 of 8 tasks on the RLM benchmark when the
+language card did it.
+
 | Var | Effect |
 |---|---|
 | `AXON_SEED` | Seed the RNG (`u64`) for reproducible `random_*` runs |
@@ -66,9 +90,17 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 | `AXON_CLOCK` | Deterministic virtual clock: `<start_ms>` or `<start_ms>:<tick_ms>` (tick default 1, may be 0). `now_ms()` returns the current virtual time then advances by `tick`; `sleep_ms(n)` advances by `n` **without really sleeping**. Monotonic, NOT frozen — so `read/sleep/read` still strictly increases and elapsed-time logic keeps working. Closes the TIME axis of replay: a program reading the clock used to reproduce nothing. (It was described here as "the last hole in replay" — that was wrong: the whole environmental column, incl. stdin/fs/net/exec, was open until `AXON_RECORD`/`AXON_REPLAY`.) `axon trace --replay` sets it automatically from the recorded run's `ts_ms`. Honoured by interp AND native (`clock_parity.sh`) |
 | `AXON_AI_MOCK` | Use deterministic stub AI responses instead of live calls |
 | `AXON_AI_REPLAY` | Path to an LLM-call replay cache: every `ai_complete` is memoized by `(prompt, model)` — a first run records `(response, tokens)`, a re-run replays it verbatim (no live call / mock / API key) so an AI run is exactly reproducible (ROADMAP §9.5 F2) |
-| `AXON_RECORD` | Path to write a **host journal**: every call through the `AxonHost` seam (`read_file`/`write_file`/`read_line`/`env_var`/`dir_list`/`exec`/`http_*`/`now_ms`/`sleep_ms`/`file_exists`/`dir_create`/`file_copy`/`file_rename`) is performed for real and appended with its outcome. Closes the whole environmental-nondeterminism column at ONE seam instead of per-builtin caches. **A journal is as sensitive as the run it records** — it holds file contents, HTTP bodies, stdin, and env-var VALUES verbatim; the hex encoding is delimiter safety, not encryption |
+| `AXON_RECORD` | Path to write a **host journal**: every call through the `AxonHost` seam (`read_file`/`write_file`/`read_line`/`env_var`/`dir_list`/`exec`/`http_*`/`now_ms`/`sleep_ms`/`file_exists`/`dir_create`/`file_copy`/`file_rename`) is performed for real and appended with its outcome. Honoured by `axon run` AND `axon goal` — the optimizer is the path where reproducibility matters most, since a score delta is meaningless if the environment moved underneath it. Closes the whole environmental-nondeterminism column at ONE seam instead of per-builtin caches. **A journal is as sensitive as the run it records** — it holds file contents, HTTP bodies, stdin, and env-var VALUES verbatim; the hex encoding is delimiter safety, not encryption |
 | `AXON_REPLAY` | Serve a run from a host journal instead of the world. The program reproduces byte-for-byte with the files deleted and stdin closed; **nothing is performed** (a replayed `write_file`/`exec`/`http_post` returns its recorded outcome without touching anything). Any miss — unrecorded method, different argument, journal exhausted, journal partly unconsumed — is a **divergence**: the first departure point is reported and the run exits **11** (`REPLAY_DIVERGENCE_EXIT_CODE`), which the program **cannot swallow** by catching the error. Mutually exclusive with `AXON_RECORD`. Gated by `replay_host_gate.sh` |
 | `AXON_PATH` | Colon-separated module search path for `mod` imports |
+| `AXON_GOAL_CONTINUE` | Resume a `goal` search from the best prior input in the provenance log (set automatically by `axon goal --iterate` for runs 2..N) |
+| `AXON_REQUIRE_CERTS` | Fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
+| `AXON_ALLOWED_EFFECTS` | Comma-separated effect ceiling enforced at runtime (the ambient counterpart to `sandbox_create`) |
+| `AXON_PRINCIPAL` / `AXON_BUDGET_TOKENS` | The principal a run executes as, and its token budget |
+| `AXON_AI_PROVIDER` / `AXON_AI_BASE_URL` / `AXON_AI_API_KEY` | Live-AI routing: `anthropic` \| `openai` codec, gateway URL, key. `.env` is honoured (`AXON_DOTENV`) — see `crates/axon-ai/README.md` |
+| `AXON_AI_MODEL_CHEAP` / `_BALANCED` / `_STRONG` | Override the model each `@[ai(tier: …)]` resolves to |
+| `AXON_INTENT_GEN` | `axon intent compile` fills TODO stubs via a live model (needs `--features asi-runtime`) |
+| `AXON_KILL_FILE` | Path whose existence trips the `@[corrigible]` kill-switch latch |
 
 ## Compiler Pipeline
 
@@ -79,7 +111,7 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
   → Resolver (resolver.rs)              name resolution, scope building
   → Infer    (infer.rs / types.rs)      Hindley-Milner type inference
   → Checker  (checker.rs)               semantic validation, diagnostics
-  → Codegen  (codegen.rs)               LLVM IR via inkwell 0.4
+  → Codegen  (codegen/mod.rs + codegen/*) LLVM IR via inkwell 0.4
   → Link     (main.rs)                  cc linker → native binary
 ```
 
@@ -96,7 +128,7 @@ crates/axon-core/src/
   infer.rs      Hindley-Milner inference, constraint solving
   checker.rs    Semantic rules R01-R12, diagnostics
   builtins.rs   BUILTINS table, builtin_sigs(), DEFERRED_ATTRS
-  codegen.rs    LLVM IR codegen via inkwell
+  codegen/      LLVM IR codegen via inkwell (mod.rs + builtins.rs, builtin_externs.rs, bpf.rs, …)
   error.rs      CompileError, Diagnostic types
   lib.rs        parse_source() public API
   main.rs       axon CLI (run/build/check/test/parse commands)
@@ -227,7 +259,7 @@ fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 
 `to_str`, anything the call site must expand/wrap):**
 
 1. `builtins.rs` — add entry to `BUILTINS` array
-2. `codegen.rs` — declare LLVM function, handle the lowering in `emit_call`
+2. `codegen/mod.rs` — declare LLVM function, handle the lowering in `emit_call`
 3. `infer.rs` — `builtin_sigs()` auto-populates; add `Type::` mapping to `fn_return_types`
 4. `checker.rs` — usually automatic via `check_call_arity_and_types`
 5. `examples/` — add usage example and test

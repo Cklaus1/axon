@@ -3164,6 +3164,10 @@ mod provenance;
 // call sites (json_quote, append_*_jsonl, read_best_input, …) are unchanged,
 // and re-export the public API at the original `interp::` path for main.rs.
 use provenance::*;
+// `sha256_hex` is re-exported crate-internally so `replay.rs` can fingerprint a
+// journal payload with the SAME hash the provenance/AI-replay caches use, rather
+// than adding a second digest implementation that could disagree with them.
+pub(crate) use provenance::sha256_hex;
 pub use provenance::{
     append_run_start_jsonl, best_recorded_score, find_run_start, provenance_log_path,
     read_ai_calls, read_provenance, set_provenance_source, AiCallRecord, ProvRecord,

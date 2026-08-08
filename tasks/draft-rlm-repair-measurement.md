@@ -1,7 +1,29 @@
 # DRAFT — Finish the RLM fluency measurement
 
-**Status:** DRAFT — not reviewed, not scheduled. Must pass a build-loop Step 1
-adversarial review before anyone runs Step 0 against it.
+**Status:** ✅ **DONE 2026-08-08 — A1 landed and RUN. See the results below and
+`aicoding/atlas/spikes/rlm-engine/results/axon-repair-primer-2026-08-08-FINDINGS.md`.**
+
+**Outcome, against the interpretation this draft fixed in advance:**
+
+- **Primed-repair = 5/8, delta +0 on both arms, three runs.** So the answer to the
+  question that motivated this draft is NO: the repair primer was not the limit.
+  Per the pre-registered reading, that bounds ONE variable and does not license the
+  stronger claim that no diagnostic could help — and it does not, because:
+- **Diagnostic content IS the limit.** With the channel fixed, two diagnostic
+  changes moved post-repair from 5/8 to **6/8** — the first non-zero repair gain
+  this project has measured, three runs, zero spread, first-try unchanged (so the
+  gain is the repair round, not generation). The task that moved is exactly the one
+  whose diagnostic was fixed: `char_at` returns a byte, and the old help told the
+  model to "cast with `as str`", which does not exist.
+
+**Consequence for the AXON_FOR_RLM §4/§5 gate:** the gate number was measured
+through a broken channel, and the re-measurement says the diagnostics work is
+load-bearing while the priming work is not. That argues for spending on diagnostics
+before `--require-contained` or the accumulating session.
+
+**Superseded item:** A1's implementation question ("new function vs. parameter") was
+settled as the REVISED note said — one `repair_primer` parameter on `run_arms`, with
+the no-change claim as a byte-identical-prompt test rather than an assertion.
 **Source:** `tasks/opportunities.md` O-RLM-07, O-RLM-08, from the 2026-08-06
 build-loop over `AXON_FOR_RLM.md`.
 **Risk class:** Trivial (measurement + a closed-table extension; no new surface)

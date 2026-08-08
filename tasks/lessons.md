@@ -414,3 +414,61 @@ the opportunity entry only records the observation.
   **Rule:** when choosing what a regression test probes, ask what the BROKEN path does — if the
   fallback blocks, waits, or retries, pick a different probe. Verify by mutating the source and
   confirming the failure is fast and specific.
+- **A diagnostic that is confidently WRONG costs more than one that says nothing.** Measured, not
+  reasoned: for six runs the RLM benchmark's repair round gained exactly zero tasks (5/8 → 5/8).
+  Two diagnostic fixes took it to 5/8 → 6/8 across three runs with zero spread, first-try unchanged —
+  so the gain is the repair round, and the task that moved is precisely the one whose diagnostic was
+  fixed. The old text for an `i64` argument where `str` was expected read "change the argument's type
+  or cast with `as str` if compatible". There is no such cast. The model spent its single repair
+  round following that advice into a dead end. Same for a shadowing warning whose help said "drop the
+  `let`" when the shadowed name was a BUILTIN — assigning to `len` is not the repair, and I shipped
+  that wrong advice myself before catching it on the very next run. **Rule:** when writing a `help`,
+  check the suggested fix actually compiles for the case that triggers it; a generic
+  "cast/convert/change the type" tail is where wrong advice hides. For an agent in a repair loop the
+  cost of a wrong hint is a whole iteration, which is worse than silence — this is the
+  silent-wrong-answer class wearing a different hat.
+- **The warning path is a diagnostic path, and it was the quiet one.** AXON_FOR_RLM §2 fixed `run`
+  emitting bare prose where `check` emitted located JSON. The identical defect survived in the
+  WARNING path of every command: resolver warnings have a span and (now) a fix, and both were dropped
+  by an `eprintln!("warning: [{code}] {message}")`. So the benchmark's most-hit diagnostic reached the
+  model with no file, no line, and nothing to repair toward. **Rule:** when auditing an output
+  channel, enumerate it by SEVERITY as well as by command — "errors are structured" is not "diagnostics
+  are structured". Also: warnings could not simply be pushed into the existing diagnostic list,
+  because a non-empty list means exit 2 and an `error:` prefix — so the fix has to respect severity,
+  not just reuse the emitter.
+- **For a model, a language card is not documentation — it is the complete map, so an omission reads
+  as an absence.** The RLM card said "this is the whole surface; there is no import and no standard
+  library beyond it" while naming 36 of Axon's 331 builtins. It omitted 13 of 25 `str_*` functions,
+  including `str_chars` (whose own doc calls it "the load-bearing character function"), `str_char_at`
+  (the i-th CHARACTER as a one-character string) and `str_reverse`. So the model reached for `char_at`
+  — which returns a BYTE — and wrote code that could not typecheck, in every task needing
+  per-character work. Correcting the list alone moved first-try 5/8 → 7/8. **Rules:** (1) never let a
+  card or primer claim completeness unless it IS complete, because the reader cannot discover
+  otherwise and will treat a gap as a missing feature; (2) gate it — a test that every name the card
+  mentions exists in the real compiler (probe it, don't parse a table) catches the inverse error too.
+  And I reached the wrong diagnosis first: I claimed "there is no ergonomic one-character `str`" and
+  cited R42's admission test to argue against adding a builtin, when `str_char_at` had existed the
+  whole time. I asserted an absence without grepping the builtin table — the seventh instance of
+  [[verify-design-assumptions]], this time against my own analysis rather than someone else's.
+- **When a card change moves a benchmark, test whether you leaked a task hint.** My first corrected
+  card ended "…or to build a string up one character at a time" and scored 8/8; stripped back to pure
+  type facts it scored 7/8. That clause was a usage hint aimed at the string-reversal task, so ~1 of
+  the 8 was measuring my prompt, not the language. **Rule:** after any primer edit that improves a
+  score, run the minimal variant that states only facts and compare — the delta between them is the
+  hint you accidentally gave. Related and unresolved: an accurate card must list `str_reverse`, but
+  one task IS "reverse a string", so card accuracy and benchmark discrimination genuinely conflict.
+  Fix the task set, not the card.
+- **`CLAUDE.md` is the agent's language card, and the card lesson applies to it directly.** Measured
+  the same session: a language card asserting "this is the whole surface" while naming 36 of 331
+  builtins cost 3 of 8 RLM tasks, because for a reader who cannot check, an omission is
+  indistinguishable from an absence. `CLAUDE.md` is that artifact for an agent working in this repo —
+  read once, acted on at speed, not independently re-derived. So it gets the same treatment:
+  `scripts/claims_gate.sh` checks the mechanically-checkable claims (every `axon <verb>` exists, every
+  documented `AXON_*` var is actually read, every path/script named exists, and the doc may not IMPLY
+  completeness). It found real staleness on its first run — `codegen.rs` named three times after it
+  became a directory — and every check is mutation-verified. **Rules:** (1) gate the direction that is
+  unambiguously a bug (a name promised that the code lacks); leave the omission direction ungated
+  because it is a judgement call about length, and neutralise it by refusing to imply completeness
+  instead; (2) when a doc states paths relative to a documented root, resolve them against that root —
+  my first version flagged the correct `codegen/mod.rs` as missing, which would have taught the next
+  person to weaken the check.

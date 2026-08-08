@@ -1924,7 +1924,49 @@ concrete reason to expect it will not.
   `cmd_run` only. The optimizer (`axon goal`) is the path where reproducibility matters most — score
   deltas are meaningless if the environment moves under them — and it is currently the one path that
   cannot be journaled.
-- **[low] Repo-wide `cargo fmt` drift.** `cargo fmt -p axon-core` reformats 13 files nobody is editing
-  (builtins/capabilities/codegen/decimal/error/interp/regex/resolver). Any commit that runs fmt sweeps
-  in unrelated churn, so everyone avoids fmt, so the drift grows. Needs one coordinated sweep commit
-  (the parallel-dev track already has a held fmt-fix PR) plus `cargo fmt --check` in the gate.
+- **[low — BLOCKED ON REVIEW, do not redo] Repo-wide `cargo fmt` drift.** `cargo fmt -p axon-core`
+  reformats 13 files nobody is editing (builtins/capabilities/codegen/decimal/error/interp/regex/
+  resolver), so any commit that runs fmt sweeps in unrelated churn and everyone avoids fmt instead.
+  **The fix already exists and is waiting:** PR #4 `ci-fmt-fix` — "fix pre-existing fmt drift — format
+  axon-core + pin CI rustfmt to 1.95.0", open since 2026-06-26. Re-doing the sweep on another branch
+  would produce a 13-file conflict against it for zero gain. The action is to REVIEW AND MERGE #4,
+  then add `cargo fmt --check` to the gate. Until then, format only the files you actually touched
+  (verify with `cargo fmt --check` filtered to your paths).
+- **[CLOSED 2026-08-08 — and the premise above was WRONG.]** ~~The last two RLM failures are one gap:
+  no ergonomic one-character `str`.~~ There is no stdlib gap. `str_char_at(s, i) -> str` returns the
+  i-th CHARACTER as a one-character string and has existed all along; its own doc says "Contrast
+  `char_at`, which returns the i-th BYTE". `str_chars(s) -> [str]` exists and its doc calls it "the
+  load-bearing character function"; `str_reverse` exists too. **I asserted an absence without
+  grepping the builtin table** — the exact discipline in [[verify-design-assumptions]]. The real
+  defect was the LANGUAGE CARD: it claimed "this is the whole surface" while naming 36 of 331
+  builtins and omitting 13 of 25 `str_*`, including all three the failing tasks needed. For a model
+  the card is the complete map, so an omission reads as an absence. Fixed + gated in atlas
+  (`card_accuracy_tests`); measured 5/8 → 7/8 from the character-API facts alone. See
+  `atlas/spikes/rlm-engine/results/axon-card-2026-08-08-FINDINGS.md` for the two attribution caveats,
+  including one where my first fix leaked a task hint.
+- **[HIGH] The RLM task set is now too easy to discriminate, which is a real problem.** With an
+  accurate card the benchmark scores 8/8 first-try, and two of the eight tasks are solved outright by
+  a listed builtin (`str_reverse`, `str_count`). A saturated benchmark cannot measure the next
+  improvement. The card must stay accurate — hiding real builtins is the bug that was just fixed — so
+  the task set is what needs to change: harder tasks, and ones whose answer is a composition rather
+  than a single builtin call. `tasks_hard` already exists and may be the right target instead.
+- **[med] E0102 and E0306 double-report one argument mismatch on two different lines.** Confirmed on
+  the RLM corpus: `str_contains(vowels, c)` yields E0102 at the `let c = char_at(...)` line and E0306
+  at the call line, same defect, two locations. A model in a repair loop sees two errors and may fix
+  the wrong one. Same class as the already-logged E0001/E0101 and E0102/E0307 double-reports.
+- **[med] `axon check` exits 0 with warnings, so the benchmark's `ok` flag cannot see them.** Correct
+  Unix behaviour and correct for the harness — but it means a program that emits five W0002s and
+  prints a wrong answer is indistinguishable from a clean one by exit code alone. Worth a
+  `--warnings-as-errors` (or `--strict`) flag so a CI/agent loop can opt into treating a shadowing
+  warning as a failure, since the measured data says W0002 co-occurs with wrong answers.
+- **[med] Extend `claims_gate.sh` to ROADMAP.md and governance/REQUIREMENTS.md.** Those carry the
+  heaviest claims in the repo ("✅ Complete", "LANDED", per-requirement status prose) and are the ones
+  observed stale in both directions (`unsigned-types-nonfunctional` was superseded; R1c/R1e was
+  overstated). A narrow, honest check: every status row naming a script or test must name one that
+  EXISTS, and — stronger — one that passed in the last gate run. That converts "LANDED" from a claim
+  into a citation. Do not try to verify prose semantically; gate the citations.
+- **[med] Record when `gate.sh` last passed green, and surface it.** `gate.sh` was RED for a week
+  without anyone noticing, which no amount of doc accuracy fixes. A `.gate-status` stamp (SHA + result
+  + timestamp) written by the gate and read by `claims_gate.sh` would make "the gate is green" a
+  checkable claim rather than an assumption. Pairs with the item above: a status row could then cite a
+  gate run instead of a script name.

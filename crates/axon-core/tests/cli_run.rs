@@ -15867,6 +15867,42 @@ fn virtual_clock_is_deterministic_and_matches_native() {
     );
 }
 
+/// CLAUDE.md's mechanically-checkable claims must be TRUE.
+///
+/// This exists because `CLAUDE.md` is the language card for this repository: an
+/// agent acts on it at speed and does not independently rediscover the codebase
+/// first, so a stale claim there is qualitatively worse than a stale claim in
+/// ordinary docs. Measured the same week on the RLM benchmark, a card claiming
+/// "this is the whole surface" while naming 36 of 331 builtins cost 3 of 8 tasks
+/// outright — the model wrote code that could not typecheck because, per its map,
+/// the working function did not exist.
+///
+/// The gate found real staleness on its first run (`codegen.rs` referenced three
+/// times after it became a directory) and each of its checks is mutation-verified.
+#[test]
+fn claude_md_claims_are_true() {
+    let script = format!("{}/../../scripts/claims_gate.sh", env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "claims_gate.sh must exist — CLAUDE.md's claims are unverified without it"
+    );
+    let out = Command::new("bash")
+        .arg(&script)
+        .env("AXON", env!("CARGO_BIN_EXE_axon"))
+        .output()
+        .expect("run claims_gate.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "CLAUDE.md promises something the code does not have:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("claims_gate: PASS"),
+        "expected the PASS line, printed only when checks ran:\n{stdout}{stderr}"
+    );
+}
+
 /// The host journal: a run reproduces with its environment DELETED, and every
 /// way of faking that is refused. See `scripts/replay_host_gate.sh` for why each
 /// of the ten checks exists — the negative ones carry the weight.

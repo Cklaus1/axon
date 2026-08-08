@@ -4345,6 +4345,31 @@ impl CheckCtx {
                     && matches!(param_ty, Type::F64 | Type::F32)
                 {
                     format!("convert with `as {expected_disp}` to widen the integer to a float")
+                } else if matches!(param_ty, Type::Str)
+                    && matches!(arg_ty, Type::I64 | Type::I32 | Type::I16 | Type::I8)
+                {
+                    // A `str` parameter handed an integer. The generic advice below
+                    // ("cast with `as str`") is ACTIVELY WRONG here: there is no
+                    // int->str cast, and `to_str` yields the number's DIGITS, not a
+                    // character. Measured against the RLM harness this is the blocker
+                    // on 3 of 8 tasks — the model writes
+                    // `str_contains(vowels, char_at(s, i))` or `char_at(s, i) == " "`,
+                    // because per-character work is the obvious approach and
+                    // `char_at` returns a BYTE VALUE. Pointing it at `as str` burns
+                    // the whole repair round, so name the idiom that works.
+                    //
+                    // `char_at` is named unconditionally rather than only when the
+                    // argument is literally a `char_at(...)` call: the usual shape
+                    // binds it first (`let c = char_at(s, i)`) and passes the
+                    // IDENTIFIER, which this check cannot trace back. An int where a
+                    // str is expected is overwhelmingly char_at-derived in string
+                    // code, so the mention earns its place even when it is not.
+                    format!(
+                        "expected `str`, found `{found_disp}` — there is no `as str` cast, and \
+                         `to_str(x)` gives a number's DIGITS. If this value came from \
+                         `char_at` (which returns a BYTE VALUE), use `str_slice(s, i, i + 1)` \
+                         for a one-character `str` instead"
+                    )
                 } else {
                     format!(
                         "expected `{expected_disp}`, found `{found_disp}` — \
