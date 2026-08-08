@@ -1759,3 +1759,28 @@ anyone changes the language a second time.
 
 **Do not assume M5 alone reaches 8/8.** It has not been measured, and this is a
 concrete reason to expect it will not.
+
+## R42 build loop — deferred
+
+- **[med] Native lowering for the character builtins (T4).** All seven are E0910-refused. `STR_OUT_EXTERNS`
+  + `synthesize_str_out_wrapper` already exist and cover `str -> str` with implicit out-params, so
+  `str_char_at`/`str_char_slice` are a row each plus an `axon-rt` impl. `str_chars` returns `[str]` and
+  has no array-out synthesis, so it stays refused until one exists. Sound today (refusal, not
+  divergence) — this is a capability gap, not a correctness risk.
+- **[med] Native lowering for the JSON builtins (T5).** Same story, 10 builtins, 18 E0910 refusals.
+  These call `serde_json`, so native needs an `axon-rt` JSON surface; larger than T4's.
+- **[med] R42 §9 Q6 — expected-VALUE rows in the parity harnesses generally.** `fuzz_parity.sh` and its
+  ~22 siblings are agreement oracles: they compare interp against native and are therefore blind to any
+  bug the two SHARE, which is every bug in the reference semantics. That is exactly how the `str_slice`
+  UTF-8 bug survived while being in the corpus with non-ASCII inputs. R42 added an expected-value gate
+  for its own slice only. Doing this across the suite is its own spec.
+- **[low] `len()` on a match-bound `[i64]` fails inference.** `len([1, 2, 3])` type-checks, but
+  `match json_arr_i64(s) { Ok(xs) => len(xs) ... }` gives `E0102 expected str, found [i64]` — so the
+  polymorphic length works on an array literal but not through that binding. Found while writing
+  `json_arrays.ax`; worked around with `arr_sum_i64`. The language card claims
+  `len(x) -> i64 [str or array]`, so either inference or the card is wrong.
+- **[low] `to_str` is not polymorphic over f64 in an argument position.** `to_str(f)` on an f64 gives
+  `E0102 expected i64, found f64`; `to_str_f64` is required. CLAUDE.md states `to_str` is "polymorphic
+  over scalars (i64/f64/bool)". Same class as above: doc/impl disagreement, low blast radius.
+- **[low] R42 §9 Q3/Q4 remain needs-human.** `file_remove`'s capability policy (irreversible deletion,
+  R11 risk integration) and hashing ownership (R28 vs R33 vs R42) are both unresolved by design.

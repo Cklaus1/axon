@@ -1,0 +1,61 @@
+// R42 T5 — the measured failure, as a fixture.
+//
+// The tasks_hard `json` task asks for "the sum of the numbers in the "a" list
+// plus the value at key "c" inside "b"" for {"a": [1,2,3], "b": {"c": 4}} = 10.
+// Before this slice that was impossible: `json_path_str` could NAVIGATE to
+// `a.1`, but nothing reported the array's length so it could not be looped, and
+// nothing returned a numeric leaf. Both halves are now reachable.
+//
+// Doubled braces are the parser's escape for a literal `{` in a string.
+
+fn main() -> i64 {
+    let doc = "{{\"a\": [1, 2, 3], \"b\": {{\"c\": 4}}}}"
+
+    // THE MEASURED TASK. One typed extraction plus one numeric leaf.
+    let total = match json_get_json(doc, "a") {
+        Ok(arr) => match json_arr_i64(arr) {
+            Ok(xs) => arr_sum_i64(xs)
+            Err(e) => 0 - 1
+        }
+        Err(e) => 0 - 2
+    }
+    let c = match json_path_i64(doc, "b.c") {
+        Ok(n) => n
+        Err(e) => 0 - 3
+    }
+    println(to_str(total + c))        // 10 — the task's expected answer
+
+    // Length, so an array can be LOOPED at all.
+    match json_get_json(doc, "a") {
+        Ok(arr) => match json_len(arr) { Ok(n) => println(to_str(n))  Err(e) => println(e) }
+        Err(e) => println(e)
+    }
+
+    // Element access, returning a JSON string that composes onward.
+    match json_get_json(doc, "a") {
+        Ok(arr) => match json_at(arr, 1) { Ok(el) => println(el)  Err(e) => println(e) }
+        Err(e) => println(e)
+    }
+
+    // Object keys, and a sub-object as a document.
+    match json_keys(doc) { Ok(ks) => println(str_join(ks, ","))  Err(e) => println(e) }
+    match json_get_json(doc, "b") { Ok(sub) => println(sub)  Err(e) => println(e) }
+
+    // A numeric path component still indexes an array (this already worked).
+    match json_path_i64(doc, "a.2") { Ok(n) => println(to_str(n))  Err(e) => println(e) }
+
+    // f64 widens an integer leaf, because JSON does not distinguish 4 from 4.0.
+    match json_path_f64(doc, "b.c") { Ok(f) => println(to_str_f64(f))  Err(e) => println(e) }
+
+    // Typed extraction of a string array.
+    match json_arr_str("[\"x\", \"y\"]") { Ok(ss) => println(str_join(ss, "|"))  Err(e) => println(e) }
+
+    // A wrong-typed element fails the WHOLE call rather than silently returning
+    // a shorter array.
+    match json_arr_i64("[1, \"two\", 3]") { Ok(xs) => println(to_str(arr_sum_i64(xs)))  Err(e) => println("ERR-elem") }
+
+    // Malformed input is E2201, and a scalar has no length.
+    match json_len("not json") { Ok(n) => println(to_str(n))  Err(e) => println("ERR-parse") }
+    match json_len("42") { Ok(n) => println(to_str(n))  Err(e) => println("ERR-scalar") }
+    0
+}

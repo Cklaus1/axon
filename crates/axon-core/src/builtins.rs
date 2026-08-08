@@ -847,6 +847,74 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<str, str>",
         doc: "Validate `s` as JSON. Returns Ok(s) if valid, Err(reason) if not. Pure; no network call.",
     },
+    // ── R42 Slice 3: reach INTO a JSON document ──────────────────────────────
+    //
+    // `json_get_i64`/`json_get_str` reach top-level scalars and `json_path_str`
+    // walks a dot path to a STRING leaf (it already indexes arrays with a numeric
+    // component). What was missing: array length, element access, numeric leaves,
+    // and whole-array extraction — so `{"a": [1,2,3]}` could be navigated but
+    // never summed. Sub-documents come back AS JSON STRINGS rather than through a
+    // new `Json` value type, so these compose with the five that already exist.
+    BuiltinFn {
+        name: "json_len",
+        params: &[("json", "str")],
+        ret: "Result<i64, str>",
+        doc: "Number of elements in a JSON array, or number of keys in a JSON object. `Err` on a scalar or malformed input. Without this an array could be reached but not LOOPED, which is why summing `{\"a\": [1,2,3]}` was impossible before R42.",
+    },
+    BuiltinFn {
+        name: "json_at",
+        params: &[("json", "str"), ("i", "i64")],
+        ret: "Result<str, str>",
+        doc: "The `i`-th element of a JSON array, returned AS A JSON STRING so it composes with every other json_* function. For a homogeneous array of numbers prefer `json_arr_i64`, which parses once: `json_at` in a loop re-parses the whole document per call and is therefore O(n^2) over the array.",
+    },
+    BuiltinFn {
+        name: "json_keys",
+        params: &[("json", "str")],
+        ret: "Result<[str], str>",
+        doc: "The keys of a JSON object, in document order. `Err` on an array or scalar.",
+    },
+    BuiltinFn {
+        name: "json_get_json",
+        params: &[("json", "str"), ("key", "str")],
+        ret: "Result<str, str>",
+        doc: "The value at top-level `key`, returned AS A JSON STRING — the accessor that makes sub-objects and sub-arrays reachable. `json_get_i64`/`json_get_str` only reach scalar fields.",
+    },
+    BuiltinFn {
+        name: "json_path_json",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<str, str>",
+        doc: "As `json_path_json`'s dot-separated path, returning the sub-document at the leaf AS A JSON STRING. Numeric path components index arrays (`\"a.1\"`).",
+    },
+    BuiltinFn {
+        name: "json_path_i64",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<i64, str>",
+        doc: "The integer at a dot-separated path. `json_path_str` reaches only STRING leaves, so this is what a numeric leaf needed: `json_path_i64(doc, \"b.c\")`. Err (E2202) if the leaf is not an integer.",
+    },
+    BuiltinFn {
+        name: "json_path_f64",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<f64, str>",
+        doc: "The float at a dot-separated path. Accepts an integer leaf and widens it, since JSON does not distinguish 4 from 4.0.",
+    },
+    BuiltinFn {
+        name: "json_arr_i64",
+        params: &[("json", "str")],
+        ret: "Result<[i64], str>",
+        doc: "A whole JSON array of integers as `[i64]`, parsing the document ONCE. The idiom for summing or folding a JSON array; Err (E2202) if any element is not an integer.",
+    },
+    BuiltinFn {
+        name: "json_arr_f64",
+        params: &[("json", "str")],
+        ret: "Result<[f64], str>",
+        doc: "A whole JSON array of numbers as `[f64]`, parsing once. Integer elements widen.",
+    },
+    BuiltinFn {
+        name: "json_arr_str",
+        params: &[("json", "str")],
+        ret: "Result<[str], str>",
+        doc: "A whole JSON array of strings as `[str]`, parsing once. Err (E2202) if any element is not a string.",
+    },
     BuiltinFn {
         name: "json_stringify",
         params: &[("s", "str")],

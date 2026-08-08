@@ -19644,3 +19644,32 @@ fn native_refuses_the_character_builtins_rather_than_diverging() {
     assert!(!out.status.success(), "native must not build these: {all}");
     assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
 }
+
+/// R42 T5 — the measured `tasks_hard` json failure, as a regression test.
+///
+/// The task wants the sum of `{"a": [1,2,3]}` plus the leaf at `b.c` = 10. It was
+/// unreachable: `json_path_str` could navigate to `a.1`, but nothing reported the
+/// array's length so it could not be looped, and nothing returned a numeric leaf.
+#[test]
+fn json_arrays_and_numeric_leaves_are_reachable() {
+    let out = axon().arg("run").arg(fixture("json_arrays.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "10",        // THE measured task: arr_sum_i64(json_arr_i64(a)) + json_path_i64(b.c)
+            "3",         // json_len — an array can be looped at all
+            "2",         // json_at(arr, 1)
+            "a,b",       // json_keys
+            "{\"c\":4}", // json_get_json returns a composable sub-document
+            "3",         // json_path_i64 with a numeric path component
+            "4",         // json_path_f64 widens an integer leaf
+            "x|y",       // json_arr_str
+            "ERR-elem",  // one bad element fails the WHOLE call, not silently short
+            "ERR-parse", // E2201 malformed
+            "ERR-scalar",// a scalar has no length
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}

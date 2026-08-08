@@ -24,6 +24,57 @@ use axon_audit;
 /// asked and which nothing downstream was asking. Matching reuses the static
 /// `@[contained]` helpers verbatim, including their refusal of any `..`
 /// component, so the compile-time and runtime layers cannot drift.
+/// Walk a dot-separated JSON path, shared by every `json_path_*` builtin.
+///
+/// R42 T5 factored this out of `json_path_str`, which owned the only copy. Four
+/// more path builtins would have meant four more copies of the same twenty lines
+/// — and the array-index branch is exactly the part a copy would have got subtly
+/// wrong, since it is the reason `json_path_str("a.1")` already worked when the
+/// spec claimed arrays were unreachable.
+///
+/// `who` carries the caller's name so error text stays byte-identical to what
+/// `json_path_str` produced before the refactor; tests assert on it.
+fn json_walk<'a>(
+    root: &'a serde_json::Value,
+    path: &str,
+    who: &str,
+) -> std::result::Result<&'a serde_json::Value, String> {
+    let mut cur = root;
+    for key in path.split('.') {
+        match cur {
+            serde_json::Value::Object(map) => match map.get(key) {
+                Some(next) => cur = next,
+                None => return Err(format!("{who}: key {key:?} not found")),
+            },
+            serde_json::Value::Array(arr) => match key.parse::<usize>() {
+                Ok(idx) => match arr.get(idx) {
+                    Some(next) => cur = next,
+                    None => {
+                        return Err(format!(
+                            "{who}: array index {idx} out of bounds (len {})",
+                            arr.len()
+                        ))
+                    }
+                },
+                Err(_) => {
+                    return Err(format!("{who}: array requires numeric index, got {key:?}"))
+                }
+            },
+            _ => return Err(format!("{who}: cannot index into scalar at key {key:?}")),
+        }
+    }
+    Ok(cur)
+}
+
+/// Parse a JSON document, or return a caller-prefixed E2201 error string.
+///
+/// E2201 is a PREFIX inside the `Err` value, not a diagnostic: every JSON builtin
+/// returns `Result`, so its failures are values and there is no diagnostic for a
+/// code to attach to (R42 §4).
+fn json_root(src: &str, who: &str) -> std::result::Result<serde_json::Value, String> {
+    serde_json::from_str(src).map_err(|e| format!("{who}: E2201 {e}"))
+}
+
 fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<String> {
     use crate::capabilities as caps;
     let deny = |what: &str, val: &str, list: &[String]| {
@@ -2468,61 +2519,174 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
             }
+            // ── R42 Slice 3: reach INTO a JSON document ──────────────────────
+            //
+            // Sub-documents are returned as JSON STRINGS, so these compose with
+            // the five json_* functions that already existed instead of needing
+            // a new `Json` value type (which would want checker, infer, codegen
+            // and `value_as_literal` arms for a surface that is already
+            // string-shaped).
+            "json_len" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let root = match json_root(&src, "json_len") {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                match &root {
+                    serde_json::Value::Array(a) => ok!(Value::Ok(Box::new(Value::Int(a.len() as i64)))),
+                    serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Int(m.len() as i64)))),
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "json_len: E2202 not an array or object".to_string()
+                    )))),
+                }
+            }
+            "json_at" => {
+                want(2)?;
+                let src = as_str(&args[0])?.to_string();
+                let i = as_int(&args[1])?;
+                let root = match json_root(&src, "json_at") {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                match &root {
+                    serde_json::Value::Array(a) => {
+                        if i < 0 || i as usize >= a.len() {
+                            ok!(Value::Err(Box::new(Value::Str(format!(
+                                "json_at: index {i} out of bounds (len {})",
+                                a.len()
+                            )))))
+                        }
+                        ok!(Value::Ok(Box::new(Value::Str(a[i as usize].to_string()))))
+                    }
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "json_at: E2202 not an array".to_string()
+                    )))),
+                }
+            }
+            "json_keys" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let root = match json_root(&src, "json_keys") {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                match &root {
+                    serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Array(
+                        m.keys().map(|k| Value::Str(k.clone())).collect()
+                    )))),
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "json_keys: E2202 not an object".to_string()
+                    )))),
+                }
+            }
+            "json_get_json" | "json_path_json" => {
+                want(2)?;
+                let src = as_str(&args[0])?.to_string();
+                let sel = as_str(&args[1])?.to_string();
+                let root = match json_root(&src, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                // `json_get_json` takes a single top-level KEY, so a key
+                // containing a dot must not be split; `json_path_json` takes a
+                // dot PATH. Same lookup otherwise.
+                let found = if name == "json_get_json" {
+                    match &root {
+                        serde_json::Value::Object(m) => m
+                            .get(&sel)
+                            .ok_or_else(|| format!("json_get_json: key {sel:?} not found")),
+                        _ => Err("json_get_json: E2202 not an object".to_string()),
+                    }
+                } else {
+                    json_walk(&root, &sel, "json_path_json")
+                };
+                match found {
+                    Ok(v) => ok!(Value::Ok(Box::new(Value::Str(v.to_string())))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "json_path_i64" | "json_path_f64" => {
+                want(2)?;
+                let src = as_str(&args[0])?.to_string();
+                let path = as_str(&args[1])?.to_string();
+                let root = match json_root(&src, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let leaf = match json_walk(&root, &path, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                if name == "json_path_i64" {
+                    match leaf.as_i64() {
+                        Some(n) => ok!(Value::Ok(Box::new(Value::Int(n)))),
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "json_path_i64: E2202 leaf at {path:?} is not an integer"
+                        ))))),
+                    }
+                } else {
+                    // JSON does not distinguish 4 from 4.0, so an integer leaf
+                    // widens rather than erroring.
+                    match leaf.as_f64() {
+                        Some(f) => ok!(Value::Ok(Box::new(Value::Float(f)))),
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "json_path_f64: E2202 leaf at {path:?} is not a number"
+                        ))))),
+                    }
+                }
+            }
+            "json_arr_i64" | "json_arr_f64" | "json_arr_str" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let root = match json_root(&src, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let arr = match &root {
+                    serde_json::Value::Array(a) => a,
+                    _ => ok!(Value::Err(Box::new(Value::Str(format!(
+                        "{name}: E2202 not an array"
+                    ))))),
+                };
+                // Parses the document ONCE — the whole point of these versus
+                // `json_at` in a loop, which re-parses per element (O(n^2)).
+                let mut out = Vec::with_capacity(arr.len());
+                for (i, el) in arr.iter().enumerate() {
+                    let v = match name {
+                        "json_arr_i64" => el.as_i64().map(Value::Int),
+                        "json_arr_f64" => el.as_f64().map(Value::Float),
+                        _ => el.as_str().map(|s| Value::Str(s.to_string())),
+                    };
+                    match v {
+                        Some(v) => out.push(v),
+                        // Fail the whole call rather than skipping or defaulting
+                        // the bad element: a silently shorter array is the class
+                        // of wrong answer R42 exists to remove.
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "{name}: E2202 element {i} has the wrong type"
+                        ))))),
+                    }
+                }
+                ok!(Value::Ok(Box::new(Value::Array(out))));
+            }
+
             "json_path_str" => {
                 want(2)?;
                 let json_str = as_str(&args[0])?.to_string();
                 let path = as_str(&args[1])?.to_string();
-                let root: serde_json::Value = match serde_json::from_str(&json_str) {
+                let root = match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(v) => v,
-                    Err(e) => {
-                        ok!(Value::Err(Box::new(Value::Str(e.to_string()))))
-                    }
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
                 };
-                let mut cur = &root;
-                for key in path.split('.') {
-                    match cur {
-                        serde_json::Value::Object(map) => match map.get(key) {
-                            Some(next) => cur = next,
-                            None => {
-                                ok!(Value::Err(Box::new(Value::Str(format!(
-                                    "json_path_str: key {key:?} not found"
-                                )))))
-                            }
-                        },
-                        serde_json::Value::Array(arr) => match key.parse::<usize>() {
-                            Ok(idx) => match arr.get(idx) {
-                                Some(next) => cur = next,
-                                None => {
-                                    ok!(Value::Err(Box::new(Value::Str(format!(
-                                        "json_path_str: array index {idx} out of bounds (len {})",
-                                        arr.len()
-                                    )))))
-                                }
-                            },
-                            Err(_) => {
-                                ok!(Value::Err(Box::new(Value::Str(format!(
-                                    "json_path_str: array requires numeric index, got {key:?}"
-                                )))))
-                            }
-                        },
-                        _ => {
-                            ok!(Value::Err(Box::new(Value::Str(format!(
-                                "json_path_str: cannot index into scalar at key {key:?}"
-                            )))))
-                        }
+                match json_walk(&root, &path, "json_path_str") {
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(serde_json::Value::String(sv)) => {
+                        ok!(Value::Ok(Box::new(Value::Str(sv.clone()))))
                     }
-                }
-                match cur {
-                    serde_json::Value::String(s) => {
-                        ok!(Value::Ok(Box::new(Value::Str(s.clone()))))
-                    }
-                    other => ok!(Value::Err(Box::new(Value::Str(format!(
+                    Ok(other) => ok!(Value::Err(Box::new(Value::Str(format!(
                         "json_path_str: leaf is not a string (found {})",
-                        if other.is_null() {
-                            "null"
-                        } else {
-                            "other type"
-                        }
+                        if other.is_null() { "null" } else { "other type" }
                     ))))),
                 }
             }
