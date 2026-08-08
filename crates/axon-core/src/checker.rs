@@ -4272,7 +4272,7 @@ impl CheckCtx {
                 // the interpreter dispatches on the runtime value (BUG_HUNT #29).
                 // Mirrors the infer special-case. A non-scalar arg still flows to
                 // the declared `i64` param and errors below.
-                || (name == "to_str" && arg_ty.is_scalar())
+                || (name == "to_str" && (arg_ty.is_scalar() || arg_ty.is_str()))
             {
                 continue;
             }

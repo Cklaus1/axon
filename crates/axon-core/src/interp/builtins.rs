@@ -1171,9 +1171,19 @@ impl<'p> Interp<'p> {
                     | Value::Bool(_)
                     | Value::SizedInt { .. }
                     | Value::Decimal(_) => display(&args[0]),
+                    // A `str` is ALREADY a string — return it unchanged.
+                    //
+                    // Measured on the tasks_hard set: `to_str(s)` where `s` is a
+                    // str was the single most common first error (9 of 36
+                    // attempts). It is a design wart rather than a model mistake —
+                    // `to_string` is total in essentially every language, so an
+                    // identity call succeeding is what a reader expects. Refusing
+                    // it fails a program for a reason that is not a bug, which is
+                    // the opposite of what a diagnostic should do.
+                    Value::Str(existing) => existing.clone(),
                     other =>
                         return panic(format!(
-                            "to_str: expected a scalar (i64/f64/bool/Decimal), got {}",
+                            "to_str: expected a scalar (i64/f64/bool/Decimal) or a str, got {}",
                             other.type_name()
                         )),
                 }));

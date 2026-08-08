@@ -472,3 +472,28 @@ the opportunity entry only records the observation.
   instead; (2) when a doc states paths relative to a documented root, resolve them against that root —
   my first version flagged the correct `codegen/mod.rs` as missing, which would have taught the next
   person to weaken the check.
+- **TOTAL-IFY a needlessly partial function; never invent an answer to make one "total".** `to_str(s)`
+  where `s` was already a `str` was E0102 — the single most common first error on the `tasks_hard` set
+  (9 of 36 attempts). That is a program failing for a reason that is not a bug: "the string form of a
+  string" has exactly one sensible answer, and `to_string` is total in essentially every language, so
+  the restriction was an accident rather than a design. Widened at all four sites (interp, infer,
+  checker, codegen) with native==interp verified through a fn boundary and inside interpolation.
+  **The boundary that stops this becoming "accept everything":** `parse_int("abc")` must NOT be
+  total-ified to `0` — there is no sensible integer, so returning one would be a silent wrong answer,
+  the worst outcome. It is total in its TYPE (`Result<i64,str>`) rather than in its value. **Rule:** if
+  the rejected inputs have exactly ONE obvious answer, widen the domain; if they do not, keep it
+  partial and widen the RETURN type. Axon is already inconsistent here — `str_char_at` returns `""`
+  out of range (total) while `char_at` returns `-1` (total via sentinel) — so a per-builtin audit of
+  "partial for a real reason, or by accident?" is the systematic version of this fix.
+- **For an AI-targeted language, prefer a repair GRADIENT over a lookup table of anticipated
+  mistakes.** Tempting conclusion from the failure data: alias the Python spellings (`not`/`and`/`or`,
+  `'x'`) so the model succeeds first try. Rejected as the LOWEST-value tier, for reasons that
+  generalise: (1) aliases only cover mistakes already observed, while a diagnostic that names the fix
+  works on mistakes nobody pre-registered — and 5/8→6/8 was measured coming entirely from the repair
+  round, so the diagnostic already recovers most of the value; (2) the mass was elsewhere — 27 of 36
+  failures were SEMANTIC (to_str 9, invented `type_of` 6, dropped Result 6, array-indexed-by-string 6)
+  vs 6 for spellings; (3) `and`/`or`/`not` are VALID IDENTIFIERS today (`let and = 1` compiles), so
+  promoting them is a breaking change; (4) every alias enlarges the language card for zero added power,
+  and the card is the artifact measured at 3-of-8 tasks. **Sharpened rule:** alias only when the
+  CANONICAL form is the accident, not when the model's habit is. `!` is defensible (C-family); `'x'` is
+  borderline-yes only because `'` steals no identifier.

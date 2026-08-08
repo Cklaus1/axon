@@ -7672,6 +7672,23 @@ impl<'ctx> super::Codegen<'ctx> {
         // f64→to_str_f64, i64→to_str. The interpreter is the oracle (I-2).
         if let ast::Expr::Ident(name) = callee {
             if name == "to_str" && args.len() == 1 {
+                // `to_str` of a `str` is the IDENTITY — emit the value and return
+                // it, calling nothing.
+                //
+                // Decided on the STATIC type, not the LLVM value: an Axon `str` is
+                // a `{i64 len, ptr data}` StructValue, and so are enums and
+                // structs, so a `BasicValueEnum::StructValue` arm could not tell
+                // them apart and would silently return a struct where a string was
+                // expected. The static type is unambiguous.
+                //
+                // The interpreter is the oracle (I-2) and it returns the string
+                // unchanged, so anything other than identity here is a divergence.
+                if matches!(
+                    self.infer_expr_sem_type(&args[0]),
+                    Some(crate::types::Type::Str)
+                ) {
+                    return self.emit_expr(&args[0], fn_val);
+                }
                 let v = self.emit_expr(&args[0], fn_val)?;
                 let dispatched = match v {
                     BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => self

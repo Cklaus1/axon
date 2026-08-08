@@ -934,7 +934,10 @@ impl InferCtx {
                 if let Some(ref name) = fn_name {
                     if name == "to_str" && args.len() == 1 {
                         let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
-                        if arg_ty.is_scalar() {
+                        // `is_str` as well as `is_scalar`: `to_str` of a `str` is
+                        // the identity. See interp/builtins.rs for why refusing it
+                        // was a wart (9 of 36 measured first errors).
+                        if arg_ty.is_scalar() || arg_ty.is_str() {
                             return Type::Str;
                         }
                         // Non-scalar: constrain the ALREADY-inferred arg to the

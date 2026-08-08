@@ -171,9 +171,24 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
         );
     }
 
-    // `if a or b` / `if a and b` — Python/Ruby spellings of the logical operators.
+    // `if a or b` / `if a and b` / `if not a` — Python/Ruby spellings of the
+    // logical operators.
+    //
+    // `not` was missing while this row's own help text already ADVERTISED `!` as
+    // the answer, so the hint named the fix for a mistake it could not detect.
+    // Measured on tasks_hard: `if not found {` produced the bare
+    // `unexpected token: Ident("found"), expected LBrace` — technically true and
+    // useless — and the repair round came back with the IDENTICAL error at the
+    // identical line and column, which is the signature of a diagnostic that gave
+    // the model nothing to act on. It cost that task outright.
+    //
+    // `not` is checked before `and`/`or` only for tidiness; the three are
+    // mutually exclusive in practice. A leading `not` at the start of the line is
+    // matched too (`not found` as a bare condition), which ` not ` alone misses.
     if msg.contains("unexpected token: Ident") {
-        let seen = if line.contains(" or ") {
+        let seen = if line.contains(" not ") || line.trim_start().starts_with("not ") {
+            Some(("not", "!"))
+        } else if line.contains(" or ") {
             Some(("or", "||"))
         } else if line.contains(" and ") {
             Some(("and", "&&"))
@@ -285,6 +300,49 @@ mod tests {
                 parse_help(&msg, src, offset).unwrap_or_else(|| panic!("{kw} must produce help"));
             assert!(h.contains("Axon declares functions with `fn`"), "{h}");
             assert!(h.contains(kw), "names the token seen: {h}");
+        }
+    }
+
+    /// `not` / `and` / `or` all reach their hint, including a LEADING `not`.
+    ///
+    /// `not` was the missing one, and its absence was measured rather than
+    /// guessed: on the `tasks_hard` set `if not found {` produced only
+    /// `unexpected token: Ident("found"), expected LBrace`, and the repair round
+    /// returned the IDENTICAL error at the identical line and column — the
+    /// signature of a diagnostic carrying nothing actionable. The row's help text
+    /// already advertised `!` as the answer while being unable to detect the
+    /// mistake it was describing.
+    #[test]
+    fn python_logical_operators_are_pointed_at_their_axon_spelling() {
+        for (word, op, src) in [
+            (
+                "not",
+                "!",
+                "fn main() -> i64 {\n  if not found { 0 } else { 1 }\n}\n",
+            ),
+            (
+                "and",
+                "&&",
+                "fn main() -> i64 {\n  if a and b { 0 } else { 1 }\n}\n",
+            ),
+            (
+                "or",
+                "||",
+                "fn main() -> i64 {\n  if a or b { 0 } else { 1 }\n}\n",
+            ),
+            // A bare leading `not` — ` not ` alone would miss this, which is why
+            // the check also tests the start of the trimmed line.
+            ("not", "!", "fn main() -> i64 {\n  let x = 1\n  not x\n}\n"),
+        ] {
+            let offset = src.find(word).expect("fixture must contain the word");
+            let msg = "unexpected token: Ident(\"found\"), expected LBrace";
+            let h = parse_help(msg, src, offset)
+                .unwrap_or_else(|| panic!("`{word}` must produce help for: {src}"));
+            assert!(
+                h.contains(&format!("`{word}` is not an Axon operator")),
+                "must name the word seen: {h}"
+            );
+            assert!(h.contains(op), "must name the Axon spelling `{op}`: {h}");
         }
     }
 

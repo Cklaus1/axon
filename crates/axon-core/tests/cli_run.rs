@@ -3173,6 +3173,74 @@ fn typed_let_bindings_enforce_the_annotation() {
 }
 
 #[test]
+fn to_str_of_a_str_is_the_identity_in_both_engines() {
+    // `to_str(s)` where `s` is already a `str` used to be E0102. Measured on the
+    // `tasks_hard` set it was the single most common first error — 9 of 36
+    // attempts — and it is a design wart rather than a model mistake: `to_string`
+    // is total in essentially every language, so an identity call succeeding is
+    // what any reader expects. Failing a program for a reason that is not a bug is
+    // the opposite of what a diagnostic is for.
+    //
+    // Checked through a fn boundary and inside interpolation too, because the
+    // codegen path decides on the STATIC type (an Axon `str` is a StructValue, and
+    // so are structs and enums — an LLVM-value arm could not tell them apart).
+    let f = std::env::temp_dir().join(format!("axon_tostr_id_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn ident(s: str) -> str { to_str(s) }\n\
+         fn main() -> i64 {\n  \
+           let s = \"already a string\"\n  \
+           println(to_str(s))\n  \
+           println(ident(\"via a fn\"))\n  \
+           println(\"in interp {to_str(s)}\")\n  \
+           println(to_str(42))\n  \
+           0\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "to_str of a str must check + run clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout, "already a string\nvia a fn\nin interp already a string\n42\n",
+        "to_str of a str must return it UNCHANGED"
+    );
+
+    // I-2: native must agree byte-for-byte, or refuse.
+    let exe = f.with_extension("bin");
+    let b = axon()
+        .args(["build", f.to_str().unwrap(), "--out", exe.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let berr = format!(
+        "{}{}",
+        String::from_utf8_lossy(&b.stdout),
+        String::from_utf8_lossy(&b.stderr)
+    );
+    if berr.contains("requires building axon with the `codegen` feature") {
+        note_harness_skip("to_str-of-str native parity (no codegen feature)");
+    } else {
+        assert!(
+            b.status.success(),
+            "native build of to_str(str) failed: {berr}"
+        );
+        let nat = std::process::Command::new(&exe).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&nat.stdout),
+            stdout,
+            "native and interp must agree on to_str(str) (I-2)"
+        );
+        let _ = std::fs::remove_file(&exe);
+    }
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
 fn to_str_is_polymorphic_over_scalars() {
     // BUG_HUNT #29: `to_str` should accept i64, f64, AND bool — picking the
     // wrong specialized name (to_str_f64 / to_str_bool) is needless onboarding
@@ -15881,7 +15949,10 @@ fn virtual_clock_is_deterministic_and_matches_native() {
 /// times after it became a directory) and each of its checks is mutation-verified.
 #[test]
 fn claude_md_claims_are_true() {
-    let script = format!("{}/../../scripts/claims_gate.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/claims_gate.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     assert!(
         std::path::Path::new(&script).exists(),
         "claims_gate.sh must exist — CLAUDE.md's claims are unverified without it"
