@@ -6,6 +6,11 @@
 the `Host` trait, which every host impl must then satisfy. The remainder is additive surface.
 **Author / date:** 2026-08-08, from the `tasks_hard` measurement run recorded in
 `atlas:spikes/rlm-engine/measurements/`
+**Review:** adversarial review folded in 2026-08-08. It corrected four factual claims (§4 array
+indexing, §10 `ln`, §3 duplicate of `chr`, §5 the `Host` risk), replaced the regex matching semantics
+(§6, leftmost-longest → leftmost-first / Pike VM), found the `&[IoKind]` capability fix insufficient
+(§5, B1 — the one item that had to change before implementation), added the missed JSON-construction
+gap (§4.1), and answered Q1. One reported issue did not reproduce and is recorded in §8.1.
 
 ```spec-meta
 id: R42-stdlib-gaps
@@ -17,7 +22,8 @@ supersedes: none
 related: R41-polyglot-runtime, R21-decimal
 reserves: E2200-E2212, confirmed free at spec time (grepped `E22[0-9]{2}` across crates/, governance/
   and spec/ — zero hits; the reserved bands are E1800-E1803, E1810, E1900, E2000-E2003, E2100/E2104,
-  E2300-E2302, E3700-E3707, so E22xx is the next contiguous free band)
+  E2100-E2108 + W2110-W2112 (R16), E2300-E2302, E3700-E3707, so E22xx is the next contiguous
+  free band)
 evidence: measured — tasks_hard 16-task set, three runs per card arm; per-task failure causes read from
   the composed cells, not inferred from the score. Artifacts under atlas measurements/.
 ```
@@ -79,8 +85,10 @@ str_slice(s, 0, 4)        // ""      ← splits `é`. SILENTLY EMPTY.
 char_at(s, 3)             // 195     — the first byte of `é`, 0xC3
 ```
 
-Interp and native agree (`5, 0, 5, 2`), so this is a uniform bug rather than an I-2 divergence — which
-also means a one-sided fix WILL be caught by the parity harness, and both must change together.
+Interp and native agree exactly — both are `s.get(start..end).unwrap_or("")`
+(`crates/axon-core/src/interp/builtins.rs:2279` and `crates/axon-rt/src/lib.rs:2073`), which is
+literally where the `""` comes from. So this is a uniform bug rather than an I-2 divergence, which
+also means a one-sided fix WILL be caught by the parity harness and both must change together.
 
 **Why it is severe out of proportion to its size:** the language card teaches, as the correct way to
 compare one character,
@@ -124,6 +132,19 @@ That second point is not specific to this slice: the parity harnesses cannot be 
 anything where the interpreter itself might be wrong. It argues for expected-value assertions
 alongside agreement assertions, which is a broader gap than this spec closes (§9 Q6).
 
+**The interim window, which must be planned for rather than discovered.** Between Slice 1 and
+Slice 2 the card's own taught idiom (`str_slice(s, i, i + 1)`) converts from silently-wrong to a
+**panic (exit 101)** on non-ASCII input, and there is no correct per-character alternative in the
+language yet. Two consequences:
+
+* **The language card MUST be updated in the same window as Slice 1**, not after Slice 2 — it
+  currently teaches an idiom that will crash. The interim advice is the byte comparison
+  (`char_at(s, i) == 32`), which stays correct because it never slices.
+* **A `tasks_hard` re-run inside that window will score WORSE on non-ASCII string tasks than
+  baseline** — a crash where there was a lucky wrong answer. That is the right trade (loud beats
+  wrong) but it is a predicted dip, written down here so §11's per-task clause is not misread as a
+  regression when it appears.
+
 **Gate:** `utf8_boundary_parity.sh` — asserts EXPECTED VALUES (not merely agreement) for a corpus of
 boundary-splitting and boundary-aligned slices, including the card's `str_slice(s, i, i + 1)` loop
 over `"café"`, plus interp/native agreement on the new refusal and its exit code.
@@ -149,11 +170,19 @@ str_len_chars(s: str) -> i64                // character count (str_len stays by
 str_char_at(s: str, i: i64) -> str          // the i-th CHARACTER, not the i-th byte
 str_char_slice(s: str, lo: i64, hi: i64) -> str   // character-indexed str_slice
 char_code(c: str) -> Result<i64, str>       // codepoint of a one-character str
-char_from_code(n: i64) -> Result<str, str>  // inverse; Err for a surrogate or > U+10FFFF
 char_is_digit(c: str) -> bool
 char_is_alpha(c: str) -> bool
 char_is_space(c: str) -> bool
 ```
+
+**`chr` already exists and is NOT duplicated here.** `chr(n: i64) -> str` (`builtins.rs:778`) is
+already the codepoint-to-character direction, so this slice adds only the inverse (`char_code`). An
+earlier draft proposed a `char_from_code` returning `Result`; that was a duplicate and is dropped.
+`chr` PANICS on an invalid codepoint rather than returning `Err`, which is a live inconsistency with
+`char_code`'s `Result` — resolved in favour of leaving `chr` alone (changing a shipped signature for
+consistency is not worth a break) and documenting the asymmetry. Note also that `chr` is currently
+**E0910-refused by native codegen**, so §3's "these lower natively" applies to the NEW functions;
+bringing `chr` along is in scope for this slice since it is the same lowering work.
 
 `str_chars` is the load-bearing one: it turns every per-character task into `arr_*` work over `[str]`,
 which the model already writes correctly, and it composes with `arr_group_by` / `dict_inc` for the
@@ -182,10 +211,20 @@ json_path_str(json: str, path: str) -> Result<str, str> // dot path, STRING leav
 json_stringify(s: str) -> str
 ```
 
-There is no array accessor at all, and `json_path_str` cannot reach a numeric leaf. So the task is a
-genuine capability hole, not a fluency problem. (An earlier note in this project's history said "JSON
-was never the gap, the card just never mentioned it." That is half wrong and is corrected here:
-scalars are covered, arrays are not.)
+**Corrected during review — the gap is narrower than first written.** `json_path_str` DOES index
+arrays: a numeric path component works, verified live, `json_path_str(j, "a.1")` on
+`{{"a": ["x","y"]}}` returns `Ok("y")` (implementation at `interp/builtins.rs:2398-2420`, which has
+explicit "array index out of bounds" / "array requires numeric index" errors). An earlier draft of
+this section said "there is no array accessor at all"; that was wrong.
+
+What is ACTUALLY missing, and what the measured failure traces to:
+* **numeric leaves** — `json_path_str(j, "n.1")` on `{{"n": [1,2,3]}}` returns
+  `Err("leaf is not a string (found other type)")`, verified. There is no `json_path_i64`.
+* **array length** — nothing reports how many elements an array has, so it cannot be looped.
+* **whole-array extraction** — no way to get `[1,2,3]` out as an Axon `[i64]`.
+
+So summing `"a"` is impossible: you cannot learn the length, and each element is unreachable as a
+number even though it is reachable as a path. That is a real capability hole, not fluency.
 
 **Design: sub-documents as strings, not a JSON value type.** The existing five functions all take and
 return `str`. The minimal addition consistent with that is an accessor returning the sub-document as
@@ -209,8 +248,43 @@ new type to the checker, infer, codegen and the session dump's `value_as_literal
 literal form for it), for a surface that is already string-shaped and works. If a future slice wants
 one, nothing here blocks it.
 
-Codes: `E2201` malformed JSON where a document was required, `E2202` type mismatch at a path
-(`json_arr_i64` on an array of strings).
+**Two things an earlier draft got wrong here.**
+
+*E-codes on `Result`-returning builtins.* Every function in this slice returns `Result<_, str>`, so
+its failures are **values, not diagnostics** — there is no diagnostic for an E-code to attach to. So
+`E2201`/`E2202` are defined as structured PREFIXES inside the `Err` string (`"E2201: ..."`), which is
+what makes them greppable in a trace and matchable by a caller, rather than pretending they are
+compiler diagnostics. The same correction applies to `E2200` (§2): runtime panics carry no E-code
+today (`chr`'s does not), so `E2200` is specified as appearing in the panic message text.
+
+*Re-parsing cost.* `json_at` in a loop re-parses the whole document per call, so walking an n-element
+array is O(n²). The typed extractors (`json_arr_i64`/`_f64`/`_str`) exist precisely to avoid that and
+are the idiom the language card should teach; `json_at` is for heterogeneous arrays where no typed
+extractor applies. Stated because a spec that ships both without ranking them invites the quadratic one.
+
+### 4.1 JSON construction — the gap review found this spec had missed entirely
+
+Slice 3 as first written is read-only. But an RLM engine's programs must also EMIT structured output,
+and the only writer today is `json_stringify`, which escapes a single string value. So:
+
+```
+json_from_pairs(pairs: [(str, str)]) -> str    // object from pre-encoded JSON values
+dict_to_json(d: Dict) -> Result<str, str>      // whole dict; Err on a value with no JSON form
+json_arr_from_i64(xs: [i64]) -> str            // and _f64 / _str
+```
+
+**One claim from review that did NOT survive checking, recorded so it is not re-litigated:** the
+review reported that a JSON literal is effectively unwritable in Axon source, because `{` opens
+string interpolation. It is writable — doubled braces are the parser's escape
+(`parser.rs:96-101`), the same mechanism the session dump relies on, and this runs today:
+
+```axon
+let doc = "{{\"a\": [1, 2, 3], \"b\": {{\"c\": 4}}}}"   // prints {"a": [1, 2, 3], "b": {"c": 4}}
+```
+
+The real problem is discoverability, not capability: `{{` is unobvious, undocumented in the language
+card, and a model will write `"{\"a\": 1}"` and get a lexer error. That is a card fix, not a builtin,
+and it belongs with the §2/§3 card update.
 
 ## 5. Slice 4 — filesystem beyond a single known path ⚠ extends `Host`
 
@@ -228,9 +302,16 @@ file_rename(from: str, to: str) -> Result<(), str>
 
 **This is the only slice that touches the TCB, and it needs care in three places:**
 
-1. **`Host` trait.** Every one of these needs a new trait method, and every impl must answer —
-   including `BrowserHost`, which has no filesystem and must return `Err` rather than silently
-   succeed. `append_file`/`file_size` avoided this by composing existing methods; these cannot.
+1. **`Host` trait — smaller than it looks, IF the methods are default-deny.** `append_file`/
+   `file_size` avoided touching the trait by composing existing methods; these cannot. But the trait
+   already has the right precedent: `exec` and the `http_*` family are **default methods returning
+   `Err`** (`host.rs:36-84`), so a host that cannot do the thing inherits a fail-closed answer and
+   needs no code. Every method in this slice MUST follow that pattern rather than being a required
+   method. That reduces "every host impl must change" to "only `DefaultHost` implements them", which
+   is in fact the only workspace impl of `AxonHost` outside test-local ones — the `--host browser`
+   shim (`main.rs:2222`) selects a virtual host and is not a second `AxonHost` impl to update.
+   Required (non-default) methods here would be a mistake in both directions: more work, and a host
+   that forgets one fails to compile rather than failing closed.
 2. **Capability classification (`capabilities.rs::classify_call`).** Getting this wrong is a sandbox
    escape, so each is stated rather than left to a default:
 
@@ -243,10 +324,20 @@ file_rename(from: str, to: str) -> Result<(), str>
    | `file_copy` | `FsRead` **and** `FsWrite` | the ONLY builtin needing two kinds — source read, destination write. `classify_call` returns a single `IoKind` today, so this slice must widen it |
    | `file_rename` | `FsWrite` | both paths must be write-allowed |
 
-   `file_copy` is the interesting one: it is a read/write bridge, and a checker that granted it on
-   the strength of the write capability alone would let a `write`-only contained function exfiltrate
-   file contents to a path it controls. `classify_call` returning `Option<IoKind>` cannot express
-   that, so it becomes `&[IoKind]` as part of this slice — a small refactor with a real reason.
+   `file_copy` is the interesting one, and the fix is NOT what an earlier draft of this spec said.
+   It is a read/write bridge: a checker granting it on the write capability alone would let a
+   `write`-only contained function exfiltrate file contents to a path it controls. The earlier draft
+   proposed widening `classify_call` from `Option<IoKind>` to `&[IoKind]`. **That is insufficient and
+   would leave the hole open.** The static check extracts exactly ONE path — `args.first()`
+   (`capabilities.rs:1132`) — and tests it against the one kind. Given a list of kinds it would check
+   the SOURCE path against both read and write, and the DESTINATION path against nothing at all,
+   which is precisely the exfiltration this paragraph claims to close.
+
+   The requirement is a **per-argument** mapping — `&[(IoKind, arg_index)]` or a bespoke multi-path
+   arm — so `file_copy(from, to)` checks arg 0 against `fs:read` and arg 1 against `fs:write`, and
+   `file_rename(from, to)` checks BOTH args against `fs:write`. Any design that cannot say *which
+   argument* a kind applies to cannot express either builtin safely. This is the one item in the spec
+   that must be got right before the builtins land, not alongside them (§9 Q5).
 3. **Path traversal.** These take paths from the program, so they inherit the existing `..`-component
    refusal (`contained-path-traversal`, E1001). `dir_list` returning names that are then joined by a
    userland `path_join` (§7) is a new way to *construct* a traversing path, which is why §7 carries a
@@ -266,22 +357,47 @@ decision, not just an API decision.
 backtracking, `(a+)+$` against a modest input is exponential. Axon runs model-authored code under
 capability sandboxes and per-principal budgets; an unbounded-time builtin would let sandboxed code
 burn arbitrary CPU with no capability at all, defeating the containment story rather than a mere
-performance goal. So the engine is a Thompson NFA simulation with an O(pattern × input) bound, and
-constructs that cannot be simulated in linear time are **refused at construction** rather than
-supported slowly:
+performance goal. So the engine is a **Pike VM** — an NFA simulation carrying capture slots — with an
+O(pattern × input) bound, and constructs that cannot be simulated in linear time are **refused at
+construction** rather than supported slowly:
 
 ```
 re_is_match(pattern: str, s: str) -> Result<bool, str>
-re_find(pattern: str, s: str) -> Result<Option<str>, str>      // leftmost-longest
+re_find(pattern: str, s: str) -> Result<Option<str>, str>      // leftmost-FIRST (see below)
 re_find_all(pattern: str, s: str) -> Result<[str], str>
 re_captures(pattern: str, s: str) -> Result<[str], str>        // group 0 first
 re_replace_all(pattern: str, s: str, with: str) -> Result<str, str>
 re_split(pattern: str, s: str) -> Result<[str], str>
 ```
 
-Supported: literals, `.`, character classes and negation, `*` `+` `?`, bounded `{n,m}`, alternation,
-groups, anchors, and the common escapes. **Refused with `E2203`:** backreferences and lookaround —
-both require backtracking, and refusing them is the point rather than a limitation to apologise for.
+Supported: literals, `.`, character classes and negation, `*` `+` `?`, lazy `*?` `+?` `??`, bounded
+`{n,m}`, alternation, groups, anchors, and the common escapes. **Refused with `E2203`:**
+backreferences and lookaround — both require backtracking, and refusing them is the point rather
+than a limitation to apologise for. This matches RE2 and Rust's `regex`, so it does not break
+ordinary use.
+
+**Leftmost-first, NOT leftmost-longest — corrected during review.** An earlier draft specified POSIX
+leftmost-longest. That is the wrong semantics for this language's authorship model: models write
+PCRE-shaped patterns and expect Perl semantics, where `re_find("a|ab", "ab")` is `"a"`, not `"ab"`.
+Worse, under leftmost-longest the lazy quantifiers models write constantly (`.*?`) are meaningless.
+Leftmost-first is available in linear time — it is what RE2 and Rust's `regex` do — but it requires a
+Pike VM rather than a plain Thompson simulation, which is also what `re_captures` needs. Hence the
+change above; plain Thompson could not have implemented the capture function this spec already listed.
+
+**Two DoS holes inside the "linear" bound, now closed:**
+* `{n,m}` **expands the NFA**, so `a{1,100000}` is a memory and time blow-up that is technically
+  linear in the *expanded* pattern. The expanded program size is capped; beyond it, `E2203`. A bound
+  advertised as linear in the pattern is worthless if the pattern can be expanded 100,000× by four
+  characters of input.
+* Pattern compilation is itself work, and these functions take the pattern per call. A pattern cache
+  keyed by the pattern string is required, or `re_find_all` in a loop recompiles every iteration.
+
+**Two semantics questions an earlier draft left open, now pinned:** `re_captures -> [str]` cannot
+distinguish a group that did not participate from one that matched empty — so a non-participating
+group is reported as the empty string and the doc says so (a `[Option<str>]` return was considered
+and rejected: it complicates the common case to serve the rare one). And `re_replace_all`'s `with`
+argument **does** interpret `$1`..`$9` as capture references, with `$$` for a literal `$`; leaving
+that unspecified would have guaranteed two incompatible answers later.
 
 `Result` on every function because a pattern is data and may be malformed; a panic on a bad pattern
 would be the wrong call for something a model composes at runtime.
@@ -298,6 +414,14 @@ base64_encode(s: str) -> str        hex_encode(s: str) -> str
 base64_decode(s: str) -> Result<str, str>   hex_decode(s: str) -> Result<str, str>
 ```
 
+**Unstated hole in an earlier draft, now specced: Axon has no bytes type.** `str` must be valid
+UTF-8, so `base64_decode` CANNOT represent arbitrary binary — which is most of what base64 exists to
+carry. The behaviour is therefore pinned rather than left to discover: a decode whose output is not
+valid UTF-8 returns **`Err`** (`E2204`), never lossy replacement characters and never a truncated
+prefix. These two functions round-trip TEXT and say so in their doc strings. Silent lossy decoding
+would be a smaller sibling of the Slice-1 bug, in a primitive justified on the grounds that
+hand-rolling it goes wrong quietly.
+
 Hand-rolled base64 is a classic source of silent corruption on padding, and it is thirty lines of
 Rust. Crypto (`sha256`, `hmac`) is **deliberately excluded** from this slice: R28's audit ledger and
 R33's quorum work already need hashing and should own that surface, so adding a second one here would
@@ -305,16 +429,24 @@ guarantee two incompatible answers. §9 Q4.
 
 **Userland `.ax` modules — these FAIL admission test (b), so they must not be builtins:**
 
-- **`examples/stdlib/date.ax`.** Civil calendar arithmetic is pure integer math: Hinnant's
-  `days_from_civil` / `civil_from_days` are a dozen lines each and need no host beyond the existing
-  `now_ms()`. A `Date { y, m, d }` struct with `date_from_ms`, `date_to_days`, `date_add_days`,
+- **`examples/stdlib/date.ax`. Verified feasible, not assumed:** both Hinnant algorithms were run as
+  plain Axon before this spec was committed, and produce `366` for the tasks_hard case
+  (2020-01-01 → 2021-01-01), round-trip a pre-epoch date (1969-07-20, exercising negative day
+  numbers), give the correct weekday for 2026-08-08, and answer `is_leap(2000)=true` /
+  `is_leap(1900)=false`. So the routing to userland is demonstrated rather than argued.
+  **Caveat found in review:** Axon's `/` and `%` truncate toward zero (Rust semantics), while
+  `civil_from_days` and `date_from_ms` need FLOOR division for negative inputs. The probe handles it
+  with the explicit `if z >= 0 { z / 146097 } else { (z - 146096) / 146097 }` branch; the module must
+  keep that shape and carry a pre-1970 test, or it ships wrong for negative timestamps. A `Date { y, m, d }` struct with `date_from_ms`, `date_to_days`, `date_add_days`,
   `date_weekday`, `date_is_leap`, `date_diff_days` and an ISO-8601 formatter covers the measured need
   (the `datetime` task) with zero TCB growth. **Timezones and DST are explicitly out** — they need a
   tzdata table and a host clock offset, and pretending otherwise produces wrong answers rather than
   missing ones. `now_ms()` is UTC; the module says so.
 - **`examples/stdlib/set.ax`.** A `Set` over the existing `Dict` (unit values), with
   `set_new/add/has/remove/len/union/intersect/difference/to_arr`. Dicts already provide the hashing;
-  a builtin would add a type for no capability the language lacks.
+  a builtin would add a type for no capability the language lacks. **Dicts are string-keyed**
+  (`builtins.rs:1507`), so this is a set of `str`; i64 members go through `to_str`. That changes the
+  ergonomics enough to be worth stating in the module's own docs rather than surprising a caller.
 - **`examples/stdlib/path.ax`.** `path_join`, `path_basename`, `path_dirname`, `path_ext`,
   `path_normalize` as pure string functions. **Security constraint, not a nicety:** `path_normalize`
   must resolve `..` lexically and `path_join` must never *produce* a path containing a `..`
@@ -344,14 +476,26 @@ deliberately (§4). Slice 6's userland `Set` is a `Dict` underneath and inherits
 and its aliasing refusal for free.
 
 **Reserved codes.** `E2200` UTF-8 boundary · `E2201` malformed JSON · `E2202` JSON path type mismatch
-· `E2203` non-linear regex construct refused · `E2204`–`E2212` unallocated, held for these slices.
+· `E2203` non-linear regex construct refused · `E2204` decode output is not valid UTF-8 (§7) · `E2205`–`E2212` unallocated, held for these
+slices. Note per §4: on `Result`-returning builtins these are `Err`-string prefixes, and on the
+`str_slice` refusal it is panic-message text — not compiler diagnostics.
+
+### 8.1 One reported issue that did NOT reproduce
+
+Review reported that `chr(34) + "abc"` fails type-check with E0102 ("arithmetic operand has
+non-numeric type str"), which would have blocked the quote-building idiom the userland modules need.
+**It does not reproduce:** `axon check` exits 0 and the program prints `"abc`. The `+`-concat arm
+handles `chr`'s return type correctly. Recorded so it is not filed as a bug later on the strength of
+the review alone — and as a reminder that a review finding is a hypothesis until it is run.
 
 ## 9. Open questions
 
-- **Q1 — Does Slice 1 break real code?** `str_slice` silently returning `""` may have accreted
-  callers that depend on it. Must be answered by grepping `examples/` and the test corpus for slices
-  over non-ASCII data BEFORE the change lands, not after. Recommendation: fix regardless, since every
-  such caller is already producing a wrong answer; but the blast radius must be *known*.
+- **Q1 — ANSWERED: Slice 1 breaks nothing in-repo; land it first.** All 18 `str_slice` call sites
+  are in `crates/axon-core/tests/fixtures/phase{18,32,38,48,60}*.ax`, `integration_fixtures.rs`,
+  `cli_run.rs` and `parse_help_probe.rs`, and every one slices ASCII literals; the non-ASCII bytes in
+  those files are box-drawing characters inside comments. No `examples/*.ax` calls `str_slice` at all.
+  The two non-ASCII fuzz rows probe midpoints 3 and 6, both character boundaries (`"str"`,
+  `"café "`), so existing fuzz rows will not begin panicking either. Blast radius: zero.
 - **Q2 — Codepoints or graphemes?** Slice 2 commits to codepoints. Graphemes need a segmentation
   table (~large) and would make `str_chars("e" + combining-acute")` return one element instead of
   two. Recommendation: ship codepoints, revisit only with a measured failure that graphemes fix.
@@ -361,11 +505,14 @@ and its aliasing refusal for free.
   deletes. Needs R11's owner to confirm rather than being decided here.
 - **Q4 — Who owns hashing?** R28 (audit ledger) and R33 (quorum) both need `sha256`. This spec
   excludes it to avoid a second answer. Needs an explicit assignment.
-- **Q5 — `classify_call` widening.** Slice 4 changes it from `Option<IoKind>` to a slice for
-  `file_copy`. That touches a security-critical function used by `@[contained]`, the sandbox and the
-  effect bridge. Recommendation: land the widening as its OWN commit with the existing capability
-  tests unchanged and green, before any new builtin uses it — a refactor and a new capability in one
-  commit is how a hole gets in.
+- **Q5 — `classify_call` widening, per ARGUMENT.** Slice 4 needs it to carry
+  `&[(IoKind, arg_index)]`, not `&[IoKind]` (§5, B1): the static check reads only `args.first()`
+  (`capabilities.rs:1132`), so a kind list would check the source path twice and the destination not
+  at all. This touches a security-critical function used by `@[contained]`, the sandbox and the effect
+  bridge. Recommendation unchanged and now firmer: land the widening as its OWN commit, existing
+  capability tests unchanged and green, with a NEW test asserting a `write`-only contained fn cannot
+  `file_copy` out of a read-denied path — before any new builtin uses it. A refactor plus a new
+  capability in one commit is how a hole gets in.
 - **Q6 — Should the parity harnesses gain expected-value rows generally?** §2 showed the
   differential fuzzer is structurally blind to bugs interp and native share, which is every bug in
   the reference semantics. Recommendation: not in this spec (scope), but it deserves its own, and
@@ -374,8 +521,14 @@ and its aliasing refusal for free.
 ## 10. Deliberately out of scope
 
 Sockets/TCP/UDP · iterators and lazy sequences · a `Json` value type · CSV/YAML/TOML · a logging
-framework · bignum integers · trigonometry (`sin`/`cos`/`tan`, `ln`, `log2` — absent, but no measured
-failure traces to them) · timezones/DST · grapheme segmentation · crypto (§9 Q4).
+framework · bignum integers · trigonometry (`sin`/`cos`/`tan` and `log2` — absent, with no measured
+failure tracing to them; note `ln`, `log10`, `exp`, `sqrt` and `pow` all EXIST, `builtins.rs:208-220`) · timezones/DST · grapheme segmentation · crypto (§9 Q4).
+
+One exclusion worth a note rather than a change: **CSV**. No measured failure traces to it, so the
+admission test excludes it — but `str_split` cannot handle quoted fields containing the delimiter, so
+the first CSV-shaped task will fail. That is the admission test working as designed (wait for the
+measurement), not an oversight, and it is recorded here so the eventual failure is recognised rather
+than re-diagnosed.
 
 **Do not build:** a general-purpose `Iterator` protocol, a `Char` primitive type, or a regex engine
 with backtracking. The first two contradict ROADMAP §2.6; the third is a capability-escape surface
