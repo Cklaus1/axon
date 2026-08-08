@@ -61,6 +61,23 @@ enum IoKind {
 }
 
 /// Match a function name to an I/O kind.
+/// Which capability kinds a builtin exercises, and on WHICH ARGUMENT each one
+/// applies to.
+///
+/// Exists because `classify_call` answers "what kind of I/O is this" with a
+/// single kind, and that is not enough for a builtin touching two paths with
+/// two different kinds — `file_copy(from, to)` reads arg 0 and writes arg 1. A
+/// bare list of kinds would not help: the enforcement site has to know which
+/// ARGUMENT to test each kind against, or it tests the first argument twice and
+/// the second never (R42 §5, B1).
+///
+/// Today every builtin maps to `[(kind, 0)]` — the single-path shape — so this
+/// is behaviour-preserving. Multi-path arms land WITH the builtins that need
+/// them; adding them ahead of time would be a match arm no code can reach.
+fn classify_call_paths(name: &str) -> Option<Vec<(IoKind, usize)>> {
+    classify_call(name).map(|k| vec![(k, 0)])
+}
+
 fn classify_call(name: &str) -> Option<IoKind> {
     match name {
         "read_file" => Some(IoKind::FsRead),
@@ -1109,268 +1126,281 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
             check_net_host(&host, &display, spec, errors);
         }
     }
-    let kind = match classify_call(name) {
-        Some(k) => k,
+    // R42 T0 (Q5/B1): a builtin may touch MORE THAN ONE path, with a DIFFERENT
+    // capability kind per path. `file_copy(from, to)` reads arg 0 and writes
+    // arg 1. This site used to read `args.first()` and test it against ONE
+    // kind, which cannot express that: given a *list* of kinds it would check
+    // the SOURCE path against both read and write, and the DESTINATION against
+    // nothing at all — leaving a write-only fn free to copy a read-denied file
+    // to a path it controls. So the classification is per ARGUMENT, and this
+    // site loops.
+    //
+    // Every builtin that exists today maps to exactly `[(kind, 0)]`, so this
+    // loop runs once and the behaviour is unchanged; the multi-path arms arrive
+    // with the builtins that need them, not before.
+    let checks = match classify_call_paths(name) {
+        Some(v) => v,
         None => return, // not an I/O builtin
     };
 
-    // Extract a literal string argument (first arg for read_file/write_file/http
-    // calls).
-    //
-    // STATIC-ANALYSIS BOUNDARY (refined): the *precise* target check (which
-    // path/host, `..` traversal, allowlist match) only applies to a LITERAL
-    // target — a computed or string-interpolated target is `None` here and the
-    // checker can't know its value. BUT an EMPTY allowlist grants ZERO
-    // capability of that kind, so the target is irrelevant: the per-kind
-    // branches below DENY a dynamic target when the relevant allowlist is empty
-    // (`fs_read`/`fs_write`/`net_allow`). This closes the laundering hole where
-    // `read_file("/etc/{p}")` / `ai_complete("leak {x}")` (interpolated args,
-    // not `Literal::Str`) slipped past `fs: []` / `net: []` — the capability
-    // boundary now fails CLOSED. A dynamic target against a NON-empty allowlist
-    // stays runtime-deferred (Phase-9 `Sandbox<P>`): the fn already holds the
-    // capability; only the specific target awaits runtime enforcement.
-    let literal_arg: Option<&str> = args.first().and_then(|a| {
-        if let Expr::Literal(crate::ast::Literal::Str(s)) = a {
-            Some(s.as_str())
-        } else {
-            None
-        }
-    });
-
-    match &kind {
-        IoKind::FsRead => {
-            if let Some(path) = literal_arg {
-                let pfx = dir_prefix(path);
-                // 1. Check never: rules first (hard violation).
-                for clause in &spec.never {
-                    if let NeverClause::Read(prefix) = clause {
-                        if path_has_prefix(path, prefix) {
-                            errors.push(CapabilityError::new(
-                                E1004,
-                                format!(
-                                    "`read_file(\"{path}\")` is forbidden by `never: [read(\"{prefix}\")]`\n  \
-                                     help: remove the `never: [read(\"{prefix}\")]` clause, or remove the read call — a `never` rule is a hard deny that no allowlist can override"
-                                ),
-                                Span::dummy(),
-                            ));
-                            return;
-                        }
-                    }
-                }
-                // 2. Check allowlist.
-                if spec.fs_read.is_empty() {
-                    // No fs read allowlist — deny all reads.
-                    errors.push(CapabilityError::new(
-                        E1001,
-                        format!(
-                            "`read_file(\"{path}\")` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
-                             help: Add `fs: [read(\"{pfx}\")]` to the @[contained(...)] attribute to allow this read"
-                        ),
-                        Span::dummy(),
-                    ));
-                } else if !spec.fs_read.iter().any(|p| path_has_prefix(path, p)) {
-                    errors.push(CapabilityError::new(
-                        E1001,
-                        format!(
-                            "`read_file(\"{path}\")` is not permitted by @[contained] \
-                             (allowed prefixes: {})\n  \
-                             help: Add `read(\"{pfx}\")` to the existing `fs: [...]` clause",
-                            spec.fs_read
-                                .iter()
-                                .map(|p| format!("\"{p}\""))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        Span::dummy(),
-                    ));
-                }
-            } else {
-                // Non-literal (dynamic / string-interpolated) path. We cannot
-                // match the target against the allowlist, and `@[contained]` has
-                // no runtime target enforcement yet, so the capability boundary
-                // fails CLOSED (sound by refusal) — NOT open. An empty allowlist
-                // grants zero read capability; a NON-empty one can't constrain a
-                // dynamic path (it could escape via `..` or be built to any
-                // value), so an unverifiable target is refused either way. This
-                // closes the laundering hole where `read_file(p)` /
-                // `read_file("/etc/{p}")` slipped past a `fs: [read("./ok/")]`
-                // allowlist (the dynamic arg is not a `Literal::Str`).
-                let help = if spec.fs_read.is_empty() {
-                    "no read capability is granted; add an `fs: [read(\"...\")]` clause and use a LITERAL path"
-                } else {
-                    "a dynamically-built path cannot be statically verified against the sandbox (it could escape the allowlist); use a literal path"
-                };
-                errors.push(CapabilityError::new(
-                    E1001,
-                    format!("`read_file(<dynamic path>)` is not permitted by @[contained]\n  help: {help}"),
-                    Span::dummy(),
-                ));
-            }
-        }
-
-        IoKind::FsWrite => {
-            if let Some(path) = literal_arg {
-                let pfx = dir_prefix(path);
-                // 1. never: write check.
-                for clause in &spec.never {
-                    if let NeverClause::Write(prefix) = clause {
-                        if path_has_prefix(path, prefix) {
-                            errors.push(CapabilityError::new(
-                                E1004,
-                                format!(
-                                    "`write_file(\"{path}\", ...)` is forbidden by `never: [write(\"{prefix}\")]`\n  \
-                                     help: remove the `never: [write(\"{prefix}\")]` clause, or remove the write call — a `never` rule is a hard deny that no allowlist can override"
-                                ),
-                                Span::dummy(),
-                            ));
-                            return;
-                        }
-                    }
-                }
-                // 2. Allowlist check.
-                if spec.fs_write.is_empty() {
-                    errors.push(CapabilityError::new(
-                        E1001,
-                        format!(
-                            "`write_file(\"{path}\", ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
-                             help: Add `fs: [write(\"{pfx}\")]` to the @[contained(...)] attribute to allow this write"
-                        ),
-                        Span::dummy(),
-                    ));
-                } else if !spec.fs_write.iter().any(|p| path_has_prefix(path, p)) {
-                    errors.push(CapabilityError::new(
-                        E1001,
-                        format!(
-                            "`write_file(\"{path}\", ...)` is not permitted by @[contained] \
-                             (allowed prefixes: {})\n  \
-                             help: Add `write(\"{pfx}\")` to the existing `fs: [...]` clause",
-                            spec.fs_write
-                                .iter()
-                                .map(|p| format!("\"{p}\""))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        Span::dummy(),
-                    ));
-                }
-            } else {
-                // Dynamic/interpolated path → fail CLOSED (see FsRead above): a
-                // non-literal path can't be verified against the allowlist, and
-                // there is no runtime target enforcement, so a write to an
-                // unprovable path is refused whether or not the allowlist is
-                // empty. Closes the `write_file(p, ...)` / `write_file("/etc/{p}",
-                // ...)` launder past a non-empty `fs: [write("./out/")]`.
-                let help = if spec.fs_write.is_empty() {
-                    "no write capability is granted; add an `fs: [write(\"...\")]` clause and use a LITERAL path"
-                } else {
-                    "a dynamically-built path cannot be statically verified against the sandbox (it could escape the allowlist); use a literal path"
-                };
-                errors.push(CapabilityError::new(
-                    E1001,
-                    format!("`write_file(<dynamic path>, ...)` is not permitted by @[contained]\n  help: {help}"),
-                    Span::dummy(),
-                ));
-            }
-        }
-
-        IoKind::Net => {
-            // CRITICAL: the network HOST is not always the first argument. For
-            // `http_get(url)`/`http_post(url, …)` the first arg IS the host/URL,
-            // so the allowlist is checked against `literal_arg`. But for the AI
-            // builtins (`ai_complete`, `ai_extract_*`) the first arg is the
-            // PROMPT — the host is implicitly the Anthropic API endpoint. Checking
-            // the prompt against a host allowlist is just wrong (it denied every
-            // `ai_complete` under a host-pinned `net: ["api.anthropic.com"]`, and
-            // would "allow" a prompt that happened to match a glob). So the
-            // effective host for an AI builtin is the fixed endpoint, regardless
-            // of the prompt's content or whether it's a literal.
-            let ai_host = ai_builtin_host(name);
-            // For `http_get`/`http_post`/`http_sse*` the first arg is a full URL, not
-            // a bare host. Normalize it to its host (strip `scheme://`, `:port`, and
-            // `/path`) so a real URL like `https://api.openai.com/v1/models` matches a
-            // host allowlist of `api.openai.com` — the same stripping native
-            // net-connect calls already use via `native_net_host`. Without this,
-            // host-pinning was unusable with real URLs (every URL was refused because
-            // the whole string never equals the bare host). AI builtins keep their
-            // fixed implicit host.
-            let normalized_url: Option<String> = if ai_host.is_none() {
-                literal_arg.map(host_of)
+    for (kind, arg_index) in checks {
+        // STATIC-ANALYSIS BOUNDARY (refined): the *precise* target check (which
+        // path/host, `..` traversal, allowlist match) only applies to a LITERAL
+        // target — a computed or string-interpolated target is `None` here and
+        // the checker can't know its value. BUT an EMPTY allowlist grants ZERO
+        // capability of that kind, so the target is irrelevant: the per-kind
+        // branches below DENY a dynamic target when the relevant allowlist is
+        // empty (`fs_read`/`fs_write`/`net_allow`). This closes the laundering
+        // hole where `read_file("/etc/{p}")` / `ai_complete("leak {x}")`
+        // (interpolated args, not `Literal::Str`) slipped past `fs: []` /
+        // `net: []` — the capability boundary now fails CLOSED. A dynamic
+        // target against a NON-empty allowlist stays runtime-deferred (Phase-9
+        // `Sandbox<P>`): the fn already holds the capability; only the specific
+        // target awaits runtime enforcement.
+        //
+        // Indexed by `arg_index`, not hardcoded to the first argument.
+        let literal_arg: Option<&str> = args.get(arg_index).and_then(|a| {
+            if let Expr::Literal(crate::ast::Literal::Str(s)) = a {
+                Some(s.as_str())
             } else {
                 None
-            };
-            let effective_host: Option<&str> = ai_host.or(normalized_url.as_deref());
-            // How to render the call in diagnostics: an AI builtin's host is
-            // implicit, so show `ai_complete(...) [host api.anthropic.com]`
-            // rather than misleadingly printing the prompt as the first-arg host.
-            let call_display = |host: &str| -> String {
-                if ai_host.is_some() {
-                    format!("{name}(...) [host {host}]")
+            }
+        });
+        match &kind {
+            IoKind::FsRead => {
+                if let Some(path) = literal_arg {
+                    let pfx = dir_prefix(path);
+                    // 1. Check never: rules first (hard violation).
+                    for clause in &spec.never {
+                        if let NeverClause::Read(prefix) = clause {
+                            if path_has_prefix(path, prefix) {
+                                errors.push(CapabilityError::new(
+                                    E1004,
+                                    format!(
+                                        "`read_file(\"{path}\")` is forbidden by `never: [read(\"{prefix}\")]`\n  \
+                                         help: remove the `never: [read(\"{prefix}\")]` clause, or remove the read call — a `never` rule is a hard deny that no allowlist can override"
+                                    ),
+                                    Span::dummy(),
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                    // 2. Check allowlist.
+                    if spec.fs_read.is_empty() {
+                        // No fs read allowlist — deny all reads.
+                        errors.push(CapabilityError::new(
+                            E1001,
+                            format!(
+                                "`read_file(\"{path}\")` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
+                                 help: Add `fs: [read(\"{pfx}\")]` to the @[contained(...)] attribute to allow this read"
+                            ),
+                            Span::dummy(),
+                        ));
+                    } else if !spec.fs_read.iter().any(|p| path_has_prefix(path, p)) {
+                        errors.push(CapabilityError::new(
+                            E1001,
+                            format!(
+                                "`read_file(\"{path}\")` is not permitted by @[contained] \
+                                 (allowed prefixes: {})\n  \
+                                 help: Add `read(\"{pfx}\")` to the existing `fs: [...]` clause",
+                                spec.fs_read
+                                    .iter()
+                                    .map(|p| format!("\"{p}\""))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                            Span::dummy(),
+                        ));
+                    }
                 } else {
-                    format!("{name}(\"{host}\", ...)")
+                    // Non-literal (dynamic / string-interpolated) path. We cannot
+                    // match the target against the allowlist, and `@[contained]` has
+                    // no runtime target enforcement yet, so the capability boundary
+                    // fails CLOSED (sound by refusal) — NOT open. An empty allowlist
+                    // grants zero read capability; a NON-empty one can't constrain a
+                    // dynamic path (it could escape via `..` or be built to any
+                    // value), so an unverifiable target is refused either way. This
+                    // closes the laundering hole where `read_file(p)` /
+                    // `read_file("/etc/{p}")` slipped past a `fs: [read("./ok/")]`
+                    // allowlist (the dynamic arg is not a `Literal::Str`).
+                    let help = if spec.fs_read.is_empty() {
+                        "no read capability is granted; add an `fs: [read(\"...\")]` clause and use a LITERAL path"
+                    } else {
+                        "a dynamically-built path cannot be statically verified against the sandbox (it could escape the allowlist); use a literal path"
+                    };
+                    errors.push(CapabilityError::new(
+                        E1001,
+                        format!("`read_file(<dynamic path>)` is not permitted by @[contained]\n  help: {help}"),
+                        Span::dummy(),
+                    ));
                 }
-            };
-            if let Some(host) = effective_host {
-                check_net_host(host, &call_display, spec, errors);
-            } else {
-                // Dynamic host (a non-AI net call like `http_get(url)` with a
-                // computed URL — AI builtins have a fixed `ai_host`, so they took
-                // the branch above). Fail CLOSED: an unverifiable host can't be
-                // matched against the allowlist and there's no runtime check, so
-                // it's refused whether or not the allowlist is empty. Closes the
-                // launder past a non-empty `net: ["ok.com"]` via a computed URL.
-                let help = if spec.net_allow.is_empty() {
-                    "no network capability is granted; add a `net: [\"...\"]` clause and use a LITERAL host"
+            }
+
+            IoKind::FsWrite => {
+                if let Some(path) = literal_arg {
+                    let pfx = dir_prefix(path);
+                    // 1. never: write check.
+                    for clause in &spec.never {
+                        if let NeverClause::Write(prefix) = clause {
+                            if path_has_prefix(path, prefix) {
+                                errors.push(CapabilityError::new(
+                                    E1004,
+                                    format!(
+                                        "`write_file(\"{path}\", ...)` is forbidden by `never: [write(\"{prefix}\")]`\n  \
+                                         help: remove the `never: [write(\"{prefix}\")]` clause, or remove the write call — a `never` rule is a hard deny that no allowlist can override"
+                                    ),
+                                    Span::dummy(),
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                    // 2. Allowlist check.
+                    if spec.fs_write.is_empty() {
+                        errors.push(CapabilityError::new(
+                            E1001,
+                            format!(
+                                "`write_file(\"{path}\", ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
+                                 help: Add `fs: [write(\"{pfx}\")]` to the @[contained(...)] attribute to allow this write"
+                            ),
+                            Span::dummy(),
+                        ));
+                    } else if !spec.fs_write.iter().any(|p| path_has_prefix(path, p)) {
+                        errors.push(CapabilityError::new(
+                            E1001,
+                            format!(
+                                "`write_file(\"{path}\", ...)` is not permitted by @[contained] \
+                                 (allowed prefixes: {})\n  \
+                                 help: Add `write(\"{pfx}\")` to the existing `fs: [...]` clause",
+                                spec.fs_write
+                                    .iter()
+                                    .map(|p| format!("\"{p}\""))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                            Span::dummy(),
+                        ));
+                    }
                 } else {
-                    "a dynamically-built host cannot be statically verified against the sandbox; use a literal host"
+                    // Dynamic/interpolated path → fail CLOSED (see FsRead above): a
+                    // non-literal path can't be verified against the allowlist, and
+                    // there is no runtime target enforcement, so a write to an
+                    // unprovable path is refused whether or not the allowlist is
+                    // empty. Closes the `write_file(p, ...)` / `write_file("/etc/{p}",
+                    // ...)` launder past a non-empty `fs: [write("./out/")]`.
+                    let help = if spec.fs_write.is_empty() {
+                        "no write capability is granted; add an `fs: [write(\"...\")]` clause and use a LITERAL path"
+                    } else {
+                        "a dynamically-built path cannot be statically verified against the sandbox (it could escape the allowlist); use a literal path"
+                    };
+                    errors.push(CapabilityError::new(
+                        E1001,
+                        format!("`write_file(<dynamic path>, ...)` is not permitted by @[contained]\n  help: {help}"),
+                        Span::dummy(),
+                    ));
+                }
+            }
+
+            IoKind::Net => {
+                // CRITICAL: the network HOST is not always the first argument. For
+                // `http_get(url)`/`http_post(url, …)` the first arg IS the host/URL,
+                // so the allowlist is checked against `literal_arg`. But for the AI
+                // builtins (`ai_complete`, `ai_extract_*`) the first arg is the
+                // PROMPT — the host is implicitly the Anthropic API endpoint. Checking
+                // the prompt against a host allowlist is just wrong (it denied every
+                // `ai_complete` under a host-pinned `net: ["api.anthropic.com"]`, and
+                // would "allow" a prompt that happened to match a glob). So the
+                // effective host for an AI builtin is the fixed endpoint, regardless
+                // of the prompt's content or whether it's a literal.
+                let ai_host = ai_builtin_host(name);
+                // For `http_get`/`http_post`/`http_sse*` the first arg is a full URL, not
+                // a bare host. Normalize it to its host (strip `scheme://`, `:port`, and
+                // `/path`) so a real URL like `https://api.openai.com/v1/models` matches a
+                // host allowlist of `api.openai.com` — the same stripping native
+                // net-connect calls already use via `native_net_host`. Without this,
+                // host-pinning was unusable with real URLs (every URL was refused because
+                // the whole string never equals the bare host). AI builtins keep their
+                // fixed implicit host.
+                let normalized_url: Option<String> = if ai_host.is_none() {
+                    literal_arg.map(host_of)
+                } else {
+                    None
                 };
+                let effective_host: Option<&str> = ai_host.or(normalized_url.as_deref());
+                // How to render the call in diagnostics: an AI builtin's host is
+                // implicit, so show `ai_complete(...) [host api.anthropic.com]`
+                // rather than misleadingly printing the prompt as the first-arg host.
+                let call_display = |host: &str| -> String {
+                    if ai_host.is_some() {
+                        format!("{name}(...) [host {host}]")
+                    } else {
+                        format!("{name}(\"{host}\", ...)")
+                    }
+                };
+                if let Some(host) = effective_host {
+                    check_net_host(host, &call_display, spec, errors);
+                } else {
+                    // Dynamic host (a non-AI net call like `http_get(url)` with a
+                    // computed URL — AI builtins have a fixed `ai_host`, so they took
+                    // the branch above). Fail CLOSED: an unverifiable host can't be
+                    // matched against the allowlist and there's no runtime check, so
+                    // it's refused whether or not the allowlist is empty. Closes the
+                    // launder past a non-empty `net: ["ok.com"]` via a computed URL.
+                    let help = if spec.net_allow.is_empty() {
+                        "no network capability is granted; add a `net: [\"...\"]` clause and use a LITERAL host"
+                    } else {
+                        "a dynamically-built host cannot be statically verified against the sandbox; use a literal host"
+                    };
+                    errors.push(CapabilityError::new(
+                        E1001,
+                        format!("`{name}(<dynamic argument>)` is not permitted by @[contained]\n  help: {help}"),
+                        Span::dummy(),
+                    ));
+                }
+            }
+
+            IoKind::Exec => {
+                // Check never: exec.
+                if spec.never.iter().any(|c| matches!(c, NeverClause::Exec)) {
+                    errors.push(CapabilityError::new(
+                        E1004,
+                        format!(
+                            "`{name}(...)` is forbidden by `never: [exec]`\n  \
+                             help: remove the `never: [exec]` clause, or remove the exec call — a `never` rule is a hard deny that no allowlist can override"
+                        ),
+                        Span::dummy(),
+                    ));
+                } else if !spec.exec_allowed {
+                    errors.push(CapabilityError::new(
+                        E1001,
+                        format!(
+                            "`{name}(...)` is not permitted: `exec: none` or exec not specified in @[contained]\n  \
+                             help: Add `exec: any` to the @[contained(...)] attribute to allow process spawning"
+                        ),
+                        Span::dummy(),
+                    ));
+                }
+            }
+
+            IoKind::Env => {
+                // No allowlist clause can grant environment access, so a @[contained]
+                // fn may NOT read the process environment — env vars are an ambient,
+                // secret-bearing channel (API keys, tokens), and permitting an
+                // ungranted read would let sandboxed code exfiltrate host secrets
+                // (defeating the whole point of containment). Always deny.
                 errors.push(CapabilityError::new(
                     E1001,
-                    format!("`{name}(<dynamic argument>)` is not permitted by @[contained]\n  help: {help}"),
-                    Span::dummy(),
-                ));
-            }
-        }
-
-        IoKind::Exec => {
-            // Check never: exec.
-            if spec.never.iter().any(|c| matches!(c, NeverClause::Exec)) {
-                errors.push(CapabilityError::new(
-                    E1004,
                     format!(
-                        "`{name}(...)` is forbidden by `never: [exec]`\n  \
-                         help: remove the `never: [exec]` clause, or remove the exec call — a `never` rule is a hard deny that no allowlist can override"
+                        "`{name}(...)` is not permitted inside @[contained]: reading the process \
+                         environment is an ungovernable ambient channel (env vars often hold secrets) \
+                         and there is no capability clause that can grant it\n  \
+                         help: read the environment OUTSIDE the contained boundary and pass the value \
+                         in as an argument, so the sandboxed code only sees what you explicitly hand it"
                     ),
                     Span::dummy(),
                 ));
-            } else if !spec.exec_allowed {
-                errors.push(CapabilityError::new(
-                    E1001,
-                    format!(
-                        "`{name}(...)` is not permitted: `exec: none` or exec not specified in @[contained]\n  \
-                         help: Add `exec: any` to the @[contained(...)] attribute to allow process spawning"
-                    ),
-                    Span::dummy(),
-                ));
             }
-        }
-
-        IoKind::Env => {
-            // No allowlist clause can grant environment access, so a @[contained]
-            // fn may NOT read the process environment — env vars are an ambient,
-            // secret-bearing channel (API keys, tokens), and permitting an
-            // ungranted read would let sandboxed code exfiltrate host secrets
-            // (defeating the whole point of containment). Always deny.
-            errors.push(CapabilityError::new(
-                E1001,
-                format!(
-                    "`{name}(...)` is not permitted inside @[contained]: reading the process \
-                     environment is an ungovernable ambient channel (env vars often hold secrets) \
-                     and there is no capability clause that can grant it\n  \
-                     help: read the environment OUTSIDE the contained boundary and pass the value \
-                     in as an argument, so the sandboxed code only sees what you explicitly hand it"
-                ),
-                Span::dummy(),
-            ));
         }
     }
 }
