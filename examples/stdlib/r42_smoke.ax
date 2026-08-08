@@ -1,0 +1,60 @@
+// r42_smoke.ax — the R42 smoke scenario: every slice, composed, in one program.
+//
+// Unit tests cover each slice in isolation. This exists because the slices were
+// built separately and the interesting failures are at the joins — a JSON array
+// feeding character iteration feeding a file round trip. It is deliberately ONE
+// pipeline rather than a checklist of independent calls.
+//
+// Success signal (asserted by `cli_run.rs::r42_smoke_scenario_runs_end_to_end`):
+//
+//     6
+//     4
+//     onetwo
+//
+// 6  = sum of the JSON array [1,2,3]                        (Slice 3)
+// 4  = characters in "café", written to and read back from disk
+//                                          (Slices 2 + 4 + append)
+// onetwo = write then APPEND then read                      (Slice 4)
+
+fn main() -> i64 {
+    // ── Slice 3: a JSON array, extracted typed and summed ───────────────────
+    let doc = "{{\"xs\": [1, 2, 3], \"label\": \"café\"}}"
+    let total = match json_get_json(doc, "xs") {
+        Ok(arr) => match json_arr_i64(arr) {
+            Ok(xs) => arr_sum_i64(xs)
+            Err(e) => 0 - 1
+        }
+        Err(e) => 0 - 2
+    }
+    println(to_str(total))
+
+    // ── Slices 2 + 4: a non-ASCII string through the filesystem, counted by
+    // CHARACTER on the way back. Before R42 this was three separate defects:
+    // the label could not be read out of the JSON as a string leaf, counting its
+    // characters meant `str_slice(s, i, i+1)` which silently returned "", and
+    // there was no directory to write it into.
+    let dir = "/tmp/axon_r42_smoke"
+    let f = "/tmp/axon_r42_smoke/label.txt"
+    let mk = dir_create(dir)
+    let label = match json_path_str(doc, "label") {
+        Ok(v) => v
+        Err(e) => "?"
+    }
+    let w = write_file(f, label)
+    let chars = match read_file(f) {
+        Ok(s) => str_len_chars(s)
+        Err(e) => 0 - 1
+    }
+    // 4 characters, 5 bytes — the distinction the whole of Slice 2 is about.
+    println(to_str(chars))
+
+    // ── Slice 4: write, then APPEND, then read back ─────────────────────────
+    let g = "/tmp/axon_r42_smoke/app.txt"
+    let w2 = write_file(g, "one")
+    let a2 = append_file(g, "two")
+    match read_file(g) {
+        Ok(s) => println(s)
+        Err(e) => println(e)
+    }
+    0
+}

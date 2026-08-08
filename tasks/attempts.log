@@ -27,3 +27,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-08T02:28:50-04:00  T8  attempt 1  base64/hex encode+decode; decode Err (E2204) when output is not valid UTF-8 since Axon has no bytes type
 2026-08-08T02:48:15-04:00  T9  attempt 1  userland examples/stdlib/date.ax — Hinnant civil algorithms, floor-division branches, pre-1970 test
 2026-08-08T02:51:46-04:00  T10 attempt 1  userland set.ax over Dict + path.ax with the .. traversal refusal test
+2026-08-08T02:54:05-04:00  T11 attempt 1  examples/stdlib/r42_smoke.ax exercising JSON array + char iteration + file round-trip; signal 6/4/onetwo

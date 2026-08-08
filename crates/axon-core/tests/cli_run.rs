@@ -19810,3 +19810,59 @@ fn path_stdlib_module_tests_pass() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
 }
+
+/// R42 T11 — the smoke scenario: every slice composed into one pipeline.
+///
+/// The per-slice tests cover each in isolation; this covers the JOINS, which is
+/// where separately-built slices actually fail. A JSON array feeds a typed sum, a
+/// non-ASCII string leaf goes through the filesystem and comes back counted by
+/// CHARACTER, and a write/append/read round trip closes it.
+///
+/// Bounded wait rather than a plain `output()`: a hang is a failure, not something
+/// to sit through until CI times out with no attribution.
+#[test]
+fn r42_smoke_scenario_runs_end_to_end() {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+
+    let mut child = axon()
+        .args(["run", &ex("stdlib/r42_smoke.ax")])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn axon");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("try_wait") {
+            Some(s) => break s,
+            None => {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    panic!("r42_smoke.ax did not finish within 30s — a hang is a failure");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+
+    let mut stdout = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        let _ = o.read_to_string(&mut stdout);
+    }
+    let mut stderr = String::new();
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut stderr);
+    }
+
+    assert!(status.success(), "smoke scenario failed (exit {:?}):\n{stderr}", status.code());
+    assert_eq!(
+        stdout.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>(),
+        vec![
+            "6",      // Slice 3: json_get_json -> json_arr_i64 -> arr_sum_i64
+            "4",      // Slices 2+4: 4 CHARACTERS of "café" (5 bytes) via a file
+            "onetwo", // Slice 4: write, then append, then read back
+        ],
+        "unexpected smoke output:\n{stdout}"
+    );
+}
