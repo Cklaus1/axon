@@ -774,6 +774,66 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "str",
         doc: "Return a string containing `s` repeated `n` times (empty string if n <= 0).",
     },
+    // ── R42 Slice 2: CHARACTER-indexed access, beside the byte-indexed surface ──
+    //
+    // `str_len`, `char_at` and `str_slice` are all BYTE-indexed and stay that
+    // way: they are correct, and the byte view has real uses. What was missing
+    // was any way to work per CHARACTER, which is why every per-character task
+    // reached for `str_slice(s, i, i + 1)` — a range that splits a multi-byte
+    // character and, since R42 T1, refuses (E2200).
+    //
+    // "Character" here means one Unicode scalar value (codepoint), NOT a grapheme
+    // cluster: `e` + combining acute is TWO characters to these functions and one
+    // grapheme to a reader. Graphemes need a segmentation table and no measured
+    // failure requires them (R42 §9 Q2).
+    BuiltinFn {
+        name: "str_chars",
+        params: &[("s", "str")],
+        ret: "[str]",
+        doc: "Split `s` into one one-character string per CHARACTER (Unicode scalar value, not grapheme cluster). The load-bearing character function: it turns per-character work into ordinary `arr_*` work over `[str]`, so `arr_group_by`/`dict_inc`/`arr_count_if` all apply. Prefer this over indexing in a loop — `str_len` counts BYTES, so a `while i < str_len(s)` loop over non-ASCII text does not iterate characters.",
+    },
+    BuiltinFn {
+        name: "str_len_chars",
+        params: &[("s", "str")],
+        ret: "i64",
+        doc: "The number of CHARACTERS in `s`. Contrast `str_len`, which counts BYTES: `str_len(\"café\")` is 5 and `str_len_chars(\"café\")` is 4.",
+    },
+    BuiltinFn {
+        name: "str_char_at",
+        params: &[("s", "str"), ("i", "i64")],
+        ret: "str",
+        doc: "The `i`-th CHARACTER of `s` as a one-character string, or \"\" if `i` is out of range. Contrast `char_at`, which returns the `i`-th BYTE as an `i64` code unit — for non-ASCII text those are different positions and different values.",
+    },
+    BuiltinFn {
+        name: "str_char_slice",
+        params: &[("s", "str"), ("lo", "i64"), ("hi", "i64")],
+        ret: "str",
+        doc: "Characters `lo`..`hi` of `s` (half-open), indexed by CHARACTER rather than by byte. Cannot split a character, so unlike `str_slice` it never refuses (E2200); out-of-range indices clamp.",
+    },
+    BuiltinFn {
+        name: "char_code",
+        params: &[("c", "str")],
+        ret: "Result<i64, str>",
+        doc: "The Unicode code point of a ONE-character string. `Err` if `c` is empty or holds more than one character. The inverse of `chr`, which goes code point -> string; `chr` PANICS on an invalid code point where this returns `Err`, an asymmetry kept deliberately rather than changing `chr`'s shipped signature.",
+    },
+    BuiltinFn {
+        name: "char_is_digit",
+        params: &[("c", "str")],
+        ret: "bool",
+        doc: "True when `c` is exactly one character and that character is an ASCII digit 0-9. False for the empty string, for multi-character input, and for non-ASCII digits — so it is a predicate about ASCII digits, not about Unicode numeric-ness.",
+    },
+    BuiltinFn {
+        name: "char_is_alpha",
+        params: &[("c", "str")],
+        ret: "bool",
+        doc: "True when `c` is exactly one character and that character is alphabetic (Unicode-aware, so `é` counts). False for the empty string and for multi-character input.",
+    },
+    BuiltinFn {
+        name: "char_is_space",
+        params: &[("c", "str")],
+        ret: "bool",
+        doc: "True when `c` is exactly one character and that character is whitespace (Unicode-aware). False for the empty string and for multi-character input.",
+    },
     BuiltinFn {
         name: "chr",
         params: &[("n", "i64")],

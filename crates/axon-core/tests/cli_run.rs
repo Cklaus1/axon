@@ -19601,3 +19601,46 @@ fn str_slice_still_slices_on_character_boundaries() {
         "unexpected aligned-slice output:\n{stdout}"
     );
 }
+
+/// R42 T4 — character-indexed access. Every case uses non-ASCII input, because
+/// an ASCII-only fixture passes against a byte-indexed implementation and so
+/// proves nothing about the thing this slice adds.
+#[test]
+fn character_access_is_indexed_by_character_not_byte() {
+    let out = axon().arg("run").arg(fixture("char_access.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "5", "4",           // str_len (bytes) vs str_len_chars (characters)
+            "é", "195", "",     // char index reaches é; byte index gives its first byte
+            "caf", "é", "café", // character slicing, including a clamp
+            "4", "c-a-f-é", "4",// str_chars -> array work
+            "233", "é",         // char_code / chr round trip
+            "ERR-multi", "ERR-empty",
+            "true", "false", "true", "true", "false",
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// Native must refuse the character builtins rather than compute something else
+/// (I-2, sound-by-refusal). They are interp-only in this slice.
+#[test]
+fn native_refuses_the_character_builtins_rather_than_diverging() {
+    let probe = axon().arg("build").arg("--help").output().unwrap();
+    if !probe.status.success() {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    let out = axon().arg("build").arg(fixture("char_access.ax")).output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "native must not build these: {all}");
+    assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
+}

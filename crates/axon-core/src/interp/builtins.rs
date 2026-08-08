@@ -2300,6 +2300,83 @@ impl<'p> Interp<'p> {
                 ));
             }
 
+            // ── R42 Slice 2: character-indexed access ────────────────────────
+            //
+            // Every one of these walks `chars()`. That is O(n) rather than O(1)
+            // indexing, which is inherent to UTF-8 and not a shortcut: there is
+            // no constant-time character index into a variable-width encoding.
+            // `str_chars` exists so a caller pays that walk ONCE and then works
+            // over an array, instead of paying it per index in a loop.
+            "str_chars" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                ok!(Value::Array(
+                    s.chars().map(|c| Value::Str(c.to_string())).collect()
+                ));
+            }
+            "str_len_chars" => {
+                want(1)?;
+                ok!(Value::Int(as_str(&args[0])?.chars().count() as i64));
+            }
+            "str_char_at" => {
+                want(2)?;
+                let s = as_str(&args[0])?;
+                let i = as_int(&args[1])?;
+                if i < 0 {
+                    ok!(Value::Str(String::new()));
+                }
+                ok!(Value::Str(
+                    s.chars().nth(i as usize).map(|c| c.to_string()).unwrap_or_default()
+                ));
+            }
+            "str_char_slice" => {
+                want(3)?;
+                let s = as_str(&args[0])?;
+                let n = s.chars().count();
+                let lo = (as_int(&args[1])?.max(0) as usize).min(n);
+                let hi = (as_int(&args[2])?.max(0) as usize).min(n);
+                let hi = hi.max(lo);
+                // Character-indexed, so this CANNOT split a character and never
+                // raises E2200 — the whole reason it exists beside `str_slice`.
+                ok!(Value::Str(s.chars().skip(lo).take(hi - lo).collect::<String>()));
+            }
+            "char_code" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut it = s.chars();
+                match (it.next(), it.next()) {
+                    (Some(c), None) => ok!(Value::Ok(Box::new(Value::Int(c as i64)))),
+                    (None, _) => ok!(Value::Err(Box::new(Value::Str(
+                        "char_code: empty string has no code point".to_string()
+                    )))),
+                    (Some(_), Some(_)) => ok!(Value::Err(Box::new(Value::Str(format!(
+                        "char_code: expected exactly one character, got {}",
+                        s.chars().count()
+                    ))))),
+                }
+            }
+            "char_is_digit" | "char_is_alpha" | "char_is_space" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut it = s.chars();
+                // Exactly one character, or false. An "is this a digit" question
+                // about a two-character string has no true answer, and returning
+                // true for the first character would be a silent wrong answer.
+                let single = match (it.next(), it.next()) {
+                    (Some(c), None) => Some(c),
+                    _ => None,
+                };
+                let b = match single {
+                    Some(c) => match name {
+                        "char_is_digit" => c.is_ascii_digit(),
+                        "char_is_alpha" => c.is_alphabetic(),
+                        _ => c.is_whitespace(),
+                    },
+                    None => false,
+                };
+                ok!(Value::Bool(b));
+            }
+
             "chr" => {
                 want(1)?;
                 let n = as_int(&args[0])?;
