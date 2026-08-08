@@ -1,0 +1,43 @@
+// R42 T8 — base64 / hex.
+//
+// The reason these are builtins rather than userland is that hand-rolled base64
+// goes wrong quietly ON PADDING. So the fixture covers all three input lengths
+// mod 3 — the exact cases that produce the wrong number of `=` characters — and
+// round-trips each, because an encoder that is self-consistently wrong passes any
+// test that only checks its own output.
+
+fn main() -> i64 {
+    // Padding: len % 3 == 0 (no `=`), == 1 (two `=`), == 2 (one `=`).
+    println(base64_encode("abc"))     // YWJj
+    println(base64_encode("a"))       // YQ==
+    println(base64_encode("ab"))      // YWI=
+    println(base64_encode(""))        // (empty)
+
+    // Round trips, including the padded cases.
+    match base64_decode(base64_encode("abc")) { Ok(s) => println(s)  Err(e) => println(e) }
+    match base64_decode(base64_encode("a")) { Ok(s) => println(s)  Err(e) => println(e) }
+    match base64_decode(base64_encode("ab")) { Ok(s) => println(s)  Err(e) => println(e) }
+
+    // Non-ASCII round trip — multi-byte UTF-8 through the encoder and back.
+    match base64_decode(base64_encode("café")) { Ok(s) => println(s)  Err(e) => println(e) }
+
+    // A known-good vector, so a self-consistently wrong encoder is caught.
+    println(base64_encode("hello world"))                  // aGVsbG8gd29ybGQ=
+    match base64_decode("aGVsbG8gd29ybGQ=") { Ok(s) => println(s)  Err(e) => println(e) }
+
+    // Hex, both directions, plus a known vector and non-ASCII.
+    println(hex_encode("abc"))                             // 616263
+    match hex_decode("616263") { Ok(s) => println(s)  Err(e) => println(e) }
+    match hex_decode(hex_encode("café")) { Ok(s) => println(s)  Err(e) => println(e) }
+    match hex_decode("48454C4C4F") { Ok(s) => println(s)  Err(e) => println(e) }   // uppercase accepted
+
+    // Failure modes, each a distinct Err rather than a silent wrong answer.
+    match base64_decode("abc") { Ok(s) => println(s)  Err(e) => println("ERR-b64-len") }
+    match base64_decode("****") { Ok(s) => println(s)  Err(e) => println("ERR-b64-char") }
+    match hex_decode("abc") { Ok(s) => println(s)  Err(e) => println("ERR-hex-odd") }
+    match hex_decode("zz") { Ok(s) => println(s)  Err(e) => println("ERR-hex-digit") }
+    // Valid base64 whose BYTES are not valid UTF-8: 0xFF. Axon has no bytes type,
+    // so this must Err rather than hand back replacement characters.
+    match base64_decode("/w==") { Ok(s) => println(s)  Err(e) => println("ERR-not-utf8") }
+    0
+}

@@ -574,6 +574,185 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
+            // ── R42 Slice 6: encoding ────────────────────────────────────────
+            //
+            // Pure, no host contact. Hand-written rather than pulling a crate for
+            // thirty lines; the padding cases that trip hand-rolled base64 are
+            // covered explicitly by the fixture (input lengths 0/1/2 mod 3).
+            "base64_encode" | "hex_encode" => {
+                want(1)?;
+                let bytes = as_str(&args[0])?.as_bytes().to_vec();
+                if name == "hex_encode" {
+                    let mut out = String::with_capacity(bytes.len() * 2);
+                    for b in &bytes {
+                        out.push_str(&format!("{b:02x}"));
+                    }
+                    ok!(Value::Str(out));
+                }
+                const A: &[u8; 64] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+                for chunk in bytes.chunks(3) {
+                    let b0 = chunk[0] as u32;
+                    let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+                    let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+                    let n = (b0 << 16) | (b1 << 8) | b2;
+                    out.push(A[(n >> 18) as usize & 63] as char);
+                    out.push(A[(n >> 12) as usize & 63] as char);
+                    // Padding is where a hand-rolled encoder goes wrong: the
+                    // third and fourth characters exist only if the chunk had a
+                    // second and third BYTE.
+                    out.push(if chunk.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
+                    out.push(if chunk.len() > 2 { A[n as usize & 63] as char } else { '=' });
+                }
+                ok!(Value::Str(out));
+            }
+            "base64_decode" | "hex_decode" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let bytes: std::result::Result<Vec<u8>, String> = if name == "hex_decode" {
+                    if src.len() % 2 != 0 {
+                        Err(format!("hex_decode: E2204 odd length ({})", src.len()))
+                    } else {
+                        let mut out = Vec::with_capacity(src.len() / 2);
+                        let cs: Vec<char> = src.chars().collect();
+                        let mut e = None;
+                        for pair in cs.chunks(2) {
+                            let hi = pair[0].to_digit(16);
+                            let lo = pair[1].to_digit(16);
+                            match (hi, lo) {
+                                (Some(h), Some(l)) => out.push((h * 16 + l) as u8),
+                                _ => {
+                                    e = Some(format!(
+                                        "hex_decode: E2204 not a hex digit in {:?}",
+                                        pair.iter().collect::<String>()
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                        match e {
+                            Some(msg) => Err(msg),
+                            None => Ok(out),
+                        }
+                    }
+                } else {
+                    let inv = |c: u8| -> Option<u32> {
+                        match c {
+                            b'A'..=b'Z' => Some((c - b'A') as u32),
+                            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+                            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+                            b'+' => Some(62),
+                            b'/' => Some(63),
+                            _ => None,
+                        }
+                    };
+                    let raw: Vec<u8> = src.bytes().collect();
+                    if raw.len() % 4 != 0 {
+                        Err(format!("base64_decode: E2204 length {} is not a multiple of 4", raw.len()))
+                    } else {
+                        let mut out: Vec<u8> = Vec::with_capacity(raw.len() / 4 * 3);
+                        let mut err = None;
+                        for chunk in raw.chunks(4) {
+                            let pad = chunk.iter().filter(|c| **c == b'=').count();
+                            if pad > 2 {
+                                err = Some("base64_decode: E2204 too much padding".to_string());
+                                break;
+                            }
+                            let mut n: u32 = 0;
+                            let mut bad = false;
+                            for (i, c) in chunk.iter().enumerate() {
+                                let v = if *c == b'=' {
+                                    0
+                                } else {
+                                    match inv(*c) {
+                                        Some(v) => v,
+                                        None => {
+                                            bad = true;
+                                            break;
+                                        }
+                                    }
+                                };
+                                n |= v << (18 - 6 * i);
+                            }
+                            if bad {
+                                err = Some("base64_decode: E2204 invalid base64 character".to_string());
+                                break;
+                            }
+                            out.push((n >> 16) as u8);
+                            if pad < 2 {
+                                out.push((n >> 8) as u8);
+                            }
+                            if pad < 1 {
+                                out.push(n as u8);
+                            }
+                        }
+                        match err {
+                            Some(msg) => Err(msg),
+                            None => Ok(out),
+                        }
+                    }
+                };
+                match bytes {
+                    Err(msg) => ok!(Value::Err(Box::new(Value::Str(msg)))),
+                    // THE limitation, made explicit: Axon has no bytes type, so
+                    // binary that is not valid UTF-8 cannot be represented. Err
+                    // rather than lossy replacement characters or a truncated
+                    // prefix — a silently lossy decode in a primitive justified
+                    // on "hand-rolling this goes wrong quietly" would be absurd.
+                    Ok(b) => match String::from_utf8(b) {
+                        Ok(text) => ok!(Value::Ok(Box::new(Value::Str(text)))),
+                        Err(_) => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "{name}: E2204 decoded bytes are not valid UTF-8 (Axon has no bytes \
+                             type, so only text round-trips)"
+                        ))))),
+                    },
+                }
+            }
+
+            // ── R42 Slice 4: filesystem beyond a single known path ───────────
+            //
+            // Every one goes through `crate::host`, never `std::fs`, so the
+            // scoped-sandbox path checks that govern read_file/write_file govern
+            // these too. Reaching for std here would create five fs builtins
+            // OUTSIDE the sandbox.
+            "file_exists" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                ok!(Value::Bool(crate::host::with_host(|h| h.file_exists(&path))));
+            }
+            "dir_create" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.dir_create(&path)) {
+                    Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "dir_list" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.dir_list(&path)) {
+                    Ok(names) => ok!(Value::Ok(Box::new(Value::Array(
+                        names.into_iter().map(Value::Str).collect()
+                    )))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "file_copy" | "file_rename" => {
+                want(2)?;
+                let from = as_str(&args[0])?.to_string();
+                let to = as_str(&args[1])?.to_string();
+                let r = if name == "file_copy" {
+                    crate::host::with_host(|h| h.file_copy(&from, &to))
+                } else {
+                    crate::host::with_host(|h| h.file_rename(&from, &to))
+                };
+                match r {
+                    Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
             "exec" => {
                 want(2)?;
                 let cmd = as_str(&args[0])?.to_string();

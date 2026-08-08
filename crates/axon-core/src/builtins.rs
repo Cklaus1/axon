@@ -278,6 +278,76 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<i64, str>",
         doc: "The size of `path` in BYTES (not characters — a multi-byte UTF-8 character counts once per byte). Returns Ok(n), or Err(message) if the file cannot be read. Note this READS the file to measure it, so it costs O(size) and requires valid UTF-8: it is not a `stat`, and a binary file reports an error rather than a size.",
     },
+    // ── R42 Slice 6: encoding ─────────────────────────────────────────────────
+    //
+    // Builtins rather than userland because hand-rolled base64 goes wrong quietly
+    // on padding, and this is thirty lines of Rust. No new dependency: a crate for
+    // thirty lines of well-understood code is not a trade worth making.
+    //
+    // Both DECODERS can fail in a way worth stating: Axon has no bytes type, so
+    // arbitrary binary cannot be represented at all.
+    BuiltinFn {
+        name: "base64_encode",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "Standard base64 (RFC 4648 alphabet, `=` padded) of `s`'s UTF-8 bytes.",
+    },
+    BuiltinFn {
+        name: "base64_decode",
+        params: &[("s", "str")],
+        ret: "Result<str, str>",
+        doc: "Decode standard base64. Err (E2204) on invalid characters, bad padding, OR when the decoded bytes are not valid UTF-8 — Axon has no bytes type and `str` must be valid UTF-8, so this round-trips TEXT only. That limitation is stated rather than papered over: returning replacement characters or a truncated prefix would be a silently lossy decode, which is the class of bug this spec exists to remove.",
+    },
+    BuiltinFn {
+        name: "hex_encode",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "Lowercase hex of `s`'s UTF-8 bytes.",
+    },
+    BuiltinFn {
+        name: "hex_decode",
+        params: &[("s", "str")],
+        ret: "Result<str, str>",
+        doc: "Decode lowercase or uppercase hex. Err (E2204) on an odd length, a non-hex digit, or bytes that are not valid UTF-8 — same text-only limitation as `base64_decode`.",
+    },
+    // ── R42 Slice 4: filesystem beyond a single known path ───────────────────
+    //
+    // `read_file`/`write_file`/`append_file`/`file_size` can only touch a path you
+    // already know. These add existence, directories, and moving files around.
+    //
+    // `file_remove` is deliberately ABSENT — irreversible deletion whose risk
+    // classification is unresolved (R42 §9 Q3, needs-human). Not shipped behind a
+    // flag either: that would be TCB surface with no decision behind it.
+    BuiltinFn {
+        name: "file_exists",
+        params: &[("path", "str")],
+        ret: "bool",
+        doc: "True when `path` exists. Capability-wise this is a READ (`fs: [read(...)]`), not a free query: probing existence is an information channel — it discloses whether a path exists without reading it, which is exactly what a sandbox's read allowlist is for.",
+    },
+    BuiltinFn {
+        name: "dir_create",
+        params: &[("path", "str")],
+        ret: "Result<(), str>",
+        doc: "Create `path`, including any missing parent directories (like `mkdir -p`). Ok(()) if it already exists.",
+    },
+    BuiltinFn {
+        name: "dir_list",
+        params: &[("path", "str")],
+        ret: "Result<[str], str>",
+        doc: "Entry NAMES (not full paths) directly inside `path`, sorted, non-recursive. Sorted because `read_dir` order is filesystem-dependent and a program whose output varies run-to-run breaks replay. Capability-wise a READ, and strictly more leakage than reading a file: it discloses names the caller did not already know.",
+    },
+    BuiltinFn {
+        name: "file_copy",
+        params: &[("from", "str"), ("to", "str")],
+        ret: "Result<(), str>",
+        doc: "Copy `from` to `to`, truncating the destination. The ONLY builtin needing two different capabilities on two different arguments: arg 0 is a READ and arg 1 is a WRITE. A checker that granted it on the write capability alone would let a write-only `@[contained]` fn exfiltrate a read-denied file to a path it controls, which is why capability classification is per-argument.",
+    },
+    BuiltinFn {
+        name: "file_rename",
+        params: &[("from", "str"), ("to", "str")],
+        ret: "Result<(), str>",
+        doc: "Rename or move `from` to `to`. BOTH paths are WRITES — the source is destroyed, so a read capability on it is not enough.",
+    },
     BuiltinFn {
         name: "exec",
         params: &[("cmd", "str"), ("args", "[str]")],
@@ -2327,6 +2397,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             // I/O
             | "println" | "print" | "eprintln" | "eprint"
             | "read_line" | "read_file" | "write_file" | "append_file" | "file_size"
+            | "file_exists" | "dir_create" | "dir_list" | "file_copy" | "file_rename"
             | "exec"
             // network — raw HTTP
             | "http_get" | "http_post" | "http_sse" | "http_sse_post"
@@ -2403,7 +2474,8 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
 
         // I/O — console, files, process spawning, environment, exit.
         "println" | "print" | "eprintln" | "eprint" | "read_line" | "read_file" | "write_file"
-        | "append_file" | "file_size"
+        | "append_file" | "file_size" | "file_exists" | "dir_create" | "dir_list"
+        | "file_copy" | "file_rename"
         | "env_var" | "exit" => &["IO"],
         "exec" => &["IO"],
 

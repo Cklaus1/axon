@@ -75,7 +75,18 @@ enum IoKind {
 /// is behaviour-preserving. Multi-path arms land WITH the builtins that need
 /// them; adding them ahead of time would be a match arm no code can reach.
 fn classify_call_paths(name: &str) -> Option<Vec<(IoKind, usize)>> {
-    classify_call(name).map(|k| vec![(k, 0)])
+    match name {
+        // R42 Slice 4. `file_copy` is the reason this function exists: arg 0 is
+        // READ, arg 1 is WRITE. Classifying it as a single kind — or as a kind
+        // LIST without argument indices — would check the source path against
+        // both kinds and the destination against nothing, leaving a write-only
+        // contained fn free to copy a read-denied file somewhere it controls.
+        "file_copy" => Some(vec![(IoKind::FsRead, 0), (IoKind::FsWrite, 1)]),
+        // Rename destroys the source, so BOTH paths are writes; a read
+        // capability on the source is not sufficient.
+        "file_rename" => Some(vec![(IoKind::FsWrite, 0), (IoKind::FsWrite, 1)]),
+        _ => classify_call(name).map(|k| vec![(k, 0)]),
+    }
 }
 
 fn classify_call(name: &str) -> Option<IoKind> {
@@ -87,6 +98,13 @@ fn classify_call(name: &str) -> Option<IoKind> {
         // honest capability, not read+write.
         "append_file" => Some(IoKind::FsWrite),
         "file_size" => Some(IoKind::FsRead),
+        // Existence probing is an information channel: it reveals whether a path
+        // exists without reading it, so it needs the read capability.
+        "file_exists" => Some(IoKind::FsRead),
+        "dir_create" => Some(IoKind::FsWrite),
+        // Strictly MORE leakage than a file read — it discloses names the caller
+        // did not already know.
+        "dir_list" => Some(IoKind::FsRead),
         "exec" => Some(IoKind::Exec),
         // Reading the process environment is an ungrantable ambient channel; a
         // @[contained] fn must not read host secrets it wasn't given.
@@ -1526,6 +1544,77 @@ mod tests {
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
         assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    /// **The exfiltration test T0's refactor existed for.**
+    ///
+    /// A fn with WRITE on `./out/` and no read capability at all must not be able
+    /// to `file_copy("/etc/passwd", "./out/leak")`. Under the single-kind
+    /// classifier this was inexpressible; under a kind LIST it would still pass,
+    /// because the checker tests only `args.first()` — the source would be
+    /// checked against both kinds and the destination against nothing.
+    #[test]
+    fn write_only_fn_cannot_file_copy_out_of_a_read_denied_path() {
+        let spec = make_spec(vec![], vec!["./out/"], vec![]);
+        let args = vec![
+            Expr::Literal(crate::ast::Literal::Str("/etc/passwd".into())),
+            Expr::Literal(crate::ast::Literal::Str("./out/leak".into())),
+        ];
+        let mut errors = Vec::new();
+        check_call("file_copy", &args, &spec, &mut errors);
+        assert!(
+            errors.iter().any(|e| e.code == E1001 && e.message.contains("/etc/passwd")),
+            "the SOURCE path must be refused as an unpermitted read, got: {errors:?}"
+        );
+    }
+
+    /// The mirror: a legitimate copy inside both allowlists is permitted, so the
+    /// check above is not passing merely because `file_copy` is refused outright.
+    #[test]
+    fn file_copy_is_allowed_when_both_paths_are_granted() {
+        let spec = make_spec(vec!["./data/"], vec!["./out/"], vec![]);
+        let args = vec![
+            Expr::Literal(crate::ast::Literal::Str("./data/in.txt".into())),
+            Expr::Literal(crate::ast::Literal::Str("./out/copy.txt".into())),
+        ];
+        let mut errors = Vec::new();
+        check_call("file_copy", &args, &spec, &mut errors);
+        assert!(errors.is_empty(), "a granted copy must be permitted, got: {errors:?}");
+    }
+
+    /// And the DESTINATION is checked too — the half a kind-list refactor would
+    /// have silently skipped. Read is granted on the source, write is granted
+    /// only on `./out/`, so a copy INTO `/tmp/` must be refused.
+    #[test]
+    fn file_copy_checks_the_destination_argument_not_just_the_source() {
+        let spec = make_spec(vec!["./data/"], vec!["./out/"], vec![]);
+        let args = vec![
+            Expr::Literal(crate::ast::Literal::Str("./data/in.txt".into())),
+            Expr::Literal(crate::ast::Literal::Str("/tmp/leak.txt".into())),
+        ];
+        let mut errors = Vec::new();
+        check_call("file_copy", &args, &spec, &mut errors);
+        assert!(
+            errors.iter().any(|e| e.code == E1001 && e.message.contains("/tmp/leak.txt")),
+            "the DESTINATION path must be refused as an unpermitted write, got: {errors:?}"
+        );
+    }
+
+    /// `file_rename` destroys its source, so a READ capability on the source is
+    /// not sufficient — both arguments need write.
+    #[test]
+    fn file_rename_requires_write_on_both_paths() {
+        let spec = make_spec(vec!["./data/"], vec!["./out/"], vec![]);
+        let args = vec![
+            Expr::Literal(crate::ast::Literal::Str("./data/in.txt".into())),
+            Expr::Literal(crate::ast::Literal::Str("./out/moved.txt".into())),
+        ];
+        let mut errors = Vec::new();
+        check_call("file_rename", &args, &spec, &mut errors);
+        assert!(
+            errors.iter().any(|e| e.code == E1001 && e.message.contains("./data/in.txt")),
+            "renaming FROM a read-only path must be refused, got: {errors:?}"
+        );
     }
 
     #[test]

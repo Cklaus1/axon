@@ -275,3 +275,13 @@ the opportunity entry only records the observation.
   than the error it was reporting. **Rule:** diagnostics naming an arbitrary value use a short type TAG
   (`value_type_tag`), never a rendering. Found only because the fixture exercised the Err branch — a
   fixture covering just the happy path would have shipped it.
+- **Do not edit or rebuild while a tier-gate suite is running — it invalidates the gate, and the
+  failures look exactly like regressions.** The T7 gate reported
+  `all_examples_native_match_interp_under_mock` and `codegen_fuzz_parity_finds_no_divergence` FAILED. I
+  had backgrounded the suite and then kept working: editing `builtins.rs`, rebuilding
+  `target/debug/axon` repeatedly, and at one point deliberately mutating base64 padding. Both harnesses
+  shell out to the binary they find on disk, so they tested a moving target. Re-run in isolation: both
+  PASS. **Rule:** a gate run is a barrier — either wait for it, or work only on files no harness reads
+  (and remember every `*_parity.sh` reads `target/debug/axon`, so "no shared files" is almost never
+  true). Third occurrence of the concurrent-build trap; the first two were `--no-default-features`
+  poisoning the same binary.

@@ -23,3 +23,5 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-08T01:21:00-04:00  T4  attempt 1  add str_chars/str_len_chars/str_char_at/str_char_slice/char_code/char_is_* to BUILTINS+interp; native via STR_OUT_EXTERNS where the fast path applies, E0910 otherwise
 2026-08-08T01:49:00-04:00  T5  attempt 1  add json_len/json_at/json_keys/json_arr_i64|f64|str/json_get_json/json_path_json|i64|f64 reusing the existing json helper
 2026-08-08T02:01:35-04:00  T6  attempt 1  add json_from_pairs/dict_to_json/json_arr_from_i64|f64|str; reuse serde_json for escaping
+2026-08-08T02:15:52-04:00  T7  attempt 1  add file_exists/dir_create/dir_list/file_copy/file_rename as default-deny Host methods; per-arg capability arms; file_remove EXCLUDED (needs-human D3)
+2026-08-08T02:28:50-04:00  T8  attempt 1  base64/hex encode+decode; decode Err (E2204) when output is not valid UTF-8 since Axon has no bytes type

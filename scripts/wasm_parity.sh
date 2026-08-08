@@ -76,7 +76,7 @@ WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 #
 # `builtin_effect_row_names_are_excluded_from_the_pure_corpus` in cli_run.rs
 # fails if any divergent builtin is missing here, so this can no longer drift.
-HOST_BUILTINS='read_file|write_file|append_file|file_size|read_line|env_var'\
+HOST_BUILTINS='read_file|write_file|append_file|file_size|file_exists|dir_create|dir_list|file_copy|file_rename|read_line|env_var'\
 '|http_get|http_post|http_sse|ai_complete|ai_extract|ai_cost_spent'\
 '|exec|spawn|chan_|goal_|agent_detect|agent_uncertainty|agent_trace|zephyr_'\
 '|random_|gaussian_sample|beta_sample|categorical_sample'\

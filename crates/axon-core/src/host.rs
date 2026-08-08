@@ -27,6 +27,48 @@ pub trait AxonHost {
     fn env_var(&self, key: &str) -> Option<String>;
     fn now_ms(&self) -> i64;
     fn sleep_ms(&self, ms: u64);
+    // ── R42 Slice 4: filesystem beyond a single known path ───────────────────
+    //
+    // ALL DEFAULT-DENY, following the `exec`/`http_*` precedent immediately
+    // below rather than being required methods. That is the whole reason this
+    // slice is low-risk: a host that cannot do these inherits a fail-closed
+    // answer and needs no code, so `DefaultHost` is the only impl that changes.
+    // Required methods would fail to COMPILE for a host that forgot one, which
+    // is worse in both directions — more work, and no fail-closed default.
+    //
+    // `file_remove` is deliberately ABSENT: irreversible deletion whose risk
+    // classification is unresolved (R42 §9 Q3, tagged needs-human). Adding the
+    // trait method "for later" would be TCB surface with no decision behind it.
+
+    /// Does `path` exist? Note this is an INFORMATION CHANNEL — it leaks whether
+    /// a path exists even without reading it — so it classifies as `FsRead`.
+    fn file_exists(&self, _path: &str) -> bool {
+        false
+    }
+
+    /// Create `path` and any missing parents (`mkdir -p`).
+    fn dir_create(&self, _path: &str) -> Result<(), String> {
+        Err("directory creation is not permitted by the active host".to_string())
+    }
+
+    /// Entry NAMES (not full paths) directly inside `path`, non-recursive.
+    /// Strictly more leakage than a read: it discloses names the caller did not
+    /// already know.
+    fn dir_list(&self, _path: &str) -> Result<Vec<String>, String> {
+        Err("directory listing is not permitted by the active host".to_string())
+    }
+
+    /// Copy `from` to `to`. Reads one path and writes another, which is why the
+    /// capability checker had to become per-argument (R42 T0).
+    fn file_copy(&self, _from: &str, _to: &str) -> Result<(), String> {
+        Err("file copying is not permitted by the active host".to_string())
+    }
+
+    /// Rename/move `from` to `to`. BOTH paths are writes.
+    fn file_rename(&self, _from: &str, _to: &str) -> Result<(), String> {
+        Err("file renaming is not permitted by the active host".to_string())
+    }
+
     /// Spawn a process (the `exec` builtin / `@[contained] exec` capability).
     /// `cmd` is the program; `args` the argument list. Returns the captured
     /// stdout on success, or a `str` error. Defaults to **denied** — a host that
@@ -120,6 +162,36 @@ impl AxonHost for DefaultHost {
 
     fn env_var(&self, key: &str) -> Option<String> {
         std::env::var(key).ok()
+    }
+
+    fn file_exists(&self, path: &str) -> bool {
+        std::path::Path::new(path).exists()
+    }
+
+    fn dir_create(&self, path: &str) -> Result<(), String> {
+        std::fs::create_dir_all(path).map_err(|e| e.to_string())
+    }
+
+    fn dir_list(&self, path: &str) -> Result<Vec<String>, String> {
+        let rd = std::fs::read_dir(path).map_err(|e| e.to_string())?;
+        let mut names: Vec<String> = Vec::new();
+        for entry in rd {
+            let entry = entry.map_err(|e| e.to_string())?;
+            names.push(entry.file_name().to_string_lossy().to_string());
+        }
+        // Sorted, because `read_dir` order is filesystem-dependent and a program
+        // whose output changes between runs on the same directory is not
+        // reproducible — which the replay/audit machinery depends on.
+        names.sort();
+        Ok(names)
+    }
+
+    fn file_copy(&self, from: &str, to: &str) -> Result<(), String> {
+        std::fs::copy(from, to).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn file_rename(&self, from: &str, to: &str) -> Result<(), String> {
+        std::fs::rename(from, to).map_err(|e| e.to_string())
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -1,0 +1,45 @@
+// R42 T7 — filesystem beyond a single known path.
+//
+// Before this, `read_file`/`write_file`/`append_file`/`file_size` could only
+// touch a path you already knew: no existence check, no directories, no moving.
+//
+// `file_remove` is absent on purpose — irreversible deletion whose risk
+// classification is unresolved (§9 Q3, needs-human). So this fixture leaves its
+// files behind, which is the honest consequence of that decision rather than
+// something to paper over.
+
+fn main() -> i64 {
+    let base = "/tmp/axon_r42_fs"
+    let nested = "/tmp/axon_r42_fs/a/b"
+    let src = "/tmp/axon_r42_fs/a/b/src.txt"
+    let cp = "/tmp/axon_r42_fs/a/b/copy.txt"
+    let mv = "/tmp/axon_r42_fs/a/b/moved.txt"
+
+    // dir_create makes parents, like mkdir -p.
+    match dir_create(nested) { Ok(u) => println("mkdir-ok")  Err(e) => println(e) }
+    println(to_str_bool(file_exists(nested)))
+
+    // A path that does not exist reports false rather than erroring.
+    println(to_str_bool(file_exists("/tmp/axon_r42_fs/nope")))
+
+    let w = write_file(src, "hello")
+    println(to_str_bool(file_exists(src)))
+
+    // Copy leaves the source in place; both exist afterwards.
+    match file_copy(src, cp) { Ok(u) => println("copy-ok")  Err(e) => println(e) }
+    println(to_str_bool(file_exists(src)))
+    match read_file(cp) { Ok(s) => println(s)  Err(e) => println(e) }
+
+    // Rename DESTROYS the source — that is why both paths need write capability.
+    match file_rename(cp, mv) { Ok(u) => println("rename-ok")  Err(e) => println(e) }
+    println(to_str_bool(file_exists(cp)))
+    println(to_str_bool(file_exists(mv)))
+
+    // dir_list gives NAMES, sorted, non-recursive.
+    match dir_list(nested) { Ok(names) => println(str_join(names, ","))  Err(e) => println(e) }
+
+    // Listing a path that is not a directory is an Err, not an empty list — an
+    // empty list would be indistinguishable from an empty directory.
+    match dir_list("/tmp/axon_r42_fs/nope") { Ok(n) => println(str_join(n, ","))  Err(e) => println("ERR-nodir") }
+    0
+}

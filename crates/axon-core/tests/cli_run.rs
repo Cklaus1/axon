@@ -19696,3 +19696,66 @@ fn json_construction_round_trips_through_the_readers() {
         "unexpected output:\n{stdout}"
     );
 }
+
+/// R42 T7 — filesystem beyond a single known path.
+#[test]
+fn filesystem_ops_create_probe_copy_rename_and_list() {
+    let out = axon().arg("run").arg(fixture("fs_ops.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "mkdir-ok", "true",   // dir_create makes parents
+            "false",              // a missing path reports false, not an error
+            "true",               // the written file exists
+            "copy-ok", "true", "hello", // copy leaves the SOURCE in place
+            "rename-ok", "false", "true", // rename DESTROYS the source
+            "moved.txt,src.txt",  // dir_list: names, sorted
+            "ERR-nodir",          // not-a-directory is an Err, not an empty list
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// Native must refuse the filesystem builtins rather than compute something else.
+#[test]
+fn native_refuses_the_filesystem_builtins() {
+    let probe = axon().arg("build").arg("--help").output().unwrap();
+    if !probe.status.success() {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    let out = axon().arg("build").arg(fixture("fs_ops.ax")).output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "native must not build these: {all}");
+    assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
+}
+
+/// R42 T8 — base64 / hex. These are builtins because hand-rolled base64 goes
+/// wrong quietly on PADDING, so the fixture covers all three input lengths mod 3
+/// and includes known-good vectors: an encoder that is self-consistently wrong
+/// passes any test that only round-trips its own output.
+#[test]
+fn base64_and_hex_encode_decode_including_padding() {
+    let out = axon().arg("run").arg(fixture("encoding.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "YWJj", "YQ==", "YWI=", "",   // padding: 0, 2, 1 `=` — the failure mode
+            "abc", "a", "ab",             // round trips through each padding case
+            "café",                       // multi-byte UTF-8 survives
+            "aGVsbG8gd29ybGQ=", "hello world", // known-good vector, both ways
+            "616263", "abc", "café", "HELLO",  // hex, incl. uppercase input
+            "ERR-b64-len", "ERR-b64-char", "ERR-hex-odd", "ERR-hex-digit",
+            "ERR-not-utf8",               // valid base64, invalid UTF-8 bytes
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
