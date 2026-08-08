@@ -285,3 +285,12 @@ the opportunity entry only records the observation.
   (and remember every `*_parity.sh` reads `target/debug/axon`, so "no shared files" is almost never
   true). Third occurrence of the concurrent-build trap; the first two were `--no-default-features`
   poisoning the same binary.
+- **A test that names the edge case it covers can still not exercise it.** `date.ax`'s
+  `test_pre_epoch_round_trip` asserted a 1969 date to prove the floor-division branches mattered, and
+  said so in a comment. Mutating both era branches to plain `/` left all 7 tests GREEN. The premise was
+  wrong: for 1969 the shifted year `ys` is 1969 and the shifted day `z` is ~719303 — both POSITIVE, so
+  truncation and flooring agree. The branches only diverge for years ≤ 0 in the proleptic calendar.
+  **Rule:** when a test exists to cover a branch, pick the input from the branch's CONDITION (`ys < 0`),
+  not from the domain concept you associate with it ("before the epoch"). Confirmed by re-mutating after
+  the fix — now both branches fail the test. This is the "suspect the premise before the assertions"
+  case, and mutation testing is the only thing that finds it.

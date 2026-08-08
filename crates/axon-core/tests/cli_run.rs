@@ -19759,3 +19759,25 @@ fn base64_and_hex_encode_decode_including_padding() {
         "unexpected output:\n{stdout}"
     );
 }
+
+/// R42 T9 — the userland `date.ax` module. Gated here because `examples/stdlib`
+/// is NOT glob-swept: a module's `@[test]`s only run in CI if a test like this
+/// invokes them, and asserting the COUNT is what stops the module silently
+/// becoming untested if its tests are renamed away.
+#[test]
+fn date_stdlib_module_tests_pass() {
+    // Civil calendar arithmetic in userland rather than as builtins, per R42's
+    // admission test (a builtin is permanent TCB surface; a `.ax` module is not).
+    // Hinnant's days_from_civil / civil_from_days.
+    //
+    // The load-bearing test is `test_floor_division_for_proleptic_years`: Axon's
+    // `/` truncates toward zero and these algorithms need FLOOR division, so
+    // every era division is an explicit branch. Note the input must be a year
+    // <= 0 — a pre-EPOCH date (1969) leaves the shifted year positive and does
+    // not reach the branch at all, which is how an earlier version of that test
+    // passed while both branches were broken.
+    let out = axon().args(["test", &ex("stdlib/date.ax")]).output().unwrap();
+    assert!(out.status.success(), "date.ax tests should pass: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
+}

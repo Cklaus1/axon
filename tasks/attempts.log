@@ -25,3 +25,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-08T02:01:35-04:00  T6  attempt 1  add json_from_pairs/dict_to_json/json_arr_from_i64|f64|str; reuse serde_json for escaping
 2026-08-08T02:15:52-04:00  T7  attempt 1  add file_exists/dir_create/dir_list/file_copy/file_rename as default-deny Host methods; per-arg capability arms; file_remove EXCLUDED (needs-human D3)
 2026-08-08T02:28:50-04:00  T8  attempt 1  base64/hex encode+decode; decode Err (E2204) when output is not valid UTF-8 since Axon has no bytes type
+2026-08-08T02:48:15-04:00  T9  attempt 1  userland examples/stdlib/date.ax — Hinnant civil algorithms, floor-division branches, pre-1970 test
