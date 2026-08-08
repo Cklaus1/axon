@@ -476,7 +476,9 @@ deliberately (§4). Slice 6's userland `Set` is a `Dict` underneath and inherits
 and its aliasing refusal for free.
 
 **Reserved codes.** `E2200` UTF-8 boundary · `E2201` malformed JSON · `E2202` JSON path type mismatch
-· `E2203` non-linear regex construct refused · `E2204` decode output is not valid UTF-8 (§7) · `E2205`–`E2212` unallocated, held for these
+· `E2203` non-linear regex construct refused · `E2204` decode output is not valid UTF-8 (§7) · `E2205` re_replace_all replacement references a capture group the pattern does not have, or an
+ambiguous `$NN` (allocated 2026-08-08, §12.2) · `E2206`–`E2212` unallocated, held for these
+· `E2213`+ belong to R43 (bytes) — do not allocate from that range here
 slices. Note per §4: on `Result`-returning builtins these are `Err`-string prefixes, and on the
 `str_slice` refusal it is panic-message text — not compiler diagnostics.
 

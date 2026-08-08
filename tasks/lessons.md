@@ -339,3 +339,11 @@ the opportunity entry only records the observation.
   else reads that path concurrently. And when verifying, follow `gate.sh`'s ORDER (codegen-less tests,
   then `cargo build -p axon-core`, then harnesses) rather than inventing an order — the sequence in a
   gate script is usually load-bearing, not incidental. Fourth occurrence of this class overall.
+- **Check the error-code ledger BEFORE writing a spec's header, not after.** R43's draft reserved
+  E2210–E2214 while R42 explicitly held E2205–E2212 — a three-code overlap, caught only because I
+  grepped the specs directory afterwards. This repo has been bitten by exactly this before (R21/R22/R23
+  dual-claimed under parallel development, and the Phase-6 effect codes collided with AI-policy
+  E1300–E1302, forcing the E131x block). **Rule:** reserving a code range is a WRITE to shared state.
+  Grep `governance/specs/` and `error.rs` for the range first, state in the header which ranges
+  neighbours hold, and when you allocate one mid-session go back and mark it allocated in the spec that
+  reserved it — a range recorded as "unallocated, held" that is silently in use is worse than no ledger.
