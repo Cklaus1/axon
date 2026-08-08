@@ -269,3 +269,9 @@ the opportunity entry only records the observation.
   from `./gate.sh | tail -5; echo $?` and nearly concluded the gate failed to fail. It had exited 1
   correctly; `tail` reported its own status. **Rule:** when the exit code IS the result, redirect to a
   file and check `$?` directly. (Second occurrence — already in memory as `tail-pipe masks exit code`.)
+- **Never `{:?}` an arbitrary interpreter `Value` in an error message.** `dict_to_json`'s "value has no
+  JSON form ({other:?})" **stack-overflowed** on a closure: a closure's Debug rendering walks its
+  captured environment, which can contain the very dict being serialized. The error path crashed harder
+  than the error it was reporting. **Rule:** diagnostics naming an arbitrary value use a short type TAG
+  (`value_type_tag`), never a rendering. Found only because the fixture exercised the Err branch — a
+  fixture covering just the happy path would have shipped it.

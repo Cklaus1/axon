@@ -19673,3 +19673,26 @@ fn json_arrays_and_numeric_leaves_are_reachable() {
         "unexpected output:\n{stdout}"
     );
 }
+
+/// R42 T6 — JSON construction. Every case ROUND-TRIPS through the Slice-3
+/// readers rather than comparing text, because "the bytes look right" is not the
+/// contract; "what we wrote can be read back" is.
+#[test]
+fn json_construction_round_trips_through_the_readers() {
+    let out = axon().arg("run").arg(fixture("json_write.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "[1,2,3]", "6",                        // array out, summed back in
+            "[\"x\",\"y\"]", "x|y",                // string array round trip
+            "{\"a\":[1,2,3],\"n\":7,\"s\":\"hi\"}",// object from pre-encoded values
+            "7", "3", "hi",                        // read back by path
+            "{\"we\\\"ird\":1}", "1",              // a quote in a KEY is escaped
+            "{\"k\":42}", "42",                    // dict_to_json round trip
+            "ERR-nojson",                          // a closure value is an Err, not a dropped key
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}

@@ -34,6 +34,29 @@ use axon_audit;
 ///
 /// `who` carries the caller's name so error text stays byte-identical to what
 /// `json_path_str` produced before the refactor; tests assert on it.
+/// A SHORT type tag for a `Value`, for error messages that must not recurse.
+///
+/// R42 T6: `format!("{value:?}")` on a closure walks its captured environment,
+/// which can contain the very dict being serialized — a stack overflow rather
+/// than an error message. Any diagnostic naming an arbitrary value needs a tag,
+/// not a rendering.
+fn value_type_tag(v: &Value) -> &'static str {
+    match v {
+        Value::Int(_) | Value::SizedInt { .. } => "i64",
+        Value::Float(_) => "f64",
+        Value::Bool(_) => "bool",
+        Value::Str(_) => "str",
+        Value::Array(_) => "array",
+        Value::Tuple(_) => "tuple",
+        Value::Dict(_) => "Dict",
+        Value::Struct { .. } => "struct",
+        Value::Enum { .. } => "enum",
+        Value::Closure { .. } => "closure",
+        Value::Unit => "()",
+        _ => "value",
+    }
+}
+
 fn json_walk<'a>(
     root: &'a serde_json::Value,
     path: &str,
@@ -2519,6 +2542,94 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
             }
+            // ── R42 Slice 3.1: WRITE a JSON document ─────────────────────────
+            "json_from_pairs" => {
+                want(1)?;
+                let pairs = match &args[0] {
+                    Value::Array(items) => items.clone(),
+                    _ => ok!(Value::Str("{}".to_string())),
+                };
+                let mut parts: Vec<String> = Vec::with_capacity(pairs.len());
+                for p in &pairs {
+                    if let Value::Tuple(kv) = p {
+                        if kv.len() == 2 {
+                            let k = match &kv[0] {
+                                Value::Str(k) => k.clone(),
+                                other => value_type_tag(other).to_string(),
+                            };
+                            let v = match &kv[1] {
+                                Value::Str(v) => v.clone(),
+                                other => value_type_tag(other).to_string(),
+                            };
+                            // The KEY is escaped (serde_json does it correctly,
+                            // including quotes and control characters); the VALUE
+                            // is inserted verbatim because it is documented as
+                            // pre-encoded JSON.
+                            let ke = serde_json::Value::String(k).to_string();
+                            parts.push(format!("{ke}:{v}"));
+                        }
+                    }
+                }
+                ok!(Value::Str(format!("{{{}}}", parts.join(","))));
+            }
+            "dict_to_json" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "dict_to_json: not a dict".to_string()
+                    )))),
+                };
+                let map = d.borrow();
+                let mut parts: Vec<String> = Vec::with_capacity(map.len());
+                for (k, v) in map.iter() {
+                    // Only values with a JSON form; anything else is an Err
+                    // rather than a silently dropped key.
+                    let encoded = match v {
+                        Value::Int(n) => n.to_string(),
+                        Value::SizedInt { val, .. } => val.to_string(),
+                        Value::Float(f) if f.is_finite() => f.to_string(),
+                        Value::Float(_) => "null".to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Str(sv) => serde_json::Value::String(sv.clone()).to_string(),
+                        other => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "dict_to_json: value at key {k:?} has no JSON form ({})",
+                            value_type_tag(other)
+                        ))))),
+                    };
+                    let ke = serde_json::Value::String(k.clone()).to_string();
+                    parts.push(format!("{ke}:{encoded}"));
+                }
+                ok!(Value::Ok(Box::new(Value::Str(format!(
+                    "{{{}}}",
+                    parts.join(",")
+                )))));
+            }
+            "json_arr_from_i64" | "json_arr_from_f64" | "json_arr_from_str" => {
+                want(1)?;
+                let items = match &args[0] {
+                    Value::Array(items) => items.clone(),
+                    _ => ok!(Value::Str("[]".to_string())),
+                };
+                let mut parts: Vec<String> = Vec::with_capacity(items.len());
+                for it in &items {
+                    parts.push(match it {
+                        Value::Int(n) => n.to_string(),
+                        Value::SizedInt { val, .. } => val.to_string(),
+                        // NaN/infinity have no JSON representation; `null` is
+                        // what every mainstream encoder emits.
+                        Value::Float(f) if f.is_finite() => f.to_string(),
+                        Value::Float(_) => "null".to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Str(sv) => serde_json::Value::String(sv.clone()).to_string(),
+                        // A tag, never a Debug rendering: see `value_type_tag`.
+                        other => serde_json::Value::String(value_type_tag(other).to_string())
+                            .to_string(),
+                    });
+                }
+                ok!(Value::Str(format!("[{}]", parts.join(","))));
+            }
+
             // ── R42 Slice 3: reach INTO a JSON document ──────────────────────
             //
             // Sub-documents are returned as JSON STRINGS, so these compose with

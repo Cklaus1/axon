@@ -847,6 +847,43 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<str, str>",
         doc: "Validate `s` as JSON. Returns Ok(s) if valid, Err(reason) if not. Pure; no network call.",
     },
+    // ── R42 Slice 3.1: WRITE a JSON document ─────────────────────────────────
+    //
+    // Slice 3 was read-only, which review caught: an RLM engine's programs must
+    // EMIT structured output too, and the only writer was `json_stringify` (one
+    // string value). Values are pre-encoded JSON strings for the same reason the
+    // readers return them — it keeps the whole surface composable without a `Json`
+    // value type.
+    BuiltinFn {
+        name: "json_from_pairs",
+        params: &[("pairs", "[(str, str)]")],
+        ret: "str",
+        doc: "Build a JSON object from (key, PRE-ENCODED JSON value) pairs. Each value is inserted verbatim, so it must already be valid JSON — use `json_stringify` for a string, `to_str` for a number, `json_arr_from_i64` for an array. Keys ARE escaped for you. The counterpart to the json_* readers: Slice 3 made a document navigable, this makes one writable.",
+    },
+    BuiltinFn {
+        name: "dict_to_json",
+        params: &[("d", "Dict")],
+        ret: "Result<str, str>",
+        doc: "Serialize a whole Dict to a JSON object. `Err` if any value has no JSON form (a closure, a channel). Distinct from `dict_to_str`, which emits Axon's own dict rendering rather than JSON.",
+    },
+    BuiltinFn {
+        name: "json_arr_from_i64",
+        params: &[("xs", "[i64]")],
+        ret: "str",
+        doc: "Build a JSON array from `[i64]`. The inverse of `json_arr_i64`.",
+    },
+    BuiltinFn {
+        name: "json_arr_from_f64",
+        params: &[("xs", "[f64]")],
+        ret: "str",
+        doc: "Build a JSON array from `[f64]`. Non-finite values (NaN, infinity) have no JSON representation and are emitted as `null`, matching what every mainstream JSON encoder does.",
+    },
+    BuiltinFn {
+        name: "json_arr_from_str",
+        params: &[("xs", "[str]")],
+        ret: "str",
+        doc: "Build a JSON array from `[str]`, escaping each element. The inverse of `json_arr_str`.",
+    },
     // ── R42 Slice 3: reach INTO a JSON document ──────────────────────────────
     //
     // `json_get_i64`/`json_get_str` reach top-level scalars and `json_path_str`
