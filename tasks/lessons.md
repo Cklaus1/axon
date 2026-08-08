@@ -347,3 +347,46 @@ the opportunity entry only records the observation.
   Grep `governance/specs/` and `error.rs` for the range first, state in the header which ranges
   neighbours hold, and when you allocate one mid-session go back and mark it allocated in the spec that
   reserved it — a range recorded as "unallocated, held" that is silently in use is worse than no ledger.
+- **A "determinism" feature can silently change what programs COMPUTE — check the obvious
+  implementation isn't the wrong one.** The obvious virtual clock freezes time: `now_ms()` always
+  returns the same value. `tests/fixtures/io_builtins.ax` does `t = now_ms(); sleep_ms(1); t2 =
+  now_ms(); if t2 > t { 1 } else { 0 }` — under a frozen clock `t2 == t`, the program takes the other
+  branch, and a feature sold as "makes runs reproducible" would have quietly altered results. The fix
+  is a MONOTONIC virtual clock (advance by `tick` per read, and let `sleep_ms` advance the timeline
+  rather than block), which is both deterministic and faithful — and makes replaying a run that slept
+  ten seconds instant. **Rule:** before implementing a determinism/mocking control, grep for programs
+  that OBSERVE the thing being controlled and check they still compute the same answers. Determinism is
+  a constraint on the run, not a licence to change semantics.
+- **When you virtualize a resource, find EVERY reader of it — the second reader is the dangerous one.**
+  I virtualized the clock via the `now_ms` builtin and declared the replay hole closed. Three more
+  builtins were reading the real clock directly through the crate's private helper: `temporal_now`,
+  `temporal_new` (which stamps `created_ms`) and `temporal_is_valid`. The consequence was worse than the
+  gap I set out to fix: a program mixing `now_ms()` with `temporal_*` observed TWO DISAGREEING
+  TIMELINES — one virtual, one real — so a `created_ms` compared against a `now_ms()` was arbitrary,
+  and nothing reported it. Found by grepping `now_ms()` in the builtin table (5 hits, only 2 of which
+  I had touched), not by reasoning. **Rule:** after adding an interception point, grep for the
+  underlying primitive across the whole crate and route every caller through the new single resolution
+  point — then add a harness check that two different readers agree, because that is the property a
+  future fifth reader would break. Corollary: a doc comment naming the one legitimate remaining caller
+  (here, the provenance log's real timestamp) is what stops the next person "fixing" it wrongly.
+- **Put a harness's cheap checks BEFORE its expensive/skippable ones.** `clock_parity.sh` ran its
+  interp-only checks after the native-build section, whose codegen-absent path exits early — so on a
+  codegen-less build only 3 of 7 checks ran and it still printed a clean skip. The gate looked fine
+  while testing less than half of what it claimed. **Rule:** order harness sections by what can skip:
+  unconditional checks first, toolchain-dependent ones last. And when a harness reports "N passed",
+  compare N across configurations — a silently smaller N is the tell.
+- **A positioning document is a technical artifact and must be reviewed against the code like one.** I
+  wrote a paper arguing "loud failure beats quiet wrongness", and its first draft was quietly wrong in
+  five ways: it misnamed the function carrying its central design claim (`classify_call` vs
+  `classify_call_paths`); it asserted Python's `re.sub` silently drops a bad group reference when Python
+  actually RAISES (so the competitor comparison was backwards, in the section about correctness); its
+  flagship anecdote was an unsourced statistic that in-repo data partly contradicted; its coverage table
+  omitted two LIVE holes in the very property it claimed was closed; and two of its three "gateable"
+  metrics were not gateable — one ("count of known silent-wrong-answer paths") is satisfied by not
+  looking. **Rules:** (1) every factual claim in a doc gets a file:line, and claims about OTHER
+  languages get an actual execution, not a memory; (2) a metric that counts what you know is a measure
+  of search effort, not of the property — prefer process metrics (oracle-test coverage, found→closed
+  latency) that cannot be gamed by looking away; (3) when a doc claims a property is closed, enumerate
+  the property's surface and check every member, because the draft's own table was where both live bugs
+  were hiding. Two real code bugs were found by reviewing prose, which is a good argument for writing
+  the prose.

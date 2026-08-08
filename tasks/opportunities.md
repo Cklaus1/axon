@@ -1835,3 +1835,67 @@ concrete reason to expect it will not.
   in place. FOURTH occurrence of the concurrent-build class and the first where the test suite races
   ITSELF rather than a human editor. Options: have the harnesses build to a private `--target-dir`, or
   mark these `#[serial]` and pin the binary they use. Not fixed here — it needs a decision about which.
+- **[med] `trace --replay` is now DETERMINISTIC but not byte-FAITHFUL to the original run.** The virtual
+  clock (2026-08-08) anchors a replay to the `ts_ms` recorded in `run_start`, so two replays of one
+  run are byte-identical — the audit property. But the replay does not reproduce the ORIGINAL's exact
+  output: `ts_ms` is stamped at run-start a few ms before the program's first `now_ms()` call, and a
+  real `sleep_ms(250)` takes ~250 ms of wall time while the virtual clock advances by exactly
+  250 + tick. Measured: original `...580 / ...830 / 250`, replay `...578 / ...829 / 251`. Full fidelity
+  needs a recorded clock TRACE (each `now_ms` return value in sequence, replayed by ordinal) — exactly
+  the shape `AXON_AI_REPLAY` already uses for `ai_complete`, so the design is known and this is a
+  build, not a research question. Worth doing before anyone diffs a replay against an original and
+  concludes the engine is nondeterministic.
+- **[low] Audit the other nondeterminism sources for replay coverage.** With RNG (`AXON_SEED`), AI
+  (`AXON_AI_REPLAY`) and now the clock covered, what remains unreplayable: `read_line` (stdin),
+  `env_var`, `http_get`/`http_post`, `exec`, `dir_list` (sorted for this reason, so already
+  deterministic given the same directory), and filesystem contents generally. "Count of
+  nondeterministic builtins not replayable" is a gateable metric and is currently >0; each remaining
+  one is a small record/replay cache in the same style.
+- **[low] `Temporal<T>` confidence decay is now replayable, but its semantics under a virtual clock
+  deserve a look.** `temporal_at` decays confidence as `c * (1 - decay)^(offset_ms / 86_400_000)`, and
+  with `AXON_CLOCK` the offsets are whatever the virtual timeline says. That is correct and desirable
+  for replay, but it means a test written against a virtual clock can assert decay values that a real
+  run would never produce. Worth a fixture pinning decay at a known virtual timestamp so the formula
+  itself is gated, rather than only its plumbing.
+- **[HIGH] `RecordingHost`/`ReplayHost` — close the whole open replay column in ONE design.** Every
+  environmental effect funnels through the `Host` trait (`crates/axon-core/src/host.rs`), which is a
+  single choke point. A recording wrapper that memoizes every host call, plus a replay wrapper that
+  REFUSES LOUDLY on a cache miss instead of falling through to the live environment, covers
+  `read_line`, `env_var`, `http_get`/`http_post`, `exec`, file contents and `dir_list` contents
+  together — rather than the per-builtin caches the current design implies. Two payoffs beyond
+  coverage: (1) it removes the "partial replay creates false confidence" hazard, since an unrecorded
+  effect becomes an error rather than a silent divergence; (2) once every effect is recorded,
+  **replay-diff** ("the first event at which run B departed from run A") becomes possible, which is
+  the feature an auditor actually wants and nothing else in the design offers. Identified in the
+  review of WHY_REPLAY_MATTERS.md; this is the highest-value item on the replayability axis.
+- **[HIGH] Gate: no builtin with a host/entropy/time/model effect row may lack a replay story.** The
+  set is enumerable from `BUILTINS` + `builtin_effect_row`, so a unit test can walk every builtin whose
+  row includes IO/Net/Exec/Time/Random and assert it has a record/replay path. This is the ONE genuinely
+  gateable metric of the three WHY_REPLAY_MATTERS.md proposed — it fails a commit that adds an
+  unreplayable builtin, which is exactly how `ai_extract_uncertain_*` slipped through unnoticed.
+  Currently ~8 builtins would fail it, so land it as a known-failures allowlist that may only shrink.
+- **[med] Measure one-shot repair rate after a diagnostic.** The review's top "missing property": for a
+  model, the CONTENT of a failure is the signal, and this repo already writes fix-naming diagnostics
+  (the interpolation error prints the corrected `"a{{2,3}}"`; E2205 says "use 9 or fewer capture
+  groups"). Metric: take the tasks a model fails, feed back the diagnostic, count how often the next
+  attempt compiles. Plausibly higher-leverage for task pass-rate than replay, and unlike "count of
+  known silent-wrong-answer paths" it is not satisfied by not looking.
+- **[med] Claim what already exists: cost accounting, deterministic scheduling, Layer-3 firewall, SMT.**
+  Four differentiating properties are BUILT and unclaimed in any positioning doc — per-token AI cost
+  metering + per-principal budgets + exit-7 exhaustion (Phase 7/R12b); scheduler order as a function of
+  spawn order + `AXON_SEED` (no mainstream language gives deterministic concurrency by default); the
+  Layer-3 4-gate firewall for AI-authored compiler passes; and SMT discharge already wired into the
+  default pipeline, which makes provable contracts statically elided rather than runtime-checked.
+  Zero engineering cost to claim; folded into WHY_REPLAY_MATTERS.md §7.
+- **[med] A stability contract for the surface models generate against.** Card drift has been MEASURED
+  to change task outcomes, so builtin signatures, diagnostic text and the JSON schemas
+  (`axon-deploy/1`, `axon-ai-audit/2`, …) need an explicit compatibility policy. A language whose
+  surface churns silently invalidates the competence its users already have — an unusual but real risk
+  for an "AI-first" language, and nothing currently states the guarantee.
+- **[low] Fuel/step metering for real CPU containment.** The regex engine's linear-time bound removes a
+  CPU AMPLIFICATION primitive but does not make Axon CPU-safe: `while true {}` burns unbounded CPU with
+  no capability at all. If "sandboxed model-authored code cannot burn unbounded CPU" is to be a claim
+  rather than an aspiration, it needs step metering. Until then the narrow claim is the honest one.
+- **[low] Checkpoint/resume for long agent runs.** Replaying a ten-hour run is useless if review costs
+  ten hours. `host_await` + `FiberState::Suspended` already exist; replay-to-prefix + resume and durable
+  checkpoints are the natural extension.
