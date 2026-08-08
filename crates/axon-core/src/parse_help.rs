@@ -160,6 +160,25 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
     // at all. Caught only by running the repaired program the model produced.
     // Any text here is advice a reader will act on; it is verified by
     // `parse_help_probe::the_character_literal_advice_actually_compiles`.
+    // `let best = 9223372036854775808` — an i64 literal one past the maximum.
+    //
+    // The lexer says "integer literal too large for i64", which states the problem
+    // and not the FACT the reader needs: the actual bound. Measured on the
+    // tasks_hard set the model reached for a sentinel to seed a min/max scan, wrote
+    // MAX+1 (the classic off-by-one), and got NO help at all — 3 of 36 attempts.
+    // Naming the bound turns it into a one-token edit.
+    //
+    // Deliberately NOT solved by adding `i64_min()`/`i64_max()` builtins: R42's
+    // admission test asks whether the need can be met in userland, and
+    // `let m = 9223372036854775807` plainly can. A diagnostic costs no new surface,
+    // and new surface must then be documented on the card — itself a measured cost.
+    if msg.contains("integer literal too large") {
+        return Some(
+            "the largest `i64` is 9223372036854775807 and the smallest is -9223372036854775808 — this literal is outside that range. Axon has no `i64::MAX` constant, so bind it if you need one: `let i64_max = 9223372036854775807`. For a min/max scan prefer seeding from the first element (`let best = xs[0]`) over a sentinel — it cannot be off by one."
+                .to_string(),
+        );
+    }
+
     if msg.contains("unexpected character '''") {
         return Some(
             "Axon has no character literals — `'a'` is not valid, and string \

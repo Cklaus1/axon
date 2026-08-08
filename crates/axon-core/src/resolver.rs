@@ -379,6 +379,24 @@ fn foreign_builtin_help(name: &str) -> Option<String> {
         "arr_append" | "list_append" | "append" | "push" => "`arr_push(xs, x)` — it returns a NEW array",
         "split" | "str_to_arr" => "`str_split(s, sep)`",
         "join" | "arr_join" | "arr_to_str" => "`str_join(parts, sep)`",
+        // Runtime type introspection. There is NO substitution to offer, so this
+        // arm returns early with an explanation instead of a "write X" — the
+        // generic table shape would have to invent a replacement, and a
+        // confidently-wrong suggestion costs more than silence because it gets
+        // followed.
+        //
+        // Measured: `type_of` was the SECOND-largest cause of failure on the
+        // tasks_hard set (6 of 36 attempts), reached for on the
+        // heterogeneous-nested-structure task. Until now it fell through to the
+        // undefined-name default, whose advice — "introduce `type_of` with
+        // `let type_of = …`" — is actively useless for a language feature that
+        // cannot exist.
+        "type_of" | "typeof" | "type" | "isinstance" | "is_a" | "get_type"
+        | "type_name" | "reflect" | "instanceof" => {
+            return Some(format!(
+                "`{name}` cannot exist in Axon — types are static, so there is no runtime type introspection to call. If a value can be one of several shapes, make that explicit with an enum and `match` on it: `type Shape = Num {{ v: i64 }} | Text {{ v: str }}`, construct with `Shape::Num {{ v: 7 }}`, then `match x {{ Shape::Num {{ v }} => …  Shape::Text {{ v }} => … }}` — arms name the VARIANT PATH and destructure with braces, not `Num(n)`"
+            ))
+        }
         _ => return prefix_misreach_help(name),
     };
     Some(format!("`{name}` does not exist in Axon — write {fix}"))
@@ -390,6 +408,18 @@ fn foreign_builtin_help(name: &str) -> Option<String> {
 /// honest: each key must actually be answered, and none may be a real builtin.
 #[cfg(test)]
 const FOREIGN_BUILTIN_KEYS: &[&str] = &[
+    // Runtime type introspection — answered with an explanation rather than a
+    // substitution, since Axon cannot have it. Listed here so `every_key_is_answered`
+    // and the no-clash check walk them like every other key.
+    "type_of",
+    "typeof",
+    "type",
+    "isinstance",
+    "is_a",
+    "get_type",
+    "type_name",
+    "reflect",
+    "instanceof",
     "str_to_int",
     "to_int",
     "int",

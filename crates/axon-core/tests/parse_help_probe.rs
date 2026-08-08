@@ -213,6 +213,25 @@ fn the_character_literal_advice_actually_compiles() {
             "one-character slice",
             "fn main() -> i64 {\n    let s = \"a b\"\n    if str_eq(str_slice(s, 1, 2), \" \") { println(\"sp\") }\n    0\n}\n",
         ),
+        // The i64-range hint tells the reader to bind the bound and to seed a
+        // min/max scan from the first element. Both must compile.
+        (
+            "i64 bound bound to a name",
+            "fn main() -> i64 {\n    let i64_max = 9223372036854775807\n    println(to_str(i64_max))\n    0\n}\n",
+        ),
+        (
+            "seed a scan from the first element",
+            "fn main() -> i64 {\n    let xs = [3, 1, 2]\n    let best = xs[0]\n    println(to_str(best))\n    0\n}\n",
+        ),
+        // The `type_of` hint recommends an enum + `match`. Its FIRST version was
+        // WRONG — it wrote `match x { Num(n) => … }`, which fails to parse
+        // ("unexpected token: LParen, expected FatArrow"): Axon arms name the
+        // VARIANT PATH and destructure with braces. Caught here, before shipping,
+        // which is the entire reason this test exists.
+        (
+            "enum + match instead of runtime type introspection",
+            "type Shape = Num { v: i64 } | Text { v: str }\nfn main() -> i64 {\n    let x = Shape::Num { v: 7 }\n    match x { Shape::Num { v } => println(to_str(v))  Shape::Text { v } => println(v) }\n    0\n}\n",
+        ),
     ] {
         let diags = check_pipeline(src, "advice.ax");
         let errors: Vec<_> = diags.iter().filter(|d| d.severity == "error").collect();
@@ -476,10 +495,22 @@ fn plus_still_refuses_mixed_and_nonsense_operands() {
     // concatenation, it is an untyped operator, and that would be a soundness
     // regression rather than a feature.
     for (label, src) in [
-        ("str + int", "fn main() -> i64 {\n    let x = \"a\" + 1\n    0\n}\n"),
-        ("int + str", "fn main() -> i64 {\n    let x = 1 + \"a\"\n    0\n}\n"),
-        ("str - str", "fn main() -> i64 {\n    let x = \"a\" - \"b\"\n    0\n}\n"),
-        ("bool + bool", "fn main() -> i64 {\n    let x = true + false\n    0\n}\n"),
+        (
+            "str + int",
+            "fn main() -> i64 {\n    let x = \"a\" + 1\n    0\n}\n",
+        ),
+        (
+            "int + str",
+            "fn main() -> i64 {\n    let x = 1 + \"a\"\n    0\n}\n",
+        ),
+        (
+            "str - str",
+            "fn main() -> i64 {\n    let x = \"a\" - \"b\"\n    0\n}\n",
+        ),
+        (
+            "bool + bool",
+            "fn main() -> i64 {\n    let x = true + false\n    0\n}\n",
+        ),
     ] {
         let errs: Vec<_> = check_pipeline(src, "probe.ax")
             .into_iter()
@@ -509,9 +540,18 @@ fn array_plus_refuses_mismatched_and_nonsense() {
     // Narrow, like N2a. A `+` that joins an array to anything is not
     // concatenation.
     for (label, src) in [
-        ("arr + int", "fn main() -> i64 {\n    let x = [1] + 2\n    0\n}\n"),
-        ("arr + str", "fn main() -> i64 {\n    let x = [1] + \"a\"\n    0\n}\n"),
-        ("arr - arr", "fn main() -> i64 {\n    let x = [1] - [2]\n    0\n}\n"),
+        (
+            "arr + int",
+            "fn main() -> i64 {\n    let x = [1] + 2\n    0\n}\n",
+        ),
+        (
+            "arr + str",
+            "fn main() -> i64 {\n    let x = [1] + \"a\"\n    0\n}\n",
+        ),
+        (
+            "arr - arr",
+            "fn main() -> i64 {\n    let x = [1] - [2]\n    0\n}\n",
+        ),
     ] {
         let errs: Vec<_> = check_pipeline(src, "probe.ax")
             .into_iter()
