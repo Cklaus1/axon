@@ -19781,3 +19781,32 @@ fn date_stdlib_module_tests_pass() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
 }
+
+/// R42 T10 — the userland `set.ax` module (a Set over the existing Dict).
+#[test]
+fn set_stdlib_module_tests_pass() {
+    // Not a builtin: Dict already provides the hashing, so a `Set` primitive
+    // would add a type to checker/infer/codegen/`value_as_literal` for no
+    // capability the language lacks. Members are STRINGS because dicts are
+    // string-keyed — `test_numeric_members_go_through_to_str` pins the
+    // consequence that `1` and `"1"` are the same member.
+    let out = axon().args(["test", &ex("stdlib/set.ax")]).output().unwrap();
+    assert!(out.status.success(), "set.ax tests should pass: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+/// R42 T10 — the userland `path.ax` module, including its SECURITY constraint.
+#[test]
+fn path_stdlib_module_tests_pass() {
+    // `test_join_cannot_construct_a_traversing_path` is the load-bearing one.
+    // `@[contained]` statically refuses any path containing a `..` component
+    // (E1001), so a joiner able to ASSEMBLE one out of pieces — from `dir_list`
+    // output, say — would reconstruct the sandbox escape downstream of a check
+    // that already exists. `path_normalize` therefore returns "" for a path that
+    // climbs above its own root, and `path_join` normalizes its result.
+    let out = axon().args(["test", &ex("stdlib/path.ax")]).output().unwrap();
+    assert!(out.status.success(), "path.ax tests should pass: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
+}
