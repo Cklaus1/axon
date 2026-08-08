@@ -267,6 +267,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Write `content` to `path`, creating or truncating the file. Returns Ok(()) or Err(message).",
     },
     BuiltinFn {
+        name: "append_file",
+        params: &[("path", "str"), ("content", "str")],
+        ret: "Result<(), str>",
+        doc: "Append `content` to the end of `path`, creating the file if it does not exist. Returns Ok(()) or Err(message). This is the counterpart to `write_file`, which TRUNCATES — reaching for `write_file` twice to build a file up is the mistake this exists to prevent. Capability-wise it is a WRITE (`fs: [write(...)]`): it reads the existing bytes only in order to rewrite them and never surfaces them to the caller, so it opens no read channel.",
+    },
+    BuiltinFn {
+        name: "file_size",
+        params: &[("path", "str")],
+        ret: "Result<i64, str>",
+        doc: "The size of `path` in BYTES (not characters — a multi-byte UTF-8 character counts once per byte). Returns Ok(n), or Err(message) if the file cannot be read. Note this READS the file to measure it, so it costs O(size) and requires valid UTF-8: it is not a `stat`, and a binary file reports an error rather than a size.",
+    },
+    BuiltinFn {
         name: "exec",
         params: &[("cmd", "str"), ("args", "[str]")],
         ret: "Result<str, str>",
@@ -2149,7 +2161,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "ai_cost_spent"
             // I/O
             | "println" | "print" | "eprintln" | "eprint"
-            | "read_line" | "read_file" | "write_file"
+            | "read_line" | "read_file" | "write_file" | "append_file" | "file_size"
             | "exec"
             // network — raw HTTP
             | "http_get" | "http_post" | "http_sse" | "http_sse_post"
@@ -2226,6 +2238,7 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
 
         // I/O — console, files, process spawning, environment, exit.
         "println" | "print" | "eprintln" | "eprint" | "read_line" | "read_file" | "write_file"
+        | "append_file" | "file_size"
         | "env_var" | "exit" => &["IO"],
         "exec" => &["IO"],
 
@@ -2733,6 +2746,8 @@ mod tests {
         for ok in [
             "read_file",
             "write_file",
+            "append_file",
+            "file_size",
             "env_var",
             "now_ms",
             "sleep_ms",

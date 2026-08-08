@@ -19384,3 +19384,123 @@ fn concat_plus_is_refused_natively_rather_than_miscompiled() {
         let _ = std::fs::remove_file(&out_bin);
     }
 }
+
+/// `append_file` must EXTEND, and `file_size` must report BYTES.
+///
+/// Behaviour, not just type-checking: an `append_file` that forwarded to
+/// `write_file` would satisfy every signature-level check and still be wrong on
+/// the very first line of this output. `io_builtins.ax` cannot catch that.
+#[test]
+fn append_file_extends_and_file_size_counts_bytes() {
+    let out = axon().arg("run").arg(fixture("fs_append_size.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec![
+            "onetwo", // append extended rather than truncated
+            "6",      // bytes
+            "2",      // "é" is ONE character but TWO bytes
+            "created",// append created the file's content
+            "ERR",    // an unreadable path errs rather than reporting 0
+        ],
+        "unexpected output:\n{stdout}"
+    );
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// Native codegen must refuse the two new fs builtins rather than emit a binary
+/// that computes something else (invariant I-2, sound-by-refusal).
+///
+/// This is not decoration: the refusal comes from codegen's default arm, so it
+/// holds only as long as nobody adds a half-lowering. If someone does, this
+/// fails and forces the parity question to be answered deliberately.
+#[test]
+fn native_refuses_the_new_fs_builtins_rather_than_diverging() {
+    // The codegen-free test binary cannot `build`; skip when the verb is absent
+    // rather than assert on an error that means something else entirely.
+    let probe = axon().arg("build").arg("--help").output().unwrap();
+    if !probe.status.success() {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    let out = axon().arg("build").arg(fixture("fs_append_size.ax")).output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "native must not build these: {all}");
+    for b in ["append_file", "file_size"] {
+        assert!(
+            all.contains("E0910") && all.contains(b),
+            "expected an E0910 refusal naming `{b}`, got:\n{all}"
+        );
+    }
+}
+
+/// A dict must survive a session dump, and an ALIASED dict must be refused
+/// rather than silently split into independent copies.
+///
+/// `Value::Dict` is `Rc<RefCell<..>>`. Writing two aliasing bindings out as two
+/// `dict_from_pairs(..)` calls reconstructs them as two separate dicts, so a
+/// later `dict_set` through one stops being visible through the other — a
+/// silent semantic change across a cell boundary. Skipping with a reason is the
+/// same call R15 made for `Chan`.
+#[test]
+fn dicts_round_trip_through_a_dump_and_aliases_are_refused() {
+    let dump = std::env::temp_dir().join("axon_test_dump_dicts.ax");
+    let _ = std::fs::remove_file(&dump);
+    let out = axon()
+        .arg("run")
+        .arg(fixture("dump_dicts.ax"))
+        .env("AXON_DUMP_BINDINGS", &dump)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "run failed: {}", String::from_utf8_lossy(&out.stderr));
+    let dumped = std::fs::read_to_string(&dump).expect("dump file should exist");
+
+    assert!(
+        dumped.contains(r#"let counts = dict_from_pairs([("apple", 2), ("fig", 5)])"#),
+        "a plain dict should be written back in key order:\n{dumped}"
+    );
+    assert!(
+        dumped.contains("let empty = dict_new()"),
+        "an empty dict has no element type, so it must come back as dict_new():\n{dumped}"
+    );
+    for name in ["shared_a", "shared_b"] {
+        assert!(
+            dumped.contains(&format!("// SKIPPED {name}: dict is shared")),
+            "aliased dict `{name}` must be skipped WITH a reason, not split:\n{dumped}"
+        );
+    }
+    // And the skip must not be a blanket dict skip — the unaliased ones stayed.
+    assert!(
+        !dumped.contains("// SKIPPED counts"),
+        "only ALIASED dicts should be skipped:\n{dumped}"
+    );
+
+    // The dump must re-run as ordinary Axon: it becomes the next cell's prelude,
+    // so a form that does not type-check would brick the session.
+    let replay = std::env::temp_dir().join("axon_test_dump_dicts_replay.ax");
+    std::fs::write(
+        &replay,
+        format!(
+            "fn main() -> i64 {{\n{}\n    println(to_str(dict_get_or(counts, \"fig\", 0)))\n    0\n}}\n",
+            dumped
+                .lines()
+                .filter(|l| l.starts_with("let "))
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )
+    .unwrap();
+    let again = axon().arg("run").arg(&replay).output().unwrap();
+    let so = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        again.status.success() && so.contains('5'),
+        "the dumped prelude must re-run and preserve values, got:\n{so}{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}

@@ -935,8 +935,55 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
                 Ok(format!("{enum_name}::{variant} {{ {} }}", parts.join(", ")))
             }
         }
+        // A dict. Not a *literal* — Axon has no dict literal syntax — but
+        // `dict_from_pairs` is a pure total call over data already written down,
+        // so it re-creates the value without re-running the computation that
+        // produced it, which is the property the session actually needs.
+        //
+        // Two things are refused rather than fudged:
+        //   * a dict whose values are not all the same shape, because
+        //     `dict_from_pairs` takes `[(str, V)]` and a mixed array does not
+        //     type-check — emitting it would produce a prelude that bricks the
+        //     next cell;
+        //   * aliasing, which is handled by the caller (see `dump_bindings`),
+        //     since a single value cannot see that another binding shares it.
+        Value::Dict(d) => {
+            let map = d.borrow();
+            if map.is_empty() {
+                // `dict_from_pairs([])` has no element type to infer from.
+                return Ok("dict_new()".to_string());
+            }
+            let tag = |v: &Value| -> &'static str {
+                match v {
+                    Value::Int(_) | Value::SizedInt { .. } => "int",
+                    Value::Float(_) => "float",
+                    Value::Bool(_) => "bool",
+                    Value::Str(_) => "str",
+                    Value::Array(_) => "array",
+                    Value::Dict(_) => "dict",
+                    Value::Struct { .. } => "struct",
+                    Value::Tuple(_) => "tuple",
+                    _ => "other",
+                }
+            };
+            let first = tag(map.values().next().expect("non-empty"));
+            if map.values().any(|v| tag(v) != first) {
+                return Err(
+                    "dict with mixed value types has no writable form (dict_from_pairs needs one \
+                     element type)"
+                        .to_string(),
+                );
+            }
+            let mut parts = Vec::with_capacity(map.len());
+            for (k, v) in map.iter() {
+                // The key goes through the same escaping as any str.
+                let kl = value_as_literal(&Value::Str(k.clone()))?;
+                parts.push(format!("({kl}, {})", value_as_literal(v)?));
+            }
+            Ok(format!("dict_from_pairs([{}])", parts.join(", ")))
+        }
         Value::Unit => Err("unit has no binding form".to_string()),
-        // Struct/Enum/Tuple/Dict/Closure/Chan/Handle/… — a session can carry a
+        // Closure/Chan/Handle/… — a session can carry a
         // value only if it can write it down, and these cannot be written as a
         // literal today. Reported by name so the caller can say WHICH binding
         // was dropped, which is the whole contract of a skip list.
@@ -1867,7 +1914,60 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
             }
             let mut names: Vec<&&String> = merged.keys().collect();
             names.sort();
+            // A `Dict` is `Rc<RefCell<..>>` — SHARED MUTABLE state. Writing two
+            // aliasing bindings out as two `dict_from_pairs(..)` calls would
+            // reconstruct them as two INDEPENDENT dicts, so a later
+            // `dict_set(a, ..)` would stop being visible through `b`. That is a
+            // silent semantic change across a cell boundary, which is exactly
+            // the class of thing this session refuses rather than fudges (the
+            // same call R15 made for `Chan`). So: find every dict reachable
+            // from more than one binding and skip it with a reason.
+            let mut seen: HashMap<*const (), usize> = HashMap::new();
+            fn count_dicts(v: &Value, seen: &mut HashMap<*const (), usize>) {
+                match v {
+                    Value::Dict(d) => {
+                        let key = Rc::as_ptr(d) as *const ();
+                        let e = seen.entry(key).or_insert(0);
+                        *e += 1;
+                        // Descend only the FIRST time this dict is seen. A dict
+                        // can contain itself (`dict_set(d, "self", d)`), and an
+                        // unconditional recursion would not terminate — a hang
+                        // at session-dump time, which is worse than the aliasing
+                        // bug this guard exists to prevent.
+                        if *e == 1 {
+                            for inner in d.borrow().values() {
+                                count_dicts(inner, seen);
+                            }
+                        }
+                    }
+                    Value::Array(items) | Value::Tuple(items) => {
+                        for it in items {
+                            count_dicts(it, seen);
+                        }
+                    }
+                    Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
+                        for f in fields.values() {
+                            count_dicts(f, seen);
+                        }
+                    }
+                    Value::Some(i) | Value::Ok(i) | Value::Err(i) => count_dicts(i, seen),
+                    _ => {}
+                }
+            }
+            for name in &names {
+                count_dicts(merged[**name], &mut seen);
+            }
+            let is_aliased = |v: &Value| -> bool {
+                matches!(v, Value::Dict(d) if seen.get(&(Rc::as_ptr(d) as *const ())).copied().unwrap_or(0) > 1)
+            };
             for name in names {
+                if is_aliased(merged[*name]) {
+                    lines.push_str(&format!(
+                        "// SKIPPED {name}: dict is shared with another binding; writing it out \
+                         would split it into independent copies\n"
+                    ));
+                    continue;
+                }
                 match value_as_literal(merged[*name]) {
                     Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
                     Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),

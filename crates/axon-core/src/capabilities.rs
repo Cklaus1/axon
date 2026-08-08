@@ -65,6 +65,11 @@ fn classify_call(name: &str) -> Option<IoKind> {
     match name {
         "read_file" => Some(IoKind::FsRead),
         "write_file" => Some(IoKind::FsWrite),
+        // `append_file` reads the existing bytes only in order to rewrite them,
+        // and never returns them, so it opens no read channel — WRITE is the
+        // honest capability, not read+write.
+        "append_file" => Some(IoKind::FsWrite),
+        "file_size" => Some(IoKind::FsRead),
         "exec" => Some(IoKind::Exec),
         // Reading the process environment is an ungrantable ambient channel; a
         // @[contained] fn must not read host secrets it wasn't given.

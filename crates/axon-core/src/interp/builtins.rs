@@ -470,6 +470,36 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
+            // Both new fs builtins go through `crate::host` rather than `std::fs`,
+            // so the scoped-sandbox path checks that already govern
+            // read_file/write_file govern these too. Calling std directly here
+            // would have created two fs builtins outside the sandbox.
+            "append_file" => {
+                want(2)?;
+                let path = as_str(&args[0])?.to_string();
+                let data = as_str(&args[1])?.to_string();
+                // Read-modify-write, because the Host trait has no append. An
+                // Err from the read is treated as "not there yet" and the write
+                // creates the file; if the read failed for some OTHER reason
+                // (permissions), the write fails too and ITS message — the
+                // actionable one — is what the caller sees.
+                let existing = crate::host::with_host(|h| h.read_file(&path)).unwrap_or_default();
+                let merged = existing + &data;
+                match crate::host::with_host(|h| h.write_file(&path, &merged)) {
+                    Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "file_size" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.read_file(&path)) {
+                    // BYTES, not chars: `s.len()` on a Rust String is its UTF-8
+                    // byte length, which is what a `stat` would report.
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Int(s.len() as i64)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
             "exec" => {
                 want(2)?;
                 let cmd = as_str(&args[0])?.to_string();
