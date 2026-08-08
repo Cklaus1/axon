@@ -4554,7 +4554,38 @@ fn run_check_pipeline_located(
         // with exit 2. Print it like the resolver warnings above and move on;
         // only genuine errors accumulate in `diags` (which drives the exit code).
         if matches!(err.severity, axon_core::checker::Severity::Warning) {
-            eprintln!("warning: [{}] {msg}", err.code);
+            // STRUCTURED, LOCATED, and carrying `help` — this used to print bare
+            // prose and drop both the span and the fix.
+            //
+            // That is the same defect AXON_FOR_RLM §2 fixed for errors and this
+            // session fixed for resolver warnings, surviving in a third place. It
+            // became load-bearing the moment E0302 was demoted to a warning by
+            // default: the help text naming `let _ = call()` — the whole reason a
+            // strict-by-default policy could be relaxed safely — was being thrown
+            // away exactly on the path that is now the default. Caught by
+            // `e0302_warns_by_default_errors_under_strict_and_names_the_discard`.
+            let (wline, wcol) = if !err.span.is_dummy() {
+                loc(&err.span)
+            } else {
+                (err.line, err.col)
+            };
+            let wd = PipelineDiagnostic {
+                code: err.code.to_string(),
+                message: msg.clone(),
+                file: file.clone(),
+                line: wline,
+                col: wcol,
+                severity: "warning".to_string(),
+                caret: String::new(),
+                expected: err.expected.clone(),
+                found: err.found.clone(),
+                help: err.fix.clone(),
+            };
+            if !std::io::stderr().is_terminal() {
+                eprintln!("{}", wd.json());
+            } else {
+                eprintln!("warning: {}", wd.display());
+            }
             continue;
         }
         // CheckError tracks both a byte-span and legacy line/col; prefer the
@@ -5796,6 +5827,21 @@ fn cmd_deploy(
     gates_file: Option<PathBuf>,
     allow_missing_gates: bool,
 ) {
+    // A DEPLOY is strict by default, inverting the authoring default.
+    //
+    // E0302 (an unused `Result`) is a warning while you are writing code, because
+    // most dropped results are harmless and blocking the common case taxes every
+    // author. A deploy is the opposite situation by definition: it is the
+    // consequential path, and a silently-swallowed `write_file` failure there is a
+    // wrong answer shipped rather than a papercut. So the same diagnostic is an
+    // error here, and the whole gate chain sees it.
+    //
+    // Set rather than read, and NOT overridden if the operator already chose:
+    // `AXON_STRICT=0 axon deploy` stays permissive on purpose, because refusing to
+    // honour an explicit choice is worse than the default being wrong.
+    if std::env::var("AXON_STRICT").is_err() {
+        std::env::set_var("AXON_STRICT", "1");
+    }
     validate_ax_extension(&file);
     let src = read_source(&file);
 

@@ -61,6 +61,23 @@ pub enum Severity {
     Info,
 }
 
+/// Is strict mode on? (`AXON_STRICT=1`)
+///
+/// Strict mode promotes advisory diagnostics that describe a real hazard — today
+/// just E0302, an unused `Result` — from warnings to errors. The DEFAULT is
+/// permissive because most dropped results are harmless and refusing to compile
+/// for the common case taxes every author.
+///
+/// Read from the environment rather than threaded through the checker so CI can
+/// turn it on globally for a whole build without every call site learning a new
+/// parameter. `axon deploy` sets it itself: a deploy is the consequential path, so
+/// the safe default there is the opposite of the safe default while authoring.
+pub fn strict_mode() -> bool {
+    std::env::var("AXON_STRICT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 // ── CheckError ────────────────────────────────────────────────────────────────
 
 /// A diagnostic produced by the type checker.
@@ -3801,7 +3818,30 @@ impl CheckCtx {
                     let file = self.file.clone();
                     let span = self.current_span;
                     let ty_disp = ty.display();
-                    self.errors.push(
+                    // WARNING BY DEFAULT, error under strict mode.
+                    //
+                    // A dropped `Result` is usually harmless (the call usually
+                    // succeeds), and blocking compilation for the usual case is
+                    // friction on every author — human or model. So the default
+                    // favours getting code running, and the strict mode exists for
+                    // where the cost of a silently-swallowed failure is real: CI,
+                    // and `axon deploy`, which turns it on automatically because a
+                    // deploy is by definition the consequential path.
+                    //
+                    // The code stays E0302 in both modes rather than becoming a
+                    // W-code under one of them: tooling, tests and `axon trace`
+                    // key on the code, and having the identifier change with a flag
+                    // would mean a consumer could not match on it at all.
+                    //
+                    // Honest note on the trade, since it was measured rather than
+                    // assumed: on the tasks_hard set the model dropped a
+                    // `write_file` Result 6 times in 36 attempts, and the warning
+                    // path is the one where the program exits 0 with a wrong
+                    // answer — the shape a repair loop gets no signal from (see
+                    // W0002's shadowing case, which cost a task exactly this way).
+                    // The default is a deliberate ease-of-authoring choice, with
+                    // strict mode as the recovery for when that matters.
+                    let diag = if strict_mode() {
                         CheckError::new(
                             E0302,
                             format!(
@@ -3809,13 +3849,42 @@ impl CheckCtx {
                                  unhandled errors are silently dropped",
                             ),
                         )
+                    } else {
+                        CheckError::warning(
+                            E0302,
+                            format!(
+                                "the `{ty_disp}` returned by this call is unused — \
+                                 an error here would be silently dropped",
+                            ),
+                        )
+                    };
+                    self.errors.push(
+                        diag
                         .node(node_path)
                         .at(&file, 0, 0)
                         .with_span(span)
                         .found(ty_disp)
                         .fix(
+                            // The third option is the one that was MISSING, and its
+                            // absence is what made this error feel arbitrary rather
+                            // than helpful. `?` and `match` both HANDLE the error;
+                            // neither expresses "I deliberately do not care", so a
+                            // reader who genuinely wants to discard the Result had
+                            // no way to learn that `let _ =` is accepted — and an
+                            // undiscoverable escape hatch reads exactly like no
+                            // escape hatch at all.
+                            //
+                            // That distinction is the whole justification for E0302
+                            // being an ERROR here when Rust only warns and Go lets
+                            // it pass: refusing the ACCIDENTAL drop is worth it
+                            // precisely because the DELIBERATE one costs eight
+                            // characters. Measured: the model dropped a
+                            // `write_file` Result 6 times in 36 attempts on the
+                            // tasks_hard set, and a silently-skipped write is a
+                            // wrong answer that a repair loop gets no signal from.
                             "add `?` to propagate the error, or wrap the call in \
-                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`",
+                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`. \
+                              To ignore it on purpose, bind it away: `let _ = call()`",
                         ),
                     );
                 }

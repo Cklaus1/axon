@@ -3173,6 +3173,124 @@ fn typed_let_bindings_enforce_the_annotation() {
 }
 
 #[test]
+fn e0302_warns_by_default_errors_under_strict_and_names_the_discard() {
+    // POLICY, decided deliberately: an unused `Result` is a WARNING by default and
+    // an ERROR under `AXON_STRICT=1` (which `axon deploy` sets for itself).
+    //
+    // The default favours getting code running: most dropped results are harmless
+    // because the call usually succeeds, and refusing to compile for the common
+    // case taxes every author, human or model. Strict mode is for where a
+    // swallowed failure actually costs something — CI, and deploys.
+    //
+    // Recorded honestly because it was measured, not assumed: on the tasks_hard
+    // set the model dropped a `write_file` Result 6 times in 36 attempts, and the
+    // WARNING path is the one where a program exits 0 carrying a wrong answer —
+    // the shape a repair loop gets no signal from. W0002's shadowing case cost a
+    // task in exactly that way. The default is an ease-of-authoring choice with
+    // strict mode as the recovery, not a claim that the hazard went away.
+    //
+    // Either way the deliberate discard must be CHEAP and DISCOVERABLE. The help
+    // used to offer only `?` and `match` — both of which HANDLE the error — and
+    // never mentioned `let _ =`, so a reader who genuinely did not care could not
+    // learn the escape hatch existed. An undiscoverable escape hatch reads exactly
+    // like no escape hatch.
+    let f = std::env::temp_dir().join(format!("axon_e0302_{}.ax", std::process::id()));
+    // Write the probe file into the TEMP dir, not `./`. Under `cargo test` the CWD
+    // is the crate directory, so a relative path here litters the repository — it
+    // did, with two stray `e0302_probe.txt` files, which is how this was noticed.
+    let probe = std::env::temp_dir()
+        .join(format!("axon_e0302_probe_{}.txt", std::process::id()))
+        .display()
+        .to_string();
+    std::fs::write(
+        &f,
+        format!(
+            "fn main() -> i64 {{\n  write_file(\"{probe}\", \"x\")\n  println(\"ran\")\n  0\n}}\n"
+        ),
+    )
+    .unwrap();
+
+    // Default: a WARNING, the program still runs, and the help names the discard.
+    let def = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_STRICT")
+        .output()
+        .unwrap();
+    let dmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&def.stdout),
+        String::from_utf8_lossy(&def.stderr)
+    );
+    assert_eq!(
+        def.status.code(),
+        Some(0),
+        "by default a dropped Result must NOT block the run: {dmsg}"
+    );
+    assert!(
+        String::from_utf8_lossy(&def.stdout).contains("ran"),
+        "the rest of the program must still execute: {dmsg}"
+    );
+    assert!(dmsg.contains("E0302"), "it must still be reported: {dmsg}");
+    assert!(
+        dmsg.contains("warning"),
+        "by default it must be a WARNING, not an error: {dmsg}"
+    );
+    assert!(
+        dmsg.contains("let _ = call()"),
+        "the help must name the DELIBERATE discard, or the diagnostic is \
+         undiscoverable and reads as arbitrary: {dmsg}"
+    );
+
+    // Strict: an ERROR, exit 2, nothing runs.
+    let strict = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_STRICT", "1")
+        .output()
+        .unwrap();
+    let smsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&strict.stdout),
+        String::from_utf8_lossy(&strict.stderr)
+    );
+    assert_eq!(
+        strict.status.code(),
+        Some(2),
+        "AXON_STRICT=1 must make a dropped Result a hard error: {smsg}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&strict.stdout).contains("ran"),
+        "under strict the program must not execute: {smsg}"
+    );
+
+    // The discard the help promises must be accepted in BOTH modes — otherwise
+    // strict mode has no escape hatch at all, which is the failure this guards.
+    std::fs::write(
+        &f,
+        format!("fn main() -> i64 {{\n  let _ = write_file(\"{probe}\", \"x\")\n  0\n}}\n"),
+    )
+    .unwrap();
+    for mode in ["0", "1"] {
+        let ok = axon()
+            .args(["check", f.to_str().unwrap()])
+            .env("AXON_STRICT", mode)
+            .output()
+            .unwrap();
+        let okmsg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&ok.stdout),
+            String::from_utf8_lossy(&ok.stderr)
+        );
+        assert!(
+            !okmsg.contains("E0302"),
+            "`let _ = call()` is what the help tells the reader to write, so it \
+             must be accepted with AXON_STRICT={mode}: {okmsg}"
+        );
+    }
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&probe);
+}
+
+#[test]
 fn to_str_of_a_str_is_the_identity_in_both_engines() {
     // `to_str(s)` where `s` is already a `str` used to be E0102. Measured on the
     // `tasks_hard` set it was the single most common first error — 9 of 36

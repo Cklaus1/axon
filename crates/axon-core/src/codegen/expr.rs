@@ -8115,6 +8115,64 @@ impl<'ctx> super::Codegen<'ctx> {
                     .unwrap();
                 return Some(chosen);
             }
+            // `len(d)` on a DICT dispatches to the same extern as `dict_len(d)`.
+            //
+            // Two defects meet here. The interpreter accepts `len(dict)` (a dict has
+            // exactly one obvious length, and `dict_len` already computed it), so
+            // native must agree or I-2 is violated. And native did not merely
+            // disagree — it failed LLVM IR VERIFICATION with
+            // "Call parameter type does not match function signature", because
+            // `len` is declared over the `{i64 len, ptr data}` str/slice struct and
+            // a dict handle is not one. That was already true BEFORE the
+            // interpreter widened (verified against the prior commit), so it is a
+            // pre-existing codegen bug, and a raw IR failure is the worst available
+            // outcome: not a clean E0910 refusal, not a working program, just an
+            // internal error surfacing to the user.
+            //
+            // Dispatched on the STATIC type for the same reason as `to_str(str)`: a
+            // dict handle and a str are both non-scalar at the value level.
+            // `len(x)` — one arm handling BOTH shapes, because the arg must be
+            // emitted exactly once (emitting twice would duplicate any side effects
+            // in it).
+            //
+            // Dispatched on the LLVM VALUE rather than the static type, because
+            // there is no `Type::Dict` — a dict is `Type::Deferred` in the type
+            // system, which is also why `len(dict)` had no static check at all.
+            // The value check is unambiguous for THIS builtin: `len` accepts only
+            // str and array, both of which are `{i64 len, ptr data}` StructValues,
+            // while a dict handle is a bare `Ptr` (see `__axon_dict_len`'s
+            // ExternSig). A PointerValue reaching `len` in a program that
+            // type-checked can therefore only be a dict. That reasoning does not
+            // generalise, so it stays local to this arm.
+            //
+            // Before this, `len(dict)` failed LLVM IR VERIFICATION —
+            // "Call parameter type does not match function signature" — because the
+            // hand-built `len` takes the str/slice struct and a dict handle is not
+            // one. That was already true before the interpreter widened (verified
+            // against the prior commit), so it is a pre-existing codegen bug, and a
+            // raw IR failure is the worst available outcome: neither a working
+            // program nor a clean E0910 refusal, just an internal error reaching the
+            // user.
+            if name == "len" && args.len() == 1 {
+                let v = self.emit_expr(&args[0], fn_val)?;
+                let sym = if matches!(v, BasicValueEnum::PointerValue(_)) {
+                    "__axon_dict_len"
+                } else {
+                    "len"
+                };
+                let f = self
+                    .functions
+                    .get(sym)
+                    .copied()
+                    .or_else(|| self.ir.module.get_function(sym))?;
+                return self
+                    .ir
+                    .builder
+                    .build_call(f, &[v.into()], "len")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left();
+            }
             if name == "dict_len" && args.len() == 1 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let f = self

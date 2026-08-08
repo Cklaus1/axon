@@ -1397,9 +1397,26 @@ impl<'p> Interp<'p> {
                 ok!(match &args[0] {
                     Value::Str(s) => Value::Int(s.len() as i64),
                     Value::Array(a) => Value::Int(a.len() as i64),
+                    // A dict has exactly one obvious length: its entry count —
+                    // which `dict_len` already computes, so `len(d)` was rejecting
+                    // a question the language could already answer.
+                    //
+                    // Found by auditing every domain restriction in this file for
+                    // the `to_str(str)` shape (a rejection with ONE sensible
+                    // answer). It was the only clear hit outside the `arr_*`/
+                    // `dict_*`/`categorical_*`/`temporal_*` families, all of which
+                    // reject correctly — there is no "array form" of a non-array,
+                    // so widening those would mean INVENTING an answer, which is
+                    // the parse_int("abc") mistake.
+                    //
+                    // It was also worse than `to_str(str)` had been: that failed
+                    // statically (E0102), while this passed `axon check` clean and
+                    // panicked only at runtime, so a caller got no signal until the
+                    // program was already running.
+                    Value::Dict(d) => Value::Int(d.borrow().len() as i64),
                     other =>
                         return panic(format!(
-                            "len: expected str/array, got {}",
+                            "len: expected str/array/dict, got {}",
                             other.type_name()
                         )),
                 });

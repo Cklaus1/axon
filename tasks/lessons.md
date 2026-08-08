@@ -497,3 +497,21 @@ the opportunity entry only records the observation.
   and the card is the artifact measured at 3-of-8 tasks. **Sharpened rule:** alias only when the
   CANONICAL form is the accident, not when the model's habit is. `!` is defensible (C-family); `'x'` is
   borderline-yes only because `'` steals no identifier.
+- **The DEFAULT path of a diagnostic is where the help text must work — and demoting a severity can
+  silently delete it.** E0302 (unused `Result`) was changed to a warning by default with
+  `AXON_STRICT=1` to promote it back to an error. The change looked complete and the behaviour was
+  right, but the check-phase WARNING printer was `eprintln!("warning: [{code}] {msg}")` — it dropped
+  the span AND the `fix`. So the help naming `let _ = call()`, which is the entire reason a
+  strict-by-default policy can be relaxed safely, was being thrown away *precisely on the path that
+  had just become the default*. Caught only because the test asserted on the help text rather than on
+  the code. **Rule:** when changing a diagnostic's severity, re-verify its OUTPUT on the new path, not
+  just its classification — a severity change moves the diagnostic to a different printer, and this
+  repo has now had three printers that dropped structured fields (errors, resolver warnings, check
+  warnings). Enumerate output channels by severity, not just by command.
+- **A test that writes a relative path litters the repo, because `cargo test`'s CWD is the crate
+  dir.** My E0302 fixture ran `write_file("./e0302_probe.txt", …)` and left two stray files in the
+  working tree — noticed only when `git status` showed them right before a commit. **Rule:** any
+  fixture that exercises a WRITE must write into `std::env::temp_dir()` and remove it afterwards;
+  interpolate the absolute path into the generated source rather than using a relative one. A stray
+  file is minor on its own, but it is the same failure as a harness that leaves state behind — the
+  next run is no longer starting from where you think.
