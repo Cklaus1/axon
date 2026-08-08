@@ -674,6 +674,79 @@ impl<'p> Interp<'p> {
                     Ok(p) => p,
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 };
+                // A `$N` naming a group the PATTERN DOES NOT HAVE is an authoring
+                // error, and it is refused here rather than expanded to "".
+                //
+                // Rust's regex crate and Perl both silently emit nothing; Python
+                // raises. Silence is wrong for this language: `re_replace_all` is
+                // reachable by model-authored code, and `$3` against a two-group
+                // pattern would produce a plausible-looking string with a piece
+                // quietly missing — the same silent-wrong-answer shape as the
+                // `str_slice` UTF-8 bug and the `{2,3}` interpolation slot.
+                //
+                // This is NOT the same as a group that exists but did not
+                // participate in the match (an unmatched `(a)?`), which correctly
+                // expands to "" below — that is a runtime fact about this input,
+                // not a mistake in the replacement string. Validated once, before
+                // the match loop, so the error does not depend on whether the
+                // subject happened to match.
+                {
+                    let wc: Vec<char> = with.chars().collect();
+                    let mut i = 0;
+                    while i < wc.len() {
+                        if wc[i] == '$' && i + 1 < wc.len() {
+                            if wc[i + 1] == '$' {
+                                i += 2;
+                                continue;
+                            }
+                            if let Some(d) = wc[i + 1].to_digit(10) {
+                                let g = d as usize;
+                                // `$N` reads exactly ONE digit, so `$12` is group 1
+                                // followed by a literal `2`. That is the usual
+                                // convention and is unambiguous while the pattern
+                                // has at most 9 groups. With 10 or more it becomes
+                                // a silent-wrong-answer of the same shape as
+                                // everything else in this pass, so refuse instead
+                                // of guessing which reading was meant.
+                                //
+                                // There is deliberately no `${12}` escape: `{`
+                                // opens string interpolation in Axon, so it would
+                                // have to be written `"${{12}}"` — reintroducing
+                                // the brace trap this pass exists to close. A clear
+                                // refusal beats an escape hatch nobody can spell.
+                                if prog.groups >= 10
+                                    && i + 2 < wc.len()
+                                    && wc[i + 2].is_ascii_digit()
+                                {
+                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                        "re_replace_all: E2205 `${}{}` is ambiguous — a group \
+                                         reference is a SINGLE digit, so this reads as group {} \
+                                         followed by the literal {:?}, and pattern {pat:?} has {} \
+                                         groups. References above $9 are not supported; use 9 or \
+                                         fewer capture groups (make the extras non-capturing).",
+                                        wc[i + 1],
+                                        wc[i + 2],
+                                        g,
+                                        wc[i + 2],
+                                        prog.groups
+                                    )))));
+                                }
+                                if g > prog.groups {
+                                    let plural = if prog.groups == 1 { "" } else { "s" };
+                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                        "re_replace_all: E2205 replacement references ${g} but \
+                                         pattern {pat:?} has {} capture group{plural} (use $$ for \
+                                         a literal dollar sign)",
+                                        prog.groups
+                                    )))));
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        }
+                        i += 1;
+                    }
+                }
                 let mut out = String::new();
                 let mut from = 0usize;
                 let mut last = 0usize;

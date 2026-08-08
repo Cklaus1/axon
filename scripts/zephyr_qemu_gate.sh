@@ -68,9 +68,12 @@ for candidate in \
 	fi
 done
 [[ -n "$AXON_BIN" ]] || skip "axon binary not found (build with: cargo build -p axon-core)"
-if ! "$AXON_BIN" build --help 2>&1 | grep -q "emit-obj"; then
-	skip "axon binary lacks codegen support (build with: cargo build -p axon-core)"
-fi
+# NOTE: there is deliberately no --help-based codegen probe here. `--emit-obj` is
+# listed in `--help` unconditionally (the CLI surface is identical either way;
+# only the runtime behavior is feature-gated), so a flag-presence check cannot
+# tell a codegen-enabled binary from a --no-default-features one — it simply
+# never skips. Codegen support is probed at the real build below, which is the
+# only place that can actually answer the question.
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
@@ -89,12 +92,21 @@ echo "  qemu:   $(command -v qemu-system-arm)" >&2
 echo "" >&2
 
 echo "1/3 compiling Axon app → arm-zephyr-eabi object ($AXON_OBJ)" >&2
-"$AXON_BIN" build --freestanding --target zephyr --emit-obj "$APP_AX" --out "$AXON_OBJ" 2>&1 |
-	grep -v "warning\[E0905\]" || true
-[[ -f "$AXON_OBJ" ]] || {
-	echo "FAIL: Axon object was not emitted" >&2
+# Capture rather than pipe: piping through `grep` discards the build's exit code
+# (grep's status is what the shell sees), and the codegen-absent case has to be
+# told apart from a real build failure — one is a SKIP, the other is a FAIL.
+set +e
+BUILD_OUT="$("$AXON_BIN" build --freestanding --target zephyr --emit-obj "$APP_AX" --out "$AXON_OBJ" 2>&1)"
+BUILD_EXIT=$?
+set -e
+echo "$BUILD_OUT" | grep -v "warning\[E0905\]" || true
+if [[ $BUILD_EXIT -ne 0 ]] || [[ ! -f "$AXON_OBJ" ]]; then
+	if echo "$BUILD_OUT" | grep -q "requires building axon with the .codegen. feature"; then
+		skip "axon binary lacks codegen support (build with: cargo build -p axon-core)"
+	fi
+	echo "FAIL: Axon object was not emitted (exit $BUILD_EXIT)" >&2
 	exit 1
-}
+fi
 
 echo "2/3 west build Zephyr app for qemu_cortex_m3" >&2
 west build -p auto -b qemu_cortex_m3 "$REPO/examples/zephyr" -d "$ZBUILD" \

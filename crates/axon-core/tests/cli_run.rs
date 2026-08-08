@@ -115,6 +115,39 @@ mod harness_skip_rules {
 }
 
 /// it believes it is running actually ran.
+/// Attempt `axon build <fixture>` and return its combined output, or `None` when
+/// THIS axon has no codegen backend at all (in which case the caller must skip,
+/// not assert).
+///
+/// Probing `axon build --help` instead — which three R42 tests used to do — is
+/// broken in a way that is worth spelling out, because the repo has now been bitten
+/// by it twice (see `qemu_boot_test.sh`'s skip heuristic): the `build` verb and its
+/// flags are registered by the argument parser REGARDLESS of the `codegen` feature,
+/// so `--help` exits 0 in a codegen-free binary. The skip therefore never fires,
+/// and the test proceeds to assert an `E0910` refusal against a binary whose actual
+/// reply is "requires building axon with the `codegen` feature" — a failure that
+/// looks like a parity regression and is not one.
+///
+/// The lesson generalises: a capability probe must exercise the capability, not
+/// something adjacent to it that happens to be cheaper to check.
+fn build_output_or_skip(fixture_name: &str) -> Option<String> {
+    let out = axon().arg("build").arg(fixture(fixture_name)).output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if all.contains("requires building axon with the `codegen` feature") {
+        note_harness_skip("axon build (no codegen feature)");
+        return None;
+    }
+    assert!(
+        !out.status.success(),
+        "native must not build {fixture_name}: {all}"
+    );
+    Some(all)
+}
+
 fn note_harness_skip(what: &str) {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/harness-skips.log");
@@ -19417,20 +19450,9 @@ fn append_file_extends_and_file_size_counts_bytes() {
 /// fails and forces the parity question to be answered deliberately.
 #[test]
 fn native_refuses_the_new_fs_builtins_rather_than_diverging() {
-    // The codegen-free test binary cannot `build`; skip when the verb is absent
-    // rather than assert on an error that means something else entirely.
-    let probe = axon().arg("build").arg("--help").output().unwrap();
-    if !probe.status.success() {
-        note_harness_skip("axon build (no codegen feature)");
+    let Some(all) = build_output_or_skip("fs_append_size.ax") else {
         return;
-    }
-    let out = axon().arg("build").arg(fixture("fs_append_size.ax")).output().unwrap();
-    let all = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(!out.status.success(), "native must not build these: {all}");
+    };
     for b in ["append_file", "file_size"] {
         assert!(
             all.contains("E0910") && all.contains(b),
@@ -19630,18 +19652,9 @@ fn character_access_is_indexed_by_character_not_byte() {
 /// (I-2, sound-by-refusal). They are interp-only in this slice.
 #[test]
 fn native_refuses_the_character_builtins_rather_than_diverging() {
-    let probe = axon().arg("build").arg("--help").output().unwrap();
-    if !probe.status.success() {
-        note_harness_skip("axon build (no codegen feature)");
+    let Some(all) = build_output_or_skip("char_access.ax") else {
         return;
-    }
-    let out = axon().arg("build").arg(fixture("char_access.ax")).output().unwrap();
-    let all = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(!out.status.success(), "native must not build these: {all}");
+    };
     assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
 }
 
@@ -19721,18 +19734,9 @@ fn filesystem_ops_create_probe_copy_rename_and_list() {
 /// Native must refuse the filesystem builtins rather than compute something else.
 #[test]
 fn native_refuses_the_filesystem_builtins() {
-    let probe = axon().arg("build").arg("--help").output().unwrap();
-    if !probe.status.success() {
-        note_harness_skip("axon build (no codegen feature)");
+    let Some(all) = build_output_or_skip("fs_ops.ax") else {
         return;
-    }
-    let out = axon().arg("build").arg(fixture("fs_ops.ax")).output().unwrap();
-    let all = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(!out.status.success(), "native must not build these: {all}");
+    };
     assert!(all.contains("E0910"), "expected an E0910 refusal, got:\n{all}");
 }
 
@@ -19894,6 +19898,13 @@ fn regex_is_leftmost_first_and_refuses_backtracking_constructs() {
             "12-345/12/345",        // captures: 0 is the whole match
             "nocap:",               // no match -> empty capture array
             "a[1]b[22]", "a$b",     // $1 references and $$ literal
+            "ERR-badgroup",         // $2 against a one-group pattern is REFUSED,
+                                    // not silently expanded to ""
+            "<>",                   // ...but a group that exists and did not
+                                    // participate does expand to ""
+            "a<1>b",                // $0 is the whole match
+            "a0",                   // $10 with 2 groups = group 1 then literal "0"
+            "ERR-ambiguous",        // $10 with 10 groups is REFUSED, not guessed
             "ERR-backref", "ERR-lookahead", "ERR-lookbehind",
             "ERR-blowup",           // {1,100000} expansion refused
             "aaa",                  // an ordinary counted repetition still works

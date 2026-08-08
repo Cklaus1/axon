@@ -2775,7 +2775,10 @@ fn cmd_build(
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
     );
-    eprintln!("note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).");
+    eprintln!(
+        "note: `cargo build -p axon-core` produces a codegen-capable axon in ~3s \
+         (see BUILD_RESOLVED.md). Do NOT combine `codegen` with `serde-json`."
+    );
     eprintln!(
         "hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed."
     );

@@ -178,11 +178,47 @@ fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
 /// Parse the expression inside `{...}` in a format string using the real lexer and parser.
 /// This supports arbitrary expressions, e.g. `{to_str(x + 1)}`.
 fn parse_fmt_inner_expr(inner: &str) -> Result<Expr> {
-    let tokens = crate::lexer::Lexer::tokenize(inner)
-        .map_err(|e| ParseError::Other(format!("fmt expr: {:?}", e)))?;
+    // A slot whose contents don't even TOKENIZE is the same caller error as one
+    // with leftover tokens (`"\d{2,4}"` reaches here as the slot `\d,4`), so it
+    // gets the same hint. The bare lexer error — `UnexpectedChar { src: "\\" }` —
+    // never mentions that a `{` opened an interpolation, which is the one fact
+    // the caller is missing.
+    let tokens = crate::lexer::Lexer::tokenize(inner).map_err(|e| {
+        ParseError::Other(format!(
+            "`{{{inner}}}`: not an expression ({e:?}) — a `{{...}}` slot holds exactly \
+             ONE expression. For a literal brace, double it: `{{{{{inner}}}}}`."
+        ))
+    })?;
     let token_vals: Vec<Token> = tokens.into_iter().map(|(t, _)| t).collect();
     let mut sub = Parser::new(token_vals);
-    sub.parse_expr()
+    // Same reasoning as the tokenize arm: a slot that runs out mid-expression
+    // (`"{x + }"`) reports a bare `Eof` that names neither the string nor the
+    // brace that opened the slot.
+    let expr = sub.parse_expr().map_err(|e| {
+        ParseError::Other(format!(
+            "`{{{inner}}}`: incomplete expression ({e:?}) — a `{{...}}` slot holds \
+             exactly ONE expression. For a literal brace, double it: `{{{{{inner}}}}}`."
+        ))
+    })?;
+    // The slot must be consumed IN FULL. `parse_expr` happily stops at the first
+    // token it cannot continue with, and for a decade of format-string
+    // implementations that has meant the tail is discarded in silence — so
+    // `"a{2,3}"` became the string `a2` with no diagnostic anywhere.
+    //
+    // That is not a style question. A counted regex repetition (`\d{2,4}`) is
+    // exactly this shape, so the pattern a caller wrote and the pattern the
+    // engine searched for were different strings, and nothing said so. Refuse,
+    // and name `{{` — because a caller who meant a literal brace has a spelling
+    // and needs to be told it, not left to guess.
+    if sub.pos < sub.tokens.len() {
+        let leftover = &sub.tokens[sub.pos];
+        return Err(ParseError::Other(format!(
+            "`{{{inner}}}`: unexpected {leftover:?} after the interpolated expression \
+             — a `{{...}}` slot holds exactly ONE expression. For a literal brace, \
+             double it: `{{{{{inner}}}}}`."
+        )));
+    }
+    Ok(expr)
 }
 
 pub struct Parser {
@@ -3309,6 +3345,52 @@ mod tests {
             .map(|(t, _)| t)
             .collect();
         Parser::new(tokens).parse_program().expect("parse failed")
+    }
+
+    /// `{...}` in a string is an INTERPOLATION SLOT, and the whole of it must be
+    /// one expression. Before this check the sub-parser parsed a prefix and threw
+    /// the rest away without a word, so `"a{2,3}"` was silently the string `a2`.
+    ///
+    /// That is a silent-wrong-answer bug, and it bit for real: every counted
+    /// regex repetition a model writes (`\d{2,4}`, `a{1,3}`) is this shape, and
+    /// the resulting pattern searched for something else entirely with no error.
+    /// The escape for a literal brace is `{{`, so the fix is to REFUSE the
+    /// ambiguous form and name that escape in the message.
+    #[test]
+    fn leftover_tokens_in_an_interpolation_slot_are_refused_not_dropped() {
+        // Each of these parsed as a silently-truncated prefix before the fix.
+        for src in [
+            r#"fn main(){println("a{2,3}")}"#,
+            r#"fn main(){println("d{\d,4}")}"#,
+            r#"fn main(){let x=1 println("{x x}")}"#,
+            r#"fn main(){let x=1 println("{x + }")}"#,
+        ] {
+            let tokens: Vec<Token> = Lexer::tokenize(src)
+                .unwrap()
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect();
+            let err = Parser::new(tokens)
+                .parse_program()
+                .expect_err(&format!("must not silently truncate: {src}"));
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("{{"),
+                "the error must name the `{{{{` escape, got: {msg}"
+            );
+        }
+
+        // And the forms that were ALWAYS fine stay fine — the check must not
+        // reject an expression that legitimately contains braces or commas.
+        parse(r#"fn main(){println("a{{2,3}}")}"#);
+        parse(r#"fn main(){let c=true println("{to_str(if c { 1 } else { 0 })}")}"#);
+        parse(r#"fn main(){println("{to_str(max_i64(1, 2))}")}"#);
+        // Commas inside the slot are fine when they belong to the expression —
+        // it is only a comma the expression does not CLAIM that is now refused.
+        // (Written with a variable rather than an inline `["a","b"]`: a nested
+        // double quote inside an interpolation ends the string literal early, a
+        // separate and pre-existing lexer limit.)
+        parse(r#"fn main(){let xs=[1,2] println("{to_str(arr_sum_i64(xs))}")}"#);
     }
 
     #[test]

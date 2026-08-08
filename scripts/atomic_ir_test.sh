@@ -29,9 +29,9 @@ do
 done
 [[ -n "$AXON_BIN" ]] || skip "axon binary not found (build with: cargo build -p axon-core)"
 
-if ! "$AXON_BIN" build --help 2>&1 | grep -q "emit-llvm"; then
-    skip "axon binary lacks codegen / --emit-llvm support"
-fi
+# No --help-based codegen probe: --emit-llvm is listed unconditionally, so
+# flag-presence never distinguishes a codegen build from a --no-default-features
+# one. The real probe is the trial build below.
 
 SRC="$REPO/examples/kernel/hello_kernel_slice2.ax"
 [[ -f "$SRC" ]] || fail "missing example $SRC"

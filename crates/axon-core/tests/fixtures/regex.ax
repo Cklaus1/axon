@@ -32,6 +32,20 @@ fn main() -> i64 {
     // ── Replacement, with $1 references and $$ for a literal dollar ────────
     match re_replace_all("(\\d+)", "a1b22", "[$1]") { Ok(s) => println(s)  Err(e) => println(e) }
     match re_replace_all("x", "axb", "$$") { Ok(s) => println(s)  Err(e) => println(e) }
+    // A `$N` the pattern has no group for is an authoring error, REFUSED (E2205)
+    // rather than expanded to "". Rust's regex and Perl both silently emit
+    // nothing here; a quietly-missing piece of an otherwise plausible string is
+    // the failure shape this language exists to avoid.
+    match re_replace_all("(\\d+)", "a1b", "[$2]") { Ok(s) => println(s)  Err(e) => println("ERR-badgroup") }
+    // A group that EXISTS but did not participate still expands to "" — that is a
+    // fact about this input, not a mistake in the replacement.
+    match re_replace_all("(a)|(b)", "b", "<$1>") { Ok(s) => println(s)  Err(e) => println(e) }
+    // `$0` is the whole match, as everywhere else.
+    match re_replace_all("(\\d+)", "a1b", "<$0>") { Ok(s) => println(s)  Err(e) => println(e) }
+    // A reference is ONE digit, so `$10` is group 1 then a literal `0`. Harmless
+    // with <=9 groups; with 10+ it is ambiguous and therefore refused.
+    match re_replace_all("(a)(b)", "ab", "$10") { Ok(s) => println(s)  Err(e) => println(e) }
+    match re_replace_all("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)", "abcdefghij", "$10") { Ok(s) => println(s)  Err(e) => println("ERR-ambiguous") }
 
     // ── The refusals. Each must be E2203 and say WHY ───────────────────────
     match re_is_match("(a)\\1", "aa") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-backref") }
@@ -40,10 +54,16 @@ fn main() -> i64 {
     // A counted repetition that would expand the program past its budget.
     //
     // NOTE THE DOUBLED BRACES, and they are not optional: `{` opens string
-    // INTERPOLATION in Axon, so `"a{1,100000}"` is not the pattern you wrote —
-    // it lexes as the string `a1`, and the regex then searches for that. `{{`
-    // is the parser's escape for a literal brace. Any counted repetition in a
-    // pattern literal must be written this way.
+    // INTERPOLATION in Axon, so `"a{1,100000}"` is not the pattern you wrote.
+    // `{{` is the parser's escape for a literal brace, and any counted
+    // repetition in a pattern literal must be written that way.
+    //
+    // The single-brace form used to compile — the slot evaluated `1` and threw
+    // `,100000` away in silence, so the engine searched for `a1`. It is now a
+    // parse error that names the `{{` escape
+    // (parser::leftover_tokens_in_an_interpolation_slot_are_refused_not_dropped),
+    // because a pattern quietly becoming a DIFFERENT pattern is the worst
+    // available outcome here.
     match re_is_match("a{{1,100000}}", "aaa") { Ok(b) => println(to_str_bool(b))  Err(e) => println("ERR-blowup") }
     // And the ordinary case, doubled, matching correctly.
     match re_find("a{{2,3}}", "aaaa") { Ok(m) => match m { Some(v) => println(v)  None => println("NONE") }  Err(e) => println(e) }

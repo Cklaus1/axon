@@ -551,3 +551,51 @@ DONE = Slice 1 landed, with interp+native byte-identical and the non-ASCII fuzz 
 The last clause is the one that matters. Every previous round of this work produced a number that
 moved for reasons other than the change being tested — a splitter bug read as a capability result, a
 card edit read as a compiler improvement. Per-task attribution or the measurement does not count.
+
+---
+
+## 12. Addendum (2026-08-08) — two post-completion findings
+
+Recorded after the build loop reported DONE. Both are amendments to §11, not new slices.
+
+### 12.1 The stop condition named ONE build configuration, and that was not enough
+
+§11 says "`cargo test --workspace` shows no new failures against the 1808/0 baseline". That was
+satisfied — and `scripts/gate.sh` was RED at the same time. The gate's test stage is
+
+```
+cargo test -p axon-core --no-default-features      # gate.sh:68
+```
+
+and `cli_run.rs`'s `axon()` resolves `CARGO_BIN_EXE_axon`, which is built in the TEST's feature
+config. So in that stage the probed binary has no codegen backend, and Slice 2/4's three
+`native_refuses_*` tests asserted an `E0910` refusal against a binary whose actual reply is
+"requires building axon with the `codegen` feature". They had been failing since T4/T7 landed.
+
+The cause was a stale capability probe — they skipped on `axon build --help` exiting non-zero, but
+the `build` verb is registered regardless of the feature, so `--help` always succeeds and the skip
+never fired. Fixed by `build_output_or_skip`, which probes the real build's refusal text; verified in
+BOTH directions, because a guard that degrades into a permanent silent skip is worse than the bug it
+replaced. Three sibling scripts carried the same stale form (`zephyr_qemu_gate.sh` failing rather
+than skipping, plus two harmless instances) and were fixed in the same pass.
+
+**§11 is amended:** a stop condition must enumerate every configuration the gate runs, and a green
+figure must be reported WITH its configuration. "The suite passes" is not a claim until it names
+which suite, built how.
+
+### 12.2 The `str_slice` class had a second member, in the parser
+
+§2 opened this spec on a silent-wrong-answer: `str_slice` returning `""` across a UTF-8 boundary.
+The same class was found in string interpolation. `parse_fmt_inner_expr` handed a `{...}` slot to
+`Parser::parse_expr` and never checked the sub-parser consumed it, so `"a{2,3}"` compiled to the
+string `a2` — the `,3` discarded with no diagnostic. It is now a parse error naming the `{{` escape.
+
+This spec had WORKED AROUND that bug rather than fixed it: §6 and all six `re_*` doc strings tell the
+caller to write `a{{1,100000}}`, because every counted regex repetition is exactly the shape that
+silently became a different pattern. Documenting a footgun is not closing it, and the note in the
+regex fixture now says so.
+
+**The generalisable rule:** wherever a parser runs on a SUBSTRING — format slots, attribute
+arguments, embedded DSLs, prose lifting — require it to consume the whole substring. "It parsed" is
+not "it parsed all of it". The regex parser added in Slice 5 already checks this
+(`compile()` rejects trailing input); the format-slot parser was the outlier.

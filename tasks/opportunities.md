@@ -1784,7 +1784,15 @@ concrete reason to expect it will not.
   over scalars (i64/f64/bool)". Same class as above: doc/impl disagreement, low blast radius.
 - **[low] R42 §9 Q3/Q4 remain needs-human.** `file_remove`'s capability policy (irreversible deletion,
   R11 risk integration) and hashing ownership (R28 vs R33 vs R42) are both unresolved by design.
-- **[HIGH] String interpolation silently DROPS content after a valid expression inside `{...}`.**
+- **[RESOLVED 2026-08-08] String interpolation silently DROPS content after a valid expression inside
+  `{...}`.** Fixed in `parser.rs::parse_fmt_inner_expr`: the sub-parser must now consume the slot in
+  FULL, and leftover tokens are a parse error naming the `{{` escape. The two adjacent arms that were
+  loud but contextless (a slot that does not tokenize, e.g. `{\d,4}`; a slot that runs out
+  mid-expression, e.g. `{x + }`) now carry the same hint, since they are the same caller mistake.
+  Verified fail-first, and the whole `.ax` corpus was scanned for slots the new check would reject —
+  every comma-bearing slot was either a real call's arguments or already doubled. Guard test:
+  `parser::tests::leftover_tokens_in_an_interpolation_slot_are_refused_not_dropped`. Note the check is
+  in the PARSER, not the lexer as this entry originally guessed. Original report follows.
   `"a{2,3}"` lexes as the string `a2`: interpolation evaluates `2` and discards `,3` with no
   diagnostic. Compare `"a{}"` and other malformed forms, which DO error (`unclosed \u{7b} in
   interpolated string`). Found via R42's regex surface, where it is severe: every counted-repetition
@@ -1796,3 +1804,34 @@ concrete reason to expect it will not.
 - **[med] Native lowering for the regex + encoding builtins.** All 10 are interp-only (E0910-refused).
   The Pike VM is pure Rust in `interp/regex.rs` and could move to `axon-rt`, but its `[str]`-returning
   functions need array-out synthesis that does not exist yet (same blocker as `str_chars`).
+- **[low] The "native codegen build is SLOW" claim is stale in five more places.** `BUILD_RESOLVED.md`
+  established that `cargo build -p axon-core` is ~3s (the stall was a `serde-json` x `codegen`
+  default-feature collision), but `dev.sh:4,24,159`, `scripts/r1_build_measure.sh` and
+  `crates/axon-core/src/codegen/builtins.rs:328` still tell a reader the build hangs — and `dev.sh`
+  steers developers away from the codegen build on that basis. The user-facing CLI hint in
+  `main.rs::cmd_build` was corrected 2026-08-08; the rest is a doc sweep, and `r1_build_measure.sh`
+  needs care because it uses the old numbers as deliberate historical BASELINES, which should stay.
+- **[med] Capability probes in the test harness must exercise the capability.** Three R42 tests skipped
+  on `axon build --help` exiting non-zero, but the `build` verb is registered regardless of the
+  `codegen` feature, so `--help` always succeeds and the skip never fired — the tests then asserted
+  E0910 against a binary that replies "requires building axon with the `codegen` feature". Second
+  instance of this exact class (first: `qemu_boot_test.sh`'s stale `--help`-presence heuristic).
+  Fixed for those three via `build_output_or_skip`, which probes the real build's error text. WORTH
+  SWEEPING: grep the harness for other `--help`-based or flag-presence-based feature probes.
+- **[low] Measure whether the language card should mention the `{{` brace escape.** The card never
+  teaches `{...}` interpolation at all (it teaches `println(to_str(n))` and concatenation), so a model
+  is unlikely to reach the slot rule — and as of 2026-08-08 a malformed slot is a loud parse error
+  rather than a silent wrong string, which removes the severe failure mode. Deliberately NOT added:
+  measured card additions have COST tasks before (9 -> 6 -> 4 of 16 on tasks_hard), so this needs an
+  A/B arm in `axon_card.rs::card()`, not an assumption.
+- **[med] Two harness tests rebuild the binary their sibling tests probe, mid-stage.**
+  `codegen_exit_codes_match_interp` and `codegen_handler_tail_resume_lowers_via_parity_harness` shell
+  out to scripts that run `cargo build -p axon-core` (codegen, default features), overwriting
+  `target/debug/axon` — which is the SAME path `CARGO_BIN_EXE_axon` resolves to for every other test in
+  the binary, and `cargo test` runs them in parallel threads. So a codegen-less stage can have its
+  binary swapped to codegen underneath tests that are asserting codegen-less behavior, and vice versa.
+  Observed as both tests failing with "native build failed (the interpreter exited 101)" inside
+  `cargo test -p axon-core --no-default-features`, while both PASS in isolation once a codegen binary is
+  in place. FOURTH occurrence of the concurrent-build class and the first where the test suite races
+  ITSELF rather than a human editor. Options: have the harnesses build to a private `--target-dir`, or
+  mark these `#[serial]` and pin the binary they use. Not fixed here — it needs a decision about which.

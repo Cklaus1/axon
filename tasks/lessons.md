@@ -294,3 +294,48 @@ the opportunity entry only records the observation.
   not from the domain concept you associate with it ("before the epoch"). Confirmed by re-mutating after
   the fix — now both branches fail the test. This is the "suspect the premise before the assertions"
   case, and mutation testing is the only thing that finds it.
+- **A sub-parser must be required to consume its whole input, or it silently truncates.**
+  `parse_fmt_inner_expr` handed a `{...}` slot's contents to `Parser::parse_expr` and returned the
+  result without checking `pos == tokens.len()`. `parse_expr` stops at the first token it cannot
+  continue with, so `"a{2,3}"` compiled to the string `a2` — the `,3` discarded with no diagnostic
+  anywhere in the pipeline. This is the worst failure shape available: not a crash, not an error, a
+  DIFFERENT correct-looking answer. It mattered because every counted regex repetition (`\d{2,4}`) is
+  exactly this shape, so a pattern searched for something other than what was written. **Rule:** any
+  time a parser is invoked on a substring — format slots, attribute arguments, embedded DSLs, prose
+  lifting — assert the input was consumed in FULL. "It parsed" is not "it parsed all of it". Worth
+  grepping for other `Parser::new(...)` sub-parses that never check the position afterwards.
+- **A capability probe must exercise the capability, not something adjacent that is cheaper to check.**
+  Three R42 tests skipped when `axon build --help` exited non-zero — but the `build` verb and its flags
+  are registered by the arg parser regardless of the `codegen` feature, so `--help` ALWAYS succeeds. The
+  skip never fired; the tests instead asserted `E0910` against a binary replying "requires building axon
+  with the `codegen` feature", which reads exactly like a parity regression. Second and third-through-
+  fifth instances of one class: `qemu_boot_test.sh` had already been bitten and its fix comment already
+  explained why, while `zephyr_qemu_gate.sh`, `atomic_ir_test.sh` and `gdt_layout_ir_test.sh` still
+  carried the stale form (the latter two harmlessly, having a real probe behind it). **Rule:** probe by
+  attempting the operation and matching its specific refusal text. A flag's PRESENCE describes the CLI
+  surface; only behavior describes the build. Corollary: when you fix an instance of a class, grep for
+  siblings in the same commit — the fix comment sitting in one file taught nobody.
+- **"That was just my wrong config" was itself the wrong conclusion — the config I picked by accident is
+  the config the GATE uses.** I verified the interpolation fix with `cargo test --workspace
+  --no-default-features`, three `native_refuses_*` tests failed, and I wrote it off as my own
+  mis-invocation because the R42 baseline (1835/0) was measured with codegen ON. Then I read
+  `scripts/gate.sh:68`: the gate's own test stage is `cargo test -p axon-core --no-default-features`,
+  and `axon()` resolves `CARGO_BIN_EXE_axon`, which is built in the TEST's feature config. So those
+  three tests had been failing **gate.sh** ever since T4/T7 landed, and my R42 end-of-run report —
+  which cited `cargo test --workspace` and the individual parity harnesses — never covered that stage.
+  The report was accurate about what it measured and silent about what it did not.
+  **Rules, in order of importance:**
+  1. Before dismissing a failure as an artefact of how you invoked the tests, check what the GATE
+     invokes. "I ran it wrong" and "the gate runs it that way" are indistinguishable from the failure
+     text alone, and only one of them is harmless.
+  2. State the configuration next to every pass/fail figure, and enumerate the configurations you did
+     NOT run. A green number in one config says nothing about another.
+  3. When a suite passes in the config you chose, that is the moment to run the config you didn't.
+- **The concurrent-build trap has a self-inflicted form: a test that rebuilds the binary its siblings
+  probe.** Two parity tests shell out to scripts running `cargo build -p axon-core`, which overwrites
+  `target/debug/axon` — the exact path `CARGO_BIN_EXE_axon` gives every other test in the same binary,
+  running in parallel threads. Inside `cargo test --no-default-features` both failed with "native build
+  failed"; both PASS in isolation. **Rule:** when a harness test builds a toolchain artifact, ask what
+  else reads that path concurrently. And when verifying, follow `gate.sh`'s ORDER (codegen-less tests,
+  then `cargo build -p axon-core`, then harnesses) rather than inventing an order — the sequence in a
+  gate script is usually load-bearing, not incidental. Fourth occurrence of this class overall.

@@ -348,20 +348,37 @@ primary    ::= block
   If it contains one or more `{...}` segments it lowers to:
     FmtStr { parts: [FmtPart::Lit, FmtPart::Expr, …] }
 
-  Interpolation expressions inside `{...}` are restricted to:
-    ident                     — bare identifier
-    ident '(' IDENT ')'       — single-argument call (for format conversions)
+  A `{...}` slot holds ANY expression — it is parsed by the ordinary expression
+  parser, so calls, arithmetic, indexing, struct literals and `if`/`match` all
+  work.  (This text previously claimed a restriction to a bare identifier or a
+  single-argument call; the implementation has been more general than that for
+  some time.)  Nested braces are matched, so the expression may itself contain
+  `{ }`.
+
+  TWO RULES, both enforced:
+
+    `{{` → literal `{`  and  `}}` → literal `}`.  A literal brace MUST be
+    doubled; this is the only way to write one.
+
+    The slot must be consumed IN FULL.  A slot whose contents parse only as a
+    PREFIX is a parse error naming the `{{` escape — it is not a truncation.
+    Before this was enforced, `"a{2,3}"` compiled to the string `a2`: the slot
+    evaluated `2` and discarded `,3` in silence, so a counted regex repetition
+    such as `\d{2,4}` became a search for a different literal string with no
+    diagnostic anywhere.  Guard:
+    `parser::tests::leftover_tokens_in_an_interpolation_slot_are_refused_not_dropped`.
 
   Examples:
-    "hello"          → Literal::Str("hello")
-    "hello {name}!"  → FmtStr { parts: [Lit("hello "), Expr(Ident("name")), Lit("!")] }
+    "hello"             → Literal::Str("hello")
+    "hello {name}!"     → FmtStr { parts: [Lit("hello "), Expr(Ident("name")), Lit("!")] }
     "{to_str(n)} items" → FmtStr with Expr(Call(to_str, [n]))
+    "a{{2,3}}"          → Literal::Str("a{2,3}")   (* the regex-safe spelling *)
+    "a{2,3}"            → parse ERROR (unexpected `,` after the expression)
 *)
 str_expr   ::= STR_RAW ;         (* parser inspects for `{…}` interpolation *)
 
-fmt_part   ::= IDENT                (* bare identifier interpolation  *)
-             | IDENT '(' IDENT ')'  (* single-arg call interpolation  *)
-             ;
+(* A slot is a full expression, and must consume the whole slot. *)
+fmt_part   ::= expr ;
 
 (* ── 6.13  Array literal ────────────────────────────────────────────────── *)
 
