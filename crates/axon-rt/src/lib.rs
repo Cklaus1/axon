@@ -2057,6 +2057,27 @@ pub extern "C" fn __axon_str_repeat(
 /// `str_slice(s, start, end)` — byte-indexed slice of `s`.
 /// Clamps start to [0, len], end to [start, len]; returns "" if byte range
 /// crosses a UTF-8 boundary (s.get returns None).
+/// R42 §2 / E2200 — refuse a byte range that splits a UTF-8 character.
+///
+/// `str::get(a..b)` returns `None` for a non-boundary range, and both engines
+/// used to `unwrap_or("")` it. That turned the language card's own taught
+/// per-character idiom, `str_eq(str_slice(s, i, i + 1), " ")`, into
+/// `str_eq("", " ")` on every non-ASCII input — a silent wrong answer, which is
+/// the failure mode this project refuses everywhere else.
+///
+/// Rounding to the nearest boundary was rejected: it swaps one silent wrong
+/// answer for another the caller cannot detect. The message text is kept
+/// byte-identical to the interpreter's so `utf8_boundary_parity.sh` compares
+/// output, not just exit codes.
+#[cfg(not(target_arch = "wasm32"))]
+fn str_slice_boundary_panic(start: usize, end: usize) -> ! {
+    eprintln!(
+        "axon: panic: str_slice: E2200 byte range {start}..{end} splits a UTF-8 character \
+         (slice on character boundaries, or use str_char_slice)"
+    );
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_slice(
@@ -2070,7 +2091,10 @@ pub extern "C" fn __axon_str_slice(
     let start = (start.max(0) as usize).min(src.len());
     let end = (end.max(0) as usize).min(src.len());
     let start = start.min(end);
-    let slice = src.get(start..end).unwrap_or("");
+    if !src.is_char_boundary(start) || !src.is_char_boundary(end) {
+        str_slice_boundary_panic(start, end);
+    }
+    let slice = &src[start..end];
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 #[no_mangle]
@@ -2093,7 +2117,14 @@ pub extern "C" fn __axon_str_slice(
     let start = (start.max(0) as usize).min(src.len());
     let end = (end.max(0) as usize).min(src.len());
     let start = start.min(end);
-    let slice = src.get(start..end).unwrap_or("");
+    // Same E2200 refusal as native/interp. wasm32 has no `process::exit` here,
+    // so this aborts — the wasm host reports a trap, which is the substrate's
+    // equivalent of the panic-class exit and keeps the three engines from
+    // disagreeing about whether a split range is legal.
+    if !src.is_char_boundary(start) || !src.is_char_boundary(end) {
+        core::panic!("axon: panic: str_slice: E2200 byte range splits a UTF-8 character");
+    }
+    let slice = &src[start..end];
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 
@@ -3662,17 +3693,32 @@ mod migrated_builtin_tests {
 
     #[test]
     fn migrated_str_slice_matches_interpreter() {
-        // Unicode: byte-indexed, s.get() returns None if mid-codepoint
-        // "héllo" bytes: h(0) é(1,2) l(3) l(4) o(5)
-        // 0..2 = "h" + first byte of é = mid-codepoint → None → ""
-        let s_val = "héllo";
-        let start: i64 = 0;
-        let end: i64 = 2;
-        let oracle = s_val
-            .get(start.max(0) as usize..end.max(0) as usize)
-            .unwrap_or("");
-        let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
-        assert_eq!(got, oracle, "str_slice unicode mid-codepoint must match");
+        // RETARGETED by R42 T1. This block used to slice "héllo" 0..2 — a
+        // MID-CODEPOINT range — and assert the result was `""`, matching
+        // `s.get(..).unwrap_or("")`. That pinned the bug rather than the
+        // contract: silently returning `""` for a split range is exactly what
+        // E2200 now refuses.
+        //
+        // The refusal cannot be asserted from here: it is a panic-class
+        // `process::exit(101)`, which would kill this whole test binary (it did
+        // — 50 of 70 tests never ran). Process-exiting paths are observable only
+        // from a subprocess, so the split-range contract lives at the .ax level
+        // in `cli_run.rs::str_slice_refuses_a_range_that_splits_a_utf8_character`
+        // and in `utf8_boundary_parity.sh`, which also proves interp and native
+        // agree on the message and exit code.
+        //
+        // What remains here is the half this layer CAN check: multi-byte input
+        // sliced ON its boundaries still matches the interpreter oracle.
+        let s_val = "héllo"; // h(0) é(1,2) l(3) l(4) o(5)
+        for (start, end, expected) in [(0i64, 1i64, "h"), (1, 3, "é"), (0, 3, "hé"), (3, 6, "llo")] {
+            let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
+            assert_eq!(got, expected, "str_slice({s_val:?}, {start}, {end}) on a boundary");
+            assert_eq!(
+                got,
+                &s_val[start as usize..end as usize],
+                "must match the interp oracle for an aligned range"
+            );
+        }
 
         // Normal cases — match the interp oracle exactly
         let cases = [

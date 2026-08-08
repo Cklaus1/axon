@@ -249,3 +249,23 @@ behaviour on either side is *asserted by a test*. A test asserting the current
 behaviour is a contract, and changing it is a product decision however
 defect-shaped the divergence looks. The tests are where the intent lives when
 the opportunity entry only records the observation.
+
+## R42 build loop
+
+- **A review's "blast radius zero" is a claim about what it searched, not about the repo.** Step 1's
+  review answered R42 Q1 by counting `str_slice` callers in `.ax` files and integration tests, and
+  concluded no caller depends on the buggy behaviour. It missed a **Rust unit test in `axon-rt`** that
+  asserted the bug verbatim ("str_slice unicode mid-codepoint must match", pinning `""`). Worse than a
+  failing test: the new refusal is `process::exit(101)`, so that one test killed the whole 70-test
+  binary after 20 tests. **Rule:** when a change alters a builtin's behaviour, grep the runtime crate's
+  own unit tests too, not just the language-level corpus — and remember a process-exiting path cannot
+  be asserted in-process, so its contract has to live at the subprocess/.ax level.
+- **Check for an existing harness before writing a new one.** I wrote `utf8_boundary_parity.sh`
+  without noticing `str_utf8_parity.sh` already existed. It turned out to be genuinely complementary
+  (different builtins, and agreement-only vs expected-value), but I found that out *after* writing it.
+  **Rule:** `ls scripts/*_parity.sh` before adding one, and if a near-neighbour exists, state in the
+  header why both should exist.
+- **`cmd | tail` masks the exit code — again.** Mutation-testing the new gate, I read `GATE_EXIT=0`
+  from `./gate.sh | tail -5; echo $?` and nearly concluded the gate failed to fail. It had exited 1
+  correctly; `tail` reported its own status. **Rule:** when the exit code IS the result, redirect to a
+  file and check `$?` directly. (Second occurrence — already in memory as `tail-pipe masks exit code`.)

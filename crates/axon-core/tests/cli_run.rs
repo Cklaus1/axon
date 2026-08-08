@@ -19556,3 +19556,48 @@ fn a_binding_that_shadows_a_builtin_does_not_persist() {
         String::from_utf8_lossy(&again.stderr)
     );
 }
+
+/// R42 T1 — `str_slice` must REFUSE a byte range that splits a UTF-8 character,
+/// rather than silently returning `""`.
+///
+/// The silent-empty behaviour made the language card's own taught idiom,
+/// `str_eq(str_slice(s, i, i + 1), " ")`, answer confidently wrong on every
+/// non-ASCII input. Loud beats wrong.
+#[test]
+fn str_slice_refuses_a_range_that_splits_a_utf8_character() {
+    let out = axon().arg("run").arg(fixture("utf8_slice_boundary.ax")).output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "must not succeed: {all}");
+    assert_eq!(out.status.code(), Some(101), "panic-class exit code: {all}");
+    assert!(all.contains("E2200"), "the refusal must name E2200: {all}");
+    assert!(
+        all.contains("str_slice") && all.contains("UTF-8"),
+        "the message must say what is wrong: {all}"
+    );
+    // And it must NOT have printed an empty line as if it had a result.
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains('\n'),
+        "no stdout should be produced before the refusal: {all}"
+    );
+}
+
+/// The other half: boundary-ALIGNED slices are untouched. A refusal that broke
+/// correct slicing would be a worse bug than the one it replaced.
+#[test]
+fn str_slice_still_slices_on_character_boundaries() {
+    let out = axon().arg("run").arg(fixture("utf8_slice_aligned.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(out.status.success(), "aligned slices must work: {stdout}");
+    assert_eq!(
+        lines,
+        vec!["café", "caf", "é", "café", "5"],
+        // note: the empty-range line is filtered out as blank, and the
+        // clamped-past-end line is the whole string again.
+        "unexpected aligned-slice output:\n{stdout}"
+    );
+}

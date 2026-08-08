@@ -18,3 +18,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-07T15:32:10Z  N1  attempt 1  apply prototype option2-interp.patch; snapshot main's env under AXON_DUMP_BINDINGS
 2026-08-07T16:29:38Z  N2b  attempt 1  Add arm for Array+Array in eval_binop_vals + checker permission
 2026-08-08T01:03:41-04:00  T0  attempt 1  widen classify_call to per-argument (IoKind, arg_index) pairs; keep existing cap tests green
+2026-08-08T01:06:06-04:00  T1  attempt 1  make str_slice refuse a non-boundary byte range (E2200) in interp+native; share the panic-class exit path

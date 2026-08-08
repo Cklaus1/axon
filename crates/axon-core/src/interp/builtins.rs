@@ -2276,7 +2276,20 @@ impl<'p> Interp<'p> {
                 let start = as_int(&args[1])?.max(0) as usize;
                 let end = (as_int(&args[2])?.max(0) as usize).min(s.len());
                 let start = start.min(end);
-                ok!(Value::Str(s.get(start..end).unwrap_or("").to_string()));
+                // R42 §2 / E2200. `s.get(a..b)` is None for a range that splits
+                // a character, and this used to `unwrap_or("")` it — turning the
+                // card's own taught idiom
+                // `str_eq(str_slice(s, i, i + 1), " ")` into `str_eq("", " ")`
+                // on any non-ASCII input. A silent wrong answer, refused now.
+                // Out-of-RANGE indices are still clamped (that is not an error);
+                // only a non-boundary index is.
+                if !s.is_char_boundary(start) || !s.is_char_boundary(end) {
+                    return panic(format!(
+                        "str_slice: E2200 byte range {start}..{end} splits a UTF-8 character \
+                         (slice on character boundaries, or use str_char_slice)"
+                    ));
+                }
+                ok!(Value::Str(s[start..end].to_string()));
             }
             "char_at" => {
                 want(2)?;

@@ -1,0 +1,16 @@
+// R42 T1 — the other half of the contract: boundary-ALIGNED slices keep working.
+//
+// A refusal that also broke correct slicing would trade one bug for a worse
+// one, so this fixture pins the aligned cases (including whole-string, empty,
+// clamped-past-end and a multi-byte character sliced on its own boundaries).
+
+fn main() -> i64 {
+    let s = "café"
+    println(str_slice(s, 0, 5))   // whole string
+    println(str_slice(s, 0, 3))   // "caf" — ASCII prefix
+    println(str_slice(s, 3, 5))   // "é"   — the multi-byte char alone
+    println(str_slice(s, 2, 2))   // ""    — empty range is aligned
+    println(str_slice(s, 0, 99))  // end clamps to len, stays aligned
+    println(to_str(str_len(str_slice(s, 0, 5))))
+    0
+}
