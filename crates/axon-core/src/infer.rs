@@ -63,6 +63,19 @@ fn int_lit_in_range(n: i64, ty: &Type) -> bool {
     }
 }
 
+/// Has this type not been pinned down yet?
+///
+/// Inference is constraint-based, so an argument's type at the CALL SITE is
+/// frequently still a variable that only resolves when the constraints solve.
+/// Anything that treats "not resolved yet" as "resolved to something wrong"
+/// reports a mismatch against a type the value never had.
+fn type_is_unresolved(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Var(_) | Type::Unknown | Type::TypeParam(_) | Type::Deferred(_)
+    )
+}
+
 // ── Inference error ───────────────────────────────────────────────────────────
 
 /// A diagnostic produced by the type-inference pass.
@@ -938,6 +951,20 @@ impl InferCtx {
                         // the identity. See interp/builtins.rs for why refusing it
                         // was a wart (9 of 36 measured first errors).
                         if arg_ty.is_scalar() || arg_ty.is_str() {
+                            return Type::Str;
+                        }
+                        // Not yet RESOLVED is not the same as wrong. A value bound
+                        // by a pattern (`Err(e) => to_str(e)`) is still a type var
+                        // here and only becomes `str` when the constraints solve —
+                        // so constraining it to `i64` below reported
+                        // "expected i64, found str" for exactly the identity call
+                        // the arm above exists to allow. Measured: this was the
+                        // remaining half of the `to_str`-of-a-`str` wart, still
+                        // firing on the benchmark after the widening landed. A
+                        // genuinely non-scalar arg (`to_str([1, 2])`) resolves to a
+                        // concrete type and is still rejected by the checker's own
+                        // argument loop, which skips only scalars and `str`.
+                        if type_is_unresolved(&arg_ty) {
                             return Type::Str;
                         }
                         // Non-scalar: constrain the ALREADY-inferred arg to the

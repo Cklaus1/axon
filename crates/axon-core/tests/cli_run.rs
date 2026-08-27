@@ -3359,6 +3359,68 @@ fn to_str_of_a_str_is_the_identity_in_both_engines() {
 }
 
 #[test]
+fn to_str_of_a_pattern_bound_str_is_also_the_identity() {
+    // The widening above accepted `to_str(s)` when the argument's type was
+    // ALREADY RESOLVED at the call site. A value bound by a pattern is not:
+    // inference is constraint-based, so `Err(e) => to_str(e)` still holds a type
+    // variable there, and the fallback constrained it to `i64` — producing
+    // "expected i64, found str" for precisely the identity call the widening
+    // exists to allow.
+    //
+    // This is not a corner: `match parse_int(s) { Err(e) => … to_str(e) … }` is
+    // the shape the error path of nearly every generated program takes, and it
+    // was still failing on the benchmark AFTER the widening landed. Half a fix
+    // reads as no fix to the caller who hits the other half.
+    let f = std::env::temp_dir().join(format!("axon_tostr_pat_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  \
+           match parse_int(\"zz\") {\n    \
+             Ok(v) => println(to_str(v))\n    \
+             Err(e) => println(to_str(e))\n  \
+           }\n  \
+           0\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "to_str of a pattern-bound str must check + run clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "could not parse `zz` as a base-10 integer\n",
+        "the Err payload must come back UNCHANGED through to_str"
+    );
+}
+
+#[test]
+fn to_str_of_a_non_scalar_is_still_refused() {
+    // The guard rail for the widening above: "unresolved" must not become a
+    // blanket "accept anything". An array has a concrete type, so it is still
+    // rejected — otherwise the two commits together would have quietly turned
+    // `to_str` into an untyped function that fails at RUNTIME instead of here.
+    let f = std::env::temp_dir().join(format!("axon_tostr_arr_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() {\n  let a = [1, 2, 3]\n  println(to_str(a))\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "to_str([i64]) must not run");
+    assert!(
+        err.contains("to_str"),
+        "the refusal must name `to_str`: {err}"
+    );
+}
+
+#[test]
 fn to_str_is_polymorphic_over_scalars() {
     // BUG_HUNT #29: `to_str` should accept i64, f64, AND bool — picking the
     // wrong specialized name (to_str_f64 / to_str_bool) is needless onboarding
