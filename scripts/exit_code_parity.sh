@@ -69,6 +69,53 @@ check() {
   fi
 }
 
+# check_msg <name> <want_exit> <stderr_substr> <src>
+#   Like `check`, but the two engines must also agree on what they SAY, not just
+#   on the number they exit with. A diagnostic that appears in one engine and not
+#   the other is the same class of divergence as a wrong exit code: the native
+#   binary would quietly do the right thing while explaining nothing.
+check_msg() {
+  local name="$1" want="$2" substr="$3" src="$4"
+  local prog="$WORK/$name.ax"
+  printf '%s\n' "$src" > "$prog"
+
+  AXON_AI_MOCK=1 "$AXON" run "$prog" >/dev/null 2>"$WORK/$name.ierr"
+  local i_exit=$?
+  # The interpreter stamps `axon: run-id …` on stderr at startup; the native
+  # binary has no such line, so it is not part of the comparison.
+  local i_msg
+  i_msg="$(grep -v 'axon: run-id' "$WORK/$name.ierr")"
+
+  local bin="$WORK/${name}_bin"
+  if ! AXON_AI_MOCK=1 "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then
+    echo "FAIL [$name]: native build failed (the interpreter exited $i_exit)"
+    fail=1
+    return
+  fi
+  AXON_AI_MOCK=1 "$bin" >/dev/null 2>"$WORK/$name.nerr"
+  local n_exit=$?
+  local n_msg
+  n_msg="$(cat "$WORK/$name.nerr")"
+
+  if [ "$i_exit" != "$n_exit" ]; then
+    echo "FAIL [$name]: interp exit=$i_exit but native exit=$n_exit (must match — I-2)"
+    fail=1
+  elif [ "$i_exit" != "$want" ]; then
+    echo "FAIL [$name]: both exited $i_exit but expected $want"
+    fail=1
+  elif [ "$i_msg" != "$n_msg" ]; then
+    echo "FAIL [$name]: engines disagree on stderr (I-2)"
+    echo "  interp: $i_msg"
+    echo "  native: $n_msg"
+    fail=1
+  elif ! printf '%s' "$i_msg" | grep -qF "$substr"; then
+    echo "FAIL [$name]: neither engine mentioned '$substr': $i_msg"
+    fail=1
+  else
+    echo "  OK $name: both exit $i_exit and say the same thing"
+  fi
+}
+
 # check_refused <name> <interp_exit> <substr> <src>
 #   For behavior native codegen cannot reproduce, the contract is not "same exit
 #   code" but "REFUSE, never miscompile" (I-2, sound-by-refusal): the interpreter
@@ -112,9 +159,33 @@ check assert_eq_bad  101 'fn main() -> i64 { assert_eq(1, 2)  0 }'
 check div_zero       101 'fn main() -> i64 { let z = 0  10 / z }'
 check oob_index      101 'fn main() -> i64 { let a = [1, 2, 3]  a[10] }'
 
-# Clean termination + explicit return value.
-check clean_zero     0   'fn main() -> i64 { 0 }'
-check return_seven   7   'fn main() -> i64 { 7 }'
+# Clean termination + explicit return value. 49 rather than 7: 7 is
+# GOAL_BUDGET_EXIT_CODE, and a value falling out of `main` is no longer allowed to
+# claim a ledger code (see the program-status block below). That this case had to
+# change is the point — the harness itself was using a reserved number as an
+# ordinary return.
+check clean_zero      0   'fn main() -> i64 { 0 }'
+check return_forty_nine 49 'fn main() -> i64 { 49 }'
+
+# ── Program-chosen exit statuses ──────────────────────────────────────────────
+# A value that FALLS OUT of `main` is an answer, not a status: it may not
+# impersonate a guard (2..=15, 101) and may not silently truncate (a status is one
+# byte, so 3240 would be seen as 168). Both become 1 with the reason on stderr.
+# 126..=255 are the shell's convention rather than this project's ledger, so an
+# ordinary answer that lands there passes through — hence `return_two_hundred`. A status the program STATES with
+# `exit(n)` is deliberate and is honoured as written, including ledger codes —
+# that is how a userland deploy gate says "policy rejection" (BUG_HUNT #26/#34).
+#
+# These use `check_msg` because the exit code alone is only half the contract:
+# both engines must also print the SAME explanation, or a native binary silently
+# remaps where `axon run` explains itself.
+check_msg main_ret_ledger  1 'is RESERVED'      'fn main() -> i64 { 6 }'
+check return_two_hundred 200 'fn main() -> i64 { 200 }'
+check_msg main_ret_wide    1 'would have seen 168' 'fn main() -> i64 { 3240 }'
+check_msg exit_stated_wide 1 'exit(3240) is not a status' 'fn main() -> i64 { exit(3240)  0 }'
+# Stated ledger codes pass through untouched, on both engines.
+check exit_stated_three  3   'fn main() -> i64 { exit(3)  0 }'
+check exit_stated_six    6   'fn main() -> i64 { exit(6)  0 }'
 
 # Phase 5: refinement-PRECONDITION violations on non-constant args → exit 6 on
 # BOTH engines (the spec's Z3-free runtime-check fallback). A constant arg is a
@@ -159,17 +230,21 @@ check refine_struct_bad 6  'type Range = { lo: i64, hi: i64 } where _.lo <= _.hi
 fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }
 fn main() -> i64 { let r = mk(10, 2)
  r.hi }'
-check refine_struct_ok  10 'type Range = { lo: i64, hi: i64 } where _.lo <= _.hi
+# 40, not 10: these cases hand the checked value back through `main`, and a value
+# falling out of `main` may no longer claim a ledger code (10 is COALITION_BOUND).
+# The case still checks the same thing — that the refinement passes — with a
+# number that is not also a claim about what happened.
+check refine_struct_ok  40 'type Range = { lo: i64, hi: i64 } where _.lo <= _.hi
 fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }
-fn main() -> i64 { let r = mk(2, 10)
+fn main() -> i64 { let r = mk(2, 40)
  r.hi }'
 check refine_let_bad    6  'type Pos = i64 where _ > 0
 fn neg(x: i64) -> i64 { 0 - x }
 fn main() -> i64 { let p: Pos = neg(5)
  p }'
-check refine_let_ok     3  'type Pos = i64 where _ > 0
+check refine_let_ok     33 'type Pos = i64 where _ > 0
 fn neg(x: i64) -> i64 { 0 - x }
-fn main() -> i64 { let p: Pos = neg(0 - 3)
+fn main() -> i64 { let p: Pos = neg(0 - 33)
  p }'
 
 # ── AI policy (exit 5) — F141 / P6-EXIT-04 ───────────────────────────────────
@@ -188,10 +263,10 @@ fn main() -> i64 { ask() }'
 # A non-`balanced` tier is refused for the same reason (the native ABI carries
 # no model, so cheap/strong would silently call sonnet). The interpreter routes
 # the tier correctly and runs clean, returning 3 from main.
-check_refused ai_tier 3 'balanced' \
+check_refused ai_tier 33 'balanced' \
 '@[ai(policy(tier: strong))]
 fn ask() -> i64 { let a = ai_complete("one")
- 3 }
+ 33 }
 fn main() -> i64 { ask() }'
 
 if [ "$fail" -ne 0 ]; then

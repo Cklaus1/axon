@@ -453,7 +453,7 @@ fn r15_host_await_interactive_via_axon_run_reads_stdin() {
         "fn main() -> i64 {\n  \
            let name = host_await(\"name> \")\n  \
            println(\"Hello, {name}!\")\n  \
-           str_len(name)\n\
+           exit(str_len(name))\n  0\n\
          }\n",
     )
     .unwrap();
@@ -515,10 +515,13 @@ fn r15_human_in_the_loop_agent_gates_actions_on_approval() {
         "action 3 approved: {stdout}"
     );
     assert!(stdout.contains("approved 2 of 3"), "tally: {stdout}");
+    // Exit 0: the tally is on stdout (asserted above), not in the exit status —
+    // a count is an answer, and 2 in the status channel means "static failure" to
+    // anything reading this run.
     assert_eq!(
         out.status.code(),
-        Some(2),
-        "2 actions approved, got {:?}",
+        Some(0),
+        "the agent completed; the tally is stdout's job: {:?}",
         out.status.code()
     );
 }
@@ -549,10 +552,13 @@ fn r15_stateful_guessing_game_keeps_state_across_suspends() {
         stdout.contains("Correct — 3 tries!"),
         "7 found in 3: {stdout}"
     );
+    // Exit 0: the try count is on stdout ("Correct — 3 tries!", asserted above).
+    // Returning it would claim exit 3, which the ledger assigns to a failed
+    // @[verify] — the game finishing successfully must not read as a guard firing.
     assert_eq!(
         out.status.code(),
-        Some(3),
-        "3 tries, got {:?}",
+        Some(0),
+        "the game completed; the count is stdout's job: {:?}",
         out.status.code()
     );
 }
@@ -577,10 +583,12 @@ fn r15_guessing_game_terminates_on_eof_not_spins() {
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Bye."), "EOF ⇒ graceful quit: {stdout}");
+    // Exit 0: the count is stdout's job now (see the sibling test) — what this
+    // case is really about is that EOF ENDS the loop instead of spinning.
     assert_eq!(
         out.status.code(),
-        Some(1),
-        "1 guess before EOF, got {:?}",
+        Some(0),
+        "EOF must end the run cleanly, got {:?}",
         out.status.code()
     );
 }
@@ -796,7 +804,7 @@ fn phase6_handler_resume_semantics() {
 
     // 4. Handler erases when no matching effect is raised (pure body).
     let (code, _) =
-        run("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
+        run("fn main() -> i64 { exit(with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x })  0 }");
     assert_eq!(code, 5, "no matching effect → body runs unchanged");
 
     // 5. An inline `return(v) => e` arm rewrites the body's final value.
@@ -888,8 +896,8 @@ fn phase6_multishot_resume() {
     // 3. Backtracking: try two continuations, keep the max — a real multi-shot
     //    use. body = c*10+3; resume(0)→3, resume(1)→13; max = 13.
     let (code, _) = run(
-        "fn main() -> i64 { with handler { on Random(p) => { let lo = resume(0)\n let hi = resume(1)\n if lo > hi { lo } else { hi } } } \
-         { let c = random_i64(0, 1)\n c * 10 + 3 } }",
+        "fn main() -> i64 { exit(with handler { on Random(p) => { let lo = resume(0)\n let hi = resume(1)\n if lo > hi { lo } else { hi } } } \
+         { let c = random_i64(0, 1)\n c * 10 + 3 })  0 }",
     );
     assert_eq!(
         code, 13,
@@ -1424,7 +1432,7 @@ fn phase8_surface_search_keywords() {
          fn main() -> i64 { \
            let best = for!<HillClimb> maximize \"score\" to 100.0 in 50\n\
            println(\"{to_str_f64(best)}\")\n\
-           goal_best_input(\"score\", 100.0) }");
+           exit(goal_best_input(\"score\", 100.0))  0 }");
     assert_eq!(code, 7, "for! optimized to the peak input x=7");
     assert!(out.contains("100"), "for! reached the peak score: {out:?}");
 
@@ -1494,7 +1502,7 @@ fn phase8_surface_search_keywords() {
     let (code, _) = run(
         "@[adaptive]\n\
          fn m(x: i64) -> i64 { x }\n\
-         fn main() -> i64 { let s = 0\n for i in 0..5 { s = s + i }\n let _ = goal_run(\"m\", 10.0, 5)\n s }",
+         fn main() -> i64 { let s = 0\n for i in 0..5 { s = s + i }\n let _ = goal_run(\"m\", 10.0, 5)\n exit(s)  0 }",
     );
     assert_eq!(code, 10, "plain for-loops + goal_run still parse and run");
 }
@@ -2980,7 +2988,7 @@ fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
     // whole module run to completion.
     let (code, err) = run(
         &format!(
-            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"\")\n  sandbox_run(sb, \"tool\", 1)\n}}\n"
+            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"\")\n  exit(sandbox_run(sb, \"tool\", 1))\n  0\n}}\n"
         ),
         "deny",
     );
@@ -3000,7 +3008,7 @@ fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
     // frame_count 2 ⇒ exit 2.
     let (code2, err2) = run(
         &format!(
-            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"IO\")\n  sandbox_run(sb, \"tool\", 1)\n}}\n"
+            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"IO\")\n  exit(sandbox_run(sb, \"tool\", 1))\n  0\n}}\n"
         ),
         "allow",
     );
@@ -3010,7 +3018,10 @@ fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
     );
 
     // (3) NEGATIVE CONTROL — outside any sandbox the module is unaffected.
-    let (code3, err3) = run(&format!("{tool}fn main() -> i64 {{ tool(1) }}\n"), "free");
+    let (code3, err3) = run(
+        &format!("{tool}fn main() -> i64 {{ exit(tool(1))  0 }}\n"),
+        "free",
+    );
     assert_eq!(
         code3, 2,
         "outside any sandbox the native module must be unaffected: {err3}"
@@ -3153,7 +3164,7 @@ fn typed_let_bindings_enforce_the_annotation() {
     let f = std::env::temp_dir().join(format!("axon_tlet_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  y }\n",
+        "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  exit(y)  0 }\n",
     )
     .unwrap();
     let ok = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -3764,7 +3775,7 @@ fn select_fires_first_ready_channel() {
         &f,
         "fn main() -> i64 {\n  let a = chan<i64>()\n  let b = chan<i64>()\n  \
          let result = 0\n  spawn { b.send(99) }\n  \
-         select { a.recv() => result = 1  b.recv() => result = 2 }\n  result\n}\n",
+         select { a.recv() => result = 1  b.recv() => result = 2 }\n  exit(result)\n  0\n}\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -5054,7 +5065,7 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let good = std::env::temp_dir().join(format!("axon_nestok_{}.ax", std::process::id()));
     std::fs::write(
         &good,
-        "type Inner = { v: i64 }\ntype Outer = { inner: Inner }\nfn main() -> i64 {\n  let o = Outer { inner: Inner { v: 5 } }\n  o.inner.v\n}\n",
+        "type Inner = { v: i64 }\ntype Outer = { inner: Inner }\nfn main() -> i64 {\n  let o = Outer { inner: Inner { v: 5 } }\n  exit(o.inner.v)\n  0\n}\n",
     )
     .unwrap();
     let outc = axon()
@@ -5110,7 +5121,7 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let sidx = std::env::temp_dir().join(format!("axon_sidx_{}.ax", std::process::id()));
     std::fs::write(
         &sidx,
-        "type P = { x: i64 }\nfn main() -> i64 {\n  let ps = [P { x: 7 }, P { x: 2 }]\n  ps[0].x\n}\n",
+        "type P = { x: i64 }\nfn main() -> i64 {\n  let ps = [P { x: 7 }, P { x: 2 }]\n  exit(ps[0].x)\n  0\n}\n",
     )
     .unwrap();
     let outsc = axon()
@@ -5196,7 +5207,7 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let mok = std::env::temp_dir().join(format!("axon_mok_{}.ax", std::process::id()));
     std::fs::write(
         &mok,
-        "type S = A | B\nfn classify(s: S) -> i64 {\n  let r = match s { S::A => 1\n    S::B => 2 }\n  r\n}\nfn main() -> i64 { classify(S::B) }\n",
+        "type S = A | B\nfn classify(s: S) -> i64 {\n  let r = match s { S::A => 1\n    S::B => 2 }\n  r\n}\nfn main() -> i64 { exit(classify(S::B))  0 }\n",
     )
     .unwrap();
     let outmc = axon()
@@ -5395,7 +5406,7 @@ fn calling_a_data_field_as_a_method_is_e0403() {
         &prim,
         "trait Double { fn double(self) -> i64 }\n\
          impl Double for i64 {\n  fn double(self: i64) -> i64 { self * 2 }\n}\n\
-         fn main() -> i64 {\n  let n = 5\n  n.double()\n}\n",
+         fn main() -> i64 {\n  let n = 5\n  exit(n.double())\n  0\n}\n",
     )
     .unwrap();
     let outpc = axon()
@@ -6027,7 +6038,7 @@ fn unknown_enum_variant_literal_is_e0404() {
     let cf = std::env::temp_dir().join(format!("axon_cfield_{}.ax", std::process::id()));
     std::fs::write(
         &cf,
-        "type S = A { x: i64 }\nfn main() -> i64 {\n  let s = S::A { x: 5 }\n  match s { S::A { x } => x }\n}\n",
+        "type S = A { x: i64 }\nfn main() -> i64 {\n  let s = S::A { x: 5 }\n  exit(match s { S::A { x } => x })\n  0\n}\n",
     )
     .unwrap();
     let outcc = axon()
@@ -6267,14 +6278,53 @@ fn byte_identical_diagnostics_are_collapsed_to_one() {
 
 #[test]
 fn run_exits_with_main_return_value() {
+    // `main`'s return is still the exit status — for values that ARE a status.
+    // 49, not 7: 7 is GOAL_BUDGET_EXIT_CODE, and a value that merely falls out of
+    // `main` may not claim a ledger code (see `interp::returned_exit_status`).
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
-    std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();
+    std::fs::write(&f, "fn main() -> i64 { 49 }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
-    let _ = std::fs::remove_file(&f);
     assert_eq!(
         out.status.code(),
-        Some(7),
+        Some(49),
         "main's i64 return should be the exit code"
+    );
+
+    // A returned ledger code does NOT pass through: it would be indistinguishable
+    // from the guard that owns it. The program is told so, and exits 1.
+    std::fs::write(&f, "fn main() -> i64 { 6 }\n").unwrap();
+    let forged = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let ferr = String::from_utf8_lossy(&forged.stderr);
+    assert_eq!(
+        forged.status.code(),
+        Some(1),
+        "a returned 6 must not be reportable as a refinement violation: {ferr}"
+    );
+    assert!(
+        ferr.contains("RESERVED"),
+        "and the program must be told why it did not get the status it named: {ferr}"
+    );
+
+    // Stating the same number with `exit` is a deliberate claim and is honoured —
+    // this is how a userland deploy gate signals a policy rejection.
+    std::fs::write(&f, "fn main() -> i64 { exit(6)  0 }\n").unwrap();
+    let stated = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert_eq!(
+        stated.status.code(),
+        Some(6),
+        "exit(6) states a status and must be honoured as written"
+    );
+
+    // A value that is not a status at all cannot silently become one: 3240 would
+    // have been observed as 168.
+    std::fs::write(&f, "fn main() -> i64 { 3240 }\n").unwrap();
+    let wide = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let werr = String::from_utf8_lossy(&wide.stderr);
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(wide.status.code(), Some(1), "3240 is not a status: {werr}");
+    assert!(
+        werr.contains("168"),
+        "the message must name what the caller WOULD have seen: {werr}"
     );
 }
 
@@ -6287,7 +6337,7 @@ fn verify_is_enforced_on_a_scalar_return_at_runtime() {
     // runs clean. (Mirrors the documented `@[verify(value <= 500)]` spend-cap.)
     let breach = "@[verify(value <= 500)]\n\
         fn recommend(roas: i64) -> i64 { roas + 100 }\n\
-        fn main() -> i64 { recommend(900) }\n";
+        fn main() -> i64 { exit(recommend(900))  0 }\n";
     let f = std::env::temp_dir().join(format!("axon_vscalar_bad_{}.ax", std::process::id()));
     std::fs::write(&f, breach).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -6309,7 +6359,7 @@ fn verify_is_enforced_on_a_scalar_return_at_runtime() {
 
     // A satisfied bound (i64 and f64) runs clean and returns normally.
     for (label, src, want) in [
-        ("i64 holds", "@[verify(value >= 0)]\nfn pos(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\nfn main() -> i64 { pos(-7) }\n", 7),
+        ("i64 holds", "@[verify(value >= 0)]\nfn pos(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\nfn main() -> i64 { exit(pos(-7))  0 }\n", 7),
         ("f64 holds", "@[verify(value <= 1.0)]\nfn frac() -> f64 { 0.5 }\nfn main() -> i64 {\n  let _ = frac()\n  0\n}\n", 0),
     ] {
         let f = std::env::temp_dir().join(format!("axon_vscalar_ok_{}_{label}.ax", std::process::id()));
@@ -6986,7 +7036,7 @@ fn function_can_return_an_enum() {
         "enum Plan { Step { v: i64, next: Plan }, Done }\n\
          fn make() -> Plan { Plan::Step { v: 7, next: Plan::Done } }\n\
          fn val(p: Plan) -> i64 { match p { Plan::Done => 0  Plan::Step { v, next } => v + val(next) } }\n\
-         fn main() -> i64 { val(make()) }\n",
+         fn main() -> i64 { exit(val(make()))  0 }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -7137,7 +7187,7 @@ fn or_patterns_in_match() {
         "enum C { Red, Green, Blue }\n\
          fn warm(c: C) -> i64 { match c { C::Red | C::Green => 1  C::Blue => 0 } }\n\
          fn rank(n: i64) -> i64 { match n { 1 | 2 | 3 => 10  _ => 0 } }\n\
-         fn main() -> i64 { warm(C::Green) + warm(C::Blue) + rank(2) }\n",
+         fn main() -> i64 { exit(warm(C::Green) + warm(C::Blue) + rank(2))  0 }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -7167,7 +7217,7 @@ fn struct_and_array_equality() {
          let a = P { x: 1, y: 2 }\n  let b = P { x: 1, y: 2 }\n  \
          let c = P { x: 9, y: 2 }\n  \
          let arr_eq = if [1, 2] == [1, 2] { 1 } else { 0 }\n  \
-         if a == b && a != c && arr_eq == 1 { 7 } else { 0 }\n}\n",
+         exit(if a == b && a != c && arr_eq == 1 { 7 } else { 0 })\n  0\n}\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -9727,8 +9777,8 @@ fn refinement_constant_via_bound_builtin_caught_statically() {
     }
     // ACCEPT (valid constant → builds + runs clean, no false positive):
     let accept = [
-        ("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = max_i64(0 - 5, 3)\n p }", 3),
-        ("type NonNeg = i64 where _ >= 0\nfn main() -> i64 { let p: NonNeg = abs_i64(0 - 7)\n p }", 7),
+        ("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = max_i64(0 - 5, 3)\n exit(p)  0 }", 3),
+        ("type NonNeg = i64 where _ >= 0\nfn main() -> i64 { let p: NonNeg = abs_i64(0 - 7)\n exit(p)  0 }", 7),
     ];
     for (i, (src, code)) in accept.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_cbb_ok_{}_{i}.ax", std::process::id()));
@@ -9926,18 +9976,18 @@ fn refinement_struct_field_and_whole_struct_enforced_at_runtime() {
     // 2. WHOLE-STRUCT refinement (`_.lo <= _.hi`) violated by non-constant. (today: 2)
     let (c, m) = run("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
          fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
-         fn main() -> i64 { let r = mk(10, 2)\n r.hi }\n");
+         fn main() -> i64 { let r = mk(10, 2)\n exit(r.hi)  0 }\n");
     assert_eq!(c, 6, "a whole-struct refinement violation must exit 6: {m}");
 
     // 3 + 4. No false positives: satisfying field + whole-struct values run clean.
     let (c, m) = run("type Pos = i64 where _ > 0\n\
          type Box = { v: Pos }\n\
          fn mk(x: i64) -> Box { Box { v: x } }\n\
-         fn main() -> i64 { let b = mk(5)\n b.v }\n");
+         fn main() -> i64 { let b = mk(5)\n exit(b.v)  0 }\n");
     assert_eq!(c, 5, "a satisfying struct field must run clean: {m}");
     let (c, m) = run("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
          fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
-         fn main() -> i64 { let r = mk(2, 10)\n r.hi }\n");
+         fn main() -> i64 { let r = mk(2, 10)\n exit(r.hi)  0 }\n");
     assert_eq!(c, 10, "a satisfying whole-struct must run clean: {m}");
 }
 
@@ -10011,7 +10061,7 @@ fn refinement_let_binding_enforced_at_runtime_and_statically() {
     // No false positives: satisfying constant + non-constant.
     let (c, m) = run("type Pos = i64 where _ > 0\n\
          fn neg(x: i64) -> i64 { 0 - x }\n\
-         fn main() -> i64 { let p: Pos = neg(0 - 3)\n p }\n");
+         fn main() -> i64 { let p: Pos = neg(0 - 3)\n exit(p)  0 }\n");
     assert_eq!(c, 3, "a satisfying non-constant let must run clean: {m}");
     assert_eq!(
         check("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = 7\n p }\n").0,
@@ -12113,7 +12163,7 @@ fn dict_from_str_malformed_is_recoverable_not_a_panic() {
     // (1) lenient: a 3-line input with one bad line yields a 2-entry dict, exit 0.
     let lenient = "fn main() -> i64 {\n  \
         let d = dict_from_str(\"a=1\\nbad_line\\nb=2\")\n  \
-        dict_len(d)\n\
+        exit(dict_len(d))\n  0\n\
     }\n";
     let f = std::env::temp_dir().join(format!("axon_d31a_{}.ax", std::process::id()));
     std::fs::write(&f, lenient).unwrap();
@@ -12129,10 +12179,10 @@ fn dict_from_str_malformed_is_recoverable_not_a_panic() {
 
     // (2) strict: dict_try_from_str returns Err on the malformed line.
     let strict = "fn main() -> i64 {\n  \
-        match dict_try_from_str(\"a=1\\nbad_line\\nb=2\") {\n    \
+        exit(match dict_try_from_str(\"a=1\\nbad_line\\nb=2\") {\n    \
             Ok(_) => 0\n    \
             Err(_) => 7\n  \
-        }\n\
+        })\n  0\n\
     }\n";
     let f2 = std::env::temp_dir().join(format!("axon_d31b_{}.ax", std::process::id()));
     std::fs::write(&f2, strict).unwrap();
@@ -13301,7 +13351,7 @@ fn multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks() {
             let _ = goal_run(\"pair\", 100.0, 80)\n  \
             let xs = goal_best_inputs(\"pair\", 100.0)\n  \
             // Exit code = x* + y* (3 + 7 = 10) so we can pin the contract.\n  \
-            xs[0] + xs[1]\n\
+            exit(xs[0] + xs[1])\n  0\n\
         }\n";
     let f = std::env::temp_dir().join(format!("axon_m2_{}.ax", std::process::id()));
     std::fs::write(&f, src2).unwrap();
@@ -14149,7 +14199,7 @@ fn uncertain_bool_condition_branches_on_inner_value() {
     for (label, src, want) in [
         ("if true branch", "fn main() -> i64 { let a = uncertain_new(10, 0.9)\n  if a > 5 { 1 } else { 0 } }\n", 1),
         ("if false branch", "fn main() -> i64 { let a = uncertain_new(3, 0.9)\n  if a > 5 { 1 } else { 0 } }\n", 0),
-        ("while loop", "fn main() -> i64 { let i = 0\n  let n = uncertain_new(3, 0.9)\n  while i < n { i = i + 1 }\n  i }\n", 3),
+        ("while loop", "fn main() -> i64 { let i = 0\n  let n = uncertain_new(3, 0.9)\n  while i < n { i = i + 1 }\n  exit(i)  0 }\n", 3),
     ] {
         let f = std::env::temp_dir().join(format!("axon_unccond_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
         std::fs::write(&f, src).unwrap();
@@ -14166,8 +14216,8 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     // STRUCT to the param, so `x` / `x * 2` silently produced 0. The value is now
     // unwrapped to its inner `T` at the call boundary (confidence dropped there).
     for (label, src, want) in [
-        ("identity", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  id(a) }\n", 5),
-        ("arithmetic", "fn double(x: i64) -> i64 { x * 2 }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  double(a) }\n", 10),
+        ("identity", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  exit(id(a))  0 }\n", 5),
+        ("arithmetic", "fn double(x: i64) -> i64 { x * 2 }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  exit(double(a))  0 }\n", 10),
     ] {
         let f = std::env::temp_dir().join(format!("axon_uncarg_{}_{}.ax", std::process::id(), label));
         std::fs::write(&f, src).unwrap();
@@ -14181,7 +14231,7 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let f = std::env::temp_dir().join(format!("axon_uncparam_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn getval(u: Uncertain<i64>) -> i64 { u.value }\nfn main() -> i64 { let a = uncertain_new(7, 0.9)\n  getval(a) }\n",
+        "fn getval(u: Uncertain<i64>) -> i64 { u.value }\nfn main() -> i64 { let a = uncertain_new(7, 0.9)\n  exit(getval(a))  0 }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -14198,7 +14248,7 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let ret = std::env::temp_dir().join(format!("axon_uncret_{}.ax", std::process::id()));
     std::fs::write(
         &ret,
-        "fn make() -> i64 { let a = uncertain_new(9, 0.9)\n  a }\nfn main() -> i64 { let r = make()\n  r + 1 }\n",
+        "fn make() -> i64 { let a = uncertain_new(9, 0.9)\n  a }\nfn main() -> i64 { let r = make()\n  exit(r + 1)  0 }\n",
     )
     .unwrap();
     let out = axon()
@@ -14215,7 +14265,7 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let keep = std::env::temp_dir().join(format!("axon_uncretkeep_{}.ax", std::process::id()));
     std::fs::write(
         &keep,
-        "fn mk() -> Uncertain<i64> { uncertain_new(5, 0.9) }\nfn main() -> i64 { let u = mk()\n  u.value }\n",
+        "fn mk() -> Uncertain<i64> { uncertain_new(5, 0.9) }\nfn main() -> i64 { let u = mk()\n  exit(u.value)  0 }\n",
     )
     .unwrap();
     let out = axon()
@@ -14232,10 +14282,10 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     // The SAME soft-typing applies to `Temporal<T>` at the boundary: it unwraps
     // to its present `value` when flowing into a plain-T param or scalar return.
     for (label, src, want) in [
-        ("temporal param", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  id(t) }\n", 7),
-        ("temporal return", "fn make() -> i64 { temporal_new(9, 100, 0.1) }\nfn main() -> i64 { let r = make()\n  r + 1 }\n", 10),
+        ("temporal param", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  exit(id(t))  0 }\n", 7),
+        ("temporal return", "fn make() -> i64 { temporal_new(9, 100, 0.1) }\nfn main() -> i64 { let r = make()\n  exit(r + 1)  0 }\n", 10),
         ("temporal compare", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  if t > 5 { 1 } else { 0 } }\n", 1),
-        ("temporal arithmetic", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  t + 3 }\n", 10),
+        ("temporal arithmetic", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  exit(t + 3)  0 }\n", 10),
     ] {
         let f = std::env::temp_dir().join(format!("axon_temp_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
         std::fs::write(&f, src).unwrap();
@@ -14295,7 +14345,7 @@ fn str_digits_only_strips_non_digits() {
         println(digits)\n  \
         // The full 10-digit number overflows a u8 exit code, so check via\n  \
         // a verifiable hash instead. len(\"4155550142\") == 10.\n  \
-        len(digits)\n\
+        exit(len(digits))\n  0\n\
     }\n";
     let f = std::env::temp_dir().join(format!("axon_strd_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
@@ -14386,7 +14436,7 @@ fn integer_overflow_panics_not_silently_wraps() {
 #[test]
 fn normal_arithmetic_unaffected_by_overflow_check() {
     // Guard against the checked-arithmetic change breaking ordinary math.
-    let src = "fn main() -> i64 { 2 + 3 * 4 - 1 }\n";
+    let src = "fn main() -> i64 { exit(2 + 3 * 4 - 1)  0 }\n";
     let f = std::env::temp_dir().join(format!("axon_arith_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -14543,7 +14593,7 @@ fn random_i64_empty_range_returns_lo() {
     // hi == lo is an empty half-open range [lo, lo); returning lo is the
     // documented boundary behavior (NOT an error — distinct from inverted args).
     let f = std::env::temp_dir().join(format!("axon_rngempty_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() -> i64 { random_i64(7, 7) }\n").unwrap();
+    std::fs::write(&f, "fn main() -> i64 { exit(random_i64(7, 7))  0 }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(
@@ -19605,7 +19655,7 @@ fn arr_push_is_generic_over_element_type() {
             let rows2 = arr_push(rows, Rec { id: 1, region: \"north\" })\n  \
             let rows3 = arr_push(rows2, Rec { id: 2, region: \"south\" })\n  \
             println(\"n={to_str(len(rows3))} r0={rows3[0].region} id1={to_str(rows3[1].id)}\")\n  \
-            len(rows3)\n\
+            exit(len(rows3))\n  0\n\
         }\n";
     let f = std::env::temp_dir().join(format!("axon_pushrec_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
@@ -19631,7 +19681,7 @@ fn arr_push_still_works_for_i64_arrays() {
         let a = [1, 2, 3]\n  \
         let b = arr_push(&a, 4)\n  \
         println(\"len={to_str(len(b))} last={to_str(b[3])} src={to_str(len(a))}\")\n  \
-        arr_sum_i64(&b)\n\
+        exit(arr_sum_i64(&b))\n  0\n\
     }\n";
     let f = std::env::temp_dir().join(format!("axon_pushi64_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();

@@ -2962,6 +2962,78 @@ pub extern "C" fn __axon_refine_panic(
     std::process::exit(REFINE_VIOLATION_EXIT_CODE);
 }
 
+/// The native mirror of `axon_core::interp::returned_exit_status` — what a value
+/// that fell out of `main` becomes.
+///
+/// Codegen routes `main`'s `i64` return through this so a native binary reports
+/// the same status, and prints the same line, as `axon run` does for the same
+/// return (I-2). Two hazards, both measured rather than imagined: a status is one
+/// byte, so `fn main() -> i64 { 3240 }` was observed as 168; and 2..=15 and 101
+/// belong to the enforcement ledger (`governance/EXIT_CODES.md`), so a program
+/// whose answer was 6 was indistinguishable from a refinement violation.
+///
+/// A status the program STATES with `exit(n)` is a different matter and is
+/// honoured as written — see [`__axon_exit_status`].
+///
+/// The rule is DUPLICATED rather than shared because this crate deliberately
+/// depends on nothing (it is linked into every native binary). The copies are
+/// held together by `scripts/exit_code_parity.sh`; change one, change both.
+#[no_mangle]
+pub extern "C" fn __axon_main_status(n: i64) -> i64 {
+    const LEDGER_TOP: i64 = 15;
+    let advice = "print it (`println(to_str(v))`) and return 0; if you MEAN a status, state it \
+                  with `exit(n)`, which is honoured as written — see governance/EXIT_CODES.md";
+    if n == 0 || n == 1 {
+        return n;
+    }
+    let complaint = if (2..=LEDGER_TOP).contains(&n) || n == RUNTIME_PANIC_EXIT_CODE as i64 {
+        format!(
+            "axon: `main` returned {n}, and {n} is RESERVED — the exit-code ledger assigns it, \
+             so exiting with it would make this run indistinguishable from a guard firing. \
+             Exiting 1 instead; {advice}"
+        )
+    } else if !(0..=255).contains(&n) {
+        format!(
+            "axon: `main` returned {n}, which is not a status — a status is one byte, so the \
+             caller would have seen {}. Exiting 1 instead; {advice}",
+            n.rem_euclid(256)
+        )
+    } else {
+        return n;
+    };
+    complain(&complaint);
+    1
+}
+
+/// The native mirror of `axon_core::interp::stated_exit_status` — what `exit(n)`
+/// becomes.
+///
+/// Stating a status is deliberate, so the ledger vocabulary is available: a
+/// userland deploy gate may `exit(3)` and mean the same "policy rejection" the
+/// `@[verify]` gate means (BUG_HUNT #26/#34). Only a value that is not a status
+/// at all is refused — `exit(3240)` would be seen as 168.
+#[no_mangle]
+pub extern "C" fn __axon_exit_status(n: i64) -> i64 {
+    if (0..=255).contains(&n) {
+        return n;
+    }
+    complain(&format!(
+        "axon: exit({n}) is not a status — a status is one byte, so the caller would have seen \
+         {}. Exiting 1 instead; pass a value in 0..=255.",
+        n.rem_euclid(256)
+    ));
+    1
+}
+
+/// Flush stdout before writing to stderr, so the two streams stay in the order
+/// the program produced them — the interpreter does the same before every
+/// diagnostic, and a differing interleaving is a parity failure.
+fn complain(msg: &str) {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    eprintln!("{msg}");
+}
+
 /// The exit code for a genuine runtime panic (integer overflow, division by
 /// zero, and the other checked-arithmetic traps). Matches the interpreter's
 /// `interp::run` panic path, which exits 101 on `Flow::Panic` — so a native

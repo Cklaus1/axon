@@ -7203,6 +7203,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.log_return_if_adaptive_val(v);
                     self.emit_verify_check_if_needed(v, fn_val);
                     self.emit_refine_return_check_if_needed(v, fn_val);
+                    // An EXPLICIT `return n` from `main` is as much a chosen exit
+                    // status as a tail expression is, so it goes through the same
+                    // rule — otherwise the guard would cover one of `main`'s two
+                    // exits and read as covering both.
+                    let v = self.map_main_exit_status(fn_val, v);
                     build_wrappers::w_ret(&self.ir.builder, v);
                 } else {
                     self.log_return_if_adaptive();

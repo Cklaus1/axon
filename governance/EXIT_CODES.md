@@ -35,6 +35,47 @@ it.** Derived from the actual constants, not from memory:
 **Next free: 16.** (Avoid 126/127/128+N — the shell uses those for
 not-executable, not-found, and killed-by-signal.)
 
+## What a PROGRAM may exit with
+
+The table above is a vocabulary a supervisor trusts. That only works if a program
+cannot forge it, so `main`'s return and `exit(n)` are judged differently — the
+difference is whether the program *stated* a status or merely *produced a value*.
+
+| | `exit(n)` — stated | falling out of `main` — an answer |
+|---|---|---|
+| 0, 1, 16..=125 | as written | as written |
+| 2..=15, 101 (this table) | **as written** | 1, with the reason on stderr |
+| 126..=255 | as written | as written |
+| outside 0..=255 | 1, with the reason | 1, with the reason |
+
+**Stating a status is deliberate**, so the ledger vocabulary stays available to
+userland: a deploy gate written in Axon says `exit(3)` and means the same "policy
+rejection" the `@[verify]` gate means (BUG_HUNT #26/#34 — every deploy-gate
+rejection is one exit class). The surface compiler emits exactly that.
+
+126 and up are the shell's by convention (not-executable, not-found,
+killed-by-signal-N), and are deliberately NOT reserved here — that is a statement
+about how a shell reports its own failures, not a claim this project makes on the
+number, and ordinary answers land there.
+
+**A value that falls out of `main` is an answer**, and two things went wrong when
+it was passed through unchanged. Both were measured, not imagined:
+
+- *Silent truncation.* `fn main() -> i64 { 3240 }` was observed by the caller as
+  **168** — a status is one byte. The number the program produced was not the
+  number anyone saw, and nothing said so. Found when a benchmark program computed
+  its answer correctly, printed it, returned it, and scored as a failure.
+- *Impersonating a guard.* A program whose answer happens to be 6 was
+  indistinguishable from a refinement violation, and 11 from a replay divergence.
+  Not hypothetical: four checked-in examples returned 2 or 3 as ordinary "blocked"
+  signals, and three cases in `exit_code_parity.sh` returned 3, 7 and 10 as
+  ordinary values.
+
+Implemented in `interp::returned_exit_status` / `interp::stated_exit_status`, and
+mirrored for native in `axon-rt` (`__axon_main_status` / `__axon_exit_status`).
+The two engines must agree on the status AND on the sentence they print;
+`scripts/exit_code_parity.sh` checks both.
+
 ## Why enforcement codes are not 101
 
 Each code above 2 exists so a supervisor can distinguish *"the program is wrong"*

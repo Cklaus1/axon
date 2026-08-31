@@ -264,6 +264,101 @@ pub const GOAL_BUDGET_EXIT_CODE: i32 = 7;
 /// continue with an `Err` result.
 pub const SANDBOX_VIOLATION_EXIT_CODE: i32 = 8;
 
+/// The enforcement ledger's block, and the shell's.
+///
+/// 2 through 15 belong to `governance/EXIT_CODES.md` — 3 verify, 4 kill-switch,
+/// 6 refinement, 8 sandbox, 11 replay-divergence, up to its own "next free: 16".
+/// 101 is a panic. Everything else in 0..=255 is a program's to use.
+///
+/// 126 and up are the SHELL's by convention (not-executable, not-found,
+/// killed-by-signal-N) and are deliberately NOT reserved here: that is a
+/// convention about how a shell reports its own failures, not a claim this
+/// project makes on the number, and ordinary answers land there (a test summing
+/// to 220 is not making a claim about signals).
+const LEDGER_TOP: i64 = 15;
+
+/// A status the program STATED, via `exit(n)`.
+///
+/// Stating a status is a deliberate act, so the ledger vocabulary is available:
+/// a userland deploy gate that has decided to reject may say `exit(3)` and mean
+/// the same "policy rejection" the `@[verify]` gate means. That is this repo's
+/// own design (BUG_HUNT #26/#34 — every deploy-gate rejection is one exit
+/// class), and taking the vocabulary away from userland would break it.
+///
+/// What is still refused is a value that is not a status at all: a status is one
+/// byte, and `exit(3240)` would be observed as 168 — a number the program never
+/// mentioned.
+pub fn stated_exit_status(n: i64) -> (i32, Option<String>) {
+    if (0..=255).contains(&n) {
+        return (n as i32, None);
+    }
+    (
+        1,
+        Some(format!(
+            "axon: exit({n}) is not a status — a status is one byte, so the caller would have \
+             seen {}. Exiting 1 instead; pass a value in 0..=255.",
+            n.rem_euclid(256)
+        )),
+    )
+}
+
+/// A value that fell out of `main`, which is an ANSWER, not a status.
+///
+/// `fn main() -> i64 { … result }` is the shape a program takes when it computes
+/// something and hands it back. Passing that through to the process status
+/// unchanged went wrong two ways, both measured rather than imagined:
+///
+/// * **Silent truncation.** `3240` was observed by the caller as `168`. The
+///   number the program produced was not the number anyone saw, and nothing said
+///   so. (A benchmark program computed its answer correctly, printed it,
+///   returned it, and scored as a failure.)
+/// * **Impersonating a guard.** A program whose answer happens to be 6 is
+///   indistinguishable from a refinement violation, and 11 from a replay
+///   divergence. A supervisor branches on that number precisely because it is
+///   supposed to mean a guard fired; arithmetic could forge it.
+///
+/// Both become status 1 — which is what a nonzero return meant anyway — with the
+/// reason on stderr. Ordinary values pass through, so `main() -> i64 { 49 }`
+/// still exits 49; a program that MEANS a ledger code says so with `exit(n)`,
+/// where the intent is explicit and is honoured.
+///
+/// MIRRORED in `axon-rt` (`__axon_main_status`) for the native engine. The two
+/// are held together by `scripts/exit_code_parity.sh`, not by shared code — the
+/// runtime crate deliberately depends on nothing.
+pub fn returned_exit_status(n: i64) -> (i32, Option<String>) {
+    let advice = "print it (`println(to_str(v))`) and return 0; if you MEAN a status, state it \
+                  with `exit(n)`, which is honoured as written — see governance/EXIT_CODES.md";
+    if n == 0 || n == 1 {
+        return (n as i32, None);
+    }
+    if (2..=LEDGER_TOP).contains(&n) || n == RUNTIME_PANIC_EXIT_CODE as i64 {
+        return (
+            1,
+            Some(format!(
+                "axon: `main` returned {n}, and {n} is RESERVED — the exit-code ledger assigns \
+                 it, so exiting with it would make this run indistinguishable from a guard \
+                 firing. Exiting 1 instead; {advice}"
+            )),
+        );
+    }
+    if !(0..=255).contains(&n) {
+        return (
+            1,
+            Some(format!(
+                "axon: `main` returned {n}, which is not a status — a status is one byte, so the \
+                 caller would have seen {}. Exiting 1 instead; {advice}",
+                n.rem_euclid(256)
+            )),
+        );
+    }
+    (n as i32, None)
+}
+
+/// A panic is a crash, i.e. a bug — distinct from every enforcement code, which
+/// is a guard doing its job. Named here so [`returned_exit_status`] can refuse to
+/// let a computed value impersonate one.
+pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
+
 type R = Result<Value, Flow>;
 
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
@@ -816,15 +911,31 @@ pub fn run_program_capturing(program: &Program) -> (i32, String) {
     on_deep_stack(|| {
         // Install a fresh capture buffer, restoring any prior one on exit.
         let prev = OUTPUT_SINK.with(|s| s.replace(Some(String::new())));
-        let code = run_program_inner(program, crate::verify::Discharged::default());
+        // Unmapped: the oracle compares what two programs PRODUCE. Mapping first
+        // would collapse distinct results into 1 and call a rewrite equivalent
+        // when it is not.
+        let code = run_program_inner(program, crate::verify::Discharged::default(), false);
         let captured = OUTPUT_SINK.with(|s| s.replace(prev)).unwrap_or_default();
         (code, captured)
     })
 }
 
-/// Parse-and-run convenience: returns the process exit code.
+/// Parse-and-run convenience: returns the **process exit status** — what the
+/// caller of `axon run` observes, with `stated_exit_status` /
+/// `returned_exit_status` applied.
 pub fn run_program(program: &Program) -> i32 {
-    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()))
+    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true))
+}
+
+/// Like [`run_program`], but returns the value the program PRODUCED rather than
+/// the status a caller would observe.
+///
+/// For reading a result out of a program — a test asserting on a computed value,
+/// or anything comparing two runs. Guard outcomes (verify, refinement, sandbox …)
+/// still come back as their ledger codes; only `main`'s own return and `exit(n)`
+/// are left alone.
+pub fn run_program_unmapped(program: &Program) -> i32 {
+    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), false))
 }
 
 /// Phase 5 §4: run with a set of SMT-discharged obligations installed, so the
@@ -995,7 +1106,7 @@ pub fn run_program_with_discharged(
     program: &Program,
     discharged: crate::verify::Discharged,
 ) -> i32 {
-    on_deep_stack(|| run_program_inner(program, discharged))
+    on_deep_stack(|| run_program_inner(program, discharged, true))
 }
 
 /// Phase 11: call a specific named function (no args) and return an exit code.
@@ -1518,7 +1629,7 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
 #[cfg(target_os = "linux")]
 pub fn run_suspendable_vsock(program: &Program, vsock_port: u32) -> i32 {
     VSOCK_PORT.with(|c| c.set(vsock_port as i32));
-    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()));
+    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
     VSOCK_PORT.with(|c| c.set(-1));
     code
 }
@@ -1594,7 +1705,7 @@ pub fn run_suspendable_hypercall(program: &Program) -> i32 {
     let sock_path = std::env::var("AXON_HOST_SOCKET")
         .unwrap_or_else(|_| "/tmp/axon-host.sock".to_string());
     UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = Some(sock_path));
-    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()));
+    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
     UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = None);
     code
 }
@@ -1723,7 +1834,28 @@ pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_suspendable_values(
     program: &Program,
+    host: impl FnMut(SendValue) -> Option<SendValue>,
+) -> i32 {
+    run_suspendable_values_inner(program, host, /*map_status=*/ true)
+}
+
+/// [`run_suspendable_values`] returning the value the program PRODUCED rather
+/// than the status a caller would observe — see [`run_program_unmapped`] for why
+/// the two are separate, and why reading a result out of a program must not go
+/// through the process-status rule.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) fn run_suspendable_values_unmapped(
+    program: &Program,
+    host: impl FnMut(SendValue) -> Option<SendValue>,
+) -> i32 {
+    run_suspendable_values_inner(program, host, /*map_status=*/ false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_suspendable_values_inner(
+    program: &Program,
     mut host: impl FnMut(SendValue) -> Option<SendValue>,
+    map_status: bool,
 ) -> i32 {
     use std::sync::mpsc::channel;
     let (req_tx, req_rx) = channel::<SendValue>(); // worker → host (await requests)
@@ -1746,7 +1878,7 @@ pub fn run_suspendable_values(
             .stack_size(stack)
             .spawn_scoped(scope, move || {
                 HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
-                let code = run_program_inner(program, crate::verify::Discharged::default());
+                let code = run_program_inner(program, crate::verify::Discharged::default(), map_status);
                 // Drop the channels → req_tx closes → the host loop below ends.
                 HOST_AWAIT.with(|h| *h.borrow_mut() = None);
                 code
@@ -1767,14 +1899,37 @@ pub fn run_suspendable_values(
 /// `Value` display string for the prompt (text hosts can't carry structured
 /// payloads); use [`run_suspendable_values`] for full `Value` fidelity. (R15.)
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<String>) -> i32 {
-    run_suspendable_values(program, |req| {
-        let s = match &req {
-            SendValue::Str(s) => s.clone(),
-            other => send_value_display(other),
-        };
-        host(&s).map(SendValue::Str)
-    })
+pub fn run_suspendable(program: &Program, host: impl FnMut(&str) -> Option<String>) -> i32 {
+    run_suspendable_str_inner(program, host, /*map_status=*/ true)
+}
+
+/// [`run_suspendable`] returning the value the program PRODUCED — the same
+/// distinction [`run_program_unmapped`] draws, for the suspendable substrate.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) fn run_suspendable_unmapped(
+    program: &Program,
+    host: impl FnMut(&str) -> Option<String>,
+) -> i32 {
+    run_suspendable_str_inner(program, host, /*map_status=*/ false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_suspendable_str_inner(
+    program: &Program,
+    mut host: impl FnMut(&str) -> Option<String>,
+    map_status: bool,
+) -> i32 {
+    run_suspendable_values_inner(
+        program,
+        |req| {
+            let s = match &req {
+                SendValue::Str(s) => s.clone(),
+                other => send_value_display(other),
+            };
+            host(&s).map(SendValue::Str)
+        },
+        map_status,
+    )
 }
 
 /// wasm32 has no OS threads, so the worker-thread host-driver substrate can't run
@@ -1785,7 +1940,7 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<S
 /// substrate that replaces this one on wasm, with the same surface + semantics.
 #[cfg(target_arch = "wasm32")]
 pub fn run_suspendable(program: &Program, _host: impl FnMut(&str) -> Option<String>) -> i32 {
-    run_program_inner(program, crate::verify::Discharged::default())
+    run_program_inner(program, crate::verify::Discharged::default(), true)
 }
 
 /// wasm `Value`-aware variant — same no-thread story as `run_suspendable`: there is
@@ -1797,7 +1952,7 @@ pub fn run_suspendable_values(
     program: &Program,
     _host: impl FnMut(SendValue) -> Option<SendValue>,
 ) -> i32 {
-    run_program_inner(program, crate::verify::Discharged::default())
+    run_program_inner(program, crate::verify::Discharged::default(), true)
 }
 
 /// The default CLI host for `host_await`: write the request (a prompt) to stdout,
@@ -1886,7 +2041,21 @@ fn pin_ai_net_allowlist(program: &Program) {
 #[cfg(not(feature = "asi-runtime"))]
 fn pin_ai_net_allowlist(_program: &Program) {}
 
-fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -> i32 {
+/// `map_status` decides whether the value the program produced is turned into a
+/// PROCESS EXIT STATUS (`stated_exit_status` / `returned_exit_status`) or handed
+/// back raw.
+///
+/// The rule belongs at the process boundary and nowhere else. Two callers read
+/// `main`'s return as a *value* rather than as a status, and must not see it
+/// rewritten: the R10 G1 oracle, which compares `(exit_code, stdout)` between an
+/// original and a transformed program — collapsing 6 and 7 both to 1 would make
+/// a meaning-changing rewrite look equivalent — and the interpreter's own tests,
+/// which use the return as the cheapest way to read a computed result out.
+fn run_program_inner(
+    program: &Program,
+    discharged: crate::verify::Discharged,
+    map_status: bool,
+) -> i32 {
     let mut interp = Interp::build(program).with_discharged(discharged);
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
     // is malformed), not a runtime panic. Report it cleanly with exit 2 (the
@@ -1995,9 +2164,23 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
             let _ = std::fs::write(path, lines);
         }
     }
+    // Two different things, deliberately judged by two different rules: a status
+    // the program STATED with `exit(n)` is honoured as written (the ledger
+    // vocabulary is userland's to use), while a value that merely fell out of
+    // `main` is an answer and may not impersonate a guard. See
+    // `stated_exit_status` / `returned_exit_status`.
+    let report = |(code, complaint): (i32, Option<String>)| -> i32 {
+        if let Some(msg) = complaint {
+            let _ = std::io::stdout().flush();
+            eprintln!("{msg}");
+        }
+        code
+    };
     match outcome {
+        Ok(Value::Int(n)) if map_status => report(returned_exit_status(n)),
         Ok(Value::Int(n)) => n as i32,
         Ok(_) => 0,
+        Err(Flow::Exit(code)) if map_status => report(stated_exit_status(code as i64)),
         Err(Flow::Exit(code)) => code,
         Err(Flow::VerifyFailed(msg)) => {
             // Policy rejection, not a crash — distinct exit code so CI can tell
@@ -3492,7 +3675,11 @@ mod tests {
 
     fn run(src: &str) -> i32 {
         let program = crate::parse_source(src).expect("parse failed");
-        run_program(&program)
+        // Unmapped: these tests use `main`'s return as a value channel — the
+        // cheapest way to read a computed result out of a program — and the
+        // status rule is about what a PROCESS reports, not what a program
+        // computed. The rule has its own tests, plus `exit_code_parity.sh`.
+        run_program_unmapped(&program)
     }
 
     /// AUDIT T35 (finding RT-02). The static checker validates `ai_complete`
@@ -3555,7 +3742,96 @@ fn main() { }
 
     #[test]
     fn main_returns_exit_code() {
-        assert_eq!(run("fn main() -> i64 { 7 }"), 7);
+        // 49, not 7: 7 is GOAL_BUDGET_EXIT_CODE, and a value falling out of
+        // `main` may no longer claim a ledger code. That this test had to change
+        // is itself the finding — the assertion was using a reserved number as
+        // an ordinary return value.
+        assert_eq!(run("fn main() -> i64 { 49 }"), 49);
+    }
+
+    #[test]
+    fn a_returned_answer_may_not_impersonate_a_guard() {
+        // The whole point of the ledger is that a supervisor can branch on it.
+        // A program whose ANSWER happens to be 6 must not be readable as a
+        // refinement violation, or 11 as a replay divergence — otherwise any
+        // program's arithmetic can forge the one signal the supervisor trusts.
+        for reserved in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 101] {
+            let (code, complaint) = returned_exit_status(reserved);
+            assert_eq!(code, 1, "a returned {reserved} must not exit {reserved}");
+            assert!(
+                complaint.is_some_and(|m| m.contains("RESERVED")),
+                "and it must say why it did not"
+            );
+        }
+        // The ordinary ground either side of the ledger is untouched.
+        for ok in [0, 1, 16, 49, 125, 200, 255] {
+            assert_eq!(returned_exit_status(ok), (ok as i32, None));
+        }
+    }
+
+    #[test]
+    fn a_returned_answer_may_not_truncate_silently() {
+        // A status is one byte. `main` returning 3240 was OBSERVED as 168: the
+        // number the program produced was not the number anyone saw, and nothing
+        // said so. Refusing to exit at all is not an option (the process must
+        // exit with something), so it exits 1 and explains itself.
+        let (code, complaint) = returned_exit_status(3240);
+        assert_eq!(code, 1);
+        let msg = complaint.expect("silent truncation is the bug — it must speak");
+        assert!(
+            msg.contains("168"),
+            "the message must name what the caller WOULD have seen, or it does \
+             not explain the surprise: {msg}"
+        );
+        // Negative values are the same hazard wearing another hat.
+        assert_eq!(returned_exit_status(-1).0, 1);
+        assert_eq!(returned_exit_status(256).0, 1);
+        // 126..=255 are the SHELL's convention, not this project's ledger, and
+        // ordinary answers land there — they pass through.
+        assert_eq!(returned_exit_status(200), (200, None));
+        assert_eq!(returned_exit_status(126), (126, None));
+    }
+
+    #[test]
+    fn a_stated_status_is_honoured_including_ledger_codes() {
+        // `exit(n)` is a deliberate claim about the process status, so userland
+        // keeps the ledger vocabulary — this is how a deploy gate written in
+        // Axon says "policy rejection" with the same code the @[verify] gate
+        // uses (BUG_HUNT #26/#34). Taking that away would have broken the
+        // one-class-per-rejection design while claiming to protect it.
+        for n in [0, 1, 3, 6, 11, 49, 101, 200, 255] {
+            assert_eq!(
+                stated_exit_status(n),
+                (n as i32, None),
+                "exit({n}) is a statement of intent and must be honoured as written"
+            );
+        }
+        // What is still refused is a value that is not a status at all.
+        let (code, complaint) = stated_exit_status(3240);
+        assert_eq!(code, 1);
+        assert!(complaint.is_some_and(|m| m.contains("168")));
+    }
+
+    #[test]
+    fn the_two_rules_differ_only_where_intent_differs() {
+        // The load-bearing distinction, stated as an assertion rather than left
+        // to prose: on the ledger block the two rules must DISAGREE (stated is
+        // honoured, returned is not), and everywhere else they must agree.
+        for n in 2..=15 {
+            assert_ne!(
+                stated_exit_status(n).0,
+                returned_exit_status(n).0,
+                "the ledger block is exactly where stating a status differs from \
+                 producing a value; if these agree, one of the two rules is wrong"
+            );
+        }
+        for n in [0, 1, 16, 49, 125, 3240, -1] {
+            assert_eq!(
+                stated_exit_status(n).0 == returned_exit_status(n).0,
+                true,
+                "outside the reserved ranges the rules must not diverge (n={n})"
+            );
+        }
     }
 
     // ── R15 resume runtime (v0) — suspend/resume across a host driver ──────────
@@ -3568,7 +3844,7 @@ fn main() { }
         // B1: the request reaches the host, and the host's reply flows back into
         // the program. host("ab") → "abab"; str_len("abab") = 4.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
+        let code = super::run_suspendable_unmapped(&prog, |req| Some(format!("{req}{req}")));
         assert_eq!(code, 4);
     }
 
@@ -3582,7 +3858,7 @@ fn main() { }
             "fn main() -> i64 { let a = host_await(\"1\")  let b = host_await(\"2\")  let c = host_await(\"3\")  str_len(a) + str_len(b) + str_len(c) }",
         );
         let mut calls = 0;
-        let code = super::run_suspendable(&prog, |_req| {
+        let code = super::run_suspendable_unmapped(&prog, |_req| {
             calls += 1;
             Some("ok".to_string()) // len 2
         });
@@ -3603,7 +3879,7 @@ fn main() { }
         );
         let replies = ["ab", "cde", "f"]; // lengths 2, 3, 1
         let mut n = 0;
-        let code = super::run_suspendable(&prog, |_req| {
+        let code = super::run_suspendable_unmapped(&prog, |_req| {
             let r = replies[n].to_string();
             n += 1;
             Some(r)
@@ -3618,7 +3894,7 @@ fn main() { }
         // identically to a bare run, with zero host calls.
         let prog = parse("fn main() -> i64 { 2 + 3 }");
         let mut calls = 0;
-        let code = super::run_suspendable(&prog, |_| {
+        let code = super::run_suspendable_unmapped(&prog, |_| {
             calls += 1;
             Some(String::new())
         });
@@ -3633,7 +3909,7 @@ fn main() { }
         // `10 / str_len("")` is a runtime div-by-zero (exit 101) after one await.
         let prog =
             parse("fn main() -> i64 { let g = host_await(\"x\")  let z = str_len(\"\")  10 / z }");
-        let code = super::run_suspendable(&prog, |_| Some("ok".to_string()));
+        let code = super::run_suspendable_unmapped(&prog, |_| Some("ok".to_string()));
         assert_eq!(code, 101, "interp panic mid-suspend → exit 101, no hang");
     }
 
@@ -3647,7 +3923,7 @@ fn main() { }
             "fn main() -> i64 { let n = 0  let go = 1  while go == 1 { match host_await_opt(\"?\") { None => { go = 0 } Some(s) => { n = n + 1 } } }  n }",
         );
         let mut fed = 0;
-        let code = super::run_suspendable(&prog, |_| {
+        let code = super::run_suspendable_unmapped(&prog, |_| {
             fed += 1;
             if fed <= 2 {
                 Some("x".to_string())
@@ -3663,7 +3939,7 @@ fn main() { }
         // The simple str form maps EOF (host None) to "" — back-compat for
         // fixed-exchange programs that don't distinguish end-of-input.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("x")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |_| None); // immediate EOF
+        let code = super::run_suspendable_unmapped(&prog, |_| None); // immediate EOF
         assert_eq!(code, 0, "EOF ⇒ host_await returns \"\" ⇒ len 0");
     }
 
@@ -3687,7 +3963,7 @@ fn main() { }
             "fn main() -> i64 { let d = dict_new()  dict_set(d, \"a\", 7)  let r = host_await_val(d)  dict_get_or(r, \"b\", 0) }",
         );
         let mut saw_request_a = 0;
-        let code = super::run_suspendable_values(&prog, |req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |req| {
             // The request must be a Dict carrying a=7 (the deep-clone preserved it).
             if let SendValue::Dict(entries) = &req {
                 for (k, v) in entries {
@@ -3714,7 +3990,7 @@ fn main() { }
             "type Point = { x: i64, y: i64 }\nfn main() -> i64 { let p = Point { x: 3, y: 4 }  let r = host_await_val(p)  r.x }",
         );
         let mut sum = 0;
-        let code = super::run_suspendable_values(&prog, |req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |req| {
             if let SendValue::Struct { name, fields } = &req {
                 assert_eq!(name, "Point");
                 let mut x = 0;
@@ -3749,7 +4025,7 @@ fn main() { }
         let prog = parse(
             "fn main() -> i64 { let r = host_await_val_opt(Some(5))  match r { Some(n) => n  None => -1 } }",
         );
-        let code = super::run_suspendable_values(&prog, |req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |req| {
             // Request is Some(5).
             assert!(matches!(&req, SendValue::Some(b) if matches!(**b, SendValue::Int(5))));
             Some(SendValue::Int(99))
@@ -3765,7 +4041,7 @@ fn main() { }
         let prog = parse("fn main() -> i64 { let c = chan<i64>()  let r = host_await_val(c)  0 }");
         // The host is never reached (the refusal happens at the boundary, worker-side).
         let mut host_calls = 0;
-        let code = super::run_suspendable_values(&prog, |_req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |_req| {
             host_calls += 1;
             Some(SendValue::Int(0))
         });
@@ -3781,7 +4057,7 @@ fn main() { }
         // Regression: the str-typed host_await still works now that the substrate
         // carries SendValue (str crosses as SendValue::Str). The B1 case, unchanged.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
+        let code = super::run_suspendable_unmapped(&prog, |req| Some(format!("{req}{req}")));
         assert_eq!(
             code, 4,
             "str host_await round-trips through the SendValue channel"

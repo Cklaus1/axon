@@ -340,6 +340,54 @@ pub struct Codegen<'ctx> {
 }
 
 impl<'ctx> Codegen<'ctx> {
+    /// Route a value `main` is about to return through the runtime's
+    /// program-status rule (`__axon_main_status` in `axon-rt`), so a native
+    /// binary reports the same status — and prints the same line — as
+    /// `axon run` does for the same return (I-2).
+    ///
+    /// A no-op for every other function, and for a `main` not returning an
+    /// `i64`: the rule is about the process exit status, and that is the only
+    /// thing `main`'s return becomes.
+    pub(super) fn map_main_exit_status(
+        &mut self,
+        fn_val: FunctionValue<'ctx>,
+        v: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        if fn_val.get_name().to_str() != Ok("main") {
+            return v;
+        }
+        let BasicValueEnum::IntValue(iv) = v else {
+            return v;
+        };
+        if iv.get_type().get_bit_width() != 64 {
+            return v;
+        }
+        // A CONSTANT return that the rule leaves alone needs no call at all.
+        // Without this every program would reference `__axon_main_status`, and a
+        // pure-integer program is supposed to link ZERO `__axon_*` symbols —
+        // `wasm_object_prune.sh` checks exactly that, and freestanding targets
+        // (R17) depend on it. Only a constant the rule would REWRITE keeps the
+        // call, so the runtime message still appears where the interpreter
+        // prints one (the two engines must agree on stderr, not just on status).
+        if let Some(k) = iv.get_sign_extended_constant() {
+            if crate::interp::returned_exit_status(k) == (k as i32, None) {
+                return v;
+            }
+        }
+        let i64_ty = self.ir.context.i64_type();
+        let f = match self.ir.module.get_function("__axon_main_status") {
+            Some(f) => f,
+            None => {
+                let ty = i64_ty.fn_type(&[i64_ty.into()], false);
+                self.ir.module.add_function("__axon_main_status", ty, None)
+            }
+        };
+        build_wrappers::w_call(&self.ir.builder, f, &[iv.into()], "main_status")
+            .try_as_basic_value()
+            .left()
+            .unwrap_or(v)
+    }
+
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         // InkwellBackend owns the only module + builder (IR_REARCH.md option
         // (c)); Codegen accesses them through `self.ir.{module, builder,
@@ -1414,6 +1462,10 @@ impl<'ctx> Codegen<'ctx> {
                         self.log_return_if_adaptive_val(v);
                         self.emit_verify_check_if_needed(v, llvm_fn);
                         self.emit_refine_return_check_if_needed(v, llvm_fn);
+                        // AFTER the @[verify]/refinement checks: those judge the
+                        // value the program computed, not the status it turns
+                        // into. Mapping first would have them inspect a 1.
+                        let v = self.map_main_exit_status(llvm_fn, v);
                         build_wrappers::w_ret(&self.ir.builder, v);
                     }
                     None if !matches!(ret_sem, Type::Unit) => {

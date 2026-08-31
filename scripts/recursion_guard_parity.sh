@@ -72,16 +72,22 @@ fi
 echo "  normal program: unaffected (exit 0) ✓"
 
 # (3) Legitimate finite recursion must compute correctly (guard fires only on a
-# real overflow, not at an artificial limit). sum(1..5000) = 12502500 → exit
-# 12502500 % 256 = 228.
+# real overflow, not at an artificial limit). sum(1..5000) = 12502500.
+#
+# Checked on STDOUT, not on the exit status. This case previously asserted exit
+# 228 — 12502500 % 256 — which is the truncation defect written down as an
+# expectation: the harness was verifying a 25-bit answer through an 8-bit channel
+# and calling the wrapped remainder "correct". A returned value that is not a
+# status now exits 1 and says so, so the answer is read from where the answer
+# actually fits.
 SUM="$WORK/sum.ax"
-printf 'fn sum(n: i64) -> i64 { if n == 0 { 0 } else { n + sum(n - 1) } }\nfn main() -> i64 { sum(5000) }\n' > "$SUM"
+printf 'fn sum(n: i64) -> i64 { if n == 0 { 0 } else { n + sum(n - 1) } }\nfn main() -> i64 { println(to_str(sum(5000)))  0 }\n' > "$SUM"
 "$AXON" build "$SUM" -o "$WORK/sum_bin" --no-cache >/dev/null 2>&1
-"$WORK/sum_bin" >/dev/null 2>&1; sumexit=$?
-if [ "$sumexit" -ne 228 ]; then
-  echo "recursion_guard_parity: FAIL — finite deep recursion miscomputed: exit=$sumexit (expected 228)"; exit 1
+sumout="$("$WORK/sum_bin" 2>/dev/null)"; sumexit=$?
+if [ "$sumexit" -ne 0 ] || [ "$sumout" != "12502500" ]; then
+  echo "recursion_guard_parity: FAIL — finite deep recursion miscomputed: exit=$sumexit out=[$sumout] (expected 0 / 12502500)"; exit 1
 fi
-echo "  finite deep recursion (sum 5000): correct (exit 228) ✓"
+echo "  finite deep recursion (sum 5000): correct (12502500) ✓"
 
 # (4) Recursion inside a SPAWNED worker (a real OS thread natively) must also fail
 # gracefully — sigaltstack is per-thread, so __axon_spawn installs the worker's own

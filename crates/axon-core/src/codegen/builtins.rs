@@ -5687,9 +5687,26 @@ impl<'ctx> super::Codegen<'ctx> {
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry_bb);
             let code = fn_val.get_nth_param(0).unwrap().into_int_value();
+            // `exit(n)` STATES a status, so the ledger vocabulary is honoured as
+            // written and only a non-status (outside one byte) is refused. The
+            // interpreter applies the same rule in `stated_exit_status`; routing
+            // one engine and not the other would make them disagree (I-2).
+            let status_fn = match self.ir.module.get_function("__axon_exit_status") {
+                Some(f) => f,
+                None => {
+                    let ty = i64_ty.fn_type(&[i64_ty.into()], false);
+                    self.ir.module.add_function("__axon_exit_status", ty, None)
+                }
+            };
+            let mapped =
+                build_wrappers::w_call(&self.ir.builder, status_fn, &[code.into()], "ex_status")
+                    .try_as_basic_value()
+                    .left()
+                    .map(|v| v.into_int_value())
+                    .unwrap_or(code);
             let code_i32 = build_wrappers::w_int_truncate(
                 &self.ir.builder,
-                code,
+                mapped,
                 self.ir.context.i32_type(),
                 "ex_code",
             );
