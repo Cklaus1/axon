@@ -47,3 +47,12 @@ channel = "nightly-2026-07-11"
 # rustfmt/clippy are required by the gate; rust-src by `-Z build-std` for the
 # freestanding guest kernel.
 components = ["rustfmt", "clippy", "rust-src"]
+# Targets are PER-TOOLCHAIN, so pinning the toolchain without naming them moves
+# the problem rather than fixing it: the first `cargo test` after adopting this
+# file found `wasm32-unknown-unknown` missing and `wasm_unknown_interp_builds`
+# reported a SKIP — which the test harness correctly refused to count as a pass.
+# Declaring them here means adopting the pin installs what the suite needs,
+# instead of each developer rediscovering it from a red run.
+#   wasm32-unknown-unknown — the R7c browser interpreter cdylib (Asyncify)
+#   wasm32-wasip1          — the `axon-run` wasm CLI and its host_await parity
+targets = ["wasm32-unknown-unknown", "wasm32-wasip1"]
