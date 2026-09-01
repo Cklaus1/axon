@@ -58,8 +58,14 @@ jobs:
           echo "SGX device nodes:"; ls -l /dev/sgx_enclave /dev/sgx_provision || true
           gramine-sgx --version || true
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
+      # place that says which toolchain this repo builds with, and `rustup
+      # toolchain install` with no argument reads it — channel, components and
+      # targets together. Naming `@stable` here is what made CI and developers
+      # disagree about rustfmt, which is how 37 files of formatting drift
+      # accumulated with nobody editing them.
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
 
       - name: Build the interpreter axon binary
         # The tee_* builtins are interpreter-only; the workload runs via `axon

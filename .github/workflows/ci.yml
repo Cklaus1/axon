@@ -19,14 +19,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
+      # place that says which toolchain this repo builds with, and `rustup
+      # toolchain install` with no argument reads it — channel, components and
+      # targets together. Naming `@stable` here is what made CI and developers
+      # disagree about rustfmt, which is how 37 files of formatting drift
+      # accumulated with nobody editing them.
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
 
-      # Cache cargo registry + compiled deps.
-      # Key includes the OS, Rust toolchain hash, and Cargo.lock so the cache
-      # is invalidated whenever dependencies change.
+      # Cache cargo registry + compiled deps. The key includes the OS, the
+      # TOOLCHAIN FILE and Cargo.lock, so bumping the pin cannot restore objects
+      # built by the previous rustc. (This comment claimed a toolchain hash
+      # before there was one to hash.)
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -35,7 +40,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -78,8 +83,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
+      # place that says which toolchain this repo builds with, and `rustup
+      # toolchain install` with no argument reads it — channel, components and
+      # targets together. Naming `@stable` here is what made CI and developers
+      # disagree about rustfmt, which is how 37 files of formatting drift
+      # accumulated with nobody editing them.
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -89,7 +100,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-ws-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-ws-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-ws-
 
@@ -122,8 +133,14 @@ jobs:
           sudo apt-get install -y llvm-17 llvm-17-dev libpolly-17-dev
           echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-17" >> "$GITHUB_ENV"
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
+      # place that says which toolchain this repo builds with, and `rustup
+      # toolchain install` with no argument reads it — channel, components and
+      # targets together. Naming `@stable` here is what made CI and developers
+      # disagree about rustfmt, which is how 37 files of formatting drift
+      # accumulated with nobody editing them.
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -133,7 +150,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-cg-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-cg-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-cg-
 

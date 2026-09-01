@@ -692,13 +692,11 @@ fn run_at(p: &Program, input: &[char], start: usize) -> Option<Slots> {
                         add(p, &mut nlist, &mut nseen, th.pc + 1, pos + 1, input, th.slots);
                     }
                 }
-                Inst::Class { neg, ranges } => {
-                    if pos < input.len() {
-                        let ch = input[pos];
-                        let inside = ranges.iter().any(|(lo, hi)| ch >= *lo && ch <= *hi);
-                        if inside != *neg {
-                            add(p, &mut nlist, &mut nseen, th.pc + 1, pos + 1, input, th.slots);
-                        }
+                Inst::Class { neg, ranges } if pos < input.len() => {
+                    let ch = input[pos];
+                    let inside = ranges.iter().any(|(lo, hi)| ch >= *lo && ch <= *hi);
+                    if inside != *neg {
+                        add(p, &mut nlist, &mut nseen, th.pc + 1, pos + 1, input, th.slots);
                     }
                 }
                 // Epsilon instructions never reach the thread list.

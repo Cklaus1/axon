@@ -853,7 +853,7 @@ impl<'p> Interp<'p> {
                 }
                 const A: &[u8; 64] =
                     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+                let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
                 for chunk in bytes.chunks(3) {
                     let b0 = chunk[0] as u32;
                     let b1 = *chunk.get(1).unwrap_or(&0) as u32;
@@ -910,7 +910,7 @@ impl<'p> Interp<'p> {
                         }
                     };
                     let raw: Vec<u8> = src.bytes().collect();
-                    if raw.len() % 4 != 0 {
+                    if !raw.len().is_multiple_of(4) {
                         Err(format!("base64_decode: E2204 length {} is not a multiple of 4", raw.len()))
                     } else {
                         let mut out: Vec<u8> = Vec::with_capacity(raw.len() / 4 * 3);
