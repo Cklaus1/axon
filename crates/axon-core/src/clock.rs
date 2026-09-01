@@ -173,7 +173,10 @@ mod tests {
         let t = now_ms().unwrap();
         advance(1);
         let t2 = now_ms().unwrap();
-        assert!(t2 > t, "t2 ({t2}) must exceed t ({t}) — io_builtins.ax relies on it");
+        assert!(
+            t2 > t,
+            "t2 ({t2}) must exceed t ({t}) — io_builtins.ax relies on it"
+        );
 
         // tick 0 means the clock ONLY moves on sleep — a legitimate config, and
         // the reason `enabled` is a flag rather than a non-zero sentinel.

@@ -40,9 +40,7 @@ fn make_monitor(
 
 /// Append a JSONL audit entry to a ledger file.
 fn append_entry(ledger: &PathBuf, seq: u64, effect: &str, operation: &str) {
-    let line = format!(
-        "{{\"seq\":{seq},\"effect\":\"{effect}\",\"operation\":\"{operation}\"}}\n"
-    );
+    let line = format!("{{\"seq\":{seq},\"effect\":\"{effect}\",\"operation\":\"{operation}\"}}\n");
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -79,7 +77,10 @@ fn acc_a1_smoke_compliance_journey() {
     // Write an allowed entry first.
     append_entry(&ledger, 1, "fs_read", "read_file");
     std::thread::sleep(Duration::from_millis(50));
-    assert!(!is_kill_tripped(&kill_file), "allowed effect must not trip kill");
+    assert!(
+        !is_kill_tripped(&kill_file),
+        "allowed effect must not trip kill"
+    );
 
     // Write a denied entry (net is not in the policy).
     append_entry(&ledger, 2, "net", "http_get");
@@ -96,7 +97,10 @@ fn acc_a1_smoke_compliance_journey() {
         elapsed < Duration::from_secs(2),
         "violation detected in {elapsed:?} — must be < 2s"
     );
-    assert!(is_kill_tripped(&kill_file), "kill file must be tripped on violation");
+    assert!(
+        is_kill_tripped(&kill_file),
+        "kill file must be tripped on violation"
+    );
 }
 
 /// A2: full-effects policy; monitor does NOT trip kill for allowed effects.
@@ -122,12 +126,19 @@ fn acc_a2_allowed_effects_pass_through() {
     }
 
     // No violation should have been detected.
-    assert!(!is_kill_tripped(&kill_file), "no allowed effect should trip the kill");
+    assert!(
+        !is_kill_tripped(&kill_file),
+        "no allowed effect should trip the kill"
+    );
 
     // Stop the monitor cleanly.
     stop.store(true, Ordering::Release);
     let result = h.join().unwrap();
-    assert_eq!(result, MonitorResult::CleanExit, "clean stop must yield CleanExit");
+    assert_eq!(
+        result,
+        MonitorResult::CleanExit,
+        "clean stop must yield CleanExit"
+    );
 }
 
 /// A3: quickstart commands execute (spec §5 gateway).
@@ -177,7 +188,11 @@ fn acc_a4_hermetic_isolated_timeout() {
     stop.store(true, Ordering::Release);
 
     let result = h.join().unwrap();
-    assert_eq!(result, MonitorResult::CleanExit, "clean job exit → CleanExit");
+    assert_eq!(
+        result,
+        MonitorResult::CleanExit,
+        "clean job exit → CleanExit"
+    );
     assert!(
         start.elapsed() < Duration::from_secs(2),
         "monitor must exit promptly after stop signal"
@@ -205,7 +220,10 @@ fn acc_a5_deterministic_detection() {
 
     // Both must be fast; and within 500ms of each other.
     assert!(t1 < Duration::from_secs(2), "first run must detect quickly");
-    assert!(t2 < Duration::from_secs(2), "second run must detect quickly");
+    assert!(
+        t2 < Duration::from_secs(2),
+        "second run must detect quickly"
+    );
     let diff = t1.abs_diff(t2);
     assert!(
         diff < Duration::from_millis(500),
@@ -299,7 +317,10 @@ fn false_positive_rate_zero() {
     std::thread::sleep(Duration::from_millis(250));
 
     // Verify no kill was tripped.
-    assert!(!is_kill_tripped(&kill_file), "100 allowed ops must produce 0 kills");
+    assert!(
+        !is_kill_tripped(&kill_file),
+        "100 allowed ops must produce 0 kills"
+    );
 
     stop.store(true, Ordering::Release);
     let result = h.join().unwrap();
@@ -374,7 +395,10 @@ fn monitor_survives_ledger_rotation() {
         matches!(result, MonitorResult::ViolationDetected { .. }),
         "monitor must detect violation after ledger rotation, got {result:?}"
     );
-    assert!(is_kill_tripped(&kill_file), "kill file must be tripped after rotation-violation");
+    assert!(
+        is_kill_tripped(&kill_file),
+        "kill file must be tripped after rotation-violation"
+    );
 }
 
 // ── Additional unit invariant checks ──────────────────────────────────────────
@@ -432,7 +456,10 @@ fn malformed_json_line_is_skipped_not_allowed() {
     }
     std::thread::sleep(Duration::from_millis(150));
     // Malformed line must NOT trigger violation or kill.
-    assert!(!is_kill_tripped(&kill_file), "malformed JSON must be skipped, not treated as violation");
+    assert!(
+        !is_kill_tripped(&kill_file),
+        "malformed JSON must be skipped, not treated as violation"
+    );
 
     // Now write an actual violation to confirm the monitor is still running.
     append_entry(&ledger, 2, "exec", "spawn"); // denied

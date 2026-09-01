@@ -2754,7 +2754,10 @@ mod tests {
     fn r23_bpf_helpers_are_known_impure_and_carry_bpf_effect() {
         for name in BPF_HELPER_BUILTINS {
             assert!(is_known_builtin(name), "{name} must be a known builtin");
-            assert!(is_bpf_helper(name), "{name} must be an allowlisted BPF helper");
+            assert!(
+                is_bpf_helper(name),
+                "{name} must be an allowlisted BPF helper"
+            );
             assert!(is_impure_builtin(name), "{name} must be impure");
             assert_eq!(
                 builtin_effect_row(name),

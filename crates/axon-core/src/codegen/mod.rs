@@ -117,7 +117,11 @@ fn expr_calls_goal_run(e: &ast::Expr) -> bool {
 /// per-op walker would risk missing an Expr variant; the string scan cannot.
 fn fn_uses_decimal(f: &ast::FnDef) -> bool {
     // Signature: a `Decimal` param or return type.
-    let sig_decimal = f.return_type.as_ref().map(type_mentions_decimal).unwrap_or(false)
+    let sig_decimal = f
+        .return_type
+        .as_ref()
+        .map(type_mentions_decimal)
+        .unwrap_or(false)
         || f.params.iter().any(|p| type_mentions_decimal(&p.ty));
     if sig_decimal {
         return true;

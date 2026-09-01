@@ -58,7 +58,10 @@ enum Inst {
     /// Match any character. `.` does not match `\n`, matching PCRE's default.
     Any,
     /// A character class: inclusive ranges, optionally negated.
-    Class { neg: bool, ranges: Vec<(char, char)> },
+    Class {
+        neg: bool,
+        ranges: Vec<(char, char)>,
+    },
     /// Try `0` first, then `1`. This ordering IS the leftmost-first rule.
     Split(usize, usize),
     Jmp(usize),
@@ -76,12 +79,23 @@ enum Ast {
     Empty,
     Char(char),
     Any,
-    Class { neg: bool, ranges: Vec<(char, char)> },
+    Class {
+        neg: bool,
+        ranges: Vec<(char, char)>,
+    },
     Concat(Vec<Ast>),
     Alt(Vec<Ast>),
     /// `greedy` false means the lazy form (`*?`, `+?`, `??`, `{n,m}?`).
-    Repeat { node: Box<Ast>, min: usize, max: Option<usize>, greedy: bool },
-    Group { index: usize, node: Box<Ast> },
+    Repeat {
+        node: Box<Ast>,
+        min: usize,
+        max: Option<usize>,
+        greedy: bool,
+    },
+    Group {
+        index: usize,
+        node: Box<Ast>,
+    },
     AssertStart,
     AssertEnd,
 }
@@ -95,7 +109,12 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(src: &'a str) -> Self {
-        Parser { chars: src.chars().collect(), pos: 0, group_count: 0, src }
+        Parser {
+            chars: src.chars().collect(),
+            pos: 0,
+            group_count: 0,
+            src,
+        }
     }
 
     fn peek(&self) -> Option<char> {
@@ -184,7 +203,12 @@ impl<'a> Parser<'a> {
                 ));
             }
         }
-        Ok(Ast::Repeat { node: Box::new(atom), min, max, greedy })
+        Ok(Ast::Repeat {
+            node: Box::new(atom),
+            min,
+            max,
+            greedy,
+        })
     }
 
     /// `{n}` / `{n,}` / `{n,m}`. Returns None (rewinding) when the braces are not
@@ -210,7 +234,10 @@ impl<'a> Parser<'a> {
             Ok(v) => v,
             Err(_) => {
                 self.pos = start;
-                return Some(Err(format!("E2203 repetition count too large in {:?}", self.src)));
+                return Some(Err(format!(
+                    "E2203 repetition count too large in {:?}",
+                    self.src
+                )));
             }
         };
         if self.eat('}') {
@@ -238,9 +265,10 @@ impl<'a> Parser<'a> {
         } else {
             match hi.parse::<usize>() {
                 Ok(v) => Some(Ok((min, Some(v)))),
-                Err(_) => {
-                    Some(Err(format!("E2203 repetition count too large in {:?}", self.src)))
-                }
+                Err(_) => Some(Err(format!(
+                    "E2203 repetition count too large in {:?}",
+                    self.src
+                ))),
             }
         }
     }
@@ -282,10 +310,7 @@ impl<'a> Parser<'a> {
                             ));
                         }
                         _ => {
-                            return Err(format!(
-                                "E2203 unsupported group flags in {:?}",
-                                self.src
-                            ))
+                            return Err(format!("E2203 unsupported group flags in {:?}", self.src))
                         }
                     }
                 }
@@ -301,7 +326,10 @@ impl<'a> Parser<'a> {
                 if !self.eat(')') {
                     return Err(format!("E2203 unclosed group in {:?}", self.src));
                 }
-                Ok(Ast::Group { index, node: Box::new(inner) })
+                Ok(Ast::Group {
+                    index,
+                    node: Box::new(inner),
+                })
             }
             Some(')') => Err(format!("E2203 unmatched `)` in {:?}", self.src)),
             Some('\\') => self.parse_escape(),
@@ -320,8 +348,14 @@ impl<'a> Parser<'a> {
                  this engine refuses so that matching stays linear-time (pattern {:?})",
                 self.src
             )),
-            Some('d') => Ok(Ast::Class { neg: false, ranges: vec![('0', '9')] }),
-            Some('D') => Ok(Ast::Class { neg: true, ranges: vec![('0', '9')] }),
+            Some('d') => Ok(Ast::Class {
+                neg: false,
+                ranges: vec![('0', '9')],
+            }),
+            Some('D') => Ok(Ast::Class {
+                neg: true,
+                ranges: vec![('0', '9')],
+            }),
             Some('w') => Ok(Ast::Class {
                 neg: false,
                 ranges: vec![('a', 'z'), ('A', 'Z'), ('0', '9'), ('_', '_')],
@@ -390,7 +424,9 @@ impl<'a> Parser<'a> {
             if self.peek() == Some('-') && self.chars.get(self.pos + 1) != Some(&']') {
                 self.pos += 1;
                 let hi = match self.bump() {
-                    None => return Err(format!("E2203 unclosed character class in {:?}", self.src)),
+                    None => {
+                        return Err(format!("E2203 unclosed character class in {:?}", self.src))
+                    }
                     Some('\\') => self.bump().unwrap_or('\\'),
                     Some(h) => h,
                 };
@@ -434,7 +470,10 @@ impl Compiler {
             Ast::Char(c) => self.emit(Inst::Char(*c)).map(|_| ()),
             Ast::Any => self.emit(Inst::Any).map(|_| ()),
             Ast::Class { neg, ranges } => self
-                .emit(Inst::Class { neg: *neg, ranges: ranges.clone() })
+                .emit(Inst::Class {
+                    neg: *neg,
+                    ranges: ranges.clone(),
+                })
                 .map(|_| ()),
             Ast::AssertStart => self.emit(Inst::AssertStart).map(|_| ()),
             Ast::AssertEnd => self.emit(Inst::AssertEnd).map(|_| ()),
@@ -473,7 +512,12 @@ impl Compiler {
                 }
                 Ok(())
             }
-            Ast::Repeat { node, min, max, greedy } => {
+            Ast::Repeat {
+                node,
+                min,
+                max,
+                greedy,
+            } => {
                 match (min, max) {
                     (0, None) => {
                         // star
@@ -581,7 +625,9 @@ pub fn compile(pattern: &str) -> Result<Program, String> {
     let mut parser = Parser::new(pattern);
     let ast = parser.parse_alt()?;
     if parser.pos < parser.chars.len() {
-        return Err(format!("E2203 unexpected `)` or trailing input in {pattern:?}"));
+        return Err(format!(
+            "E2203 unexpected `)` or trailing input in {pattern:?}"
+        ));
     }
     let groups = parser.group_count;
     let mut c = Compiler { prog: Vec::new() };
@@ -590,7 +636,10 @@ pub fn compile(pattern: &str) -> Result<Program, String> {
     c.compile(&ast)?;
     c.emit(Inst::Save(1))?;
     c.emit(Inst::Match)?;
-    let program = Program { prog: c.prog, groups };
+    let program = Program {
+        prog: c.prog,
+        groups,
+    };
     CACHE.with(|cache| {
         let mut m = cache.borrow_mut();
         // Bound the cache: a program generating patterns in a loop should not
@@ -665,7 +714,15 @@ fn run_at(p: &Program, input: &[char], start: usize) -> Option<Slots> {
         }
     }
 
-    add(p, &mut clist, &mut seen, 0, start, input, vec![usize::MAX; nslots]);
+    add(
+        p,
+        &mut clist,
+        &mut seen,
+        0,
+        start,
+        input,
+        vec![usize::MAX; nslots],
+    );
 
     let mut matched: Option<Slots> = None;
     let mut pos = start;
@@ -683,20 +740,44 @@ fn run_at(p: &Program, input: &[char], start: usize) -> Option<Slots> {
                 }
                 Inst::Char(c) => {
                     if pos < input.len() && input[pos] == *c {
-                        add(p, &mut nlist, &mut nseen, th.pc + 1, pos + 1, input, th.slots);
+                        add(
+                            p,
+                            &mut nlist,
+                            &mut nseen,
+                            th.pc + 1,
+                            pos + 1,
+                            input,
+                            th.slots,
+                        );
                     }
                 }
                 Inst::Any => {
                     // `.` excludes newline, matching PCRE's default.
                     if pos < input.len() && input[pos] != '\n' {
-                        add(p, &mut nlist, &mut nseen, th.pc + 1, pos + 1, input, th.slots);
+                        add(
+                            p,
+                            &mut nlist,
+                            &mut nseen,
+                            th.pc + 1,
+                            pos + 1,
+                            input,
+                            th.slots,
+                        );
                     }
                 }
                 Inst::Class { neg, ranges } if pos < input.len() => {
                     let ch = input[pos];
                     let inside = ranges.iter().any(|(lo, hi)| ch >= *lo && ch <= *hi);
                     if inside != *neg {
-                        add(p, &mut nlist, &mut nseen, th.pc + 1, pos + 1, input, th.slots);
+                        add(
+                            p,
+                            &mut nlist,
+                            &mut nseen,
+                            th.pc + 1,
+                            pos + 1,
+                            input,
+                            th.slots,
+                        );
                     }
                 }
                 // Epsilon instructions never reach the thread list.

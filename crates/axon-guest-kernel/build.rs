@@ -11,8 +11,9 @@ fn main() {
     // AT&T syntax under certain nightly versions; GAS compiles it cleanly.
     let status = Command::new("as")
         .args([
-            "-64",                        // x86_64 output
-            "-o", boot_o.to_str().unwrap(),
+            "-64", // x86_64 output
+            "-o",
+            boot_o.to_str().unwrap(),
             boot_s,
         ])
         .status()

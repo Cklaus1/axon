@@ -1020,11 +1020,7 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
         // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
         Expr::Ident(name) => check_builtin_value_ref(name, ctx.spec, ctx.errors),
         // Leaf nodes — no recursion needed.
-        Expr::Literal(_)
-        | Expr::None
-        | Expr::Break
-        | Expr::Continue
-        | Expr::InlineAsm { .. } => {}
+        Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue | Expr::InlineAsm { .. } => {}
     }
 }
 
@@ -1563,7 +1559,9 @@ mod tests {
         let mut errors = Vec::new();
         check_call("file_copy", &args, &spec, &mut errors);
         assert!(
-            errors.iter().any(|e| e.code == E1001 && e.message.contains("/etc/passwd")),
+            errors
+                .iter()
+                .any(|e| e.code == E1001 && e.message.contains("/etc/passwd")),
             "the SOURCE path must be refused as an unpermitted read, got: {errors:?}"
         );
     }
@@ -1579,7 +1577,10 @@ mod tests {
         ];
         let mut errors = Vec::new();
         check_call("file_copy", &args, &spec, &mut errors);
-        assert!(errors.is_empty(), "a granted copy must be permitted, got: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "a granted copy must be permitted, got: {errors:?}"
+        );
     }
 
     /// And the DESTINATION is checked too — the half a kind-list refactor would
@@ -1595,7 +1596,9 @@ mod tests {
         let mut errors = Vec::new();
         check_call("file_copy", &args, &spec, &mut errors);
         assert!(
-            errors.iter().any(|e| e.code == E1001 && e.message.contains("/tmp/leak.txt")),
+            errors
+                .iter()
+                .any(|e| e.code == E1001 && e.message.contains("/tmp/leak.txt")),
             "the DESTINATION path must be refused as an unpermitted write, got: {errors:?}"
         );
     }
@@ -1612,7 +1615,9 @@ mod tests {
         let mut errors = Vec::new();
         check_call("file_rename", &args, &spec, &mut errors);
         assert!(
-            errors.iter().any(|e| e.code == E1001 && e.message.contains("./data/in.txt")),
+            errors
+                .iter()
+                .any(|e| e.code == E1001 && e.message.contains("./data/in.txt")),
             "renaming FROM a read-only path must be refused, got: {errors:?}"
         );
     }

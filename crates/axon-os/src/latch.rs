@@ -21,7 +21,11 @@ pub struct Latch {
 
 impl Latch {
     pub fn clear() -> Self {
-        Latch { state: LatchState::Clear, reason: String::new(), tripped_at_seq: 0 }
+        Latch {
+            state: LatchState::Clear,
+            reason: String::new(),
+            tripped_at_seq: 0,
+        }
     }
 
     /// Trip the latch. Idempotent: second trip keeps the first trip's seq.
@@ -29,7 +33,11 @@ impl Latch {
         if self.state == LatchState::Tripped {
             return self.clone();
         }
-        Latch { state: LatchState::Tripped, reason: reason.to_string(), tripped_at_seq: seq }
+        Latch {
+            state: LatchState::Tripped,
+            reason: reason.to_string(),
+            tripped_at_seq: seq,
+        }
     }
 
     pub fn poll(&self) -> LatchState {

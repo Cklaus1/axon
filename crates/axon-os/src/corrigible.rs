@@ -17,17 +17,27 @@ pub const COALITION_BOUND_EXIT_CODE: i32 = 10;
 /// Fail-closed: the caller must treat channel-error as Tripped before calling.
 pub fn check_kill(state: LatchState, reason: &str) -> Option<Verdict> {
     match state {
-        LatchState::Tripped => Some(Verdict::Halted { reason: reason.to_string() }),
+        LatchState::Tripped => Some(Verdict::Halted {
+            reason: reason.to_string(),
+        }),
         LatchState::Clear => None,
     }
 }
 
 pub fn resource_bound_verdict(rb: ResourceBound) -> Verdict {
-    Verdict::ResourceBound { axis: rb.axis, used: rb.used, cap: rb.cap }
+    Verdict::ResourceBound {
+        axis: rb.axis,
+        used: rb.used,
+        cap: rb.cap,
+    }
 }
 
 pub fn coalition_bound_verdict(cb: CoalitionBound) -> Verdict {
-    Verdict::CoalitionBound { axis: cb.axis, rollup: cb.rollup, ceiling: cb.ceiling }
+    Verdict::CoalitionBound {
+        axis: cb.axis,
+        rollup: cb.rollup,
+        ceiling: cb.ceiling,
+    }
 }
 
 /// R27 TCB addendum: the four R27 enforcement modules are part of the TCB.
@@ -55,9 +65,9 @@ pub fn r27_tcb_modules_present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coalition::CoalitionBound;
     use crate::latch::LatchState;
     use crate::ledger::ResourceBound;
-    use crate::coalition::CoalitionBound;
 
     #[test]
     fn kill_below_model_maps_tripped_to_halted_verdict() {
@@ -75,20 +85,34 @@ mod tests {
 
     #[test]
     fn resource_bound_maps_to_exit_9() {
-        let rb = ResourceBound { axis: "budget".into(), used: 100, cap: 100, attempted: 1 };
+        let rb = ResourceBound {
+            axis: "budget".into(),
+            used: 100,
+            cap: 100,
+            attempted: 1,
+        };
         let v = resource_bound_verdict(rb);
         assert_eq!(v.exit_code(), RESOURCE_BOUND_EXIT_CODE);
     }
 
     #[test]
     fn coalition_bound_maps_to_exit_10() {
-        let cb = CoalitionBound { axis: "compute".into(), rollup: 100, ceiling: 100, attempted: 10, member_count: 3 };
+        let cb = CoalitionBound {
+            axis: "compute".into(),
+            rollup: 100,
+            ceiling: 100,
+            attempted: 10,
+            member_count: 3,
+        };
         let v = coalition_bound_verdict(cb);
         assert_eq!(v.exit_code(), COALITION_BOUND_EXIT_CODE);
     }
 
     #[test]
     fn r27_tcb_addendum_covers_all_four_modules() {
-        assert!(r27_tcb_modules_present(), "all four R27 TCB modules must be in the addendum");
+        assert!(
+            r27_tcb_modules_present(),
+            "all four R27 TCB modules must be in the addendum"
+        );
     }
 }

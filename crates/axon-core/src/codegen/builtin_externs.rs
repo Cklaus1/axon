@@ -504,11 +504,10 @@ impl<'ctx> super::Codegen<'ctx> {
         let saved = self.ir.builder.get_insert_block();
         self.ir.builder.position_at_end(bb);
 
-        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = (0..row
-            .params
-            .len())
-            .map(|i| fn_val.get_nth_param(i as u32).unwrap().into())
-            .collect();
+        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> =
+            (0..row.params.len())
+                .map(|i| fn_val.get_nth_param(i as u32).unwrap().into())
+                .collect();
 
         let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "sout_olen");
         let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "sout_optr");
@@ -665,13 +664,16 @@ mod drift_tests {
     #[test]
     fn every_extern_row_matches_a_known_builtin_with_the_same_arity() {
         for row in BUILTIN_EXTERNS {
-            let b = BUILTINS.iter().find(|b| b.name == row.axon_name).unwrap_or_else(|| {
-                panic!(
-                    "BUILTIN_EXTERNS row '{}' has no matching BUILTINS entry \
+            let b = BUILTINS
+                .iter()
+                .find(|b| b.name == row.axon_name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "BUILTIN_EXTERNS row '{}' has no matching BUILTINS entry \
                      (renamed or removed without updating the registry — R1d slice 3 drift)",
-                    row.axon_name
-                )
-            });
+                        row.axon_name
+                    )
+                });
             assert_eq!(
                 b.params.len(),
                 row.params.len(),
@@ -703,13 +705,16 @@ mod drift_tests {
     #[test]
     fn every_str_out_row_matches_a_known_builtin_with_the_same_arity() {
         for row in STR_OUT_EXTERNS {
-            let b = BUILTINS.iter().find(|b| b.name == row.axon_name).unwrap_or_else(|| {
-                panic!(
-                    "STR_OUT_EXTERNS row '{}' has no matching BUILTINS entry \
+            let b = BUILTINS
+                .iter()
+                .find(|b| b.name == row.axon_name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "STR_OUT_EXTERNS row '{}' has no matching BUILTINS entry \
                      (renamed or removed without updating the registry — R1d slice 3 drift)",
-                    row.axon_name
-                )
-            });
+                        row.axon_name
+                    )
+                });
             assert_eq!(
                 b.params.len(),
                 row.params.len(),

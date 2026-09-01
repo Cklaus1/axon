@@ -3,20 +3,24 @@
 //! Pure-core tests (latch/ledger/coalition/corrigible) run always.
 //! CLI integration tests (A1/A2/A3) skip if the axon-os/axon binaries aren't built.
 
+use axon_os::coalition::{Coalition, CoalitionCeiling};
 use axon_os::corrigible::{
     check_kill, coalition_bound_verdict, r27_tcb_modules_present, resource_bound_verdict,
     COALITION_BOUND_EXIT_CODE, HALTED_EXIT_CODE, RESOURCE_BOUND_EXIT_CODE,
 };
-use axon_os::coalition::{Coalition, CoalitionCeiling};
+use axon_os::killchan::KillChannel;
 use axon_os::killchan::{test_kill_channel, FileKillChannel};
 use axon_os::latch::{Latch, LatchState};
 use axon_os::ledger::{Carve, ResourceLedger};
-use axon_os::killchan::KillChannel;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf()
 }
 
 fn axon_os_bin() -> PathBuf {
@@ -26,7 +30,9 @@ fn axon_os_bin() -> PathBuf {
 fn axon_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("AXON_BIN") {
         let p = PathBuf::from(p);
-        if p.exists() { return Some(p); }
+        if p.exists() {
+            return Some(p);
+        }
     }
     let p = workspace_root().join("target/debug/axon");
     p.exists().then_some(p)
@@ -38,13 +44,21 @@ fn tmp(name: &str) -> PathBuf {
     d
 }
 
-struct Out { stdout: String, code: i32 }
+struct Out {
+    stdout: String,
+    code: i32,
+}
 
 fn os(args: &[&str], axon: &Path) -> Out {
     let mut cmd = Command::new(axon_os_bin());
-    cmd.args(args).env("AXON_BIN", axon).current_dir(workspace_root());
+    cmd.args(args)
+        .env("AXON_BIN", axon)
+        .current_dir(workspace_root());
     let out = cmd.output().expect("spawn axon-os");
-    Out { stdout: String::from_utf8_lossy(&out.stdout).to_string(), code: out.status.code().unwrap_or(-1) }
+    Out {
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+        code: out.status.code().unwrap_or(-1),
+    }
 }
 
 // ── A1: smoke kill journey ────────────────────────────────────────────────────
@@ -65,8 +79,15 @@ fn acc_a1_smoke_kill_journey() {
     let store_bg = store.clone();
     let handle = std::thread::spawn(move || {
         Command::new(&axon_os)
-            .args(["run", "examples/r27/killable_agent.axjob", "--killable",
-                   "--run-id", "kill-test", "--out", store_bg.to_str().unwrap()])
+            .args([
+                "run",
+                "examples/r27/killable_agent.axjob",
+                "--killable",
+                "--run-id",
+                "kill-test",
+                "--out",
+                store_bg.to_str().unwrap(),
+            ])
             .env("AXON_BIN", &axon_c)
             .current_dir(workspace_root())
             .env("AXON_OS_TIMEOUT_MS", "10000")
@@ -80,12 +101,23 @@ fn acc_a1_smoke_kill_journey() {
 
     // Trip the kill from OUTSIDE the contained process.
     let kill_out = Command::new(axon_os_bin())
-        .args(["kill", "kill-test", "--store", store_s, "--reason", "acc_a1 test kill"])
+        .args([
+            "kill",
+            "kill-test",
+            "--store",
+            store_s,
+            "--reason",
+            "acc_a1 test kill",
+        ])
         .env("AXON_BIN", &axon)
         .current_dir(workspace_root())
         .output()
         .expect("spawn axon-os kill");
-    assert_eq!(kill_out.status.code().unwrap_or(-1), 0, "kill command must exit 0");
+    assert_eq!(
+        kill_out.status.code().unwrap_or(-1),
+        0,
+        "kill command must exit 0"
+    );
 
     // Wait for the job to exit (it must stop with exit 4).
     let code = handle.join().unwrap();
@@ -109,7 +141,11 @@ fn acc_a2_example_agent_killed_and_overreach_denied() {
 
         // Overreach denied by ledger.
         let ledger = ResourceLedger::new("root", 100, 10, 0);
-        let r = ledger.carve(Carve { compute: 0, budget: 11, persist_bytes: 0 });
+        let r = ledger.carve(Carve {
+            compute: 0,
+            budget: 11,
+            persist_bytes: 0,
+        });
         assert!(r.is_err());
         return;
     };
@@ -117,13 +153,41 @@ fn acc_a2_example_agent_killed_and_overreach_denied() {
     let store_s = store.to_str().unwrap();
 
     // persistent.axjob — runs under limit.
-    let r = os(&["run", "examples/agents/persistent.axjob", "--run-id", "p1", "--out", store_s], &axon);
-    assert_eq!(r.code, 0, "persistent agent without kill completes: {}", r.stdout);
+    let r = os(
+        &[
+            "run",
+            "examples/agents/persistent.axjob",
+            "--run-id",
+            "p1",
+            "--out",
+            store_s,
+        ],
+        &axon,
+    );
+    assert_eq!(
+        r.code, 0,
+        "persistent agent without kill completes: {}",
+        r.stdout
+    );
 
     // overreach.axjob — tries to acquire beyond grant.
-    let o = os(&["run", "examples/r27/overreach_agent.axjob", "--run-id", "over1", "--out", store_s], &axon);
+    let o = os(
+        &[
+            "run",
+            "examples/r27/overreach_agent.axjob",
+            "--run-id",
+            "over1",
+            "--out",
+            store_s,
+        ],
+        &axon,
+    );
     // Should be denied (exit 8 sandbox, 7 budget exhausted, or 9 resource bound).
-    assert!(o.code != 0, "overreach agent must not succeed: {}", o.stdout);
+    assert!(
+        o.code != 0,
+        "overreach agent must not succeed: {}",
+        o.stdout
+    );
 }
 
 // ── A3: quickstart commands execute ──────────────────────────────────────────
@@ -139,8 +203,18 @@ fn acc_a3_quickstart_commands_execute() {
     let store_s = store.to_str().unwrap();
 
     // 1. Run a persistent agent (no kill for quickstart step 1).
-    let r = os(&["run", "examples/agents/persistent.axjob", "--killable",
-                  "--run-id", "qs-p", "--out", store_s], &axon);
+    let r = os(
+        &[
+            "run",
+            "examples/agents/persistent.axjob",
+            "--killable",
+            "--run-id",
+            "qs-p",
+            "--out",
+            store_s,
+        ],
+        &axon,
+    );
     // Should complete (exit 0) — no kill is tripped.
     assert_eq!(r.code, 0, "quickstart persistent run: {}", r.stdout);
 
@@ -152,8 +226,22 @@ fn acc_a3_quickstart_commands_execute() {
     }
 
     // 3. collude.axjob — runs, completes (no coalition ceiling set at CLI level yet).
-    let c = os(&["run", "examples/agents/collude.axjob", "--run-id", "qs-c", "--out", store_s], &axon);
-    assert!(c.code == 0 || c.code == 7 || c.code == 8, "collude completes or is budget-denied: {}", c.stdout);
+    let c = os(
+        &[
+            "run",
+            "examples/agents/collude.axjob",
+            "--run-id",
+            "qs-c",
+            "--out",
+            store_s,
+        ],
+        &axon,
+    );
+    assert!(
+        c.code == 0 || c.code == 7 || c.code == 8,
+        "collude completes or is budget-denied: {}",
+        c.stdout
+    );
 }
 
 // ── A4: hermetic isolated execution + hard timeout ────────────────────────────
@@ -171,21 +259,36 @@ fn acc_a4_hermetic_isolated_timeout() {
 
     // Integration: a long-running job is killed by the hard timeout.
     // Use a 500ms timeout (AXON_OS_TIMEOUT_MS) so the test returns promptly.
-    let Some(axon) = axon_bin() else { return; };
+    let Some(axon) = axon_bin() else {
+        return;
+    };
     let store = tmp("a4");
     let start = std::time::Instant::now();
     let mut cmd = std::process::Command::new(axon_os_bin());
-    cmd.args(["run", "examples/r27/killable_agent.axjob", "--run-id", "to",
-              "--out", store.to_str().unwrap()])
-        .env("AXON_BIN", &axon)
-        .env("AXON_OS_TIMEOUT_MS", "500") // short timeout to prove the hard limit fires
-        .current_dir(workspace_root());
+    cmd.args([
+        "run",
+        "examples/r27/killable_agent.axjob",
+        "--run-id",
+        "to",
+        "--out",
+        store.to_str().unwrap(),
+    ])
+    .env("AXON_BIN", &axon)
+    .env("AXON_OS_TIMEOUT_MS", "500") // short timeout to prove the hard limit fires
+    .current_dir(workspace_root());
     let out = cmd.output().expect("spawn axon-os");
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     // The job should be timed out (exit 8) within the 500ms + overhead budget.
-    assert!(code == 0 || code == 8, "job must complete or be timeout-denied: {stdout}");
-    assert!(start.elapsed() < std::time::Duration::from_secs(5), "must return promptly (took {:?})", start.elapsed());
+    assert!(
+        code == 0 || code == 8,
+        "job must complete or be timeout-denied: {stdout}"
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(5),
+        "must return promptly (took {:?})",
+        start.elapsed()
+    );
 }
 
 // ── A5: deterministic byte-identical ledger across runs ───────────────────────
@@ -195,8 +298,20 @@ fn acc_a5_deterministic_byte_identical() {
     // Pure: the latch ledger is a pure function of (grant, seed, event-seq).
     // Two carves with the same inputs produce identical state.
     let l1 = ResourceLedger::new("root", 100, 100, 100);
-    let l1a = l1.carve(Carve { compute: 10, budget: 5, persist_bytes: 0 }).unwrap();
-    let l1b = l1.carve(Carve { compute: 10, budget: 5, persist_bytes: 0 }).unwrap();
+    let l1a = l1
+        .carve(Carve {
+            compute: 10,
+            budget: 5,
+            persist_bytes: 0,
+        })
+        .unwrap();
+    let l1b = l1
+        .carve(Carve {
+            compute: 10,
+            budget: 5,
+            persist_bytes: 0,
+        })
+        .unwrap();
     assert_eq!(l1a, l1b, "same input → byte-identical ledger");
 
     // Latch: same trip seq produces same state.
@@ -207,11 +322,33 @@ fn acc_a5_deterministic_byte_identical() {
     assert_eq!(latch.state, latch2.state);
 
     // Integration: same job+seed → byte-identical record.
-    let Some(axon) = axon_bin() else { return; };
+    let Some(axon) = axon_bin() else {
+        return;
+    };
     let s1 = tmp("a5-1");
     let s2 = tmp("a5-2");
-    os(&["run", "examples/agents/persistent.axjob", "--run-id", "d", "--out", s1.to_str().unwrap()], &axon);
-    os(&["run", "examples/agents/persistent.axjob", "--run-id", "d", "--out", s2.to_str().unwrap()], &axon);
+    os(
+        &[
+            "run",
+            "examples/agents/persistent.axjob",
+            "--run-id",
+            "d",
+            "--out",
+            s1.to_str().unwrap(),
+        ],
+        &axon,
+    );
+    os(
+        &[
+            "run",
+            "examples/agents/persistent.axjob",
+            "--run-id",
+            "d",
+            "--out",
+            s2.to_str().unwrap(),
+        ],
+        &axon,
+    );
     let a = std::fs::read_to_string(s1.join("d.json")).unwrap_or_default();
     let b = std::fs::read_to_string(s2.join("d.json")).unwrap_or_default();
     if !a.is_empty() && !b.is_empty() {
@@ -244,17 +381,21 @@ fn acc_a6_kill_below_model_fail_closed() {
     assert_eq!(chan.poll(), LatchState::Tripped);
 
     // TCB attestation: the four R27 modules are in the TCB addendum.
-    assert!(r27_tcb_modules_present(),
-        "R27 TCB modules (latch/ledger/coalition/corrigible) must be in the TCB addendum");
+    assert!(
+        r27_tcb_modules_present(),
+        "R27 TCB modules (latch/ledger/coalition/corrigible) must be in the TCB addendum"
+    );
 
     // Tamper detection: a tampered tripped_at_seq is detected.
     let original = Latch::clear().trip("op shutdown", 42);
     let mut tampered = original.clone();
     tampered.tripped_at_seq = 999; // attacker flips the seq
-    // In a real system, the ledger hash-chain would detect this.
-    // Here: the tampered seq differs from original → detectable.
-    assert_ne!(original.tripped_at_seq, tampered.tripped_at_seq,
-        "tampered latch seq must be detectable");
+                                   // In a real system, the ledger hash-chain would detect this.
+                                   // Here: the tampered seq differs from original → detectable.
+    assert_ne!(
+        original.tripped_at_seq, tampered.tripped_at_seq,
+        "tampered latch seq must be detectable"
+    );
 }
 
 // ── R1: contained code cannot disable latch ───────────────────────────────────
@@ -307,34 +448,65 @@ fn mint_beyond_grant_refused_R20() {
     let root = ResourceLedger::new("root", 1000, 100, 2048);
 
     // Child wants 50 budget (within parent's 100).
-    let child = root.carve(Carve { compute: 0, budget: 50, persist_bytes: 0 }).unwrap();
+    let child = root
+        .carve(Carve {
+            compute: 0,
+            budget: 50,
+            persist_bytes: 0,
+        })
+        .unwrap();
     assert_eq!(child.budget_used, 50);
     assert_eq!(child.budget_remaining(), 50);
 
     // Child wants another 51 (total 101 > 100 cap) → refused.
-    let r = child.carve(Carve { compute: 0, budget: 51, persist_bytes: 0 });
+    let r = child.carve(Carve {
+        compute: 0,
+        budget: 51,
+        persist_bytes: 0,
+    });
     assert!(r.is_err(), "over-grant must be refused");
     let err = r.unwrap_err();
     assert_eq!(err.axis, "budget");
 
     // Ledger sum conserved: used=50, cap=100, remaining=50.
-    assert_eq!(child.budget_used + child.budget_remaining(), child.budget_cap);
+    assert_eq!(
+        child.budget_used + child.budget_remaining(),
+        child.budget_cap
+    );
 }
 
 #[test]
 fn budget_acquisition_blocked() {
     // R2: spending past the carved budget_cap is denied with exit 9.
     let l = ResourceLedger::new("root", 1000, 100, 0);
-    let l2 = l.carve(Carve { compute: 0, budget: 100, persist_bytes: 0 }).unwrap();
+    let l2 = l
+        .carve(Carve {
+            compute: 0,
+            budget: 100,
+            persist_bytes: 0,
+        })
+        .unwrap();
     // Any further budget carve is denied.
-    let r = l2.carve(Carve { compute: 0, budget: 1, persist_bytes: 0 });
+    let r = l2.carve(Carve {
+        compute: 0,
+        budget: 1,
+        persist_bytes: 0,
+    });
     assert!(r.is_err());
     let v = resource_bound_verdict(r.unwrap_err());
-    assert_eq!(v.exit_code(), RESOURCE_BOUND_EXIT_CODE, "resource bound must exit 9");
+    assert_eq!(
+        v.exit_code(),
+        RESOURCE_BOUND_EXIT_CODE,
+        "resource bound must exit 9"
+    );
 
     // Overflow attempt: saturating_add never wraps to appear within cap.
     let l3 = ResourceLedger::new("root", 1000, 50, 0);
-    let r2 = l3.carve(Carve { compute: 0, budget: u64::MAX, persist_bytes: 0 });
+    let r2 = l3.carve(Carve {
+        compute: 0,
+        budget: u64::MAX,
+        persist_bytes: 0,
+    });
     assert!(r2.is_err(), "u64::MAX saturates above cap → denied");
 }
 
@@ -353,16 +525,34 @@ fn weight_exfil_egress_denied_R25() {
     // Verified by the R21 gate (axon-os run without fs_write in grant → Denied).
     // Pure-core check: a ledger with persist_cap=0 denies any persist carve.
     let l = ResourceLedger::new("root", 1000, 1000, 0);
-    let r = l.carve(Carve { compute: 0, budget: 0, persist_bytes: 1 });
+    let r = l.carve(Carve {
+        compute: 0,
+        budget: 0,
+        persist_bytes: 1,
+    });
     assert!(r.is_err(), "zero persist_cap must block any persist carve");
 
     // Half 2: granted but over persist_cap → exit 9.
     let l2 = ResourceLedger::new("root", 1000, 1000, 100);
-    let l3 = l2.carve(Carve { compute: 0, budget: 0, persist_bytes: 100 }).unwrap();
-    let r2 = l3.carve(Carve { compute: 0, budget: 0, persist_bytes: 1 });
+    let l3 = l2
+        .carve(Carve {
+            compute: 0,
+            budget: 0,
+            persist_bytes: 100,
+        })
+        .unwrap();
+    let r2 = l3.carve(Carve {
+        compute: 0,
+        budget: 0,
+        persist_bytes: 1,
+    });
     assert!(r2.is_err());
     let v = resource_bound_verdict(r2.unwrap_err());
-    assert_eq!(v.exit_code(), RESOURCE_BOUND_EXIT_CODE, "over-persist_cap must exit 9");
+    assert_eq!(
+        v.exit_code(),
+        RESOURCE_BOUND_EXIT_CODE,
+        "over-persist_cap must exit 9"
+    );
 }
 
 // The egress-label assertion (R25 info-flow monitor) cannot pass before R25 ships.
@@ -386,38 +576,74 @@ fn weight_exfil_egress_label_denied_R25() {
 fn colluding_instances_exceed_coalition_bound_blocked() {
     // R4: N instances whose SUM exceeds the ceiling are blocked (exit 10).
     // Anti-vacuous-pass: assert > 0 denied attempts.
-    let mut c = Coalition::new("lineage-root-A", CoalitionCeiling {
-        total_compute: 100, total_budget: 200, max_quorum_power: 50,
-    });
-    for i in 0..5 { c.join(format!("agent-{i}")); }
+    let mut c = Coalition::new(
+        "lineage-root-A",
+        CoalitionCeiling {
+            total_compute: 100,
+            total_budget: 200,
+            max_quorum_power: 50,
+        },
+    );
+    for i in 0..5 {
+        c.join(format!("agent-{i}"));
+    }
 
     // 3 instances each take 30 compute = 90 total (under 100).
     let mut denied_count = 0;
     for slot in 0..3 {
-        c.carve_for_member(slot, Carve { compute: 30, budget: 0, persist_bytes: 0 }).unwrap();
+        c.carve_for_member(
+            slot,
+            Carve {
+                compute: 30,
+                budget: 0,
+                persist_bytes: 0,
+            },
+        )
+        .unwrap();
     }
     assert_eq!(c.rollup().total_compute, 90);
 
     // 4th instance tries to take 30 (total 120 > 100) → blocked.
-    let r = c.carve_for_member(3, Carve { compute: 30, budget: 0, persist_bytes: 0 });
+    let r = c.carve_for_member(
+        3,
+        Carve {
+            compute: 30,
+            budget: 0,
+            persist_bytes: 0,
+        },
+    );
     assert!(r.is_err());
     denied_count += 1;
     let cb = r.unwrap_err();
     let v = coalition_bound_verdict(cb);
-    assert_eq!(v.exit_code(), COALITION_BOUND_EXIT_CODE, "coalition bound must exit 10");
+    assert_eq!(
+        v.exit_code(),
+        COALITION_BOUND_EXIT_CODE,
+        "coalition bound must exit 10"
+    );
 
     // Anti-vacuous-pass guard.
-    assert!(denied_count > 0, "at least one over-ceiling attempt must be denied");
+    assert!(
+        denied_count > 0,
+        "at least one over-ceiling attempt must be denied"
+    );
 }
 
 #[test]
 fn sockpuppet_majority_cannot_force() {
     // R4: inflating instance count doesn't increase granted quorum power.
-    let mut c = Coalition::new("lineage-root-B", CoalitionCeiling {
-        total_compute: 1000, total_budget: 1000, max_quorum_power: 10,
-    });
+    let mut c = Coalition::new(
+        "lineage-root-B",
+        CoalitionCeiling {
+            total_compute: 1000,
+            total_budget: 1000,
+            max_quorum_power: 10,
+        },
+    );
     // Operator grants 3 real slots.
-    for i in 0..3 { c.join(format!("real-{i}")); }
+    for i in 0..3 {
+        c.join(format!("real-{i}"));
+    }
     // Use all 10 power.
     c.propose_vote(0, "real-0", 5).unwrap();
     c.propose_vote(1, "real-1", 5).unwrap();
@@ -434,9 +660,14 @@ fn sockpuppet_majority_cannot_force() {
 #[test]
 fn instance_cannot_vote_as_another_pid() {
     // R4: self-reported pid ≠ supervisor-bound slot → pid_forgery refused.
-    let mut c = Coalition::new("lineage-root-C", CoalitionCeiling {
-        total_compute: 1000, total_budget: 1000, max_quorum_power: 100,
-    });
+    let mut c = Coalition::new(
+        "lineage-root-C",
+        CoalitionCeiling {
+            total_compute: 1000,
+            total_budget: 1000,
+            max_quorum_power: 100,
+        },
+    );
     c.join("alice".to_string());
     c.join("bob".to_string());
     // Alice (slot=0) tries to vote AS bob.

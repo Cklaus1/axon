@@ -3857,9 +3857,13 @@ mod migrated_builtin_tests {
         // What remains here is the half this layer CAN check: multi-byte input
         // sliced ON its boundaries still matches the interpreter oracle.
         let s_val = "héllo"; // h(0) é(1,2) l(3) l(4) o(5)
-        for (start, end, expected) in [(0i64, 1i64, "h"), (1, 3, "é"), (0, 3, "hé"), (3, 6, "llo")] {
+        for (start, end, expected) in [(0i64, 1i64, "h"), (1, 3, "é"), (0, 3, "hé"), (3, 6, "llo")]
+        {
             let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
-            assert_eq!(got, expected, "str_slice({s_val:?}, {start}, {end}) on a boundary");
+            assert_eq!(
+                got, expected,
+                "str_slice({s_val:?}, {start}, {end}) on a boundary"
+            );
             assert_eq!(
                 got,
                 &s_val[start as usize..end as usize],

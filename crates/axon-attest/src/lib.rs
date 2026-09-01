@@ -21,8 +21,8 @@
 //! All functions in this module are pure (no I/O, no clock, no random),
 //! except `measure_kernel` which reads a file — keeping `verify` small and total.
 
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -88,7 +88,11 @@ pub struct DeviceSet {
 impl DeviceSet {
     /// The required minimal device surface: vsock + serial + timer.
     pub fn minimal() -> Self {
-        DeviceSet { vsock: true, serial: true, timer: true }
+        DeviceSet {
+            vsock: true,
+            serial: true,
+            timer: true,
+        }
     }
 
     /// Validate that this set has exactly the three required devices.
@@ -141,16 +145,20 @@ pub fn measure_kernel_bytes(bytes: &[u8]) -> GuestMeasurement {
     let tcb_hash: [u8; 32] = h.finalize().into();
     let axtcb1 = format!("axtcb1:{}", hex::encode(tcb_hash));
 
-    GuestMeasurement { digest: digest_array, axtcb1, timestamp: 0 }
+    GuestMeasurement {
+        digest: digest_array,
+        axtcb1,
+        timestamp: 0,
+    }
 }
 
 /// Measure a guest kernel image from a file path.
 ///
 /// Reads the file, then calls `measure_kernel_bytes`. Same file content ⇒
 /// same measurement (A5 determinism).
-pub fn measure_kernel(kernel_path: &std::path::Path)
-    -> Result<GuestMeasurement, Box<dyn std::error::Error>>
-{
+pub fn measure_kernel(
+    kernel_path: &std::path::Path,
+) -> Result<GuestMeasurement, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(kernel_path)?;
     Ok(measure_kernel_bytes(&bytes))
 }
@@ -195,11 +203,9 @@ pub fn verify_report(
 ) -> Result<(), String> {
     // Step 1 (Core): no-attestation ⇒ refused (Core `vm_without_attestation_is_refused`)
     if report.signature.is_empty() {
-        return Err(
-            "no attestation signature present — report is unsigned; \
+        return Err("no attestation signature present — report is unsigned; \
              vm_without_attestation_is_refused (exit 10)"
-                .to_string(),
-        );
+            .to_string());
     }
 
     // Step 2: measurement digest must match the pinned expectation (A6, Core)
@@ -326,7 +332,10 @@ impl std::fmt::Display for MeasureError {
         match self {
             MeasureError::ComponentMissing(n) => write!(f, "required component missing: {n}"),
             MeasureError::ComponentNotRegularFile => {
-                write!(f, "component path is not a regular file (symlink / directory refused)")
+                write!(
+                    f,
+                    "component path is not a regular file (symlink / directory refused)"
+                )
             }
             MeasureError::IoError(e) => write!(f, "I/O error reading component: {e}"),
         }
@@ -352,10 +361,16 @@ impl std::fmt::Display for VerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VerifyError::PrefixMismatch => {
-                write!(f, "axtcb1_ext prefix mismatch: must start with 'axtcb1-ext:'")
+                write!(
+                    f,
+                    "axtcb1_ext prefix mismatch: must start with 'axtcb1-ext:'"
+                )
             }
             VerifyError::MonitorSlotMismatch => {
-                write!(f, "monitor.sha256 ≠ axon-os.sha256 (I-2 invariant violated)")
+                write!(
+                    f,
+                    "monitor.sha256 ≠ axon-os.sha256 (I-2 invariant violated)"
+                )
             }
             VerifyError::DigestMismatch { got, expected } => {
                 write!(f, "axtcb1_ext mismatch: got={got}, expected={expected}")
@@ -439,11 +454,11 @@ pub struct ExtendedMeasurement {
 /// Missing `axon-audit` → `[0u8; 32]` zero-fill sentinel (R28-pending; auditable).
 pub fn measure_extended(paths: ComponentPaths) -> Result<ExtendedMeasurement, MeasureError> {
     // ── inner hashes (one per slot) ──────────────────────────────────────────
-    let kernel_hash: [u8; 32]    = Sha256::digest(&paths.kernel).into();
-    let axon_os_hash: [u8; 32]   = Sha256::digest(&paths.axon_os).into();
+    let kernel_hash: [u8; 32] = Sha256::digest(&paths.kernel).into();
+    let axon_os_hash: [u8; 32] = Sha256::digest(&paths.axon_os).into();
     let axon_audit_hash: [u8; 32] = match &paths.axon_audit {
         Some(b) => Sha256::digest(b).into(),
-        None    => [0u8; 32], // R28-pending sentinel — deliberate, auditable zero-fill
+        None => [0u8; 32], // R28-pending sentinel — deliberate, auditable zero-fill
     };
     // Slot 3 (monitor) uses the same bytes as axon-os — embedded thread (§4.1).
     let monitor_hash: [u8; 32] = axon_os_hash;
@@ -462,55 +477,69 @@ pub fn measure_extended(paths: ComponentPaths) -> Result<ExtendedMeasurement, Me
     let axon_os_sha256_hex = hex::encode(axon_os_hash);
     let components = vec![
         ComponentEntry {
-            name:   "kernel".to_string(),
-            path:   paths.kernel_path,
-            size:   paths.kernel.len() as u64,
+            name: "kernel".to_string(),
+            path: paths.kernel_path,
+            size: paths.kernel.len() as u64,
             sha256: hex::encode(kernel_hash),
         },
         ComponentEntry {
-            name:   "axon-os".to_string(),
-            path:   paths.axon_os_path,
-            size:   paths.axon_os.len() as u64,
+            name: "axon-os".to_string(),
+            path: paths.axon_os_path,
+            size: paths.axon_os.len() as u64,
             sha256: axon_os_sha256_hex.clone(),
         },
         ComponentEntry {
-            name:   "axon-audit".to_string(),
+            name: "axon-audit".to_string(),
             // When bytes are absent (zero-fill sentinel), path is always "<absent>"
             // regardless of what was passed in axon_audit_path (§4.2).
-            path:   if paths.axon_audit.is_some() {
-                        paths.axon_audit_path.unwrap_or_else(|| "<absent>".to_string())
-                    } else {
-                        "<absent>".to_string()
-                    },
-            size:   paths.axon_audit.as_ref().map(|b| b.len() as u64).unwrap_or(0),
+            path: if paths.axon_audit.is_some() {
+                paths
+                    .axon_audit_path
+                    .unwrap_or_else(|| "<absent>".to_string())
+            } else {
+                "<absent>".to_string()
+            },
+            size: paths
+                .axon_audit
+                .as_ref()
+                .map(|b| b.len() as u64)
+                .unwrap_or(0),
             sha256: hex::encode(axon_audit_hash),
         },
         ComponentEntry {
             // I-2: monitor.sha256 == axon-os.sha256 (same binary, embedded thread)
-            name:   "monitor".to_string(),
-            path:   "(embedded in axon-os)".to_string(),
-            size:   0,
+            name: "monitor".to_string(),
+            path: "(embedded in axon-os)".to_string(),
+            size: 0,
             sha256: axon_os_sha256_hex,
         },
     ];
 
     // R26 base measurement preserved (I-4).
     let base = measure_kernel_bytes(&paths.kernel);
-    Ok(ExtendedMeasurement { base, components, axtcb1_ext })
+    Ok(ExtendedMeasurement {
+        base,
+        components,
+        axtcb1_ext,
+    })
 }
 
 // ── R31 I/O layer: file-reading wrapper ──────────────────────────────────────
 
 /// Internal error for the file-reading path.
-enum ComponentReadError { Missing, NotRegularFile, Io(String) }
+enum ComponentReadError {
+    Missing,
+    NotRegularFile,
+    Io(String),
+}
 
 fn read_component_file(path: &std::path::Path) -> Result<Vec<u8>, ComponentReadError> {
     if !path.exists() {
         return Err(ComponentReadError::Missing);
     }
     // Refuse symlinks — classic TOCTOU vector (§4.2).
-    let meta = std::fs::symlink_metadata(path)
-        .map_err(|e| ComponentReadError::Io(e.to_string()))?;
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|e| ComponentReadError::Io(e.to_string()))?;
     if meta.file_type().is_symlink() || !meta.file_type().is_file() {
         return Err(ComponentReadError::NotRegularFile);
     }
@@ -519,9 +548,9 @@ fn read_component_file(path: &std::path::Path) -> Result<Vec<u8>, ComponentReadE
 
 fn map_read_err(e: ComponentReadError, name: &str) -> MeasureError {
     match e {
-        ComponentReadError::Missing        => MeasureError::ComponentMissing(name.to_string()),
+        ComponentReadError::Missing => MeasureError::ComponentMissing(name.to_string()),
         ComponentReadError::NotRegularFile => MeasureError::ComponentNotRegularFile,
-        ComponentReadError::Io(msg)        => MeasureError::IoError(msg),
+        ComponentReadError::Io(msg) => MeasureError::IoError(msg),
     }
 }
 
@@ -534,37 +563,33 @@ fn map_read_err(e: ComponentReadError, name: &str) -> MeasureError {
 /// - `axon_os_path`     — always required; Err if missing/unreadable.
 /// - `axon_audit_path`  — optional (R28 pending); None → zero-fill sentinel.
 pub fn measure_host_stack(
-    kernel_path:     &std::path::Path,
-    axon_os_path:    Option<&std::path::Path>,
+    kernel_path: &std::path::Path,
+    axon_os_path: Option<&std::path::Path>,
     axon_audit_path: Option<&std::path::Path>,
 ) -> Result<ExtendedMeasurement, MeasureError> {
     // kernel: always required
-    let kernel_bytes = read_component_file(kernel_path)
-        .map_err(|e| map_read_err(e, "kernel"))?;
+    let kernel_bytes = read_component_file(kernel_path).map_err(|e| map_read_err(e, "kernel"))?;
 
     // axon-os: always required
-    let aop = axon_os_path
-        .ok_or_else(|| MeasureError::ComponentMissing("axon-os".to_string()))?;
-    let axon_os_bytes = read_component_file(aop)
-        .map_err(|e| map_read_err(e, "axon-os"))?;
+    let aop = axon_os_path.ok_or_else(|| MeasureError::ComponentMissing("axon-os".to_string()))?;
+    let axon_os_bytes = read_component_file(aop).map_err(|e| map_read_err(e, "axon-os"))?;
 
     // axon-audit: optional (None → zero-fill)
     let (axon_audit_bytes, axon_audit_path_str) = match axon_audit_path {
         Some(p) => {
-            let b = read_component_file(p)
-                .map_err(|e| map_read_err(e, "axon-audit"))?;
+            let b = read_component_file(p).map_err(|e| map_read_err(e, "axon-audit"))?;
             (Some(b), Some(p.to_string_lossy().to_string()))
         }
         None => (None, None),
     };
 
     measure_extended(ComponentPaths {
-        kernel:           kernel_bytes,
-        axon_os:          axon_os_bytes,
-        axon_audit:       axon_audit_bytes,
-        kernel_path:      kernel_path.to_string_lossy().to_string(),
-        axon_os_path:     aop.to_string_lossy().to_string(),
-        axon_audit_path:  axon_audit_path_str,
+        kernel: kernel_bytes,
+        axon_os: axon_os_bytes,
+        axon_audit: axon_audit_bytes,
+        kernel_path: kernel_path.to_string_lossy().to_string(),
+        axon_os_path: aop.to_string_lossy().to_string(),
+        axon_audit_path: axon_audit_path_str,
     })
 }
 
@@ -593,20 +618,23 @@ pub fn verify_extended(
     const CANONICAL: [&str; 4] = ["kernel", "axon-os", "axon-audit", "monitor"];
     if measured.components.len() != 4 {
         return Err(VerifyError::Malformed(format!(
-            "expected 4 components, got {}", measured.components.len()
+            "expected 4 components, got {}",
+            measured.components.len()
         )));
     }
-    for (i, (entry, &expected_name)) in measured.components.iter().zip(CANONICAL.iter()).enumerate() {
+    for (i, (entry, &expected_name)) in measured.components.iter().zip(CANONICAL.iter()).enumerate()
+    {
         if entry.name != expected_name {
             return Err(VerifyError::Malformed(format!(
-                "component[{i}]: expected '{expected_name}', got '{}'", entry.name
+                "component[{i}]: expected '{expected_name}', got '{}'",
+                entry.name
             )));
         }
     }
 
     // I-2: re-derive monitor's expected hash from axon-os entry; never trust the report's claim
-    let axon_os_sha256  = &measured.components[1].sha256;
-    let monitor_sha256  = &measured.components[3].sha256;
+    let axon_os_sha256 = &measured.components[1].sha256;
+    let monitor_sha256 = &measured.components[3].sha256;
     if monitor_sha256 != axon_os_sha256 {
         return Err(VerifyError::MonitorSlotMismatch);
     }
@@ -614,7 +642,7 @@ pub fn verify_extended(
     // Digest equality check (the load-bearing gate)
     if measured.axtcb1_ext != expected_axtcb1_ext {
         return Err(VerifyError::DigestMismatch {
-            got:      measured.axtcb1_ext.clone(),
+            got: measured.axtcb1_ext.clone(),
             expected: expected_axtcb1_ext.to_string(),
         });
     }
@@ -631,14 +659,18 @@ pub fn verify_extended(
 pub fn report_to_json_extended(report: &AttestationReport, ext: &ExtendedMeasurement) -> String {
     use base64::Engine as _;
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(&report.signature);
-    let components_json: Vec<serde_json::Value> = ext.components.iter().map(|c| {
-        serde_json::json!({
-            "name":   c.name,
-            "path":   c.path,
-            "size":   c.size,
-            "sha256": c.sha256,
+    let components_json: Vec<serde_json::Value> = ext
+        .components
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "name":   c.name,
+                "path":   c.path,
+                "size":   c.size,
+                "sha256": c.sha256,
+            })
         })
-    }).collect();
+        .collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "schema": "axon-vm-report/2",
         "hw_root": report.hw_root,
@@ -680,8 +712,12 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     // ipad = 0x36 repeated; opad = 0x5c repeated.
     let mut ipad = k;
     let mut opad = k;
-    for b in &mut ipad { *b ^= 0x36; }
-    for b in &mut opad { *b ^= 0x5c; }
+    for b in &mut ipad {
+        *b ^= 0x36;
+    }
+    for b in &mut opad {
+        *b ^= 0x5c;
+    }
     // Inner hash: H(ipad ‖ data)
     let mut inner = Sha256::new();
     inner.update(ipad);
@@ -713,25 +749,43 @@ mod tests {
         // Measurement is deterministic
         let m1 = measure_kernel_bytes(kernel);
         let m2 = measure_kernel_bytes(kernel);
-        assert_eq!(m1.digest, m2.digest, "same image bytes must produce identical digest");
-        assert_eq!(m1.axtcb1, m2.axtcb1, "same image bytes must produce identical axtcb1");
+        assert_eq!(
+            m1.digest, m2.digest,
+            "same image bytes must produce identical digest"
+        );
+        assert_eq!(
+            m1.axtcb1, m2.axtcb1,
+            "same image bytes must produce identical axtcb1"
+        );
         assert_eq!(m1.timestamp, 0, "pure measurement timestamp must be 0");
 
         // Signature is deterministic (same measurement + same key)
         let r1 = sign_report(m1.clone(), TEST_KEY);
         let r2 = sign_report(m1.clone(), TEST_KEY);
-        assert_eq!(r1.signature, r2.signature, "same inputs must produce identical signature");
+        assert_eq!(
+            r1.signature, r2.signature,
+            "same inputs must produce identical signature"
+        );
 
         // In-guest record is deterministic (same job + same seed)
         let job = b"summarize --input ./data/ --out ./out/";
         let rec1 = simulate_job_run(job, 42u64);
         let rec2 = simulate_job_run(job, 42u64);
-        assert_eq!(rec1, rec2, "same job+seed must produce byte-identical RunRecord");
-        assert!(rec1.starts_with("axrec1:"), "record must use axrec1: prefix");
+        assert_eq!(
+            rec1, rec2,
+            "same job+seed must produce byte-identical RunRecord"
+        );
+        assert!(
+            rec1.starts_with("axrec1:"),
+            "record must use axrec1: prefix"
+        );
 
         // Different seed ⇒ different record
         let rec_diff = simulate_job_run(job, 99u64);
-        assert_ne!(rec1, rec_diff, "different seeds must produce different records");
+        assert_ne!(
+            rec1, rec_diff,
+            "different seeds must produce different records"
+        );
     }
 
     // ─ Core: attestation_mismatch_fails_closed ─────────────────────────────────
@@ -766,7 +820,11 @@ mod tests {
 
         // (c) Correct values ⇒ must succeed
         let r3 = verify_report(&report, &correct_digest, &correct_axtcb1);
-        assert!(r3.is_ok(), "correct report must pass verification: {:?}", r3.err());
+        assert!(
+            r3.is_ok(),
+            "correct report must pass verification: {:?}",
+            r3.err()
+        );
     }
 
     // ─ Core: vm_without_attestation_is_refused ─────────────────────────────────
@@ -784,7 +842,10 @@ mod tests {
 
         // verify_report must refuse
         let result = verify_report(&unsigned_report, &digest, &axtcb1);
-        assert!(result.is_err(), "unsigned report (no attestation) must be refused");
+        assert!(
+            result.is_err(),
+            "unsigned report (no attestation) must be refused"
+        );
         let msg = result.unwrap_err();
         assert!(
             msg.contains("no attestation") || msg.contains("signature") || msg.contains("unsigned"),
@@ -813,13 +874,23 @@ mod tests {
         );
         // axtcb1 hex body is 64 chars (32 bytes)
         let hex_body = m.axtcb1.strip_prefix("axtcb1:").unwrap();
-        assert_eq!(hex_body.len(), 64, "axtcb1 hex body must be 64 hex chars (sha256)");
+        assert_eq!(
+            hex_body.len(),
+            64,
+            "axtcb1 hex body must be 64 hex chars (sha256)"
+        );
 
         // Different kernel content ⇒ different axtcb1 AND different digest (the chain)
         let other_kernel = b"different-kernel-different-tcb";
         let m2 = measure_kernel_bytes(other_kernel);
-        assert_ne!(m.axtcb1, m2.axtcb1, "different kernel must produce different axtcb1");
-        assert_ne!(m.digest, m2.digest, "different kernel must produce different digest");
+        assert_ne!(
+            m.axtcb1, m2.axtcb1,
+            "different kernel must produce different axtcb1"
+        );
+        assert_ne!(
+            m.digest, m2.digest,
+            "different kernel must produce different digest"
+        );
 
         // The axtcb1 is verified by verify_report — a mismatched axtcb1 fails the chain check
         let report = sign_report(m.clone(), TEST_KEY);
@@ -884,7 +955,10 @@ mod tests {
         // Step 1: measure (axon-vm measure)
         let kernel = b"mock-axon-os-kernel-for-a1-journey";
         let m = measure_kernel_bytes(kernel);
-        assert!(m.axtcb1.starts_with("axtcb1:"), "measurement must carry axtcb1: prefix");
+        assert!(
+            m.axtcb1.starts_with("axtcb1:"),
+            "measurement must carry axtcb1: prefix"
+        );
         let expected_digest = m.digest;
         let expected_axtcb1 = m.axtcb1.clone();
 
@@ -901,14 +975,25 @@ mod tests {
 
         // Step 3: verify (axon-vm verify — relying party)
         let ok = verify_report(&report, &expected_digest, &expected_axtcb1);
-        assert!(ok.is_ok(), "genuine image must pass attestation: {:?}", ok.err());
+        assert!(
+            ok.is_ok(),
+            "genuine image must pass attestation: {:?}",
+            ok.err()
+        );
 
         // Step 4: admit + run (axon-vm run — only after verified)
         let job = b"summarize --input ./data/ --out ./out/";
         let record = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 42u64);
-        assert!(record.is_ok(), "attested job must be admitted: {:?}", record.err());
+        assert!(
+            record.is_ok(),
+            "attested job must be admitted: {:?}",
+            record.err()
+        );
         let rec = record.unwrap();
-        assert!(rec.starts_with("axrec1:"), "record must have axrec1: prefix");
+        assert!(
+            rec.starts_with("axrec1:"),
+            "record must have axrec1: prefix"
+        );
 
         // Step 5: tampered image ⇒ refused (axon-vm run with tampered image → exit 10, job never ran)
         let mut tampered = b"mock-axon-os-kernel-for-a1-journey".to_vec();
@@ -921,8 +1006,13 @@ mod tests {
             "tampered image must be refused — job must never enter an unverified guest"
         );
         // Job must NOT be admitted when attestation fails
-        let refused_job =
-            try_admit_job(&tampered_report, &expected_digest, &expected_axtcb1, job, 42u64);
+        let refused_job = try_admit_job(
+            &tampered_report,
+            &expected_digest,
+            &expected_axtcb1,
+            job,
+            42u64,
+        );
         assert!(
             refused_job.is_err(),
             "try_admit_job must refuse when attestation fails (tampered image)"
@@ -952,27 +1042,47 @@ mod tests {
         let job = b"summarize: reads ./data/, writes ./out/, no net (R21 job)";
         let record = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 1u64)
             .expect("attested job must run");
-        assert!(record.starts_with("axrec1:"), "record must use axrec1: prefix");
+        assert!(
+            record.starts_with("axrec1:"),
+            "record must use axrec1: prefix"
+        );
 
         // A5: same job + same seed ⇒ byte-identical record
         let record2 = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 1u64)
             .expect("second run must also succeed");
-        assert_eq!(record, record2, "same job+seed must produce byte-identical RunRecord (A5)");
+        assert_eq!(
+            record, record2,
+            "same job+seed must produce byte-identical RunRecord (A5)"
+        );
 
         // Different seed ⇒ different record
         let record_diff = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 2u64)
             .expect("different-seed run must also succeed");
-        assert_ne!(record, record_diff, "different seeds must produce different records");
+        assert_ne!(
+            record, record_diff,
+            "different seeds must produce different records"
+        );
 
         // Overreach variant: a job with net effects would be in-guest-denied
         // (in real R21+R23 pipeline; here we verify the mock gate works)
         let overreach_job = b"net: tries to reach external host (overreach)";
         // In mock mode both are just hash-based, but the gate should work
-        let overreach_record =
-            try_admit_job(&report, &expected_digest, &expected_axtcb1, overreach_job, 1u64)
-                .expect("mock admits any bytes for A2; real R21 would deny net");
-        assert!(overreach_record.starts_with("axrec1:"), "even mock overreach produces a record");
-        assert_ne!(record, overreach_record, "different jobs must produce different records");
+        let overreach_record = try_admit_job(
+            &report,
+            &expected_digest,
+            &expected_axtcb1,
+            overreach_job,
+            1u64,
+        )
+        .expect("mock admits any bytes for A2; real R21 would deny net");
+        assert!(
+            overreach_record.starts_with("axrec1:"),
+            "even mock overreach produces a record"
+        );
+        assert_ne!(
+            record, overreach_record,
+            "different jobs must produce different records"
+        );
     }
 
     // ─ A3: quickstart commands execute ─────────────────────────────────────────
@@ -982,14 +1092,20 @@ mod tests {
         // Quickstart step 2: axon-vm measure → produces deterministic axmeas1: digest
         let kernel = b"axon-os-quickstart-test-kernel";
         let m = measure_kernel_bytes(kernel);
-        assert!(m.axtcb1.starts_with("axtcb1:"), "measure must produce axtcb1: prefix");
+        assert!(
+            m.axtcb1.starts_with("axtcb1:"),
+            "measure must produce axtcb1: prefix"
+        );
         let digest_hex = hex::encode(m.digest);
         assert_eq!(digest_hex.len(), 64, "hex digest must be 64 chars");
 
         // Quickstart step 3: axon-vm attest → sign_report
         let report = sign_report(m.clone(), TEST_KEY);
         assert_eq!(report.hw_root, SOFTWARE_TPM_HW_ROOT);
-        assert!(!report.signature.is_empty(), "attest must produce a non-empty signature");
+        assert!(
+            !report.signature.is_empty(),
+            "attest must produce a non-empty signature"
+        );
 
         // Quickstart step 4: axon-vm verify → verify_report
         let ok = verify_report(&report, &m.digest, &m.axtcb1);
@@ -997,16 +1113,22 @@ mod tests {
 
         // JSON output round-trips correctly (what axon-vm attest emits)
         let json_str = report_to_json(&report);
-        let parsed: serde_json::Value = serde_json::from_str(&json_str)
-            .expect("report_to_json must produce valid JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("report_to_json must produce valid JSON");
         assert_eq!(parsed["hw_root"], SOFTWARE_TPM_HW_ROOT);
         assert_eq!(parsed["schema"], "axon-vm-report/1");
         assert!(
-            parsed["measurement"]["axtcb1"].as_str().unwrap().starts_with("axtcb1:"),
+            parsed["measurement"]["axtcb1"]
+                .as_str()
+                .unwrap()
+                .starts_with("axtcb1:"),
             "JSON measurement.axtcb1 must carry the axtcb1: prefix"
         );
         assert!(
-            parsed["substrate"].as_str().unwrap().contains("no memory encryption"),
+            parsed["substrate"]
+                .as_str()
+                .unwrap()
+                .contains("no memory encryption"),
             "JSON must contain the stand-in caveat about no memory encryption"
         );
 
@@ -1014,7 +1136,10 @@ mod tests {
         let job = b"summarize.axjob";
         let rec = try_admit_job(&report, &m.digest, &m.axtcb1, job, 0u64)
             .expect("quickstart run must succeed");
-        assert!(rec.starts_with("axrec1:"), "run must produce axrec1: record");
+        assert!(
+            rec.starts_with("axrec1:"),
+            "run must produce axrec1: record"
+        );
 
         // Quickstart step 6: axon-vm run tampered → refused (exit 10, job never ran)
         let mut tampered_kernel = kernel.to_vec();
@@ -1022,7 +1147,10 @@ mod tests {
         let m_tampered = measure_kernel_bytes(&tampered_kernel);
         let tampered_report = sign_report(m_tampered, TEST_KEY);
         let refused = verify_report(&tampered_report, &m.digest, &m.axtcb1);
-        assert!(refused.is_err(), "tampered image must be refused (quickstart step 6)");
+        assert!(
+            refused.is_err(),
+            "tampered image must be refused (quickstart step 6)"
+        );
     }
 
     // ─ A4: device surface is minimal and isolated ───────────────────────────────
@@ -1031,10 +1159,22 @@ mod tests {
     fn acc_a4_device_surface_minimal_and_isolated() {
         // The minimal set is exactly {vsock, serial, timer}
         let allowed = DeviceSet::minimal();
-        assert!(allowed.vsock, "vsock (job channel) must be in the minimal set");
-        assert!(allowed.serial, "serial (diagnostics) must be in the minimal set");
-        assert!(allowed.timer, "timer (scheduler) must be in the minimal set");
-        assert!(allowed.validate().is_ok(), "minimal DeviceSet must validate");
+        assert!(
+            allowed.vsock,
+            "vsock (job channel) must be in the minimal set"
+        );
+        assert!(
+            allowed.serial,
+            "serial (diagnostics) must be in the minimal set"
+        );
+        assert!(
+            allowed.timer,
+            "timer (scheduler) must be in the minimal set"
+        );
+        assert!(
+            allowed.validate().is_ok(),
+            "minimal DeviceSet must validate"
+        );
 
         // Named devices in the allowlist are accepted
         assert!(DeviceSet::validate_manifest_extra_device("vsock").is_ok());
@@ -1042,9 +1182,17 @@ mod tests {
         assert!(DeviceSet::validate_manifest_extra_device("timer").is_ok());
 
         // Devices outside the allowlist are DeviceDeny
-        for extra in &["gpu", "virtio-net", "block", "virtio-rng", "pci-passthrough",
-                        "virtio-balloon", "nvme", "usb", "virtio-console-multiport"]
-        {
+        for extra in &[
+            "gpu",
+            "virtio-net",
+            "block",
+            "virtio-rng",
+            "pci-passthrough",
+            "virtio-balloon",
+            "nvme",
+            "usb",
+            "virtio-console-multiport",
+        ] {
             let r = DeviceSet::validate_manifest_extra_device(extra);
             assert!(
                 r.is_err(),
@@ -1052,16 +1200,32 @@ mod tests {
             );
             let msg = r.unwrap_err();
             assert!(
-                msg.contains("DeviceDeny") || msg.contains("allowlist") || msg.contains("permitted"),
+                msg.contains("DeviceDeny")
+                    || msg.contains("allowlist")
+                    || msg.contains("permitted"),
                 "error for '{extra}' must explain the allowlist violation: {msg}"
             );
         }
 
         // A DeviceSet missing required devices fails validation
-        let missing_vsock = DeviceSet { vsock: false, serial: true, timer: true };
-        assert!(missing_vsock.validate().is_err(), "missing vsock must fail validation");
-        let missing_timer = DeviceSet { vsock: true, serial: true, timer: false };
-        assert!(missing_timer.validate().is_err(), "missing timer must fail validation");
+        let missing_vsock = DeviceSet {
+            vsock: false,
+            serial: true,
+            timer: true,
+        };
+        assert!(
+            missing_vsock.validate().is_err(),
+            "missing vsock must fail validation"
+        );
+        let missing_timer = DeviceSet {
+            vsock: true,
+            serial: true,
+            timer: false,
+        };
+        assert!(
+            missing_timer.validate().is_err(),
+            "missing timer must fail validation"
+        );
     }
 
     // ─ A6: attestation is mandatory and chained ─────────────────────────────────
@@ -1083,7 +1247,11 @@ mod tests {
         // With correct attestation, job is admitted
         let signed = sign_report(m.clone(), TEST_KEY);
         let r_signed = try_admit_job(&signed, &m.digest, &m.axtcb1, b"any-job", 0);
-        assert!(r_signed.is_ok(), "job must be admitted after valid attestation: {:?}", r_signed.err());
+        assert!(
+            r_signed.is_ok(),
+            "job must be admitted after valid attestation: {:?}",
+            r_signed.err()
+        );
 
         // The axtcb1 prefix is present and chained (A6 + Core)
         assert!(
@@ -1101,7 +1269,10 @@ mod tests {
 
         // Attestation without any job (just verify) also works
         let r_verify = verify_report(&signed, &m.digest, &m.axtcb1);
-        assert!(r_verify.is_ok(), "standalone verify_report must succeed for genuine report");
+        assert!(
+            r_verify.is_ok(),
+            "standalone verify_report must succeed for genuine report"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1111,12 +1282,12 @@ mod tests {
     /// Helper: produce a valid `ComponentPaths` for unit tests (no filesystem).
     fn test_component_paths() -> ComponentPaths {
         ComponentPaths {
-            kernel:           b"kernel-bytes-r31-test".to_vec(),
-            axon_os:          b"axon-os-bytes-r31-test".to_vec(),
-            axon_audit:       Some(b"axon-audit-bytes-r31-test".to_vec()),
-            kernel_path:      "dist/guest/vmlinuz".to_string(),
-            axon_os_path:     "target/release/axon-os".to_string(),
-            axon_audit_path:  Some("target/release/axon-audit-writer".to_string()),
+            kernel: b"kernel-bytes-r31-test".to_vec(),
+            axon_os: b"axon-os-bytes-r31-test".to_vec(),
+            axon_audit: Some(b"axon-audit-bytes-r31-test".to_vec()),
+            kernel_path: "dist/guest/vmlinuz".to_string(),
+            axon_os_path: "target/release/axon-os".to_string(),
+            axon_audit_path: Some("target/release/axon-audit-writer".to_string()),
         }
     }
 
@@ -1130,10 +1301,17 @@ mod tests {
             m1.axtcb1_ext, m2.axtcb1_ext,
             "same bytes must produce byte-identical axtcb1_ext on every invocation"
         );
-        assert!(m1.axtcb1_ext.starts_with("axtcb1-ext:"), "must carry axtcb1-ext: prefix");
+        assert!(
+            m1.axtcb1_ext.starts_with("axtcb1-ext:"),
+            "must carry axtcb1-ext: prefix"
+        );
         // Digest hex body is 64 hex chars (sha256 = 32 bytes)
         let hex_body = m1.axtcb1_ext.strip_prefix("axtcb1-ext:").unwrap();
-        assert_eq!(hex_body.len(), 64, "axtcb1_ext hex body must be 64 hex chars");
+        assert_eq!(
+            hex_body.len(),
+            64,
+            "axtcb1_ext hex body must be 64 hex chars"
+        );
     }
 
     // ─ A4: hermetic / isolated — pure function, no panics on valid inputs ─────
@@ -1143,39 +1321,45 @@ mod tests {
     fn acc_a4_hermetic_isolated_timeout() {
         // Empty bytes edge case: still valid (0-byte kernel is unusual but must not panic)
         let empty = ComponentPaths {
-            kernel:           vec![],
-            axon_os:          vec![],
-            axon_audit:       None,
-            kernel_path:      "dist/guest/vmlinuz".to_string(),
-            axon_os_path:     "target/release/axon-os".to_string(),
-            axon_audit_path:  None,
+            kernel: vec![],
+            axon_os: vec![],
+            axon_audit: None,
+            kernel_path: "dist/guest/vmlinuz".to_string(),
+            axon_os_path: "target/release/axon-os".to_string(),
+            axon_audit_path: None,
         };
         let m = measure_extended(empty).unwrap();
-        assert!(m.axtcb1_ext.starts_with("axtcb1-ext:"), "even empty inputs must produce a valid digest");
+        assert!(
+            m.axtcb1_ext.starts_with("axtcb1-ext:"),
+            "even empty inputs must produce a valid digest"
+        );
         assert_eq!(m.components.len(), 4);
 
         // Large synthetic bytes: must not panic and must be deterministic
-        let large_kernel  = vec![0xABu8; 1024 * 64];
+        let large_kernel = vec![0xABu8; 1024 * 64];
         let large_axon_os = vec![0xCDu8; 1024 * 64];
         let large = ComponentPaths {
-            kernel:           large_kernel.clone(),
-            axon_os:          large_axon_os.clone(),
-            axon_audit:       Some(vec![0xEFu8; 1024 * 64]),
-            kernel_path:      "dist/guest/vmlinuz".to_string(),
-            axon_os_path:     "target/release/axon-os".to_string(),
-            axon_audit_path:  Some("target/release/axon-audit-writer".to_string()),
+            kernel: large_kernel.clone(),
+            axon_os: large_axon_os.clone(),
+            axon_audit: Some(vec![0xEFu8; 1024 * 64]),
+            kernel_path: "dist/guest/vmlinuz".to_string(),
+            axon_os_path: "target/release/axon-os".to_string(),
+            axon_audit_path: Some("target/release/axon-audit-writer".to_string()),
         };
         let m_large1 = measure_extended(large).unwrap();
         let large2 = ComponentPaths {
-            kernel:           large_kernel,
-            axon_os:          large_axon_os,
-            axon_audit:       Some(vec![0xEFu8; 1024 * 64]),
-            kernel_path:      "dist/guest/vmlinuz".to_string(),
-            axon_os_path:     "target/release/axon-os".to_string(),
-            axon_audit_path:  Some("target/release/axon-audit-writer".to_string()),
+            kernel: large_kernel,
+            axon_os: large_axon_os,
+            axon_audit: Some(vec![0xEFu8; 1024 * 64]),
+            kernel_path: "dist/guest/vmlinuz".to_string(),
+            axon_os_path: "target/release/axon-os".to_string(),
+            axon_audit_path: Some("target/release/axon-audit-writer".to_string()),
         };
         let m_large2 = measure_extended(large2).unwrap();
-        assert_eq!(m_large1.axtcb1_ext, m_large2.axtcb1_ext, "large-byte determinism");
+        assert_eq!(
+            m_large1.axtcb1_ext, m_large2.axtcb1_ext,
+            "large-byte determinism"
+        );
     }
 
     // ─ A5: tampered component detected ────────────────────────────────────────
@@ -1195,8 +1379,12 @@ mod tests {
         let m_k = measure_extended(ComponentPaths {
             kernel: tampered_kernel,
             ..test_component_paths()
-        }).unwrap();
-        assert_ne!(m_k.axtcb1_ext, base_ext, "tampered kernel must change axtcb1_ext (slot 0)");
+        })
+        .unwrap();
+        assert_ne!(
+            m_k.axtcb1_ext, base_ext,
+            "tampered kernel must change axtcb1_ext (slot 0)"
+        );
 
         // Tamper slot 1: axon-os (also affects slot 3 monitor — two slots)
         let tampered_axon_os = {
@@ -1207,9 +1395,16 @@ mod tests {
         let m_a = measure_extended(ComponentPaths {
             axon_os: tampered_axon_os,
             ..test_component_paths()
-        }).unwrap();
-        assert_ne!(m_a.axtcb1_ext, base_ext, "tampered axon-os must change axtcb1_ext (slot 1+3)");
-        assert_ne!(m_a.axtcb1_ext, m_k.axtcb1_ext, "kernel tamper ≠ axon-os tamper");
+        })
+        .unwrap();
+        assert_ne!(
+            m_a.axtcb1_ext, base_ext,
+            "tampered axon-os must change axtcb1_ext (slot 1+3)"
+        );
+        assert_ne!(
+            m_a.axtcb1_ext, m_k.axtcb1_ext,
+            "kernel tamper ≠ axon-os tamper"
+        );
 
         // Tamper slot 2: axon-audit (real binary path; zero-fill path is tested separately)
         let tampered_axon_audit = {
@@ -1220,16 +1415,25 @@ mod tests {
         let m_au = measure_extended(ComponentPaths {
             axon_audit: Some(tampered_axon_audit),
             ..test_component_paths()
-        }).unwrap();
-        assert_ne!(m_au.axtcb1_ext, base_ext, "tampered axon-audit must change axtcb1_ext (slot 2)");
+        })
+        .unwrap();
+        assert_ne!(
+            m_au.axtcb1_ext, base_ext,
+            "tampered axon-audit must change axtcb1_ext (slot 2)"
+        );
 
         // Anti-vacuous: all three tamper outcomes are distinct
         let distinct: std::collections::HashSet<&str> = [
             m_k.axtcb1_ext.as_str(),
             m_a.axtcb1_ext.as_str(),
             m_au.axtcb1_ext.as_str(),
-        ].into();
-        assert_eq!(distinct.len(), 3, "all three tamper outcomes must be distinct digests");
+        ]
+        .into();
+        assert_eq!(
+            distinct.len(),
+            3,
+            "all three tamper outcomes must be distinct digests"
+        );
     }
 
     // ─ A6: canonical chaining order matters ───────────────────────────────────
@@ -1240,23 +1444,25 @@ mod tests {
     fn acc_a6_chaining_order_canonical() {
         // Canonical: kernel=A, axon-os=B
         let m_canonical = measure_extended(ComponentPaths {
-            kernel:           b"component-A".to_vec(),
-            axon_os:          b"component-B".to_vec(),
-            axon_audit:       Some(b"component-C".to_vec()),
-            kernel_path:      "k".to_string(),
-            axon_os_path:     "ao".to_string(),
-            axon_audit_path:  Some("aa".to_string()),
-        }).unwrap();
+            kernel: b"component-A".to_vec(),
+            axon_os: b"component-B".to_vec(),
+            axon_audit: Some(b"component-C".to_vec()),
+            kernel_path: "k".to_string(),
+            axon_os_path: "ao".to_string(),
+            axon_audit_path: Some("aa".to_string()),
+        })
+        .unwrap();
 
         // Swapped: kernel=B, axon-os=A (same byte sets, different slot assignment)
         let m_swapped = measure_extended(ComponentPaths {
-            kernel:           b"component-B".to_vec(),
-            axon_os:          b"component-A".to_vec(),
-            axon_audit:       Some(b"component-C".to_vec()),
-            kernel_path:      "k".to_string(),
-            axon_os_path:     "ao".to_string(),
-            axon_audit_path:  Some("aa".to_string()),
-        }).unwrap();
+            kernel: b"component-B".to_vec(),
+            axon_os: b"component-A".to_vec(),
+            axon_audit: Some(b"component-C".to_vec()),
+            kernel_path: "k".to_string(),
+            axon_os_path: "ao".to_string(),
+            axon_audit_path: Some("aa".to_string()),
+        })
+        .unwrap();
 
         assert_ne!(
             m_canonical.axtcb1_ext, m_swapped.axtcb1_ext,
@@ -1266,7 +1472,10 @@ mod tests {
         // Components are always in the canonical named order regardless of inputs
         let canonical_names = ["kernel", "axon-os", "axon-audit", "monitor"];
         for (entry, expected_name) in m_canonical.components.iter().zip(canonical_names.iter()) {
-            assert_eq!(&entry.name, expected_name, "component names must be in canonical order");
+            assert_eq!(
+                &entry.name, expected_name,
+                "component names must be in canonical order"
+            );
         }
     }
 
@@ -1280,17 +1489,29 @@ mod tests {
 
         // Zero-fill path: axon-audit = None → zero-fill, not an error
         let m = measure_extended(ComponentPaths {
-            kernel:           b"k".to_vec(),
-            axon_os:          b"ao".to_vec(),
-            axon_audit:       None,
-            kernel_path:      "k-path".to_string(),
-            axon_os_path:     "ao-path".to_string(),
-            axon_audit_path:  None,
-        }).unwrap();
+            kernel: b"k".to_vec(),
+            axon_os: b"ao".to_vec(),
+            axon_audit: None,
+            kernel_path: "k-path".to_string(),
+            axon_os_path: "ao-path".to_string(),
+            axon_audit_path: None,
+        })
+        .unwrap();
         // Confirm zero-fill sentinel appears in components
-        let audit_entry = m.components.iter().find(|c| c.name == "axon-audit").unwrap();
-        assert_eq!(audit_entry.sha256, "0".repeat(64), "absent axon-audit must be zero-filled");
-        assert_eq!(audit_entry.path, "<absent>", "absent axon-audit must record '<absent>'");
+        let audit_entry = m
+            .components
+            .iter()
+            .find(|c| c.name == "axon-audit")
+            .unwrap();
+        assert_eq!(
+            audit_entry.sha256,
+            "0".repeat(64),
+            "absent axon-audit must be zero-filled"
+        );
+        assert_eq!(
+            audit_entry.path, "<absent>",
+            "absent axon-audit must record '<absent>'"
+        );
         assert_eq!(audit_entry.size, 0, "absent axon-audit size must be 0");
 
         // measure_extended always succeeds (byte-level API; no I/O fails here)
@@ -1312,7 +1533,10 @@ mod tests {
         let r2 = measure_host_stack(&kernel_tmp, Some(&missing_axon_os), None);
         assert!(r2.is_err(), "missing axon-os must return Err");
         let msg2 = r2.unwrap_err().to_string();
-        assert!(msg2.contains("axon-os"), "error must mention 'axon-os': {msg2}");
+        assert!(
+            msg2.contains("axon-os"),
+            "error must mention 'axon-os': {msg2}"
+        );
         let _ = std::fs::remove_file(&kernel_tmp);
 
         // axon-os path = None → Err(ComponentMissing("axon-os"))
@@ -1328,7 +1552,8 @@ mod tests {
         let without_audit = measure_extended(ComponentPaths {
             axon_audit: None,
             ..test_component_paths()
-        }).unwrap();
+        })
+        .unwrap();
 
         // axtcb1_ext values must differ (zero-fill ≠ real audit hash)
         assert_ne!(
@@ -1336,8 +1561,16 @@ mod tests {
             "zero-fill sentinel must produce a different digest than the real axon-audit hash"
         );
         // The sentinel entry is auditable
-        let audit_entry = without_audit.components.iter().find(|c| c.name == "axon-audit").unwrap();
-        assert_eq!(audit_entry.sha256, "0".repeat(64), "zero-fill sha256 must be 64 zeros");
+        let audit_entry = without_audit
+            .components
+            .iter()
+            .find(|c| c.name == "axon-audit")
+            .unwrap();
+        assert_eq!(
+            audit_entry.sha256,
+            "0".repeat(64),
+            "zero-fill sha256 must be 64 zeros"
+        );
         assert_eq!(audit_entry.path, "<absent>");
         // The measurement is still valid (R28-pending window)
         assert!(without_audit.axtcb1_ext.starts_with("axtcb1-ext:"));
@@ -1351,7 +1584,11 @@ mod tests {
         let m = measure_extended(test_component_paths()).unwrap();
 
         // Exactly 4 components
-        assert_eq!(m.components.len(), 4, "must have exactly 4 component entries");
+        assert_eq!(
+            m.components.len(),
+            4,
+            "must have exactly 4 component entries"
+        );
 
         // Canonical names in order
         let names: Vec<&str> = m.components.iter().map(|c| c.name.as_str()).collect();
@@ -1359,8 +1596,8 @@ mod tests {
 
         // All entries have non-empty name, path, sha256
         for c in &m.components {
-            assert!(!c.name.is_empty(),   "component name must be non-empty");
-            assert!(!c.path.is_empty(),   "component path must be non-empty");
+            assert!(!c.name.is_empty(), "component name must be non-empty");
+            assert!(!c.path.is_empty(), "component path must be non-empty");
             assert!(!c.sha256.is_empty(), "component sha256 must be non-empty");
             assert_eq!(c.sha256.len(), 64, "sha256 must be 64 hex chars");
         }
@@ -1376,20 +1613,36 @@ mod tests {
         assert_eq!(m.components[3].size, 0);
 
         // JSON round-trip: report_to_json_extended produces schema axon-vm-report/2
-        let kernel    = b"kernel-bytes-r31-test";
+        let kernel = b"kernel-bytes-r31-test";
         let base_meas = measure_kernel_bytes(kernel);
         let fake_report = sign_report(base_meas, b"test-key");
         let json_str = report_to_json_extended(&fake_report, &m);
         let parsed: serde_json::Value = serde_json::from_str(&json_str)
             .expect("report_to_json_extended must produce valid JSON");
-        assert_eq!(parsed["schema"], "axon-vm-report/2", "extended schema must be axon-vm-report/2");
+        assert_eq!(
+            parsed["schema"], "axon-vm-report/2",
+            "extended schema must be axon-vm-report/2"
+        );
         let comps = parsed["measurement"]["components"].as_array().unwrap();
         assert_eq!(comps.len(), 4, "JSON must have 4 components");
-        assert_eq!(comps[3]["sha256"], comps[1]["sha256"], "JSON monitor.sha256 must equal axon-os.sha256");
-        assert!(parsed["measurement"]["axtcb1"].as_str().unwrap().starts_with("axtcb1:"),
-            "R26 axtcb1 must be present in schema/2");
-        assert!(parsed["measurement"]["axtcb1_ext"].as_str().unwrap().starts_with("axtcb1-ext:"),
-            "axtcb1_ext must be present in schema/2");
+        assert_eq!(
+            comps[3]["sha256"], comps[1]["sha256"],
+            "JSON monitor.sha256 must equal axon-os.sha256"
+        );
+        assert!(
+            parsed["measurement"]["axtcb1"]
+                .as_str()
+                .unwrap()
+                .starts_with("axtcb1:"),
+            "R26 axtcb1 must be present in schema/2"
+        );
+        assert!(
+            parsed["measurement"]["axtcb1_ext"]
+                .as_str()
+                .unwrap()
+                .starts_with("axtcb1-ext:"),
+            "axtcb1_ext must be present in schema/2"
+        );
     }
 
     // ─ Core: r26_baseline_backward_compatible ─────────────────────────────────
@@ -1400,36 +1653,62 @@ mod tests {
         // R26 path: measure_kernel_bytes → sign_report → verify_report → report_to_json
         let kernel = b"r26-backward-compat-kernel";
         let m = measure_kernel_bytes(kernel);
-        assert!(m.axtcb1.starts_with("axtcb1:"), "R26 axtcb1 prefix must be 'axtcb1:'");
+        assert!(
+            m.axtcb1.starts_with("axtcb1:"),
+            "R26 axtcb1 prefix must be 'axtcb1:'"
+        );
 
         let report = sign_report(m.clone(), TEST_KEY);
-        assert!(verify_report(&report, &m.digest, &m.axtcb1).is_ok(), "R26 verify must pass");
+        assert!(
+            verify_report(&report, &m.digest, &m.axtcb1).is_ok(),
+            "R26 verify must pass"
+        );
 
         // report_to_json (R26) still produces schema /1 with no extended fields
         let json_str = report_to_json(&report);
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(parsed["schema"], "axon-vm-report/1", "R26 schema must remain axon-vm-report/1");
-        assert!(parsed["measurement"].get("axtcb1_ext").is_none(),
-            "R26 JSON must NOT contain axtcb1_ext");
-        assert!(parsed["measurement"].get("components").is_none(),
-            "R26 JSON must NOT contain components");
+        assert_eq!(
+            parsed["schema"], "axon-vm-report/1",
+            "R26 schema must remain axon-vm-report/1"
+        );
+        assert!(
+            parsed["measurement"].get("axtcb1_ext").is_none(),
+            "R26 JSON must NOT contain axtcb1_ext"
+        );
+        assert!(
+            parsed["measurement"].get("components").is_none(),
+            "R26 JSON must NOT contain components"
+        );
 
         // R31 extended path: measure_extended produces schema /2 with BOTH axtcb1 and axtcb1_ext
         let ext = measure_extended(test_component_paths()).unwrap();
-        assert!(ext.base.axtcb1.starts_with("axtcb1:"),
-            "ExtendedMeasurement.base.axtcb1 must carry R26 prefix");
-        assert!(ext.axtcb1_ext.starts_with("axtcb1-ext:"),
-            "ExtendedMeasurement.axtcb1_ext must carry R31 prefix");
+        assert!(
+            ext.base.axtcb1.starts_with("axtcb1:"),
+            "ExtendedMeasurement.base.axtcb1 must carry R26 prefix"
+        );
+        assert!(
+            ext.axtcb1_ext.starts_with("axtcb1-ext:"),
+            "ExtendedMeasurement.axtcb1_ext must carry R31 prefix"
+        );
         // The two digests are never the same value (different prefix strings)
-        assert_ne!(ext.base.axtcb1, ext.axtcb1_ext, "axtcb1 and axtcb1_ext must never be equal");
+        assert_ne!(
+            ext.base.axtcb1, ext.axtcb1_ext,
+            "axtcb1 and axtcb1_ext must never be equal"
+        );
 
         // report_to_json_extended produces schema /2 with both fields
         let ext_report = sign_report(ext.base.clone(), TEST_KEY);
         let ext_json = report_to_json_extended(&ext_report, &ext);
         let ext_parsed: serde_json::Value = serde_json::from_str(&ext_json).unwrap();
         assert_eq!(ext_parsed["schema"], "axon-vm-report/2");
-        assert!(ext_parsed["measurement"]["axtcb1"].as_str().unwrap().starts_with("axtcb1:"));
-        assert!(ext_parsed["measurement"]["axtcb1_ext"].as_str().unwrap().starts_with("axtcb1-ext:"));
+        assert!(ext_parsed["measurement"]["axtcb1"]
+            .as_str()
+            .unwrap()
+            .starts_with("axtcb1:"));
+        assert!(ext_parsed["measurement"]["axtcb1_ext"]
+            .as_str()
+            .unwrap()
+            .starts_with("axtcb1-ext:"));
     }
 
     // ─ Verify: prefix mismatch and monitor mismatch are detected ──────────────
@@ -1439,26 +1718,37 @@ mod tests {
 
         // Wrong prefix on expected value → PrefixMismatch
         let r = verify_extended(&m, "axtcb1:not-the-right-prefix");
-        assert!(matches!(r, Err(VerifyError::PrefixMismatch)),
-            "expected PrefixMismatch, got {r:?}");
+        assert!(
+            matches!(r, Err(VerifyError::PrefixMismatch)),
+            "expected PrefixMismatch, got {r:?}"
+        );
 
         // Correct expected → Ok
-        assert!(verify_extended(&m, &m.axtcb1_ext).is_ok(), "correct expected must pass");
+        assert!(
+            verify_extended(&m, &m.axtcb1_ext).is_ok(),
+            "correct expected must pass"
+        );
 
         // Wrong expected (right prefix, wrong digest) → DigestMismatch
         let wrong = format!("axtcb1-ext:{}", "a".repeat(64));
-        assert!(matches!(
-            verify_extended(&m, &wrong),
-            Err(VerifyError::DigestMismatch { .. })
-        ), "wrong digest must give DigestMismatch");
+        assert!(
+            matches!(
+                verify_extended(&m, &wrong),
+                Err(VerifyError::DigestMismatch { .. })
+            ),
+            "wrong digest must give DigestMismatch"
+        );
 
         // Mutated monitor sha256 → MonitorSlotMismatch
         let mut bad = m.clone();
         bad.components[3].sha256 = "b".repeat(64);
-        assert!(matches!(
-            verify_extended(&bad, &bad.axtcb1_ext),
-            Err(VerifyError::MonitorSlotMismatch)
-        ), "monitor sha256 tamper must give MonitorSlotMismatch");
+        assert!(
+            matches!(
+                verify_extended(&bad, &bad.axtcb1_ext),
+                Err(VerifyError::MonitorSlotMismatch)
+            ),
+            "monitor sha256 tamper must give MonitorSlotMismatch"
+        );
     }
 
     // ─ A1: smoke extended TCB journey (unit-level; filesystem + pure) ──────────
@@ -1481,8 +1771,14 @@ mod tests {
         let m = measure_host_stack(&kernel_path, Some(&axon_os_path), Some(&audit_path))
             .expect("measure_host_stack must succeed on valid files");
         assert_eq!(m.components.len(), 4, "must have 4 components");
-        assert!(m.axtcb1_ext.starts_with("axtcb1-ext:"), "must have axtcb1-ext: prefix");
-        assert_eq!(m.components[3].sha256, m.components[1].sha256, "monitor sha256 == axon-os sha256");
+        assert!(
+            m.axtcb1_ext.starts_with("axtcb1-ext:"),
+            "must have axtcb1-ext: prefix"
+        );
+        assert_eq!(
+            m.components[3].sha256, m.components[1].sha256,
+            "monitor sha256 == axon-os sha256"
+        );
 
         // Step 2: verify against the measured value → Ok
         assert!(
@@ -1496,13 +1792,20 @@ mod tests {
         os_bytes[4] ^= 0xFF;
         std::fs::write(&tampered_os_path, &os_bytes).unwrap();
 
-        let m_tampered = measure_host_stack(&kernel_path, Some(&tampered_os_path), Some(&audit_path))
-            .expect("measure_host_stack must succeed on tampered file too");
-        assert_ne!(m.axtcb1_ext, m_tampered.axtcb1_ext, "tampered axon-os must change axtcb1_ext");
+        let m_tampered =
+            measure_host_stack(&kernel_path, Some(&tampered_os_path), Some(&audit_path))
+                .expect("measure_host_stack must succeed on tampered file too");
+        assert_ne!(
+            m.axtcb1_ext, m_tampered.axtcb1_ext,
+            "tampered axon-os must change axtcb1_ext"
+        );
 
         // Verify tampered measurement against original expected → must fail
         let r = verify_extended(&m_tampered, &m.axtcb1_ext);
-        assert!(r.is_err(), "original expected must reject tampered measurement");
+        assert!(
+            r.is_err(),
+            "original expected must reject tampered measurement"
+        );
 
         // Clean up
         for p in [&kernel_path, &axon_os_path, &audit_path, &tampered_os_path] {
@@ -1518,15 +1821,26 @@ mod tests {
         let m = measure_extended(test_component_paths()).unwrap();
 
         // Step 1: axtcb1_ext starts with the right prefix
-        assert!(m.axtcb1_ext.starts_with("axtcb1-ext:"), "step 1: axtcb1-ext: prefix");
+        assert!(
+            m.axtcb1_ext.starts_with("axtcb1-ext:"),
+            "step 1: axtcb1-ext: prefix"
+        );
 
         // Step 2: components | length == 4
         assert_eq!(m.components.len(), 4, "step 2: 4 components");
 
         // Step 5: monitor.sha256 == axon-os.sha256
         assert_eq!(
-            m.components.iter().find(|c| c.name == "monitor").unwrap().sha256,
-            m.components.iter().find(|c| c.name == "axon-os").unwrap().sha256,
+            m.components
+                .iter()
+                .find(|c| c.name == "monitor")
+                .unwrap()
+                .sha256,
+            m.components
+                .iter()
+                .find(|c| c.name == "axon-os")
+                .unwrap()
+                .sha256,
             "step 5: monitor.sha256 == axon-os.sha256"
         );
 
@@ -1534,7 +1848,8 @@ mod tests {
         let tampered = measure_extended(ComponentPaths {
             axon_os: b"TAMPERED".to_vec(),
             ..test_component_paths()
-        }).unwrap();
+        })
+        .unwrap();
         assert_ne!(m.axtcb1_ext, tampered.axtcb1_ext, "step 6: tamper detected");
 
         // report_to_json_extended round-trips to valid JSON with schema /2
@@ -1543,7 +1858,13 @@ mod tests {
         let json_str = report_to_json_extended(&fake_report, &m);
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["schema"], "axon-vm-report/2");
-        assert_eq!(parsed["measurement"]["components"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            parsed["measurement"]["components"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
     }
 
     // ─ Additional: HMAC determinism ─────────────────────────────────────────────

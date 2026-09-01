@@ -1576,10 +1576,10 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
         svm_zero: [u8; 3],
     }
 
-    let fd = unsafe {
-        libc::socket(AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0)
-    };
-    if fd < 0 { return Err(()); }
+    let fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(());
+    }
 
     let addr = SockaddrVm {
         svm_family: AF_VSOCK as u16,
@@ -1598,7 +1598,9 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
         )
     };
     if r < 0 {
-        unsafe { libc::close(fd); }
+        unsafe {
+            libc::close(fd);
+        }
         return Err(());
     }
 
@@ -1629,7 +1631,8 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
 #[cfg(target_os = "linux")]
 pub fn run_suspendable_vsock(program: &Program, vsock_port: u32) -> i32 {
     VSOCK_PORT.with(|c| c.set(vsock_port as i32));
-    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
+    let code =
+        on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
     VSOCK_PORT.with(|c| c.set(-1));
     code
 }
@@ -1665,14 +1668,18 @@ fn unix_socket_roundtrip(path: &str, req: &str) -> Result<Option<String>, ()> {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect(path).or_else(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        UnixStream::connect(path)
-    }).map_err(|_| ())?;
+    let mut stream = UnixStream::connect(path)
+        .or_else(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            UnixStream::connect(path)
+        })
+        .map_err(|_| ())?;
 
     // Send: 4-byte LE length + payload bytes.
     let payload = req.as_bytes();
-    stream.write_all(&(payload.len() as u32).to_le_bytes()).map_err(|_| ())?;
+    stream
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .map_err(|_| ())?;
     stream.write_all(payload).map_err(|_| ())?;
     stream.flush().map_err(|_| ())?;
 
@@ -1702,10 +1709,11 @@ fn unix_socket_roundtrip(path: &str, req: &str) -> Result<Option<String>, ()> {
 /// completes normally even when no socket exists at the default path.
 #[cfg(unix)]
 pub fn run_suspendable_hypercall(program: &Program) -> i32 {
-    let sock_path = std::env::var("AXON_HOST_SOCKET")
-        .unwrap_or_else(|_| "/tmp/axon-host.sock".to_string());
+    let sock_path =
+        std::env::var("AXON_HOST_SOCKET").unwrap_or_else(|_| "/tmp/axon-host.sock".to_string());
     UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = Some(sock_path));
-    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
+    let code =
+        on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
     UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = None);
     code
 }
@@ -1729,8 +1737,7 @@ pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> 
                 SendValue::Str(s) => s.clone(),
                 other => format!("{other:?}"),
             };
-            return unix_socket_roundtrip(&path, &req_str)
-                .map(|opt| opt.map(SendValue::Str));
+            return unix_socket_roundtrip(&path, &req_str).map(|opt| opt.map(SendValue::Str));
         }
     }
 
@@ -1743,8 +1750,7 @@ pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> 
                 SendValue::Str(s) => s.clone(),
                 other => format!("{:?}", other),
             };
-            return vsock_send_recv(port as u32, &req_str)
-                .map(|opt| opt.map(SendValue::Str));
+            return vsock_send_recv(port as u32, &req_str).map(|opt| opt.map(SendValue::Str));
         }
     }
 
@@ -1878,7 +1884,8 @@ fn run_suspendable_values_inner(
             .stack_size(stack)
             .spawn_scoped(scope, move || {
                 HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
-                let code = run_program_inner(program, crate::verify::Discharged::default(), map_status);
+                let code =
+                    run_program_inner(program, crate::verify::Discharged::default(), map_status);
                 // Drop the channels → req_tx closes → the host loop below ends.
                 HOST_AWAIT.with(|h| *h.borrow_mut() = None);
                 code
@@ -4722,10 +4729,7 @@ mod literal_escape_tests {
                 Value::Err(Box::new(Value::Str("bad".into()))),
                 "Err(\"bad\")",
             ),
-            (
-                Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
-                "(1, 2)",
-            ),
+            (Value::Tuple(vec![Value::Int(1), Value::Int(2)]), "(1, 2)"),
             // A 1-tuple needs the trailing comma, or it re-parses as a
             // parenthesised expression and silently changes type.
             (Value::Tuple(vec![Value::Int(7)]), "(7,)"),
@@ -4745,10 +4749,7 @@ mod literal_escape_tests {
             variant: "Circle".into(),
             fields: f,
         };
-        assert_eq!(
-            value_as_literal(&e).unwrap(),
-            "Shape::Circle { r: 2.0 }"
-        );
+        assert_eq!(value_as_literal(&e).unwrap(), "Shape::Circle { r: 2.0 }");
         let bare = Value::Enum {
             enum_name: "Shape".into(),
             variant: "Point".into(),

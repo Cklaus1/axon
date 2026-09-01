@@ -132,15 +132,13 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
             false,
         );
         let g = self.module.add_global(def_ty, None, MAP_NAME);
-        g.set_initializer(
-            &def_ty.const_named_struct(&[
-                i32_ty.const_int(BPF_MAP_TYPE_ARRAY, false).into(),
-                i32_ty.const_int(MAP_KEY_SIZE, false).into(),
-                i32_ty.const_int(MAP_VALUE_SIZE, false).into(),
-                i32_ty.const_int(MAP_MAX_ENTRIES, false).into(),
-                i32_ty.const_int(0, false).into(),
-            ]),
-        );
+        g.set_initializer(&def_ty.const_named_struct(&[
+            i32_ty.const_int(BPF_MAP_TYPE_ARRAY, false).into(),
+            i32_ty.const_int(MAP_KEY_SIZE, false).into(),
+            i32_ty.const_int(MAP_VALUE_SIZE, false).into(),
+            i32_ty.const_int(MAP_MAX_ENTRIES, false).into(),
+            i32_ty.const_int(0, false).into(),
+        ]));
         g.set_section(Some("maps"));
         g.set_linkage(Linkage::External);
         self.map_global = Some(g.as_pointer_value());
@@ -157,11 +155,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
     }
 
     /// Lower the `@[bpf]` fn into a BPF function in `section`.
-    fn lower_program_fn(
-        &mut self,
-        f: &crate::ast::FnDef,
-        section: &str,
-    ) -> Result<(), String> {
+    fn lower_program_fn(&mut self, f: &crate::ast::FnDef, section: &str) -> Result<(), String> {
         let i64_ty = self.ctx.i64_type();
         let ptr_ty = self.ctx.i8_type().ptr_type(AddressSpace::default());
         // BPF program signature: i64 prog(ptr ctx). The single param (ctx) is a
@@ -226,9 +220,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                 Ok(last)
             }
             Expr::Literal(Literal::Int(n)) => Ok(Some(i64_ty.const_int(*n as u64, true))),
-            Expr::Literal(Literal::Bool(b)) => {
-                Ok(Some(i64_ty.const_int(*b as u64, false)))
-            }
+            Expr::Literal(Literal::Bool(b)) => Ok(Some(i64_ty.const_int(*b as u64, false))),
             Expr::Return(inner) => {
                 let v = match inner {
                     Some(e) => self
@@ -266,9 +258,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                     .ok_or_else(|| e2301(func, "binop on a value-less rhs"))?;
                 self.lower_binop(op, l, r, func).map(Some)
             }
-            Expr::If { cond, then, else_ } => {
-                self.lower_if(cond, then, else_.as_deref(), func)
-            }
+            Expr::If { cond, then, else_ } => self.lower_if(cond, then, else_.as_deref(), func),
             Expr::Call { callee, args, .. } => self.lower_call(callee, args, func),
             other => Err(e2301(func, expr_kind(other))),
         }
@@ -406,8 +396,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                 self.builder.build_store(key_slot, key32).unwrap();
                 let map_ptr = self.map_global.unwrap();
                 // helper #1: ptr bpf_map_lookup_elem(ptr map, ptr key)
-                let helper_ty =
-                    ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+                let helper_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
                 let helper = self
                     .builder
                     .build_int_to_ptr(i64_ty.const_int(1, false), ptr_ty, "h_lookup")
@@ -453,11 +442,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                     .ok_or_else(|| e2301(func, "bpf_map_value_add delta has no value"))?;
                 let vptr = self
                     .builder
-                    .build_int_to_ptr(
-                        ptr_int,
-                        i64_ty.ptr_type(AddressSpace::default()),
-                        "vptr",
-                    )
+                    .build_int_to_ptr(ptr_int, i64_ty.ptr_type(AddressSpace::default()), "vptr")
                     .unwrap();
                 self.builder
                     .build_atomicrmw(
@@ -481,7 +466,9 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                     .builder
                     .build_indirect_call(helper_ty, helper, &[], name)
                     .unwrap();
-                Ok(Some(call.try_as_basic_value().left().unwrap().into_int_value()))
+                Ok(Some(
+                    call.try_as_basic_value().left().unwrap().into_int_value(),
+                ))
             }
             other => Err(e2301(func, &format!("call to `{other}`"))),
         }
@@ -520,9 +507,8 @@ fn write_object(module: &Module<'_>, output_path: &str) -> Result<(), String> {
     Target::initialize_all(&InitializationConfig::default());
     // `bpfel` = little-endian BPF (the host byte order on x86_64).
     let triple = TargetTriple::create("bpfel");
-    let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] BPF target not supported by this LLVM build: {e}")
-    })?;
+    let target = Target::from_triple(&triple)
+        .map_err(|e| format!("[E0904] BPF target not supported by this LLVM build: {e}"))?;
     let machine = target
         .create_target_machine(
             &triple,

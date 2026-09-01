@@ -180,10 +180,7 @@ impl ComplianceMonitor {
                         Some(e) => e.to_lowercase(),
                         None => {
                             // No `effect` field → treat as violation (I-3).
-                            let seq = entry
-                                .get("seq")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
+                            let seq = entry.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
                             let operation = entry
                                 .get("operation")
                                 .and_then(|v| v.as_str())
@@ -197,10 +194,7 @@ impl ComplianceMonitor {
                             };
                         }
                     };
-                    let seq = entry
-                        .get("seq")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let seq = entry.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
                     let operation = entry
                         .get("operation")
                         .and_then(|v| v.as_str())
@@ -255,8 +249,7 @@ impl ComplianceMonitor {
 pub const CONTAINMENT_VIOLATION_EXIT_CODE: i32 = 12;
 
 /// R29 TCB addendum string — folded into the axtcb1: measurement chain.
-pub const R29_TCB_ADDENDUM: &str =
-    "R29-monitor:poll-100ms-fail-closed-deny-by-default";
+pub const R29_TCB_ADDENDUM: &str = "R29-monitor:poll-100ms-fail-closed-deny-by-default";
 
 #[cfg(test)]
 mod tests {

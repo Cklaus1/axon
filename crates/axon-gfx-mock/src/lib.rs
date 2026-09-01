@@ -133,7 +133,10 @@ pub enum GfxArg {
     Str(String),
     /// A handle `(tag, payload)` — the nominal tag plus its slab index. Both
     /// halves cross the boundary so the shim can reject a tag/table mismatch.
-    Handle { tag: i64, payload: i64 },
+    Handle {
+        tag: i64,
+        payload: i64,
+    },
 }
 
 impl GfxArg {
@@ -219,7 +222,10 @@ impl GfxMock {
     }
 
     fn check_window(&self, win: i64) -> Result<(), String> {
-        match self.windows.get(usize::try_from(win).map_err(|_| bad_handle())?) {
+        match self
+            .windows
+            .get(usize::try_from(win).map_err(|_| bad_handle())?)
+        {
             Some(s) if s.live => Ok(()),
             _ => Err(bad_handle()),
         }
@@ -403,7 +409,8 @@ mod tests {
         m.dispatch("present", std::slice::from_ref(&sh)).unwrap();
         m.dispatch("present", std::slice::from_ref(&sh)).unwrap();
         assert_eq!(
-            m.dispatch("frame_count", std::slice::from_ref(&sh)).unwrap(),
+            m.dispatch("frame_count", std::slice::from_ref(&sh))
+                .unwrap(),
             GfxValue::Int(2)
         );
         m.dispatch("surface_close", std::slice::from_ref(&sh))

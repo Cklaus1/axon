@@ -24,7 +24,11 @@ pub struct ResourceBound {
 
 impl fmt::Display for ResourceBound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "resource bound exceeded on {}: used={} cap={} attempted={}", self.axis, self.used, self.cap, self.attempted)
+        write!(
+            f,
+            "resource bound exceeded on {}: used={} cap={} attempted={}",
+            self.axis, self.used, self.cap, self.attempted
+        )
     }
 }
 
@@ -41,12 +45,20 @@ pub struct ResourceLedger {
 }
 
 impl ResourceLedger {
-    pub fn new(lineage_root: &str, compute_cap: u64, budget_cap: u64, persist_bytes_cap: u64) -> Self {
+    pub fn new(
+        lineage_root: &str,
+        compute_cap: u64,
+        budget_cap: u64,
+        persist_bytes_cap: u64,
+    ) -> Self {
         ResourceLedger {
             lineage_root: lineage_root.to_string(),
-            compute_used: 0, compute_cap,
-            budget_used: 0, budget_cap,
-            persist_bytes_used: 0, persist_bytes_cap,
+            compute_used: 0,
+            compute_cap,
+            budget_used: 0,
+            budget_cap,
+            persist_bytes_used: 0,
+            persist_bytes_cap,
             seq: 0,
         }
     }
@@ -59,13 +71,28 @@ impl ResourceLedger {
 
     pub fn carve(&self, c: Carve) -> Result<Self, ResourceBound> {
         if self.compute_used.saturating_add(c.compute) > self.compute_cap {
-            return Err(ResourceBound { axis: "compute".into(), used: self.compute_used, cap: self.compute_cap, attempted: c.compute });
+            return Err(ResourceBound {
+                axis: "compute".into(),
+                used: self.compute_used,
+                cap: self.compute_cap,
+                attempted: c.compute,
+            });
         }
         if self.budget_used.saturating_add(c.budget) > self.budget_cap {
-            return Err(ResourceBound { axis: "budget".into(), used: self.budget_used, cap: self.budget_cap, attempted: c.budget });
+            return Err(ResourceBound {
+                axis: "budget".into(),
+                used: self.budget_used,
+                cap: self.budget_cap,
+                attempted: c.budget,
+            });
         }
         if self.persist_bytes_used.saturating_add(c.persist_bytes) > self.persist_bytes_cap {
-            return Err(ResourceBound { axis: "persist_bytes".into(), used: self.persist_bytes_used, cap: self.persist_bytes_cap, attempted: c.persist_bytes });
+            return Err(ResourceBound {
+                axis: "persist_bytes".into(),
+                used: self.persist_bytes_used,
+                cap: self.persist_bytes_cap,
+                attempted: c.persist_bytes,
+            });
         }
         Ok(ResourceLedger {
             lineage_root: self.lineage_root.clone(),
@@ -79,9 +106,16 @@ impl ResourceLedger {
         })
     }
 
-    pub fn compute_remaining(&self) -> u64 { self.compute_cap.saturating_sub(self.compute_used) }
-    pub fn budget_remaining(&self) -> u64 { self.budget_cap.saturating_sub(self.budget_used) }
-    pub fn persist_remaining(&self) -> u64 { self.persist_bytes_cap.saturating_sub(self.persist_bytes_used) }
+    pub fn compute_remaining(&self) -> u64 {
+        self.compute_cap.saturating_sub(self.compute_used)
+    }
+    pub fn budget_remaining(&self) -> u64 {
+        self.budget_cap.saturating_sub(self.budget_used)
+    }
+    pub fn persist_remaining(&self) -> u64 {
+        self.persist_bytes_cap
+            .saturating_sub(self.persist_bytes_used)
+    }
 }
 
 #[cfg(test)]
@@ -96,7 +130,11 @@ mod tests {
     #[allow(non_snake_case)]
     fn mint_beyond_grant_refused_R20() {
         let ledger = ResourceLedger::new("root", 100, 50, 1024);
-        let r = ledger.carve(Carve { compute: 0, budget: 51, persist_bytes: 0 });
+        let r = ledger.carve(Carve {
+            compute: 0,
+            budget: 51,
+            persist_bytes: 0,
+        });
         assert!(r.is_err());
         let err = r.unwrap_err();
         assert_eq!(err.axis, "budget");
@@ -108,17 +146,35 @@ mod tests {
     fn budget_acquisition_blocked() {
         // Exhaust the budget cap (100), then any further budget carve is denied.
         let ledger = ResourceLedger::new("root", 1000, 100, 0);
-        let l2 = ledger.carve(Carve { compute: 0, budget: 100, persist_bytes: 0 }).unwrap();
+        let l2 = ledger
+            .carve(Carve {
+                compute: 0,
+                budget: 100,
+                persist_bytes: 0,
+            })
+            .unwrap();
         assert_eq!(l2.budget_used, 100);
         assert_eq!(l2.budget_remaining(), 0);
         // Any further budget carve is denied.
-        let r = l2.carve(Carve { compute: 0, budget: 1, persist_bytes: 0 });
+        let r = l2.carve(Carve {
+            compute: 0,
+            budget: 1,
+            persist_bytes: 0,
+        });
         assert!(r.is_err(), "exhausted budget cap must deny further carves");
         // Overflow attempt: u64::MAX saturates above cap → denied (no wrap-to-zero exploit).
-        let r2 = l2.carve(Carve { compute: 0, budget: u64::MAX, persist_bytes: 0 });
+        let r2 = l2.carve(Carve {
+            compute: 0,
+            budget: u64::MAX,
+            persist_bytes: 0,
+        });
         assert!(r2.is_err(), "saturating_add prevents wrap-to-zero exploit");
         // Compute cap (1000) is not exhausted, so compute-only carves still succeed.
-        let r3 = l2.carve(Carve { compute: 1, budget: 0, persist_bytes: 0 });
+        let r3 = l2.carve(Carve {
+            compute: 1,
+            budget: 0,
+            persist_bytes: 0,
+        });
         assert!(r3.is_ok(), "non-exhausted compute cap allows compute carve");
     }
 
@@ -126,16 +182,34 @@ mod tests {
     fn seq_is_monotone_per_carve() {
         let l = ResourceLedger::new("root", 100, 100, 100);
         assert_eq!(l.seq, 0);
-        let l2 = l.carve(Carve { compute: 1, budget: 1, persist_bytes: 0 }).unwrap();
+        let l2 = l
+            .carve(Carve {
+                compute: 1,
+                budget: 1,
+                persist_bytes: 0,
+            })
+            .unwrap();
         assert_eq!(l2.seq, 1);
-        let l3 = l2.carve(Carve { compute: 1, budget: 1, persist_bytes: 0 }).unwrap();
+        let l3 = l2
+            .carve(Carve {
+                compute: 1,
+                budget: 1,
+                persist_bytes: 0,
+            })
+            .unwrap();
         assert_eq!(l3.seq, 2);
     }
 
     #[test]
     fn used_never_decreases() {
         let l = ResourceLedger::new("root", 100, 100, 100);
-        let l2 = l.carve(Carve { compute: 50, budget: 50, persist_bytes: 0 }).unwrap();
+        let l2 = l
+            .carve(Carve {
+                compute: 50,
+                budget: 50,
+                persist_bytes: 0,
+            })
+            .unwrap();
         assert!(l2.compute_used >= l.compute_used);
         assert!(l2.budget_used >= l.budget_used);
     }

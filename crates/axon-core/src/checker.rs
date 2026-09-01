@@ -3859,33 +3859,32 @@ impl CheckCtx {
                         )
                     };
                     self.errors.push(
-                        diag
-                        .node(node_path)
-                        .at(&file, 0, 0)
-                        .with_span(span)
-                        .found(ty_disp)
-                        .fix(
-                            // The third option is the one that was MISSING, and its
-                            // absence is what made this error feel arbitrary rather
-                            // than helpful. `?` and `match` both HANDLE the error;
-                            // neither expresses "I deliberately do not care", so a
-                            // reader who genuinely wants to discard the Result had
-                            // no way to learn that `let _ =` is accepted — and an
-                            // undiscoverable escape hatch reads exactly like no
-                            // escape hatch at all.
-                            //
-                            // That distinction is the whole justification for E0302
-                            // being an ERROR here when Rust only warns and Go lets
-                            // it pass: refusing the ACCIDENTAL drop is worth it
-                            // precisely because the DELIBERATE one costs eight
-                            // characters. Measured: the model dropped a
-                            // `write_file` Result 6 times in 36 attempts on the
-                            // tasks_hard set, and a silently-skipped write is a
-                            // wrong answer that a repair loop gets no signal from.
-                            "add `?` to propagate the error, or wrap the call in \
+                        diag.node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .found(ty_disp)
+                            .fix(
+                                // The third option is the one that was MISSING, and its
+                                // absence is what made this error feel arbitrary rather
+                                // than helpful. `?` and `match` both HANDLE the error;
+                                // neither expresses "I deliberately do not care", so a
+                                // reader who genuinely wants to discard the Result had
+                                // no way to learn that `let _ =` is accepted — and an
+                                // undiscoverable escape hatch reads exactly like no
+                                // escape hatch at all.
+                                //
+                                // That distinction is the whole justification for E0302
+                                // being an ERROR here when Rust only warns and Go lets
+                                // it pass: refusing the ACCIDENTAL drop is worth it
+                                // precisely because the DELIBERATE one costs eight
+                                // characters. Measured: the model dropped a
+                                // `write_file` Result 6 times in 36 attempts on the
+                                // tasks_hard set, and a silently-skipped write is a
+                                // wrong answer that a repair loop gets no signal from.
+                                "add `?` to propagate the error, or wrap the call in \
                               `match call() { Ok(v) => v, Err(e) => /* handle */ }`. \
                               To ignore it on purpose, bind it away: `let _ = call()`",
-                        ),
+                            ),
                     );
                 }
             }

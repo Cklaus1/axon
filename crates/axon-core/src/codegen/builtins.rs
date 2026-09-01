@@ -5469,8 +5469,6 @@ impl<'ctx> super::Codegen<'ctx> {
         // out-param-synthesis extension. Was previously hand-written here; see that file's
         // StrOutSig doc comment.
 
-
-
         // ── Phase 6: env_var(name: str) -> Result<str, str> ──────────────────
         // Calls C getenv(). Returns Ok(str) if set, Err("not set") otherwise.
         {
@@ -5721,6 +5719,5 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // str_len — now a registry row (R1d slice 1).
-
     }
 }

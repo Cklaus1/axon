@@ -495,7 +495,9 @@ const FOREIGN_BUILTIN_KEYS: &[&str] = &[
 /// without pinning members is what produced these, so the help says where the
 /// real list is instead of guessing which member was meant.
 fn prefix_misreach_help(name: &str) -> Option<String> {
-    let family = ["arr_", "dict_", "str_"].into_iter().find(|p| name.starts_with(p))?;
+    let family = ["arr_", "dict_", "str_"]
+        .into_iter()
+        .find(|p| name.starts_with(p))?;
     Some(format!(
         "`{name}` does not exist — the `{family}` family is a fixed set, not a naming pattern, so \
          a plausible-looking name is not necessarily a real one"
@@ -2753,7 +2755,10 @@ mod foreign_builtin_help_tests {
             ("str_cat", "+"),
         ] {
             let help = foreign_builtin_help(wrote).expect("answered");
-            assert!(help.contains(want), "help for `{wrote}` should name `{want}`, got: {help}");
+            assert!(
+                help.contains(want),
+                "help for `{wrote}` should name `{want}`, got: {help}"
+            );
         }
     }
 
