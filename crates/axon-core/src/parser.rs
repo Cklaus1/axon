@@ -1673,6 +1673,20 @@ impl Parser {
 
     fn parse_block(&mut self) -> Result<Expr> {
         self.expect(&Token::LBrace)?;
+        // A brace block's statements are newline-separated NO MATTER what
+        // encloses it. `paren_depth` disables the ASI guards, and a lambda body
+        // inside a call's argument list is still "inside parens" -- so without
+        // this reset, a block whose statements are
+        //
+        //     let region = f[1]
+        //     [id, region]
+        //
+        // parses the array literal as an INDEX of the previous line and dies at
+        // `expected RBracket`. That is the ordinary shape of a record-building
+        // `arr_map` lambda, so the ambiguity was reachable from the first thing
+        // a reader writes rather than from a corner.
+        let saved_depth = self.paren_depth;
+        self.paren_depth = 0;
         let mut stmts = Vec::new();
         while !self.at(&Token::RBrace) {
             let span = self.current_span();
@@ -1681,6 +1695,7 @@ impl Parser {
             push_stmt_or_splice_destructure(&mut stmts, expr, span);
         }
         self.expect(&Token::RBrace)?;
+        self.paren_depth = saved_depth;
         Ok(Expr::Block(stmts))
     }
 
@@ -3345,6 +3360,54 @@ mod tests {
             .map(|(t, _)| t)
             .collect();
         Parser::new(tokens).parse_program().expect("parse failed")
+    }
+
+    /// A brace block separates its statements by NEWLINE regardless of what
+    /// encloses it. The ASI guards that implement this are switched off while
+    /// `paren_depth > 0`, and a lambda body inside a call's argument list is
+    /// still inside parens -- so an array literal on its own line was absorbed
+    /// as an INDEX of the line above and died at `expected RBracket`.
+    ///
+    /// Not a corner: this is the shape of every record-building `arr_map`
+    /// lambda, and it failed step 1 of the RLM chain benchmark in all four arms
+    /// at once, which is what surfaced it.
+    #[test]
+    fn a_block_tail_array_literal_is_not_an_index_of_the_line_above() {
+        // Inside a call's argument list -- the case that was broken.
+        parse_nl(
+            "fn main() -> i64 {\n\
+             let xs = [\"a\"]\n\
+             let r = arr_map(xs, |line| {\n\
+                 let region = line\n\
+                 [1, 2]\n\
+             })\n\
+             0\n\
+             }",
+        );
+        // And a `(` continuation in the same position, the sibling guard.
+        parse_nl(
+            "fn main() -> i64 {\n\
+             let r = arr_map([1], |x| {\n\
+                 let y = x\n\
+                 (y)\n\
+             })\n\
+             0\n\
+             }",
+        );
+        // The genuine index must still parse as an index when it is NOT
+        // newline-separated -- the fix must not buy the block case by breaking
+        // ordinary subscripting inside a lambda.
+        let p = parse_nl(
+            "fn main() -> i64 {\n\
+             let r = arr_map([[1, 2]], |row| {\n\
+                 let first = row[0]\n\
+                 first\n\
+             })\n\
+             0\n\
+             }",
+        );
+        let src = format!("{p:?}");
+        assert!(src.contains("Index"), "subscript inside a lambda must stay an Index");
     }
 
     /// `{...}` in a string is an INTERPOLATION SLOT, and the whole of it must be
