@@ -1004,16 +1004,17 @@ pub fn value_shape(v: &Value) -> String {
             Value::Dict(dd) => {
                 let b = dd.borrow();
                 let n = b.len();
-                // Keys are schema; values are not. Emitting a first-value shape
-                // costs one level and is what tells the model whether
-                // `dict_get` hands back an i64 or a [Row].
+                // Keys are schema ONLY when the dict is a record. A dict built by
+                // GROUPING is keyed by the data itself, so printing the key set
+                // leaks dataset values into what is supposed to be a value-free
+                // shape — `arr_group_by(rows, region)` would emit the regions.
+                // The two cases are indistinguishable here, so neither prints its
+                // keys: the key TYPE and the count are the schema, and the value
+                // shape (which tells the model whether `dict_get` hands back an
+                // i64 or a [Row]) is kept because it carries no data.
                 if let (Some(k), true) = (b.keys().next(), d < 2) {
-                    let mut keys: Vec<&String> = b.keys().collect();
-                    keys.sort();
-                    let shown: Vec<&str> = keys.iter().take(12).map(|s| s.as_str()).collect();
                     format!(
-                        "dict, len={n}, keys={{{}}}, values are {}",
-                        shown.join(","),
+                        "dict, len={n}, keys are str, values are {}",
                         go(&b[k], d + 1)
                     )
                 } else {
@@ -4903,5 +4904,51 @@ mod literal_escape_tests {
                 "round trip changed the value: {original:?} -> {lit}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod value_shape_leak_tests {
+    //! `value_shape` is the source of the RLM shape inventory, whose whole
+    //! contract is that it carries STRUCTURE and no dataset values. A dict is
+    //! the one container whose keys can be data rather than schema.
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    fn dict(pairs: &[(&str, Value)]) -> Value {
+        let mut m = BTreeMap::new();
+        for (k, v) in pairs {
+            m.insert((*k).to_string(), v.clone());
+        }
+        Value::Dict(Rc::new(RefCell::new(m)))
+    }
+
+    /// A dict built by GROUPING is keyed by the data. Printing that key set put
+    /// `north`/`south`/`east` straight into the inventory and voided two arm-A
+    /// measurement runs (the harness leak guard caught it and withheld the arm).
+    #[test]
+    fn grouping_dict_keys_are_not_emitted() {
+        let s = value_shape(&dict(&[
+            ("north", Value::Int(315)),
+            ("south", Value::Int(95)),
+        ]));
+        for leaked in ["north", "south", "315", "95"] {
+            assert!(
+                !s.contains(leaked),
+                "value_shape leaked the dataset value `{leaked}`: {s}"
+            );
+        }
+    }
+
+    /// The shape must still be USEFUL: length, key type, and the value shape are
+    /// what tell a model whether `dict_get` hands back an i64 or a record.
+    #[test]
+    fn dict_shape_still_carries_length_and_value_type() {
+        let s = value_shape(&dict(&[("north", Value::Int(315))]));
+        assert!(s.contains("len=1"), "{s}");
+        assert!(s.contains("keys are str"), "{s}");
+        assert!(s.contains("i64"), "{s}");
     }
 }
