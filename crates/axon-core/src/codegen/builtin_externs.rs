@@ -199,6 +199,14 @@ pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
         ret_type: Some(("str_contains", SemRet::Bool)),
     },
     ExternSig {
+        axon_name: "str_cmp",
+        symbol: "__axon_str_cmp",
+        params: &[L::Str, L::Str],
+        ret: L::I64,
+        fn_key: Some("str_cmp"),
+        ret_type: Some(("str_cmp", SemRet::I64)),
+    },
+    ExternSig {
         axon_name: "str_starts_with",
         symbol: "__axon_str_starts_with",
         params: &[L::Str, L::Str],

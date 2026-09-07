@@ -289,6 +289,7 @@ let m = max_i32(3, 7)   // 7
 | `sleep_ms` | 4 | Time | Sleep current thread for N milliseconds |
 | `now_ms` | 4 | Time | Wall-clock time as ms since Unix epoch |
 | `str_eq` | 5 | String | Content equality for two `str` values |
+| `str_cmp` | 5 | String | Lexicographic byte-order compare: -1 / 0 / 1; usable directly as an `arr_sort_by` comparator |
 | `str_contains` | 5 | String | Check if string contains a substring |
 | `str_starts_with` | 5 | String | Check if string begins with prefix |
 | `str_ends_with` | 5 | String | Check if string ends with suffix |

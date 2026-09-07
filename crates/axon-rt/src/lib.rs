@@ -1358,6 +1358,51 @@ pub extern "C" fn __axon_str_contains(
     a.contains(b)
 }
 
+/// Lexicographic byte-order comparison, returning -1 / 0 / 1.
+///
+/// The i64 return (rather than a dedicated ordering type) is what makes this
+/// usable as an `arr_sort_by` comparator without a wrapper. Matches the
+/// interpreter oracle: `a.cmp(b)` over `str`, which is byte order.
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_str_cmp(a: AxonStr, b: AxonStr) -> i64 {
+    let a = unsafe { a.as_str() };
+    let b = unsafe { b.as_str() };
+    match a.cmp(b) {
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
+    }
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_cmp(
+    a_len: i64,
+    a_ptr: *const u8,
+    b_len: i64,
+    b_ptr: *const u8,
+) -> i64 {
+    let a = unsafe {
+        AxonStr {
+            len: a_len,
+            data: a_ptr,
+        }
+        .as_str()
+    };
+    let b = unsafe {
+        AxonStr {
+            len: b_len,
+            data: b_ptr,
+        }
+        .as_str()
+    };
+    match a.cmp(b) {
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
+    }
+}
+
 /// Check if haystack starts with prefix.
 ///
 /// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
@@ -3615,6 +3660,44 @@ mod migrated_builtin_tests {
                                                         // UTF-8 multibyte: "héllo" contains "él"
         assert!(__axon_str_contains(s("héllo"), s("él")));
         assert!(!(__axon_str_contains(s("héllo"), s("xyz"))));
+    }
+
+    // ── str_cmp: matches interp.rs a.cmp(b) mapped to -1/0/1 ──────────
+    // Non-ASCII is called out explicitly: every previous divergence in this
+    // family (to_upper/to_lower/trim/pad) was an inline-IR ASCII assumption
+    // that an ASCII-only corpus hid. This one delegates to Rust's str Ord,
+    // so the test is here to keep it that way rather than to find a bug.
+    #[test]
+    fn str_cmp_matches_interpreter() {
+        for (a, b) in [
+            ("apple", "banana"),
+            ("banana", "apple"),
+            ("same", "same"),
+            ("abc", "abcd"),
+            ("", "a"),
+            ("", ""),
+            ("héllo", "hello"),
+            ("Z", "a"),
+        ] {
+            let expect = match a.cmp(b) {
+                core::cmp::Ordering::Less => -1,
+                core::cmp::Ordering::Equal => 0,
+                core::cmp::Ordering::Greater => 1,
+            };
+            assert_eq!(
+                __axon_str_cmp(s(a), s(b)),
+                expect,
+                "str_cmp({a:?}, {b:?}) diverges"
+            );
+        }
+    }
+
+    /// The return must be exactly -1/0/1, not just correctly-signed: it is
+    /// documented as a comparator and callers may compare it to a literal.
+    #[test]
+    fn str_cmp_returns_normalized_three_way() {
+        assert_eq!(__axon_str_cmp(s("a"), s("zzzzzzzz")), -1);
+        assert_eq!(__axon_str_cmp(s("zzzzzzzz"), s("a")), 1);
     }
 
     // ── str_starts_with: matches interp.rs a.starts_with(b) ───────────

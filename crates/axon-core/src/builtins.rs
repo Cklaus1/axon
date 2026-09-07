@@ -455,6 +455,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Return true if `a` and `b` have the same content (byte-by-byte equality).",
     },
     BuiltinFn {
+        name: "str_cmp",
+        params: &[("a", "str"), ("b", "str")],
+        ret: "i64",
+        doc: "Lexicographic byte-order comparison: -1 if `a` < `b`, 0 if equal, 1 if `a` > `b`. \
+              Drops directly into `arr_sort_by`, whose comparator is `fn(T, T) -> i64`.",
+    },
+    BuiltinFn {
         name: "str_contains",
         params: &[("s", "str"), ("needle", "str")],
         ret: "bool",

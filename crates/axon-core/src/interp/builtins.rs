@@ -2679,6 +2679,18 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 ok!(Value::Bool(as_str(&args[0])? == as_str(&args[1])?));
             }
+            "str_cmp" => {
+                want(2)?;
+                let a = as_str(&args[0])?;
+                let b = as_str(&args[1])?;
+                // Byte order, matching Rust's `str: Ord`, so the native extern
+                // can be a one-liner over the same comparison.
+                ok!(Value::Int(match a.cmp(b) {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                }));
+            }
             "str_contains" => {
                 want(2)?;
                 ok!(Value::Bool(as_str(&args[0])?.contains(as_str(&args[1])?)));
