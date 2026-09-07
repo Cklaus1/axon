@@ -994,8 +994,10 @@ pub fn value_shape(v: &Value) -> String {
                 if d < 2 {
                     let mut ks: Vec<&String> = fields.keys().collect();
                     ks.sort();
-                    let inner: Vec<String> =
-                        ks.iter().map(|k| format!("{k}: {}", go(&fields[*k], d + 1))).collect();
+                    let inner: Vec<String> = ks
+                        .iter()
+                        .map(|k| format!("{k}: {}", go(&fields[*k], d + 1)))
+                        .collect();
                     format!("{name} {{ {} }}", inner.join(", "))
                 } else {
                     name.clone()
@@ -2282,7 +2284,6 @@ fn run_program_inner(
                 }
             }
             let _ = std::fs::write(path, lines);
-
         }
     }
     // Two different things, deliberately judged by two different rules: a status

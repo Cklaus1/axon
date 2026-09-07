@@ -3407,7 +3407,10 @@ mod tests {
              }",
         );
         let src = format!("{p:?}");
-        assert!(src.contains("Index"), "subscript inside a lambda must stay an Index");
+        assert!(
+            src.contains("Index"),
+            "subscript inside a lambda must stay an Index"
+        );
     }
 
     /// `{...}` in a string is an INTERPOLATION SLOT, and the whole of it must be
