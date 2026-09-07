@@ -941,6 +941,97 @@ pub fn run_program_unmapped(program: &Program) -> i32 {
 /// Phase 5 §4: run with a set of SMT-discharged obligations installed, so the
 /// interpreter elides the runtime checks Z3 proved ∀-inputs. Identical to
 /// [`run_program`] with an empty set.
+/// Describe a value's SHAPE — its structure, never its contents.
+///
+/// `AXON_FOR_RLM.md` §5 / atlas `RLM_MODE_SPEC.md` §11 arm A. A session tells
+/// the model which names are bound; the measured failure is that names alone
+/// leave it guessing what they *hold*, so it indexes a `[Row]` as if it were a
+/// str and the reuse produces a wrong answer confidently.
+///
+/// The describer answers that without executing anything and without leaking a
+/// value. Every branch here is written to that rule:
+///
+///   * scalars give a type name and never a number,
+///   * `str` gives a LENGTH and never its characters,
+///   * containers give an element description and a length,
+///   * a struct gives its field NAMES — schema, which is the point — and its
+///     field types, never their values.
+///
+/// A field name is the one branch that could leak, if a namespace were keyed by
+/// data rather than by schema. That is a real risk and the reason the caller is
+/// expected to scan the emitted text for dataset values rather than trust this
+/// doc comment.
+///
+/// Depth-limited to two levels: deeper nesting would make the description grow
+/// with the DATA, and the whole claim of a shape inventory is that it is a
+/// per-turn constant that tracks schema instead.
+pub fn value_shape(v: &Value) -> String {
+    fn go(v: &Value, d: usize) -> String {
+        match v {
+            // A length only at the TOP level. Nested, it would be ambiguous
+            // (`Row { region: str, len=5 }` reads as a field named `len`) and it
+            // would track the DATA — every element of a `[str]` has its own
+            // length, so the description would grow with the array instead of
+            // staying a schema.
+            Value::Str(s) if d == 0 => format!("str, len={}", s.chars().count()),
+            Value::Str(_) => "str".to_string(),
+            Value::Array(items) => {
+                if let (Some(first), true) = (items.first(), d < 2) {
+                    format!("[{}], len={}", go(first, d + 1), items.len())
+                } else {
+                    format!("[], len={}", items.len())
+                }
+            }
+            Value::Tuple(items) => {
+                if d < 2 {
+                    let inner: Vec<String> = items.iter().map(|i| go(i, d + 1)).collect();
+                    format!("({})", inner.join(", "))
+                } else {
+                    format!("tuple, len={}", items.len())
+                }
+            }
+            Value::Struct { name, fields } => {
+                if d < 2 {
+                    let mut ks: Vec<&String> = fields.keys().collect();
+                    ks.sort();
+                    let inner: Vec<String> =
+                        ks.iter().map(|k| format!("{k}: {}", go(&fields[*k], d + 1))).collect();
+                    format!("{name} {{ {} }}", inner.join(", "))
+                } else {
+                    name.clone()
+                }
+            }
+            Value::Dict(dd) => {
+                let b = dd.borrow();
+                let n = b.len();
+                // Keys are schema; values are not. Emitting a first-value shape
+                // costs one level and is what tells the model whether
+                // `dict_get` hands back an i64 or a [Row].
+                if let (Some(k), true) = (b.keys().next(), d < 2) {
+                    let mut keys: Vec<&String> = b.keys().collect();
+                    keys.sort();
+                    let shown: Vec<&str> = keys.iter().take(12).map(|s| s.as_str()).collect();
+                    format!(
+                        "dict, len={n}, keys={{{}}}, values are {}",
+                        shown.join(","),
+                        go(&b[k], d + 1)
+                    )
+                } else {
+                    format!("dict, len={n}")
+                }
+            }
+            Value::Some(inner) if d < 2 => format!("Option<{}>", go(inner, d + 1)),
+            Value::Ok(inner) if d < 2 => format!("Result, Ok<{}>", go(inner, d + 1)),
+            Value::Err(inner) if d < 2 => format!("Result, Err<{}>", go(inner, d + 1)),
+            Value::None => "Option, None".to_string(),
+            // Scalars and everything else: the type name alone, which for an
+            // Int/Float/Bool is exactly the no-value rule.
+            other => other.type_name(),
+        }
+    }
+    go(v, 0)
+}
+
 /// Render a value as an Axon **literal**, or explain why it cannot be.
 ///
 /// `AXON_FOR_RLM.md` §5, the values-persisting session. A session restores a
@@ -2078,6 +2169,27 @@ fn run_program_inner(
     // `run_main` so a cell's own top-level `let`s are included at their final
     // values. Only on success — a cell that failed must not mutate the session.
     if outcome.is_ok() {
+        // The SHAPE inventory (arm A) — a sibling of the literal dump, not a
+        // part of it. It describes EVERY binding, including the ones the
+        // literal dump skipped: a closure or an aliased dict cannot be
+        // persisted, but its structure can still be described, and a name the
+        // model can see but not reuse is the case it most needs told about.
+        if outcome.is_ok() {
+            if let Ok(spath) = std::env::var("AXON_DUMP_SHAPES") {
+                let locals = interp.main_locals.borrow();
+                let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
+                for (k, v) in locals.iter() {
+                    merged.insert(k, v);
+                }
+                let mut snames: Vec<&&String> = merged.keys().collect();
+                snames.sort();
+                let mut sl = String::new();
+                for name in snames {
+                    sl.push_str(&format!("{name}: {}\n", value_shape(merged[*name])));
+                }
+                let _ = std::fs::write(spath, sl);
+            }
+        }
         if let Ok(path) = std::env::var("AXON_DUMP_BINDINGS") {
             let mut lines = String::new();
             // PROTOTYPE (RLM session option 2): main's final top-level locals
@@ -2169,6 +2281,7 @@ fn run_program_inner(
                 }
             }
             let _ = std::fs::write(path, lines);
+
         }
     }
     // Two different things, deliberately judged by two different rules: a status
@@ -2819,7 +2932,8 @@ impl<'p> Interp<'p> {
         // frame's final locals for the dump.
         let capture = f.name == "main"
             && self.call_depth.get() == 1
-            && std::env::var("AXON_DUMP_BINDINGS").is_ok();
+            && (std::env::var("AXON_DUMP_BINDINGS").is_ok()
+                || std::env::var("AXON_DUMP_SHAPES").is_ok());
         let body_result = if capture {
             if let Expr::Block(stmts) = &f.body {
                 let mut last = Ok(Value::Unit);
