@@ -24,7 +24,7 @@ Derived from commit history; attempt counts live in `tasks/attempts.log`.
       character literals. Became U6's row rather than a separate task.
 
 ## Tier 4 — the deciding measurement
-- [ ] **Re-measure with the CORRECTED char-literal advice — RAN, but NOT ISOLATING.** Ran 2026-09-07
+- [x] **Re-measure with the CORRECTED char-literal advice — done, and the answer is a NULL.** Ran 2026-09-07
       against axon `671d7e5`; atlas `37e355a`, artifact
       `measurements/card-gate-corrected.txt` (+ `.raw.txt`).
       - **8/8 first try, stable across all three runs**, in BOTH the card and
@@ -51,9 +51,20 @@ Derived from commit history; attempt counts live in `tasks/attempts.log`.
         card-vs-README, not diagnostics-vs-none. Tightest surviving bound: the
         card alone reached 7/8 on 08-06, *before* the corrected advice existed,
         so the diagnostics work is bounded above by 7→8 and may be worth zero.
-      - **The isolating run**, still to do: hold the card fixed at today's text,
-        vary only the axon binary — `671d7e5` vs a build predating `831895a`.
-        One variable. Cheap; the harness and gateway are both known-good now.
+      - **The isolating run — DONE 2026-09-07, and the answer is NO.** Held the
+        card/gateway/tasks fixed, varied only the axon binary across ONE commit
+        (`6b89557` wrong advice → `831895a` corrected; verified a single-variable
+        pair by diffing both binaries' output on the same source). Card arm:
+        **[5,5,5] both sides**, post-repair [5,5,5] both sides, `check` carried
+        help on **9 task-runs each**. Not vacuous — the model was shown the
+        corrected text and repaired exactly as often as with the wrong text.
+        O-RLM-11's original negative finding therefore stands on its own; the
+        discount ("maybe it was just the wrong hint") was mistaken.
+      - **So the 5/8 → 8/8 is the CARD plus the language capability work**
+        (`48038b3` str_chars, `526c7d2` `str + str`, `f2c3eaf` array `+`,
+        `84db563` `let mut`, `8d01947` generic `arr_push`), not the diagnostics.
+        Prevention beat repair. Artifact: atlas
+        `measurements/narrow-diag-isolation.txt`.
       - **Does not show:** the set is now SATURATED (every arm reads 8/8, so it
         cannot resolve anything above its ceiling); the repair path is untested
         at 8/8 because nothing needed repairing; `differed` is 0/8, so nothing

@@ -1583,10 +1583,48 @@ char-literal guidance, so 8-vs-5 is card-vs-README.
 
 What survives: the card **alone** reached 7/8 before the corrected advice
 existed, so the diagnostics work is bounded above by the 7 → 8 step and may be
-worth nothing. O-RLM-11 **stays open**. The isolating experiment is now cheap
-and one-variable: hold the card fixed at today's text and run only the axon
-binary across `831895a` (`671d7e5` vs a build predating it). Harness, gateway
-and worktree are all known-good as of today.
+worth nothing.
+
+**ANSWERED 2026-09-07 — it is worth nothing, and the original finding stands.**
+The isolating run held the card, gateway and task set fixed and varied ONLY the
+axon binary, across ONE commit (`6b89557` wrong advice → `831895a` corrected).
+Verified as a single-variable pair by diffing the two binaries' output on the
+same source: same code, same span, differing only in the `help` string.
+
+|                      | `6b89557` wrong | `831895a` corrected |
+|----------------------|-----------------|---------------------|
+| card, first try      | [5, 5, 5]       | [5, 5, 5]           |
+| card, post-repair    | [5, 5, 5]       | [5, 5, 5]           |
+| README control       | [3]             | [3]                 |
+| primed repair (a)    | [6, 6, 6]       | [6, 6, 7]           |
+| `check` carried help | 9 task-runs     | 9 task-runs         |
+
+(3 trials per arm, both arms complete. The lone 7 in the primed arm is noise:
+(a) and (b) disagree about which trial produced it, on identical diagnostic
+text. One task is 12.5 points here, which is why the harness reports spreads and
+refuses to average.)
+
+Identical. And critically **not vacuous**: help was delivered on 9 task-runs per
+arm, so the model *was* shown the corrected text and repaired exactly as often
+as with the wrong one. (Contrast the 8/8 arm on current main, where first-try
+success means repair never fires, `check carried help` is 0/8, and the binary is
+causally inert — that comparison could not have answered anything.)
+
+So O-RLM-11's title is literally true and its discount was wrong: the diagnostic
+did not repair, and the reason was not that the hint was incorrect. Artifact:
+atlas `measurements/narrow-diag-isolation.txt`.
+
+This also settles the 5/8 → 8/8 attribution in the honest direction. That gain
+is the card rewrites plus the **language capability** work landing after
+`831895a` — `48038b3` (str_chars/char_code), `526c7d2` (`str + str`), `f2c3eaf`
+(array `+`), `84db563` (`let mut`), `8d01947` (generic `arr_push`). Making the
+language accept what the model naturally writes, and saying so in the card,
+moved the number. Repairing after the fact did not. **Prevention beat repair.**
+
+Limits: a null over 8 tasks with 3 help deliveries excludes a large effect, not
+a small one. And the harness measures card and diagnostics as a SUM by
+construction — a better card raises first-try, which drives diagnostic delivery
+toward zero — so this experiment gets *harder* to run as the card improves.
 
 ## O-RLM-12 — two type-checking entry points that must agree, and no test that they do (proposed: MEDIUM)
 
