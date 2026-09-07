@@ -1567,6 +1567,27 @@ honest status is: *unmeasured with correct advice*. That single re-run is the
 cheapest experiment on this list and the one that decides whether the diagnostic
 work pays at all.
 
+**UPDATE 2026-09-07 — attempted, and it did not answer the question.** The
+re-run happened (atlas `37e355a`/`f87ac43`, artifact
+`measurements/card-gate-corrected.txt`) and scored **8/8 first try, stable over
+three runs**, against a contemporaneous README-primer control at 5/8. But it is
+**not attributable**: four card changes landed between the 5/8 baseline and the
+re-run — `1170645` (character literals in the card, independently measured
+**5/8 → 7/8 on its own**), `15d7eea` (the card's builtin list was false, "worth
+3 tasks"), `7de6450`, `faa326e`. `spec-high-security-gates.md` S4 names this
+exact constraint, and the run violated it.
+
+The README control does not save the comparison, because it is not a
+card-minus-diagnostics arm — it is a different primer that never carried the
+char-literal guidance, so 8-vs-5 is card-vs-README.
+
+What survives: the card **alone** reached 7/8 before the corrected advice
+existed, so the diagnostics work is bounded above by the 7 → 8 step and may be
+worth nothing. O-RLM-11 **stays open**. The isolating experiment is now cheap
+and one-variable: hold the card fixed at today's text and run only the axon
+binary across `831895a` (`671d7e5` vs a build predating it). Harness, gateway
+and worktree are all known-good as of today.
+
 ## O-RLM-12 — two type-checking entry points that must agree, and no test that they do (proposed: MEDIUM)
 
 `lib::check_pipeline` and `main::run_check_pipeline_located` run the same passes
