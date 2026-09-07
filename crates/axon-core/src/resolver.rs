@@ -232,18 +232,35 @@ impl SymbolTable {
     /// ≤ 3) to `name`, or `None` if no such name exists.
     ///
     /// Used to generate "did you mean …?" suggestions in E0001 diagnostics.
+    ///
+    /// **Ties break lexicographically, and that is load-bearing.** `scope.keys()`
+    /// iterates a `HashMap`, whose order depends on a per-process random seed.
+    /// The previous implementation kept whichever equidistant candidate it saw
+    /// first, so the suggestion for an unchanged file changed between runs —
+    /// measured at 12 invocations of one `axon check` yielding `exp` seven times
+    /// and `pow` five. That makes diagnostics irreproducible, makes any test
+    /// asserting on help text flaky, and tells an AI caller different things
+    /// about the same program on successive attempts. Found by the
+    /// verb-vs-`check` equivalence matrix, which caught `run` and `check`
+    /// disagreeing on a diagnostic neither of them was doing anything wrong to.
+    ///
+    /// Lexicographic order is chosen because any total order fixes the bug and
+    /// this one is the cheapest to state, to test, and to predict when reading
+    /// the diagnostic.
     pub fn suggest(&self, name: &str) -> Option<String> {
         let mut best: Option<(usize, &str)> = None;
         for scope in &self.scopes {
             for key in scope.keys() {
                 let dist = levenshtein(name, key);
                 if dist <= 3 {
-                    match best {
-                        None => best = Some((dist, key)),
-                        Some((prev_dist, _)) if dist < prev_dist => {
-                            best = Some((dist, key));
+                    let better = match best {
+                        None => true,
+                        Some((prev_dist, prev_key)) => {
+                            dist < prev_dist || (dist == prev_dist && key.as_str() < prev_key)
                         }
-                        _ => {}
+                    };
+                    if better {
+                        best = Some((dist, key));
                     }
                 }
             }
@@ -261,6 +278,230 @@ impl SymbolTable {
             .iter()
             .flat_map(|s| s.keys().map(String::as_str))
     }
+}
+
+/// Fix text for a declaration keyword borrowed from another language, or `None`.
+///
+/// `AXON_FOR_RLM.md` §1 names `const` and `var` among the habits models bring.
+/// Unlike `mut`, they lex as ordinary identifiers, so they never reach the
+/// parser as an error and `parse_help` is never called for them — they surface
+/// as `E0001 cannot find name`, one tier lower. Same defect, different tier.
+///
+/// Kept as a closed table for the same reason as `parse_help`'s: a compiler hint
+/// must be deterministic and offline, and one table is auditable.
+fn foreign_keyword_help(name: &str) -> Option<String> {
+    let (lang, fix) = match name {
+        "const" => ("Rust/JS", "`let NAME = …` — Axon bindings are immutable by default"),
+        "var" => ("JS/Go", "`let NAME = …`"),
+        "let" => ("(shadowed)", "`let NAME = …`"),
+        "def" | "func" | "fun" => ("Python/Go", "`fn NAME(arg: i64) -> i64 { … }`"),
+        "function" => ("JS", "`fn NAME(arg: i64) -> i64 { … }`"),
+        "elif" => ("Python", "`else if`"),
+        "null" | "nil" | "None" => ("Python/JS/Go", "`Option`: `None` is written as the `Option` variant, and a missing value is `Option<T>` rather than a null"),
+        "true_" | "True" => ("Python", "`true`"),
+        "False" => ("Python", "`false`"),
+        // Deliberately NOT listed: `print`, `len` and friends are real Axon
+        // builtins. A row here for a name that resolves would be unreachable;
+        // a row for one that does not would tell the reader something false.
+        _ => return None,
+    };
+    Some(format!(
+        "`{name}` is not an Axon keyword (it is {lang}) — write {fix}"
+    ))
+}
+
+/// A name borrowed from another language's standard library, mapped to the Axon
+/// builtin that does the job.
+///
+/// Sibling of [`foreign_keyword_help`], and for the same reason: the spelling
+/// suggestion does not merely miss these, it points the reader at the WRONG
+/// function. Measured against what a model actually writes:
+///
+/// | written | spelling suggestion | correct |
+/// |---|---|---|
+/// | `str_to_int` | `str_count` | `parse_int` |
+/// | `arr_len`    | `str_len`   | `len` |
+/// | `create_file`| `read_file` | `write_file` |
+/// | `str_cat`    | `str_count` | `+` |
+///
+/// Four of five suggestions sent a repair attempt at a function with the wrong
+/// signature and the wrong meaning. Confidently-wrong advice costs more than
+/// silence, because it gets followed.
+///
+/// The rows are names observed in real model output, not a guess at what someone
+/// might type. `PREFIX_MISREACH` covers the family-prefix habit (`arr_*`) that no
+/// fixed list can enumerate.
+fn foreign_builtin_help(name: &str) -> Option<String> {
+    let fix: &str = match name {
+        // Conversion. Every neighbouring language spells these differently and
+        // none of them spells it `parse_int`.
+        "str_to_int" | "to_int" | "int" | "parse_i64" | "atoi" | "str_to_i64" => {
+            "`parse_int(s)` — it returns `Result<i64, str>`, so `match` it or use `?`"
+        }
+        "str_to_float" | "to_float" | "float" | "parse_f64" => {
+            "`parse_float(s)` — it returns `Result<f64, str>`"
+        }
+        "int_to_str" | "str_of" | "string" | "to_string" | "itoa" => "`to_str(n)`",
+        // Concatenation. `+` on two strings is the answer since the checker
+        // stopped refusing it; `str_concat` has never existed.
+        "str_cat" | "str_concat" | "concat" | "str_append" | "strcat" => {
+            "`a + b` — `+` concatenates two `str` (and two arrays)"
+        }
+        // Length. `len` is polymorphic over str and arrays; there is no
+        // per-type length function despite the `str_len` alias existing.
+        "arr_len" | "array_len" | "list_len" | "length" | "size" | "count" => {
+            "`len(x)` — one polymorphic length for both `str` and arrays"
+        }
+        // Files. `write_file` both creates and truncates, so the create/open
+        // step every other language needs does not exist here.
+        "create_file" | "file_create" | "open" | "file_open" | "fopen" | "write" | "write_line"
+        | "writelines" | "file_write" => {
+            "`write_file(path, contents)` — it creates or truncates in one call, so there is no \
+             separate open/create step. To build a file up, `append_file(path, more)`; to write \
+             lines, `write_file(path, str_join(lines, \"\\n\"))`"
+        }
+        "read_lines" | "readlines" | "file_read" | "file_lines" => {
+            "`str_split(contents, \"\\n\")` after `read_file(path)` — there is no line-oriented \
+             read"
+        }
+        "file_size_bytes" | "stat" | "filesize" | "getsize" => "`file_size(path)`",
+        // Collections the model reaches for by analogy.
+        "dict_get_default" | "dict_lookup" | "get" => {
+            "`dict_get_or(d, k, default)` — `dict_get` returns `Option<T>`"
+        }
+        "dict_add" | "dict_put" | "dict_insert" | "set" => "`dict_set(d, k, v)`",
+        "dict_count" | "dict_tally" | "counter" | "Counter" => {
+            "`dict_inc(d, k)` — increments, creating the key at 0 first"
+        }
+        "arr_sort" | "sort" | "sorted" => {
+            "`arr_sort_by(xs, |a, b| a - b)` — sorting always takes a comparator"
+        }
+        "arr_append" | "list_append" | "append" | "push" => "`arr_push(xs, x)` — it returns a NEW array",
+        "split" | "str_to_arr" => "`str_split(s, sep)`",
+        "join" | "arr_join" | "arr_to_str" => "`str_join(parts, sep)`",
+        // Runtime type introspection. There is NO substitution to offer, so this
+        // arm returns early with an explanation instead of a "write X" — the
+        // generic table shape would have to invent a replacement, and a
+        // confidently-wrong suggestion costs more than silence because it gets
+        // followed.
+        //
+        // Measured: `type_of` was the SECOND-largest cause of failure on the
+        // tasks_hard set (6 of 36 attempts), reached for on the
+        // heterogeneous-nested-structure task. Until now it fell through to the
+        // undefined-name default, whose advice — "introduce `type_of` with
+        // `let type_of = …`" — is actively useless for a language feature that
+        // cannot exist.
+        "type_of" | "typeof" | "type" | "isinstance" | "is_a" | "get_type"
+        | "type_name" | "reflect" | "instanceof" => {
+            return Some(format!(
+                "`{name}` cannot exist in Axon — types are static, so there is no runtime type introspection to call. If a value can be one of several shapes, make that explicit with an enum and `match` on it: `type Shape = Num {{ v: i64 }} | Text {{ v: str }}`, construct with `Shape::Num {{ v: 7 }}`, then `match x {{ Shape::Num {{ v }} => …  Shape::Text {{ v }} => … }}` — arms name the VARIANT PATH and destructure with braces, not `Num(n)`"
+            ))
+        }
+        _ => return prefix_misreach_help(name),
+    };
+    Some(format!("`{name}` does not exist in Axon — write {fix}"))
+}
+
+/// Every key [`foreign_builtin_help`] answers, for the tests to walk.
+///
+/// A second list is a drift risk, so the tests use it to hold the match itself
+/// honest: each key must actually be answered, and none may be a real builtin.
+#[cfg(test)]
+const FOREIGN_BUILTIN_KEYS: &[&str] = &[
+    // Runtime type introspection — answered with an explanation rather than a
+    // substitution, since Axon cannot have it. Listed here so `every_key_is_answered`
+    // and the no-clash check walk them like every other key.
+    "type_of",
+    "typeof",
+    "type",
+    "isinstance",
+    "is_a",
+    "get_type",
+    "type_name",
+    "reflect",
+    "instanceof",
+    "str_to_int",
+    "to_int",
+    "int",
+    "parse_i64",
+    "atoi",
+    "str_to_i64",
+    "str_to_float",
+    "to_float",
+    "float",
+    "parse_f64",
+    "int_to_str",
+    "str_of",
+    "string",
+    "to_string",
+    "itoa",
+    "str_cat",
+    "str_concat",
+    "concat",
+    "str_append",
+    "strcat",
+    "arr_len",
+    "array_len",
+    "list_len",
+    "length",
+    "size",
+    "count",
+    "create_file",
+    "file_create",
+    "open",
+    "file_open",
+    "fopen",
+    "write",
+    "write_line",
+    "writelines",
+    "file_write",
+    "read_lines",
+    "readlines",
+    "file_read",
+    "file_lines",
+    "file_size_bytes",
+    "stat",
+    "filesize",
+    "getsize",
+    "dict_get_default",
+    "dict_lookup",
+    "get",
+    "dict_add",
+    "dict_put",
+    "dict_insert",
+    "set",
+    "dict_count",
+    "dict_tally",
+    "counter",
+    "Counter",
+    "arr_sort",
+    "sort",
+    "sorted",
+    "arr_append",
+    "list_append",
+    "append",
+    "push",
+    "split",
+    "str_to_arr",
+    "join",
+    "arr_join",
+    "arr_to_str",
+];
+
+/// The habit no fixed table can cover: inventing a name from a family prefix.
+///
+/// A model told that `arr_*` functions exist will write `arr_len`, `arr_first`,
+/// `arr_last` — plausible names assembled from a real prefix. Naming the family
+/// without pinning members is what produced these, so the help says where the
+/// real list is instead of guessing which member was meant.
+fn prefix_misreach_help(name: &str) -> Option<String> {
+    let family = ["arr_", "dict_", "str_"]
+        .into_iter()
+        .find(|p| name.starts_with(p))?;
+    Some(format!(
+        "`{name}` does not exist — the `{family}` family is a fixed set, not a naming pattern, so \
+         a plausible-looking name is not necessarily a real one"
+    ))
 }
 
 impl Default for SymbolTable {
@@ -844,46 +1085,21 @@ impl<'a> Resolver<'a> {
             Expr::Let { name, value, .. } => {
                 self.resolve_expr(value);
                 // Fix #15: warn when a new binding shadows an existing one.
-                // `_` and `_<rest>` are conventional "ignore" names — Rust
-                // and most ML-family languages treat them specially. We
-                // don't warn on `let _ = …`, `let _unused = …`, etc.
-                if !name.starts_with('_') && self.table.lookup(name).is_some() {
-                    self.emit_warning(
-                        Diagnostic::warning(
-                            "W0002",
-                            format!("variable `{name}` shadows a previous binding"),
-                        )
-                        .with_file(self.file),
-                    );
-                }
+                self.warn_shadowing(name, value);
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
             Expr::Own { name, value, .. } => {
                 self.resolve_expr(value);
-                if !name.starts_with('_') && self.table.lookup(name).is_some() {
-                    self.emit_warning(
-                        Diagnostic::warning(
-                            "W0002",
-                            format!("variable `{name}` shadows a previous binding"),
-                        )
-                        .with_file(self.file),
-                    );
-                }
+                // Fix #15: warn when a new binding shadows an existing one.
+                self.warn_shadowing(name, value);
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
             Expr::RefBind { name, value, .. } => {
                 self.resolve_expr(value);
-                if !name.starts_with('_') && self.table.lookup(name).is_some() {
-                    self.emit_warning(
-                        Diagnostic::warning(
-                            "W0002",
-                            format!("variable `{name}` shadows a previous binding"),
-                        )
-                        .with_file(self.file),
-                    );
-                }
+                // Fix #15: warn when a new binding shadows an existing one.
+                self.warn_shadowing(name, value);
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
@@ -898,7 +1114,26 @@ impl<'a> Resolver<'a> {
                     )
                     .with_file(self.file)
                     .with_span(self.current_span);
-                    if let Some(s) = suggestion {
+                    // A foreign declaration keyword is checked FIRST, ahead of
+                    // the spelling suggestion, because the spelling suggestion
+                    // actively misleads here: `const` is 3 edits from several
+                    // real builtins, so a reader who wrote `const x = 0` was
+                    // told "did you mean `cos`?" rather than that `const` is not
+                    // an Axon keyword.
+                    //
+                    // These reach the RESOLVE tier, not the parse tier, because
+                    // they lex as ordinary identifiers — which is why
+                    // `parse_help` cannot serve them and this arm exists.
+                    if let Some(fix) = foreign_keyword_help(name) {
+                        d = d.with_fix(fix);
+                    } else if let Some(fix) = foreign_builtin_help(name) {
+                        // Also ahead of the spelling suggestion, and for a
+                        // sharper version of the same reason: for these the
+                        // suggestion names a real function with the wrong
+                        // meaning, so following it produces a program that
+                        // compiles and answers the wrong question.
+                        d = d.with_fix(fix);
+                    } else if let Some(s) = suggestion {
                         d = d.with_fix(format!(
                             "a name with a similar spelling exists — did you mean `{s}`?"
                         ));
@@ -1139,6 +1374,92 @@ impl<'a> Resolver<'a> {
             | Expr::Continue
             | Expr::InlineAsm { .. } => {}
         }
+    }
+
+    /// Warn that `name` shadows an existing binding — and, when the shape says
+    /// the author meant to ASSIGN, say so.
+    ///
+    /// WHY THIS CARRIES A `help`. Measured against the RLM harness, `let x = x +
+    /// 1` was the single most common failure the model produced: 3 of 8 benchmark
+    /// tasks failed on it, each writing `let count = count + 1` inside a nested
+    /// block to increment a counter — a Rust/Python habit. In Axon that declares a
+    /// NEW binding scoped to the block and discards it, so the counter never moves
+    /// and the program prints a wrong answer while exiting 0.
+    ///
+    /// That makes it a silent-wrong-answer path reachable from ordinary code,
+    /// which is the class this language claims to eliminate — so the diagnostic
+    /// must name the fix rather than describe the symptom. "variable `count`
+    /// shadows a previous binding" is true and useless: the reader knows they
+    /// wrote the name twice. What they do not know is that Axon spells
+    /// reassignment without `let`.
+    ///
+    /// Three cases, because one message would be WRONG for one of them:
+    /// shadowing a BUILTIN (where "drop the `let`" is bad advice — assigning to
+    /// `len` is not the repair), re-declaring from the name's own value (the "I
+    /// meant to assign" shape), and plain deliberate shadowing (which gets a
+    /// pointer, not a nag).
+    ///
+    /// Replaces three byte-identical copies of this warning (Let/Own/RefBind).
+    fn warn_shadowing(&mut self, name: &str, value: &Expr) {
+        // `_` and `_<rest>` are conventional "ignore" names — Rust and most
+        // ML-family languages treat them specially, so `let _ = …` never warns.
+        let Some(prev) = self.table.lookup(name) else {
+            return;
+        };
+        if name.starts_with('_') {
+            return;
+        }
+        let shadows_builtin = matches!(prev, Symbol::Builtin { .. });
+        // `walk_expr` is exhaustive with no `_` arm, so this cannot silently miss
+        // a shape the way a hand-rolled matcher would.
+        let mut reads_itself = false;
+        crate::ast::walk_expr(value, &mut |e| {
+            if let Expr::Ident(id) = e {
+                if id == name {
+                    reads_itself = true;
+                }
+            }
+        });
+        let d = if shadows_builtin {
+            Diagnostic::warning(
+                "W0002",
+                format!("`{name}` is the name of a builtin — this binding shadows it"),
+            )
+            .with_fix(format!(
+                "rename the binding (e.g. `{name}_` or a more specific name). Assigning to \
+                 `{name}` is not the fix here — the builtin is not a variable"
+            ))
+        } else if reads_itself {
+            Diagnostic::warning(
+                "W0002",
+                format!(
+                    "`let {name} = …` re-declares `{name}` from its own value — that is a NEW \
+                     binding, so the outer `{name}` is left unchanged"
+                ),
+            )
+            .with_fix(format!(
+                "to update it, drop the `let`: `{name} = …`. Axon bindings are already \
+                 reassignable, so `let` always introduces a new one — and inside a nested block \
+                 that new one disappears at the closing brace"
+            ))
+        } else {
+            Diagnostic::warning(
+                "W0002",
+                format!("variable `{name}` shadows a previous binding"),
+            )
+            .with_fix(format!(
+                "if you meant to update the existing `{name}`, drop the `let`: `{name} = …`"
+            ))
+        };
+        let d = d.with_file(self.file);
+        // `current_span` is the enclosing statement's span, maintained by
+        // `resolve_stmt`; `Expr::Let` itself carries none.
+        let d = if self.current_span.is_dummy() {
+            d
+        } else {
+            d.with_span(self.current_span)
+        };
+        self.emit_warning(d);
     }
 
     fn resolve_stmt(&mut self, stmt: &Stmt) {
@@ -2364,5 +2685,90 @@ mod tests {
             "underscore-prefixed names must not shadow-warn, got: {:?}",
             result.warnings
         );
+    }
+}
+
+#[cfg(test)]
+mod foreign_builtin_help_tests {
+    use super::*;
+
+    /// A row for a name that RESOLVES would be unreachable — and worse, it would
+    /// claim a working function "does not exist in Axon".
+    #[test]
+    fn no_key_is_a_real_builtin() {
+        let clashes: Vec<&str> = FOREIGN_BUILTIN_KEYS
+            .iter()
+            .copied()
+            .filter(|k| crate::builtins::is_known_builtin(k))
+            .collect();
+        assert!(
+            clashes.is_empty(),
+            "these keys are REAL builtins, so the help would call an existing function \
+             nonexistent: {clashes:?}"
+        );
+    }
+
+    #[test]
+    fn every_key_is_answered() {
+        for k in FOREIGN_BUILTIN_KEYS {
+            assert!(
+                foreign_builtin_help(k).is_some(),
+                "`{k}` is listed but the match does not answer it"
+            );
+        }
+    }
+
+    /// **Every function the help RECOMMENDS must exist.**
+    ///
+    /// This is the guard that matters. Advice is followed, so advice naming a
+    /// function that isn't there is worse than no advice — the exact mistake
+    /// this whole table exists to correct. The recommended names are scraped out
+    /// of the help text rather than listed again, so the check cannot drift away
+    /// from what is actually said.
+    #[test]
+    fn every_recommended_function_exists() {
+        for k in FOREIGN_BUILTIN_KEYS {
+            let help = foreign_builtin_help(k).expect("answered");
+            // A recommendation looks like `name(` inside backticks.
+            for cap in help.split('`') {
+                let Some(open) = cap.find('(') else { continue };
+                let cand = &cap[..open];
+                if cand.is_empty() || !cand.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                    continue;
+                }
+                assert!(
+                    crate::builtins::is_known_builtin(cand),
+                    "help for `{k}` recommends `{cand}(..)`, which is NOT a builtin: {help}"
+                );
+            }
+        }
+    }
+
+    /// The four measured misdirections, pinned. Each previously produced a
+    /// suggestion naming a real function with the wrong meaning.
+    #[test]
+    fn the_measured_misdirections_now_point_at_the_right_function() {
+        for (wrote, want) in [
+            ("str_to_int", "parse_int"),
+            ("arr_len", "len(x)"),
+            ("create_file", "write_file"),
+            ("str_cat", "+"),
+        ] {
+            let help = foreign_builtin_help(wrote).expect("answered");
+            assert!(
+                help.contains(want),
+                "help for `{wrote}` should name `{want}`, got: {help}"
+            );
+        }
+    }
+
+    /// An invented name from a real family prefix gets the family answer rather
+    /// than a guess at which member was meant.
+    #[test]
+    fn an_invented_family_name_is_not_guessed_at() {
+        let help = foreign_builtin_help("arr_first").expect("prefix fallback");
+        assert!(help.contains("fixed set"), "got: {help}");
+        // A name with no known family still falls through to spelling.
+        assert!(foreign_builtin_help("wibble").is_none());
     }
 }

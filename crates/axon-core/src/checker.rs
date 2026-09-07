@@ -61,6 +61,23 @@ pub enum Severity {
     Info,
 }
 
+/// Is strict mode on? (`AXON_STRICT=1`)
+///
+/// Strict mode promotes advisory diagnostics that describe a real hazard — today
+/// just E0302, an unused `Result` — from warnings to errors. The DEFAULT is
+/// permissive because most dropped results are harmless and refusing to compile
+/// for the common case taxes every author.
+///
+/// Read from the environment rather than threaded through the checker so CI can
+/// turn it on globally for a whole build without every call site learning a new
+/// parameter. `axon deploy` sets it itself: a deploy is the consequential path, so
+/// the safe default there is the opposite of the safe default while authoring.
+pub fn strict_mode() -> bool {
+    std::env::var("AXON_STRICT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 // ── CheckError ────────────────────────────────────────────────────────────────
 
 /// A diagnostic produced by the type checker.
@@ -162,6 +179,53 @@ fn type_contains_unresolved(ty: &Type) -> bool {
         Type::Result(ok, err) => type_contains_unresolved(ok) || type_contains_unresolved(err),
         Type::Tuple(elems) => elems.iter().any(type_contains_unresolved),
         _ => false,
+    }
+}
+
+/// True when a builtin signature's `Type::Deferred(name)` is a *type parameter*
+/// slot (`T`, `U`, `V`, `K`, `E`) rather than an opaque deferred type (`Dict`,
+/// `Uncertain<…>`) or a closure slot (`fn(T) -> U`).
+///
+/// `parse_type_str` (infer.rs) has no type-variable arm, so every one of these
+/// lands as `Deferred`; the name is the only thing that tells them apart.
+fn is_builtin_type_param_name(n: &str) -> bool {
+    !n.starts_with("fn(")
+        && !DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
+        && !n.is_empty()
+        && n.len() <= 2
+        && n.starts_with(|c: char| c.is_ascii_uppercase())
+        && n.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+/// Structurally match a builtin's declared parameter type against a concrete
+/// argument type, recording every `T ↦ concrete` binding it implies.
+///
+/// Used to keep a *generic* builtin from degrading into an *untyped* one: a
+/// signature that names `T` twice (`arr_push([T], T)`, `arr_contains`,
+/// `arr_concat`) means the two slots must agree. Unresolved argument types
+/// (empty-array literals, inference variables) bind nothing — silence, not a
+/// guess.
+fn collect_builtin_type_param_bindings(param: &Type, arg: &Type, out: &mut Vec<(String, Type)>) {
+    match (param, arg) {
+        (Type::Deferred(n), a) if is_builtin_type_param_name(n) => {
+            if !type_contains_unresolved(a) {
+                out.push((n.clone(), a.clone()));
+            }
+        }
+        (Type::Slice(p), Type::Slice(a))
+        | (Type::Option(p), Type::Option(a))
+        | (Type::Chan(p), Type::Chan(a)) => collect_builtin_type_param_bindings(p, a, out),
+        (Type::Result(po, pe), Type::Result(ao, ae)) => {
+            collect_builtin_type_param_bindings(po, ao, out);
+            collect_builtin_type_param_bindings(pe, ae, out);
+        }
+        (Type::Tuple(ps), Type::Tuple(as_)) if ps.len() == as_.len() => {
+            for (p, a) in ps.iter().zip(as_.iter()) {
+                collect_builtin_type_param_bindings(p, a, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1869,9 +1933,7 @@ impl CheckCtx {
     /// construction — the verifier rejects unbounded loops, so Axon enforces
     /// `@[total]` up front to refuse them BEFORE codegen).
     fn fn_is_total(f: &FnDef) -> bool {
-        f.attrs
-            .iter()
-            .any(|a| a.name == "total" || a.name == "bpf")
+        f.attrs.iter().any(|a| a.name == "total" || a.name == "bpf")
     }
 
     /// R23 eBPF: a fn is treated as `@[no_alloc]` if explicitly annotated OR it
@@ -2595,7 +2657,10 @@ impl CheckCtx {
         if let Expr::Call { callee, args, .. } = expr {
             if let Expr::Ident(name) = callee.as_ref() {
                 if name == "sql_query"
-                    && !matches!(args.first(), Some(Expr::Literal(crate::ast::Literal::Str(_))))
+                    && !matches!(
+                        args.first(),
+                        Some(Expr::Literal(crate::ast::Literal::Str(_)))
+                    )
                 {
                     *out += 1;
                 }
@@ -3276,8 +3341,39 @@ impl CheckCtx {
                     // which short-circuits on Deferred (handles are Deferred).
                     self.check_handle_not_arithmetic(&lty, &lpath, "used in arithmetic");
                     self.check_handle_not_arithmetic(&rty, &rpath, "used in arithmetic");
-                    self.check_numeric_operand(&lty, &lpath);
-                    self.check_numeric_operand(&rty, &rpath);
+                    // N2a: `str + str` is CONCATENATION, and the interpreter has
+                    // implemented it all along (`interp/value.rs:681`
+                    // `(Add, Str(a), Str(b)) => Ok(Str(a + &b))`). Only this
+                    // check refused it, so the evaluator arm was unreachable —
+                    // the checker being more restrictive than the reference
+                    // oracle, which is the same shape as M4 in the opposite
+                    // direction.
+                    //
+                    // Deliberately narrow: BOTH sides must be `str`, and only
+                    // for `Add`. `"a" - "b"` stays refused here.
+                    //
+                    // The `rty` half is belt-and-braces, and mutation-testing
+                    // showed why that is worth saying rather than assuming:
+                    // loosening this to `lty == Str` alone did NOT fail the
+                    // mixed-operand test, because INFER already refuses
+                    // `"a" + 1` by unification ("type mismatch in arithmetic
+                    // operands"), a different E0102 from this one. So that test
+                    // covers infer, not this clause. The clause stays because it
+                    // makes this check's intent independent of another pass —
+                    // if unification ever loosened, `str + int` must not become
+                    // silently legal here.
+                    let str_concat =
+                        matches!(op, BinOp::Add) && lty == Type::Str && rty == Type::Str;
+                    // N2b: same permission for `[T] + [T]`. Element types must
+                    // already agree — infer unifies them — so this only has to
+                    // stop the numeric check from firing on two arrays.
+                    let arr_concat = matches!(op, BinOp::Add)
+                        && matches!(lty, Type::Slice(_))
+                        && matches!(rty, Type::Slice(_));
+                    if !str_concat && !arr_concat {
+                        self.check_numeric_operand(&lty, &lpath);
+                        self.check_numeric_operand(&rty, &rpath);
+                    }
                 }
                 // Integer division/remainder by a divisor that CONSTANT-FOLDS to
                 // zero always panics at runtime ("integer division by zero").
@@ -3722,7 +3818,30 @@ impl CheckCtx {
                     let file = self.file.clone();
                     let span = self.current_span;
                     let ty_disp = ty.display();
-                    self.errors.push(
+                    // WARNING BY DEFAULT, error under strict mode.
+                    //
+                    // A dropped `Result` is usually harmless (the call usually
+                    // succeeds), and blocking compilation for the usual case is
+                    // friction on every author — human or model. So the default
+                    // favours getting code running, and the strict mode exists for
+                    // where the cost of a silently-swallowed failure is real: CI,
+                    // and `axon deploy`, which turns it on automatically because a
+                    // deploy is by definition the consequential path.
+                    //
+                    // The code stays E0302 in both modes rather than becoming a
+                    // W-code under one of them: tooling, tests and `axon trace`
+                    // key on the code, and having the identifier change with a flag
+                    // would mean a consumer could not match on it at all.
+                    //
+                    // Honest note on the trade, since it was measured rather than
+                    // assumed: on the tasks_hard set the model dropped a
+                    // `write_file` Result 6 times in 36 attempts, and the warning
+                    // path is the one where the program exits 0 with a wrong
+                    // answer — the shape a repair loop gets no signal from (see
+                    // W0002's shadowing case, which cost a task exactly this way).
+                    // The default is a deliberate ease-of-authoring choice, with
+                    // strict mode as the recovery for when that matters.
+                    let diag = if strict_mode() {
                         CheckError::new(
                             E0302,
                             format!(
@@ -3730,14 +3849,42 @@ impl CheckCtx {
                                  unhandled errors are silently dropped",
                             ),
                         )
-                        .node(node_path)
-                        .at(&file, 0, 0)
-                        .with_span(span)
-                        .found(ty_disp)
-                        .fix(
-                            "add `?` to propagate the error, or wrap the call in \
-                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`",
-                        ),
+                    } else {
+                        CheckError::warning(
+                            E0302,
+                            format!(
+                                "the `{ty_disp}` returned by this call is unused — \
+                                 an error here would be silently dropped",
+                            ),
+                        )
+                    };
+                    self.errors.push(
+                        diag.node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .found(ty_disp)
+                            .fix(
+                                // The third option is the one that was MISSING, and its
+                                // absence is what made this error feel arbitrary rather
+                                // than helpful. `?` and `match` both HANDLE the error;
+                                // neither expresses "I deliberately do not care", so a
+                                // reader who genuinely wants to discard the Result had
+                                // no way to learn that `let _ =` is accepted — and an
+                                // undiscoverable escape hatch reads exactly like no
+                                // escape hatch at all.
+                                //
+                                // That distinction is the whole justification for E0302
+                                // being an ERROR here when Rust only warns and Go lets
+                                // it pass: refusing the ACCIDENTAL drop is worth it
+                                // precisely because the DELIBERATE one costs eight
+                                // characters. Measured: the model dropped a
+                                // `write_file` Result 6 times in 36 attempts on the
+                                // tasks_hard set, and a silently-skipped write is a
+                                // wrong answer that a repair loop gets no signal from.
+                                "add `?` to propagate the error, or wrap the call in \
+                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`. \
+                              To ignore it on purpose, bind it away: `let _ = call()`",
+                            ),
                     );
                 }
             }
@@ -3982,9 +4129,63 @@ impl CheckCtx {
         }
 
         // R06 — argument types.
+        // Bindings for the type parameters a builtin signature names more than
+        // once (`arr_push([T], T)`, `arr_contains`, `arr_index_of`,
+        // `arr_concat`): tp name → (arg index that bound it, concrete type).
+        let mut tp_bindings: HashMap<String, (usize, Type)> = HashMap::new();
         for (i, (arg, param_ty)) in args.iter().zip(sig.params.iter()).enumerate() {
             let arg_path = format!("{node_path}.arg_{i}");
             let arg_ty = self.resolve_expr_type(arg, &arg_path, scope);
+
+            // A generic slot accepts ANY type — but the same `T` in two slots
+            // must be the SAME type, or "generic" would just mean "untyped".
+            // `arr_push([1, 2], "str")` binds T=i64 then T=str: refuse.
+            let mut bindings: Vec<(String, Type)> = Vec::new();
+            collect_builtin_type_param_bindings(param_ty, &arg_ty, &mut bindings);
+            let mut conflicted = false;
+            for (tp, bound) in bindings {
+                match tp_bindings.get(&tp) {
+                    Option::Some((first_i, first_ty)) => {
+                        if *first_ty != bound
+                            && !is_integer_widening(&bound, first_ty)
+                            && !is_integer_widening(first_ty, &bound)
+                        {
+                            let file = self.file.clone();
+                            let span = self.current_span;
+                            let first_disp = first_ty.display();
+                            let bound_disp = bound.display();
+                            let first_i = *first_i;
+                            self.errors.push(
+                                CheckError::new(
+                                    E0306,
+                                    format!(
+                                        "argument {i} of `{name}` has the wrong type — the \
+                                         element type `{tp}` was already fixed to \
+                                         `{first_disp}` by argument {first_i}"
+                                    ),
+                                )
+                                .node(&arg_path)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .expected(first_disp.clone())
+                                .found(bound_disp)
+                                .fix(format!(
+                                    "`{name}` is generic but not heterogeneous — every `{tp}` \
+                                     slot must be the same type; pass a `{first_disp}` here, or \
+                                     make argument {first_i} match"
+                                )),
+                            );
+                            conflicted = true;
+                        }
+                    }
+                    Option::None => {
+                        tp_bindings.insert(tp, (i, bound));
+                    }
+                }
+            }
+            if conflicted {
+                continue;
+            }
 
             // A *concrete wrapper* arg (`()`, `Option<_>`, `Result<_,_>`) can
             // never satisfy a *deferred opaque* parameter (`Dict`, `Uncertain`,
@@ -4009,6 +4210,50 @@ impl CheckCtx {
             // Option/Result/Unit). A generic *value* slot (`dict_set`'s `v: T`)
             // is `Type::TypeParam`, NOT deferred — so legitimately storing an
             // `Option` as a dict value is unaffected.
+            // M4: a NAMED function passed where a closure is expected.
+            //
+            // `arr_map([1,2,3], double)` passed `axon check` and then PANICKED at
+            // run with "undefined identifier `double`" — a check/run soundness
+            // divergence, and the interpreter is this project's reference oracle,
+            // so the checker accepting it is the bug. Passing a named fn to a
+            // higher-order builtin is the first thing a model writes.
+            //
+            // Refused rather than supported: making the interpreter resolve
+            // fn-names-as-values would oblige native codegen to match or create
+            // an interp/native divergence (invariant I-2), which is a language
+            // feature, not a fix. The diagnostic names the working form instead,
+            // so the reader is one edit away rather than stuck.
+            // NOTE the type test: `parse_type_str` (infer.rs:167) has no `fn(`
+            // arm, so a builtin's `fn(T) -> U` parameter lands as
+            // `Type::Deferred("fn(T) -> U")`, not `Type::Fn`. Matching on
+            // `Type::Fn` here compiled and silently never fired — the same
+            // deferred-swallows-the-check class this function already documents
+            // for `Dict`.
+            let param_is_fn = matches!(param_ty, Type::Fn(..))
+                || matches!(param_ty, Type::Deferred(n) if n.starts_with("fn("));
+            if param_is_fn {
+                if let Expr::Ident(callee) = arg {
+                    let is_local = scope.contains_key(callee);
+                    if !is_local && self.fn_sigs.contains_key(callee) {
+                        let file = self.file.clone();
+                        self.errors.push(
+                            CheckError::new(
+                                E0306,
+                                format!(
+                                    "argument {i} of `{name}` is the function \
+                                     `{callee}` passed by name, which Axon cannot \
+                                     evaluate as a value"
+                                ),
+                            )
+                            .node(&arg_path)
+                            .at(&file, 0, 0)
+                            .fix(format!("wrap it in a lambda — `|x| {callee}(x)`")),
+                        );
+                        continue;
+                    }
+                }
+            }
+
             let arg_is_concrete_wrapper =
                 matches!(arg_ty, Type::Unit | Type::Option(_) | Type::Result(_, _));
             // Only an *opaque* deferred param (Dict/Uncertain/Temporal/Goal)
@@ -4095,7 +4340,7 @@ impl CheckCtx {
                 // the interpreter dispatches on the runtime value (BUG_HUNT #29).
                 // Mirrors the infer special-case. A non-scalar arg still flows to
                 // the declared `i64` param and errors below.
-                || (name == "to_str" && arg_ty.is_scalar())
+                || (name == "to_str" && (arg_ty.is_scalar() || arg_ty.is_str()))
             {
                 continue;
             }
@@ -4168,6 +4413,31 @@ impl CheckCtx {
                     && matches!(param_ty, Type::F64 | Type::F32)
                 {
                     format!("convert with `as {expected_disp}` to widen the integer to a float")
+                } else if matches!(param_ty, Type::Str)
+                    && matches!(arg_ty, Type::I64 | Type::I32 | Type::I16 | Type::I8)
+                {
+                    // A `str` parameter handed an integer. The generic advice below
+                    // ("cast with `as str`") is ACTIVELY WRONG here: there is no
+                    // int->str cast, and `to_str` yields the number's DIGITS, not a
+                    // character. Measured against the RLM harness this is the blocker
+                    // on 3 of 8 tasks — the model writes
+                    // `str_contains(vowels, char_at(s, i))` or `char_at(s, i) == " "`,
+                    // because per-character work is the obvious approach and
+                    // `char_at` returns a BYTE VALUE. Pointing it at `as str` burns
+                    // the whole repair round, so name the idiom that works.
+                    //
+                    // `char_at` is named unconditionally rather than only when the
+                    // argument is literally a `char_at(...)` call: the usual shape
+                    // binds it first (`let c = char_at(s, i)`) and passes the
+                    // IDENTIFIER, which this check cannot trace back. An int where a
+                    // str is expected is overwhelmingly char_at-derived in string
+                    // code, so the mention earns its place even when it is not.
+                    format!(
+                        "expected `str`, found `{found_disp}` — there is no `as str` cast, and \
+                         `to_str(x)` gives a number's DIGITS. If this value came from \
+                         `char_at` (which returns a BYTE VALUE), use `str_slice(s, i, i + 1)` \
+                         for a one-character `str` instead"
+                    )
                 } else {
                     format!(
                         "expected `{expected_disp}`, found `{found_disp}` — \

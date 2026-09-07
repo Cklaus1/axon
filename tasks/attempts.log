@@ -1,0 +1,31 @@
+ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
+2026-08-06T17:34:50Z  T-R1  attempt 1  closed-table parse_help keyed on (parse message, source, offset); mut first
+2026-08-06T17:43:26Z  T-R2  attempt 1  cmd_run: parse_source_located + PipelineDiagnostic(E0000) with help, honouring the same tty/JSON switch as cmd_check
+2026-08-06T17:45:13Z  T-R3  attempt 1  cmd_run: run_check_pipeline_located(src) + typed emit; delete the flattening wrapper if callerless
+2026-08-06T17:48:30Z  T-R4  attempt 1  move E1001 inline 'help:' prose into PipelineDiagnostic.help
+2026-08-06T18:31:03Z  U1  attempt 1  parameterise run_arms with repair_primer; old bin passes ""; prove byte-identical vs committed transcript; 3 trials
+2026-08-06T18:35:08Z  U2a  attempt 1  did-you-mean suggestion is nondeterministic (HashSet iteration); add deterministic tie-break
+2026-08-06T18:39:57Z  U2  attempt 1  convert 10 run_check_pipeline callers to the located variant + emit_pipeline_diag
+2026-08-06T18:47:03Z  U5  attempt 1  foreign-keyword help on the E0001 unresolved-name diagnostic (const/var)
+2026-08-06T20:24:00Z  S1a  attempt 1  live Ledger compares file line count against self.entries; no on-disk format change
+2026-08-06T20:28:04Z  S2  attempt 1  r31/r33/r34: parse one cargo test run per crate; require each name to report ok
+2026-08-07T02:14:28Z  M1  attempt 1  escape { and } in value_as_literal string rendering
+2026-08-07T02:17:39Z  M2  attempt 1  value_as_literal for Option/Result/Tuple/Enum
+2026-08-07T02:20:04Z  M3  attempt 1  brace-count let capture in split_lets so multi-line lets are not torn apart
+2026-08-07T02:21:18Z  M4  attempt 1  named fn passed to higher-order builtin: check passes, run panics
+2026-08-07T02:34:17Z  M5  attempt 1  parser accepts 'let mut x' as a no-op, emits an INFO diagnostic
+2026-08-07T15:29:13Z  N2a  attempt 1  checker: allow str+str, which the evaluator already implements
+2026-08-07T15:32:10Z  N1  attempt 1  apply prototype option2-interp.patch; snapshot main's env under AXON_DUMP_BINDINGS
+2026-08-07T16:29:38Z  N2b  attempt 1  Add arm for Array+Array in eval_binop_vals + checker permission
+2026-08-08T01:03:41-04:00  T0  attempt 1  widen classify_call to per-argument (IoKind, arg_index) pairs; keep existing cap tests green
+2026-08-08T01:06:06-04:00  T1  attempt 1  make str_slice refuse a non-boundary byte range (E2200) in interp+native; share the panic-class exit path
+2026-08-08T01:19:19-04:00  T2  attempt 1  retire the card's slice-one-char idiom for the byte idiom; it now panics (E2200) on non-ASCII
+2026-08-08T01:21:00-04:00  T4  attempt 1  add str_chars/str_len_chars/str_char_at/str_char_slice/char_code/char_is_* to BUILTINS+interp; native via STR_OUT_EXTERNS where the fast path applies, E0910 otherwise
+2026-08-08T01:49:00-04:00  T5  attempt 1  add json_len/json_at/json_keys/json_arr_i64|f64|str/json_get_json/json_path_json|i64|f64 reusing the existing json helper
+2026-08-08T02:01:35-04:00  T6  attempt 1  add json_from_pairs/dict_to_json/json_arr_from_i64|f64|str; reuse serde_json for escaping
+2026-08-08T02:15:52-04:00  T7  attempt 1  add file_exists/dir_create/dir_list/file_copy/file_rename as default-deny Host methods; per-arg capability arms; file_remove EXCLUDED (needs-human D3)
+2026-08-08T02:28:50-04:00  T8  attempt 1  base64/hex encode+decode; decode Err (E2204) when output is not valid UTF-8 since Axon has no bytes type
+2026-08-08T02:48:15-04:00  T9  attempt 1  userland examples/stdlib/date.ax — Hinnant civil algorithms, floor-division branches, pre-1970 test
+2026-08-08T02:51:46-04:00  T10 attempt 1  userland set.ax over Dict + path.ax with the .. traversal refusal test
+2026-08-08T02:54:05-04:00  T11 attempt 1  examples/stdlib/r42_smoke.ax exercising JSON array + char iteration + file round-trip; signal 6/4/onetwo
+2026-08-08T02:55:29-04:00  T12 attempt 1  Pike VM in interp/regex.rs: parse->compile->simulate, leftmost-first, {n,m} cap, pattern cache, refuse backref/lookaround E2203

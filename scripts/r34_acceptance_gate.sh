@@ -26,6 +26,37 @@ CHAIN_VERIFY_FAIL_EXIT_CODE=15
 echo ""
 echo "1. Normative test name presence check"
 
+
+# ── S2 (O037): require each named test to RUN and PASS, not merely to exist ───
+#
+# This gate used to `grep -q "$name"` the source. That is satisfied by the name
+# appearing in a comment, a docstring, or an `#[ignore]`d body — it proves the
+# string exists, not that the property holds. It is exactly how P4-OS-11 shipped:
+# `extended_tcb_wired_into_run` was present and the gate was green while
+# `--extended-tcb` gated nothing.
+#
+# One suite run is parsed for every name, rather than one `cargo test` spawned
+# per name: these gates are themselves invoked from cargo, and a nested cargo
+# per name contends on the same build lock that makes the parity harnesses
+# flaky (O036).
+#
+# `ok` is required specifically. An ignored test reports `ignored`, and a test
+# renamed into a comment reports nothing at all — a name-grep cannot tell either
+# from a pass; this can.
+require_named_tests_pass() {
+    local log="$1"; shift
+    local name
+    for name in "$@"; do
+        if grep -qE "^test .*${name}.* \.\.\. ok$" "$log"; then
+            pass "ran and passed: $name"
+        elif grep -qE "^test .*${name}.* \.\.\. ignored" "$log"; then
+            fail "IGNORED (not run): $name — a name-grep would have called this green"
+        else
+            fail "did not run: $name (not present in the suite output)"
+        fi
+    done
+}
+
 REQUIRED_NAMES=(
     "entry_hash_deterministic"
     "different_prog_hash_different_entry_hash"
@@ -38,13 +69,10 @@ REQUIRED_NAMES=(
     "verify_malformed_json_line_is_clear_error"
 )
 
-for name in "${REQUIRED_NAMES[@]}"; do
-    if grep -q "fn $name" "$CHAIN_SRC" 2>/dev/null; then
-        pass "found: $name"
-    else
-        fail "MISSING test name: $name (check $CHAIN_SRC)"
-    fi
-done
+S2_LOG="$(mktemp)"
+cargo test -p axon-vm --no-default-features 2>&1 | tee "$S2_LOG" | tail -3
+require_named_tests_pass "$S2_LOG" "${REQUIRED_NAMES[@]}"
+rm -f "$S2_LOG"
 
 # ── 2. Anti-stub check: no todo!/unimplemented!/assert!(true) in chain.rs ───
 echo ""
@@ -204,7 +232,12 @@ PYEOF
 KERNEL_DEFAULT="$REPO_ROOT/dist/guest/vmlinuz"
 INITRD_DEFAULT="$REPO_ROOT/dist/guest/initramfs.cpio"
 if [ -f "$KERNEL_DEFAULT" ] && { [ -f "$INITRD_DEFAULT" ] || [ -f "$INITRD_DEFAULT.gz" ]; }; then
-    RUN_OUT="$("$AXON_VM_BIN" run "$PROG" --chain-stamp "$CHAIN_FILE" --no-attest 2>&1)"
+    # O-HI-01: AUDIT T48 made the launcher REFUSE a run with no effect grant
+    # rather than send a null policy to the guest, so without one this check
+    # never reached the chain logic it exists to test — it failed with "no
+    # effect grant" and read as a chain regression. Supply the grant explicitly
+    # so the chain verifier is what decides the outcome.
+    RUN_OUT="$(AXON_VM_ALLOWED_EFFECTS="IO" "$AXON_VM_BIN" run "$PROG" --chain-stamp "$CHAIN_FILE" --no-attest 2>&1)"
     RUN_EXIT=$?
     if [ "$RUN_EXIT" = "$CHAIN_VERIFY_FAIL_EXIT_CODE" ] && echo "$RUN_OUT" | grep -q "CHAIN BROKEN"; then
         pass "run --chain-stamp refused a broken chain before VM launch, exit $RUN_EXIT"

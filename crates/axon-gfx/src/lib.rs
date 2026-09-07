@@ -105,13 +105,11 @@ impl GfxReal {
             backends: wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::VULKAN),
             ..Default::default()
         });
-        let adapter = pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::None,
-                force_fallback_adapter: false,
-                compatible_surface: None, // headless: no surface
-            },
-        ))
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::None,
+            force_fallback_adapter: false,
+            compatible_surface: None, // headless: no surface
+        }))
         .ok_or_else(|| {
             "native::gfx: no usable wgpu adapter (headless GPU unavailable). \
              Set WGPU_BACKEND=vulkan + VK_ICD_FILENAMES to a software Vulkan ICD \
@@ -352,7 +350,10 @@ impl GfxReal {
     }
 
     fn check_window(&self, win: i64) -> Result<WindowSlot, String> {
-        match self.windows.get(usize::try_from(win).map_err(|_| bad_handle())?) {
+        match self
+            .windows
+            .get(usize::try_from(win).map_err(|_| bad_handle())?)
+        {
             Some(s) if s.live => Ok(*s),
             _ => Err(bad_handle()),
         }
@@ -449,7 +450,10 @@ mod tests {
             GfxValue::Int(n) => n,
             _ => unreachable!(),
         };
-        assert_eq!(px, 0x0080_FFFF, "real GPU readback must match the clear color");
+        assert_eq!(
+            px, 0x0080_FFFF,
+            "real GPU readback must match the clear color"
+        );
     }
 
     #[test]

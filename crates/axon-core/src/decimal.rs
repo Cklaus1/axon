@@ -212,7 +212,7 @@ pub fn round_dp(mantissa: i128, dp: u32, mode: RoundMode) -> Result<i128, String
     let drop = SCALE - dp;
     let divisor = pow10(drop);
     let quotient = rescale_div(mantissa, divisor, mode); // value at scale `dp`
-    // Re-expand back to scale SCALE.
+                                                         // Re-expand back to scale SCALE.
     quotient
         .checked_mul(divisor)
         .ok_or_else(|| "decimal overflow on round".to_string())
@@ -275,7 +275,17 @@ mod tests {
 
     #[test]
     fn parse_and_format_round_trip() {
-        for s in ["0", "1", "100", "1.5", "0.1", "0.2", "0.3", "-2.75", "123.456789"] {
+        for s in [
+            "0",
+            "1",
+            "100",
+            "1.5",
+            "0.1",
+            "0.2",
+            "0.3",
+            "-2.75",
+            "123.456789",
+        ] {
             assert_eq!(format_decimal(d(s)), s, "round-trip {s}");
         }
     }
@@ -301,9 +311,15 @@ mod tests {
     #[test]
     fn mul_rounds_half_even() {
         // 1.005 * 1 = 1.005; rounding to 2dp via round_dp half-even = 1.00 (even).
-        assert_eq!(round_dp(d("1.005"), 2, RoundMode::HalfEven).unwrap(), d("1.00"));
+        assert_eq!(
+            round_dp(d("1.005"), 2, RoundMode::HalfEven).unwrap(),
+            d("1.00")
+        );
         // 1.015 -> 1.02 (even)
-        assert_eq!(round_dp(d("1.015"), 2, RoundMode::HalfEven).unwrap(), d("1.02"));
+        assert_eq!(
+            round_dp(d("1.015"), 2, RoundMode::HalfEven).unwrap(),
+            d("1.02")
+        );
     }
 
     #[test]
@@ -318,7 +334,10 @@ mod tests {
 
     #[test]
     fn negative_half_even() {
-        assert_eq!(round_dp(d("-2.5"), 0, RoundMode::HalfEven).unwrap(), d("-2"));
+        assert_eq!(
+            round_dp(d("-2.5"), 0, RoundMode::HalfEven).unwrap(),
+            d("-2")
+        );
         assert_eq!(round_dp(d("2.5"), 0, RoundMode::HalfEven).unwrap(), d("2"));
         assert_eq!(round_dp(d("3.5"), 0, RoundMode::HalfEven).unwrap(), d("4"));
     }

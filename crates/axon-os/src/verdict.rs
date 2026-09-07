@@ -31,7 +31,11 @@ pub enum Verdict {
     ResourceBound { axis: String, used: u64, cap: u64 },
     /// R27: the coalition rollup / quorum power exceeded the per-coalition ceiling.
     /// → exit 10 (`COALITION_BOUND_EXIT_CODE`).
-    CoalitionBound { axis: String, rollup: u64, ceiling: u64 },
+    CoalitionBound {
+        axis: String,
+        rollup: u64,
+        ceiling: u64,
+    },
     /// A stored record failed integrity verification, or a replay diverged
     /// from the recorded run. → exit 11. (Moved from 9 to free it for R27.)
     VerifyMismatch { detail: String },
@@ -60,7 +64,9 @@ impl Verdict {
         match self {
             Verdict::Completed { value } => format!("\u{2713} completed (value={value})"),
             Verdict::Malformed { reason } => format!("malformed: {reason}"),
-            Verdict::Halted { reason } => format!("\u{1f6d1} HALTED: {reason} (kill-switch tripped)"),
+            Verdict::Halted { reason } => {
+                format!("\u{1f6d1} HALTED: {reason} (kill-switch tripped)")
+            }
             Verdict::Denied { reason, axis } => {
                 format!("\u{26a0} DENIED: {reason} (axis: {axis})")
             }
@@ -69,7 +75,11 @@ impl Verdict {
             Verdict::ResourceBound { axis, used, cap } => {
                 format!("\u{26a0} RESOURCE BOUND: {axis} used={used} cap={cap}")
             }
-            Verdict::CoalitionBound { axis, rollup, ceiling } => {
+            Verdict::CoalitionBound {
+                axis,
+                rollup,
+                ceiling,
+            } => {
                 format!("\u{26a0} COALITION BOUND: {axis} rollup={rollup} ceiling={ceiling}")
             }
             Verdict::VerifyMismatch { detail } => format!("\u{2717} TAMPERED: {detail}"),
@@ -91,19 +101,36 @@ mod tests {
             6
         );
         assert_eq!(
-            Verdict::BudgetExhausted { axis: "tokens".into() }.exit_code(),
+            Verdict::BudgetExhausted {
+                axis: "tokens".into()
+            }
+            .exit_code(),
             7
         );
         assert_eq!(
-            Verdict::Denied { reason: "x".into(), axis: "net".into() }.exit_code(),
+            Verdict::Denied {
+                reason: "x".into(),
+                axis: "net".into()
+            }
+            .exit_code(),
             8
         );
         assert_eq!(
-            Verdict::ResourceBound { axis: "budget".into(), used: 100, cap: 100 }.exit_code(),
+            Verdict::ResourceBound {
+                axis: "budget".into(),
+                used: 100,
+                cap: 100
+            }
+            .exit_code(),
             9
         );
         assert_eq!(
-            Verdict::CoalitionBound { axis: "compute".into(), rollup: 50, ceiling: 50 }.exit_code(),
+            Verdict::CoalitionBound {
+                axis: "compute".into(),
+                rollup: 50,
+                ceiling: 50
+            }
+            .exit_code(),
             10
         );
         assert_eq!(

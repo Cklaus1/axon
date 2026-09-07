@@ -38,12 +38,12 @@ fn square(n: i64) -> i64 {
 
 fn test_apply_sum_double() -> bool {
     // double(0)+double(1)+double(2)+double(3)+double(4) = 0+2+4+6+8 = 20
-    apply_and_sum(double, 0, 5) == 20
+    apply_and_sum(|x| double(x), 0, 5) == 20
 }
 
 fn test_apply_sum_square() -> bool {
     // 0+1+4+9+16 = 30
-    apply_and_sum(square, 0, 5) == 30
+    apply_and_sum(|x| square(x), 0, 5) == 30
 }
 
 fn test_apply_sum_lambda() -> bool {
@@ -71,12 +71,12 @@ fn is_positive(n: i64) -> bool {
 
 fn test_count_even() -> bool {
     // Even numbers in 0..10: 0,2,4,6,8 = 5
-    count_matching(is_even, 0, 10) == 5
+    count_matching(|x| is_even(x), 0, 10) == 5
 }
 
 fn test_count_positive() -> bool {
     // Positive in -2..4: 1,2,3 = 3
-    count_matching(is_positive, -2, 4) == 3
+    count_matching(|x| is_positive(x), -2, 4) == 3
 }
 
 fn test_count_with_lambda() -> bool {
@@ -96,7 +96,7 @@ fn sum_if(pred: fn(i64) -> bool, start: i64, end: i64) -> i64 {
 
 fn test_sum_if_even() -> bool {
     // Even numbers in 1..9: 2+4+6+8 = 20
-    sum_if(is_even, 1, 9) == 20
+    sum_if(|x| is_even(x), 1, 9) == 20
 }
 
 fn main() -> i64 {

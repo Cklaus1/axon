@@ -1861,6 +1861,11 @@ pub extern "C" fn __axon_write_file(
 /// Suspend the current thread for at least `ms` milliseconds.
 #[no_mangle]
 pub extern "C" fn __axon_sleep_ms(ms: i64) {
+    // Under a virtual clock, advance the timeline rather than blocking — the
+    // program still observes `ms` elapsed. Matches the interpreter.
+    if vclock::advance(ms) {
+        return;
+    }
     if ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
     }
@@ -1869,11 +1874,81 @@ pub extern "C" fn __axon_sleep_ms(ms: i64) {
 /// Return the current wall-clock time as milliseconds since the Unix epoch.
 #[no_mangle]
 pub extern "C" fn __axon_now_ms() -> i64 {
+    // Honour the virtual clock so a native binary replays like the interpreter
+    // does (I-2). This duplicates `axon-core`'s `clock.rs` because axon-core does
+    // not depend on axon-rt; `scripts/clock_parity.sh` is what keeps the two
+    // honest. Precedent: native silently ignored AXON_AI_MOCK until that was
+    // found and fixed the same way.
+    if let Some(t) = vclock::now_ms() {
+        return t;
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Deterministic virtual clock for the NATIVE runtime — the mirror of
+/// `axon-core`'s `clock.rs`. See that module for the full rationale; the short
+/// version is that a monotonic virtual clock (not a frozen one) is what lets a
+/// run that reads the time be replayed without changing what the program
+/// computes.
+///
+/// `AXON_CLOCK=<start_ms>` or `<start_ms>:<tick_ms>`; tick defaults to 1 and may
+/// be 0 for a clock that only moves when `sleep_ms` advances it.
+mod vclock {
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static INITIALIZED: AtomicBool = AtomicBool::new(false);
+    static CURRENT: AtomicI64 = AtomicI64::new(0);
+    static TICK: AtomicI64 = AtomicI64::new(1);
+
+    fn init_from_env() {
+        if INITIALIZED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let Ok(raw) = std::env::var("AXON_CLOCK") else {
+            return;
+        };
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return;
+        }
+        let (start, tick) = match raw.split_once(':') {
+            Some((s, t)) => (s.trim().parse::<i64>(), t.trim().parse::<i64>().ok()),
+            None => (raw.parse::<i64>(), None),
+        };
+        // Malformed input leaves the clock OFF rather than inventing a timeline.
+        if let Ok(start) = start {
+            CURRENT.store(start, Ordering::SeqCst);
+            TICK.store(tick.unwrap_or(1).max(0), Ordering::SeqCst);
+            ENABLED.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn enabled() -> bool {
+        init_from_env();
+        ENABLED.load(Ordering::SeqCst)
+    }
+
+    /// The virtual "now", advancing by `tick`. `None` → use the real clock.
+    pub fn now_ms() -> Option<i64> {
+        if !enabled() {
+            return None;
+        }
+        Some(CURRENT.fetch_add(TICK.load(Ordering::SeqCst), Ordering::SeqCst))
+    }
+
+    /// Advance by `ms`. `false` → the caller should really sleep.
+    pub fn advance(ms: i64) -> bool {
+        if !enabled() {
+            return false;
+        }
+        CURRENT.fetch_add(ms.max(0), Ordering::SeqCst);
+        true
+    }
 }
 
 // ── Phase 10: i64_to_str_radix ────────────────────────────────────────────────
@@ -2057,6 +2132,27 @@ pub extern "C" fn __axon_str_repeat(
 /// `str_slice(s, start, end)` — byte-indexed slice of `s`.
 /// Clamps start to [0, len], end to [start, len]; returns "" if byte range
 /// crosses a UTF-8 boundary (s.get returns None).
+/// R42 §2 / E2200 — refuse a byte range that splits a UTF-8 character.
+///
+/// `str::get(a..b)` returns `None` for a non-boundary range, and both engines
+/// used to `unwrap_or("")` it. That turned the language card's own taught
+/// per-character idiom, `str_eq(str_slice(s, i, i + 1), " ")`, into
+/// `str_eq("", " ")` on every non-ASCII input — a silent wrong answer, which is
+/// the failure mode this project refuses everywhere else.
+///
+/// Rounding to the nearest boundary was rejected: it swaps one silent wrong
+/// answer for another the caller cannot detect. The message text is kept
+/// byte-identical to the interpreter's so `utf8_boundary_parity.sh` compares
+/// output, not just exit codes.
+#[cfg(not(target_arch = "wasm32"))]
+fn str_slice_boundary_panic(start: usize, end: usize) -> ! {
+    eprintln!(
+        "axon: panic: str_slice: E2200 byte range {start}..{end} splits a UTF-8 character \
+         (slice on character boundaries, or use str_char_slice)"
+    );
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_slice(
@@ -2070,7 +2166,10 @@ pub extern "C" fn __axon_str_slice(
     let start = (start.max(0) as usize).min(src.len());
     let end = (end.max(0) as usize).min(src.len());
     let start = start.min(end);
-    let slice = src.get(start..end).unwrap_or("");
+    if !src.is_char_boundary(start) || !src.is_char_boundary(end) {
+        str_slice_boundary_panic(start, end);
+    }
+    let slice = &src[start..end];
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 #[no_mangle]
@@ -2093,7 +2192,14 @@ pub extern "C" fn __axon_str_slice(
     let start = (start.max(0) as usize).min(src.len());
     let end = (end.max(0) as usize).min(src.len());
     let start = start.min(end);
-    let slice = src.get(start..end).unwrap_or("");
+    // Same E2200 refusal as native/interp. wasm32 has no `process::exit` here,
+    // so this aborts — the wasm host reports a trap, which is the substrate's
+    // equivalent of the panic-class exit and keeps the three engines from
+    // disagreeing about whether a split range is legal.
+    if !src.is_char_boundary(start) || !src.is_char_boundary(end) {
+        core::panic!("axon: panic: str_slice: E2200 byte range splits a UTF-8 character");
+    }
+    let slice = &src[start..end];
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 
@@ -2854,6 +2960,78 @@ pub extern "C" fn __axon_refine_panic(
         s(refine_ptr, refine_len),
     );
     std::process::exit(REFINE_VIOLATION_EXIT_CODE);
+}
+
+/// The native mirror of `axon_core::interp::returned_exit_status` — what a value
+/// that fell out of `main` becomes.
+///
+/// Codegen routes `main`'s `i64` return through this so a native binary reports
+/// the same status, and prints the same line, as `axon run` does for the same
+/// return (I-2). Two hazards, both measured rather than imagined: a status is one
+/// byte, so `fn main() -> i64 { 3240 }` was observed as 168; and 2..=15 and 101
+/// belong to the enforcement ledger (`governance/EXIT_CODES.md`), so a program
+/// whose answer was 6 was indistinguishable from a refinement violation.
+///
+/// A status the program STATES with `exit(n)` is a different matter and is
+/// honoured as written — see [`__axon_exit_status`].
+///
+/// The rule is DUPLICATED rather than shared because this crate deliberately
+/// depends on nothing (it is linked into every native binary). The copies are
+/// held together by `scripts/exit_code_parity.sh`; change one, change both.
+#[no_mangle]
+pub extern "C" fn __axon_main_status(n: i64) -> i64 {
+    const LEDGER_TOP: i64 = 15;
+    let advice = "print it (`println(to_str(v))`) and return 0; if you MEAN a status, state it \
+                  with `exit(n)`, which is honoured as written — see governance/EXIT_CODES.md";
+    if n == 0 || n == 1 {
+        return n;
+    }
+    let complaint = if (2..=LEDGER_TOP).contains(&n) || n == RUNTIME_PANIC_EXIT_CODE as i64 {
+        format!(
+            "axon: `main` returned {n}, and {n} is RESERVED — the exit-code ledger assigns it, \
+             so exiting with it would make this run indistinguishable from a guard firing. \
+             Exiting 1 instead; {advice}"
+        )
+    } else if !(0..=255).contains(&n) {
+        format!(
+            "axon: `main` returned {n}, which is not a status — a status is one byte, so the \
+             caller would have seen {}. Exiting 1 instead; {advice}",
+            n.rem_euclid(256)
+        )
+    } else {
+        return n;
+    };
+    complain(&complaint);
+    1
+}
+
+/// The native mirror of `axon_core::interp::stated_exit_status` — what `exit(n)`
+/// becomes.
+///
+/// Stating a status is deliberate, so the ledger vocabulary is available: a
+/// userland deploy gate may `exit(3)` and mean the same "policy rejection" the
+/// `@[verify]` gate means (BUG_HUNT #26/#34). Only a value that is not a status
+/// at all is refused — `exit(3240)` would be seen as 168.
+#[no_mangle]
+pub extern "C" fn __axon_exit_status(n: i64) -> i64 {
+    if (0..=255).contains(&n) {
+        return n;
+    }
+    complain(&format!(
+        "axon: exit({n}) is not a status — a status is one byte, so the caller would have seen \
+         {}. Exiting 1 instead; pass a value in 0..=255.",
+        n.rem_euclid(256)
+    ));
+    1
+}
+
+/// Flush stdout before writing to stderr, so the two streams stay in the order
+/// the program produced them — the interpreter does the same before every
+/// diagnostic, and a differing interleaving is a parity failure.
+fn complain(msg: &str) {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    eprintln!("{msg}");
 }
 
 /// The exit code for a genuine runtime panic (integer overflow, division by
@@ -3662,17 +3840,36 @@ mod migrated_builtin_tests {
 
     #[test]
     fn migrated_str_slice_matches_interpreter() {
-        // Unicode: byte-indexed, s.get() returns None if mid-codepoint
-        // "héllo" bytes: h(0) é(1,2) l(3) l(4) o(5)
-        // 0..2 = "h" + first byte of é = mid-codepoint → None → ""
-        let s_val = "héllo";
-        let start: i64 = 0;
-        let end: i64 = 2;
-        let oracle = s_val
-            .get(start.max(0) as usize..end.max(0) as usize)
-            .unwrap_or("");
-        let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
-        assert_eq!(got, oracle, "str_slice unicode mid-codepoint must match");
+        // RETARGETED by R42 T1. This block used to slice "héllo" 0..2 — a
+        // MID-CODEPOINT range — and assert the result was `""`, matching
+        // `s.get(..).unwrap_or("")`. That pinned the bug rather than the
+        // contract: silently returning `""` for a split range is exactly what
+        // E2200 now refuses.
+        //
+        // The refusal cannot be asserted from here: it is a panic-class
+        // `process::exit(101)`, which would kill this whole test binary (it did
+        // — 50 of 70 tests never ran). Process-exiting paths are observable only
+        // from a subprocess, so the split-range contract lives at the .ax level
+        // in `cli_run.rs::str_slice_refuses_a_range_that_splits_a_utf8_character`
+        // and in `utf8_boundary_parity.sh`, which also proves interp and native
+        // agree on the message and exit code.
+        //
+        // What remains here is the half this layer CAN check: multi-byte input
+        // sliced ON its boundaries still matches the interpreter oracle.
+        let s_val = "héllo"; // h(0) é(1,2) l(3) l(4) o(5)
+        for (start, end, expected) in [(0i64, 1i64, "h"), (1, 3, "é"), (0, 3, "hé"), (3, 6, "llo")]
+        {
+            let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
+            assert_eq!(
+                got, expected,
+                "str_slice({s_val:?}, {start}, {end}) on a boundary"
+            );
+            assert_eq!(
+                got,
+                &s_val[start as usize..end as usize],
+                "must match the interp oracle for an aligned range"
+            );
+        }
 
         // Normal cases — match the interp oracle exactly
         let cases = [

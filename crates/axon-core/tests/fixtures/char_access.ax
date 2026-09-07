@@ -1,0 +1,44 @@
+// R42 T4 — character-indexed access, the surface that makes per-character work
+// possible now that byte-splitting refuses (E2200).
+//
+// Every case uses non-ASCII input on purpose: an ASCII-only fixture would pass
+// against a byte-indexed implementation and prove nothing.
+
+fn main() -> i64 {
+    let s = "café"            // 5 BYTES, 4 CHARACTERS
+
+    // The distinction the whole slice exists for.
+    println(to_str(str_len(s)))          // 5 — bytes
+    println(to_str(str_len_chars(s)))    // 4 — characters
+
+    // Character indexing reaches the multi-byte character; byte indexing cannot.
+    println(str_char_at(s, 3))           // é
+    println(to_str(char_at(s, 3)))       // 195 — the first BYTE of é
+    println(str_char_at(s, 9))           // "" — out of range, not a panic
+
+    // Character slicing cannot split a character, so this never raises E2200.
+    println(str_char_slice(s, 0, 3))     // caf
+    println(str_char_slice(s, 3, 4))     // é
+    println(str_char_slice(s, 0, 99))    // café — clamps
+
+    // str_chars turns per-character work into array work.
+    let cs = str_chars(s)
+    println(to_str(len(cs)))             // 4
+    println(str_join(cs, "-"))           // c-a-f-é
+    println(to_str(arr_count_if(cs, |c| char_is_alpha(c))))   // 4
+
+    // char_code / chr round trip, including the multi-byte character.
+    match char_code("é") { Ok(n) => println(to_str(n))  Err(e) => println(e) }
+    println(chr(233))                    // é
+    // Err rather than a wrong answer for input that is not one character.
+    match char_code("ab") { Ok(n) => println(to_str(n))  Err(e) => println("ERR-multi") }
+    match char_code("") { Ok(n) => println(to_str(n))  Err(e) => println("ERR-empty") }
+
+    // Predicates are false for anything that is not exactly one character.
+    println(to_str_bool(char_is_digit("7")))
+    println(to_str_bool(char_is_digit("é")))
+    println(to_str_bool(char_is_alpha("é")))
+    println(to_str_bool(char_is_space(" ")))
+    println(to_str_bool(char_is_digit("77")))
+    0
+}

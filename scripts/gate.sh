@@ -3,9 +3,10 @@
 #
 # Every code change (mine or a subagent's) must pass THIS exact gate before it
 # is committed, so "green" means the same thing everywhere. Runs:
-#   1. the full test suite (interpreter path, --no-default-features)
-#   2. the native codegen build (cargo build -p axon-core)
-#   3. clippy as a hard error (lib by default; --strict adds --all-targets)
+#   1. cargo fmt --all --check (text-only, so it runs before anything builds)
+#   2. the full test suite (interpreter path, --no-default-features)
+#   3. the native codegen build (cargo build -p axon-core)
+#   4. clippy as a hard error (lib by default; --strict adds --all-targets)
 #
 # Determinism: AXON_SEED + AXON_AI_MOCK are pinned so seeded-RNG / AI-call tests
 # never flake. Speed: mold linker + sccache rustc cache are used IF installed
@@ -61,6 +62,14 @@ mkdir -p target && : > "$SKIPLOG"
 echo "── gate: VISION.md focus ──────────────────────────────────────────"
 ./scripts/vision_focus.sh || fail "VISION.md focus"
 
+# Formatting. This is deliberately BEFORE the build: it is pure text, costs
+# under a second, and a fmt failure needs no compiler to be true. It is also
+# --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
+# drift accumulated unseen in the crates nobody was checking (2980206). Adding a
+# crate to the workspace? --all picks it up with no edit here.
+echo "── gate: cargo fmt --all --check ──────────────────────────────────"
+cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --all)"
+
 echo "── gate: tests (--no-default-features) ─────────────────────────────"
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
   cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
@@ -99,7 +108,15 @@ cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clip
 # gated; 2 mechanical clippy fixes (a ?-operator rewrite, a redundant &) made
 # it clean, no behavior change.
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
-cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest -p axon-ledger --all-targets -- -D warnings \
+# O-RLM-04: this list is an ALLOWLIST, not the workspace, so a crate absent from
+# it is simply unlinted — and a green gate reads as coverage. Six crates were
+# outside it (axon-intent, axon-os, axon-web, axon-audit, axon-certcheck,
+# axon-signal); axon-os alone carried ~11 warnings including a dead function.
+# Third recorded sighting of this class, so the fix is the list AND this note.
+# Adding a new crate to the workspace? Add it here in the same commit.
+cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain \
+  -p axon-vm -p axon-attest -p axon-ledger -p axon-intent -p axon-os -p axon-web \
+  -p axon-audit -p axon-certcheck -p axon-signal --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 if [ "$STRICT" = 1 ]; then

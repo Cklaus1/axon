@@ -90,7 +90,14 @@ fn severity_for(code: &str) -> &'static str {
 /// `help:` or `fix:` contributes its remainder (after the prefix, trimmed) to
 /// `help` (multiple joined with a space); the other lines form `message`, with
 /// literal newlines re-escaped as `\n` so the result is a single line.
-fn split_help(body: &str) -> (String, String) {
+/// AXON_FOR_RLM §2b: made `pub` so the *typed* diagnostic path can apply the
+/// same convention. Diagnostics built by `check_capabilities` (E1001) and
+/// friends embed their hint as a `help:` line inside the message; this function
+/// was the only implementation of that convention, and it was reachable only
+/// from the string path. The typed path therefore emitted the hint buried in
+/// `message` with no `help` key — so the two representations of the same
+/// diagnostic disagreed about where help lives. One splitter, both paths.
+pub fn split_help(body: &str) -> (String, String) {
     let mut msg_lines: Vec<&str> = Vec::new();
     let mut help_parts: Vec<String> = Vec::new();
     for line in body.lines() {

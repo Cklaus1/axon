@@ -7,12 +7,12 @@
 
 /// Parsed boot policy delivered via kernel cmdline.
 pub struct Policy<'a> {
-    pub principal:       Option<&'a str>,
+    pub principal: Option<&'a str>,
     pub allowed_effects: EffectSet,
-    pub budget_tokens:   Option<u64>,
-    pub source_hash:     Option<&'a str>, // unused at kernel level
-    pub run_id:          Option<&'a str>, // unused at kernel level
-    pub seccomp_hint:    &'a [u8],        // unused at kernel level
+    pub budget_tokens: Option<u64>,
+    pub source_hash: Option<&'a str>, // unused at kernel level
+    pub run_id: Option<&'a str>,      // unused at kernel level
+    pub seccomp_hint: &'a [u8],       // unused at kernel level
 }
 
 /// Bitmask of allowed effect rows.
@@ -20,31 +20,35 @@ pub struct Policy<'a> {
 pub struct EffectSet(pub u64);
 
 impl EffectSet {
-    pub const IO:     EffectSet = EffectSet(1 << 0);
-    pub const FS:     EffectSet = EffectSet(1 << 1);
-    pub const NET:    EffectSet = EffectSet(1 << 2);
-    pub const AI:     EffectSet = EffectSet(1 << 3);
-    pub const EXEC:   EffectSet = EffectSet(1 << 4);
+    pub const IO: EffectSet = EffectSet(1 << 0);
+    pub const FS: EffectSet = EffectSet(1 << 1);
+    pub const NET: EffectSet = EffectSet(1 << 2);
+    pub const AI: EffectSet = EffectSet(1 << 3);
+    pub const EXEC: EffectSet = EffectSet(1 << 4);
     pub const RANDOM: EffectSet = EffectSet(1 << 5);
 
-    pub fn contains(self, other: EffectSet) -> bool { self.0 & other.0 == other.0 }
-    pub fn union(self, other: EffectSet)    -> EffectSet { EffectSet(self.0 | other.0) }
+    pub fn contains(self, other: EffectSet) -> bool {
+        self.0 & other.0 == other.0
+    }
+    pub fn union(self, other: EffectSet) -> EffectSet {
+        EffectSet(self.0 | other.0)
+    }
 }
 
 // Static buffers — no heap allocation.
-static mut CMDLINE_BUF:    [u8; 4096] = [0u8; 4096];
-static mut CMDLINE_LEN:    usize      = 0;
-static mut JSON_BUF:       [u8; 2048] = [0u8; 2048];
-static mut JSON_LEN:       usize      = 0;
-static mut PRINCIPAL_BUF:  [u8; 128]  = [0u8; 128];
-static mut PRINCIPAL_LEN:  usize      = 0;
+static mut CMDLINE_BUF: [u8; 4096] = [0u8; 4096];
+static mut CMDLINE_LEN: usize = 0;
+static mut JSON_BUF: [u8; 2048] = [0u8; 2048];
+static mut JSON_LEN: usize = 0;
+static mut PRINCIPAL_BUF: [u8; 128] = [0u8; 128];
+static mut PRINCIPAL_LEN: usize = 0;
 // AUDIT T48 (finding OSK-P7-C3; R36 §2 site 3). This was `EffectSet(0xFF)` —
 // "open by default" — in the enforcement point of a security boundary. Every
 // ambiguity now denies. See `set_closed_policy`.
 static mut ALLOWED_EFFECTS: EffectSet = EffectSet(0);
-static mut BUDGET_TOKENS:  u64        = 0;
-static mut HAS_BUDGET:     bool       = false;
-static mut POLICY_READY:   bool       = false;
+static mut BUDGET_TOKENS: u64 = 0;
+static mut HAS_BUDGET: bool = false;
+static mut POLICY_READY: bool = false;
 
 // Byte offset of `cmd_line_ptr` (u32) in the Linux x86 boot_params struct.
 const CMD_LINE_PTR_OFF: usize = 0x228;
@@ -61,9 +65,8 @@ pub fn init(boot_params_phys: u64) {
     // SAFETY: boot_params_phys is the identity-mapped physical address provided
     // by Firecracker via the Linux boot protocol; the field is 4-byte aligned.
     let cmdline_phys = unsafe {
-        core::ptr::read_unaligned(
-            (boot_params_phys as usize + CMD_LINE_PTR_OFF) as *const u32,
-        ) as u64
+        core::ptr::read_unaligned((boot_params_phys as usize + CMD_LINE_PTR_OFF) as *const u32)
+            as u64
     };
 
     if cmdline_phys == 0 {
@@ -79,7 +82,9 @@ pub fn init(boot_params_phys: u64) {
         let mut i = 0usize;
         while i < 4095 {
             let b = core::ptr::read_volatile(src.add(i));
-            if b == 0 { break; }
+            if b == 0 {
+                break;
+            }
             CMDLINE_BUF[i] = b;
             i += 1;
         }
@@ -92,14 +97,13 @@ pub fn init(boot_params_phys: u64) {
     let (val_start, val_end) = {
         // SAFETY: reading CMDLINE_BUF written immediately above.
         let cmdline = unsafe {
-            core::slice::from_raw_parts(
-                core::ptr::addr_of!(CMDLINE_BUF) as *const u8, cmdline_len,
-            )
+            core::slice::from_raw_parts(core::ptr::addr_of!(CMDLINE_BUF) as *const u8, cmdline_len)
         };
         match find_subslice(cmdline, TAG) {
             Some(p) => {
                 let vs = p + TAG.len();
-                let ve = cmdline[vs..].iter()
+                let ve = cmdline[vs..]
+                    .iter()
                     .position(|&b| b == b' ')
                     .map(|q| vs + q)
                     .unwrap_or(cmdline_len);
@@ -139,9 +143,8 @@ pub fn init(boot_params_phys: u64) {
     // Parse JSON fields.
     // SAFETY: JSON_BUF holds the decoded policy; PRINCIPAL_BUF is distinct.
     unsafe {
-        let json = core::slice::from_raw_parts(
-            core::ptr::addr_of!(JSON_BUF) as *const u8, json_len,
-        );
+        let json =
+            core::slice::from_raw_parts(core::ptr::addr_of!(JSON_BUF) as *const u8, json_len);
 
         if let Some(s) = json_str_field(json, b"principal") {
             let n = s.len().min(127);
@@ -155,11 +158,11 @@ pub fn init(boot_params_phys: u64) {
 
         if let Some(budget) = json_u64_field(json, b"budget_tokens") {
             BUDGET_TOKENS = budget;
-            HAS_BUDGET    = true;
+            HAS_BUDGET = true;
         }
 
         ALLOWED_EFFECTS = json_array_effects(json, b"allowed_effects");
-        POLICY_READY    = true;
+        POLICY_READY = true;
     }
 }
 
@@ -173,23 +176,34 @@ pub fn read_policy() -> Policy<'static> {
             // before `init` — or after an init path that bailed — must not be
             // the most permissive answer in the system.
             return Policy {
-                principal: None, allowed_effects: EffectSet(0),
-                budget_tokens: None, source_hash: None, run_id: None,
+                principal: None,
+                allowed_effects: EffectSet(0),
+                budget_tokens: None,
+                source_hash: None,
+                run_id: None,
                 seccomp_hint: &[],
             };
         }
         let principal = if PRINCIPAL_LEN > 0 {
             core::str::from_utf8(core::slice::from_raw_parts(
-                core::ptr::addr_of!(PRINCIPAL_BUF) as *const u8, PRINCIPAL_LEN,
-            )).ok()
+                core::ptr::addr_of!(PRINCIPAL_BUF) as *const u8,
+                PRINCIPAL_LEN,
+            ))
+            .ok()
         } else {
             None
         };
         Policy {
             principal,
             allowed_effects: ALLOWED_EFFECTS,
-            budget_tokens:   if HAS_BUDGET { Some(BUDGET_TOKENS) } else { None },
-            source_hash: None, run_id: None, seccomp_hint: &[],
+            budget_tokens: if HAS_BUDGET {
+                Some(BUDGET_TOKENS)
+            } else {
+                None
+            },
+            source_hash: None,
+            run_id: None,
+            seccomp_hint: &[],
         }
     }
 }
@@ -215,7 +229,12 @@ pub fn read_policy() -> Policy<'static> {
 /// violation is a recorded, attributable refusal.
 fn set_closed_policy() {
     // SAFETY: called only from init() on the single boot path.
-    unsafe { ALLOWED_EFFECTS = EffectSet(0); HAS_BUDGET = false; PRINCIPAL_LEN = 0; POLICY_READY = true; }
+    unsafe {
+        ALLOWED_EFFECTS = EffectSet(0);
+        HAS_BUDGET = false;
+        PRINCIPAL_LEN = 0;
+        POLICY_READY = true;
+    }
 }
 
 // The pure parsing helpers live in `mmds_parse.rs` and are included here so the

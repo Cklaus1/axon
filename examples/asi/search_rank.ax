@@ -116,6 +116,10 @@ fn main() -> i64 {
         0
     } else {
         println("Redteam: FAIL — variant 0 ranked the injected doc first; do NOT deploy")
-        2
+        // A redteam rejection is a policy rejection — the same exit class as a
+        // failed @[verify] gate (3). STATED with `exit`, because a bare tail
+        // value is an answer, not a status, and may not claim a ledger code.
+        exit(3)
+        0
     }
 }

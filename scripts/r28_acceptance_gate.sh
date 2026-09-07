@@ -24,13 +24,24 @@ CHECKS=(
     ai_call_entry_carries_prompt_hash
     ledger_export_and_reimport_verified
 )
+# S2 (O037): run the suite once and require each named check to REPORT ok.
+# `grep -r "$check" crates/axon-audit/` passed on the name appearing anywhere,
+# including in a comment or an `#[ignore]`d body.
+S2_LOG="$(mktemp)"
+cargo test -p axon-audit 2>&1 | tee "$S2_LOG" | tail -3
 for check in "${CHECKS[@]}"; do
-    if ! grep -r "$check" "$ROOT/crates/axon-audit/" > /dev/null 2>&1; then
-        echo "MISSING acceptance check: $check"
-        exit 1
+    if grep -qE "^test .*${check}.* \.\.\. ok$" "$S2_LOG"; then
+        :
+    elif grep -qE "^test .*${check}.* \.\.\. ignored" "$S2_LOG"; then
+        echo "IGNORED (not run): $check — a name-grep would have called this green"
+        rm -f "$S2_LOG"; exit 1
+    else
+        echo "did not run: $check"
+        rm -f "$S2_LOG"; exit 1
     fi
 done
-echo "  OK: all 10 acceptance checks present in axon-audit"
+rm -f "$S2_LOG"
+echo "  OK: all acceptance checks RAN and PASSED in axon-audit"
 
 # ── [A2] Anti-stub check: no acceptance test is todo!()/unimplemented!()/assert!(true) ──
 

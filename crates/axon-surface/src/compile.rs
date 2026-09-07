@@ -302,7 +302,16 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
         // supervisor can branch on "policy blocked deploy" (3) vs "the program
         // crashed" (101) vs clean (0). Pre-#34 this returned 1, conflated with
         // an ordinary failure.
-        let _ = writeln!(out, "        3");
+        //
+        // STATED with `exit(3)` rather than returned as a tail value, because
+        // those are now two different things: a value falling out of `main` is an
+        // answer and may not impersonate a guard (it would be remapped to 1),
+        // while `exit(n)` is a deliberate claim about the process status and is
+        // honoured as written. This gate means the ledger code, so it says so.
+        let _ = writeln!(out, "        exit(3)");
+        // Unreachable — `exit` does not return — but the branch still has to
+        // produce the `i64` the other branch does for the `if` to type.
+        let _ = writeln!(out, "        0");
         let _ = writeln!(out, "    }}");
     } else {
         let _ = writeln!(out, "    println(\"deploy gate: passed\")");
@@ -444,8 +453,10 @@ Some scoring.
         let fail_idx = ax.find("REDTEAM FAILED").expect("fail branch present");
         let after = &ax[fail_idx..];
         assert!(
-            after.contains("\n        3\n"),
-            "redteam fail branch must return 3 (policy code), not 1: {after}"
+            after.contains("\n        exit(3)\n"),
+            "redteam fail branch must STATE the policy code 3 with `exit(3)`: a bare `3` tail is \
+             an answer, not a status, and is remapped to 1 so a computed value cannot impersonate \
+             a guard: {after}"
         );
         assert!(
             !after[..after.find("}}").unwrap_or(after.len()).min(80)].contains('1'),

@@ -245,7 +245,14 @@ fn first_axon_line(stderr: &str, default: &str) -> String {
 /// capability-bearing builtins (deny-by-default: a read error or any ambiguity
 /// yields the FULL set). A fully sound extractor uses `axon ast review`; this
 /// conservative scanner is sound *as a lower bound made safe by over-approx*.
-fn scan_effects(source: &str) -> Decl {
+/// AUDIT T54 (finding P4-OS-03). Made `pub` so `axon-intent` can call THIS
+/// implementation instead of keeping its own. There were two copies of this
+/// security scanner, and T4's whitespace-evasion fix landed in only one — the
+/// `axon-intent` copy still read `source.contains("exec(")`, which
+/// `exec (name, args)` evades, and additionally omitted `env_var` and the whole
+/// `goal_run*` family and had no `mod`-import handling at all. Duplicated
+/// security logic does not stay in sync; the fix is to have one copy.
+pub fn scan_effects(source: &str) -> Decl {
     // AUDIT T4 (finding OSK-P4-H1). The previous implementation tested
     // `source.contains("exec(")`, which `exec (name, args)` — one space — parses
     // identically and evades. That is an UNDER-approximation, the opposite of
@@ -416,8 +423,24 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> St
     // The marker carries the job's value only implicitly (via the exit code) —
     // printing `to_str(__v)` would panic for the common `fn main()` job, whose
     // renamed entry returns unit.
+    //
+    // The wrapper STATES the job's value with `exit(__r)` rather than returning
+    // it as a tail expression. A value falling out of `main` is an answer and may
+    // not claim a ledger code — it is remapped to 1 — which is the language-level
+    // half of this same collision (`interp::returned_exit_status`). A supervisor
+    // deliberately propagating a job's chosen status is exactly the case `exit`
+    // exists for, and the marker is still printed BEFORE it, so "did it finish?"
+    // is still answered independently of the number.
+    // Only a job that DECLARES a value has one to propagate. A nullary
+    // `fn main()` job leaves `__r` unit, and `exit(())` is a type error — which is
+    // why the tail differs by job shape rather than being uniform.
+    let propagate = if src.contains("fn main() ->") || src.contains("fn main () ->") {
+        "    exit(__r)\n    0\n"
+    } else {
+        "    0\n"
+    };
     format!(
-        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    let __r = sandbox_run(__sb, \"__job_entry\", 0)\n    println(\"{sentinel}{nonce}\")\n    __r\n}}\n",
+        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    let __r = sandbox_run(__sb, \"__job_entry\", 0)\n    println(\"{sentinel}{nonce}\")\n{propagate}}}\n",
         sentinel = DONE_SENTINEL,
         nonce = nonce,
         net = ceiling.net,

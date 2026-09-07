@@ -1,0 +1,46 @@
+// R42 T6 — JSON construction. Slice 3 was read-only; review caught that an RLM
+// engine's programs must also EMIT structured output.
+//
+// The contract that matters: what is written must be readable back by the Slice-3
+// functions. Every case below round-trips rather than just comparing text.
+
+fn main() -> i64 {
+    // Arrays out, then straight back in.
+    let ja = json_arr_from_i64([1, 2, 3])
+    println(ja)
+    match json_arr_i64(ja) { Ok(xs) => println(to_str(arr_sum_i64(xs)))  Err(e) => println(e) }
+
+    let js = json_arr_from_str(["x", "y"])
+    println(js)
+    match json_arr_str(js) { Ok(ss) => println(str_join(ss, "|"))  Err(e) => println(e) }
+
+    // An object from pre-encoded values, read back by path.
+    let doc = json_from_pairs([("a", ja), ("n", to_str(7)), ("s", json_stringify("hi"))])
+    println(doc)
+    match json_path_i64(doc, "n") { Ok(n) => println(to_str(n))  Err(e) => println(e) }
+    match json_path_i64(doc, "a.2") { Ok(n) => println(to_str(n))  Err(e) => println(e) }
+    match json_path_str(doc, "s") { Ok(v) => println(v)  Err(e) => println(e) }
+
+    // Keys are escaped even when they contain a quote — the case a hand-rolled
+    // encoder gets wrong and then produces a document nothing can parse.
+    let tricky = json_from_pairs([("we\"ird", to_str(1))])
+    println(tricky)
+    match json_len(tricky) { Ok(n) => println(to_str(n))  Err(e) => println("ERR-unparseable") }
+
+    // A whole dict, round-tripped.
+    let d = dict_new()
+    dict_set(d, "k", 42)
+    match dict_to_json(d) {
+        Ok(j) => {
+            println(j)
+            match json_path_i64(j, "k") { Ok(n) => println(to_str(n))  Err(e) => println(e) }
+        }
+        Err(e) => println(e)
+    }
+
+    // A dict holding a value with no JSON form is an Err, not a dropped key.
+    let bad = dict_new()
+    dict_set(bad, "f", |x| x)
+    match dict_to_json(bad) { Ok(j) => println(j)  Err(e) => println("ERR-nojson") }
+    0
+}

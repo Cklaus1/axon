@@ -54,12 +54,17 @@ jobs:
           xcrun --sdk iphonesimulator --show-sdk-path
           xcrun --sdk iphoneos --show-sdk-path
 
-      - name: Install Rust + iOS targets
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          # Device triple + both simulator triples (the runner may be arm64;
-          # x86_64-apple-ios is kept for Intel-runner fallback).
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      # The toolchain comes from `rust-toolchain.toml` like everywhere else; only
+      # the iOS targets are added here. They are deliberately NOT in that file:
+      # every developer would then download an Apple std they cannot use, and
+      # these triples are reachable only from a macOS runner.
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
+
+      # Device triple + both simulator triples (the runner may be arm64;
+      # x86_64-apple-ios is kept for Intel-runner fallback).
+      - name: Add the iOS targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
       - name: Cache cargo + target
         uses: actions/cache@v4
@@ -69,7 +74,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-ios-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-ios-cargo-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-ios-cargo-
 

@@ -264,6 +264,101 @@ pub const GOAL_BUDGET_EXIT_CODE: i32 = 7;
 /// continue with an `Err` result.
 pub const SANDBOX_VIOLATION_EXIT_CODE: i32 = 8;
 
+/// The enforcement ledger's block, and the shell's.
+///
+/// 2 through 15 belong to `governance/EXIT_CODES.md` — 3 verify, 4 kill-switch,
+/// 6 refinement, 8 sandbox, 11 replay-divergence, up to its own "next free: 16".
+/// 101 is a panic. Everything else in 0..=255 is a program's to use.
+///
+/// 126 and up are the SHELL's by convention (not-executable, not-found,
+/// killed-by-signal-N) and are deliberately NOT reserved here: that is a
+/// convention about how a shell reports its own failures, not a claim this
+/// project makes on the number, and ordinary answers land there (a test summing
+/// to 220 is not making a claim about signals).
+const LEDGER_TOP: i64 = 15;
+
+/// A status the program STATED, via `exit(n)`.
+///
+/// Stating a status is a deliberate act, so the ledger vocabulary is available:
+/// a userland deploy gate that has decided to reject may say `exit(3)` and mean
+/// the same "policy rejection" the `@[verify]` gate means. That is this repo's
+/// own design (BUG_HUNT #26/#34 — every deploy-gate rejection is one exit
+/// class), and taking the vocabulary away from userland would break it.
+///
+/// What is still refused is a value that is not a status at all: a status is one
+/// byte, and `exit(3240)` would be observed as 168 — a number the program never
+/// mentioned.
+pub fn stated_exit_status(n: i64) -> (i32, Option<String>) {
+    if (0..=255).contains(&n) {
+        return (n as i32, None);
+    }
+    (
+        1,
+        Some(format!(
+            "axon: exit({n}) is not a status — a status is one byte, so the caller would have \
+             seen {}. Exiting 1 instead; pass a value in 0..=255.",
+            n.rem_euclid(256)
+        )),
+    )
+}
+
+/// A value that fell out of `main`, which is an ANSWER, not a status.
+///
+/// `fn main() -> i64 { … result }` is the shape a program takes when it computes
+/// something and hands it back. Passing that through to the process status
+/// unchanged went wrong two ways, both measured rather than imagined:
+///
+/// * **Silent truncation.** `3240` was observed by the caller as `168`. The
+///   number the program produced was not the number anyone saw, and nothing said
+///   so. (A benchmark program computed its answer correctly, printed it,
+///   returned it, and scored as a failure.)
+/// * **Impersonating a guard.** A program whose answer happens to be 6 is
+///   indistinguishable from a refinement violation, and 11 from a replay
+///   divergence. A supervisor branches on that number precisely because it is
+///   supposed to mean a guard fired; arithmetic could forge it.
+///
+/// Both become status 1 — which is what a nonzero return meant anyway — with the
+/// reason on stderr. Ordinary values pass through, so `main() -> i64 { 49 }`
+/// still exits 49; a program that MEANS a ledger code says so with `exit(n)`,
+/// where the intent is explicit and is honoured.
+///
+/// MIRRORED in `axon-rt` (`__axon_main_status`) for the native engine. The two
+/// are held together by `scripts/exit_code_parity.sh`, not by shared code — the
+/// runtime crate deliberately depends on nothing.
+pub fn returned_exit_status(n: i64) -> (i32, Option<String>) {
+    let advice = "print it (`println(to_str(v))`) and return 0; if you MEAN a status, state it \
+                  with `exit(n)`, which is honoured as written — see governance/EXIT_CODES.md";
+    if n == 0 || n == 1 {
+        return (n as i32, None);
+    }
+    if (2..=LEDGER_TOP).contains(&n) || n == RUNTIME_PANIC_EXIT_CODE as i64 {
+        return (
+            1,
+            Some(format!(
+                "axon: `main` returned {n}, and {n} is RESERVED — the exit-code ledger assigns \
+                 it, so exiting with it would make this run indistinguishable from a guard \
+                 firing. Exiting 1 instead; {advice}"
+            )),
+        );
+    }
+    if !(0..=255).contains(&n) {
+        return (
+            1,
+            Some(format!(
+                "axon: `main` returned {n}, which is not a status — a status is one byte, so the \
+                 caller would have seen {}. Exiting 1 instead; {advice}",
+                n.rem_euclid(256)
+            )),
+        );
+    }
+    (n as i32, None)
+}
+
+/// A panic is a crash, i.e. a bug — distinct from every enforcement code, which
+/// is a guard doing its job. Named here so [`returned_exit_status`] can refuse to
+/// let a computed value impersonate one.
+pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
+
 type R = Result<Value, Flow>;
 
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
@@ -520,6 +615,10 @@ pub struct Interp<'p> {
     /// evaluated with `_` bound to the argument and a violation raises
     /// [`Flow::RefineViolation`]. Empty when the program has no refinements.
     refine_preds: HashMap<String, &'p Expr>,
+    /// PROTOTYPE (RLM session option 2): `main`'s final top-level locals,
+    /// captured after its body evaluates so AXON_DUMP_BINDINGS can persist a
+    /// cell's mutated locals. Only populated when the env var is set.
+    main_locals: RefCell<HashMap<String, Value>>,
     /// Phase 5 §4: obligations an SMT prover discharged for ALL inputs, so the
     /// matching runtime check is provably dead and may be elided. Empty by
     /// default (and always, unless `Interp::with_discharged` is used by a
@@ -812,25 +911,202 @@ pub fn run_program_capturing(program: &Program) -> (i32, String) {
     on_deep_stack(|| {
         // Install a fresh capture buffer, restoring any prior one on exit.
         let prev = OUTPUT_SINK.with(|s| s.replace(Some(String::new())));
-        let code = run_program_inner(program, crate::verify::Discharged::default());
+        // Unmapped: the oracle compares what two programs PRODUCE. Mapping first
+        // would collapse distinct results into 1 and call a rewrite equivalent
+        // when it is not.
+        let code = run_program_inner(program, crate::verify::Discharged::default(), false);
         let captured = OUTPUT_SINK.with(|s| s.replace(prev)).unwrap_or_default();
         (code, captured)
     })
 }
 
-/// Parse-and-run convenience: returns the process exit code.
+/// Parse-and-run convenience: returns the **process exit status** — what the
+/// caller of `axon run` observes, with `stated_exit_status` /
+/// `returned_exit_status` applied.
 pub fn run_program(program: &Program) -> i32 {
-    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()))
+    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true))
+}
+
+/// Like [`run_program`], but returns the value the program PRODUCED rather than
+/// the status a caller would observe.
+///
+/// For reading a result out of a program — a test asserting on a computed value,
+/// or anything comparing two runs. Guard outcomes (verify, refinement, sandbox …)
+/// still come back as their ledger codes; only `main`'s own return and `exit(n)`
+/// are left alone.
+pub fn run_program_unmapped(program: &Program) -> i32 {
+    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), false))
 }
 
 /// Phase 5 §4: run with a set of SMT-discharged obligations installed, so the
 /// interpreter elides the runtime checks Z3 proved ∀-inputs. Identical to
 /// [`run_program`] with an empty set.
+/// Render a value as an Axon **literal**, or explain why it cannot be.
+///
+/// `AXON_FOR_RLM.md` §5, the values-persisting session. A session restores a
+/// prior cell's bindings by emitting `let name = <literal>` — a literal, never
+/// the original expression, because re-evaluating `let rows = expensive()`
+/// would re-run `expensive()` on every subsequent cell. That side-effect replay
+/// is the failure the declarations-only spike avoided by having no values at
+/// all, and it is the one this must not reintroduce.
+///
+/// `Err(reason)` is not a failure path: an open channel or a closure is a
+/// perfectly normal binding that simply cannot be written down. The caller
+/// reports it as `skipped`, which is what `Engine::Snapshot` models and what
+/// CPython's `dill` does.
+pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
+    match v {
+        Value::Int(n) => Ok(n.to_string()),
+        Value::SizedInt { val, .. } => Ok(val.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Float(f) => {
+            // `1` would re-parse as an i64 and silently change the binding's type.
+            if f.fract() == 0.0 && f.is_finite() {
+                Ok(format!("{f:.1}"))
+            } else if f.is_finite() {
+                Ok(format!("{f:?}"))
+            } else {
+                Err("non-finite float has no literal form".to_string())
+            }
+        }
+        Value::Str(st) => {
+            // Braces MUST be doubled. Axon string literals interpolate, so a
+            // value containing `{` dumped verbatim produces a literal the lexer
+            // rejects (`unclosed \u{7b} in interpolated string`) — and since the
+            // dump becomes the next cell's prelude, that bricks the session
+            // permanently: even `let n = 1` is then refused. A model building a
+            // JSON-ish string hits this immediately. `{{` → `{` is the parser's
+            // own convention (`parser.rs:96-101`); `}}` is doubled with it so
+            // the escaping is the parser's exact inverse rather than nearly so.
+            let esc = st
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\t', "\\t")
+                .replace('{', "{{")
+                .replace('}', "}}");
+            Ok(format!("\"{esc}\""))
+        }
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(value_as_literal(it)?);
+            }
+            Ok(format!("[{}]", out.join(", ")))
+        }
+        // A record. Needed because the very first binding in a realistic session
+        // is a list of records — `rows` in `stateful.rs`'s chain fixture — and
+        // skipping structs means the session cannot carry its own headline case.
+        // Field order is sorted so the emitted literal is deterministic; a
+        // HashMap's iteration order would make the session file differ run to run.
+        Value::Struct { name, fields } => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            let mut parts = Vec::with_capacity(keys.len());
+            for k in keys {
+                parts.push(format!("{k}: {}", value_as_literal(&fields[k])?));
+            }
+            Ok(format!("{name} {{ {} }}", parts.join(", ")))
+        }
+        // Option / Result / Tuple / Enum all HAVE literal syntax, and a realistic
+        // session binds them constantly — `let o = parse_int(s)` is a `Result`.
+        // Leaving them in the catch-all meant the most ordinary binding a model
+        // writes could not cross a cell boundary.
+        Value::Some(inner) => Ok(format!("Some({})", value_as_literal(inner)?)),
+        Value::None => Ok("None".to_string()),
+        Value::Ok(inner) => Ok(format!("Ok({})", value_as_literal(inner)?)),
+        Value::Err(inner) => Ok(format!("Err({})", value_as_literal(inner)?)),
+        Value::Tuple(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(value_as_literal(it)?);
+            }
+            // A 1-tuple needs the trailing comma or it re-parses as a
+            // parenthesised expression and silently changes type.
+            if out.len() == 1 {
+                Ok(format!("({},)", out[0]))
+            } else {
+                Ok(format!("({})", out.join(", ")))
+            }
+        }
+        Value::Enum {
+            enum_name,
+            variant,
+            fields,
+        } => {
+            if fields.is_empty() {
+                Ok(format!("{enum_name}::{variant}"))
+            } else {
+                let mut keys: Vec<&String> = fields.keys().collect();
+                keys.sort(); // deterministic, as for structs
+                let mut parts = Vec::with_capacity(keys.len());
+                for k in keys {
+                    parts.push(format!("{k}: {}", value_as_literal(&fields[k])?));
+                }
+                Ok(format!("{enum_name}::{variant} {{ {} }}", parts.join(", ")))
+            }
+        }
+        // A dict. Not a *literal* — Axon has no dict literal syntax — but
+        // `dict_from_pairs` is a pure total call over data already written down,
+        // so it re-creates the value without re-running the computation that
+        // produced it, which is the property the session actually needs.
+        //
+        // Two things are refused rather than fudged:
+        //   * a dict whose values are not all the same shape, because
+        //     `dict_from_pairs` takes `[(str, V)]` and a mixed array does not
+        //     type-check — emitting it would produce a prelude that bricks the
+        //     next cell;
+        //   * aliasing, which is handled by the caller (see `dump_bindings`),
+        //     since a single value cannot see that another binding shares it.
+        Value::Dict(d) => {
+            let map = d.borrow();
+            if map.is_empty() {
+                // `dict_from_pairs([])` has no element type to infer from.
+                return Ok("dict_new()".to_string());
+            }
+            let tag = |v: &Value| -> &'static str {
+                match v {
+                    Value::Int(_) | Value::SizedInt { .. } => "int",
+                    Value::Float(_) => "float",
+                    Value::Bool(_) => "bool",
+                    Value::Str(_) => "str",
+                    Value::Array(_) => "array",
+                    Value::Dict(_) => "dict",
+                    Value::Struct { .. } => "struct",
+                    Value::Tuple(_) => "tuple",
+                    _ => "other",
+                }
+            };
+            let first = tag(map.values().next().expect("non-empty"));
+            if map.values().any(|v| tag(v) != first) {
+                return Err(
+                    "dict with mixed value types has no writable form (dict_from_pairs needs one \
+                     element type)"
+                        .to_string(),
+                );
+            }
+            let mut parts = Vec::with_capacity(map.len());
+            for (k, v) in map.iter() {
+                // The key goes through the same escaping as any str.
+                let kl = value_as_literal(&Value::Str(k.clone()))?;
+                parts.push(format!("({kl}, {})", value_as_literal(v)?));
+            }
+            Ok(format!("dict_from_pairs([{}])", parts.join(", ")))
+        }
+        Value::Unit => Err("unit has no binding form".to_string()),
+        // Closure/Chan/Handle/… — a session can carry a
+        // value only if it can write it down, and these cannot be written as a
+        // literal today. Reported by name so the caller can say WHICH binding
+        // was dropped, which is the whole contract of a skip list.
+        other => Err(format!("{other:?} has no literal form")),
+    }
+}
+
 pub fn run_program_with_discharged(
     program: &Program,
     discharged: crate::verify::Discharged,
 ) -> i32 {
-    on_deep_stack(|| run_program_inner(program, discharged))
+    on_deep_stack(|| run_program_inner(program, discharged, true))
 }
 
 /// Phase 11: call a specific named function (no args) and return an exit code.
@@ -1300,10 +1576,10 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
         svm_zero: [u8; 3],
     }
 
-    let fd = unsafe {
-        libc::socket(AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0)
-    };
-    if fd < 0 { return Err(()); }
+    let fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(());
+    }
 
     let addr = SockaddrVm {
         svm_family: AF_VSOCK as u16,
@@ -1322,7 +1598,9 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
         )
     };
     if r < 0 {
-        unsafe { libc::close(fd); }
+        unsafe {
+            libc::close(fd);
+        }
         return Err(());
     }
 
@@ -1353,7 +1631,8 @@ fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
 #[cfg(target_os = "linux")]
 pub fn run_suspendable_vsock(program: &Program, vsock_port: u32) -> i32 {
     VSOCK_PORT.with(|c| c.set(vsock_port as i32));
-    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()));
+    let code =
+        on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
     VSOCK_PORT.with(|c| c.set(-1));
     code
 }
@@ -1389,14 +1668,18 @@ fn unix_socket_roundtrip(path: &str, req: &str) -> Result<Option<String>, ()> {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect(path).or_else(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        UnixStream::connect(path)
-    }).map_err(|_| ())?;
+    let mut stream = UnixStream::connect(path)
+        .or_else(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            UnixStream::connect(path)
+        })
+        .map_err(|_| ())?;
 
     // Send: 4-byte LE length + payload bytes.
     let payload = req.as_bytes();
-    stream.write_all(&(payload.len() as u32).to_le_bytes()).map_err(|_| ())?;
+    stream
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .map_err(|_| ())?;
     stream.write_all(payload).map_err(|_| ())?;
     stream.flush().map_err(|_| ())?;
 
@@ -1426,10 +1709,11 @@ fn unix_socket_roundtrip(path: &str, req: &str) -> Result<Option<String>, ()> {
 /// completes normally even when no socket exists at the default path.
 #[cfg(unix)]
 pub fn run_suspendable_hypercall(program: &Program) -> i32 {
-    let sock_path = std::env::var("AXON_HOST_SOCKET")
-        .unwrap_or_else(|_| "/tmp/axon-host.sock".to_string());
+    let sock_path =
+        std::env::var("AXON_HOST_SOCKET").unwrap_or_else(|_| "/tmp/axon-host.sock".to_string());
     UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = Some(sock_path));
-    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()));
+    let code =
+        on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default(), true));
     UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = None);
     code
 }
@@ -1453,8 +1737,7 @@ pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> 
                 SendValue::Str(s) => s.clone(),
                 other => format!("{other:?}"),
             };
-            return unix_socket_roundtrip(&path, &req_str)
-                .map(|opt| opt.map(SendValue::Str));
+            return unix_socket_roundtrip(&path, &req_str).map(|opt| opt.map(SendValue::Str));
         }
     }
 
@@ -1467,8 +1750,7 @@ pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> 
                 SendValue::Str(s) => s.clone(),
                 other => format!("{:?}", other),
             };
-            return vsock_send_recv(port as u32, &req_str)
-                .map(|opt| opt.map(SendValue::Str));
+            return vsock_send_recv(port as u32, &req_str).map(|opt| opt.map(SendValue::Str));
         }
     }
 
@@ -1558,7 +1840,28 @@ pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_suspendable_values(
     program: &Program,
+    host: impl FnMut(SendValue) -> Option<SendValue>,
+) -> i32 {
+    run_suspendable_values_inner(program, host, /*map_status=*/ true)
+}
+
+/// [`run_suspendable_values`] returning the value the program PRODUCED rather
+/// than the status a caller would observe — see [`run_program_unmapped`] for why
+/// the two are separate, and why reading a result out of a program must not go
+/// through the process-status rule.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) fn run_suspendable_values_unmapped(
+    program: &Program,
+    host: impl FnMut(SendValue) -> Option<SendValue>,
+) -> i32 {
+    run_suspendable_values_inner(program, host, /*map_status=*/ false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_suspendable_values_inner(
+    program: &Program,
     mut host: impl FnMut(SendValue) -> Option<SendValue>,
+    map_status: bool,
 ) -> i32 {
     use std::sync::mpsc::channel;
     let (req_tx, req_rx) = channel::<SendValue>(); // worker → host (await requests)
@@ -1581,7 +1884,8 @@ pub fn run_suspendable_values(
             .stack_size(stack)
             .spawn_scoped(scope, move || {
                 HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
-                let code = run_program_inner(program, crate::verify::Discharged::default());
+                let code =
+                    run_program_inner(program, crate::verify::Discharged::default(), map_status);
                 // Drop the channels → req_tx closes → the host loop below ends.
                 HOST_AWAIT.with(|h| *h.borrow_mut() = None);
                 code
@@ -1602,14 +1906,37 @@ pub fn run_suspendable_values(
 /// `Value` display string for the prompt (text hosts can't carry structured
 /// payloads); use [`run_suspendable_values`] for full `Value` fidelity. (R15.)
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<String>) -> i32 {
-    run_suspendable_values(program, |req| {
-        let s = match &req {
-            SendValue::Str(s) => s.clone(),
-            other => send_value_display(other),
-        };
-        host(&s).map(SendValue::Str)
-    })
+pub fn run_suspendable(program: &Program, host: impl FnMut(&str) -> Option<String>) -> i32 {
+    run_suspendable_str_inner(program, host, /*map_status=*/ true)
+}
+
+/// [`run_suspendable`] returning the value the program PRODUCED — the same
+/// distinction [`run_program_unmapped`] draws, for the suspendable substrate.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) fn run_suspendable_unmapped(
+    program: &Program,
+    host: impl FnMut(&str) -> Option<String>,
+) -> i32 {
+    run_suspendable_str_inner(program, host, /*map_status=*/ false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_suspendable_str_inner(
+    program: &Program,
+    mut host: impl FnMut(&str) -> Option<String>,
+    map_status: bool,
+) -> i32 {
+    run_suspendable_values_inner(
+        program,
+        |req| {
+            let s = match &req {
+                SendValue::Str(s) => s.clone(),
+                other => send_value_display(other),
+            };
+            host(&s).map(SendValue::Str)
+        },
+        map_status,
+    )
 }
 
 /// wasm32 has no OS threads, so the worker-thread host-driver substrate can't run
@@ -1620,7 +1947,7 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<S
 /// substrate that replaces this one on wasm, with the same surface + semantics.
 #[cfg(target_arch = "wasm32")]
 pub fn run_suspendable(program: &Program, _host: impl FnMut(&str) -> Option<String>) -> i32 {
-    run_program_inner(program, crate::verify::Discharged::default())
+    run_program_inner(program, crate::verify::Discharged::default(), true)
 }
 
 /// wasm `Value`-aware variant — same no-thread story as `run_suspendable`: there is
@@ -1632,7 +1959,7 @@ pub fn run_suspendable_values(
     program: &Program,
     _host: impl FnMut(SendValue) -> Option<SendValue>,
 ) -> i32 {
-    run_program_inner(program, crate::verify::Discharged::default())
+    run_program_inner(program, crate::verify::Discharged::default(), true)
 }
 
 /// The default CLI host for `host_await`: write the request (a prompt) to stdout,
@@ -1721,7 +2048,21 @@ fn pin_ai_net_allowlist(program: &Program) {
 #[cfg(not(feature = "asi-runtime"))]
 fn pin_ai_net_allowlist(_program: &Program) {}
 
-fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -> i32 {
+/// `map_status` decides whether the value the program produced is turned into a
+/// PROCESS EXIT STATUS (`stated_exit_status` / `returned_exit_status`) or handed
+/// back raw.
+///
+/// The rule belongs at the process boundary and nowhere else. Two callers read
+/// `main`'s return as a *value* rather than as a status, and must not see it
+/// rewritten: the R10 G1 oracle, which compares `(exit_code, stdout)` between an
+/// original and a transformed program — collapsing 6 and 7 both to 1 would make
+/// a meaning-changing rewrite look equivalent — and the interpreter's own tests,
+/// which use the return as the cheapest way to read a computed result out.
+fn run_program_inner(
+    program: &Program,
+    discharged: crate::verify::Discharged,
+    map_status: bool,
+) -> i32 {
     let mut interp = Interp::build(program).with_discharged(discharged);
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
     // is malformed), not a runtime panic. Report it cleanly with exit 2 (the
@@ -1733,9 +2074,120 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
         return 2;
     }
     let outcome = interp.init_globals().and_then(|()| interp.run_main());
+    // §5: hand the session its bindings back, as literals. Written after
+    // `run_main` so a cell's own top-level `let`s are included at their final
+    // values. Only on success — a cell that failed must not mutate the session.
+    if outcome.is_ok() {
+        if let Ok(path) = std::env::var("AXON_DUMP_BINDINGS") {
+            let mut lines = String::new();
+            // PROTOTYPE (RLM session option 2): main's final top-level locals
+            // override globals of the same name — a cell that mutated a local
+            // persists the mutated value.
+            let locals = interp.main_locals.borrow();
+            let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
+            for (k, v) in locals.iter() {
+                merged.insert(k, v);
+            }
+            let mut names: Vec<&&String> = merged.keys().collect();
+            names.sort();
+            // A `Dict` is `Rc<RefCell<..>>` — SHARED MUTABLE state. Writing two
+            // aliasing bindings out as two `dict_from_pairs(..)` calls would
+            // reconstruct them as two INDEPENDENT dicts, so a later
+            // `dict_set(a, ..)` would stop being visible through `b`. That is a
+            // silent semantic change across a cell boundary, which is exactly
+            // the class of thing this session refuses rather than fudges (the
+            // same call R15 made for `Chan`). So: find every dict reachable
+            // from more than one binding and skip it with a reason.
+            let mut seen: HashMap<*const (), usize> = HashMap::new();
+            fn count_dicts(v: &Value, seen: &mut HashMap<*const (), usize>) {
+                match v {
+                    Value::Dict(d) => {
+                        let key = Rc::as_ptr(d) as *const ();
+                        let e = seen.entry(key).or_insert(0);
+                        *e += 1;
+                        // Descend only the FIRST time this dict is seen. A dict
+                        // can contain itself (`dict_set(d, "self", d)`), and an
+                        // unconditional recursion would not terminate — a hang
+                        // at session-dump time, which is worse than the aliasing
+                        // bug this guard exists to prevent.
+                        if *e == 1 {
+                            for inner in d.borrow().values() {
+                                count_dicts(inner, seen);
+                            }
+                        }
+                    }
+                    Value::Array(items) | Value::Tuple(items) => {
+                        for it in items {
+                            count_dicts(it, seen);
+                        }
+                    }
+                    Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
+                        for f in fields.values() {
+                            count_dicts(f, seen);
+                        }
+                    }
+                    Value::Some(i) | Value::Ok(i) | Value::Err(i) => count_dicts(i, seen),
+                    _ => {}
+                }
+            }
+            for name in &names {
+                count_dicts(merged[**name], &mut seen);
+            }
+            let is_aliased = |v: &Value| -> bool {
+                matches!(v, Value::Dict(d) if seen.get(&(Rc::as_ptr(d) as *const ())).copied().unwrap_or(0) > 1)
+            };
+            for name in names {
+                // A binding that SHADOWS A BUILTIN must not persist. It is legal
+                // Axon inside one cell — `let len = 5` merely warns (W0002) —
+                // but once it reaches the prelude, every later cell that calls
+                // `len(xs)` dies with E0306 "cannot call non-function value",
+                // and the session never recovers. Measured: one task naming a
+                // variable `len` poisoned 14 of the following cells in a
+                // tasks_hard run, which scored as Axon failing tasks it can
+                // actually do.
+                //
+                // Skipping loses the value, which is why it is REPORTED — the
+                // alternative is a session that silently breaks a builtin for
+                // every cell after this one.
+                if crate::builtins::is_known_builtin(name) {
+                    lines.push_str(&format!(
+                        "// SKIPPED {name}: shadows the builtin `{name}`; persisting it would \
+                         break every later call to it\n"
+                    ));
+                    continue;
+                }
+                if is_aliased(merged[*name]) {
+                    lines.push_str(&format!(
+                        "// SKIPPED {name}: dict is shared with another binding; writing it out \
+                         would split it into independent copies\n"
+                    ));
+                    continue;
+                }
+                match value_as_literal(merged[*name]) {
+                    Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
+                    Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),
+                }
+            }
+            let _ = std::fs::write(path, lines);
+        }
+    }
+    // Two different things, deliberately judged by two different rules: a status
+    // the program STATED with `exit(n)` is honoured as written (the ledger
+    // vocabulary is userland's to use), while a value that merely fell out of
+    // `main` is an answer and may not impersonate a guard. See
+    // `stated_exit_status` / `returned_exit_status`.
+    let report = |(code, complaint): (i32, Option<String>)| -> i32 {
+        if let Some(msg) = complaint {
+            let _ = std::io::stdout().flush();
+            eprintln!("{msg}");
+        }
+        code
+    };
     match outcome {
+        Ok(Value::Int(n)) if map_status => report(returned_exit_status(n)),
         Ok(Value::Int(n)) => n as i32,
         Ok(_) => 0,
+        Err(Flow::Exit(code)) if map_status => report(stated_exit_status(code as i64)),
         Err(Flow::Exit(code)) => code,
         Err(Flow::VerifyFailed(msg)) => {
             // Policy rejection, not a crash — distinct exit code so CI can tell
@@ -1978,6 +2430,7 @@ impl<'p> Interp<'p> {
             sandboxes: RefCell::new(Vec::new()),
             active_sandbox: Cell::new(-1),
             refine_preds,
+            main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
             gfx_mock: RefCell::new(crate::native::GfxMock::new()),
             #[cfg(not(target_arch = "wasm32"))]
@@ -2360,7 +2813,38 @@ impl<'p> Interp<'p> {
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
         env.define("goal_met".into(), Value::Int(goal_met));
-        let mut result = match self.eval(&f.body, &mut env) {
+        // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
+        // top-level statements WITHOUT the extra block scope (eval_block pops
+        // its scope before returning, discarding the locals), then capture the
+        // frame's final locals for the dump.
+        let capture = f.name == "main"
+            && self.call_depth.get() == 1
+            && std::env::var("AXON_DUMP_BINDINGS").is_ok();
+        let body_result = if capture {
+            if let Expr::Block(stmts) = &f.body {
+                let mut last = Ok(Value::Unit);
+                for stmt in &stmts[..] {
+                    match self.eval(&stmt.expr, &mut env) {
+                        Ok(v) => last = Ok(v),
+                        Err(e) => {
+                            last = Err(e);
+                            break;
+                        }
+                    }
+                }
+                last
+            } else {
+                self.eval(&f.body, &mut env)
+            }
+        } else {
+            self.eval(&f.body, &mut env)
+        };
+        if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
+            let mut snap = env.snapshot();
+            snap.remove("goal_met"); // injected by call_fn, not a user binding
+            *self.main_locals.borrow_mut() = snap;
+        }
+        let mut result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
             Err(other) => return Err(other),
@@ -2870,6 +3354,10 @@ mod provenance;
 // call sites (json_quote, append_*_jsonl, read_best_input, …) are unchanged,
 // and re-export the public API at the original `interp::` path for main.rs.
 use provenance::*;
+// `sha256_hex` is re-exported crate-internally so `replay.rs` can fingerprint a
+// journal payload with the SAME hash the provenance/AI-replay caches use, rather
+// than adding a second digest implementation that could disagree with them.
+pub(crate) use provenance::sha256_hex;
 pub use provenance::{
     append_run_start_jsonl, best_recorded_score, find_run_start, provenance_log_path,
     read_ai_calls, read_provenance, set_provenance_source, AiCallRecord, ProvRecord,
@@ -3145,6 +3633,12 @@ fn eval_unary(op: &UnaryOp, v: Value) -> R {
 /// (`asi.rs::emit_binop_uncertain`) so the interpreter and native agree.
 // Value formatting + value-level ops extracted to interp/value.rs (R0 slice 2).
 mod value;
+
+/// R42 Slice 5: the Pike VM regex engine. Its own module because it is a real
+/// compiler+VM rather than a builtin body, and because its refusals
+/// (backreferences, lookaround, oversized counted repetition) are a security
+/// boundary worth reading in one place.
+mod regex;
 use value::*;
 
 // ── R19 Slice B — interp.rs-level coercion helpers ───────────────────────────
@@ -3188,7 +3682,11 @@ mod tests {
 
     fn run(src: &str) -> i32 {
         let program = crate::parse_source(src).expect("parse failed");
-        run_program(&program)
+        // Unmapped: these tests use `main`'s return as a value channel — the
+        // cheapest way to read a computed result out of a program — and the
+        // status rule is about what a PROCESS reports, not what a program
+        // computed. The rule has its own tests, plus `exit_code_parity.sh`.
+        run_program_unmapped(&program)
     }
 
     /// AUDIT T35 (finding RT-02). The static checker validates `ai_complete`
@@ -3251,7 +3749,96 @@ fn main() { }
 
     #[test]
     fn main_returns_exit_code() {
-        assert_eq!(run("fn main() -> i64 { 7 }"), 7);
+        // 49, not 7: 7 is GOAL_BUDGET_EXIT_CODE, and a value falling out of
+        // `main` may no longer claim a ledger code. That this test had to change
+        // is itself the finding — the assertion was using a reserved number as
+        // an ordinary return value.
+        assert_eq!(run("fn main() -> i64 { 49 }"), 49);
+    }
+
+    #[test]
+    fn a_returned_answer_may_not_impersonate_a_guard() {
+        // The whole point of the ledger is that a supervisor can branch on it.
+        // A program whose ANSWER happens to be 6 must not be readable as a
+        // refinement violation, or 11 as a replay divergence — otherwise any
+        // program's arithmetic can forge the one signal the supervisor trusts.
+        for reserved in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 101] {
+            let (code, complaint) = returned_exit_status(reserved);
+            assert_eq!(code, 1, "a returned {reserved} must not exit {reserved}");
+            assert!(
+                complaint.is_some_and(|m| m.contains("RESERVED")),
+                "and it must say why it did not"
+            );
+        }
+        // The ordinary ground either side of the ledger is untouched.
+        for ok in [0, 1, 16, 49, 125, 200, 255] {
+            assert_eq!(returned_exit_status(ok), (ok as i32, None));
+        }
+    }
+
+    #[test]
+    fn a_returned_answer_may_not_truncate_silently() {
+        // A status is one byte. `main` returning 3240 was OBSERVED as 168: the
+        // number the program produced was not the number anyone saw, and nothing
+        // said so. Refusing to exit at all is not an option (the process must
+        // exit with something), so it exits 1 and explains itself.
+        let (code, complaint) = returned_exit_status(3240);
+        assert_eq!(code, 1);
+        let msg = complaint.expect("silent truncation is the bug — it must speak");
+        assert!(
+            msg.contains("168"),
+            "the message must name what the caller WOULD have seen, or it does \
+             not explain the surprise: {msg}"
+        );
+        // Negative values are the same hazard wearing another hat.
+        assert_eq!(returned_exit_status(-1).0, 1);
+        assert_eq!(returned_exit_status(256).0, 1);
+        // 126..=255 are the SHELL's convention, not this project's ledger, and
+        // ordinary answers land there — they pass through.
+        assert_eq!(returned_exit_status(200), (200, None));
+        assert_eq!(returned_exit_status(126), (126, None));
+    }
+
+    #[test]
+    fn a_stated_status_is_honoured_including_ledger_codes() {
+        // `exit(n)` is a deliberate claim about the process status, so userland
+        // keeps the ledger vocabulary — this is how a deploy gate written in
+        // Axon says "policy rejection" with the same code the @[verify] gate
+        // uses (BUG_HUNT #26/#34). Taking that away would have broken the
+        // one-class-per-rejection design while claiming to protect it.
+        for n in [0, 1, 3, 6, 11, 49, 101, 200, 255] {
+            assert_eq!(
+                stated_exit_status(n),
+                (n as i32, None),
+                "exit({n}) is a statement of intent and must be honoured as written"
+            );
+        }
+        // What is still refused is a value that is not a status at all.
+        let (code, complaint) = stated_exit_status(3240);
+        assert_eq!(code, 1);
+        assert!(complaint.is_some_and(|m| m.contains("168")));
+    }
+
+    #[test]
+    fn the_two_rules_differ_only_where_intent_differs() {
+        // The load-bearing distinction, stated as an assertion rather than left
+        // to prose: on the ledger block the two rules must DISAGREE (stated is
+        // honoured, returned is not), and everywhere else they must agree.
+        for n in 2..=15 {
+            assert_ne!(
+                stated_exit_status(n).0,
+                returned_exit_status(n).0,
+                "the ledger block is exactly where stating a status differs from \
+                 producing a value; if these agree, one of the two rules is wrong"
+            );
+        }
+        for n in [0, 1, 16, 49, 125, 3240, -1] {
+            assert_eq!(
+                stated_exit_status(n).0 == returned_exit_status(n).0,
+                true,
+                "outside the reserved ranges the rules must not diverge (n={n})"
+            );
+        }
     }
 
     // ── R15 resume runtime (v0) — suspend/resume across a host driver ──────────
@@ -3264,7 +3851,7 @@ fn main() { }
         // B1: the request reaches the host, and the host's reply flows back into
         // the program. host("ab") → "abab"; str_len("abab") = 4.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
+        let code = super::run_suspendable_unmapped(&prog, |req| Some(format!("{req}{req}")));
         assert_eq!(code, 4);
     }
 
@@ -3278,7 +3865,7 @@ fn main() { }
             "fn main() -> i64 { let a = host_await(\"1\")  let b = host_await(\"2\")  let c = host_await(\"3\")  str_len(a) + str_len(b) + str_len(c) }",
         );
         let mut calls = 0;
-        let code = super::run_suspendable(&prog, |_req| {
+        let code = super::run_suspendable_unmapped(&prog, |_req| {
             calls += 1;
             Some("ok".to_string()) // len 2
         });
@@ -3299,7 +3886,7 @@ fn main() { }
         );
         let replies = ["ab", "cde", "f"]; // lengths 2, 3, 1
         let mut n = 0;
-        let code = super::run_suspendable(&prog, |_req| {
+        let code = super::run_suspendable_unmapped(&prog, |_req| {
             let r = replies[n].to_string();
             n += 1;
             Some(r)
@@ -3314,7 +3901,7 @@ fn main() { }
         // identically to a bare run, with zero host calls.
         let prog = parse("fn main() -> i64 { 2 + 3 }");
         let mut calls = 0;
-        let code = super::run_suspendable(&prog, |_| {
+        let code = super::run_suspendable_unmapped(&prog, |_| {
             calls += 1;
             Some(String::new())
         });
@@ -3329,7 +3916,7 @@ fn main() { }
         // `10 / str_len("")` is a runtime div-by-zero (exit 101) after one await.
         let prog =
             parse("fn main() -> i64 { let g = host_await(\"x\")  let z = str_len(\"\")  10 / z }");
-        let code = super::run_suspendable(&prog, |_| Some("ok".to_string()));
+        let code = super::run_suspendable_unmapped(&prog, |_| Some("ok".to_string()));
         assert_eq!(code, 101, "interp panic mid-suspend → exit 101, no hang");
     }
 
@@ -3343,7 +3930,7 @@ fn main() { }
             "fn main() -> i64 { let n = 0  let go = 1  while go == 1 { match host_await_opt(\"?\") { None => { go = 0 } Some(s) => { n = n + 1 } } }  n }",
         );
         let mut fed = 0;
-        let code = super::run_suspendable(&prog, |_| {
+        let code = super::run_suspendable_unmapped(&prog, |_| {
             fed += 1;
             if fed <= 2 {
                 Some("x".to_string())
@@ -3359,7 +3946,7 @@ fn main() { }
         // The simple str form maps EOF (host None) to "" — back-compat for
         // fixed-exchange programs that don't distinguish end-of-input.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("x")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |_| None); // immediate EOF
+        let code = super::run_suspendable_unmapped(&prog, |_| None); // immediate EOF
         assert_eq!(code, 0, "EOF ⇒ host_await returns \"\" ⇒ len 0");
     }
 
@@ -3383,7 +3970,7 @@ fn main() { }
             "fn main() -> i64 { let d = dict_new()  dict_set(d, \"a\", 7)  let r = host_await_val(d)  dict_get_or(r, \"b\", 0) }",
         );
         let mut saw_request_a = 0;
-        let code = super::run_suspendable_values(&prog, |req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |req| {
             // The request must be a Dict carrying a=7 (the deep-clone preserved it).
             if let SendValue::Dict(entries) = &req {
                 for (k, v) in entries {
@@ -3410,7 +3997,7 @@ fn main() { }
             "type Point = { x: i64, y: i64 }\nfn main() -> i64 { let p = Point { x: 3, y: 4 }  let r = host_await_val(p)  r.x }",
         );
         let mut sum = 0;
-        let code = super::run_suspendable_values(&prog, |req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |req| {
             if let SendValue::Struct { name, fields } = &req {
                 assert_eq!(name, "Point");
                 let mut x = 0;
@@ -3445,7 +4032,7 @@ fn main() { }
         let prog = parse(
             "fn main() -> i64 { let r = host_await_val_opt(Some(5))  match r { Some(n) => n  None => -1 } }",
         );
-        let code = super::run_suspendable_values(&prog, |req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |req| {
             // Request is Some(5).
             assert!(matches!(&req, SendValue::Some(b) if matches!(**b, SendValue::Int(5))));
             Some(SendValue::Int(99))
@@ -3461,7 +4048,7 @@ fn main() { }
         let prog = parse("fn main() -> i64 { let c = chan<i64>()  let r = host_await_val(c)  0 }");
         // The host is never reached (the refusal happens at the boundary, worker-side).
         let mut host_calls = 0;
-        let code = super::run_suspendable_values(&prog, |_req| {
+        let code = super::run_suspendable_values_unmapped(&prog, |_req| {
             host_calls += 1;
             Some(SendValue::Int(0))
         });
@@ -3477,7 +4064,7 @@ fn main() { }
         // Regression: the str-typed host_await still works now that the substrate
         // carries SendValue (str crosses as SendValue::Str). The B1 case, unchanged.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
+        let code = super::run_suspendable_unmapped(&prog, |req| Some(format!("{req}{req}")));
         assert_eq!(
             code, 4,
             "str host_await round-trips through the SendValue channel"
@@ -4106,5 +4693,101 @@ fn main() { }
         // so unix_socket_roundtrip is never invoked.
         let code = super::run_suspendable_hypercall(&prog);
         assert_eq!(code, 0);
+    }
+}
+
+#[cfg(test)]
+mod literal_escape_tests {
+    use super::*;
+
+    /// M1. A value containing `{` used to be dumped un-escaped, and since Axon
+    /// strings interpolate, the dumped `let j = "{"` was itself unlexable. Every
+    /// subsequent cell then died on `unclosed \`{\` in interpolated string` — the
+    /// session was permanently bricked with no recovery path, and a model that
+    /// builds a JSON-ish string does this immediately.
+    #[test]
+    fn braces_in_a_dumped_string_are_escaped_for_re_parsing() {
+        let v = Value::Str("{\"a\": 1}".to_string());
+        let lit = value_as_literal(&v).expect("a string always has a literal form");
+        assert!(
+            lit.contains("{{") && lit.contains("}}"),
+            "both braces must be doubled for the interpolating lexer: {lit}"
+        );
+    }
+
+    /// M2. Option/Result/Tuple/Enum all HAVE literal syntax, and a session binds
+    /// them constantly — `let o = parse_int(s)` is a `Result`. They used to fall
+    /// into the catch-all and be reported as unserialisable, so the most
+    /// ordinary binding a model writes could not cross a cell boundary.
+    #[test]
+    fn option_result_tuple_and_enum_have_literal_forms() {
+        let cases: Vec<(Value, &str)> = vec![
+            (Value::Some(Box::new(Value::Int(2))), "Some(2)"),
+            (Value::None, "None"),
+            (Value::Ok(Box::new(Value::Int(5))), "Ok(5)"),
+            (
+                Value::Err(Box::new(Value::Str("bad".into()))),
+                "Err(\"bad\")",
+            ),
+            (Value::Tuple(vec![Value::Int(1), Value::Int(2)]), "(1, 2)"),
+            // A 1-tuple needs the trailing comma, or it re-parses as a
+            // parenthesised expression and silently changes type.
+            (Value::Tuple(vec![Value::Int(7)]), "(7,)"),
+        ];
+        for (v, want) in cases {
+            assert_eq!(
+                value_as_literal(&v).expect("must have a literal form"),
+                want
+            );
+        }
+        // A fieldless enum variant renders bare; a fielded one renders with
+        // sorted fields, as structs do.
+        let mut f = HashMap::new();
+        f.insert("r".to_string(), Value::Float(2.0));
+        let e = Value::Enum {
+            enum_name: "Shape".into(),
+            variant: "Circle".into(),
+            fields: f,
+        };
+        assert_eq!(value_as_literal(&e).unwrap(), "Shape::Circle { r: 2.0 }");
+        let bare = Value::Enum {
+            enum_name: "Shape".into(),
+            variant: "Point".into(),
+            fields: HashMap::new(),
+        };
+        assert_eq!(value_as_literal(&bare).unwrap(), "Shape::Point");
+    }
+
+    /// The round trip is the real requirement: what comes back must equal what
+    /// went in. Escaping that is not the parser's inverse would corrupt values
+    /// silently, which is worse than the wedge it replaces.
+    #[test]
+    fn a_braced_string_round_trips_through_the_parser() {
+        for original in [
+            "{",
+            "}",
+            "{\"k\": [1, 2]}",
+            "a{b}c",
+            "{{already doubled}}",
+            "quote\" and \\ and \ttab",
+        ] {
+            let lit = value_as_literal(&Value::Str(original.to_string())).unwrap();
+            let src = format!("let x = {lit}\nfn main() -> i64 {{ 0 }}\n");
+            let prog = crate::parse_source(&src)
+                .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
+            let mut interp = Interp::build(&prog);
+            interp.init_globals().expect("globals initialise");
+            let got = interp.globals.get("x").expect("let x must be bound");
+            // Value has no PartialEq; compare the rendered form, which is what
+            // the session actually round-trips anyway.
+            let got_s = match got {
+                Value::Str(t) => t.clone(),
+                other => panic!("expected a Str, got {other:?}"),
+            };
+            assert_eq!(
+                got_s, original,
+                "round trip changed the value: {original:?} -> {lit}"
+            );
+        }
     }
 }

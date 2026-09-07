@@ -28,5 +28,7 @@ fn main() -> i64 {
     let c = propose("send the weekly report")
     let approved = a + b + c
     println("approved {approved} of 3 proposed actions.")
-    approved
+    // Printed above; a count is an answer, not a process status.
+    let _ = approved
+    0
 }

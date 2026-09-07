@@ -1421,3 +1421,586 @@ single `cargo test` run whose output is parsed for each name reporting `ok`.
 That also catches the `#[ignore]` case, which name-grepping cannot. Worth
 sweeping the other `REQUIRED_NAMES`-style gates for the same shape at the same
 time — `grep -l REQUIRED_NAMES scripts/*.sh` finds them.
+
+---
+
+# Opportunities — build-loop over `AXON_FOR_RLM.md` (2026-08-06)
+
+Deferred work found during the RLM build. Logged, not acted on.
+
+## O-RLM-01 — ten more verbs still throw their diagnostics away (proposed: HIGH)
+
+T-R3 fixed `run`. `run_check_pipeline` — whose entire body flattens typed
+diagnostics to `[CODE] message`, dropping `help`/`file`/`line`/`col`/`expected`/
+`found` — has **eleven** callers, and the other ten are untouched:
+`main.rs:2354, 2447, 2526, 3032, 3136, 3974, 4519, 5014, 5485, 5936` (`test`,
+`deploy`, `ast review`, `doc`, `redteam`, and others).
+
+So `axon test` and `axon deploy` report the same location-free, help-free
+diagnostics `run` did. Decision D2 assumed this wrapper had one caller and could
+simply be deleted; it is shared, not obsolete. Converting the remaining ten is a
+mechanical but real task, and the corpus equivalence test from T-R3 generalises
+to it directly — one `verb × corpus` matrix asserting every verb agrees with
+`check`.
+
+## O-RLM-02 — `const` and `var` get no help, at the resolve tier (proposed: MEDIUM)
+
+`AXON_FOR_RLM.md` §1 names both. Probing showed they lex as ordinary identifiers
+and fail at name resolution (`cannot find name \`const\` in this scope`), not at
+the parse tier, so `parse_help` is never called for them and cannot be. They are
+exactly as unrepairable as `let mut` was. The fix is the same shape one tier
+down: a help row on the unresolved-name diagnostic when the name is a known
+foreign keyword. Pinned as a negative test today
+(`parse_help_probe.rs::const_and_var_do_not_reach_the_parse_tier`) so the
+tier fact is not re-discovered.
+
+## O-RLM-03 — repo-wide `cargo fmt` is red, and it blocks the project's own gate (proposed: MEDIUM)
+
+~40 files under `crates/axon-core/src/` are unformatted at HEAD (`builtins.rs`,
+`capabilities.rs`, `checker.rs`, `codegen/*`, …), pre-existing and from the
+parallel R21/R23 track. Recorded as O005 by the previous build loop and still
+open, so this is its second sighting.
+
+The practical cost this run: `cargo fmt -- --check` cannot be used as a gate at
+all, so each task had to diff its own files against HEAD to prove it added no
+formatting debt. A one-shot `cargo fmt` would fix it and collide with whatever
+that track has in flight — which is why it was declined before and is declined
+again, not because it is hard.
+
+## O-RLM-04 — the clippy gate is an allowlist, and six crates are outside it (proposed: MEDIUM)
+
+`scripts/gate.sh` lints `axon-core` (under `--no-default-features` only) plus
+`axon-rt/ai/surface/gfx-mock/domain/vm/attest/ledger`. Not linted:
+**`axon-intent`, `axon-os`, `axon-web`, `axon-audit`, `axon-certcheck`,
+`axon-signal`**. `axon-os` currently carries ~11 warnings including a dead
+`append_entry` (`monitor.rs:287`).
+
+This is the third recorded instance of the same class. The fix is one line in
+`gate.sh`; the reason it keeps recurring is that a green gate reads as coverage.
+
+## O-RLM-05 — the audit ledger cannot detect tail truncation (proposed: HIGH)
+
+`crates/axon-audit/src/lib.rs:349` `verify_chain` walks entries checking
+`seq`/`prev_hash`/`entry_hash`, but nothing anchors the tip or the expected
+length. `Ledger::open` reads whatever lines are present, so deleting the last N
+lines of the JSONL yields a chain that verifies **clean** — an audited program
+can erase its own trailing FS/Exec records. Found by reading the code during the
+pre-build survey; independently reproduced three times by the 2026-08-01 triage
+as finding P6-COV-02, which is still open. Needs an externally-anchored tip or a
+signed entry count.
+
+## O-RLM-06 — `axon-web` has no auth and `Access-Control-Allow-Origin: *` (proposed: MEDIUM)
+
+`crates/axon-web/src/server.rs:70`. Every `POST /api/*` shells attacker-supplied
+program text into the interpreter. It binds loopback only, which is the
+mitigation, but there is no Origin check and no CSRF token — and a `fetch` with a
+default `text/plain` body is a CORS *simple* request, so no preflight blocks it.
+Any page the user visits while the server is up can drive it, and `ACAO: *` lets
+that page read the results. Triage finding P4-PROD-11, still open.
+
+## O-RLM-07 — the repair round is unprimed, so the diagnostics are measured through a channel that discards them (proposed: HIGH — and cheap)
+
+Found by the T-R5 gate measurement. `repair_prompt`
+(`atlas/spikes/rlm-engine/src/axon_engine.rs`) takes **no primer**: every repair
+call in R9 is zero-shot, whatever the generation arm was given.
+
+The consequence is measured, not theorised. Post-repair was 5/8 against a
+first-try of 5/8 — **+0** — and on the vowel task the *first* generation wrote
+`let i = 0` correctly while the *repair* introduced `let mut i`. The language
+card suppressed the habit and the unprimed repair round put it back, faster than
+the diagnostic could correct it.
+
+So the headline conclusion "better diagnostics did not improve repair" is not
+supported by this run, in either direction: the experiment cannot see it. The
+fix is to pass the primer into `repair_prompt` and re-run — one afternoon, ~24
+model calls — and it is the measurement that would say whether Axon's ceiling
+with a card is 5/8 or higher. It should be run **before** any decision about
+§4/§5, because the gate D6 asks about is exactly that ceiling.
+
+Do it as a fourth arm rather than by changing `run_arms`, so the published
+zero-shot-repair numbers stay comparable.
+
+## O-RLM-08 — the remaining 3 failures are three more table rows, not a new problem (proposed: MEDIUM)
+
+With the card, `mut` is gone from first generation. What fails instead:
+`or`/`and` where Axon wants `||`/`&&`; method syntax on arrays (`v.max()`,
+`s.len()`); and one lexer-level rejection (`unexpected character`). The first two
+are exactly the shape `parse_help` already handles and would be two more rows
+plus two probe cases. The third needs a look at what the model actually emitted.
+
+---
+
+# Opportunities — loop 2 (the two follow-up specs), 2026-08-06
+
+## O-RLM-09 — `axon test`'s PARSE tier still flattens (proposed: MEDIUM)
+
+U2 converted every `run_check_pipeline` caller, but `axon test` reaches the
+parse tier through `parse_source_files` (`lib.rs:380`), a **public API returning
+`Vec<String>`** with four callers. Converting it to typed diagnostics is a
+public-interface change and was out of U2's scope.
+
+Visible, not hidden: `cli_run.rs`'s verb matrix carries
+`TEST_VERB_PARSE_TIER_IS_A_KNOWN_GAP` and skips exactly those cases, so the hole
+is in the test source rather than in a silently-passing assertion.
+
+## O-RLM-10 — the language card does not mention character literals (proposed: HIGH)
+
+The measured cause of all three remaining fluency failures is `c == ' '`. The
+compiler now names it (U6), but the **card** still does not, so the model writes
+it on first generation every time and spends its one repair round recovering.
+Adding one line to `LANGUAGE_CARD` is the obvious next measurement — and it must
+be measured ALONE, since changing the card and the diagnostic together is what
+A2b was written to prevent.
+
+## O-RLM-11 — the diagnostic did not repair, even when correct and primed (proposed: HIGH — research)
+
+The most interesting negative result of the loop. With the card in the repair
+prompt AND a correct, specific diagnostic naming the construct and its
+replacement, the score stayed 5/8 and the same three tasks failed. `check`
+carried `help` on 9 task-runs, up from 3, so the mechanism fired three times more
+often and moved nothing.
+
+Note this was measured with the FIRST version of the char-literal hint, which
+was wrong (it claimed `char_at` returns a `str`). The corrected hint has not
+been measured — the atlas working tree moved to another branch mid-run. So the
+honest status is: *unmeasured with correct advice*. That single re-run is the
+cheapest experiment on this list and the one that decides whether the diagnostic
+work pays at all.
+
+**UPDATE 2026-09-07 — attempted, and it did not answer the question.** The
+re-run happened (atlas `37e355a`/`f87ac43`, artifact
+`measurements/card-gate-corrected.txt`) and scored **8/8 first try, stable over
+three runs**, against a contemporaneous README-primer control at 5/8. But it is
+**not attributable**: four card changes landed between the 5/8 baseline and the
+re-run — `1170645` (character literals in the card, independently measured
+**5/8 → 7/8 on its own**), `15d7eea` (the card's builtin list was false, "worth
+3 tasks"), `7de6450`, `faa326e`. `spec-high-security-gates.md` S4 names this
+exact constraint, and the run violated it.
+
+The README control does not save the comparison, because it is not a
+card-minus-diagnostics arm — it is a different primer that never carried the
+char-literal guidance, so 8-vs-5 is card-vs-README.
+
+What survives: the card **alone** reached 7/8 before the corrected advice
+existed, so the diagnostics work is bounded above by the 7 → 8 step and may be
+worth nothing. O-RLM-11 **stays open**. The isolating experiment is now cheap
+and one-variable: hold the card fixed at today's text and run only the axon
+binary across `831895a` (`671d7e5` vs a build predating it). Harness, gateway
+and worktree are all known-good as of today.
+
+## O-RLM-12 — two type-checking entry points that must agree, and no test that they do (proposed: MEDIUM)
+
+`lib::check_pipeline` and `main::run_check_pipeline_located` run the same passes
+and carry a code comment saying they must stay in sync. They had drifted:
+`check_pipeline` dropped every resolver diagnostic's `fix`, so library consumers
+saw no help where the CLI showed it (fixed in U5). The comment is not a test.
+The same corpus trick the verb matrix uses would work here: run both over the
+refused-programs corpus and assert they produce identical diagnostics.
+
+## O-RLM-13 — the containment refusal (E1001) has no line number, in any verb (proposed: MEDIUM)
+
+Found by loop 2's smoke test, which asked `axon deploy` on a containment
+violation to show file, line and help. It shows file and help; there is no line,
+and `axon check` has none either — so this is not a delivery gap that U2 missed
+but a **pre-existing** one in the capability checker, which emits its diagnostic
+with a dummy span. `PipelineDiagnostic::json` correctly omits `line`/`col` when
+they are 0 rather than faking them.
+
+E1001 is the diagnostic a containment host shows a model when the compiler
+refuses its code, so "which call was refused" is exactly the question a reader
+has. The message names the call (`read_file("/etc/passwd")`), which is why this
+is MEDIUM rather than HIGH — the information is recoverable by searching, just
+not by jumping.
+
+Fix: carry the offending call's span through `capabilities::check_capabilities`
+into its `Diagnostic`, the same way the resolver already does.
+
+---
+
+# Opportunities — the HIGH-tier loop, 2026-08-06
+
+## O-HI-01 — `r34_acceptance_gate.sh` asserts behaviour that T48 deliberately removed (proposed: MEDIUM)
+
+`r34` fails at HEAD, before and after this loop's changes, in a section this loop
+did not touch:
+
+```
+✗ run --chain-stamp → exit 2, output: 'axon-vm: no effect grant: … Refusing to
+  launch rather than sending a null policy to the guest' (expected CHAIN BROKEN, exit 15)
+```
+
+The gate expects a run that T48 **intentionally** made refuse. So the gate is not
+detecting a regression; it is asserting the pre-T48 behaviour. Fix is to give the
+chain-stamp case an explicit grant (`AXON_VM_ALLOWED_EFFECTS` or a manifest) so
+it reaches the chain logic it means to test.
+
+Pre-existing and unrelated to S2 — verified by running the HEAD version of the
+script, which fails identically.
+
+## O-HI-02 — O026 was already fixed, and the opportunity entry did not say so (proposed: MEDIUM — process)
+
+O026 ("the in-guest effect policy defaults to OPEN") was carried into this
+spec's `needs-human` set as a live decision. It is **closed**: AUDIT T48
+(`axon-vm/src/main.rs:1114`) makes the launcher refuse rather than emit a null
+policy, and the comment records that the guest now denies on ambiguity too.
+
+The process lesson is the one worth keeping: this loop carefully re-read every
+source entry's *text* — which is what caught six "decision needed" markers — but
+did not check whether the *code* had moved since the entry was written. An
+opportunity can be stale in the CLOSED direction, and handing someone a decision
+they already made is its own kind of wrong answer.
+
+Sweep the rest of `opportunities.md` against current code before the next loop
+plans from it.
+
+## O-HI-03 — H2/O031 reclassified: native AI builds are an INTENDED capability (proposed: HIGH — decision, not code)
+
+Attempted on the "fix all" instruction and **reverted**, because implementation
+revealed what the opportunity entry could not.
+
+O031 frames it as a defect: `axon-core`'s default features exclude
+`asi-runtime`, so the interpreter refuses `ai_complete` (E1300), while codegen
+links `axon-ai` unconditionally and produces a binary that dials the model live.
+That divergence is real and reproducible.
+
+But the repo has **three tests asserting AI programs must build natively** —
+`build_refuses_non_balanced_ai_tier_e0910_r3` explicitly requires that "a
+balanced-tier ai_complete must still BUILD", and the other two assert that only
+*specific* shapes (per-call tier, `@[ai(policy(budget: N))]`) are refused. So
+native AI is a supported, tested capability with a deliberately drawn refusal
+boundary, not an oversight.
+
+Gating the native link on `asi-runtime` therefore **removes a capability people
+rely on**. That is a product decision with external-behaviour exposure, which is
+the definition of `needs-human` — and it is why the attempt was reverted rather
+than shipped behind a flag.
+
+The choice, restated with what is now known:
+
+1. **Gate native on `asi-runtime`** — the two paths agree; native AI builds stop
+   working for anyone not passing the feature, and three tests change.
+2. **Make the interpreter live too** — the paths agree in the other direction;
+   `axon run` starts making network calls in the default build, which is a much
+   larger blast radius.
+3. **Document the divergence** and keep both — cheapest, and leaves a capability
+   difference decided by execution path rather than by grant.
+
+No recommendation is adopted. Worth noting (1) is still my suggestion, but it is
+a capability removal and belongs to whoever owns that contract.
+
+One thing that IS safely fixable without the decision: nothing about the current
+behaviour is stated where a user would see it. `axon build --help` and the AI
+docs could say that a native build makes live AI calls regardless of
+`asi-runtime`, which is true today under every option above.
+
+## O-SESS-01 — `arr_push` is `[i64]`-only, so a list of records cannot be BUILT (proposed: HIGH — blocks the RLM head-to-head)
+
+Found trying to port `atlas/spikes/rlm-engine/src/stateful.rs`'s chain fixture to
+Axon for the head-to-head against CPython.
+
+`arr_push` is `params: [("xs", "[i64]"), ("x", "i64")], ret: "[i64]"`
+(`builtins.rs:402`), and its own doc says why: *"Concrete-typed for i64 today;
+generic [T] form waits on Phase 8."* The whole `arr_*` family is the same shape.
+
+The consequence is sharper than a missing convenience. Axon can **represent** a
+list of records — `let rows = [Rec { id: 1, region: "north", amount: 120 }, …]`
+round-trips through the session's literal store correctly, verified — but it
+cannot **construct** one from parsed input of unknown length. There is no
+`arr_push` that accepts a `Rec`.
+
+`stateful.rs`'s chain step 1 is "parse the dataset into a list of records". So
+the fixture is **not expressible in Axon today**, and the harness's own rule
+applies: *"the chain fixture is not expressible on this engine, so a reuse rate
+or a token ratio from it would be a measurement of the harness."*
+
+This is therefore the gate on the entire stateful head-to-head, which is the
+measurement the RLM thread has been aimed at. Generic `[T]` for the `arr_*`
+family is Phase 8 work per the doc; a narrower unblock would be a generic
+`arr_push` alone.
+
+## O-SESS-02 — the session has no `axon session` verb (proposed: MEDIUM)
+
+Cell splitting and module composition live in `scripts/axon_session.py`, using
+brace counting rather than the parser — so a `{` inside a string literal or a
+comment will mis-split a cell. The value persistence is real and in the
+interpreter; the ergonomics are a shell script. Moving the driver into the CLI
+and giving it the real parser is the slice that makes this a feature.
+
+## O-RLM2-01 — closures cannot persist, so a model must use `fn` for reusable helpers (proposed: MEDIUM — card content)
+
+Found building M3. `let f = |x: i64| { x + 1 }` evaluates fine within a cell, but
+a closure has no literal form, so it is correctly SKIPPED from the dump and `f`
+is gone in the next cell. `fn f(x: i64) -> i64 { … }` persists, because it is a
+declaration.
+
+This is a real property of the session, not a bug, and it is the kind of thing
+the language card should state: **define reusable helpers with `fn`, not
+`let f = |x| …`**. Unlike a card line targeting one benchmark task, this
+describes a genuine constraint a model will otherwise hit repeatedly. Add it when
+the card is next revised, and measure the card change alone (A2b).
+
+## O-RLM2-02 — three fixtures asserted "parses cleanly" for programs that panic at run (proposed: MEDIUM)
+
+M4's checker guard turned `phase36_iterator_patterns`, `phase44_option_chaining`
+and `phase47_closure_composition` red. Investigating showed the guard was right
+and the fixtures were wrong: each passed a named function to a function-typed
+parameter, which the interpreter cannot evaluate — verified by disabling the
+guard and running one, which panicked with `undefined identifier is_even`.
+
+So three fixtures had been asserting, for as long as they existed, that a
+program *parses* — while that program could not *run*. A `*_parses_cleanly` test
+is exactly as strong as its name and no stronger, and nothing else covered these.
+
+Fixed here by converting them to the lambda form, which runs. The wider question
+is whether other `*_parses_cleanly` fixtures are in the same position: a sweep
+would be `axon run` (or `axon test`) over every fixture that currently only has
+its parse asserted.
+
+## O-RLM2-03 — 8/8 needs `str_concat` awareness too, not just `mut` (proposed: HIGH)
+
+Found finishing M5. The last fluency failure was `let mut result = ""` in a
+string accumulator, and M5 makes the `mut` parse. But the same task then does
+`result = result + ch`, and **Axon has no `+` for strings** — concatenation is
+`str_concat(a, b)`. So that task hits TWO walls and M5 only removed one.
+
+Two ways to close it, and they are different in kind:
+
+1. **Card line** — "concatenate with `str_concat(a, b)`, not `a + b`". Cheap.
+   Arguably not overfitting: string building is universal, not benchmark-shaped.
+   But it is another card line, and the card is at diminishing returns.
+2. **Make `+` concatenate strings** — a language change, in the same family as
+   M5 and with a stronger claim to being right (every neighbouring language does
+   this, and `+` on two strings has no other meaning in Axon so nothing is
+   ambiguous). Bigger blast radius: typing, codegen, and the i64/f64 operand
+   checks.
+
+Recommend measuring (1) first, since it is a card change that can be measured
+alone per A2b, and it tells you whether the ceiling is actually at 8/8 before
+anyone changes the language a second time.
+
+**Do not assume M5 alone reaches 8/8.** It has not been measured, and this is a
+concrete reason to expect it will not.
+
+## R42 build loop — deferred
+
+- **[med] Native lowering for the character builtins (T4).** All seven are E0910-refused. `STR_OUT_EXTERNS`
+  + `synthesize_str_out_wrapper` already exist and cover `str -> str` with implicit out-params, so
+  `str_char_at`/`str_char_slice` are a row each plus an `axon-rt` impl. `str_chars` returns `[str]` and
+  has no array-out synthesis, so it stays refused until one exists. Sound today (refusal, not
+  divergence) — this is a capability gap, not a correctness risk.
+- **[med] Native lowering for the JSON builtins (T5).** Same story, 10 builtins, 18 E0910 refusals.
+  These call `serde_json`, so native needs an `axon-rt` JSON surface; larger than T4's.
+- **[med] R42 §9 Q6 — expected-VALUE rows in the parity harnesses generally.** `fuzz_parity.sh` and its
+  ~22 siblings are agreement oracles: they compare interp against native and are therefore blind to any
+  bug the two SHARE, which is every bug in the reference semantics. That is exactly how the `str_slice`
+  UTF-8 bug survived while being in the corpus with non-ASCII inputs. R42 added an expected-value gate
+  for its own slice only. Doing this across the suite is its own spec.
+- **[low] `len()` on a match-bound `[i64]` fails inference.** `len([1, 2, 3])` type-checks, but
+  `match json_arr_i64(s) { Ok(xs) => len(xs) ... }` gives `E0102 expected str, found [i64]` — so the
+  polymorphic length works on an array literal but not through that binding. Found while writing
+  `json_arrays.ax`; worked around with `arr_sum_i64`. The language card claims
+  `len(x) -> i64 [str or array]`, so either inference or the card is wrong.
+- **[low] `to_str` is not polymorphic over f64 in an argument position.** `to_str(f)` on an f64 gives
+  `E0102 expected i64, found f64`; `to_str_f64` is required. CLAUDE.md states `to_str` is "polymorphic
+  over scalars (i64/f64/bool)". Same class as above: doc/impl disagreement, low blast radius.
+- **[low] R42 §9 Q3/Q4 remain needs-human.** `file_remove`'s capability policy (irreversible deletion,
+  R11 risk integration) and hashing ownership (R28 vs R33 vs R42) are both unresolved by design.
+- **[RESOLVED 2026-08-08] String interpolation silently DROPS content after a valid expression inside
+  `{...}`.** Fixed in `parser.rs::parse_fmt_inner_expr`: the sub-parser must now consume the slot in
+  FULL, and leftover tokens are a parse error naming the `{{` escape. The two adjacent arms that were
+  loud but contextless (a slot that does not tokenize, e.g. `{\d,4}`; a slot that runs out
+  mid-expression, e.g. `{x + }`) now carry the same hint, since they are the same caller mistake.
+  Verified fail-first, and the whole `.ax` corpus was scanned for slots the new check would reject —
+  every comma-bearing slot was either a real call's arguments or already doubled. Guard test:
+  `parser::tests::leftover_tokens_in_an_interpolation_slot_are_refused_not_dropped`. Note the check is
+  in the PARSER, not the lexer as this entry originally guessed. Original report follows.
+  `"a{2,3}"` lexes as the string `a2`: interpolation evaluates `2` and discards `,3` with no
+  diagnostic. Compare `"a{}"` and other malformed forms, which DO error (`unclosed \u{7b} in
+  interpolated string`). Found via R42's regex surface, where it is severe: every counted-repetition
+  pattern a model writes (`re_find("a{2,3}", s)`) silently becomes a search for a different literal
+  string and returns no match. Worked around by documenting `{{n,m}}` in all six `re_*` doc strings and
+  the fixture, but the underlying behaviour is a silent-wrong-answer in the LEXER and deserves its own
+  fix: `{2,3}` should be a parse error, or literal, never "evaluate the prefix and drop the rest".
+  Same family as the `str_slice` UTF-8 bug this spec opened with.
+- **[med] Native lowering for the regex + encoding builtins.** All 10 are interp-only (E0910-refused).
+  The Pike VM is pure Rust in `interp/regex.rs` and could move to `axon-rt`, but its `[str]`-returning
+  functions need array-out synthesis that does not exist yet (same blocker as `str_chars`).
+- **[low] The "native codegen build is SLOW" claim is stale in five more places.** `BUILD_RESOLVED.md`
+  established that `cargo build -p axon-core` is ~3s (the stall was a `serde-json` x `codegen`
+  default-feature collision), but `dev.sh:4,24,159`, `scripts/r1_build_measure.sh` and
+  `crates/axon-core/src/codegen/builtins.rs:328` still tell a reader the build hangs — and `dev.sh`
+  steers developers away from the codegen build on that basis. The user-facing CLI hint in
+  `main.rs::cmd_build` was corrected 2026-08-08; the rest is a doc sweep, and `r1_build_measure.sh`
+  needs care because it uses the old numbers as deliberate historical BASELINES, which should stay.
+- **[med] Capability probes in the test harness must exercise the capability.** Three R42 tests skipped
+  on `axon build --help` exiting non-zero, but the `build` verb is registered regardless of the
+  `codegen` feature, so `--help` always succeeds and the skip never fired — the tests then asserted
+  E0910 against a binary that replies "requires building axon with the `codegen` feature". Second
+  instance of this exact class (first: `qemu_boot_test.sh`'s stale `--help`-presence heuristic).
+  Fixed for those three via `build_output_or_skip`, which probes the real build's error text. WORTH
+  SWEEPING: grep the harness for other `--help`-based or flag-presence-based feature probes.
+- **[low] Measure whether the language card should mention the `{{` brace escape.** The card never
+  teaches `{...}` interpolation at all (it teaches `println(to_str(n))` and concatenation), so a model
+  is unlikely to reach the slot rule — and as of 2026-08-08 a malformed slot is a loud parse error
+  rather than a silent wrong string, which removes the severe failure mode. Deliberately NOT added:
+  measured card additions have COST tasks before (9 -> 6 -> 4 of 16 on tasks_hard), so this needs an
+  A/B arm in `axon_card.rs::card()`, not an assumption.
+- **[med] Two harness tests rebuild the binary their sibling tests probe, mid-stage.**
+  `codegen_exit_codes_match_interp` and `codegen_handler_tail_resume_lowers_via_parity_harness` shell
+  out to scripts that run `cargo build -p axon-core` (codegen, default features), overwriting
+  `target/debug/axon` — which is the SAME path `CARGO_BIN_EXE_axon` resolves to for every other test in
+  the binary, and `cargo test` runs them in parallel threads. So a codegen-less stage can have its
+  binary swapped to codegen underneath tests that are asserting codegen-less behavior, and vice versa.
+  Observed as both tests failing with "native build failed (the interpreter exited 101)" inside
+  `cargo test -p axon-core --no-default-features`, while both PASS in isolation once a codegen binary is
+  in place. FOURTH occurrence of the concurrent-build class and the first where the test suite races
+  ITSELF rather than a human editor. Options: have the harnesses build to a private `--target-dir`, or
+  mark these `#[serial]` and pin the binary they use. Not fixed here — it needs a decision about which.
+- **[med] `trace --replay` is now DETERMINISTIC but not byte-FAITHFUL to the original run.** The virtual
+  clock (2026-08-08) anchors a replay to the `ts_ms` recorded in `run_start`, so two replays of one
+  run are byte-identical — the audit property. But the replay does not reproduce the ORIGINAL's exact
+  output: `ts_ms` is stamped at run-start a few ms before the program's first `now_ms()` call, and a
+  real `sleep_ms(250)` takes ~250 ms of wall time while the virtual clock advances by exactly
+  250 + tick. Measured: original `...580 / ...830 / 250`, replay `...578 / ...829 / 251`. Full fidelity
+  needs a recorded clock TRACE (each `now_ms` return value in sequence, replayed by ordinal) — exactly
+  the shape `AXON_AI_REPLAY` already uses for `ai_complete`, so the design is known and this is a
+  build, not a research question. Worth doing before anyone diffs a replay against an original and
+  concludes the engine is nondeterministic.
+- **[low] Audit the other nondeterminism sources for replay coverage.** With RNG (`AXON_SEED`), AI
+  (`AXON_AI_REPLAY`) and now the clock covered, what remains unreplayable: `read_line` (stdin),
+  `env_var`, `http_get`/`http_post`, `exec`, `dir_list` (sorted for this reason, so already
+  deterministic given the same directory), and filesystem contents generally. "Count of
+  nondeterministic builtins not replayable" is a gateable metric and is currently >0; each remaining
+  one is a small record/replay cache in the same style.
+- **[low] `Temporal<T>` confidence decay is now replayable, but its semantics under a virtual clock
+  deserve a look.** `temporal_at` decays confidence as `c * (1 - decay)^(offset_ms / 86_400_000)`, and
+  with `AXON_CLOCK` the offsets are whatever the virtual timeline says. That is correct and desirable
+  for replay, but it means a test written against a virtual clock can assert decay values that a real
+  run would never produce. Worth a fixture pinning decay at a known virtual timestamp so the formula
+  itself is gated, rather than only its plumbing.
+- **[HIGH] `RecordingHost`/`ReplayHost` — close the whole open replay column in ONE design.** Every
+  environmental effect funnels through the `Host` trait (`crates/axon-core/src/host.rs`), which is a
+  single choke point. A recording wrapper that memoizes every host call, plus a replay wrapper that
+  REFUSES LOUDLY on a cache miss instead of falling through to the live environment, covers
+  `read_line`, `env_var`, `http_get`/`http_post`, `exec`, file contents and `dir_list` contents
+  together — rather than the per-builtin caches the current design implies. Two payoffs beyond
+  coverage: (1) it removes the "partial replay creates false confidence" hazard, since an unrecorded
+  effect becomes an error rather than a silent divergence; (2) once every effect is recorded,
+  **replay-diff** ("the first event at which run B departed from run A") becomes possible, which is
+  the feature an auditor actually wants and nothing else in the design offers. Identified in the
+  review of WHY_REPLAY_MATTERS.md; this is the highest-value item on the replayability axis.
+- **[HIGH] Gate: no builtin with a host/entropy/time/model effect row may lack a replay story.** The
+  set is enumerable from `BUILTINS` + `builtin_effect_row`, so a unit test can walk every builtin whose
+  row includes IO/Net/Exec/Time/Random and assert it has a record/replay path. This is the ONE genuinely
+  gateable metric of the three WHY_REPLAY_MATTERS.md proposed — it fails a commit that adds an
+  unreplayable builtin, which is exactly how `ai_extract_uncertain_*` slipped through unnoticed.
+  Currently ~8 builtins would fail it, so land it as a known-failures allowlist that may only shrink.
+- **[med] Measure one-shot repair rate after a diagnostic.** The review's top "missing property": for a
+  model, the CONTENT of a failure is the signal, and this repo already writes fix-naming diagnostics
+  (the interpolation error prints the corrected `"a{{2,3}}"`; E2205 says "use 9 or fewer capture
+  groups"). Metric: take the tasks a model fails, feed back the diagnostic, count how often the next
+  attempt compiles. Plausibly higher-leverage for task pass-rate than replay, and unlike "count of
+  known silent-wrong-answer paths" it is not satisfied by not looking.
+- **[med] Claim what already exists: cost accounting, deterministic scheduling, Layer-3 firewall, SMT.**
+  Four differentiating properties are BUILT and unclaimed in any positioning doc — per-token AI cost
+  metering + per-principal budgets + exit-7 exhaustion (Phase 7/R12b); scheduler order as a function of
+  spawn order + `AXON_SEED` (no mainstream language gives deterministic concurrency by default); the
+  Layer-3 4-gate firewall for AI-authored compiler passes; and SMT discharge already wired into the
+  default pipeline, which makes provable contracts statically elided rather than runtime-checked.
+  Zero engineering cost to claim; folded into WHY_REPLAY_MATTERS.md §7.
+- **[med] A stability contract for the surface models generate against.** Card drift has been MEASURED
+  to change task outcomes, so builtin signatures, diagnostic text and the JSON schemas
+  (`axon-deploy/1`, `axon-ai-audit/2`, …) need an explicit compatibility policy. A language whose
+  surface churns silently invalidates the competence its users already have — an unusual but real risk
+  for an "AI-first" language, and nothing currently states the guarantee.
+- **[low] Fuel/step metering for real CPU containment.** The regex engine's linear-time bound removes a
+  CPU AMPLIFICATION primitive but does not make Axon CPU-safe: `while true {}` burns unbounded CPU with
+  no capability at all. If "sandboxed model-authored code cannot burn unbounded CPU" is to be a claim
+  rather than an aspiration, it needs step metering. Until then the narrow claim is the honest one.
+- **[low] Checkpoint/resume for long agent runs.** Replaying a ten-hour run is useless if review costs
+  ten hours. `host_await` + `FiberState::Suspended` already exist; replay-to-prefix + resume and durable
+  checkpoints are the natural extension.
+- **[HIGH] Replay-diff: report the first divergence between TWO journals, not just journal-vs-run.**
+  `AXON_REPLAY` now names the first point where a live run departs from its journal (exit 11). The
+  remaining half is journal-vs-journal: record run A and run B, then report the first event where they
+  differ. That is the question an auditor actually asks ("what changed?"), it needs no new mechanism —
+  two `Vec<HostEvent>` and a walk — and the sequential matching already in place is what makes it
+  possible. Note `axon-os/src/replay.rs` answers a coarser version (whole-record hash equality) and
+  would compose: it says *whether*, this says *where*.
+- **[HIGH] Gate the replay column: fail CI when a new host effect has no replay story.** The
+  `ai_extract_uncertain_*` bypass survived because nothing enumerated "effects that can reach the
+  world". Now that `AxonHost` is the single seam, that set IS enumerable — the trait's method list.
+  A test asserting every `AxonHost` method appears in both `RecordingHost` and `ReplayHost` (and that
+  no interp builtin calls `std::fs`/`stdin`/`Command` directly) turns the discipline into a mechanism.
+  This is the one genuinely gateable metric from the three proposed in WHY_REPLAY_MATTERS.md §5.
+- **[med] `axon replay <journal>` as a first-class verb, not an env var.** `AXON_RECORD`/`AXON_REPLAY`
+  match the existing `AXON_*` family, but a journal is an artifact a user hands to a reviewer, and a
+  verb can carry `--diff`, `--show` (render a journal as a readable transcript), and `--verify`.
+  Env-var-only also means the web UI and `axon deploy` cannot offer it without setting process env.
+- **[med] Wire the journal into `axon trace --replay` and `run_start`.** The run-start record already
+  carries the seed and `ts_ms`; it should also carry the journal path when one was recorded, so
+  `axon trace --replay <run-id>` restores entropy, time AND environment from one handle instead of
+  requiring the operator to remember which journal went with which run.
+- **[med] Record/replay for `goal`/`test`/`deploy`, not just `run`.** `install_from_env` is wired into
+  `cmd_run` only. The optimizer (`axon goal`) is the path where reproducibility matters most — score
+  deltas are meaningless if the environment moves under them — and it is currently the one path that
+  cannot be journaled.
+- **[low — BLOCKED ON REVIEW, do not redo] Repo-wide `cargo fmt` drift.** `cargo fmt -p axon-core`
+  reformats 13 files nobody is editing (builtins/capabilities/codegen/decimal/error/interp/regex/
+  resolver), so any commit that runs fmt sweeps in unrelated churn and everyone avoids fmt instead.
+  **The fix already exists and is waiting:** PR #4 `ci-fmt-fix` — "fix pre-existing fmt drift — format
+  axon-core + pin CI rustfmt to 1.95.0", open since 2026-06-26. Re-doing the sweep on another branch
+  would produce a 13-file conflict against it for zero gain. The action is to REVIEW AND MERGE #4,
+  then add `cargo fmt --check` to the gate. Until then, format only the files you actually touched
+  (verify with `cargo fmt --check` filtered to your paths).
+- **[CLOSED 2026-08-08 — and the premise above was WRONG.]** ~~The last two RLM failures are one gap:
+  no ergonomic one-character `str`.~~ There is no stdlib gap. `str_char_at(s, i) -> str` returns the
+  i-th CHARACTER as a one-character string and has existed all along; its own doc says "Contrast
+  `char_at`, which returns the i-th BYTE". `str_chars(s) -> [str]` exists and its doc calls it "the
+  load-bearing character function"; `str_reverse` exists too. **I asserted an absence without
+  grepping the builtin table** — the exact discipline in [[verify-design-assumptions]]. The real
+  defect was the LANGUAGE CARD: it claimed "this is the whole surface" while naming 36 of 331
+  builtins and omitting 13 of 25 `str_*`, including all three the failing tasks needed. For a model
+  the card is the complete map, so an omission reads as an absence. Fixed + gated in atlas
+  (`card_accuracy_tests`); measured 5/8 → 7/8 from the character-API facts alone. See
+  `atlas/spikes/rlm-engine/results/axon-card-2026-08-08-FINDINGS.md` for the two attribution caveats,
+  including one where my first fix leaked a task hint.
+- **[HIGH] The RLM task set is now too easy to discriminate, which is a real problem.** With an
+  accurate card the benchmark scores 8/8 first-try, and two of the eight tasks are solved outright by
+  a listed builtin (`str_reverse`, `str_count`). A saturated benchmark cannot measure the next
+  improvement. The card must stay accurate — hiding real builtins is the bug that was just fixed — so
+  the task set is what needs to change: harder tasks, and ones whose answer is a composition rather
+  than a single builtin call. `tasks_hard` already exists and may be the right target instead.
+- **[med] E0102 and E0306 double-report one argument mismatch on two different lines.** Confirmed on
+  the RLM corpus: `str_contains(vowels, c)` yields E0102 at the `let c = char_at(...)` line and E0306
+  at the call line, same defect, two locations. A model in a repair loop sees two errors and may fix
+  the wrong one. Same class as the already-logged E0001/E0101 and E0102/E0307 double-reports.
+- **[med] `axon check` exits 0 with warnings, so the benchmark's `ok` flag cannot see them.** Correct
+  Unix behaviour and correct for the harness — but it means a program that emits five W0002s and
+  prints a wrong answer is indistinguishable from a clean one by exit code alone. Worth a
+  `--warnings-as-errors` (or `--strict`) flag so a CI/agent loop can opt into treating a shadowing
+  warning as a failure, since the measured data says W0002 co-occurs with wrong answers.
+- **[med] Extend `claims_gate.sh` to ROADMAP.md and governance/REQUIREMENTS.md.** Those carry the
+  heaviest claims in the repo ("✅ Complete", "LANDED", per-requirement status prose) and are the ones
+  observed stale in both directions (`unsigned-types-nonfunctional` was superseded; R1c/R1e was
+  overstated). A narrow, honest check: every status row naming a script or test must name one that
+  EXISTS, and — stronger — one that passed in the last gate run. That converts "LANDED" from a claim
+  into a citation. Do not try to verify prose semantically; gate the citations.
+- **[med] Record when `gate.sh` last passed green, and surface it.** `gate.sh` was RED for a week
+  without anyone noticing, which no amount of doc accuracy fixes. A `.gate-status` stamp (SHA + result
+  + timestamp) written by the gate and read by `claims_gate.sh` would make "the gate is green" a
+  checkable claim rather than an assumption. Pairs with the item above: a status row could then cite a
+  gate run instead of a script name.
+- **[HIGH — needs one human decision] Finish the toolchain/fmt fix: unset the rustup override, then
+  ONE sweep.** Root cause found 2026-08-08 and it is NOT what PR #4 addresses: a machine-local
+  `rustup override` pinned this working tree to *rolling* `nightly`, which **beats
+  `rust-toolchain.toml` silently** (rustup precedence: CLI > RUSTUP_TOOLCHAIN > directory override >
+  file > default). So local rustfmt changed on every `rustup update` while CI ran `@stable` — the drift
+  regenerated continuously and no CI-side pin could stop it. `rust-toolchain.toml` now pins
+  `nightly-2026-07-11` (the verified-green toolchain) and `claims_gate.sh` check 6 WARNS when an
+  override shadows it. Remaining, in order: (1) each developer runs `rustup override unset` here —
+  a one-time ~1GB install of the dated nightly, which is why it was not done unilaterally; (2) CI drops
+  `dtolnay/rust-toolchain@stable` in favour of the file (5 workflow sites, untestable from here);
+  (3) ONE `cargo fmt --all` sweep commit, no logic — must come AFTER (1)/(2) or the next differing
+  rustfmt re-dirties it; (4) add `cargo fmt --all --check` to `gate.sh`. **Supersede PR #4:** its
+  5-file format is a subset of the 38, and its CI-only pin cannot fix a local rolling channel.

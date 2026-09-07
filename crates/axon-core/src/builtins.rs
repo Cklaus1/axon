@@ -267,6 +267,138 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Write `content` to `path`, creating or truncating the file. Returns Ok(()) or Err(message).",
     },
     BuiltinFn {
+        name: "append_file",
+        params: &[("path", "str"), ("content", "str")],
+        ret: "Result<(), str>",
+        doc: "Append `content` to the end of `path`, creating the file if it does not exist. Returns Ok(()) or Err(message). This is the counterpart to `write_file`, which TRUNCATES — reaching for `write_file` twice to build a file up is the mistake this exists to prevent. Capability-wise it is a WRITE (`fs: [write(...)]`): it reads the existing bytes only in order to rewrite them and never surfaces them to the caller, so it opens no read channel.",
+    },
+    BuiltinFn {
+        name: "file_size",
+        params: &[("path", "str")],
+        ret: "Result<i64, str>",
+        doc: "The size of `path` in BYTES (not characters — a multi-byte UTF-8 character counts once per byte). Returns Ok(n), or Err(message) if the file cannot be read. Note this READS the file to measure it, so it costs O(size) and requires valid UTF-8: it is not a `stat`, and a binary file reports an error rather than a size.",
+    },
+    // ── R42 Slice 5: pattern matching, LINEAR TIME ONLY ──────────────────────
+    //
+    // WRITING A PATTERN LITERAL: `{` opens string INTERPOLATION in Axon, so a
+    // counted repetition must DOUBLE its braces — `"a{{2,3}}"`, not `"a{2,3}"`.
+    // The single-brace form does not error; it silently lexes as `a2`, and the
+    // regex then searches for THAT. This is the sharpest trap on the surface.
+    //
+    // A Pike VM (`interp/regex.rs`): no backtracking, ever. That is a containment
+    // requirement rather than a performance goal — Axon runs model-authored code
+    // under capability sandboxes and per-principal budgets, so an unbounded-time
+    // builtin would let sandboxed code burn arbitrary CPU with NO capability at
+    // all. Backreferences and lookaround are refused (E2203) because they require
+    // backtracking; so is a counted repetition that expands the program past its
+    // instruction budget. This matches RE2 and Rust's `regex`.
+    BuiltinFn {
+        name: "re_is_match",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<bool, str>",
+        doc: "Does `pattern` match anywhere in `s`? Result-returning because a pattern is DATA and may be malformed — a panic would be wrong for something a model composes at runtime. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_find",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<Option<str>, str>",
+        doc: "The leftmost match, or None. **Leftmost-FIRST (Perl/PCRE), not leftmost-longest:** `re_find(\"a|ab\", \"ab\")` is `\"a\"`, because alternation order is priority. Lazy quantifiers (`.*?`) therefore work as models expect. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_find_all",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<[str], str>",
+        doc: "Every non-overlapping match, left to right. An empty match advances one character so the scan always terminates. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_captures",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<[str], str>",
+        doc: "Capture groups of the leftmost match: element 0 is the whole match, 1.. are the groups. Empty array when there is no match. A group that did not PARTICIPATE is reported as the empty string — indistinguishable from a group that matched empty, a documented limitation rather than a `[Option<str>]` return that complicates the common case to serve the rare one. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_replace_all",
+        params: &[("pattern", "str"), ("s", "str"), ("with", "str")],
+        ret: "Result<str, str>",
+        doc: "Replace every non-overlapping match. `with` interprets `$1`..`$9` as capture references and `$$` as a literal `$` — specified rather than left open, because two implementations would otherwise disagree later. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    BuiltinFn {
+        name: "re_split",
+        params: &[("pattern", "str"), ("s", "str")],
+        ret: "Result<[str], str>",
+        doc: "Split `s` on every match of `pattern`. Adjacent matches yield empty fields, like every other split; a pattern that matches empty is refused rather than looping forever. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring.",
+    },
+    // ── R42 Slice 6: encoding ─────────────────────────────────────────────────
+    //
+    // Builtins rather than userland because hand-rolled base64 goes wrong quietly
+    // on padding, and this is thirty lines of Rust. No new dependency: a crate for
+    // thirty lines of well-understood code is not a trade worth making.
+    //
+    // Both DECODERS can fail in a way worth stating: Axon has no bytes type, so
+    // arbitrary binary cannot be represented at all.
+    BuiltinFn {
+        name: "base64_encode",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "Standard base64 (RFC 4648 alphabet, `=` padded) of `s`'s UTF-8 bytes.",
+    },
+    BuiltinFn {
+        name: "base64_decode",
+        params: &[("s", "str")],
+        ret: "Result<str, str>",
+        doc: "Decode standard base64. Err (E2204) on invalid characters, bad padding, OR when the decoded bytes are not valid UTF-8 — Axon has no bytes type and `str` must be valid UTF-8, so this round-trips TEXT only. That limitation is stated rather than papered over: returning replacement characters or a truncated prefix would be a silently lossy decode, which is the class of bug this spec exists to remove.",
+    },
+    BuiltinFn {
+        name: "hex_encode",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "Lowercase hex of `s`'s UTF-8 bytes.",
+    },
+    BuiltinFn {
+        name: "hex_decode",
+        params: &[("s", "str")],
+        ret: "Result<str, str>",
+        doc: "Decode lowercase or uppercase hex. Err (E2204) on an odd length, a non-hex digit, or bytes that are not valid UTF-8 — same text-only limitation as `base64_decode`.",
+    },
+    // ── R42 Slice 4: filesystem beyond a single known path ───────────────────
+    //
+    // `read_file`/`write_file`/`append_file`/`file_size` can only touch a path you
+    // already know. These add existence, directories, and moving files around.
+    //
+    // `file_remove` is deliberately ABSENT — irreversible deletion whose risk
+    // classification is unresolved (R42 §9 Q3, needs-human). Not shipped behind a
+    // flag either: that would be TCB surface with no decision behind it.
+    BuiltinFn {
+        name: "file_exists",
+        params: &[("path", "str")],
+        ret: "bool",
+        doc: "True when `path` exists. Capability-wise this is a READ (`fs: [read(...)]`), not a free query: probing existence is an information channel — it discloses whether a path exists without reading it, which is exactly what a sandbox's read allowlist is for.",
+    },
+    BuiltinFn {
+        name: "dir_create",
+        params: &[("path", "str")],
+        ret: "Result<(), str>",
+        doc: "Create `path`, including any missing parent directories (like `mkdir -p`). Ok(()) if it already exists.",
+    },
+    BuiltinFn {
+        name: "dir_list",
+        params: &[("path", "str")],
+        ret: "Result<[str], str>",
+        doc: "Entry NAMES (not full paths) directly inside `path`, sorted, non-recursive. Sorted because `read_dir` order is filesystem-dependent and a program whose output varies run-to-run breaks replay. Capability-wise a READ, and strictly more leakage than reading a file: it discloses names the caller did not already know.",
+    },
+    BuiltinFn {
+        name: "file_copy",
+        params: &[("from", "str"), ("to", "str")],
+        ret: "Result<(), str>",
+        doc: "Copy `from` to `to`, truncating the destination. The ONLY builtin needing two different capabilities on two different arguments: arg 0 is a READ and arg 1 is a WRITE. A checker that granted it on the write capability alone would let a write-only `@[contained]` fn exfiltrate a read-denied file to a path it controls, which is why capability classification is per-argument.",
+    },
+    BuiltinFn {
+        name: "file_rename",
+        params: &[("from", "str"), ("to", "str")],
+        ret: "Result<(), str>",
+        doc: "Rename or move `from` to `to`. BOTH paths are WRITES — the source is destroyed, so a read capability on it is not enough.",
+    },
+    BuiltinFn {
         name: "exec",
         params: &[("cmd", "str"), ("args", "[str]")],
         ret: "Result<str, str>",
@@ -400,9 +532,9 @@ pub const BUILTINS: &[BuiltinFn] = &[
     },
     BuiltinFn {
         name: "arr_push",
-        params: &[("xs", "[i64]"), ("x", "i64")],
-        ret: "[i64]",
-        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. (Concrete-typed for i64 today; generic [T] form waits on Phase 8.)",
+        params: &[("xs", "[T]"), ("x", "T")],
+        ret: "[T]",
+        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. Element type is deferred, so `arr_push(rows, Rec { .. })` builds a `[Rec]`; `T` must be consistent between the array and the pushed element (a mixed push is E0306). Native codegen lowers the `[i64]` case only — other element types are E0910-refused (interpreter-only).",
     },
     BuiltinFn {
         name: "arr_sum_i64",
@@ -762,6 +894,66 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "str",
         doc: "Return a string containing `s` repeated `n` times (empty string if n <= 0).",
     },
+    // ── R42 Slice 2: CHARACTER-indexed access, beside the byte-indexed surface ──
+    //
+    // `str_len`, `char_at` and `str_slice` are all BYTE-indexed and stay that
+    // way: they are correct, and the byte view has real uses. What was missing
+    // was any way to work per CHARACTER, which is why every per-character task
+    // reached for `str_slice(s, i, i + 1)` — a range that splits a multi-byte
+    // character and, since R42 T1, refuses (E2200).
+    //
+    // "Character" here means one Unicode scalar value (codepoint), NOT a grapheme
+    // cluster: `e` + combining acute is TWO characters to these functions and one
+    // grapheme to a reader. Graphemes need a segmentation table and no measured
+    // failure requires them (R42 §9 Q2).
+    BuiltinFn {
+        name: "str_chars",
+        params: &[("s", "str")],
+        ret: "[str]",
+        doc: "Split `s` into one one-character string per CHARACTER (Unicode scalar value, not grapheme cluster). The load-bearing character function: it turns per-character work into ordinary `arr_*` work over `[str]`, so `arr_group_by`/`dict_inc`/`arr_count_if` all apply. Prefer this over indexing in a loop — `str_len` counts BYTES, so a `while i < str_len(s)` loop over non-ASCII text does not iterate characters.",
+    },
+    BuiltinFn {
+        name: "str_len_chars",
+        params: &[("s", "str")],
+        ret: "i64",
+        doc: "The number of CHARACTERS in `s`. Contrast `str_len`, which counts BYTES: `str_len(\"café\")` is 5 and `str_len_chars(\"café\")` is 4.",
+    },
+    BuiltinFn {
+        name: "str_char_at",
+        params: &[("s", "str"), ("i", "i64")],
+        ret: "str",
+        doc: "The `i`-th CHARACTER of `s` as a one-character string, or \"\" if `i` is out of range. Contrast `char_at`, which returns the `i`-th BYTE as an `i64` code unit — for non-ASCII text those are different positions and different values.",
+    },
+    BuiltinFn {
+        name: "str_char_slice",
+        params: &[("s", "str"), ("lo", "i64"), ("hi", "i64")],
+        ret: "str",
+        doc: "Characters `lo`..`hi` of `s` (half-open), indexed by CHARACTER rather than by byte. Cannot split a character, so unlike `str_slice` it never refuses (E2200); out-of-range indices clamp.",
+    },
+    BuiltinFn {
+        name: "char_code",
+        params: &[("c", "str")],
+        ret: "Result<i64, str>",
+        doc: "The Unicode code point of a ONE-character string. `Err` if `c` is empty or holds more than one character. The inverse of `chr`, which goes code point -> string; `chr` PANICS on an invalid code point where this returns `Err`, an asymmetry kept deliberately rather than changing `chr`'s shipped signature.",
+    },
+    BuiltinFn {
+        name: "char_is_digit",
+        params: &[("c", "str")],
+        ret: "bool",
+        doc: "True when `c` is exactly one character and that character is an ASCII digit 0-9. False for the empty string, for multi-character input, and for non-ASCII digits — so it is a predicate about ASCII digits, not about Unicode numeric-ness.",
+    },
+    BuiltinFn {
+        name: "char_is_alpha",
+        params: &[("c", "str")],
+        ret: "bool",
+        doc: "True when `c` is exactly one character and that character is alphabetic (Unicode-aware, so `é` counts). False for the empty string and for multi-character input.",
+    },
+    BuiltinFn {
+        name: "char_is_space",
+        params: &[("c", "str")],
+        ret: "bool",
+        doc: "True when `c` is exactly one character and that character is whitespace (Unicode-aware). False for the empty string and for multi-character input.",
+    },
     BuiltinFn {
         name: "chr",
         params: &[("n", "i64")],
@@ -774,6 +966,111 @@ pub const BUILTINS: &[BuiltinFn] = &[
         params: &[("s", "str")],
         ret: "Result<str, str>",
         doc: "Validate `s` as JSON. Returns Ok(s) if valid, Err(reason) if not. Pure; no network call.",
+    },
+    // ── R42 Slice 3.1: WRITE a JSON document ─────────────────────────────────
+    //
+    // Slice 3 was read-only, which review caught: an RLM engine's programs must
+    // EMIT structured output too, and the only writer was `json_stringify` (one
+    // string value). Values are pre-encoded JSON strings for the same reason the
+    // readers return them — it keeps the whole surface composable without a `Json`
+    // value type.
+    BuiltinFn {
+        name: "json_from_pairs",
+        params: &[("pairs", "[(str, str)]")],
+        ret: "str",
+        doc: "Build a JSON object from (key, PRE-ENCODED JSON value) pairs. Each value is inserted verbatim, so it must already be valid JSON — use `json_stringify` for a string, `to_str` for a number, `json_arr_from_i64` for an array. Keys ARE escaped for you. The counterpart to the json_* readers: Slice 3 made a document navigable, this makes one writable.",
+    },
+    BuiltinFn {
+        name: "dict_to_json",
+        params: &[("d", "Dict")],
+        ret: "Result<str, str>",
+        doc: "Serialize a whole Dict to a JSON object. `Err` if any value has no JSON form (a closure, a channel). Distinct from `dict_to_str`, which emits Axon's own dict rendering rather than JSON.",
+    },
+    BuiltinFn {
+        name: "json_arr_from_i64",
+        params: &[("xs", "[i64]")],
+        ret: "str",
+        doc: "Build a JSON array from `[i64]`. The inverse of `json_arr_i64`.",
+    },
+    BuiltinFn {
+        name: "json_arr_from_f64",
+        params: &[("xs", "[f64]")],
+        ret: "str",
+        doc: "Build a JSON array from `[f64]`. Non-finite values (NaN, infinity) have no JSON representation and are emitted as `null`, matching what every mainstream JSON encoder does.",
+    },
+    BuiltinFn {
+        name: "json_arr_from_str",
+        params: &[("xs", "[str]")],
+        ret: "str",
+        doc: "Build a JSON array from `[str]`, escaping each element. The inverse of `json_arr_str`.",
+    },
+    // ── R42 Slice 3: reach INTO a JSON document ──────────────────────────────
+    //
+    // `json_get_i64`/`json_get_str` reach top-level scalars and `json_path_str`
+    // walks a dot path to a STRING leaf (it already indexes arrays with a numeric
+    // component). What was missing: array length, element access, numeric leaves,
+    // and whole-array extraction — so `{"a": [1,2,3]}` could be navigated but
+    // never summed. Sub-documents come back AS JSON STRINGS rather than through a
+    // new `Json` value type, so these compose with the five that already exist.
+    BuiltinFn {
+        name: "json_len",
+        params: &[("json", "str")],
+        ret: "Result<i64, str>",
+        doc: "Number of elements in a JSON array, or number of keys in a JSON object. `Err` on a scalar or malformed input. Without this an array could be reached but not LOOPED, which is why summing `{\"a\": [1,2,3]}` was impossible before R42.",
+    },
+    BuiltinFn {
+        name: "json_at",
+        params: &[("json", "str"), ("i", "i64")],
+        ret: "Result<str, str>",
+        doc: "The `i`-th element of a JSON array, returned AS A JSON STRING so it composes with every other json_* function. For a homogeneous array of numbers prefer `json_arr_i64`, which parses once: `json_at` in a loop re-parses the whole document per call and is therefore O(n^2) over the array.",
+    },
+    BuiltinFn {
+        name: "json_keys",
+        params: &[("json", "str")],
+        ret: "Result<[str], str>",
+        doc: "The keys of a JSON object, in document order. `Err` on an array or scalar.",
+    },
+    BuiltinFn {
+        name: "json_get_json",
+        params: &[("json", "str"), ("key", "str")],
+        ret: "Result<str, str>",
+        doc: "The value at top-level `key`, returned AS A JSON STRING — the accessor that makes sub-objects and sub-arrays reachable. `json_get_i64`/`json_get_str` only reach scalar fields.",
+    },
+    BuiltinFn {
+        name: "json_path_json",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<str, str>",
+        doc: "As `json_path_json`'s dot-separated path, returning the sub-document at the leaf AS A JSON STRING. Numeric path components index arrays (`\"a.1\"`).",
+    },
+    BuiltinFn {
+        name: "json_path_i64",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<i64, str>",
+        doc: "The integer at a dot-separated path. `json_path_str` reaches only STRING leaves, so this is what a numeric leaf needed: `json_path_i64(doc, \"b.c\")`. Err (E2202) if the leaf is not an integer.",
+    },
+    BuiltinFn {
+        name: "json_path_f64",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<f64, str>",
+        doc: "The float at a dot-separated path. Accepts an integer leaf and widens it, since JSON does not distinguish 4 from 4.0.",
+    },
+    BuiltinFn {
+        name: "json_arr_i64",
+        params: &[("json", "str")],
+        ret: "Result<[i64], str>",
+        doc: "A whole JSON array of integers as `[i64]`, parsing the document ONCE. The idiom for summing or folding a JSON array; Err (E2202) if any element is not an integer.",
+    },
+    BuiltinFn {
+        name: "json_arr_f64",
+        params: &[("json", "str")],
+        ret: "Result<[f64], str>",
+        doc: "A whole JSON array of numbers as `[f64]`, parsing once. Integer elements widen.",
+    },
+    BuiltinFn {
+        name: "json_arr_str",
+        params: &[("json", "str")],
+        ret: "Result<[str], str>",
+        doc: "A whole JSON array of strings as `[str]`, parsing once. Err (E2202) if any element is not a string.",
     },
     BuiltinFn {
         name: "json_stringify",
@@ -2149,7 +2446,8 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "ai_cost_spent"
             // I/O
             | "println" | "print" | "eprintln" | "eprint"
-            | "read_line" | "read_file" | "write_file"
+            | "read_line" | "read_file" | "write_file" | "append_file" | "file_size"
+            | "file_exists" | "dir_create" | "dir_list" | "file_copy" | "file_rename"
             | "exec"
             // network — raw HTTP
             | "http_get" | "http_post" | "http_sse" | "http_sse_post"
@@ -2226,6 +2524,8 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
 
         // I/O — console, files, process spawning, environment, exit.
         "println" | "print" | "eprintln" | "eprint" | "read_line" | "read_file" | "write_file"
+        | "append_file" | "file_size" | "file_exists" | "dir_create" | "dir_list"
+        | "file_copy" | "file_rename"
         | "env_var" | "exit" => &["IO"],
         "exec" => &["IO"],
 
@@ -2454,7 +2754,10 @@ mod tests {
     fn r23_bpf_helpers_are_known_impure_and_carry_bpf_effect() {
         for name in BPF_HELPER_BUILTINS {
             assert!(is_known_builtin(name), "{name} must be a known builtin");
-            assert!(is_bpf_helper(name), "{name} must be an allowlisted BPF helper");
+            assert!(
+                is_bpf_helper(name),
+                "{name} must be an allowlisted BPF helper"
+            );
             assert!(is_impure_builtin(name), "{name} must be impure");
             assert_eq!(
                 builtin_effect_row(name),
@@ -2733,6 +3036,8 @@ mod tests {
         for ok in [
             "read_file",
             "write_file",
+            "append_file",
+            "file_size",
             "env_var",
             "now_ms",
             "sleep_ms",

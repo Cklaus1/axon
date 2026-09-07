@@ -71,16 +71,28 @@ pub struct CompletionItem {
 /// list of diagnostics for LSP `publishDiagnostics`.
 pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
     // ── Parse ──────────────────────────────────────────────────────────────
-    let mut program = match crate::parse_source(source) {
+    let mut program = match crate::parse_source_located(source) {
         Ok(p) => p,
-        Err(e) => {
+        Err((msg, offset)) => {
+            // AXON_FOR_RLM §1: carry the same fix hint the CLI now carries.
+            // `LspDiagnostic` has no `help` field, so it goes into the message
+            // as a `help:` line — the convention `diag_schema::split_help`
+            // already parses, so the two representations agree.
+            let message = match crate::parse_help::parse_help(&msg, source, offset) {
+                Some(h) => format!("{msg}\n  help: {h}"),
+                None => msg,
+            };
+            // The located parse hands back the offset, so the span is free —
+            // this diagnostic previously reported a dummy span, which an editor
+            // renders at the top of the file rather than on the bad token.
+            let end = offset.saturating_add(1).min(source.len());
             return crate::AnalysisResult {
                 program: None,
                 infer_ctx: None,
                 diagnostics: vec![LspDiagnostic {
                     code: "E0000".to_string(),
-                    message: e.to_string(),
-                    span: span::Span::dummy(),
+                    message,
+                    span: span::Span::new(offset, end),
                     severity: 1,
                 }],
             };

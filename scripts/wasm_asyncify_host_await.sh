@@ -100,13 +100,17 @@ echo "  OK  opt: host_await_opt async → Some(P)/Some(Q)"
 # (4) DEEPLY-NESTED suspend point: the guessing game (host_await_opt inside
 # while→match→match→if). The rewind re-enters every saved wasm frame, so this needs
 # the raised JS stack ($NODE) — with it, the deep-nest case round-trips just like the
-# rest. guesses 5/9/7 → Higher/Lower/Correct, exit 3.
+# rest. guesses 5/9/7 → Higher/Lower/Correct in 3 tries, printed, exit 0.
+#
+# The try count is read from STDOUT, not the exit status: the demo used to return
+# it, which put an answer in the channel where 3 means "@[verify] failed" to
+# anything reading the run (governance/EXIT_CODES.md).
 if [ -f examples/interactive/guess.ax ]; then
   gout="$($NODE "$DRIVER" "$ASYNC" examples/interactive/guess.ax $'5\n9\n7' 2>/dev/null)"; gcode=$?
-  if ! echo "$gout" | grep -q 'Correct — 3 tries!' || [ "$gcode" != "3" ]; then
+  if ! echo "$gout" | grep -q 'Correct — 3 tries!' || [ "$gcode" != "0" ]; then
     echo "wasm_asyncify_host_await: FAIL (guess loop): code=$gcode out:"; echo "$gout" | sed 's/^/    /'; exit 1
   fi
-  echo "  OK  guess: deep-nested multi-turn async loop → 3 tries, exit 3"
+  echo "  OK  guess: deep-nested multi-turn async loop → 3 tries, clean exit"
 fi
 
 echo "wasm_asyncify_host_await: PASS — host_await suspends across async JS work in the browser (Asyncify)"

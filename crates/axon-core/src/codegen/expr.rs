@@ -691,7 +691,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let val = i8_ty.const_int(marker as u64, false);
         self.ir
             .builder
-            .build_indirect_call(outb_fn_ty, outb_asm, &[port.into(), val.into()], "trap_outb")
+            .build_indirect_call(
+                outb_fn_ty,
+                outb_asm,
+                &[port.into(), val.into()],
+                "trap_outb",
+            )
             .unwrap();
         self.ir.builder.build_unconditional_branch(halt).unwrap();
 
@@ -1325,6 +1330,33 @@ impl<'ctx> super::Codegen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> BasicValueEnum<'ctx> {
+        // N2a/N2b: `str + str` and `[T] + [T]` are CONCATENATION, and this
+        // function cannot lower either — the value arms below match on integer
+        // and float kinds, and a str/slice operand falls through to a path that
+        // silently yields the LEFT operand.
+        //
+        // Measured before this guard existed: `"a" + "b"` built and printed `a`,
+        // and `[1,2] + [3]` built and printed length 2. Both are WRONG ANSWERS
+        // from a successful build — an I-2 violation, and the worst possible
+        // failure mode, because nothing tells the caller. Refuse instead: an
+        // honest E0910 is what `arr_push` and the effect-handler shapes above
+        // already do when native cannot reproduce the interpreter.
+        if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Str | Type::Slice(_)) {
+            let what = if matches!(ty, Type::Str) {
+                "string"
+            } else {
+                "array"
+            };
+            let msg = format!(
+                "codegen error [E0910]: native codegen does not lower {what} concatenation                  (`+`). The interpreter supports it; run under `axon run`, or use                  str_join/arr_concat which do lower."
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                eprintln!("{msg}");
+                self.codegen_errors.push(msg);
+            }
+            return lhs;
+        }
+
         // True when the semantic type is an unsigned integer.
         let is_unsigned = matches!(ty, Type::U8 | Type::U16 | Type::U32 | Type::U64);
 
@@ -7171,6 +7203,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.log_return_if_adaptive_val(v);
                     self.emit_verify_check_if_needed(v, fn_val);
                     self.emit_refine_return_check_if_needed(v, fn_val);
+                    // An EXPLICIT `return n` from `main` is as much a chosen exit
+                    // status as a tail expression is, so it goes through the same
+                    // rule — otherwise the guard would cover one of `main`'s two
+                    // exits and read as covering both.
+                    let v = self.map_main_exit_status(fn_val, v);
                     build_wrappers::w_ret(&self.ir.builder, v);
                 } else {
                     self.log_return_if_adaptive();
@@ -7640,6 +7677,23 @@ impl<'ctx> super::Codegen<'ctx> {
         // f64→to_str_f64, i64→to_str. The interpreter is the oracle (I-2).
         if let ast::Expr::Ident(name) = callee {
             if name == "to_str" && args.len() == 1 {
+                // `to_str` of a `str` is the IDENTITY — emit the value and return
+                // it, calling nothing.
+                //
+                // Decided on the STATIC type, not the LLVM value: an Axon `str` is
+                // a `{i64 len, ptr data}` StructValue, and so are enums and
+                // structs, so a `BasicValueEnum::StructValue` arm could not tell
+                // them apart and would silently return a struct where a string was
+                // expected. The static type is unambiguous.
+                //
+                // The interpreter is the oracle (I-2) and it returns the string
+                // unchanged, so anything other than identity here is a divergence.
+                if matches!(
+                    self.infer_expr_sem_type(&args[0]),
+                    Some(crate::types::Type::Str)
+                ) {
+                    return self.emit_expr(&args[0], fn_val);
+                }
                 let v = self.emit_expr(&args[0], fn_val)?;
                 let dispatched = match v {
                     BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => self
@@ -8065,6 +8119,64 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_select(found, some_v, none_v, "dg_opt")
                     .unwrap();
                 return Some(chosen);
+            }
+            // `len(d)` on a DICT dispatches to the same extern as `dict_len(d)`.
+            //
+            // Two defects meet here. The interpreter accepts `len(dict)` (a dict has
+            // exactly one obvious length, and `dict_len` already computed it), so
+            // native must agree or I-2 is violated. And native did not merely
+            // disagree — it failed LLVM IR VERIFICATION with
+            // "Call parameter type does not match function signature", because
+            // `len` is declared over the `{i64 len, ptr data}` str/slice struct and
+            // a dict handle is not one. That was already true BEFORE the
+            // interpreter widened (verified against the prior commit), so it is a
+            // pre-existing codegen bug, and a raw IR failure is the worst available
+            // outcome: not a clean E0910 refusal, not a working program, just an
+            // internal error surfacing to the user.
+            //
+            // Dispatched on the STATIC type for the same reason as `to_str(str)`: a
+            // dict handle and a str are both non-scalar at the value level.
+            // `len(x)` — one arm handling BOTH shapes, because the arg must be
+            // emitted exactly once (emitting twice would duplicate any side effects
+            // in it).
+            //
+            // Dispatched on the LLVM VALUE rather than the static type, because
+            // there is no `Type::Dict` — a dict is `Type::Deferred` in the type
+            // system, which is also why `len(dict)` had no static check at all.
+            // The value check is unambiguous for THIS builtin: `len` accepts only
+            // str and array, both of which are `{i64 len, ptr data}` StructValues,
+            // while a dict handle is a bare `Ptr` (see `__axon_dict_len`'s
+            // ExternSig). A PointerValue reaching `len` in a program that
+            // type-checked can therefore only be a dict. That reasoning does not
+            // generalise, so it stays local to this arm.
+            //
+            // Before this, `len(dict)` failed LLVM IR VERIFICATION —
+            // "Call parameter type does not match function signature" — because the
+            // hand-built `len` takes the str/slice struct and a dict handle is not
+            // one. That was already true before the interpreter widened (verified
+            // against the prior commit), so it is a pre-existing codegen bug, and a
+            // raw IR failure is the worst available outcome: neither a working
+            // program nor a clean E0910 refusal, just an internal error reaching the
+            // user.
+            if name == "len" && args.len() == 1 {
+                let v = self.emit_expr(&args[0], fn_val)?;
+                let sym = if matches!(v, BasicValueEnum::PointerValue(_)) {
+                    "__axon_dict_len"
+                } else {
+                    "len"
+                };
+                let f = self
+                    .functions
+                    .get(sym)
+                    .copied()
+                    .or_else(|| self.ir.module.get_function(sym))?;
+                return self
+                    .ir
+                    .builder
+                    .build_call(f, &[v.into()], "len")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left();
             }
             if name == "dict_len" && args.len() == 1 {
                 let d = self.emit_expr(&args[0], fn_val)?;
@@ -8807,13 +8919,25 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             // arr_push(&a, x) → a ++ [x] (fresh array; input untouched).
+            //
+            // `arr_push` is GENERIC at the source level (`[T], T -> [T]`), but
+            // this lowering is the 8-byte-stride i64 one. Anything else — a
+            // struct/str/array element (StructValue), an f64 (FloatValue), or a
+            // BOOL (an i1 IntValue, which would be stored into an i64 slot and
+            // read back as garbage) — must fall through to the E0910 refusal
+            // below rather than miscompile (invariant I-2: native either matches
+            // the interpreter or refuses honestly). Narrow *signed* ints
+            // (i8/i16/i32) keep the pre-generic behaviour: they widened to the
+            // old `x: i64` parameter and lower correctly.
             if name == "arr_push" && args.len() == 2 {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(x))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
                 ) {
-                    if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
-                        return Some(r);
+                    if x.get_type().get_bit_width() > 1 {
+                        if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
+                            return Some(r);
+                        }
                     }
                 }
             }

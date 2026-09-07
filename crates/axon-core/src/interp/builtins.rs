@@ -24,6 +24,129 @@ use axon_audit;
 /// asked and which nothing downstream was asking. Matching reuses the static
 /// `@[contained]` helpers verbatim, including their refusal of any `..`
 /// component, so the compile-time and runtime layers cannot drift.
+/// Walk a dot-separated JSON path, shared by every `json_path_*` builtin.
+///
+/// R42 T5 factored this out of `json_path_str`, which owned the only copy. Four
+/// more path builtins would have meant four more copies of the same twenty lines
+/// — and the array-index branch is exactly the part a copy would have got subtly
+/// wrong, since it is the reason `json_path_str("a.1")` already worked when the
+/// spec claimed arrays were unreachable.
+///
+/// `who` carries the caller's name so error text stays byte-identical to what
+/// `json_path_str` produced before the refactor; tests assert on it.
+/// A SHORT type tag for a `Value`, for error messages that must not recurse.
+///
+/// R42 T6: `format!("{value:?}")` on a closure walks its captured environment,
+/// which can contain the very dict being serialized — a stack overflow rather
+/// than an error message. Any diagnostic naming an arbitrary value needs a tag,
+/// not a rendering.
+/// The time a PROGRAM observes — the single resolution point for every builtin
+/// that reads a clock.
+///
+/// There are two clocks in this crate and they are not interchangeable:
+///
+///   * `interp::now_ms()` (private) is the REAL clock. It stamps the provenance
+///     log's `ts_ms` and seeds the RNG, and it must stay real — a log that lies
+///     about when it was written is useless for an audit.
+///   * this function is the program's view, which a virtual clock (`AXON_CLOCK`,
+///     or `trace --replay` anchoring to a recorded run) may override so a program
+///     that reads the time is replayable.
+///
+/// Every builtin exposing time to Axon code MUST come through here. `temporal_now`,
+/// `temporal_new` and `temporal_is_valid` originally called the private helper
+/// directly, which had two consequences: a program using `Temporal<T>` was not
+/// replayable, and — worse — mixing `now_ms()` with `temporal_*` gave the program
+/// TWO DISAGREEING TIMELINES, since one was virtual and the other real. A
+/// `created_ms` from the real clock compared against a virtual `now_ms()` is
+/// arbitrary garbage, and nothing would have reported it.
+/// Rebuild an `Uncertain<T>` from a replay-cache entry written as `"<value>|<confidence>"`.
+///
+/// A malformed entry is an `Err` VALUE, not a panic: the cache is a file a user can
+/// hand-edit or truncate, and a corrupt line must not take the program down. It is
+/// also not silently ignored — falling through to a live call would turn a broken
+/// replay into an unreproducible run, which is the failure this whole path exists
+/// to prevent, so the error names the cache and the key.
+fn replay_uncertain(cached: &str, who: &str, as_float: bool) -> Value {
+    let parsed = cached.split_once('|').and_then(|(v, c)| {
+        let conf = c.trim().parse::<f64>().ok()?;
+        if as_float {
+            Some((Value::Float(v.trim().parse::<f64>().ok()?), conf))
+        } else {
+            Some((Value::Int(v.trim().parse::<i64>().ok()?), conf))
+        }
+    });
+    match parsed {
+        Some((v, c)) => Value::Ok(Box::new(make_uncertain(v, c))),
+        None => Value::Err(Box::new(Value::Str(format!(
+            "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"<value>|<confidence>\") \
+             — delete the cache to re-record rather than replaying a corrupt one"
+        )))),
+    }
+}
+
+fn program_now_ms() -> i64 {
+    if let Some(t) = crate::clock::now_ms() {
+        return t;
+    }
+    crate::host::with_host(|h| h.now_ms())
+}
+
+fn value_type_tag(v: &Value) -> &'static str {
+    match v {
+        Value::Int(_) | Value::SizedInt { .. } => "i64",
+        Value::Float(_) => "f64",
+        Value::Bool(_) => "bool",
+        Value::Str(_) => "str",
+        Value::Array(_) => "array",
+        Value::Tuple(_) => "tuple",
+        Value::Dict(_) => "Dict",
+        Value::Struct { .. } => "struct",
+        Value::Enum { .. } => "enum",
+        Value::Closure { .. } => "closure",
+        Value::Unit => "()",
+        _ => "value",
+    }
+}
+
+fn json_walk<'a>(
+    root: &'a serde_json::Value,
+    path: &str,
+    who: &str,
+) -> std::result::Result<&'a serde_json::Value, String> {
+    let mut cur = root;
+    for key in path.split('.') {
+        match cur {
+            serde_json::Value::Object(map) => match map.get(key) {
+                Some(next) => cur = next,
+                None => return Err(format!("{who}: key {key:?} not found")),
+            },
+            serde_json::Value::Array(arr) => match key.parse::<usize>() {
+                Ok(idx) => match arr.get(idx) {
+                    Some(next) => cur = next,
+                    None => {
+                        return Err(format!(
+                            "{who}: array index {idx} out of bounds (len {})",
+                            arr.len()
+                        ))
+                    }
+                },
+                Err(_) => return Err(format!("{who}: array requires numeric index, got {key:?}")),
+            },
+            _ => return Err(format!("{who}: cannot index into scalar at key {key:?}")),
+        }
+    }
+    Ok(cur)
+}
+
+/// Parse a JSON document, or return a caller-prefixed E2201 error string.
+///
+/// E2201 is a PREFIX inside the `Err` value, not a diagnostic: every JSON builtin
+/// returns `Result`, so its failures are values and there is no diagnostic for a
+/// code to attach to (R42 §4).
+fn json_root(src: &str, who: &str) -> std::result::Result<serde_json::Value, String> {
+    serde_json::from_str(src).map_err(|e| format!("{who}: E2201 {e}"))
+}
+
 fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<String> {
     use crate::capabilities as caps;
     let deny = |what: &str, val: &str, list: &[String]| {
@@ -442,14 +565,12 @@ impl<'p> Interp<'p> {
             }
             "read_line" => {
                 want(0)?;
-                let mut line = String::new();
-                match std::io::stdin().read_line(&mut line) {
-                    Ok(_) => {
-                        while line.ends_with('\n') || line.ends_with('\r') {
-                            line.pop();
-                        }
-                        ok!(Value::Str(line));
-                    }
+                // Through the host seam, not `std::io::stdin()` directly — stdin
+                // is an environmental effect like any other, and a bypass here
+                // means a run that reads input cannot be recorded or replayed.
+                // The `<read error: …>` shape is preserved verbatim.
+                match crate::host::with_host(|h| h.read_line()) {
+                    Ok(line) => ok!(Value::Str(line)),
                     Err(e) => ok!(Value::Str(format!("<read error: {e}>"))),
                 }
             }
@@ -466,6 +587,430 @@ impl<'p> Interp<'p> {
                 let path = as_str(&args[0])?.to_string();
                 let data = as_str(&args[1])?.to_string();
                 match crate::host::with_host(|h| h.write_file(&path, &data)) {
+                    Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            // Both new fs builtins go through `crate::host` rather than `std::fs`,
+            // so the scoped-sandbox path checks that already govern
+            // read_file/write_file govern these too. Calling std directly here
+            // would have created two fs builtins outside the sandbox.
+            "append_file" => {
+                want(2)?;
+                let path = as_str(&args[0])?.to_string();
+                let data = as_str(&args[1])?.to_string();
+                // Read-modify-write, because the Host trait has no append. An
+                // Err from the read is treated as "not there yet" and the write
+                // creates the file; if the read failed for some OTHER reason
+                // (permissions), the write fails too and ITS message — the
+                // actionable one — is what the caller sees.
+                let existing = crate::host::with_host(|h| h.read_file(&path)).unwrap_or_default();
+                let merged = existing + &data;
+                match crate::host::with_host(|h| h.write_file(&path, &merged)) {
+                    Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "file_size" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.read_file(&path)) {
+                    // BYTES, not chars: `s.len()` on a Rust String is its UTF-8
+                    // byte length, which is what a `stat` would report.
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Int(s.len() as i64)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            // ── R42 Slice 5: pattern matching (Pike VM, linear time) ─────────
+            "re_is_match" | "re_find" | "re_find_all" | "re_captures" | "re_split" => {
+                want(2)?;
+                let pat = as_str(&args[0])?.to_string();
+                let subject: Vec<char> = as_str(&args[1])?.chars().collect();
+                let prog = match crate::interp::regex::compile(&pat) {
+                    Ok(p) => p,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let span = |sl: &[usize], i: usize| -> String {
+                    // A group that did not participate has usize::MAX slots; it
+                    // reads as empty (documented, see the builtin's doc).
+                    let (a, b) = (sl[i * 2], sl[i * 2 + 1]);
+                    if a == usize::MAX || b == usize::MAX || b < a {
+                        String::new()
+                    } else {
+                        subject[a..b].iter().collect()
+                    }
+                };
+                match name {
+                    "re_is_match" => {
+                        let hit = crate::interp::regex::find_from(&prog, &subject, 0).is_some();
+                        ok!(Value::Ok(Box::new(Value::Bool(hit))));
+                    }
+                    "re_find" => {
+                        match crate::interp::regex::find_from(&prog, &subject, 0) {
+                            Some(sl) => ok!(Value::Ok(Box::new(Value::Some(Box::new(
+                                Value::Str(span(&sl, 0))
+                            ))))),
+                            None => ok!(Value::Ok(Box::new(Value::None))),
+                        }
+                    }
+                    "re_captures" => {
+                        match crate::interp::regex::find_from(&prog, &subject, 0) {
+                            Some(sl) => {
+                                let mut out = Vec::with_capacity(prog.groups + 1);
+                                for g in 0..=prog.groups {
+                                    out.push(Value::Str(span(&sl, g)));
+                                }
+                                ok!(Value::Ok(Box::new(Value::Array(out))));
+                            }
+                            None => ok!(Value::Ok(Box::new(Value::Array(Vec::new())))),
+                        }
+                    }
+                    "re_find_all" => {
+                        let mut out: Vec<Value> = Vec::new();
+                        let mut from = 0usize;
+                        while from <= subject.len() {
+                            match crate::interp::regex::find_from(&prog, &subject, from) {
+                                Some(sl) => {
+                                    out.push(Value::Str(span(&sl, 0)));
+                                    // An EMPTY match must still advance, or this
+                                    // loops forever on a pattern like `a*`.
+                                    from = if sl[1] > sl[0] { sl[1] } else { sl[1] + 1 };
+                                }
+                                None => break,
+                            }
+                        }
+                        ok!(Value::Ok(Box::new(Value::Array(out))));
+                    }
+                    _ => {
+                        // re_split
+                        let mut out: Vec<Value> = Vec::new();
+                        let mut from = 0usize;
+                        let mut last = 0usize;
+                        while from <= subject.len() {
+                            match crate::interp::regex::find_from(&prog, &subject, from) {
+                                Some(sl) => {
+                                    if sl[1] == sl[0] {
+                                        // A pattern matching empty would split
+                                        // between every character forever; refuse
+                                        // rather than emit an unbounded array.
+                                        ok!(Value::Err(Box::new(Value::Str(format!(
+                                            "re_split: E2203 pattern {pat:?} matches the empty \
+                                             string, which has no well-defined split"
+                                        )))));
+                                    }
+                                    out.push(Value::Str(
+                                        subject[last..sl[0]].iter().collect::<String>(),
+                                    ));
+                                    last = sl[1];
+                                    from = sl[1];
+                                }
+                                None => break,
+                            }
+                        }
+                        out.push(Value::Str(subject[last..].iter().collect::<String>()));
+                        ok!(Value::Ok(Box::new(Value::Array(out))));
+                    }
+                }
+            }
+            "re_replace_all" => {
+                want(3)?;
+                let pat = as_str(&args[0])?.to_string();
+                let subject: Vec<char> = as_str(&args[1])?.chars().collect();
+                let with = as_str(&args[2])?.to_string();
+                let prog = match crate::interp::regex::compile(&pat) {
+                    Ok(p) => p,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                // A `$N` naming a group the PATTERN DOES NOT HAVE is an authoring
+                // error, and it is refused here rather than expanded to "".
+                //
+                // Rust's regex crate and Perl both silently emit nothing; Python
+                // raises. Silence is wrong for this language: `re_replace_all` is
+                // reachable by model-authored code, and `$3` against a two-group
+                // pattern would produce a plausible-looking string with a piece
+                // quietly missing — the same silent-wrong-answer shape as the
+                // `str_slice` UTF-8 bug and the `{2,3}` interpolation slot.
+                //
+                // This is NOT the same as a group that exists but did not
+                // participate in the match (an unmatched `(a)?`), which correctly
+                // expands to "" below — that is a runtime fact about this input,
+                // not a mistake in the replacement string. Validated once, before
+                // the match loop, so the error does not depend on whether the
+                // subject happened to match.
+                {
+                    let wc: Vec<char> = with.chars().collect();
+                    let mut i = 0;
+                    while i < wc.len() {
+                        if wc[i] == '$' && i + 1 < wc.len() {
+                            if wc[i + 1] == '$' {
+                                i += 2;
+                                continue;
+                            }
+                            if let Some(d) = wc[i + 1].to_digit(10) {
+                                let g = d as usize;
+                                // `$N` reads exactly ONE digit, so `$12` is group 1
+                                // followed by a literal `2`. That is the usual
+                                // convention and is unambiguous while the pattern
+                                // has at most 9 groups. With 10 or more it becomes
+                                // a silent-wrong-answer of the same shape as
+                                // everything else in this pass, so refuse instead
+                                // of guessing which reading was meant.
+                                //
+                                // There is deliberately no `${12}` escape: `{`
+                                // opens string interpolation in Axon, so it would
+                                // have to be written `"${{12}}"` — reintroducing
+                                // the brace trap this pass exists to close. A clear
+                                // refusal beats an escape hatch nobody can spell.
+                                if prog.groups >= 10
+                                    && i + 2 < wc.len()
+                                    && wc[i + 2].is_ascii_digit()
+                                {
+                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                        "re_replace_all: E2205 `${}{}` is ambiguous — a group \
+                                         reference is a SINGLE digit, so this reads as group {} \
+                                         followed by the literal {:?}, and pattern {pat:?} has {} \
+                                         groups. References above $9 are not supported; use 9 or \
+                                         fewer capture groups (make the extras non-capturing).",
+                                        wc[i + 1],
+                                        wc[i + 2],
+                                        g,
+                                        wc[i + 2],
+                                        prog.groups
+                                    )))));
+                                }
+                                if g > prog.groups {
+                                    let plural = if prog.groups == 1 { "" } else { "s" };
+                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                        "re_replace_all: E2205 replacement references ${g} but \
+                                         pattern {pat:?} has {} capture group{plural} (use $$ for \
+                                         a literal dollar sign)",
+                                        prog.groups
+                                    )))));
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                let mut out = String::new();
+                let mut from = 0usize;
+                let mut last = 0usize;
+                while from <= subject.len() {
+                    let sl = match crate::interp::regex::find_from(&prog, &subject, from) {
+                        Some(sl) => sl,
+                        None => break,
+                    };
+                    out.push_str(&subject[last..sl[0]].iter().collect::<String>());
+                    // `$1`..`$9` are capture references, `$$` a literal `$`.
+                    let wc: Vec<char> = with.chars().collect();
+                    let mut i = 0;
+                    while i < wc.len() {
+                        if wc[i] == '$' && i + 1 < wc.len() {
+                            let nxt = wc[i + 1];
+                            if nxt == '$' {
+                                out.push('$');
+                                i += 2;
+                                continue;
+                            }
+                            if let Some(d) = nxt.to_digit(10) {
+                                let g = d as usize;
+                                if g <= prog.groups {
+                                    let (a, b) = (sl[g * 2], sl[g * 2 + 1]);
+                                    if a != usize::MAX && b != usize::MAX && b >= a {
+                                        out.push_str(&subject[a..b].iter().collect::<String>());
+                                    }
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        }
+                        out.push(wc[i]);
+                        i += 1;
+                    }
+                    last = sl[1];
+                    from = if sl[1] > sl[0] { sl[1] } else { sl[1] + 1 };
+                }
+                out.push_str(&subject[last.min(subject.len())..].iter().collect::<String>());
+                ok!(Value::Ok(Box::new(Value::Str(out))));
+            }
+
+            // ── R42 Slice 6: encoding ────────────────────────────────────────
+            //
+            // Pure, no host contact. Hand-written rather than pulling a crate for
+            // thirty lines; the padding cases that trip hand-rolled base64 are
+            // covered explicitly by the fixture (input lengths 0/1/2 mod 3).
+            "base64_encode" | "hex_encode" => {
+                want(1)?;
+                let bytes = as_str(&args[0])?.as_bytes().to_vec();
+                if name == "hex_encode" {
+                    let mut out = String::with_capacity(bytes.len() * 2);
+                    for b in &bytes {
+                        out.push_str(&format!("{b:02x}"));
+                    }
+                    ok!(Value::Str(out));
+                }
+                const A: &[u8; 64] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+                for chunk in bytes.chunks(3) {
+                    let b0 = chunk[0] as u32;
+                    let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+                    let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+                    let n = (b0 << 16) | (b1 << 8) | b2;
+                    out.push(A[(n >> 18) as usize & 63] as char);
+                    out.push(A[(n >> 12) as usize & 63] as char);
+                    // Padding is where a hand-rolled encoder goes wrong: the
+                    // third and fourth characters exist only if the chunk had a
+                    // second and third BYTE.
+                    out.push(if chunk.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
+                    out.push(if chunk.len() > 2 { A[n as usize & 63] as char } else { '=' });
+                }
+                ok!(Value::Str(out));
+            }
+            "base64_decode" | "hex_decode" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let bytes: std::result::Result<Vec<u8>, String> = if name == "hex_decode" {
+                    if src.len() % 2 != 0 {
+                        Err(format!("hex_decode: E2204 odd length ({})", src.len()))
+                    } else {
+                        let mut out = Vec::with_capacity(src.len() / 2);
+                        let cs: Vec<char> = src.chars().collect();
+                        let mut e = None;
+                        for pair in cs.chunks(2) {
+                            let hi = pair[0].to_digit(16);
+                            let lo = pair[1].to_digit(16);
+                            match (hi, lo) {
+                                (Some(h), Some(l)) => out.push((h * 16 + l) as u8),
+                                _ => {
+                                    e = Some(format!(
+                                        "hex_decode: E2204 not a hex digit in {:?}",
+                                        pair.iter().collect::<String>()
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                        match e {
+                            Some(msg) => Err(msg),
+                            None => Ok(out),
+                        }
+                    }
+                } else {
+                    let inv = |c: u8| -> Option<u32> {
+                        match c {
+                            b'A'..=b'Z' => Some((c - b'A') as u32),
+                            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+                            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+                            b'+' => Some(62),
+                            b'/' => Some(63),
+                            _ => None,
+                        }
+                    };
+                    let raw: Vec<u8> = src.bytes().collect();
+                    if !raw.len().is_multiple_of(4) {
+                        Err(format!("base64_decode: E2204 length {} is not a multiple of 4", raw.len()))
+                    } else {
+                        let mut out: Vec<u8> = Vec::with_capacity(raw.len() / 4 * 3);
+                        let mut err = None;
+                        for chunk in raw.chunks(4) {
+                            let pad = chunk.iter().filter(|c| **c == b'=').count();
+                            if pad > 2 {
+                                err = Some("base64_decode: E2204 too much padding".to_string());
+                                break;
+                            }
+                            let mut n: u32 = 0;
+                            let mut bad = false;
+                            for (i, c) in chunk.iter().enumerate() {
+                                let v = if *c == b'=' {
+                                    0
+                                } else {
+                                    match inv(*c) {
+                                        Some(v) => v,
+                                        None => {
+                                            bad = true;
+                                            break;
+                                        }
+                                    }
+                                };
+                                n |= v << (18 - 6 * i);
+                            }
+                            if bad {
+                                err = Some("base64_decode: E2204 invalid base64 character".to_string());
+                                break;
+                            }
+                            out.push((n >> 16) as u8);
+                            if pad < 2 {
+                                out.push((n >> 8) as u8);
+                            }
+                            if pad < 1 {
+                                out.push(n as u8);
+                            }
+                        }
+                        match err {
+                            Some(msg) => Err(msg),
+                            None => Ok(out),
+                        }
+                    }
+                };
+                match bytes {
+                    Err(msg) => ok!(Value::Err(Box::new(Value::Str(msg)))),
+                    // THE limitation, made explicit: Axon has no bytes type, so
+                    // binary that is not valid UTF-8 cannot be represented. Err
+                    // rather than lossy replacement characters or a truncated
+                    // prefix — a silently lossy decode in a primitive justified
+                    // on "hand-rolling this goes wrong quietly" would be absurd.
+                    Ok(b) => match String::from_utf8(b) {
+                        Ok(text) => ok!(Value::Ok(Box::new(Value::Str(text)))),
+                        Err(_) => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "{name}: E2204 decoded bytes are not valid UTF-8 (Axon has no bytes \
+                             type, so only text round-trips)"
+                        ))))),
+                    },
+                }
+            }
+
+            // ── R42 Slice 4: filesystem beyond a single known path ───────────
+            //
+            // Every one goes through `crate::host`, never `std::fs`, so the
+            // scoped-sandbox path checks that govern read_file/write_file govern
+            // these too. Reaching for std here would create five fs builtins
+            // OUTSIDE the sandbox.
+            "file_exists" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                ok!(Value::Bool(crate::host::with_host(|h| h.file_exists(&path))));
+            }
+            "dir_create" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.dir_create(&path)) {
+                    Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "dir_list" => {
+                want(1)?;
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.dir_list(&path)) {
+                    Ok(names) => ok!(Value::Ok(Box::new(Value::Array(
+                        names.into_iter().map(Value::Str).collect()
+                    )))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "file_copy" | "file_rename" => {
+                want(2)?;
+                let from = as_str(&args[0])?.to_string();
+                let to = as_str(&args[1])?.to_string();
+                let r = if name == "file_copy" {
+                    crate::host::with_host(|h| h.file_copy(&from, &to))
+                } else {
+                    crate::host::with_host(|h| h.file_rename(&from, &to))
+                };
+                match r {
                     Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
@@ -626,9 +1171,19 @@ impl<'p> Interp<'p> {
                     | Value::Bool(_)
                     | Value::SizedInt { .. }
                     | Value::Decimal(_) => display(&args[0]),
+                    // A `str` is ALREADY a string — return it unchanged.
+                    //
+                    // Measured on the tasks_hard set: `to_str(s)` where `s` is a
+                    // str was the single most common first error (9 of 36
+                    // attempts). It is a design wart rather than a model mistake —
+                    // `to_string` is total in essentially every language, so an
+                    // identity call succeeding is what a reader expects. Refusing
+                    // it fails a program for a reason that is not a bug, which is
+                    // the opposite of what a diagnostic should do.
+                    Value::Str(existing) => existing.clone(),
                     other =>
                         return panic(format!(
-                            "to_str: expected a scalar (i64/f64/bool/Decimal), got {}",
+                            "to_str: expected a scalar (i64/f64/bool/Decimal) or a str, got {}",
                             other.type_name()
                         )),
                 }));
@@ -842,9 +1397,26 @@ impl<'p> Interp<'p> {
                 ok!(match &args[0] {
                     Value::Str(s) => Value::Int(s.len() as i64),
                     Value::Array(a) => Value::Int(a.len() as i64),
+                    // A dict has exactly one obvious length: its entry count —
+                    // which `dict_len` already computes, so `len(d)` was rejecting
+                    // a question the language could already answer.
+                    //
+                    // Found by auditing every domain restriction in this file for
+                    // the `to_str(str)` shape (a rejection with ONE sensible
+                    // answer). It was the only clear hit outside the `arr_*`/
+                    // `dict_*`/`categorical_*`/`temporal_*` families, all of which
+                    // reject correctly — there is no "array form" of a non-array,
+                    // so widening those would mean INVENTING an answer, which is
+                    // the parse_int("abc") mistake.
+                    //
+                    // It was also worse than `to_str(str)` had been: that failed
+                    // statically (E0102), while this passed `axon check` clean and
+                    // panicked only at runtime, so a caller got no signal until the
+                    // program was already running.
+                    Value::Dict(d) => Value::Int(d.borrow().len() as i64),
                     other =>
                         return panic(format!(
-                            "len: expected str/array, got {}",
+                            "len: expected str/array/dict, got {}",
                             other.type_name()
                         )),
                 });
@@ -2246,7 +2818,20 @@ impl<'p> Interp<'p> {
                 let start = as_int(&args[1])?.max(0) as usize;
                 let end = (as_int(&args[2])?.max(0) as usize).min(s.len());
                 let start = start.min(end);
-                ok!(Value::Str(s.get(start..end).unwrap_or("").to_string()));
+                // R42 §2 / E2200. `s.get(a..b)` is None for a range that splits
+                // a character, and this used to `unwrap_or("")` it — turning the
+                // card's own taught idiom
+                // `str_eq(str_slice(s, i, i + 1), " ")` into `str_eq("", " ")`
+                // on any non-ASCII input. A silent wrong answer, refused now.
+                // Out-of-RANGE indices are still clamped (that is not an error);
+                // only a non-boundary index is.
+                if !s.is_char_boundary(start) || !s.is_char_boundary(end) {
+                    return panic(format!(
+                        "str_slice: E2200 byte range {start}..{end} splits a UTF-8 character \
+                         (slice on character boundaries, or use str_char_slice)"
+                    ));
+                }
+                ok!(Value::Str(s[start..end].to_string()));
             }
             "char_at" => {
                 want(2)?;
@@ -2255,6 +2840,83 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(
                     s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)
                 ));
+            }
+
+            // ── R42 Slice 2: character-indexed access ────────────────────────
+            //
+            // Every one of these walks `chars()`. That is O(n) rather than O(1)
+            // indexing, which is inherent to UTF-8 and not a shortcut: there is
+            // no constant-time character index into a variable-width encoding.
+            // `str_chars` exists so a caller pays that walk ONCE and then works
+            // over an array, instead of paying it per index in a loop.
+            "str_chars" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                ok!(Value::Array(
+                    s.chars().map(|c| Value::Str(c.to_string())).collect()
+                ));
+            }
+            "str_len_chars" => {
+                want(1)?;
+                ok!(Value::Int(as_str(&args[0])?.chars().count() as i64));
+            }
+            "str_char_at" => {
+                want(2)?;
+                let s = as_str(&args[0])?;
+                let i = as_int(&args[1])?;
+                if i < 0 {
+                    ok!(Value::Str(String::new()));
+                }
+                ok!(Value::Str(
+                    s.chars().nth(i as usize).map(|c| c.to_string()).unwrap_or_default()
+                ));
+            }
+            "str_char_slice" => {
+                want(3)?;
+                let s = as_str(&args[0])?;
+                let n = s.chars().count();
+                let lo = (as_int(&args[1])?.max(0) as usize).min(n);
+                let hi = (as_int(&args[2])?.max(0) as usize).min(n);
+                let hi = hi.max(lo);
+                // Character-indexed, so this CANNOT split a character and never
+                // raises E2200 — the whole reason it exists beside `str_slice`.
+                ok!(Value::Str(s.chars().skip(lo).take(hi - lo).collect::<String>()));
+            }
+            "char_code" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut it = s.chars();
+                match (it.next(), it.next()) {
+                    (Some(c), None) => ok!(Value::Ok(Box::new(Value::Int(c as i64)))),
+                    (None, _) => ok!(Value::Err(Box::new(Value::Str(
+                        "char_code: empty string has no code point".to_string()
+                    )))),
+                    (Some(_), Some(_)) => ok!(Value::Err(Box::new(Value::Str(format!(
+                        "char_code: expected exactly one character, got {}",
+                        s.chars().count()
+                    ))))),
+                }
+            }
+            "char_is_digit" | "char_is_alpha" | "char_is_space" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut it = s.chars();
+                // Exactly one character, or false. An "is this a digit" question
+                // about a two-character string has no true answer, and returning
+                // true for the first character would be a silent wrong answer.
+                let single = match (it.next(), it.next()) {
+                    (Some(c), None) => Some(c),
+                    _ => None,
+                };
+                let b = match single {
+                    Some(c) => match name {
+                        "char_is_digit" => c.is_ascii_digit(),
+                        "char_is_alpha" => c.is_alphabetic(),
+                        _ => c.is_whitespace(),
+                    },
+                    None => false,
+                };
+                ok!(Value::Bool(b));
             }
 
             "chr" => {
@@ -2348,61 +3010,262 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
             }
+            // ── R42 Slice 3.1: WRITE a JSON document ─────────────────────────
+            "json_from_pairs" => {
+                want(1)?;
+                let pairs = match &args[0] {
+                    Value::Array(items) => items.clone(),
+                    _ => ok!(Value::Str("{}".to_string())),
+                };
+                let mut parts: Vec<String> = Vec::with_capacity(pairs.len());
+                for p in &pairs {
+                    if let Value::Tuple(kv) = p {
+                        if kv.len() == 2 {
+                            let k = match &kv[0] {
+                                Value::Str(k) => k.clone(),
+                                other => value_type_tag(other).to_string(),
+                            };
+                            let v = match &kv[1] {
+                                Value::Str(v) => v.clone(),
+                                other => value_type_tag(other).to_string(),
+                            };
+                            // The KEY is escaped (serde_json does it correctly,
+                            // including quotes and control characters); the VALUE
+                            // is inserted verbatim because it is documented as
+                            // pre-encoded JSON.
+                            let ke = serde_json::Value::String(k).to_string();
+                            parts.push(format!("{ke}:{v}"));
+                        }
+                    }
+                }
+                ok!(Value::Str(format!("{{{}}}", parts.join(","))));
+            }
+            "dict_to_json" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "dict_to_json: not a dict".to_string()
+                    )))),
+                };
+                let map = d.borrow();
+                let mut parts: Vec<String> = Vec::with_capacity(map.len());
+                for (k, v) in map.iter() {
+                    // Only values with a JSON form; anything else is an Err
+                    // rather than a silently dropped key.
+                    let encoded = match v {
+                        Value::Int(n) => n.to_string(),
+                        Value::SizedInt { val, .. } => val.to_string(),
+                        Value::Float(f) if f.is_finite() => f.to_string(),
+                        Value::Float(_) => "null".to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Str(sv) => serde_json::Value::String(sv.clone()).to_string(),
+                        other => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "dict_to_json: value at key {k:?} has no JSON form ({})",
+                            value_type_tag(other)
+                        ))))),
+                    };
+                    let ke = serde_json::Value::String(k.clone()).to_string();
+                    parts.push(format!("{ke}:{encoded}"));
+                }
+                ok!(Value::Ok(Box::new(Value::Str(format!(
+                    "{{{}}}",
+                    parts.join(",")
+                )))));
+            }
+            "json_arr_from_i64" | "json_arr_from_f64" | "json_arr_from_str" => {
+                want(1)?;
+                let items = match &args[0] {
+                    Value::Array(items) => items.clone(),
+                    _ => ok!(Value::Str("[]".to_string())),
+                };
+                let mut parts: Vec<String> = Vec::with_capacity(items.len());
+                for it in &items {
+                    parts.push(match it {
+                        Value::Int(n) => n.to_string(),
+                        Value::SizedInt { val, .. } => val.to_string(),
+                        // NaN/infinity have no JSON representation; `null` is
+                        // what every mainstream encoder emits.
+                        Value::Float(f) if f.is_finite() => f.to_string(),
+                        Value::Float(_) => "null".to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Str(sv) => serde_json::Value::String(sv.clone()).to_string(),
+                        // A tag, never a Debug rendering: see `value_type_tag`.
+                        other => serde_json::Value::String(value_type_tag(other).to_string())
+                            .to_string(),
+                    });
+                }
+                ok!(Value::Str(format!("[{}]", parts.join(","))));
+            }
+
+            // ── R42 Slice 3: reach INTO a JSON document ──────────────────────
+            //
+            // Sub-documents are returned as JSON STRINGS, so these compose with
+            // the five json_* functions that already existed instead of needing
+            // a new `Json` value type (which would want checker, infer, codegen
+            // and `value_as_literal` arms for a surface that is already
+            // string-shaped).
+            "json_len" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let root = match json_root(&src, "json_len") {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                match &root {
+                    serde_json::Value::Array(a) => ok!(Value::Ok(Box::new(Value::Int(a.len() as i64)))),
+                    serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Int(m.len() as i64)))),
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "json_len: E2202 not an array or object".to_string()
+                    )))),
+                }
+            }
+            "json_at" => {
+                want(2)?;
+                let src = as_str(&args[0])?.to_string();
+                let i = as_int(&args[1])?;
+                let root = match json_root(&src, "json_at") {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                match &root {
+                    serde_json::Value::Array(a) => {
+                        if i < 0 || i as usize >= a.len() {
+                            ok!(Value::Err(Box::new(Value::Str(format!(
+                                "json_at: index {i} out of bounds (len {})",
+                                a.len()
+                            )))))
+                        }
+                        ok!(Value::Ok(Box::new(Value::Str(a[i as usize].to_string()))))
+                    }
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "json_at: E2202 not an array".to_string()
+                    )))),
+                }
+            }
+            "json_keys" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let root = match json_root(&src, "json_keys") {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                match &root {
+                    serde_json::Value::Object(m) => ok!(Value::Ok(Box::new(Value::Array(
+                        m.keys().map(|k| Value::Str(k.clone())).collect()
+                    )))),
+                    _ => ok!(Value::Err(Box::new(Value::Str(
+                        "json_keys: E2202 not an object".to_string()
+                    )))),
+                }
+            }
+            "json_get_json" | "json_path_json" => {
+                want(2)?;
+                let src = as_str(&args[0])?.to_string();
+                let sel = as_str(&args[1])?.to_string();
+                let root = match json_root(&src, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                // `json_get_json` takes a single top-level KEY, so a key
+                // containing a dot must not be split; `json_path_json` takes a
+                // dot PATH. Same lookup otherwise.
+                let found = if name == "json_get_json" {
+                    match &root {
+                        serde_json::Value::Object(m) => m
+                            .get(&sel)
+                            .ok_or_else(|| format!("json_get_json: key {sel:?} not found")),
+                        _ => Err("json_get_json: E2202 not an object".to_string()),
+                    }
+                } else {
+                    json_walk(&root, &sel, "json_path_json")
+                };
+                match found {
+                    Ok(v) => ok!(Value::Ok(Box::new(Value::Str(v.to_string())))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "json_path_i64" | "json_path_f64" => {
+                want(2)?;
+                let src = as_str(&args[0])?.to_string();
+                let path = as_str(&args[1])?.to_string();
+                let root = match json_root(&src, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let leaf = match json_walk(&root, &path, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                if name == "json_path_i64" {
+                    match leaf.as_i64() {
+                        Some(n) => ok!(Value::Ok(Box::new(Value::Int(n)))),
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "json_path_i64: E2202 leaf at {path:?} is not an integer"
+                        ))))),
+                    }
+                } else {
+                    // JSON does not distinguish 4 from 4.0, so an integer leaf
+                    // widens rather than erroring.
+                    match leaf.as_f64() {
+                        Some(f) => ok!(Value::Ok(Box::new(Value::Float(f)))),
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "json_path_f64: E2202 leaf at {path:?} is not a number"
+                        ))))),
+                    }
+                }
+            }
+            "json_arr_i64" | "json_arr_f64" | "json_arr_str" => {
+                want(1)?;
+                let src = as_str(&args[0])?.to_string();
+                let root = match json_root(&src, name) {
+                    Ok(v) => v,
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                };
+                let arr = match &root {
+                    serde_json::Value::Array(a) => a,
+                    _ => ok!(Value::Err(Box::new(Value::Str(format!(
+                        "{name}: E2202 not an array"
+                    ))))),
+                };
+                // Parses the document ONCE — the whole point of these versus
+                // `json_at` in a loop, which re-parses per element (O(n^2)).
+                let mut out = Vec::with_capacity(arr.len());
+                for (i, el) in arr.iter().enumerate() {
+                    let v = match name {
+                        "json_arr_i64" => el.as_i64().map(Value::Int),
+                        "json_arr_f64" => el.as_f64().map(Value::Float),
+                        _ => el.as_str().map(|s| Value::Str(s.to_string())),
+                    };
+                    match v {
+                        Some(v) => out.push(v),
+                        // Fail the whole call rather than skipping or defaulting
+                        // the bad element: a silently shorter array is the class
+                        // of wrong answer R42 exists to remove.
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "{name}: E2202 element {i} has the wrong type"
+                        ))))),
+                    }
+                }
+                ok!(Value::Ok(Box::new(Value::Array(out))));
+            }
+
             "json_path_str" => {
                 want(2)?;
                 let json_str = as_str(&args[0])?.to_string();
                 let path = as_str(&args[1])?.to_string();
-                let root: serde_json::Value = match serde_json::from_str(&json_str) {
+                let root = match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(v) => v,
-                    Err(e) => {
-                        ok!(Value::Err(Box::new(Value::Str(e.to_string()))))
-                    }
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
                 };
-                let mut cur = &root;
-                for key in path.split('.') {
-                    match cur {
-                        serde_json::Value::Object(map) => match map.get(key) {
-                            Some(next) => cur = next,
-                            None => {
-                                ok!(Value::Err(Box::new(Value::Str(format!(
-                                    "json_path_str: key {key:?} not found"
-                                )))))
-                            }
-                        },
-                        serde_json::Value::Array(arr) => match key.parse::<usize>() {
-                            Ok(idx) => match arr.get(idx) {
-                                Some(next) => cur = next,
-                                None => {
-                                    ok!(Value::Err(Box::new(Value::Str(format!(
-                                        "json_path_str: array index {idx} out of bounds (len {})",
-                                        arr.len()
-                                    )))))
-                                }
-                            },
-                            Err(_) => {
-                                ok!(Value::Err(Box::new(Value::Str(format!(
-                                    "json_path_str: array requires numeric index, got {key:?}"
-                                )))))
-                            }
-                        },
-                        _ => {
-                            ok!(Value::Err(Box::new(Value::Str(format!(
-                                "json_path_str: cannot index into scalar at key {key:?}"
-                            )))))
-                        }
+                match json_walk(&root, &path, "json_path_str") {
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                    Ok(serde_json::Value::String(sv)) => {
+                        ok!(Value::Ok(Box::new(Value::Str(sv.clone()))))
                     }
-                }
-                match cur {
-                    serde_json::Value::String(s) => {
-                        ok!(Value::Ok(Box::new(Value::Str(s.clone()))))
-                    }
-                    other => ok!(Value::Err(Box::new(Value::Str(format!(
+                    Ok(other) => ok!(Value::Err(Box::new(Value::Str(format!(
                         "json_path_str: leaf is not a string (found {})",
-                        if other.is_null() {
-                            "null"
-                        } else {
-                            "other type"
-                        }
+                        if other.is_null() { "null" } else { "other type" }
                     ))))),
                 }
             }
@@ -2458,11 +3321,17 @@ impl<'p> Interp<'p> {
             }
             "now_ms" => {
                 want(0)?;
-                ok!(Value::Int(crate::host::with_host(|h| h.now_ms())));
+                ok!(Value::Int(program_now_ms()));
             }
             "sleep_ms" => {
                 want(1)?;
                 let ms = as_int(&args[0])?.max(0) as u64;
+                // Under a virtual clock, advance the timeline instead of really
+                // sleeping: the program still observes `ms` elapsed, and a replay
+                // of a run that slept for ten seconds is instant.
+                if crate::clock::advance(ms as i64) {
+                    ok!(Value::Unit);
+                }
                 crate::host::with_host(|h| h.sleep_ms(ms));
                 ok!(Value::Unit);
             }
@@ -2552,7 +3421,7 @@ impl<'p> Interp<'p> {
             // Represented as `Temporal { value, horizon_ms, decay, created_ms }`.
             "temporal_now" => {
                 want(0)?;
-                ok!(Value::Int(now_ms()));
+                ok!(Value::Int(program_now_ms()));
             }
             "temporal_new" => {
                 want(3)?;
@@ -2561,7 +3430,7 @@ impl<'p> Interp<'p> {
                     1.0, // confidence starts full at creation; decays via temporal_at
                     as_int(&args[1])?,
                     as_float(&args[2])?,
-                    now_ms(),
+                    program_now_ms(),
                 ));
             }
             "temporal_at" => {
@@ -2620,7 +3489,7 @@ impl<'p> Interp<'p> {
                     Value::Struct { fields, .. } => {
                         let horizon = fields.get("horizon_ms").and_then(as_int_opt).unwrap_or(0);
                         let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
-                        ok!(Value::Bool(now_ms() <= created + horizon));
+                        ok!(Value::Bool(program_now_ms() <= created + horizon));
                     }
                     _ => panic("temporal_is_valid: expected a Temporal value"),
                 }
@@ -4657,11 +5526,24 @@ impl<'p> Interp<'p> {
                 if ai_mock_enabled() {
                     ok!(Value::Ok(Box::new(make_uncertain(Value::Int(1), 0.9))));
                 }
+                // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
+                // typed extract made a live, unrecorded model call even under a
+                // replay cache — silently defeating the reproducibility the flag
+                // promises. Found in review. The cache is keyed by
+                // sha256(model \0 prompt), so passing the BUILTIN NAME as the model
+                // keeps an extract's entry distinct from an `ai_complete` for the
+                // same prompt.
+                if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
+                    ok!(replay_uncertain(&cached, name, false));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(
                         match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
-                            Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Int(v), c))),
+                            Ok((v, c)) => {
+                                ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
+                                Value::Ok(Box::new(make_uncertain(Value::Int(v), c)))
+                            }
                             Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }
                     );
@@ -4676,11 +5558,18 @@ impl<'p> Interp<'p> {
                 if ai_mock_enabled() {
                     ok!(Value::Ok(Box::new(make_uncertain(Value::Float(1.0), 0.9))));
                 }
+                // Same replay bypass as the i64 variant above.
+                if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
+                    ok!(replay_uncertain(&cached, name, true));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(
                         match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
-                            Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Float(v), c))),
+                            Ok((v, c)) => {
+                                ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
+                                Value::Ok(Box::new(make_uncertain(Value::Float(v), c)))
+                            }
                             Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }
                     );

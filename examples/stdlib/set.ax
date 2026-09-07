@@ -1,0 +1,175 @@
+// set.ax — a set, in USERLAND, over the existing Dict.
+//
+// R42 Slice 6 / T10. Not a builtin: Dict already provides the hashing, so a `Set`
+// primitive would add a type to the checker, infer, codegen and the session
+// dump's `value_as_literal` for no capability the language lacks. The admission
+// test says that makes it a module.
+//
+// ── Members are STRINGS, and that is not a detail ────────────────────────────
+//
+// Axon's dicts are string-keyed (`dict_new` makes a "fresh empty string-keyed
+// map"), so this is a set of `str`. Numeric members go through `to_str` at the
+// boundary — `set_add(s, to_str(n))`. That changes the ergonomics enough to be
+// worth stating up front rather than letting a caller discover it via a type
+// error, and it is why there is no `set_add_i64` convenience wrapper: hiding the
+// conversion would hide that `1` and `"1"` are the SAME member.
+
+type Set = { d: Dict }
+
+fn set_new() -> Set { Set { d: dict_new() } }
+
+/// Add a member. Idempotent — adding twice leaves one member.
+/// The value stored is irrelevant (a set is keys-only), so it is a fixed 1.
+fn set_add(s: Set, m: str) -> () { dict_set(s.d, m, 1) }
+
+fn set_has(s: Set, m: str) -> bool { dict_has(s.d, m) }
+
+fn set_len(s: Set) -> i64 { dict_len(s.d) }
+
+/// Remove a member. Removing an absent member is a no-op, not an error — the
+/// post-condition ("m is not in s") holds either way.
+fn set_remove(s: Set, m: str) -> () {
+    let _ = dict_remove(s.d, m)
+}
+
+/// Members, in the dict's key order (sorted, since dicts are BTree-backed).
+fn set_to_arr(s: Set) -> [str] { dict_keys(s.d) }
+
+fn set_from_arr(xs: &[str]) -> Set {
+    let s = set_new()
+    let i = 0
+    while i < len(xs) {
+        set_add(s, xs[i])
+        i = i + 1
+    }
+    s
+}
+
+/// All three combinators return a NEW set and leave their arguments untouched —
+/// mutating in place would make `a` and `b` order-dependent and is the classic
+/// set-library footgun.
+fn set_union(a: Set, b: Set) -> Set {
+    let out = set_from_arr(&set_to_arr(a))
+    let bs = set_to_arr(b)
+    let i = 0
+    while i < len(bs) {
+        set_add(out, bs[i])
+        i = i + 1
+    }
+    out
+}
+
+fn set_intersect(a: Set, b: Set) -> Set {
+    let out = set_new()
+    let as_ = set_to_arr(a)
+    let i = 0
+    while i < len(as_) {
+        if set_has(b, as_[i]) { set_add(out, as_[i]) }
+        i = i + 1
+    }
+    out
+}
+
+/// Members of `a` that are not in `b`. NOT symmetric — `difference(a,b)` and
+/// `difference(b,a)` differ, which a test below pins.
+fn set_difference(a: Set, b: Set) -> Set {
+    let out = set_new()
+    let as_ = set_to_arr(a)
+    let i = 0
+    while i < len(as_) {
+        if !set_has(b, as_[i]) { set_add(out, as_[i]) }
+        i = i + 1
+    }
+    out
+}
+
+fn set_is_subset(a: Set, b: Set) -> bool {
+    let as_ = set_to_arr(a)
+    let i = 0
+    let ok = true
+    while i < len(as_) {
+        if !set_has(b, as_[i]) { ok = false }
+        i = i + 1
+    }
+    ok
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_add_is_idempotent() {
+    let s = set_new()
+    set_add(s, "a")
+    set_add(s, "a")
+    set_add(s, "b")
+    assert_eq(set_len(s), 2)
+    assert(set_has(s, "a"))
+    assert(!set_has(s, "z"))
+}
+
+@[test]
+fn test_remove_absent_is_a_noop() {
+    let s = set_from_arr(&["a", "b"])
+    set_remove(s, "zzz")
+    assert_eq(set_len(s), 2)
+    set_remove(s, "a")
+    assert_eq(set_len(s), 1)
+    assert(!set_has(s, "a"))
+}
+
+@[test]
+fn test_union_and_intersect_do_not_mutate_their_arguments() {
+    let a = set_from_arr(&["a", "b"])
+    let b = set_from_arr(&["b", "c"])
+    let u = set_union(a, b)
+    let i = set_intersect(a, b)
+    assert_eq(set_len(u), 3)
+    assert_eq(set_len(i), 1)
+    assert(set_has(i, "b"))
+    // The inputs are unchanged — the property that makes these composable.
+    assert_eq(set_len(a), 2)
+    assert_eq(set_len(b), 2)
+}
+
+@[test]
+fn test_difference_is_not_symmetric() {
+    let a = set_from_arr(&["a", "b"])
+    let b = set_from_arr(&["b", "c"])
+    let ab = set_difference(a, b)
+    let ba = set_difference(b, a)
+    assert_eq(set_len(ab), 1)
+    assert(set_has(ab, "a"))
+    assert_eq(set_len(ba), 1)
+    assert(set_has(ba, "c"))
+    assert(!set_has(ab, "c"))
+}
+
+@[test]
+fn test_subset() {
+    let small = set_from_arr(&["a"])
+    let big = set_from_arr(&["a", "b"])
+    assert(set_is_subset(small, big))
+    assert(!set_is_subset(big, small))
+    // The empty set is a subset of everything, including itself.
+    assert(set_is_subset(set_new(), big))
+    assert(set_is_subset(set_new(), set_new()))
+}
+
+@[test]
+fn test_numeric_members_go_through_to_str() {
+    // The consequence of string keys, pinned rather than left implicit: the
+    // integer 1 and the string "1" are the SAME member.
+    let s = set_new()
+    set_add(s, to_str(1))
+    set_add(s, "1")
+    assert_eq(set_len(s), 1)
+    assert(set_has(s, to_str(1)))
+}
+
+fn main() -> i64 {
+    let a = set_from_arr(&["x", "y"])
+    let b = set_from_arr(&["y", "z"])
+    println(to_str(set_len(set_union(a, b))))
+    println(str_join(set_to_arr(set_intersect(a, b)), ","))
+    0
+}

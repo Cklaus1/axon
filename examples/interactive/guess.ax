@@ -32,5 +32,9 @@ fn main() -> i64 {
             }
         }
     }
-    tries
+    // The try count is an ANSWER, and it is already on stdout above. Returning
+    // it would put it in the process-status channel, where 3 means "@[verify]
+    // failed" to anything reading this run — see governance/EXIT_CODES.md.
+    let _ = tries
+    0
 }

@@ -10,7 +10,10 @@
 //! Fail-closed: poll() error or unknown state → Tripped.
 
 use crate::latch::LatchState;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 /// The read-only poll interface given to the subprocess runtime.
 /// Fail-closed: a channel error MUST be treated as Tripped.
@@ -34,7 +37,12 @@ pub struct AtomicKillChannel {
 
 pub fn kill_channel() -> (KillSender, AtomicKillChannel) {
     let flag = Arc::new(AtomicBool::new(false));
-    (KillSender { flag: Arc::clone(&flag) }, AtomicKillChannel { flag })
+    (
+        KillSender {
+            flag: Arc::clone(&flag),
+        },
+        AtomicKillChannel { flag },
+    )
 }
 
 impl KillSender {
@@ -48,7 +56,11 @@ impl KillSender {
 
 impl KillChannel for AtomicKillChannel {
     fn poll(&self) -> LatchState {
-        if self.flag.load(Ordering::SeqCst) { LatchState::Tripped } else { LatchState::Clear }
+        if self.flag.load(Ordering::SeqCst) {
+            LatchState::Tripped
+        } else {
+            LatchState::Clear
+        }
     }
 }
 
@@ -64,7 +76,12 @@ pub struct TestKillChannel {
 
 pub fn test_kill_channel() -> (TestKillSender, TestKillChannel) {
     let flag = Arc::new(AtomicBool::new(false));
-    (TestKillSender { flag: Arc::clone(&flag) }, TestKillChannel { flag })
+    (
+        TestKillSender {
+            flag: Arc::clone(&flag),
+        },
+        TestKillChannel { flag },
+    )
 }
 
 impl TestKillSender {
@@ -75,7 +92,11 @@ impl TestKillSender {
 
 impl KillChannel for TestKillChannel {
     fn poll(&self) -> LatchState {
-        if self.flag.load(Ordering::SeqCst) { LatchState::Tripped } else { LatchState::Clear }
+        if self.flag.load(Ordering::SeqCst) {
+            LatchState::Tripped
+        } else {
+            LatchState::Clear
+        }
     }
 }
 
@@ -97,7 +118,11 @@ impl FileKillChannel {
 impl KillChannel for FileKillChannel {
     fn poll(&self) -> LatchState {
         match std::fs::read_to_string(&self.path) {
-            Ok(s) if s.contains("\"latch\":\"tripped\"") || s.contains("\"latch\": \"tripped\"") => LatchState::Tripped,
+            Ok(s)
+                if s.contains("\"latch\":\"tripped\"") || s.contains("\"latch\": \"tripped\"") =>
+            {
+                LatchState::Tripped
+            }
             Ok(_) => LatchState::Clear,
             Err(_) => LatchState::Clear, // file absent = not yet tripped (fail-open for absence)
         }
@@ -105,9 +130,16 @@ impl KillChannel for FileKillChannel {
 }
 
 /// Write the kill state to a file (the supervisor's write side).
-pub fn write_kill_state(path: &std::path::Path, tripped: bool, reason: &str) -> std::io::Result<()> {
+pub fn write_kill_state(
+    path: &std::path::Path,
+    tripped: bool,
+    reason: &str,
+) -> std::io::Result<()> {
     let content = if tripped {
-        format!("{{\"latch\":\"tripped\",\"reason\":\"{}\"}}", reason.replace('"', "'"))
+        format!(
+            "{{\"latch\":\"tripped\",\"reason\":\"{}\"}}",
+            reason.replace('"', "'")
+        )
     } else {
         "{\"latch\":\"clear\"}".to_string()
     };
@@ -144,7 +176,7 @@ mod tests {
         // This does NOT affect the real supervisor channel.
         let (_fake_s, fake_c) = test_kill_channel();
         assert_eq!(fake_c.poll(), LatchState::Clear); // fake is Clear
-        assert_eq!(chan.poll(), LatchState::Tripped);  // real is still Tripped
+        assert_eq!(chan.poll(), LatchState::Tripped); // real is still Tripped
 
         // Attempt 4: double-trip is idempotent.
         sender.trip();
@@ -171,7 +203,9 @@ mod tests {
             } else {
                 denied += 1;
             }
-            if i == 2 { sender.trip(); }
+            if i == 2 {
+                sender.trip();
+            }
         }
         assert_eq!(dispatched, 3);
         assert_eq!(denied, 2);

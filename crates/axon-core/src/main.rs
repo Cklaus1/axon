@@ -157,7 +157,10 @@ enum Command {
         /// risk level, and a conservative syscall hint list.  A microVM launcher
         /// (e.g. `axon-vm`) reads this sidecar to generate seccomp policies and
         /// cgroup budgets without re-parsing the source.
-        #[arg(long, help = "Emit <binary>.axmeta capability manifest (axon-manifest/1)")]
+        #[arg(
+            long,
+            help = "Emit <binary>.axmeta capability manifest (axon-manifest/1)"
+        )]
         emit_manifest: bool,
     },
 
@@ -294,6 +297,38 @@ enum Command {
         /// Emit results as newline-delimited JSON (NDJSON).
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
+    },
+
+    /// Read a host journal (`AXON_RECORD`) as a human-reviewable transcript, or
+    /// diff two of them.
+    ///
+    /// The journal itself is hex — the right format for a replaying engine and the
+    /// wrong one for a person. This is the reviewer's view of it: what the run
+    /// touched, in order, in plain language, with a summary that leads on the
+    /// question a reviewer actually has ("did this change anything it should not
+    /// have?").
+    ///
+    /// Values are REDACTED by default (sizes + content digests). A journal holds
+    /// every file the run read and the value of every env var it looked up, so a
+    /// transcript that leaked credentials by default is one people would learn not
+    /// to share — which would defeat the point of having a shareable artifact.
+    Replay {
+        /// The journal to read (written by `AXON_RECORD=<path> axon run …`).
+        #[arg(help = "Path to a host journal")]
+        journal: PathBuf,
+
+        /// A second journal — report the FIRST event at which the two runs differ.
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Diff against a second journal: where did the two runs depart?"
+        )]
+        diff: Option<PathBuf>,
+
+        /// Show payload values instead of sizes + digests. Off by default because
+        /// a journal can contain secrets the run read.
+        #[arg(long, help = "Show payload values (may include secrets the run read)")]
+        show_values: bool,
     },
 
     /// Summarize the provenance log: per-`@[adaptive]`-fn score trajectory.
@@ -762,6 +797,11 @@ fn dispatch(command: Command) {
             jobs,
             json,
         } => cmd_test(files, filter, jobs, json),
+        Command::Replay {
+            journal,
+            diff,
+            show_values,
+        } => cmd_replay(journal, diff, show_values),
         Command::Trace {
             func,
             path,
@@ -943,23 +983,11 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // line:col (previously span-less). The byte offset → (line,col) via the
     // SourceMap, emitted as a structured PipelineDiagnostic JSON.
     let use_json_early = json_flag || !std::io::stderr().is_terminal();
-    let mut program = match axon_core::parse_source_located(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err((msg, offset)) => {
-            let (line, col) = axon_core::span::SourceMap::new(src.clone()).line_col(offset);
-            let diag = axon_core::PipelineDiagnostic {
-                // Parse errors use the E0000 catch-all (same as lib::check_pipeline).
-                code: "E0000".to_string(),
-                message: msg,
-                file: file.display().to_string(),
-                line: line as u32,
-                col: col as u32,
-                severity: "error".to_string(),
-                caret: String::new(),
-                expected: None,
-                found: None,
-                help: None,
-            };
+        Err(diag) => {
+            // `--json` forces JSON even on a tty; otherwise this is exactly
+            // `emit_pipeline_diag`'s rule, which `run` also uses.
             if use_json_early {
                 eprintln!("{}", diag.json());
             } else {
@@ -1007,6 +1035,10 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // JSON a tool/agent consumes carries file/line/col (resolved from each
     // typed diagnostic's byte-span against the source), not just code+message.
     let (located, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    // M5: accepted-`mut` notes ride on the same channel and schema as every
+    // other diagnostic, so a host parsing axon-diag/1 sees them without a
+    // special case.
+    let located: Vec<_> = located.into_iter().chain(mut_notes(&src, &file)).collect();
     // Import-cap (E1203) and lock (E1201/E1202/W1210) errors are file-level
     // strings with no span — they keep the string emit path.
     let mut string_errors = import_cap_errors;
@@ -2363,10 +2395,10 @@ fn cmd_target_mobile(file: &Path, triple: &str) {
             process::exit(2);
         }
     };
-    let (errors, _infer) = run_check_pipeline(&mut program, file);
+    let (errors, _infer) = check_program_located(&mut program, file);
     if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         process::exit(2);
     }
@@ -2456,7 +2488,7 @@ fn mobile_emit_object(
 ) -> Result<String, String> {
     let instantiations = {
         // Re-run inference to get instantiations for monomorphisation.
-        let (_e, mut infer) = run_check_pipeline(program, file);
+        let (_e, mut infer) = check_program_located(program, file);
         infer.drain_instantiations()
     };
     let mono = axon_core::mono::monomorphise(program, instantiations);
@@ -2535,10 +2567,10 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     };
 
     // Type-check before codegen (same gate as native build).
-    let (errors, mut infer_ctx) = run_check_pipeline(&mut program, file);
+    let (errors, mut infer_ctx) = check_program_located(&mut program, file);
     if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         process::exit(2);
     }
@@ -2783,7 +2815,10 @@ fn cmd_build(
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
     );
-    eprintln!("note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).");
+    eprintln!(
+        "note: `cargo build -p axon-core` produces a codegen-capable axon in ~3s \
+         (see BUILD_RESOLVED.md). Do NOT combine `codegen` with `serde-json`."
+    );
     eprintln!(
         "hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed."
     );
@@ -3041,10 +3076,10 @@ fn cmd_build_bpf(
     // allowlist E2300, the kind check E2302) AND the auto-implied @[total]
     // (E1208) / @[no_alloc] (E1704) gates, so an unbounded loop / heap touch /
     // un-granted helper is refused BEFORE codegen.
-    let (errors, _infer) = run_check_pipeline(program, source_path);
+    let (errors, _infer) = check_program_located(program, source_path);
     if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         return Err(format!("{} error(s); BPF build aborted", errors.len()));
     }
@@ -3145,11 +3180,10 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
     };
 
     // Type-check before running.
-    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _infer_ctx) = check_program_located(&mut program, &file);
     if !errors.is_empty() {
-        let use_json = !std::io::stderr().is_terminal();
-        for err in &errors {
-            emit_error(err, use_json);
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         process::exit(2);
     }
@@ -3159,8 +3193,55 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
     // input via the persisted provenance log (AXON_GOAL_CONTINUE) — so the
     // best score climbs run-over-run and converges. Autonomous iterate-to-
     // converge, driven by one command (builds on cross-run self-improvement).
+    // Record or replay the environment (AXON_RECORD / AXON_REPLAY), same as
+    // `axon run`.
+    //
+    // This is the path where reproducibility matters MOST and was missing: the
+    // optimizer's whole output is score deltas, and a score delta is meaningless
+    // if the environment moved underneath it. A goal that reads a data file, calls
+    // a model, or shells out was previously un-rerunnable, so "variant 7 scored
+    // 96" could not be checked — only believed.
+    //
+    // ONE journal spans the whole session, including every `--iterate` pass. That
+    // is deliberate: the iterate loop's later passes depend on the earlier ones
+    // (via AXON_GOAL_CONTINUE), so a per-pass journal would record fragments that
+    // cannot be replayed independently anyway.
+    //
+    // HONEST LIMIT, stated because a half-replayable optimizer would be worse than
+    // an unreplayable one: the provenance log is NOT in the journal (it is the
+    // recorder — journaling it would make recording recursive). So a replayed goal
+    // reproduces the program's host interactions exactly, while its cross-run
+    // continuation state still comes from the live log. To make a goal replay
+    // hermetic, point `XDG_CACHE_HOME` at a fresh directory so the log starts empty
+    // — the same way the recording run saw it.
+    let replay_mode = match axon_core::replay::install_from_env() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    // Shared by both the single-run and iterate paths: a divergence must decide the
+    // exit code regardless of what the goal program did with the error.
+    let finish_replay = |code: i32| -> i32 {
+        if let Some(d) = axon_core::replay::finish() {
+            if !d.already_reported {
+                eprintln!("axon: replay divergence: {}", d.report);
+            }
+            return axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE;
+        }
+        if replay_mode == axon_core::replay::Mode::Recording {
+            eprintln!(
+                "axon: recorded host journal to {}",
+                std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
+            );
+        }
+        code
+    };
+
     let Some(n) = iterate else {
-        process::exit(axon_core::interp::run_program(&program));
+        let code = axon_core::interp::run_program(&program);
+        process::exit(finish_replay(code));
     };
     let n = n.max(1);
     let start_ts = std::time::SystemTime::now()
@@ -3207,7 +3288,11 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
             eprintln!("# best: score {}{at}", best.score);
         }
     }
-    process::exit(code);
+    // A diverged replay of an OPTIMIZER run is worth flagging even louder than a
+    // plain one: the "# best: score …" line above is the whole point of the
+    // command, and if the environment moved during a replay that number describes
+    // a search that did not happen.
+    process::exit(finish_replay(code));
 }
 
 // ── trace ─────────────────────────────────────────────────────────────────────
@@ -3530,13 +3615,25 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
         }
     };
     eprintln!(
-        "axon: replaying run-id {rid} (seed={seed}, src={src})",
+        "axon: replaying run-id {rid} (seed={seed}, clock={ts}, src={src})",
         rid = rec.run_id,
         seed = rec.seed,
+        ts = rec.ts_ms,
         src = rec.src,
     );
     // Fix the seed so the re-run is deterministic.
     std::env::set_var("AXON_SEED", rec.seed.to_string());
+    // ...and fix the CLOCK, which used to be the hole in "deterministic for every
+    // run": a program calling `now_ms()` reproduced nothing, because the seed says
+    // nothing about time. The `run_start` record already carries the original
+    // run's wall-clock `ts_ms`, so the replay is anchored to the moment being
+    // reproduced rather than to the moment of replay. No record-format change was
+    // needed — the anchor was already being written.
+    //
+    // An explicit AXON_CLOCK wins, so a user can re-anchor a replay deliberately.
+    if std::env::var(axon_core::clock::ENV_VAR).is_err() {
+        axon_core::clock::set(rec.ts_ms as i64, 1);
+    }
     let source_path = PathBuf::from(&rec.src);
     cmd_run(source_path, false, vec![]);
 }
@@ -3575,6 +3672,44 @@ fn effective_seed() -> u64 {
 
 // ── run ───────────────────────────────────────────────────────────────────────
 
+/// `axon replay <journal> [--diff other] [--show-values]`
+///
+/// Reading and diffing only — this never executes anything. Serving a program FROM
+/// a journal is `AXON_REPLAY=<path> axon run …`; keeping the two apart means an
+/// operator inspecting an agent's behaviour cannot accidentally re-run it.
+fn cmd_replay(journal: PathBuf, diff: Option<PathBuf>, show_values: bool) {
+    let opts = axon_core::replay::RenderOpts { show_values };
+    let a = match axon_core::replay::read_journal(&journal) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    match diff {
+        None => {
+            print!("{}", axon_core::replay::render_transcript(&a, &opts));
+        }
+        Some(other) => {
+            let b = match axon_core::replay::read_journal(&other) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(2);
+                }
+            };
+            let d = axon_core::replay::diff_journals(&a, &b);
+            print!("{}", d.render(&opts));
+            // Exit 11 when they differ — the same code a diverging replay uses, so
+            // a script can branch on "these two runs are not the same run" without
+            // parsing prose, and it means the same thing in both places.
+            if d.first_difference.is_some() {
+                process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+            }
+        }
+    }
+}
+
 fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
@@ -3597,10 +3732,15 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     axon_core::interp::set_provenance_source(file.display().to_string());
 
     let src = read_source(&file);
-    let mut program = match parse_source(&src) {
+    // AXON_FOR_RLM §2. This used the unlocated `parse_source` and printed bare
+    // prose — no schema, no code, no line, no help — while `check` on the same
+    // file emitted a located, structured diagnostic. The parse tier is where
+    // 100% of a model's measured failures land, so the run-and-see loop every
+    // other RLM engine uses was the one loop getting nothing back.
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: {e}");
+        Err(diag) => {
+            emit_pipeline_diag(&diag);
             // Fix 8: exit 2 for compile errors.
             process::exit(2);
         }
@@ -3608,11 +3748,24 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
 
     // Type-check before running, so type errors are reported up front rather
     // than surfacing as interpreter runtime panics.
-    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    //
+    // AXON_FOR_RLM §2. This called `run_check_pipeline`, whose whole body is
+    // `format!("[{code}] {message}")` over the typed diagnostics — because it
+    // passes `""` as the source, so no span can resolve. `emit_error` then
+    // re-derived JSON from that string by regex, recovering only what happened
+    // to be inside `message`. `help`, `file`, `line`, `col`, `expected` and
+    // `found` were all dropped, so a model in a run-and-see loop was told
+    // neither what was wrong nor where. The located variant differs only in
+    // being handed `src`.
+    let (errors, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    // M5: notes are emitted even when the program is otherwise clean — `run`
+    // must not be the quiet path again (that was §2's whole defect).
+    for note in mut_notes(&src, &file) {
+        emit_pipeline_diag(&note);
+    }
     if !errors.is_empty() {
-        let use_json = !std::io::stderr().is_terminal();
         for err in &errors {
-            emit_error(err, use_json);
+            emit_pipeline_diag(err);
         }
         process::exit(2);
     }
@@ -3625,6 +3778,18 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // before running anything — in EVERY build (Z3 not required). Off by default
     // (no output, byte-unchanged); under AXON_REQUIRE_CERTS it fails closed.
     axon_core::cert_gate::enforce_or_exit();
+
+    // Record or replay every host interaction (AXON_RECORD / AXON_REPLAY).
+    // Installed here — after the checks, immediately before execution — so the
+    // journal contains the PROGRAM's host calls and none of the compiler's.
+    // A bad journal fails the run now rather than halfway through.
+    let replay_mode = match axon_core::replay::install_from_env() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
 
     // Phase 5 §4: when built with the `smt` feature, statically discharge the
     // refinement-return / scalar-`@[verify]` obligations Z3 can prove ∀-inputs,
@@ -3664,7 +3829,36 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
         axon_core::interp::run_program_with_discharged(&program, discharged)
     };
     // R28: flush the capability audit ledger before exiting.
-    let _ = axon_audit::flush_ledger();
+    //
+    // O-RLM-05: the flush now also confirms the file still holds every entry
+    // this process appended, and the result is no longer discarded. A ledger
+    // that lost records during the run is an integrity event — the audit exists
+    // so capability use is detectable, and silence there means the erasure
+    // worked. Reported loudly on stderr; whether it should also change the exit
+    // code is a policy call (every code 0–8 is already assigned) and is logged
+    // rather than decided here.
+    if let Err(e) = axon_audit::flush_ledger() {
+        eprintln!("error: audit ledger integrity check failed: {e}");
+    }
+
+    // A replay that diverged is not the run it claims to be, and saying so must
+    // not depend on the program's cooperation: the program may have caught the
+    // error from the host and exited 0. So the code is decided from state the
+    // program cannot reach. This is the "partial replay is worse than none"
+    // guard — an auditor must never be handed a transcript of a run that did
+    // not happen, with a clean exit to vouch for it.
+    if let Some(d) = axon_core::replay::finish() {
+        if !d.already_reported {
+            eprintln!("axon: replay divergence: {}", d.report);
+        }
+        process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+    }
+    if replay_mode == axon_core::replay::Mode::Recording {
+        eprintln!(
+            "axon: recorded host journal to {}",
+            std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
+        );
+    }
     process::exit(code);
 }
 
@@ -3978,10 +4172,10 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
     // Abort on type errors before running any tests.
     let primary_file = &files[0];
-    let (type_errors, _infer_ctx) = run_check_pipeline(&mut program, primary_file);
+    let (type_errors, _infer_ctx) = check_program_located(&mut program, primary_file);
     if !type_errors.is_empty() {
-        for err in &type_errors {
-            eprintln!("error: {err}");
+        for d in &type_errors {
+            emit_pipeline_diag(d);
         }
         eprintln!("error: {} type error(s); tests aborted", type_errors.len());
         process::exit(2);
@@ -4136,32 +4330,15 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
-/// Run the type-checking pipeline and return a list of error messages.
-///
-/// Back-compat string view over [`run_check_pipeline_located`]: each located
-/// diagnostic is rendered `[CODE] message` (message already folds in any
-/// expected/found detail). Callers that only need to count/print strings use
-/// this; the `--json` path (R8 typed end-to-end) consumes the located form so
-/// `file`/`line`/`col` survive to the consumer.
-fn run_check_pipeline(
-    program: &mut axon_core::ast::Program,
-    source_path: &Path,
-) -> (Vec<String>, axon_core::infer::InferCtx) {
-    // Source text is only needed to resolve spans → (line,col); the string view
-    // doesn't carry locations, so an empty SourceMap (dummy spans → line 0) is
-    // fine here. The JSON callers pass the real source via the `_src` variant.
-    let (diags, ctx) = run_check_pipeline_located(program, "", source_path);
-    let strings = diags
-        .iter()
-        .map(|d| format!("[{}] {}", d.code, d.message))
-        .collect();
-    (strings, ctx)
-}
-
 /// R8 typed end-to-end: run the pipeline and return **located** diagnostics
 /// (`code`/`message`/`file`/`line`/`col`), resolving each typed error's
 /// byte-offset span against `src` via [`axon_core::span::SourceMap`]. This is
-/// the source of truth; [`run_check_pipeline`] is the flattened string view.
+/// the only form. A flattened `[CODE] message` string view existed alongside it
+/// until 2026-08-06 and was what made ten CLI verbs report diagnostics with no
+/// location and no help: it passed `""` as the source, so no span could resolve.
+/// Two functions differing only in how much they discard is how that happened,
+/// so there is now one. `flat_diag` renders the flattened form at the two call
+/// sites that publish it inside a JSON schema.
 ///
 // NOTE: this must stay in sync with `lib::check_pipeline` re: the safety passes
 // it runs (resolve → infer → check → borrow → capabilities → verify). The two
@@ -4196,6 +4373,16 @@ fn run_check_pipeline_located(
                 severity: &str,
                 line: u32,
                 col: u32| {
+        // AXON_FOR_RLM §2b. Several checkers (capabilities/E1001 most visibly)
+        // write their fix hint into the message as a `help:` line. This closure
+        // used to hard-code `help: None`, so that hint reached the wire buried
+        // inside `message` and a consumer reading the `help` key saw nothing —
+        // on precisely the diagnostic a containment host must show its caller.
+        // `diag_schema::split_help` is the existing implementation of that
+        // convention (the string path has always applied it); using it here
+        // makes the typed and string representations agree instead of
+        // introducing a second splitter that could drift from it.
+        let (message, help) = axon_core::diag_schema::split_help(&message);
         diags.push(PipelineDiagnostic {
             code,
             message,
@@ -4206,7 +4393,7 @@ fn run_check_pipeline_located(
             caret: String::new(),
             expected: None,
             found: None,
-            help: None,
+            help: (!help.is_empty()).then_some(help),
         });
     };
     // R8 axon-diag/2: like `push` but carrying the structured type-mismatch +
@@ -4274,7 +4461,39 @@ fn run_check_pipeline_located(
         );
     }
     for warn in &resolve_result.warnings {
-        eprintln!("warning: [{}] {}", warn.code, warn.message);
+        // STRUCTURED, LOCATED, and carrying `help` — not the bare prose this used
+        // to print.
+        //
+        // AXON_FOR_RLM §2 is about `run` being the quiet path; the same defect
+        // lived in the WARNING path of every command. A resolver warning has a
+        // span and (now) a `fix`, and both were dropped on the floor here, so the
+        // most-hit diagnostic in the RLM benchmark — `let x = x + 1`, which cost
+        // 3 of 8 tasks — reached the model as "variable `x` shadows a previous
+        // binding" with no file, no line, and no suggestion. There was nothing in
+        // it to repair toward.
+        //
+        // Warnings are emitted here rather than pushed into `diags`: that list is
+        // the ERROR list — a non-empty one exits 2 and every entry prints with an
+        // `error:` prefix — so putting a warning in it would fail the build on a
+        // shadowed name and mislabel it as an error.
+        let (line, col) = loc(&warn.span);
+        let d = PipelineDiagnostic {
+            code: warn.code.to_string(),
+            message: warn.message.clone(),
+            file: file.clone(),
+            line,
+            col,
+            severity: "warning".to_string(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: warn.fix.clone(),
+        };
+        if !std::io::stderr().is_terminal() {
+            eprintln!("{}", d.json());
+        } else {
+            eprintln!("warning: {}", d.display());
+        }
     }
 
     // Step 1b: fill lambda capture lists (post-resolution pass)
@@ -4335,7 +4554,38 @@ fn run_check_pipeline_located(
         // with exit 2. Print it like the resolver warnings above and move on;
         // only genuine errors accumulate in `diags` (which drives the exit code).
         if matches!(err.severity, axon_core::checker::Severity::Warning) {
-            eprintln!("warning: [{}] {msg}", err.code);
+            // STRUCTURED, LOCATED, and carrying `help` — this used to print bare
+            // prose and drop both the span and the fix.
+            //
+            // That is the same defect AXON_FOR_RLM §2 fixed for errors and this
+            // session fixed for resolver warnings, surviving in a third place. It
+            // became load-bearing the moment E0302 was demoted to a warning by
+            // default: the help text naming `let _ = call()` — the whole reason a
+            // strict-by-default policy could be relaxed safely — was being thrown
+            // away exactly on the path that is now the default. Caught by
+            // `e0302_warns_by_default_errors_under_strict_and_names_the_discard`.
+            let (wline, wcol) = if !err.span.is_dummy() {
+                loc(&err.span)
+            } else {
+                (err.line, err.col)
+            };
+            let wd = PipelineDiagnostic {
+                code: err.code.to_string(),
+                message: msg.clone(),
+                file: file.clone(),
+                line: wline,
+                col: wcol,
+                severity: "warning".to_string(),
+                caret: String::new(),
+                expected: err.expected.clone(),
+                found: err.found.clone(),
+                help: err.fix.clone(),
+            };
+            if !std::io::stderr().is_terminal() {
+                eprintln!("{}", wd.json());
+            } else {
+                eprintln!("warning: {}", wd.display());
+            }
             continue;
         }
         // CheckError tracks both a byte-span and legacy line/col; prefer the
@@ -4523,13 +4773,13 @@ fn run_build_pipeline(
     opts: &BuildOptions,
 ) -> Result<(), String> {
     // Check first, fail fast on errors.
-    let (errors, mut infer_ctx) = run_check_pipeline(program, source_path);
+    let (errors, mut infer_ctx) = check_program_located(program, source_path);
     if !errors.is_empty() {
         // Print each diagnostic, not just the count — otherwise `axon build` on a
         // program with a type/name error showed only "N error(s); build aborted",
         // forcing the user to re-run `axon check` to see WHAT was wrong.
-        for e in &errors {
-            eprintln!("error: {e}");
+        for d in &errors {
+            emit_pipeline_diag(d);
         }
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
@@ -4769,6 +5019,117 @@ fn read_source(file: &PathBuf) -> String {
     })
 }
 
+/// Parse for a CLI verb, returning a fully-populated parse diagnostic on error.
+///
+/// AXON_FOR_RLM §2. `check` and `run` each used to build this diagnostic
+/// themselves, and they built *different* ones: `check` located the error and
+/// (after §1) attached a fix hint; `run` printed `error: parse error: …` with
+/// no code, no location and no hint. Two call sites constructing the same
+/// diagnostic is how they came to disagree, so there is now one.
+/// The error is boxed because `PipelineDiagnostic` is much larger than a
+/// `Program` handle, and clippy's `result_large_err` is right that every
+/// success path would otherwise pay for the error's size.
+fn parse_source_located_cli(
+    src: &str,
+    file: &Path,
+) -> Result<axon_core::ast::Program, Box<axon_core::PipelineDiagnostic>> {
+    // M5: clear the accepted-`mut` sink so a previous parse cannot leak notes
+    // into this one. Drained by `mut_notes` after the check pipeline runs.
+    axon_core::parser::clear_accepted_mut();
+    axon_core::parse_source_located(src).map_err(|(msg, offset)| {
+        let (line, col) = axon_core::span::SourceMap::new(src.to_string()).line_col(offset);
+        Box::new(axon_core::PipelineDiagnostic {
+            // Parse errors use the E0000 catch-all (same as lib::check_pipeline).
+            code: "E0000".to_string(),
+            // §1: a fix hint keyed on the token actually seen.
+            help: axon_core::parse_help::parse_help(&msg, src, offset),
+            message: msg,
+            file: file.display().to_string(),
+            line: line as u32,
+            col: col as u32,
+            severity: "error".to_string(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+        })
+    })
+}
+
+/// Type-check and return TYPED diagnostics, for call sites that do not already
+/// hold the source text.
+///
+/// `run_check_pipeline_located` needs the source only to turn spans into
+/// `(line, col)`. Sites that already read the file pass their own copy — that is
+/// the source that was actually parsed, and re-reading could in principle pick
+/// up a different file. Sites that never read it (they were handed a `&Program`)
+/// use this, which reads it here. A read failure degrades to an empty string,
+/// which resolves every span to line 0 — exactly the old flattened behaviour,
+/// so the fallback is never worse than what it replaces.
+fn check_program_located(
+    program: &mut axon_core::ast::Program,
+    source_path: &Path,
+) -> (
+    Vec<axon_core::PipelineDiagnostic>,
+    axon_core::infer::InferCtx,
+) {
+    let src = std::fs::read_to_string(source_path).unwrap_or_default();
+    run_check_pipeline_located(program, &src, source_path)
+}
+
+/// The `[CODE] message` string form, for the two JSON reports that publish
+/// diagnostics inside a schema (`axon-deploy/1`, `axon-redteam/1`).
+///
+/// Those payloads are a contract with `axon-web`, so their shape is preserved
+/// verbatim while the *diagnostics* those verbs print gain location and help.
+/// This is the one place the flattened form survives on purpose.
+fn flat_diag(d: &axon_core::PipelineDiagnostic) -> String {
+    format!("[{}] {}", d.code, d.message)
+}
+
+/// M5: turn each accepted foreign `mut` into an I0002 note.
+///
+/// The parser no longer refuses `let mut x` — accepting it asserts nothing false,
+/// since Axon locals are already reassignable — but a reader should still learn
+/// the keyword did nothing, so this is emitted rather than the program silently
+/// compiling as though `mut` had never been written.
+fn mut_notes(src: &str, file: &Path) -> Vec<axon_core::PipelineDiagnostic> {
+    let map = axon_core::span::SourceMap::new(src.to_string());
+    axon_core::parser::take_accepted_mut()
+        .into_iter()
+        .map(|offset| {
+            let (line, col) = map.line_col(offset);
+            axon_core::PipelineDiagnostic {
+                code: "I0002".to_string(),
+                message: "`mut` is not an Axon keyword and was ignored — bindings \
+                          are already reassignable"
+                    .to_string(),
+                file: file.display().to_string(),
+                line: line as u32,
+                col: col as u32,
+                severity: "note".to_string(),
+                caret: String::new(),
+                expected: None,
+                found: None,
+                help: Some("drop it: `let x = …`, then assign with `x = …`".to_string()),
+            }
+        })
+        .collect()
+}
+
+/// Emit a typed diagnostic, JSON when stderr is not a terminal.
+///
+/// The tty check is the same one `cmd_check` uses, so a piped `run` and a piped
+/// `check` produce the same bytes and an interactive one produces the same
+/// prose. Keeping the switch here rather than at each call site is what stops
+/// the two drifting again.
+fn emit_pipeline_diag(diag: &axon_core::PipelineDiagnostic) {
+    if !std::io::stderr().is_terminal() {
+        eprintln!("{}", diag.json());
+    } else {
+        eprintln!("error: {}", diag.display());
+    }
+}
+
 fn emit_error(msg: &str, as_json: bool) {
     if as_json {
         // R8: a versioned, structured NDJSON object (code/severity/message/help
@@ -4957,15 +5318,15 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     validate_ax_extension(&file);
     let src = read_source(&file);
 
-    let mut program = match parse_source(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: parse failed: {e}");
+        Err(diag) => {
+            emit_pipeline_diag(&diag);
             process::exit(2);
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
 
     // Collect top-level function items for the review report.
     let fns: Vec<_> = program
@@ -4983,7 +5344,7 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     if json_flag {
         let errors_json = errors
             .iter()
-            .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+            .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(",");
         let fns_json = fns.iter().map(|f| {
@@ -5053,8 +5414,11 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
         println!("  no type errors");
     } else {
         println!("  {} error(s):", errors.len());
-        for e in &errors {
-            println!("    {e}");
+        for d in &errors {
+            // The human review report keeps its indented stdout layout; it now
+            // shows the location too, which is the point of carrying the typed
+            // diagnostic this far.
+            println!("    {}", d.display());
         }
         process::exit(2);
     }
@@ -5124,42 +5488,87 @@ fn risk_level_name(r: i64) -> &'static str {
 fn syscalls_for_effects(effects: &[String]) -> Vec<&'static str> {
     // Baseline syscalls every Axon binary needs regardless of effects.
     let mut set: Vec<&'static str> = vec![
-        "read", "write", "exit", "exit_group", "brk", "mmap", "munmap",
-        "mprotect", "arch_prctl", "set_tid_address", "set_robust_list",
-        "rseq", "futex", "sigaltstack", "rt_sigaction", "rt_sigprocmask",
+        "read",
+        "write",
+        "exit",
+        "exit_group",
+        "brk",
+        "mmap",
+        "munmap",
+        "mprotect",
+        "arch_prctl",
+        "set_tid_address",
+        "set_robust_list",
+        "rseq",
+        "futex",
+        "sigaltstack",
+        "rt_sigaction",
+        "rt_sigprocmask",
     ];
     for eff in effects {
         match eff.to_lowercase().as_str() {
             "io" | "fs" => {
                 for s in &[
-                    "openat", "close", "lseek", "fstat", "newfstatat", "getdents64",
-                    "mkdir", "mkdirat", "unlink", "unlinkat", "rename", "renameat2",
-                    "dup", "dup2", "fcntl", "ioctl",
+                    "openat",
+                    "close",
+                    "lseek",
+                    "fstat",
+                    "newfstatat",
+                    "getdents64",
+                    "mkdir",
+                    "mkdirat",
+                    "unlink",
+                    "unlinkat",
+                    "rename",
+                    "renameat2",
+                    "dup",
+                    "dup2",
+                    "fcntl",
+                    "ioctl",
                 ] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             "net" | "ai" => {
                 for s in &[
-                    "socket", "connect", "sendto", "recvfrom", "sendmsg", "recvmsg",
-                    "setsockopt", "getsockopt", "getpeername", "getsockname",
-                    "poll", "epoll_create1", "epoll_ctl", "epoll_wait",
+                    "socket",
+                    "connect",
+                    "sendto",
+                    "recvfrom",
+                    "sendmsg",
+                    "recvmsg",
+                    "setsockopt",
+                    "getsockopt",
+                    "getpeername",
+                    "getsockname",
+                    "poll",
+                    "epoll_create1",
+                    "epoll_ctl",
+                    "epoll_wait",
                     "close",
                 ] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             "exec" => {
                 for s in &[
-                    "execve", "execveat", "fork", "clone", "clone3",
-                    "waitpid", "wait4", "kill", "pipe2", "dup2",
+                    "execve", "execveat", "fork", "clone", "clone3", "waitpid", "wait4", "kill",
+                    "pipe2", "dup2",
                 ] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             "random" => {
                 for s in &["getrandom", "openat"] {
-                    if !set.contains(s) { set.push(s); }
+                    if !set.contains(s) {
+                        set.push(s);
+                    }
                 }
             }
             _ => {}
@@ -5212,7 +5621,9 @@ fn build_axmeta_manifest(
     let mut fn_entries: Vec<String> = Vec::new();
 
     for item in &program.items {
-        let axon_core::ast::Item::FnDef(f) = item else { continue };
+        let axon_core::ast::Item::FnDef(f) = item else {
+            continue;
+        };
 
         let fn_effects: Vec<String> = f
             .effect_row
@@ -5416,13 +5827,31 @@ fn cmd_deploy(
     gates_file: Option<PathBuf>,
     allow_missing_gates: bool,
 ) {
+    // A DEPLOY is strict by default, inverting the authoring default.
+    //
+    // E0302 (an unused `Result`) is a warning while you are writing code, because
+    // most dropped results are harmless and blocking the common case taxes every
+    // author. A deploy is the opposite situation by definition: it is the
+    // consequential path, and a silently-swallowed `write_file` failure there is a
+    // wrong answer shipped rather than a papercut. So the same diagnostic is an
+    // error here, and the whole gate chain sees it.
+    //
+    // Set rather than read, and NOT overridden if the operator already chose:
+    // `AXON_STRICT=0 axon deploy` stays permissive on purpose, because refusing to
+    // honour an explicit choice is worse than the default being wrong.
+    if std::env::var("AXON_STRICT").is_err() {
+        std::env::set_var("AXON_STRICT", "1");
+    }
     validate_ax_extension(&file);
     let src = read_source(&file);
 
-    let mut program = match parse_source(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            let msg = format!("parse failed: {e}");
+        Err(diag) => {
+            // The typed diagnostic goes to stderr like every other verb's;
+            // the schema's prose `message` field is preserved for axon-web.
+            emit_pipeline_diag(&diag);
+            let msg = format!("parse failed: {}", diag.message);
             if json_flag {
                 println!(
                     "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"error\",\"message\":{}}}",
@@ -5436,12 +5865,14 @@ fn cmd_deploy(
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
         if json_flag {
+            // The `errors` array is part of the published schema that axon-web
+            // parses, so it keeps the flattened form byte-for-byte.
             let errs = errors
                 .iter()
-                .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+                .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
@@ -5450,8 +5881,8 @@ fn cmd_deploy(
                 errs,
             );
         } else {
-            for e in &errors {
-                eprintln!("error: {e}");
+            for d in &errors {
+                emit_pipeline_diag(d);
             }
         }
         process::exit(2);
@@ -5834,7 +6265,12 @@ fn run_quorum_gate(
         None => std::fs::read_dir(quorum_dir)
             .map_err(|e| format!("cannot read --quorum-dir {}: {e}", quorum_dir.display()))?
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|ext| ext == "vote").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "vote")
+                    .unwrap_or(false)
+            })
             .count(),
     };
 
@@ -5870,10 +6306,13 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
     validate_ax_extension(&file);
     let src = read_source(&file);
 
-    let mut program = match parse_source(&src) {
+    let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
-        Err(e) => {
-            let msg = format!("parse failed: {e}");
+        Err(diag) => {
+            // The typed diagnostic goes to stderr like every other verb's;
+            // the schema's prose `message` field is preserved for axon-web.
+            emit_pipeline_diag(&diag);
+            let msg = format!("parse failed: {}", diag.message);
             if json_flag {
                 println!(
                     "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"error\",\"message\":{}}}",
@@ -5887,12 +6326,14 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
         if json_flag {
+            // The `errors` array is part of the published schema that axon-web
+            // parses, so it keeps the flattened form byte-for-byte.
             let errs = errors
                 .iter()
-                .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+                .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
@@ -5901,8 +6342,8 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
                 errs,
             );
         } else {
-            for e in &errors {
-                eprintln!("error: {e}");
+            for d in &errors {
+                emit_pipeline_diag(d);
             }
         }
         process::exit(2);

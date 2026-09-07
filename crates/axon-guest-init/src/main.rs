@@ -47,7 +47,10 @@ fn main() {
         (args[1].clone(), args[1..].to_vec())
     } else {
         let bin = "/usr/bin/axon".to_string();
-        (bin.clone(), vec![bin, "run".to_string(), "/axon/program.ax".to_string()])
+        (
+            bin.clone(),
+            vec![bin, "run".to_string(), "/axon/program.ax".to_string()],
+        )
     };
 
     // 1. Re-seed entropy before any crypto-adjacent work.
@@ -298,8 +301,7 @@ fn exec_process(binary: &str, args: &[String]) -> ! {
             })
         })
         .collect();
-    let mut ptrs: Vec<*const libc::c_char> =
-        c_args.iter().map(|a| a.as_ptr()).collect();
+    let mut ptrs: Vec<*const libc::c_char> = c_args.iter().map(|a| a.as_ptr()).collect();
     ptrs.push(std::ptr::null());
 
     unsafe { libc::execvp(c_binary.as_ptr(), ptrs.as_ptr()) };
@@ -331,8 +333,14 @@ fn supervisor_main(first_child: libc::pid_t) -> ! {
         // As PID 1, signals whose default action is "ignore" stay ignored unless
         // we install handlers. Install forwarding handlers for the two most
         // common termination signals so they propagate to the Axon child.
-        libc::signal(libc::SIGTERM, forward_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGINT, forward_signal as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGTERM,
+            forward_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            forward_signal as *const () as libc::sighandler_t,
+        );
     }
 
     let mut exit_code: i32 = 0;

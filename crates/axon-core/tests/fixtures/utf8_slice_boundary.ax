@@ -1,0 +1,15 @@
+// R42 T1 — `str_slice` must REFUSE a byte range that splits a UTF-8 character.
+//
+// Before this fixture, the range below silently produced `""`, so the language
+// card's own taught idiom — `str_eq(str_slice(s, i, i + 1), " ")` — evaluated
+// `str_eq("", " ")` on every non-ASCII input and answered confidently wrong.
+//
+// This file must EXIT 101 with the E2200 panic. Boundary-aligned slices are
+// unaffected and are covered by `utf8_slice_aligned.ax`.
+
+fn main() -> i64 {
+    let s = "café"
+    // 5 bytes; `é` occupies bytes 3 and 4. 0..4 splits it.
+    println(str_slice(s, 0, 4))
+    0
+}

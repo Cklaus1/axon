@@ -9,8 +9,8 @@ use crate::mmds::{EffectSet, Policy};
 
 // ── MSR indices ───────────────────────────────────────────────────────────────
 
-const IA32_EFER:  u32 = 0xC000_0080;
-const IA32_STAR:  u32 = 0xC000_0081;
+const IA32_EFER: u32 = 0xC000_0080;
+const IA32_STAR: u32 = 0xC000_0081;
 const IA32_LSTAR: u32 = 0xC000_0082;
 const IA32_FMASK: u32 = 0xC000_0084;
 
@@ -32,8 +32,8 @@ static mut ALLOWED_EFFECTS: u64 = 0xFF;
 
 // ── Audit ring buffer ─────────────────────────────────────────────────────────
 
-static mut AUDIT_BUF:  [u8; 4096] = [0u8; 4096];
-static mut AUDIT_HEAD: usize      = 0;
+static mut AUDIT_BUF: [u8; 4096] = [0u8; 4096];
+static mut AUDIT_HEAD: usize = 0;
 
 fn audit_write_bytes(s: &[u8]) {
     unsafe {
@@ -229,12 +229,24 @@ extern "C" fn syscall_dispatch(nr: u64) -> u64 {
 }
 
 fn effect_name(bits: u64) -> &'static str {
-    if bits == EffectSet::IO.0     { return "IO"; }
-    if bits == EffectSet::FS.0     { return "FS"; }
-    if bits == EffectSet::NET.0    { return "Net"; }
-    if bits == EffectSet::AI.0     { return "AI"; }
-    if bits == EffectSet::EXEC.0   { return "Exec"; }
-    if bits == EffectSet::RANDOM.0 { return "Random"; }
+    if bits == EffectSet::IO.0 {
+        return "IO";
+    }
+    if bits == EffectSet::FS.0 {
+        return "FS";
+    }
+    if bits == EffectSet::NET.0 {
+        return "Net";
+    }
+    if bits == EffectSet::AI.0 {
+        return "AI";
+    }
+    if bits == EffectSet::EXEC.0 {
+        return "Exec";
+    }
+    if bits == EffectSet::RANDOM.0 {
+        return "Random";
+    }
     "unknown"
 }
 
@@ -302,15 +314,21 @@ fn clean_halt() -> ! {
 /// of the full-execution work — and instead halt cleanly.
 pub fn run_program(policy: &Policy) -> ! {
     const SYS_OPENAT: u64 = 257;
-    kprintln!("[axon-kernel] K5: launch — program's first op is openat(\"/axon/hello.ax\") → needs FS");
+    kprintln!(
+        "[axon-kernel] K5: launch — program's first op is openat(\"/axon/hello.ax\") → needs FS"
+    );
 
     if policy.allowed_effects.contains(EffectSet::FS) {
         kprintln!("[axon-kernel] K5: policy GRANTS FS — open permitted; program would proceed");
-        kprintln!("[axon-kernel] K5: (full interpreter ELF load + VFS is the remaining work) — halting");
+        kprintln!(
+            "[axon-kernel] K5: (full interpreter ELF load + VFS is the remaining work) — halting"
+        );
         clean_halt();
     }
 
-    kprintln!("[axon-kernel] K5: policy WITHHOLDS FS — issuing the real openat to exercise the gate");
+    kprintln!(
+        "[axon-kernel] K5: policy WITHHOLDS FS — issuing the real openat to exercise the gate"
+    );
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -433,7 +451,7 @@ pub fn init(policy: &Policy) {
         // STAR[63:48] = user CS base (0x18+8 = 0x20; no real user mode here)
         //   64-bit SYSRET loads: CS = STAR[63:48]+16, SS = STAR[63:48]+8
         const KERNEL_CS: u64 = 0x18;
-        const USER_CS:   u64 = 0x20; // 0x18 + 8
+        const USER_CS: u64 = 0x20; // 0x18 + 8
         wrmsr(IA32_STAR, (USER_CS << 48) | (KERNEL_CS << 32));
 
         // ── LSTAR: handler virtual address ────────────────────────────────────

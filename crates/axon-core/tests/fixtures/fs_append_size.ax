@@ -1,0 +1,51 @@
+// Behaviour fixture for `append_file` / `file_size`.
+//
+// The pre-existing `io_builtins.ax` only proves these NAMES type-check. That is
+// not enough for `append_file`, whose whole reason to exist is that it must NOT
+// truncate — a wrong implementation that simply forwarded to `write_file` would
+// pass a type-check fixture and fail here on the first line of output.
+
+fn main() -> i64 {
+    let p = "/tmp/axon_test_append.txt"
+
+    // write TRUNCATES, append EXTENDS. If append truncated, this prints "two".
+    let a = write_file(p, "one")
+    let b = append_file(p, "two")
+    match read_file(p) {
+        Ok(s) => println(s)
+        Err(e) => println(e)
+    }
+
+    // Size is in BYTES.
+    match file_size(p) {
+        Ok(n) => println(to_str(n))
+        Err(e) => println(e)
+    }
+
+    // A multi-byte character counts once PER BYTE, not once per character:
+    // "é" is two bytes in UTF-8. This is the difference between `file_size`
+    // and `str_len` on the contents, and it is what a `stat` would report.
+    let m = "/tmp/axon_test_append_utf8.txt"
+    let c = write_file(m, "é")
+    match file_size(m) {
+        Ok(n) => println(to_str(n))
+        Err(e) => println(e)
+    }
+
+    // Appending to a file that does not exist CREATES it.
+    let fresh = "/tmp/axon_test_append_fresh.txt"
+    let d = write_file(fresh, "")
+    let e2 = append_file(fresh, "created")
+    match read_file(fresh) {
+        Ok(s) => println(s)
+        Err(e) => println(e)
+    }
+
+    // Sizing a path that cannot be read is an Err, never a bogus 0 — a 0 would
+    // be indistinguishable from an empty file that really exists.
+    match file_size("/no/such/path/anywhere") {
+        Ok(n) => println(to_str(n))
+        Err(e) => println("ERR")
+    }
+    0
+}

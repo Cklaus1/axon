@@ -591,6 +591,14 @@ fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
     // value 8, not as a denial. This is what the completion marker buys: the
     // exit code can be trusted precisely because "did it finish?" is answered
     // separately.
+    //
+    // The job keeps its plain `8` tail: after renaming it is `__job_entry`, an
+    // ordinary function, so the language-level rule (a value falling out of
+    // `main` may not claim a ledger code — `interp::returned_exit_status`) does
+    // not touch it. The WRAPPER chooses the process status, and it now STATES the
+    // job's value with `exit`. That rule and this marker are the same argument
+    // made twice: the exit channel is a vocabulary, and "did it finish?" must not
+    // be inferred from it.
     let (code3, out3) = run_adhoc_job(
         &base.join("returns8"),
         &axon,

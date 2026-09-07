@@ -148,7 +148,9 @@ pub struct ChainStore {
 
 impl ChainStore {
     pub fn new(path: &Path) -> Self {
-        ChainStore { path: path.to_path_buf() }
+        ChainStore {
+            path: path.to_path_buf(),
+        }
     }
 
     /// Read every line, parsed. Each element is `(line_index, parse_result)` so
@@ -197,7 +199,10 @@ impl ChainStore {
                 fs::create_dir_all(parent)?;
             }
         }
-        let mut f = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
         let line = serde_json::to_string(entry)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         writeln!(f, "{line}")?;
@@ -474,7 +479,8 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    const GENESIS: &str = "axtcb1-ext:0000000000000000000000000000000000000000000000000000000000000001";
+    const GENESIS: &str =
+        "axtcb1-ext:0000000000000000000000000000000000000000000000000000000000000001";
     const PROG_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const PROG_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -484,7 +490,10 @@ mod tests {
         let h1 = compute_entry_hash(GENESIS, PROG_A, "run-1", 1_000);
         let h2 = compute_entry_hash(GENESIS, PROG_A, "run-1", 1_000);
         assert_eq!(h1, h2, "same inputs must produce byte-identical entry_hash");
-        assert!(h1.starts_with("axtcb1-run:"), "entry_hash must carry the axtcb1-run: prefix");
+        assert!(
+            h1.starts_with("axtcb1-run:"),
+            "entry_hash must carry the axtcb1-run: prefix"
+        );
     }
 
     /// Case 2: different `prog_hash` -> different `entry_hash` (no truncation/collision).
@@ -492,17 +501,26 @@ mod tests {
     fn different_prog_hash_different_entry_hash() {
         let h_a = compute_entry_hash(GENESIS, PROG_A, "run-1", 1_000);
         let h_b = compute_entry_hash(GENESIS, PROG_B, "run-1", 1_000);
-        assert_ne!(h_a, h_b, "different prog_hash must produce a different entry_hash");
+        assert_ne!(
+            h_a, h_b,
+            "different prog_hash must produce a different entry_hash"
+        );
     }
 
     /// R31 composition: genesis is fed in with the `axtcb1-ext:` prefix and the
     /// resulting link still carries the `axtcb1-run:` prefix distinctly.
     #[test]
     fn chain_composes_with_r31() {
-        assert!(GENESIS.starts_with("axtcb1-ext:"), "test genesis must use the R31 prefix");
+        assert!(
+            GENESIS.starts_with("axtcb1-ext:"),
+            "test genesis must use the R31 prefix"
+        );
         let h = compute_entry_hash(GENESIS, PROG_A, "run-0", 0);
         assert!(h.starts_with("axtcb1-run:"));
-        assert_ne!(h, GENESIS, "the run-chain link must differ from the genesis root");
+        assert_ne!(
+            h, GENESIS,
+            "the run-chain link must differ from the genesis root"
+        );
     }
 
     /// Build a `n`-entry chain in `dir`, returning `(store, entries, head)`.
@@ -694,7 +712,11 @@ mod tests {
             prev = entry_hash;
         }
 
-        assert_eq!(store.verify(GENESIS), Ok(3), "3 well-formed entries must verify OK");
+        assert_eq!(
+            store.verify(GENESIS),
+            Ok(3),
+            "3 well-formed entries must verify OK"
+        );
     }
 
     /// Case 4: corrupt seq 1's `entry_hash` -> Err(1), the FIRST broken link,
@@ -753,7 +775,11 @@ mod tests {
     fn verify_empty_chain_ok() {
         let dir = tempdir().unwrap();
         let store = ChainStore::new(&dir.path().join("does-not-exist.jsonl"));
-        assert_eq!(store.verify(GENESIS), Ok(0), "missing/empty chain file verifies trivially OK");
+        assert_eq!(
+            store.verify(GENESIS),
+            Ok(0),
+            "missing/empty chain file verifies trivially OK"
+        );
     }
 
     /// Case 6: wrong genesis -> Err(0) (breaks at the very first link).
@@ -775,7 +801,8 @@ mod tests {
             })
             .unwrap();
 
-        let wrong_genesis = "axtcb1-ext:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        let wrong_genesis =
+            "axtcb1-ext:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
         assert_eq!(
             store.verify(wrong_genesis),
             Err(0),
@@ -823,7 +850,10 @@ mod tests {
         // Must return a clear Err, never panic (the test itself not panicking
         // is the proof — a real panic would abort the test process).
         let result = store.verify(GENESIS);
-        assert!(result.is_err(), "malformed JSON line must be a clear Err, not a silent pass");
+        assert!(
+            result.is_err(),
+            "malformed JSON line must be a clear Err, not a silent pass"
+        );
     }
 
     /// `ChainStore::last_entry` on an empty store returns the genesis as seq 0.
@@ -878,7 +908,9 @@ mod tests {
         let store = ChainStore::new(&dir.path().join("chain.jsonl"));
         let entries = build_three_entry_chain(&store);
 
-        let export = store.export("vm-alpha", GENESIS, 1_751_000_000_000).unwrap();
+        let export = store
+            .export("vm-alpha", GENESIS, 1_751_000_000_000)
+            .unwrap();
         assert_eq!(export.schema, CHAIN_EXPORT_SCHEMA);
         assert_eq!(export.vm_id, "vm-alpha");
         assert_eq!(export.boot_root, GENESIS);
@@ -904,7 +936,9 @@ mod tests {
     fn empty_chain_export_verifies_ok() {
         let dir = tempdir().unwrap();
         let store = ChainStore::new(&dir.path().join("chain.jsonl"));
-        let export = store.export("vm-empty", GENESIS, 1_751_000_000_000).unwrap();
+        let export = store
+            .export("vm-empty", GENESIS, 1_751_000_000_000)
+            .unwrap();
         assert_eq!(export.head, GENESIS);
         assert!(export.entries.is_empty());
         assert_eq!(verify_export(&export), Ok(0));
@@ -918,7 +952,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = ChainStore::new(&dir.path().join("chain.jsonl"));
         build_three_entry_chain(&store);
-        let mut export = store.export("vm-alpha", GENESIS, 1_751_000_000_000).unwrap();
+        let mut export = store
+            .export("vm-alpha", GENESIS, 1_751_000_000_000)
+            .unwrap();
 
         let mut bad_hash = export.entries[1].entry_hash.clone();
         let last = bad_hash.pop().unwrap();
@@ -941,7 +977,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = ChainStore::new(&dir.path().join("chain.jsonl"));
         build_three_entry_chain(&store);
-        let mut export = store.export("vm-alpha", GENESIS, 1_751_000_000_000).unwrap();
+        let mut export = store
+            .export("vm-alpha", GENESIS, 1_751_000_000_000)
+            .unwrap();
 
         let mut bad_head = export.head.clone();
         let last = bad_head.pop().unwrap();

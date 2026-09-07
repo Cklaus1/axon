@@ -1,0 +1,26 @@
+// Fixture for the session dump's `Dict` handling (AXON_DUMP_BINDINGS).
+//
+// A dict was previously unwritable, so it could not cross a cell boundary —
+// which made every "group / tally / count" task impossible in a session even
+// though Axon has `dict_inc` and `arr_group_by`.
+
+fn main() -> i64 {
+    // Writable: single owner, uniform value type.
+    let counts = dict_new()
+    dict_set(counts, "apple", 2)
+    dict_set(counts, "fig", 5)
+
+    // Writable: empty. `dict_from_pairs([])` has no element type to infer from,
+    // so this must come back as `dict_new()`.
+    let empty = dict_new()
+
+    // NOT writable: `shared_a` and `shared_b` are the same Rc. Splitting them
+    // into two `dict_from_pairs(..)` calls would make a later `dict_set` on one
+    // invisible through the other.
+    let shared_a = dict_new()
+    dict_set(shared_a, "k", 1)
+    let shared_b = shared_a
+
+    println(to_str(dict_len(counts) + dict_len(shared_b)))
+    0
+}

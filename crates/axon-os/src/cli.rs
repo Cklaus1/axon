@@ -189,7 +189,7 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // R27: --killable enables manual kill via `axon-os kill`.
     let mut killable = false;
     let mut _coalition: Option<String> = None; // R27: coalition root (future use)
-    // R29: --monitor enables the continuous compliance monitor.
+                                               // R29: --monitor enables the continuous compliance monitor.
     let mut monitor_effects: Option<String> = None; // comma-sep allowed effects
     let mut monitor_ledger: Option<PathBuf> = None; // JSONL ledger to watch
     let mut i = 0;
@@ -302,12 +302,7 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         let violation_clone = Arc::clone(&violation);
         let kill_file_clone = kill_file.clone();
 
-        let monitor = ComplianceMonitor::new(
-            ledger,
-            kill_file_clone,
-            allowed,
-            stop_clone,
-        );
+        let monitor = ComplianceMonitor::new(ledger, kill_file_clone, allowed, stop_clone);
 
         let monitor_thread = std::thread::spawn(move || {
             let result = monitor.run();
@@ -412,7 +407,9 @@ fn cmd_verify(record: &Path) -> ExitCode {
         Err(e) => {
             println!("\u{2717} TAMPERED: {}", e.detail);
             // VerifyMismatch → exit 11 (R27 §5.3: freed 9 for RESOURCE_BOUND_EXIT_CODE).
-            ExitCode::from(crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8)
+            ExitCode::from(
+                crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8,
+            )
         }
     }
 }
@@ -468,7 +465,9 @@ fn cmd_replay(rest: &[&str]) -> ExitCode {
         }
         Err(e) => {
             println!("\u{2717} {}", e.detail);
-            ExitCode::from(crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8)
+            ExitCode::from(
+                crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8,
+            )
         }
     }
 }
@@ -550,7 +549,10 @@ fn cmd_kill(rest: &[&str]) -> ExitCode {
             ExitCode::from(0)
         }
         Err(e) => {
-            eprintln!("axon-os kill: cannot write kill file {}: {e}", kill_path.display());
+            eprintln!(
+                "axon-os kill: cannot write kill file {}: {e}",
+                kill_path.display()
+            );
             ExitCode::from(2)
         }
     }
@@ -616,7 +618,10 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
         Err(_) => "{\"latch\":\"clear\"}".to_string(),
     };
     let run_id_str = run_id.as_deref().unwrap_or(
-        kill_path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown"),
+        kill_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown"),
     );
     let tripped = state.contains("\"latch\":\"tripped\"");
     if json_out {
@@ -688,18 +693,19 @@ fn cmd_audit(rest: &[&str]) -> ExitCode {
     };
 
     match subcommand {
-        "verify" => {
-            match ledger.verify() {
-                Ok(()) => {
-                    println!("\u{2713} ledger intact ({} entries, chain verified)", ledger.len());
-                    ExitCode::from(0)
-                }
-                Err(e) => {
-                    println!("\u{2717} LEDGER TAMPERED: {e}");
-                    ExitCode::from(11)
-                }
+        "verify" => match ledger.verify() {
+            Ok(()) => {
+                println!(
+                    "\u{2713} ledger intact ({} entries, chain verified)",
+                    ledger.len()
+                );
+                ExitCode::from(0)
             }
-        }
+            Err(e) => {
+                println!("\u{2717} LEDGER TAMPERED: {e}");
+                ExitCode::from(11)
+            }
+        },
         "show" => {
             if json_out {
                 match ledger.export_json() {

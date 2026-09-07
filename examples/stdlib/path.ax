@@ -1,0 +1,187 @@
+// path.ax — path manipulation, in USERLAND. Pure string work, no host contact.
+//
+// R42 Slice 6 / T10.
+//
+// ── The security constraint, which is the whole reason this file has tests ────
+//
+// `@[contained]`'s fs allowlist REFUSES any path containing a `..` component
+// (E1001) — a static check added because `read("./data/")` plus `"../../etc/pw"`
+// would otherwise escape the sandbox. That check inspects the path the program
+// passes to a builtin.
+//
+// A joiner is therefore a laundering risk: if `path_join` can ASSEMBLE a `..`
+// path out of pieces — say from `dir_list` output — then the escape is
+// reconstructed downstream of a check that already exists. So:
+//
+//   * `path_normalize` resolves `..` LEXICALLY, and refuses to walk above the
+//     root of the path it was given (returning "" rather than a climbing path);
+//   * `path_join` normalizes its result, so it can never PRODUCE a `..`
+//     component even when handed one.
+//
+// `test_join_cannot_construct_a_traversing_path` is the test that matters here.
+// Both functions are pure string manipulation and grant no capability by
+// themselves — the point is that they must not manufacture an argument that
+// defeats one.
+
+/// Split on "/" and drop empty and "." components. Absolute-ness is tracked
+/// separately by the caller, since splitting loses the leading "/".
+fn path_parts(p: str) -> [str] {
+    let raw = str_split(p, "/")
+    let out = []
+    let i = 0
+    while i < len(raw) {
+        let c = raw[i]
+        if !str_eq(c, "") && !str_eq(c, ".") {
+            out = arr_push(out, c)
+        }
+        i = i + 1
+    }
+    out
+}
+
+fn path_is_absolute(p: str) -> bool { str_starts_with(p, "/") }
+
+/// Resolve `.` and `..` lexically, without touching the filesystem.
+///
+/// Returns "" when the path would climb ABOVE its own root — that is the refusal,
+/// and it is deliberately not "return the climbing path and let the caller check".
+/// A caller who forgets to check is exactly the case this exists to stop.
+fn path_normalize(p: str) -> str {
+    let parts = path_parts(p)
+    let abs = path_is_absolute(p)
+    let stack = []
+    let i = 0
+    let escaped = false
+    while i < len(parts) {
+        let c = parts[i]
+        if str_eq(c, "..") {
+            if len(stack) > 0 {
+                stack = arr_take(stack, len(stack) - 1)
+            } else {
+                // Nothing left to pop: this path climbs above its own root.
+                escaped = true
+            }
+        } else {
+            stack = arr_push(stack, c)
+        }
+        i = i + 1
+    }
+    if escaped {
+        ""
+    } else {
+        let body = str_join(stack, "/")
+        if abs { "/{body}" } else { body }
+    }
+}
+
+/// Join two path fragments. The result is NORMALIZED, so it never contains a
+/// `..` component — see the file header for why that is a security property and
+/// not a convenience.
+fn path_join(a: str, b: str) -> str {
+    // An absolute right-hand side replaces the left, as every path library does.
+    if path_is_absolute(b) {
+        path_normalize(b)
+    } else {
+        if str_eq(a, "") {
+            path_normalize(b)
+        } else {
+            path_normalize("{a}/{b}")
+        }
+    }
+}
+
+/// The final component, or "" for a path with none.
+fn path_basename(p: str) -> str {
+    let parts = path_parts(p)
+    if len(parts) == 0 { "" } else { parts[len(parts) - 1] }
+}
+
+/// Everything before the final component. "/" for an absolute path with one
+/// component, "" for a bare relative name.
+fn path_dirname(p: str) -> str {
+    let parts = path_parts(p)
+    let abs = path_is_absolute(p)
+    if len(parts) <= 1 {
+        if abs { "/" } else { "" }
+    } else {
+        let body = str_join(arr_take(parts, len(parts) - 1), "/")
+        if abs { "/{body}" } else { body }
+    }
+}
+
+/// The extension WITHOUT the dot, or "" when there is none. A leading dot means
+/// a hidden file rather than an extension, so ".bashrc" has no extension.
+fn path_ext(p: str) -> str {
+    let base = path_basename(p)
+    let idx = str_index_of(base, ".")
+    if idx <= 0 {
+        ""
+    } else {
+        str_slice(base, idx + 1, str_len(base))
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_join_cannot_construct_a_traversing_path() {
+    // THE security test. `@[contained]` statically refuses a `..` path, so a
+    // joiner that could assemble one would move the escape downstream of that
+    // check.
+    assert(str_eq(path_join("./out", "../etc/passwd"), "etc/passwd"))
+    // Climbing above the root yields "" — the refusal — not a usable path.
+    assert(str_eq(path_join("out", "../../etc/passwd"), ""))
+    assert(str_eq(path_normalize("../../etc"), ""))
+    assert(str_eq(path_normalize("/../etc"), ""))
+    // And no output of either function ever contains "..".
+    assert(!str_contains(path_join("./out", "../etc/passwd"), ".."))
+    assert(!str_contains(path_normalize("a/b/../../c"), ".."))
+}
+
+@[test]
+fn test_normalize_resolves_dot_and_dotdot() {
+    assert(str_eq(path_normalize("a/./b"), "a/b"))
+    assert(str_eq(path_normalize("a/b/../c"), "a/c"))
+    assert(str_eq(path_normalize("/a//b/"), "/a/b"))
+    assert(str_eq(path_normalize("a/b/.."), "a"))
+    // Absolute-ness survives normalization.
+    assert(path_is_absolute(path_normalize("/a/b/../c")))
+    assert(!path_is_absolute(path_normalize("a/b")))
+}
+
+@[test]
+fn test_join_basics() {
+    assert(str_eq(path_join("a", "b"), "a/b"))
+    assert(str_eq(path_join("a/", "b"), "a/b"))
+    assert(str_eq(path_join("", "b"), "b"))
+    // An absolute right-hand side wins.
+    assert(str_eq(path_join("a", "/b/c"), "/b/c"))
+}
+
+@[test]
+fn test_basename_and_dirname() {
+    assert(str_eq(path_basename("/a/b/c.txt"), "c.txt"))
+    assert(str_eq(path_basename("c.txt"), "c.txt"))
+    assert(str_eq(path_basename("/"), ""))
+    assert(str_eq(path_dirname("/a/b/c.txt"), "/a/b"))
+    assert(str_eq(path_dirname("a/b"), "a"))
+    assert(str_eq(path_dirname("c.txt"), ""))
+    assert(str_eq(path_dirname("/c.txt"), "/"))
+}
+
+@[test]
+fn test_ext_treats_a_leading_dot_as_hidden_not_an_extension() {
+    assert(str_eq(path_ext("a/b/c.txt"), "txt"))
+    assert(str_eq(path_ext("archive.tar.gz"), "tar.gz"))
+    assert(str_eq(path_ext("noext"), ""))
+    // A dotfile is hidden, not an extension named "bashrc".
+    assert(str_eq(path_ext(".bashrc"), ""))
+}
+
+fn main() -> i64 {
+    println(path_join("./out", "../etc/passwd"))
+    println(path_normalize("a/b/../c"))
+    println(path_basename("/a/b/c.txt"))
+    println(path_ext("archive.tar.gz"))
+    0
+}

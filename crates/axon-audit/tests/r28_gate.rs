@@ -37,7 +37,9 @@ fn acc_a1_smoke_audit_journey() {
         .expect("append Net");
 
     // Step 2: verify the chain.
-    ledger.verify().expect("verify should pass on a clean ledger");
+    ledger
+        .verify()
+        .expect("verify should pass on a clean ledger");
     assert_eq!(ledger.len(), 3);
 
     // Step 3: export as JSON and re-import.
@@ -76,12 +78,24 @@ fn acc_a2_all_capability_classes_recorded() {
     let mut ledger = Ledger::open(&path).expect("open");
 
     // One entry per EffectKind.
-    ledger.append("root", EffectKind::FS,     "read:/data/file.csv").unwrap();
-    ledger.append("root", EffectKind::Net,    "http_post:api.example.com/infer").unwrap();
-    ledger.append("root", EffectKind::AI,     "ai_complete:sha256:cafebabe").unwrap();
-    ledger.append("root", EffectKind::Exec,   "exec:ls -la").unwrap();
-    ledger.append("root", EffectKind::Random, "random_i64").unwrap();
-    ledger.append("root", EffectKind::IO,     "println:hello").unwrap();
+    ledger
+        .append("root", EffectKind::FS, "read:/data/file.csv")
+        .unwrap();
+    ledger
+        .append("root", EffectKind::Net, "http_post:api.example.com/infer")
+        .unwrap();
+    ledger
+        .append("root", EffectKind::AI, "ai_complete:sha256:cafebabe")
+        .unwrap();
+    ledger
+        .append("root", EffectKind::Exec, "exec:ls -la")
+        .unwrap();
+    ledger
+        .append("root", EffectKind::Random, "random_i64")
+        .unwrap();
+    ledger
+        .append("root", EffectKind::IO, "println:hello")
+        .unwrap();
 
     assert_eq!(ledger.len(), 6, "must have one entry per capability class");
 
@@ -118,14 +132,18 @@ fn acc_a3_quickstart_commands_execute() {
         bytes.iter().map(|x| format!("{x:02x}")).collect::<String>()
     };
     let op = format!("ai_complete:sha256:{prompt_hash}");
-    ledger.append("root", EffectKind::AI, &op).expect("append AI call");
+    ledger
+        .append("root", EffectKind::AI, &op)
+        .expect("append AI call");
 
     // Flush equivalent: verify chain.
     ledger.verify().expect("verify after append");
 
     assert_eq!(ledger.len(), 1, "should have 1 entry");
     assert!(
-        ledger.entries()[0].operation.starts_with("ai_complete:sha256:"),
+        ledger.entries()[0]
+            .operation
+            .starts_with("ai_complete:sha256:"),
         "AI entry must have sha256 prefix"
     );
 
@@ -154,7 +172,8 @@ fn acc_a4_hermetic_isolated_timeout() {
     // Simulate a run: open ledger, append entries.
     let entry_count = {
         let mut l = Ledger::open(&path).expect("open for run");
-        l.append("root", EffectKind::AI, "ai_complete:sha256:abc").unwrap();
+        l.append("root", EffectKind::AI, "ai_complete:sha256:abc")
+            .unwrap();
         l.append("root", EffectKind::FS, "write:/tmp/out").unwrap();
         l.verify().expect("chain intact during run");
         l.len()
@@ -181,7 +200,8 @@ fn acc_a6_ledger_mandatory_and_chained() {
     // First run: write two entries.
     {
         let mut l = Ledger::open(&path).expect("open first");
-        l.append("root", EffectKind::AI, "ai_complete:sha256:aaa").unwrap();
+        l.append("root", EffectKind::AI, "ai_complete:sha256:aaa")
+            .unwrap();
         l.append("root", EffectKind::FS, "write:/tmp/a").unwrap();
         l.verify().expect("verify first run");
     }
@@ -190,8 +210,10 @@ fn acc_a6_ledger_mandatory_and_chained() {
     {
         let mut l = Ledger::open(&path).expect("open second");
         assert_eq!(l.len(), 2, "should have loaded 2 existing entries");
-        l.append("alice", EffectKind::Net, "http_get:api.example.com").unwrap();
-        l.append("alice", EffectKind::Exec, "exec:cat /tmp/a").unwrap();
+        l.append("alice", EffectKind::Net, "http_get:api.example.com")
+            .unwrap();
+        l.append("alice", EffectKind::Exec, "exec:cat /tmp/a")
+            .unwrap();
         l.verify().expect("verify second run");
         assert_eq!(l.len(), 4);
 

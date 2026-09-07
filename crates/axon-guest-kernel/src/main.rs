@@ -36,7 +36,10 @@ pub extern "C" fn kernel_main(boot_params_phys: u64) -> ! {
     // K2: read policy from kernel cmdline (`axon.policy=<base64-json>`).
     mmds::init(boot_params_phys);
     let policy = mmds::read_policy();
-    kprintln!("[axon-kernel] policy ok  principal={}", policy.principal.unwrap_or("root"));
+    kprintln!(
+        "[axon-kernel] policy ok  principal={}",
+        policy.principal.unwrap_or("root")
+    );
 
     // K3: install syscall gate (SYSCALL MSR).
     enforce::init(&policy);

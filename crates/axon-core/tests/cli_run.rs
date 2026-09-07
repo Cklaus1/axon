@@ -115,6 +115,43 @@ mod harness_skip_rules {
 }
 
 /// it believes it is running actually ran.
+/// Attempt `axon build <fixture>` and return its combined output, or `None` when
+/// THIS axon has no codegen backend at all (in which case the caller must skip,
+/// not assert).
+///
+/// Probing `axon build --help` instead — which three R42 tests used to do — is
+/// broken in a way that is worth spelling out, because the repo has now been bitten
+/// by it twice (see `qemu_boot_test.sh`'s skip heuristic): the `build` verb and its
+/// flags are registered by the argument parser REGARDLESS of the `codegen` feature,
+/// so `--help` exits 0 in a codegen-free binary. The skip therefore never fires,
+/// and the test proceeds to assert an `E0910` refusal against a binary whose actual
+/// reply is "requires building axon with the `codegen` feature" — a failure that
+/// looks like a parity regression and is not one.
+///
+/// The lesson generalises: a capability probe must exercise the capability, not
+/// something adjacent to it that happens to be cheaper to check.
+fn build_output_or_skip(fixture_name: &str) -> Option<String> {
+    let out = axon()
+        .arg("build")
+        .arg(fixture(fixture_name))
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if all.contains("requires building axon with the `codegen` feature") {
+        note_harness_skip("axon build (no codegen feature)");
+        return None;
+    }
+    assert!(
+        !out.status.success(),
+        "native must not build {fixture_name}: {all}"
+    );
+    Some(all)
+}
+
 fn note_harness_skip(what: &str) {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/harness-skips.log");
@@ -416,7 +453,7 @@ fn r15_host_await_interactive_via_axon_run_reads_stdin() {
         "fn main() -> i64 {\n  \
            let name = host_await(\"name> \")\n  \
            println(\"Hello, {name}!\")\n  \
-           str_len(name)\n\
+           exit(str_len(name))\n  0\n\
          }\n",
     )
     .unwrap();
@@ -478,10 +515,13 @@ fn r15_human_in_the_loop_agent_gates_actions_on_approval() {
         "action 3 approved: {stdout}"
     );
     assert!(stdout.contains("approved 2 of 3"), "tally: {stdout}");
+    // Exit 0: the tally is on stdout (asserted above), not in the exit status —
+    // a count is an answer, and 2 in the status channel means "static failure" to
+    // anything reading this run.
     assert_eq!(
         out.status.code(),
-        Some(2),
-        "2 actions approved, got {:?}",
+        Some(0),
+        "the agent completed; the tally is stdout's job: {:?}",
         out.status.code()
     );
 }
@@ -512,10 +552,13 @@ fn r15_stateful_guessing_game_keeps_state_across_suspends() {
         stdout.contains("Correct — 3 tries!"),
         "7 found in 3: {stdout}"
     );
+    // Exit 0: the try count is on stdout ("Correct — 3 tries!", asserted above).
+    // Returning it would claim exit 3, which the ledger assigns to a failed
+    // @[verify] — the game finishing successfully must not read as a guard firing.
     assert_eq!(
         out.status.code(),
-        Some(3),
-        "3 tries, got {:?}",
+        Some(0),
+        "the game completed; the count is stdout's job: {:?}",
         out.status.code()
     );
 }
@@ -540,10 +583,12 @@ fn r15_guessing_game_terminates_on_eof_not_spins() {
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Bye."), "EOF ⇒ graceful quit: {stdout}");
+    // Exit 0: the count is stdout's job now (see the sibling test) — what this
+    // case is really about is that EOF ENDS the loop instead of spinning.
     assert_eq!(
         out.status.code(),
-        Some(1),
-        "1 guess before EOF, got {:?}",
+        Some(0),
+        "EOF must end the run cleanly, got {:?}",
         out.status.code()
     );
 }
@@ -759,7 +804,7 @@ fn phase6_handler_resume_semantics() {
 
     // 4. Handler erases when no matching effect is raised (pure body).
     let (code, _) =
-        run("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
+        run("fn main() -> i64 { exit(with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x })  0 }");
     assert_eq!(code, 5, "no matching effect → body runs unchanged");
 
     // 5. An inline `return(v) => e` arm rewrites the body's final value.
@@ -851,8 +896,8 @@ fn phase6_multishot_resume() {
     // 3. Backtracking: try two continuations, keep the max — a real multi-shot
     //    use. body = c*10+3; resume(0)→3, resume(1)→13; max = 13.
     let (code, _) = run(
-        "fn main() -> i64 { with handler { on Random(p) => { let lo = resume(0)\n let hi = resume(1)\n if lo > hi { lo } else { hi } } } \
-         { let c = random_i64(0, 1)\n c * 10 + 3 } }",
+        "fn main() -> i64 { exit(with handler { on Random(p) => { let lo = resume(0)\n let hi = resume(1)\n if lo > hi { lo } else { hi } } } \
+         { let c = random_i64(0, 1)\n c * 10 + 3 })  0 }",
     );
     assert_eq!(
         code, 13,
@@ -1387,7 +1432,7 @@ fn phase8_surface_search_keywords() {
          fn main() -> i64 { \
            let best = for!<HillClimb> maximize \"score\" to 100.0 in 50\n\
            println(\"{to_str_f64(best)}\")\n\
-           goal_best_input(\"score\", 100.0) }");
+           exit(goal_best_input(\"score\", 100.0))  0 }");
     assert_eq!(code, 7, "for! optimized to the peak input x=7");
     assert!(out.contains("100"), "for! reached the peak score: {out:?}");
 
@@ -1457,7 +1502,7 @@ fn phase8_surface_search_keywords() {
     let (code, _) = run(
         "@[adaptive]\n\
          fn m(x: i64) -> i64 { x }\n\
-         fn main() -> i64 { let s = 0\n for i in 0..5 { s = s + i }\n let _ = goal_run(\"m\", 10.0, 5)\n s }",
+         fn main() -> i64 { let s = 0\n for i in 0..5 { s = s + i }\n let _ = goal_run(\"m\", 10.0, 5)\n exit(s)  0 }",
     );
     assert_eq!(code, 10, "plain for-loops + goal_run still parse and run");
 }
@@ -2943,7 +2988,7 @@ fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
     // whole module run to completion.
     let (code, err) = run(
         &format!(
-            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"\")\n  sandbox_run(sb, \"tool\", 1)\n}}\n"
+            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"\")\n  exit(sandbox_run(sb, \"tool\", 1))\n  0\n}}\n"
         ),
         "deny",
     );
@@ -2963,7 +3008,7 @@ fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
     // frame_count 2 ⇒ exit 2.
     let (code2, err2) = run(
         &format!(
-            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"IO\")\n  sandbox_run(sb, \"tool\", 1)\n}}\n"
+            "{tool}fn main() -> i64 {{\n  let p = principal_root(\"p\", false, false, false, 100)\n               let sb = sandbox_create(p, \"IO\")\n  exit(sandbox_run(sb, \"tool\", 1))\n  0\n}}\n"
         ),
         "allow",
     );
@@ -2973,7 +3018,10 @@ fn native_module_calls_pass_the_runtime_sandbox_gate_interp_h02() {
     );
 
     // (3) NEGATIVE CONTROL — outside any sandbox the module is unaffected.
-    let (code3, err3) = run(&format!("{tool}fn main() -> i64 {{ tool(1) }}\n"), "free");
+    let (code3, err3) = run(
+        &format!("{tool}fn main() -> i64 {{ exit(tool(1))  0 }}\n"),
+        "free",
+    );
     assert_eq!(
         code3, 2,
         "outside any sandbox the native module must be unaffected: {err3}"
@@ -3116,7 +3164,7 @@ fn typed_let_bindings_enforce_the_annotation() {
     let f = std::env::temp_dir().join(format!("axon_tlet_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  y }\n",
+        "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  exit(y)  0 }\n",
     )
     .unwrap();
     let ok = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -3132,6 +3180,254 @@ fn typed_let_bindings_enforce_the_annotation() {
         bad.status.code(),
         Some(2),
         "a type-mismatched annotation must be rejected"
+    );
+}
+
+#[test]
+fn e0302_warns_by_default_errors_under_strict_and_names_the_discard() {
+    // POLICY, decided deliberately: an unused `Result` is a WARNING by default and
+    // an ERROR under `AXON_STRICT=1` (which `axon deploy` sets for itself).
+    //
+    // The default favours getting code running: most dropped results are harmless
+    // because the call usually succeeds, and refusing to compile for the common
+    // case taxes every author, human or model. Strict mode is for where a
+    // swallowed failure actually costs something — CI, and deploys.
+    //
+    // Recorded honestly because it was measured, not assumed: on the tasks_hard
+    // set the model dropped a `write_file` Result 6 times in 36 attempts, and the
+    // WARNING path is the one where a program exits 0 carrying a wrong answer —
+    // the shape a repair loop gets no signal from. W0002's shadowing case cost a
+    // task in exactly that way. The default is an ease-of-authoring choice with
+    // strict mode as the recovery, not a claim that the hazard went away.
+    //
+    // Either way the deliberate discard must be CHEAP and DISCOVERABLE. The help
+    // used to offer only `?` and `match` — both of which HANDLE the error — and
+    // never mentioned `let _ =`, so a reader who genuinely did not care could not
+    // learn the escape hatch existed. An undiscoverable escape hatch reads exactly
+    // like no escape hatch.
+    let f = std::env::temp_dir().join(format!("axon_e0302_{}.ax", std::process::id()));
+    // Write the probe file into the TEMP dir, not `./`. Under `cargo test` the CWD
+    // is the crate directory, so a relative path here litters the repository — it
+    // did, with two stray `e0302_probe.txt` files, which is how this was noticed.
+    let probe = std::env::temp_dir()
+        .join(format!("axon_e0302_probe_{}.txt", std::process::id()))
+        .display()
+        .to_string();
+    std::fs::write(
+        &f,
+        format!(
+            "fn main() -> i64 {{\n  write_file(\"{probe}\", \"x\")\n  println(\"ran\")\n  0\n}}\n"
+        ),
+    )
+    .unwrap();
+
+    // Default: a WARNING, the program still runs, and the help names the discard.
+    let def = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_STRICT")
+        .output()
+        .unwrap();
+    let dmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&def.stdout),
+        String::from_utf8_lossy(&def.stderr)
+    );
+    assert_eq!(
+        def.status.code(),
+        Some(0),
+        "by default a dropped Result must NOT block the run: {dmsg}"
+    );
+    assert!(
+        String::from_utf8_lossy(&def.stdout).contains("ran"),
+        "the rest of the program must still execute: {dmsg}"
+    );
+    assert!(dmsg.contains("E0302"), "it must still be reported: {dmsg}");
+    assert!(
+        dmsg.contains("warning"),
+        "by default it must be a WARNING, not an error: {dmsg}"
+    );
+    assert!(
+        dmsg.contains("let _ = call()"),
+        "the help must name the DELIBERATE discard, or the diagnostic is \
+         undiscoverable and reads as arbitrary: {dmsg}"
+    );
+
+    // Strict: an ERROR, exit 2, nothing runs.
+    let strict = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_STRICT", "1")
+        .output()
+        .unwrap();
+    let smsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&strict.stdout),
+        String::from_utf8_lossy(&strict.stderr)
+    );
+    assert_eq!(
+        strict.status.code(),
+        Some(2),
+        "AXON_STRICT=1 must make a dropped Result a hard error: {smsg}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&strict.stdout).contains("ran"),
+        "under strict the program must not execute: {smsg}"
+    );
+
+    // The discard the help promises must be accepted in BOTH modes — otherwise
+    // strict mode has no escape hatch at all, which is the failure this guards.
+    std::fs::write(
+        &f,
+        format!("fn main() -> i64 {{\n  let _ = write_file(\"{probe}\", \"x\")\n  0\n}}\n"),
+    )
+    .unwrap();
+    for mode in ["0", "1"] {
+        let ok = axon()
+            .args(["check", f.to_str().unwrap()])
+            .env("AXON_STRICT", mode)
+            .output()
+            .unwrap();
+        let okmsg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&ok.stdout),
+            String::from_utf8_lossy(&ok.stderr)
+        );
+        assert!(
+            !okmsg.contains("E0302"),
+            "`let _ = call()` is what the help tells the reader to write, so it \
+             must be accepted with AXON_STRICT={mode}: {okmsg}"
+        );
+    }
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&probe);
+}
+
+#[test]
+fn to_str_of_a_str_is_the_identity_in_both_engines() {
+    // `to_str(s)` where `s` is already a `str` used to be E0102. Measured on the
+    // `tasks_hard` set it was the single most common first error — 9 of 36
+    // attempts — and it is a design wart rather than a model mistake: `to_string`
+    // is total in essentially every language, so an identity call succeeding is
+    // what any reader expects. Failing a program for a reason that is not a bug is
+    // the opposite of what a diagnostic is for.
+    //
+    // Checked through a fn boundary and inside interpolation too, because the
+    // codegen path decides on the STATIC type (an Axon `str` is a StructValue, and
+    // so are structs and enums — an LLVM-value arm could not tell them apart).
+    let f = std::env::temp_dir().join(format!("axon_tostr_id_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn ident(s: str) -> str { to_str(s) }\n\
+         fn main() -> i64 {\n  \
+           let s = \"already a string\"\n  \
+           println(to_str(s))\n  \
+           println(ident(\"via a fn\"))\n  \
+           println(\"in interp {to_str(s)}\")\n  \
+           println(to_str(42))\n  \
+           0\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "to_str of a str must check + run clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout, "already a string\nvia a fn\nin interp already a string\n42\n",
+        "to_str of a str must return it UNCHANGED"
+    );
+
+    // I-2: native must agree byte-for-byte, or refuse.
+    let exe = f.with_extension("bin");
+    let b = axon()
+        .args(["build", f.to_str().unwrap(), "--out", exe.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let berr = format!(
+        "{}{}",
+        String::from_utf8_lossy(&b.stdout),
+        String::from_utf8_lossy(&b.stderr)
+    );
+    if berr.contains("requires building axon with the `codegen` feature") {
+        note_harness_skip("to_str-of-str native parity (no codegen feature)");
+    } else {
+        assert!(
+            b.status.success(),
+            "native build of to_str(str) failed: {berr}"
+        );
+        let nat = std::process::Command::new(&exe).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&nat.stdout),
+            stdout,
+            "native and interp must agree on to_str(str) (I-2)"
+        );
+        let _ = std::fs::remove_file(&exe);
+    }
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
+fn to_str_of_a_pattern_bound_str_is_also_the_identity() {
+    // The widening above accepted `to_str(s)` when the argument's type was
+    // ALREADY RESOLVED at the call site. A value bound by a pattern is not:
+    // inference is constraint-based, so `Err(e) => to_str(e)` still holds a type
+    // variable there, and the fallback constrained it to `i64` — producing
+    // "expected i64, found str" for precisely the identity call the widening
+    // exists to allow.
+    //
+    // This is not a corner: `match parse_int(s) { Err(e) => … to_str(e) … }` is
+    // the shape the error path of nearly every generated program takes, and it
+    // was still failing on the benchmark AFTER the widening landed. Half a fix
+    // reads as no fix to the caller who hits the other half.
+    let f = std::env::temp_dir().join(format!("axon_tostr_pat_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  \
+           match parse_int(\"zz\") {\n    \
+             Ok(v) => println(to_str(v))\n    \
+             Err(e) => println(to_str(e))\n  \
+           }\n  \
+           0\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "to_str of a pattern-bound str must check + run clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "could not parse `zz` as a base-10 integer\n",
+        "the Err payload must come back UNCHANGED through to_str"
+    );
+}
+
+#[test]
+fn to_str_of_a_non_scalar_is_still_refused() {
+    // The guard rail for the widening above: "unresolved" must not become a
+    // blanket "accept anything". An array has a concrete type, so it is still
+    // rejected — otherwise the two commits together would have quietly turned
+    // `to_str` into an untyped function that fails at RUNTIME instead of here.
+    let f = std::env::temp_dir().join(format!("axon_tostr_arr_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() {\n  let a = [1, 2, 3]\n  println(to_str(a))\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "to_str([i64]) must not run");
+    assert!(
+        err.contains("to_str"),
+        "the refusal must name `to_str`: {err}"
     );
 }
 
@@ -3479,7 +3775,7 @@ fn select_fires_first_ready_channel() {
         &f,
         "fn main() -> i64 {\n  let a = chan<i64>()\n  let b = chan<i64>()\n  \
          let result = 0\n  spawn { b.send(99) }\n  \
-         select { a.recv() => result = 1  b.recv() => result = 2 }\n  result\n}\n",
+         select { a.recv() => result = 1  b.recv() => result = 2 }\n  exit(result)\n  0\n}\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -4512,9 +4808,24 @@ fn parse_error_prefix_is_not_doubled() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    // AXON_FOR_RLM §2 changed what this test can assert, and the change is the
+    // point rather than a casualty of it.
+    //
+    // The `parse error: ` prose prefix came from `AxonError::Parse`'s Display,
+    // on the path `run` used and `check` did not — so the two verbs disagreed
+    // about this prefix exactly as they disagreed about `help`, `line` and
+    // `col`. `run` now emits the same structured diagnostic `check` does, which
+    // has never carried the prefix, so requiring it would be requiring the
+    // divergence back.
+    //
+    // Nothing is lost: the error's CLASS now travels as `code: E0000`, which a
+    // consumer can read without matching prose, and the human-facing form
+    // renders it as `error[E0000]`. Bug #7 was about the prefix appearing
+    // TWICE, and that is still what is guarded below — a re-wrapping regression
+    // would produce a doubled prefix here just as it did then.
     assert!(
-        msg.contains("parse error:"),
-        "should still have one prefix: {msg}"
+        msg.contains("\"code\":\"E0000\"") || msg.contains("error[E0000]"),
+        "the parse-error class must still be identifiable: {msg}"
     );
     assert!(
         !msg.contains("parse error: parse error:"),
@@ -4754,7 +5065,7 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let good = std::env::temp_dir().join(format!("axon_nestok_{}.ax", std::process::id()));
     std::fs::write(
         &good,
-        "type Inner = { v: i64 }\ntype Outer = { inner: Inner }\nfn main() -> i64 {\n  let o = Outer { inner: Inner { v: 5 } }\n  o.inner.v\n}\n",
+        "type Inner = { v: i64 }\ntype Outer = { inner: Inner }\nfn main() -> i64 {\n  let o = Outer { inner: Inner { v: 5 } }\n  exit(o.inner.v)\n  0\n}\n",
     )
     .unwrap();
     let outc = axon()
@@ -4810,7 +5121,7 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let sidx = std::env::temp_dir().join(format!("axon_sidx_{}.ax", std::process::id()));
     std::fs::write(
         &sidx,
-        "type P = { x: i64 }\nfn main() -> i64 {\n  let ps = [P { x: 7 }, P { x: 2 }]\n  ps[0].x\n}\n",
+        "type P = { x: i64 }\nfn main() -> i64 {\n  let ps = [P { x: 7 }, P { x: 2 }]\n  exit(ps[0].x)\n  0\n}\n",
     )
     .unwrap();
     let outsc = axon()
@@ -4896,7 +5207,7 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let mok = std::env::temp_dir().join(format!("axon_mok_{}.ax", std::process::id()));
     std::fs::write(
         &mok,
-        "type S = A | B\nfn classify(s: S) -> i64 {\n  let r = match s { S::A => 1\n    S::B => 2 }\n  r\n}\nfn main() -> i64 { classify(S::B) }\n",
+        "type S = A | B\nfn classify(s: S) -> i64 {\n  let r = match s { S::A => 1\n    S::B => 2 }\n  r\n}\nfn main() -> i64 { exit(classify(S::B))  0 }\n",
     )
     .unwrap();
     let outmc = axon()
@@ -5095,7 +5406,7 @@ fn calling_a_data_field_as_a_method_is_e0403() {
         &prim,
         "trait Double { fn double(self) -> i64 }\n\
          impl Double for i64 {\n  fn double(self: i64) -> i64 { self * 2 }\n}\n\
-         fn main() -> i64 {\n  let n = 5\n  n.double()\n}\n",
+         fn main() -> i64 {\n  let n = 5\n  exit(n.double())\n  0\n}\n",
     )
     .unwrap();
     let outpc = axon()
@@ -5727,7 +6038,7 @@ fn unknown_enum_variant_literal_is_e0404() {
     let cf = std::env::temp_dir().join(format!("axon_cfield_{}.ax", std::process::id()));
     std::fs::write(
         &cf,
-        "type S = A { x: i64 }\nfn main() -> i64 {\n  let s = S::A { x: 5 }\n  match s { S::A { x } => x }\n}\n",
+        "type S = A { x: i64 }\nfn main() -> i64 {\n  let s = S::A { x: 5 }\n  exit(match s { S::A { x } => x })\n  0\n}\n",
     )
     .unwrap();
     let outcc = axon()
@@ -5919,11 +6230,16 @@ fn wrong_arg_type_e0306_message_is_not_double_printed() {
 
 #[test]
 fn byte_identical_diagnostics_are_collapsed_to_one() {
-    // `"a" + "b"` runs the checker's non-numeric-operand check on BOTH operands;
+    // A binary op runs the checker's non-numeric-operand check on BOTH operands;
     // each produced an E0102 with the SAME code/message/line/col, so the user
     // saw the identical line twice. The pipeline now drops exact duplicates.
+    //
+    // The fixture was `"a" + "b"` until N2a made string concatenation LEGAL —
+    // the test then failed because there was no diagnostic left to collapse.
+    // Its subject was the collapsing, never string concat, so it moves to
+    // `true + false`, which still puts a non-numeric type on both sides.
     let f = std::env::temp_dir().join(format!("axon_dupdiag_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() { let x = \"a\" + \"b\" }\n").unwrap();
+    std::fs::write(&f, "fn main() { let x = true + false }\n").unwrap();
     let out = axon()
         .args(["check", f.to_str().unwrap()])
         .output()
@@ -5935,7 +6251,7 @@ fn byte_identical_diagnostics_are_collapsed_to_one() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        msg.matches("non-numeric type str").count(),
+        msg.matches("non-numeric type bool").count(),
         1,
         "the identical non-numeric E0102 must be reported exactly once: {msg}"
     );
@@ -5962,14 +6278,53 @@ fn byte_identical_diagnostics_are_collapsed_to_one() {
 
 #[test]
 fn run_exits_with_main_return_value() {
+    // `main`'s return is still the exit status — for values that ARE a status.
+    // 49, not 7: 7 is GOAL_BUDGET_EXIT_CODE, and a value that merely falls out of
+    // `main` may not claim a ledger code (see `interp::returned_exit_status`).
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
-    std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();
+    std::fs::write(&f, "fn main() -> i64 { 49 }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
-    let _ = std::fs::remove_file(&f);
     assert_eq!(
         out.status.code(),
-        Some(7),
+        Some(49),
         "main's i64 return should be the exit code"
+    );
+
+    // A returned ledger code does NOT pass through: it would be indistinguishable
+    // from the guard that owns it. The program is told so, and exits 1.
+    std::fs::write(&f, "fn main() -> i64 { 6 }\n").unwrap();
+    let forged = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let ferr = String::from_utf8_lossy(&forged.stderr);
+    assert_eq!(
+        forged.status.code(),
+        Some(1),
+        "a returned 6 must not be reportable as a refinement violation: {ferr}"
+    );
+    assert!(
+        ferr.contains("RESERVED"),
+        "and the program must be told why it did not get the status it named: {ferr}"
+    );
+
+    // Stating the same number with `exit` is a deliberate claim and is honoured —
+    // this is how a userland deploy gate signals a policy rejection.
+    std::fs::write(&f, "fn main() -> i64 { exit(6)  0 }\n").unwrap();
+    let stated = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert_eq!(
+        stated.status.code(),
+        Some(6),
+        "exit(6) states a status and must be honoured as written"
+    );
+
+    // A value that is not a status at all cannot silently become one: 3240 would
+    // have been observed as 168.
+    std::fs::write(&f, "fn main() -> i64 { 3240 }\n").unwrap();
+    let wide = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let werr = String::from_utf8_lossy(&wide.stderr);
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(wide.status.code(), Some(1), "3240 is not a status: {werr}");
+    assert!(
+        werr.contains("168"),
+        "the message must name what the caller WOULD have seen: {werr}"
     );
 }
 
@@ -5982,7 +6337,7 @@ fn verify_is_enforced_on_a_scalar_return_at_runtime() {
     // runs clean. (Mirrors the documented `@[verify(value <= 500)]` spend-cap.)
     let breach = "@[verify(value <= 500)]\n\
         fn recommend(roas: i64) -> i64 { roas + 100 }\n\
-        fn main() -> i64 { recommend(900) }\n";
+        fn main() -> i64 { exit(recommend(900))  0 }\n";
     let f = std::env::temp_dir().join(format!("axon_vscalar_bad_{}.ax", std::process::id()));
     std::fs::write(&f, breach).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -6004,7 +6359,7 @@ fn verify_is_enforced_on_a_scalar_return_at_runtime() {
 
     // A satisfied bound (i64 and f64) runs clean and returns normally.
     for (label, src, want) in [
-        ("i64 holds", "@[verify(value >= 0)]\nfn pos(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\nfn main() -> i64 { pos(-7) }\n", 7),
+        ("i64 holds", "@[verify(value >= 0)]\nfn pos(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\nfn main() -> i64 { exit(pos(-7))  0 }\n", 7),
         ("f64 holds", "@[verify(value <= 1.0)]\nfn frac() -> f64 { 0.5 }\nfn main() -> i64 {\n  let _ = frac()\n  0\n}\n", 0),
     ] {
         let f = std::env::temp_dir().join(format!("axon_vscalar_ok_{}_{label}.ax", std::process::id()));
@@ -6681,7 +7036,7 @@ fn function_can_return_an_enum() {
         "enum Plan { Step { v: i64, next: Plan }, Done }\n\
          fn make() -> Plan { Plan::Step { v: 7, next: Plan::Done } }\n\
          fn val(p: Plan) -> i64 { match p { Plan::Done => 0  Plan::Step { v, next } => v + val(next) } }\n\
-         fn main() -> i64 { val(make()) }\n",
+         fn main() -> i64 { exit(val(make()))  0 }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -6832,7 +7187,7 @@ fn or_patterns_in_match() {
         "enum C { Red, Green, Blue }\n\
          fn warm(c: C) -> i64 { match c { C::Red | C::Green => 1  C::Blue => 0 } }\n\
          fn rank(n: i64) -> i64 { match n { 1 | 2 | 3 => 10  _ => 0 } }\n\
-         fn main() -> i64 { warm(C::Green) + warm(C::Blue) + rank(2) }\n",
+         fn main() -> i64 { exit(warm(C::Green) + warm(C::Blue) + rank(2))  0 }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -6862,7 +7217,7 @@ fn struct_and_array_equality() {
          let a = P { x: 1, y: 2 }\n  let b = P { x: 1, y: 2 }\n  \
          let c = P { x: 9, y: 2 }\n  \
          let arr_eq = if [1, 2] == [1, 2] { 1 } else { 0 }\n  \
-         if a == b && a != c && arr_eq == 1 { 7 } else { 0 }\n}\n",
+         exit(if a == b && a != c && arr_eq == 1 { 7 } else { 0 })\n  0\n}\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -9422,8 +9777,8 @@ fn refinement_constant_via_bound_builtin_caught_statically() {
     }
     // ACCEPT (valid constant → builds + runs clean, no false positive):
     let accept = [
-        ("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = max_i64(0 - 5, 3)\n p }", 3),
-        ("type NonNeg = i64 where _ >= 0\nfn main() -> i64 { let p: NonNeg = abs_i64(0 - 7)\n p }", 7),
+        ("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = max_i64(0 - 5, 3)\n exit(p)  0 }", 3),
+        ("type NonNeg = i64 where _ >= 0\nfn main() -> i64 { let p: NonNeg = abs_i64(0 - 7)\n exit(p)  0 }", 7),
     ];
     for (i, (src, code)) in accept.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_cbb_ok_{}_{i}.ax", std::process::id()));
@@ -9621,18 +9976,18 @@ fn refinement_struct_field_and_whole_struct_enforced_at_runtime() {
     // 2. WHOLE-STRUCT refinement (`_.lo <= _.hi`) violated by non-constant. (today: 2)
     let (c, m) = run("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
          fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
-         fn main() -> i64 { let r = mk(10, 2)\n r.hi }\n");
+         fn main() -> i64 { let r = mk(10, 2)\n exit(r.hi)  0 }\n");
     assert_eq!(c, 6, "a whole-struct refinement violation must exit 6: {m}");
 
     // 3 + 4. No false positives: satisfying field + whole-struct values run clean.
     let (c, m) = run("type Pos = i64 where _ > 0\n\
          type Box = { v: Pos }\n\
          fn mk(x: i64) -> Box { Box { v: x } }\n\
-         fn main() -> i64 { let b = mk(5)\n b.v }\n");
+         fn main() -> i64 { let b = mk(5)\n exit(b.v)  0 }\n");
     assert_eq!(c, 5, "a satisfying struct field must run clean: {m}");
     let (c, m) = run("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
          fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
-         fn main() -> i64 { let r = mk(2, 10)\n r.hi }\n");
+         fn main() -> i64 { let r = mk(2, 10)\n exit(r.hi)  0 }\n");
     assert_eq!(c, 10, "a satisfying whole-struct must run clean: {m}");
 }
 
@@ -9706,7 +10061,7 @@ fn refinement_let_binding_enforced_at_runtime_and_statically() {
     // No false positives: satisfying constant + non-constant.
     let (c, m) = run("type Pos = i64 where _ > 0\n\
          fn neg(x: i64) -> i64 { 0 - x }\n\
-         fn main() -> i64 { let p: Pos = neg(0 - 3)\n p }\n");
+         fn main() -> i64 { let p: Pos = neg(0 - 3)\n exit(p)  0 }\n");
     assert_eq!(c, 3, "a satisfying non-constant let must run clean: {m}");
     assert_eq!(
         check("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = 7\n p }\n").0,
@@ -11808,7 +12163,7 @@ fn dict_from_str_malformed_is_recoverable_not_a_panic() {
     // (1) lenient: a 3-line input with one bad line yields a 2-entry dict, exit 0.
     let lenient = "fn main() -> i64 {\n  \
         let d = dict_from_str(\"a=1\\nbad_line\\nb=2\")\n  \
-        dict_len(d)\n\
+        exit(dict_len(d))\n  0\n\
     }\n";
     let f = std::env::temp_dir().join(format!("axon_d31a_{}.ax", std::process::id()));
     std::fs::write(&f, lenient).unwrap();
@@ -11824,10 +12179,10 @@ fn dict_from_str_malformed_is_recoverable_not_a_panic() {
 
     // (2) strict: dict_try_from_str returns Err on the malformed line.
     let strict = "fn main() -> i64 {\n  \
-        match dict_try_from_str(\"a=1\\nbad_line\\nb=2\") {\n    \
+        exit(match dict_try_from_str(\"a=1\\nbad_line\\nb=2\") {\n    \
             Ok(_) => 0\n    \
             Err(_) => 7\n  \
-        }\n\
+        })\n  0\n\
     }\n";
     let f2 = std::env::temp_dir().join(format!("axon_d31b_{}.ax", std::process::id()));
     std::fs::write(&f2, strict).unwrap();
@@ -12996,7 +13351,7 @@ fn multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks() {
             let _ = goal_run(\"pair\", 100.0, 80)\n  \
             let xs = goal_best_inputs(\"pair\", 100.0)\n  \
             // Exit code = x* + y* (3 + 7 = 10) so we can pin the contract.\n  \
-            xs[0] + xs[1]\n\
+            exit(xs[0] + xs[1])\n  0\n\
         }\n";
     let f = std::env::temp_dir().join(format!("axon_m2_{}.ax", std::process::id()));
     std::fs::write(&f, src2).unwrap();
@@ -13844,7 +14199,7 @@ fn uncertain_bool_condition_branches_on_inner_value() {
     for (label, src, want) in [
         ("if true branch", "fn main() -> i64 { let a = uncertain_new(10, 0.9)\n  if a > 5 { 1 } else { 0 } }\n", 1),
         ("if false branch", "fn main() -> i64 { let a = uncertain_new(3, 0.9)\n  if a > 5 { 1 } else { 0 } }\n", 0),
-        ("while loop", "fn main() -> i64 { let i = 0\n  let n = uncertain_new(3, 0.9)\n  while i < n { i = i + 1 }\n  i }\n", 3),
+        ("while loop", "fn main() -> i64 { let i = 0\n  let n = uncertain_new(3, 0.9)\n  while i < n { i = i + 1 }\n  exit(i)  0 }\n", 3),
     ] {
         let f = std::env::temp_dir().join(format!("axon_unccond_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
         std::fs::write(&f, src).unwrap();
@@ -13861,8 +14216,8 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     // STRUCT to the param, so `x` / `x * 2` silently produced 0. The value is now
     // unwrapped to its inner `T` at the call boundary (confidence dropped there).
     for (label, src, want) in [
-        ("identity", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  id(a) }\n", 5),
-        ("arithmetic", "fn double(x: i64) -> i64 { x * 2 }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  double(a) }\n", 10),
+        ("identity", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  exit(id(a))  0 }\n", 5),
+        ("arithmetic", "fn double(x: i64) -> i64 { x * 2 }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  exit(double(a))  0 }\n", 10),
     ] {
         let f = std::env::temp_dir().join(format!("axon_uncarg_{}_{}.ax", std::process::id(), label));
         std::fs::write(&f, src).unwrap();
@@ -13876,7 +14231,7 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let f = std::env::temp_dir().join(format!("axon_uncparam_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn getval(u: Uncertain<i64>) -> i64 { u.value }\nfn main() -> i64 { let a = uncertain_new(7, 0.9)\n  getval(a) }\n",
+        "fn getval(u: Uncertain<i64>) -> i64 { u.value }\nfn main() -> i64 { let a = uncertain_new(7, 0.9)\n  exit(getval(a))  0 }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -13893,7 +14248,7 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let ret = std::env::temp_dir().join(format!("axon_uncret_{}.ax", std::process::id()));
     std::fs::write(
         &ret,
-        "fn make() -> i64 { let a = uncertain_new(9, 0.9)\n  a }\nfn main() -> i64 { let r = make()\n  r + 1 }\n",
+        "fn make() -> i64 { let a = uncertain_new(9, 0.9)\n  a }\nfn main() -> i64 { let r = make()\n  exit(r + 1)  0 }\n",
     )
     .unwrap();
     let out = axon()
@@ -13910,7 +14265,7 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let keep = std::env::temp_dir().join(format!("axon_uncretkeep_{}.ax", std::process::id()));
     std::fs::write(
         &keep,
-        "fn mk() -> Uncertain<i64> { uncertain_new(5, 0.9) }\nfn main() -> i64 { let u = mk()\n  u.value }\n",
+        "fn mk() -> Uncertain<i64> { uncertain_new(5, 0.9) }\nfn main() -> i64 { let u = mk()\n  exit(u.value)  0 }\n",
     )
     .unwrap();
     let out = axon()
@@ -13927,10 +14282,10 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     // The SAME soft-typing applies to `Temporal<T>` at the boundary: it unwraps
     // to its present `value` when flowing into a plain-T param or scalar return.
     for (label, src, want) in [
-        ("temporal param", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  id(t) }\n", 7),
-        ("temporal return", "fn make() -> i64 { temporal_new(9, 100, 0.1) }\nfn main() -> i64 { let r = make()\n  r + 1 }\n", 10),
+        ("temporal param", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  exit(id(t))  0 }\n", 7),
+        ("temporal return", "fn make() -> i64 { temporal_new(9, 100, 0.1) }\nfn main() -> i64 { let r = make()\n  exit(r + 1)  0 }\n", 10),
         ("temporal compare", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  if t > 5 { 1 } else { 0 } }\n", 1),
-        ("temporal arithmetic", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  t + 3 }\n", 10),
+        ("temporal arithmetic", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  exit(t + 3)  0 }\n", 10),
     ] {
         let f = std::env::temp_dir().join(format!("axon_temp_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
         std::fs::write(&f, src).unwrap();
@@ -13990,7 +14345,7 @@ fn str_digits_only_strips_non_digits() {
         println(digits)\n  \
         // The full 10-digit number overflows a u8 exit code, so check via\n  \
         // a verifiable hash instead. len(\"4155550142\") == 10.\n  \
-        len(digits)\n\
+        exit(len(digits))\n  0\n\
     }\n";
     let f = std::env::temp_dir().join(format!("axon_strd_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
@@ -14081,7 +14436,7 @@ fn integer_overflow_panics_not_silently_wraps() {
 #[test]
 fn normal_arithmetic_unaffected_by_overflow_check() {
     // Guard against the checked-arithmetic change breaking ordinary math.
-    let src = "fn main() -> i64 { 2 + 3 * 4 - 1 }\n";
+    let src = "fn main() -> i64 { exit(2 + 3 * 4 - 1)  0 }\n";
     let f = std::env::temp_dir().join(format!("axon_arith_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
@@ -14238,7 +14593,7 @@ fn random_i64_empty_range_returns_lo() {
     // hi == lo is an empty half-open range [lo, lo); returning lo is the
     // documented boundary behavior (NOT an error — distinct from inverted args).
     let f = std::env::temp_dir().join(format!("axon_rngempty_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() -> i64 { random_i64(7, 7) }\n").unwrap();
+    std::fs::write(&f, "fn main() -> i64 { exit(random_i64(7, 7))  0 }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(
@@ -15758,6 +16113,135 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
     assert!(
         stdout.contains("random_i64 degenerate bounds match the interpreter"),
         "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+/// The deterministic virtual clock (`AXON_CLOCK`) — determinism, exact values,
+/// monotonicity, and interp/native parity.
+///
+/// Delegates to `scripts/clock_parity.sh`. That harness is picked up
+/// automatically by `parity_all.sh` (which globs `scripts/*_parity.sh`), but
+/// `parity_all.sh` only runs under `gate.sh --strict`, so without this wrapper the
+/// clock would go unverified on every ordinary test run — the vacuous-coverage
+/// shape this repo has hit repeatedly.
+///
+/// The clock logic exists TWICE (`axon-core/src/clock.rs` and a `vclock` module in
+/// `axon-rt`) because axon-core does not depend on axon-rt, so there is no shared
+/// home for it. Duplicated logic is exactly what a parity harness is for.
+#[test]
+fn virtual_clock_is_deterministic_and_matches_native() {
+    let script = format!(
+        "{}/../../scripts/clock_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("clock_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run clock_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if harness_skipped(&out, &stdout, &stderr, &script) {
+        eprintln!("clock parity skipped:\n{stdout}{stderr}");
+        note_harness_skip("codegen unavailable — clock parity");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "the virtual clock must be deterministic and match native (I-2):\n{stdout}{stderr}"
+    );
+    // Assert on the explicit PASS line, which the script emits ONLY when checks
+    // actually ran — a harness that verified nothing also exits 0, so success
+    // alone is not evidence. (An earlier version of this asserted the absence of
+    // "0 passed"; `harness_success_assertions_are_strings_their_scripts_can_emit`
+    // correctly rejected that, since a string the script never literally prints
+    // can only be reached vacuously.)
+    assert!(
+        stdout.contains("clock_parity: PASS"),
+        "expected the PASS line, which is only printed when checks ran:\n{stdout}{stderr}"
+    );
+}
+
+/// CLAUDE.md's mechanically-checkable claims must be TRUE.
+///
+/// This exists because `CLAUDE.md` is the language card for this repository: an
+/// agent acts on it at speed and does not independently rediscover the codebase
+/// first, so a stale claim there is qualitatively worse than a stale claim in
+/// ordinary docs. Measured the same week on the RLM benchmark, a card claiming
+/// "this is the whole surface" while naming 36 of 331 builtins cost 3 of 8 tasks
+/// outright — the model wrote code that could not typecheck because, per its map,
+/// the working function did not exist.
+///
+/// The gate found real staleness on its first run (`codegen.rs` referenced three
+/// times after it became a directory) and each of its checks is mutation-verified.
+#[test]
+fn claude_md_claims_are_true() {
+    let script = format!(
+        "{}/../../scripts/claims_gate.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "claims_gate.sh must exist — CLAUDE.md's claims are unverified without it"
+    );
+    let out = Command::new("bash")
+        .arg(&script)
+        .env("AXON", env!("CARGO_BIN_EXE_axon"))
+        .output()
+        .expect("run claims_gate.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "CLAUDE.md promises something the code does not have:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("claims_gate: PASS"),
+        "expected the PASS line, printed only when checks ran:\n{stdout}{stderr}"
+    );
+}
+
+/// The host journal: a run reproduces with its environment DELETED, and every
+/// way of faking that is refused. See `scripts/replay_host_gate.sh` for why each
+/// of the ten checks exists — the negative ones carry the weight.
+///
+/// No codegen dependency (the journal is an interpreter facility), so unlike the
+/// clock gate this one has no skip path: if it cannot run, that is a failure.
+#[test]
+fn host_journal_records_and_replays_without_the_environment() {
+    let script = format!(
+        "{}/../../scripts/replay_host_gate.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "replay_host_gate.sh must exist — the record/replay claim is unverified without it"
+    );
+    let out = Command::new("bash")
+        .arg(&script)
+        // Point the script at THIS test run's binary rather than letting it fall
+        // back to `./target/debug/axon`. Two reasons: the script SKIPs when that
+        // path is missing (and a skip has no PASS line, so the assertion below
+        // would fail confusingly), and a stale binary on disk would mean this
+        // test and its siblings are checking different builds.
+        .env("AXON", env!("CARGO_BIN_EXE_axon"))
+        .output()
+        .expect("run replay_host_gate.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a recorded run must replay byte-for-byte with its environment removed, \
+         and every way of faking that must be refused:\n{stdout}{stderr}"
+    );
+    // The PASS line is printed ONLY when checks ran — a harness that verified
+    // nothing also exits 0.
+    assert!(
+        stdout.contains("replay_host_gate: PASS"),
+        "expected the PASS line, which is only printed when checks ran:\n{stdout}{stderr}"
     );
 }
 
@@ -18683,5 +19167,1320 @@ fn r21_decimal_exact_arithmetic_and_overdraft() {
         Some(6),
         "overdraft must exit 6 (REFINE_VIOLATION), got {:?}",
         bad.status.code()
+    );
+}
+
+// ── AXON_FOR_RLM.md §2 — `axon run` must carry what `axon check` carries ─────
+//
+// Measured: `run` carried no `help` at any tier. The cause was not a policy
+// choice but a lossy string round-trip — `cmd_run` flattened typed diagnostics
+// to `[CODE] message` and `emit_error` re-derived JSON by regex, so `help`,
+// `file`, `line`, `col`, `expected` and `found` were all dropped. And at the
+// PARSE tier `run` emitted bare prose with no JSON at all, which is the tier
+// where 100% of a model's measured failures land.
+//
+// These tests assert on the `run` path specifically. `parse_help_probe.rs`
+// covers the same ground for `check`; the point here is that the two agree.
+
+/// A temp `.ax` file unique to this process AND this test name, so tests that
+/// run concurrently in the same process cannot collide on the path. (The
+/// project has a recorded flake class from tests sharing a fixed `/tmp` path.)
+fn tmp_ax(name: &str, src: &str) -> std::path::PathBuf {
+    let f = std::env::temp_dir().join(format!("axon_rlm_{}_{}.ax", name, std::process::id()));
+    std::fs::write(&f, src).expect("write temp source");
+    f
+}
+
+// Was `let mut count = 0`, until M5 made that COMPILE. These tests need *a*
+// parse error to check that the parse tier's diagnostic survives to each verb —
+// the specific error was never the subject. `:=` is still one.
+const MUT_SRC: &str = "fn main() -> i64 {\n    let c := 0\n    0\n}\n";
+
+#[test]
+fn run_emits_a_structured_parse_diagnostic_with_help() {
+    let f = tmp_ax("run_parse_help", MUT_SRC);
+    let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+
+    assert_eq!(out.status.code(), Some(2), "parse error exits 2: {stderr}");
+    // Before this change `run` printed `error: parse error: unexpected token…`
+    // — prose, no code, no location, no help.
+    assert!(
+        stderr.contains("\"schema\":\"axon-diag/1\""),
+        "run must emit the versioned schema at the parse tier: {stderr}"
+    );
+    assert!(stderr.contains("\"code\":\"E0000\""), "{stderr}");
+    assert!(
+        stderr.contains("\"line\":2"),
+        "must locate the error: {stderr}"
+    );
+    assert!(
+        stderr.contains("`:=` is not Axon"),
+        "must carry the fix hint: {stderr}"
+    );
+}
+
+#[test]
+fn run_and_check_agree_on_the_parse_diagnostic() {
+    // The round-trip equivalence gate. Any field one path carries and the other
+    // drops shows up here, which is what a per-field assertion cannot promise.
+    let f = tmp_ax("run_check_parse_parity", MUT_SRC);
+
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let check = axon().arg("check").arg(&f).output().expect("spawn check");
+    let _ = std::fs::remove_file(&f);
+
+    // `run` stamps `axon: run-id …` on stderr before anything else; that line is
+    // the replay handle and is not a diagnostic. Compare the diagnostic lines.
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .collect()
+    };
+    let run_diags = diag_lines(&String::from_utf8_lossy(&run.stderr));
+    let check_diags = diag_lines(&String::from_utf8_lossy(&check.stderr));
+
+    assert!(!run_diags.is_empty(), "run emitted no diagnostic JSON");
+    assert_eq!(
+        run_diags, check_diags,
+        "run and check must emit byte-identical diagnostic JSON"
+    );
+}
+
+/// A type error whose diagnostic carries a `help` — E0307 is the one
+/// `AXON_FOR_RLM.md` §2 cites as what the type tier already does well.
+const TYPE_ERR_SRC: &str = "fn f() -> i64 { \"hello\" }\nfn main() -> i64 { 0 }\n";
+
+#[test]
+fn run_carries_help_and_location_at_the_check_tier() {
+    let f = tmp_ax("run_check_tier_help", TYPE_ERR_SRC);
+    let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    // Previously `run` flattened this to `[E0307] return type mismatch…` and
+    // re-derived JSON from the string, so all four of these were absent.
+    assert!(stderr.contains("\"code\":\"E0307\""), "{stderr}");
+    assert!(stderr.contains("\"help\":"), "help must survive: {stderr}");
+    assert!(
+        stderr.contains("\"line\":1"),
+        "location must survive: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"expected\":\"i64\"") && stderr.contains("\"found\":\"str\""),
+        "the typed fields must survive: {stderr}"
+    );
+}
+
+#[test]
+fn run_and_check_agree_at_the_check_tier() {
+    // The critical-path gate, at the tier T-R3 changes. Byte equality over the
+    // whole diagnostic set, so a field carried by one path and dropped by the
+    // other cannot hide behind a passing per-field assertion.
+    let f = tmp_ax("run_check_tier_parity", TYPE_ERR_SRC);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let check = axon().arg("check").arg(&f).output().expect("spawn check");
+    let _ = std::fs::remove_file(&f);
+
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .collect()
+    };
+    let run_diags = diag_lines(&String::from_utf8_lossy(&run.stderr));
+    let check_diags = diag_lines(&String::from_utf8_lossy(&check.stderr));
+
+    assert!(!run_diags.is_empty(), "run emitted no diagnostic JSON");
+    assert_eq!(
+        run_diags, check_diags,
+        "run and check must emit byte-identical diagnostic JSON at the check tier"
+    );
+}
+
+#[test]
+fn run_and_check_emit_identical_diagnostics_across_a_corpus() {
+    // The critical-path extra gate for T-R3 (`tasks/build-loop-rlm.md`).
+    //
+    // Per-field assertions prove the fields someone thought to name survive.
+    // This proves ALL of them do, over every diagnostic-producing program in
+    // the tree — which is the only form of the claim that a partial fix cannot
+    // satisfy. It is the invariant the flattening broke.
+    //
+    // `run` EXECUTES a valid program, so the corpus is filtered by asking
+    // `check` first and comparing only where `check` already refuses. That also
+    // keeps the test hermetic: nothing here ever runs a program body.
+    let mut corpus: Vec<(String, String)> = vec![
+        ("mut".into(), MUT_SRC.into()),
+        ("type-err".into(), TYPE_ERR_SRC.into()),
+        (
+            "walrus".into(),
+            "fn main() -> i64 {\n    let c := 0\n    0\n}\n".into(),
+        ),
+        ("def".into(), "def main():\n    return 0\n".into()),
+        (
+            "unknown-name".into(),
+            "fn main() -> i64 {\n    nope()\n}\n".into(),
+        ),
+        (
+            "arity".into(),
+            "fn f(a: i64) -> i64 { a }\nfn main() -> i64 { f(1, 2) }\n".into(),
+        ),
+        (
+            "bad-arg-type".into(),
+            "fn main() -> i64 {\n    println(1)\n    0\n}\n".into(),
+        ),
+    ];
+
+    // Plus every example in the tree that fails `check` — programs nobody wrote
+    // for this test, which is where an unanticipated diagnostic shape would be.
+    let ex_dir = format!("{}/../../examples", env!("CARGO_MANIFEST_DIR"));
+    if let Ok(entries) = std::fs::read_dir(&ex_dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("ax") {
+                if let Ok(src) = std::fs::read_to_string(&p) {
+                    let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                    corpus.push((format!("example:{name}"), src));
+                }
+            }
+        }
+    }
+
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .collect()
+    };
+
+    let mut compared = 0usize;
+    for (name, src) in &corpus {
+        let safe: String = name.chars().filter(|c| c.is_alphanumeric()).collect();
+        let f = tmp_ax(&format!("corpus_{safe}"), src);
+
+        let check = axon().arg("check").arg(&f).output().expect("spawn check");
+        if check.status.code() != Some(2) {
+            let _ = std::fs::remove_file(&f);
+            continue; // `check` accepts it — `run` would execute it.
+        }
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let _ = std::fs::remove_file(&f);
+
+        let c = diag_lines(&String::from_utf8_lossy(&check.stderr));
+        let r = diag_lines(&String::from_utf8_lossy(&run.stderr));
+        assert_eq!(r, c, "run/check diagnostics diverge on `{name}`");
+        compared += 1;
+    }
+
+    // A corpus that silently matched nothing would pass this test while proving
+    // nothing — the vacuous-pass failure mode.
+    assert!(
+        compared >= 7,
+        "expected at least the 7 hand-written cases to be compared, got {compared}"
+    );
+}
+
+// ── AXON_FOR_RLM.md §2b — the containment refusal's own help ────────────────
+
+/// A `@[contained]` function reading outside its allowlist: the E1001 refusal
+/// an RLM host shows a model when the compiler stops it.
+const CONTAINED_SRC: &str = concat!(
+    "@[contained(fs: [read(\"./data/\")], net: [], exec: none)]\n",
+    "fn leak() -> i64 {\n",
+    "    match read_file(\"/etc/passwd\") {\n",
+    "        Ok(s) => { println(s) }\n",
+    "        Err(e) => { println(e) }\n",
+    "    }\n",
+    "    0\n",
+    "}\n",
+    "fn main() -> i64 { leak() }\n",
+);
+
+#[test]
+fn the_containment_refusal_puts_its_help_in_the_help_field() {
+    // §2b. E1001 carried its fix hint INSIDE `message` as a `help:` line, so a
+    // consumer reading the `help` key — the entire point of the versioned
+    // schema — saw no help on the one diagnostic containment exists to produce.
+    let f = tmp_ax("contained_help", CONTAINED_SRC);
+    let out = axon().arg("check").arg(&f).output().expect("spawn check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("\"code\":\"E1001\""))
+        .unwrap_or_else(|| panic!("expected an E1001 diagnostic: {stderr}"));
+
+    assert!(
+        line.contains("\"help\":"),
+        "E1001 must expose `help` as a first-class field: {line}"
+    );
+    assert!(
+        line.contains("Add `read("),
+        "the hint itself must survive: {line}"
+    );
+    // And it must no longer be duplicated inside `message`: a consumer that
+    // renders both would print the hint twice.
+    let msg_start = line.find("\"message\":").expect("message field");
+    let msg_end = line[msg_start..]
+        .find("\",\"")
+        .map(|i| msg_start + i)
+        .unwrap_or(line.len());
+    assert!(
+        !line[msg_start..msg_end].contains("help:"),
+        "help must be moved out of `message`, not copied: {line}"
+    );
+}
+
+// ── Diagnostic delivery: every type-checking verb agrees with `check` ────────
+//
+// T-R3 proved `run` and `check` emit byte-identical diagnostic JSON. Eight other
+// verbs still call the flattening `run_check_pipeline`, so they print
+// `error: [E0102] …` prose with no location, no help, and no schema — the exact
+// defect §2 fixed for `run`.
+//
+// This is the generalisation, and it is the gate for the conversion: no partial
+// conversion satisfies it.
+
+/// Verbs that type-check a `.ax` file and report diagnostics **on stderr**, so
+/// they must emit exactly what `check` emits.
+///
+/// Absent, each for a stated reason rather than by oversight:
+/// - `fmt`, `doc` — do not type-check at all.
+/// - `build`, `target` — need codegen; this test binary is built without it.
+/// - `ast review` — presents diagnostics in its own stdout report, not as stderr
+///   JSON. Covered by its own test below, because the decision (E1) was
+///   uniformity of *information*, not of formatting.
+const STDERR_DIAGNOSTIC_VERBS: &[&[&str]] = &[&["run"], &["test"], &["deploy"], &["redteam"]];
+
+/// `axon test` parses many files through `parse_source_files`, which returns
+/// `Vec<String>` and is a public API with four callers, so its PARSE tier was
+/// not converted with the rest. Recorded here so the gap is visible in the test
+/// output rather than hidden by a skipped case — see `tasks/opportunities.md`
+/// O-RLM-09.
+const TEST_VERB_PARSE_TIER_IS_A_KNOWN_GAP: bool = true;
+
+#[test]
+fn every_type_checking_verb_agrees_with_check_on_diagnostics() {
+    // Programs that `check` REFUSES. Comparing only on refused programs is what
+    // keeps this test hermetic: `deploy`, `test` and friends execute a program
+    // that type-checks, and a diagnostics test must never run arbitrary code as
+    // a side effect. A refused program stops at the diagnostic stage everywhere.
+    let corpus: &[(&str, &str)] = &[
+        ("type-err", TYPE_ERR_SRC),
+        ("mut", MUT_SRC),
+        ("contained", CONTAINED_SRC),
+        ("unknown-name", "fn main() -> i64 {\n    nope()\n}\n"),
+        (
+            "arity",
+            "fn f(a: i64) -> i64 { a }\nfn main() -> i64 { f(1, 2) }\n",
+        ),
+    ];
+
+    let diag_lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.trim_start().starts_with('{') && l.contains("axon-diag/1"))
+            .map(str::to_string)
+            .collect()
+    };
+
+    let mut compared = 0usize;
+    let mut skipped_known_gap = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (name, src) in corpus {
+        let f = tmp_ax(&format!("verbmatrix_{name}"), src);
+
+        let check = axon().arg("check").arg(&f).output().expect("spawn check");
+        if check.status.code() != Some(2) {
+            let _ = std::fs::remove_file(&f);
+            continue;
+        }
+        let expect = diag_lines(&String::from_utf8_lossy(&check.stderr));
+        assert!(!expect.is_empty(), "`check` produced no JSON for {name}");
+        let is_parse_tier = expect.iter().all(|l| l.contains("\"code\":\"E0000\""));
+
+        for verb in STDERR_DIAGNOSTIC_VERBS {
+            if verb == &["test"] && is_parse_tier && TEST_VERB_PARSE_TIER_IS_A_KNOWN_GAP {
+                skipped_known_gap += 1;
+                continue;
+            }
+            let out = axon()
+                .args(*verb)
+                .arg(&f)
+                .output()
+                .unwrap_or_else(|e| panic!("spawn {verb:?}: {e}"));
+            let got = diag_lines(&String::from_utf8_lossy(&out.stderr));
+            if got != expect {
+                failures.push(format!(
+                    "  {:<10} on {name}: expected {} diagnostic(s), got {}",
+                    verb.join(" "),
+                    expect.len(),
+                    got.len()
+                ));
+            }
+            compared += 1;
+        }
+        let _ = std::fs::remove_file(&f);
+    }
+
+    // Guard against a corpus that silently matched nothing: a vacuous pass here
+    // would read as "every verb agrees" while proving nothing at all.
+    assert!(
+        compared >= 15,
+        "expected the corpus to exercise every verb several times, got {compared} comparisons \
+         ({skipped_known_gap} skipped as the known `test` parse-tier gap)"
+    );
+    assert!(
+        failures.is_empty(),
+        "verbs disagree with `check` on diagnostics:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn ast_review_reports_diagnostics_with_their_location() {
+    // `ast review` publishes diagnostics in its own stdout report rather than as
+    // stderr JSON, so the matrix above excludes it. The claim it must satisfy is
+    // the same one in a different shape: the information reaches the reader.
+    // Before the conversion this printed `[E0307] return type mismatch…` with no
+    // location at all.
+    let f = tmp_ax("astreview_loc", TYPE_ERR_SRC);
+    let out = axon()
+        .args(["ast", "review"])
+        .arg(&f)
+        .output()
+        .expect("spawn ast review");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let _ = std::fs::remove_file(&f);
+
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    assert!(stdout.contains("E0307"), "must name the code: {stdout}");
+    assert!(
+        stdout.contains(":1:17"),
+        "must carry file:line:col: {stdout}"
+    );
+}
+
+#[test]
+fn the_did_you_mean_suggestion_is_deterministic_across_processes() {
+    // Found by the verb×check matrix: `run` and `check` disagreed on an
+    // unknown-name diagnostic with the SAME count but different text. Cause:
+    // `SymbolTable::suggest` iterates a HashMap and, on a Levenshtein tie, kept
+    // whichever candidate it happened to see first — so the answer depended on
+    // the per-process hash seed. Measured before the fix: 12 runs of the same
+    // command on the same file gave `exp` 7 times and `pow` 5 times.
+    //
+    // A compiler that gives different advice for identical input is a problem
+    // beyond this test: it makes diagnostics irreproducible, makes any test
+    // asserting on help text flaky, and — for the RLM host this work is for —
+    // means the model is told different things about the same program.
+    let f = tmp_ax("suggest_determinism", "fn main() -> i64 {\n    nope()\n}\n");
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..16 {
+        let out = axon().arg("check").arg(&f).output().expect("spawn check");
+        seen.insert(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        seen.len(),
+        1,
+        "`axon check` gave {} different outputs for one unchanged file:\n{}",
+        seen.len(),
+        seen.iter().cloned().collect::<Vec<_>>().join("\n---\n")
+    );
+}
+
+#[test]
+fn a_truncated_audit_ledger_is_reported_at_end_of_run() {
+    // O-RLM-05, end to end. `verify_against_file` having tests is not the same
+    // as it being WIRED: the caller check found it had no production caller, and
+    // `flush_ledger`'s result was being discarded at the call site with `let _`.
+    // This test exercises the real CLI so both halves have to be connected.
+    //
+    // The program erases the ledger's tail itself, which is the threat as
+    // stated: an audited program deleting its own trailing records.
+    let ledger =
+        std::env::temp_dir().join(format!("axon_ledger_trunc_{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&ledger);
+
+    let prog = format!(
+        "fn main() -> i64 {{\n    \
+             let _a = write_file(\"{}\", \"x\")\n    \
+             let _b = write_file(\"{}\", \"\")\n    \
+             0\n\
+         }}\n",
+        std::env::temp_dir().join("axon_trunc_probe.txt").display(),
+        ledger.display(),
+    );
+    let f = tmp_ax("ledger_trunc", &prog);
+
+    let out = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AUDIT_LEDGER", &ledger)
+        .output()
+        .expect("spawn axon run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&ledger);
+
+    assert!(
+        stderr.contains("audit ledger integrity check failed"),
+        "the run erased the ledger's records and nothing said so:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("truncated") || stderr.contains("unreadable"),
+        "the report must name what happened: {stderr}"
+    );
+}
+
+// ── M6: generic `arr_push` ───────────────────────────────────────────────────
+
+/// Headline: build a `[Rec]` by appending records.
+///
+/// `arr_push` was declared `([i64], i64) -> [i64]`, so Axon could REPRESENT a
+/// list of records but could not BUILD one — `arr_push(rows, Rec { … })` died
+/// with E0102/E0306 "expected i64, found Rec". That blocked the RLM stateful
+/// measurement, whose model-natural idiom is `rows = arr_push(rows, record)`.
+#[test]
+fn arr_push_is_generic_over_element_type() {
+    let src = "type Rec = { id: i64, region: str }\n\
+        fn main() -> i64 {\n  \
+            let rows = []\n  \
+            let rows2 = arr_push(rows, Rec { id: 1, region: \"north\" })\n  \
+            let rows3 = arr_push(rows2, Rec { id: 2, region: \"south\" })\n  \
+            println(\"n={to_str(len(rows3))} r0={rows3[0].region} id1={to_str(rows3[1].id)}\")\n  \
+            exit(len(rows3))\n  0\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_pushrec_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "pushing a struct should build a [Rec]: stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("n=2 r0=north id1=2"),
+        "the pushed records must survive intact: {stdout}"
+    );
+}
+
+/// A generic `arr_push` must not regress the i64 path it used to be pinned to.
+#[test]
+fn arr_push_still_works_for_i64_arrays() {
+    let src = "fn main() -> i64 {\n  \
+        let a = [1, 2, 3]\n  \
+        let b = arr_push(&a, 4)\n  \
+        println(\"len={to_str(len(b))} last={to_str(b[3])} src={to_str(len(a))}\")\n  \
+        exit(arr_sum_i64(&b))\n  0\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pushi64_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(10), "1+2+3+4 = 10: {stdout}");
+    assert!(
+        stdout.contains("len=4 last=4 src=3"),
+        "copy semantics must hold: {stdout}"
+    );
+}
+
+/// Generic is not untyped: the element type must still be CONSISTENT. Pushing
+/// a `str` onto a `[i64]` binds `T` twice to two different concrete types and
+/// must be refused at check time, not silently accepted.
+#[test]
+fn arr_push_refuses_a_mixed_element_type() {
+    let src = "fn main() -> i64 {\n  \
+        let a = [1, 2]\n  \
+        let b = arr_push(a, \"str\")\n  \
+        len(b)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pushmix_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "a mixed-type push must not type-check: {all}"
+    );
+    assert!(
+        all.contains("E0306"),
+        "the refusal should be an argument-type error: {all}"
+    );
+}
+
+/// I-2: native codegen lowers only the `[i64]` element case of `arr_push`
+/// (8-byte stride, i64 slots). Making the builtin generic must NOT open an
+/// interp/native divergence — a struct or bool element has to abort the build
+/// with E0910, never silently compute a wrong value.
+///
+/// The bool case is the sharp one: a `bool` is an *i1* IntValue, so it matched
+/// the old i64 lowering's pattern and was stored into (and read back from) an
+/// i64 slot — it built cleanly and returned the wrong element.
+#[test]
+fn arr_push_non_i64_elements_are_e0910_refused_natively() {
+    let pid = std::process::id();
+    for (label, src) in [
+        (
+            "struct",
+            "type Rec = { id: i64 }\n\
+             fn main() -> i64 { let rows = []\n let r = arr_push(rows, Rec { id: 1 })\n len(r) }\n",
+        ),
+        (
+            "bool",
+            "fn main() -> i64 { let a = [true, false]\n let b = arr_push(&a, true)\n \
+             if b[2] { 1 } else { 0 } }\n",
+        ),
+        (
+            "f64",
+            "fn main() -> i64 { let a = [1.5]\n let b = arr_push(&a, 2.5)\n len(b) }\n",
+        ),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let bin = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.bin"));
+        let out = axon()
+            .args(["build", f.to_str().unwrap(), "-o"])
+            .arg(&bin)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let _ = std::fs::remove_file(&bin);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if msg.contains("requires building axon with the `codegen` feature") {
+            eprintln!("codegen feature absent — arr_push E0910 case `{label}` skipped");
+            continue;
+        }
+        assert!(
+            msg.contains("E0910") && msg.contains("arr_push"),
+            "a {label}-element arr_push must abort the native build with E0910, got:\n{msg}"
+        );
+        assert!(
+            !out.status.success(),
+            "build must FAIL (not exit 0) on the {label} case:\n{msg}"
+        );
+    }
+}
+
+#[test]
+fn concat_plus_is_refused_natively_rather_than_miscompiled() {
+    // N2a/N2b, invariant I-2. `emit_binop` matches on integer/float value kinds;
+    // a str or slice operand fell through to a path that yields the LEFT
+    // operand. So before the guard, native BUILT these and printed the wrong
+    // answer: `"a" + "b"` → `a`, and `[1,2] + [3]` → length 2.
+    //
+    // A wrong answer from a successful build is the worst failure mode available
+    // — nothing tells the caller. Refusing is what arr_push and the
+    // effect-handler shapes already do when native cannot reproduce the
+    // interpreter, and it is what this asserts.
+    for (label, src, interp_expects) in [
+        (
+            "str",
+            "fn main() -> i64 {\n    println(\"a\" + \"b\")\n    0\n}\n",
+            "ab",
+        ),
+        (
+            "array",
+            "fn main() -> i64 {\n    let xs = [1, 2] + [3]\n    println(to_str(len(xs)))\n    0\n}\n",
+            "3",
+        ),
+    ] {
+        let f = tmp_ax(&format!("concat_native_{label}"), src);
+        let out_bin = std::env::temp_dir()
+            .join(format!("axon_concat_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&out_bin);
+
+        // The interpreter is the oracle and must be right.
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(
+            stdout.lines().next_back().unwrap_or(""),
+            interp_expects,
+            "{label}: interpreter must concatenate"
+        );
+
+        // Native must refuse, and leave nothing behind.
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .output()
+            .expect("spawn build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            continue; // codegen absent in this build — nothing to assert
+        }
+        assert_ne!(build.status.code(), Some(0), "{label}: must not build: {msg}");
+        assert!(msg.contains("E0910"), "{label}: must be the refusal class: {msg}");
+        assert!(
+            !out_bin.exists(),
+            "{label}: a refused build must leave no binary"
+        );
+        let _ = std::fs::remove_file(&out_bin);
+    }
+}
+
+/// `append_file` must EXTEND, and `file_size` must report BYTES.
+///
+/// Behaviour, not just type-checking: an `append_file` that forwarded to
+/// `write_file` would satisfy every signature-level check and still be wrong on
+/// the very first line of this output. `io_builtins.ax` cannot catch that.
+#[test]
+fn append_file_extends_and_file_size_counts_bytes() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("fs_append_size.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec![
+            "onetwo",  // append extended rather than truncated
+            "6",       // bytes
+            "2",       // "é" is ONE character but TWO bytes
+            "created", // append created the file's content
+            "ERR",     // an unreadable path errs rather than reporting 0
+        ],
+        "unexpected output:\n{stdout}"
+    );
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Native codegen must refuse the two new fs builtins rather than emit a binary
+/// that computes something else (invariant I-2, sound-by-refusal).
+///
+/// This is not decoration: the refusal comes from codegen's default arm, so it
+/// holds only as long as nobody adds a half-lowering. If someone does, this
+/// fails and forces the parity question to be answered deliberately.
+#[test]
+fn native_refuses_the_new_fs_builtins_rather_than_diverging() {
+    let Some(all) = build_output_or_skip("fs_append_size.ax") else {
+        return;
+    };
+    for b in ["append_file", "file_size"] {
+        assert!(
+            all.contains("E0910") && all.contains(b),
+            "expected an E0910 refusal naming `{b}`, got:\n{all}"
+        );
+    }
+}
+
+/// A dict must survive a session dump, and an ALIASED dict must be refused
+/// rather than silently split into independent copies.
+///
+/// `Value::Dict` is `Rc<RefCell<..>>`. Writing two aliasing bindings out as two
+/// `dict_from_pairs(..)` calls reconstructs them as two separate dicts, so a
+/// later `dict_set` through one stops being visible through the other — a
+/// silent semantic change across a cell boundary. Skipping with a reason is the
+/// same call R15 made for `Chan`.
+#[test]
+fn dicts_round_trip_through_a_dump_and_aliases_are_refused() {
+    let dump = std::env::temp_dir().join("axon_test_dump_dicts.ax");
+    let _ = std::fs::remove_file(&dump);
+    let out = axon()
+        .arg("run")
+        .arg(fixture("dump_dicts.ax"))
+        .env("AXON_DUMP_BINDINGS", &dump)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dumped = std::fs::read_to_string(&dump).expect("dump file should exist");
+
+    assert!(
+        dumped.contains(r#"let counts = dict_from_pairs([("apple", 2), ("fig", 5)])"#),
+        "a plain dict should be written back in key order:\n{dumped}"
+    );
+    assert!(
+        dumped.contains("let empty = dict_new()"),
+        "an empty dict has no element type, so it must come back as dict_new():\n{dumped}"
+    );
+    for name in ["shared_a", "shared_b"] {
+        assert!(
+            dumped.contains(&format!("// SKIPPED {name}: dict is shared")),
+            "aliased dict `{name}` must be skipped WITH a reason, not split:\n{dumped}"
+        );
+    }
+    // And the skip must not be a blanket dict skip — the unaliased ones stayed.
+    assert!(
+        !dumped.contains("// SKIPPED counts"),
+        "only ALIASED dicts should be skipped:\n{dumped}"
+    );
+
+    // The dump must re-run as ordinary Axon: it becomes the next cell's prelude,
+    // so a form that does not type-check would brick the session.
+    let replay = std::env::temp_dir().join("axon_test_dump_dicts_replay.ax");
+    std::fs::write(
+        &replay,
+        format!(
+            "fn main() -> i64 {{\n{}\n    println(to_str(dict_get_or(counts, \"fig\", 0)))\n    0\n}}\n",
+            dumped
+                .lines()
+                .filter(|l| l.starts_with("let "))
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )
+    .unwrap();
+    let again = axon().arg("run").arg(&replay).output().unwrap();
+    let so = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        again.status.success() && so.contains('5'),
+        "the dumped prelude must re-run and preserve values, got:\n{so}{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}
+
+/// A binding that shadows a builtin must not survive a session dump.
+///
+/// `let len = 5` is legal in one cell and only warns. Persisted into the next
+/// cell's prelude it makes `len(xs)` fail with E0306 for the rest of the
+/// session, and the session cannot recover. This is the largest single cause of
+/// failure found in a `tasks_hard` run: one task naming a variable `len`
+/// poisoned 14 of the cells after it.
+#[test]
+fn a_binding_that_shadows_a_builtin_does_not_persist() {
+    let dump = std::env::temp_dir().join("axon_test_dump_shadow.ax");
+    let _ = std::fs::remove_file(&dump);
+    let out = axon()
+        .arg("run")
+        .arg(fixture("dump_shadow_builtin.ax"))
+        .env("AXON_DUMP_BINDINGS", &dump)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dumped = std::fs::read_to_string(&dump).expect("dump file should exist");
+
+    assert!(
+        dumped.contains("// SKIPPED len: shadows the builtin"),
+        "`len` must be skipped WITH a reason, not silently dropped:\n{dumped}"
+    );
+    assert!(
+        !dumped.contains("let len ="),
+        "`len` must not persist:\n{dumped}"
+    );
+    // And the skip is targeted — an ordinary binding in the same cell survives.
+    assert!(
+        dumped.contains("let keep = 7"),
+        "non-shadowing bindings must persist:\n{dumped}"
+    );
+
+    // The point of all of it: a following cell can still CALL the builtin.
+    let next = std::env::temp_dir().join("axon_test_dump_shadow_next.ax");
+    std::fs::write(
+        &next,
+        format!(
+            "fn main() -> i64 {{\n{}\n    let xs = [1, 2, 3]\n    println(to_str(len(xs) + keep))\n    0\n}}\n",
+            dumped
+                .lines()
+                .filter(|l| l.starts_with("let "))
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )
+    .unwrap();
+    let again = axon().arg("run").arg(&next).output().unwrap();
+    let so = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        again.status.success() && so.contains("10"),
+        "the next cell must be able to call `len` (expected 3 + 7):\n{so}{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}
+
+/// R42 T1 — `str_slice` must REFUSE a byte range that splits a UTF-8 character,
+/// rather than silently returning `""`.
+///
+/// The silent-empty behaviour made the language card's own taught idiom,
+/// `str_eq(str_slice(s, i, i + 1), " ")`, answer confidently wrong on every
+/// non-ASCII input. Loud beats wrong.
+#[test]
+fn str_slice_refuses_a_range_that_splits_a_utf8_character() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("utf8_slice_boundary.ax"))
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "must not succeed: {all}");
+    assert_eq!(out.status.code(), Some(101), "panic-class exit code: {all}");
+    assert!(all.contains("E2200"), "the refusal must name E2200: {all}");
+    assert!(
+        all.contains("str_slice") && all.contains("UTF-8"),
+        "the message must say what is wrong: {all}"
+    );
+    // And it must NOT have printed an empty line as if it had a result.
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains('\n'),
+        "no stdout should be produced before the refusal: {all}"
+    );
+}
+
+/// The other half: boundary-ALIGNED slices are untouched. A refusal that broke
+/// correct slicing would be a worse bug than the one it replaced.
+#[test]
+fn str_slice_still_slices_on_character_boundaries() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("utf8_slice_aligned.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(out.status.success(), "aligned slices must work: {stdout}");
+    assert_eq!(
+        lines,
+        vec!["café", "caf", "é", "café", "5"],
+        // note: the empty-range line is filtered out as blank, and the
+        // clamped-past-end line is the whole string again.
+        "unexpected aligned-slice output:\n{stdout}"
+    );
+}
+
+/// R42 T4 — character-indexed access. Every case uses non-ASCII input, because
+/// an ASCII-only fixture passes against a byte-indexed implementation and so
+/// proves nothing about the thing this slice adds.
+#[test]
+fn character_access_is_indexed_by_character_not_byte() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("char_access.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "5",
+            "4", // str_len (bytes) vs str_len_chars (characters)
+            "é",
+            "195",
+            "", // char index reaches é; byte index gives its first byte
+            "caf",
+            "é",
+            "café", // character slicing, including a clamp
+            "4",
+            "c-a-f-é",
+            "4", // str_chars -> array work
+            "233",
+            "é", // char_code / chr round trip
+            "ERR-multi",
+            "ERR-empty",
+            "true",
+            "false",
+            "true",
+            "true",
+            "false",
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// Native must refuse the character builtins rather than compute something else
+/// (I-2, sound-by-refusal). They are interp-only in this slice.
+#[test]
+fn native_refuses_the_character_builtins_rather_than_diverging() {
+    let Some(all) = build_output_or_skip("char_access.ax") else {
+        return;
+    };
+    assert!(
+        all.contains("E0910"),
+        "expected an E0910 refusal, got:\n{all}"
+    );
+}
+
+/// R42 T5 — the measured `tasks_hard` json failure, as a regression test.
+///
+/// The task wants the sum of `{"a": [1,2,3]}` plus the leaf at `b.c` = 10. It was
+/// unreachable: `json_path_str` could navigate to `a.1`, but nothing reported the
+/// array's length so it could not be looped, and nothing returned a numeric leaf.
+#[test]
+fn json_arrays_and_numeric_leaves_are_reachable() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("json_arrays.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "10",         // THE measured task: arr_sum_i64(json_arr_i64(a)) + json_path_i64(b.c)
+            "3",          // json_len — an array can be looped at all
+            "2",          // json_at(arr, 1)
+            "a,b",        // json_keys
+            "{\"c\":4}",  // json_get_json returns a composable sub-document
+            "3",          // json_path_i64 with a numeric path component
+            "4",          // json_path_f64 widens an integer leaf
+            "x|y",        // json_arr_str
+            "ERR-elem",   // one bad element fails the WHOLE call, not silently short
+            "ERR-parse",  // E2201 malformed
+            "ERR-scalar", // a scalar has no length
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// R42 T6 — JSON construction. Every case ROUND-TRIPS through the Slice-3
+/// readers rather than comparing text, because "the bytes look right" is not the
+/// contract; "what we wrote can be read back" is.
+#[test]
+fn json_construction_round_trips_through_the_readers() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("json_write.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "[1,2,3]",
+            "6", // array out, summed back in
+            "[\"x\",\"y\"]",
+            "x|y",                                  // string array round trip
+            "{\"a\":[1,2,3],\"n\":7,\"s\":\"hi\"}", // object from pre-encoded values
+            "7",
+            "3",
+            "hi", // read back by path
+            "{\"we\\\"ird\":1}",
+            "1", // a quote in a KEY is escaped
+            "{\"k\":42}",
+            "42",         // dict_to_json round trip
+            "ERR-nojson", // a closure value is an Err, not a dropped key
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// R42 T7 — filesystem beyond a single known path.
+#[test]
+fn filesystem_ops_create_probe_copy_rename_and_list() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("fs_ops.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "mkdir-ok",
+            "true",  // dir_create makes parents
+            "false", // a missing path reports false, not an error
+            "true",  // the written file exists
+            "copy-ok",
+            "true",
+            "hello", // copy leaves the SOURCE in place
+            "rename-ok",
+            "false",
+            "true",              // rename DESTROYS the source
+            "moved.txt,src.txt", // dir_list: names, sorted
+            "ERR-nodir",         // not-a-directory is an Err, not an empty list
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// Native must refuse the filesystem builtins rather than compute something else.
+#[test]
+fn native_refuses_the_filesystem_builtins() {
+    let Some(all) = build_output_or_skip("fs_ops.ax") else {
+        return;
+    };
+    assert!(
+        all.contains("E0910"),
+        "expected an E0910 refusal, got:\n{all}"
+    );
+}
+
+/// R42 T8 — base64 / hex. These are builtins because hand-rolled base64 goes
+/// wrong quietly on PADDING, so the fixture covers all three input lengths mod 3
+/// and includes known-good vectors: an encoder that is self-consistently wrong
+/// passes any test that only round-trips its own output.
+#[test]
+fn base64_and_hex_encode_decode_including_padding() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("encoding.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "YWJj",
+            "YQ==",
+            "YWI=",
+            "", // padding: 0, 2, 1 `=` — the failure mode
+            "abc",
+            "a",
+            "ab",   // round trips through each padding case
+            "café", // multi-byte UTF-8 survives
+            "aGVsbG8gd29ybGQ=",
+            "hello world", // known-good vector, both ways
+            "616263",
+            "abc",
+            "café",
+            "HELLO", // hex, incl. uppercase input
+            "ERR-b64-len",
+            "ERR-b64-char",
+            "ERR-hex-odd",
+            "ERR-hex-digit",
+            "ERR-not-utf8", // valid base64, invalid UTF-8 bytes
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// R42 T9 — the userland `date.ax` module.
+///
+/// `examples/stdlib` IS glob-swept by `stdlib_module_acceptance_suites_pass`,
+/// which I initially believed it was not — that sweep requires every module to
+/// report at least one passing test. This per-module test adds what the sweep
+/// cannot: an assertion on the exact COUNT, so the module cannot quietly shrink
+/// from 8 tests to 1 and still look gated.
+#[test]
+fn date_stdlib_module_tests_pass() {
+    // Civil calendar arithmetic in userland rather than as builtins, per R42's
+    // admission test (a builtin is permanent TCB surface; a `.ax` module is not).
+    // Hinnant's days_from_civil / civil_from_days.
+    //
+    // The load-bearing test is `test_floor_division_for_proleptic_years`: Axon's
+    // `/` truncates toward zero and these algorithms need FLOOR division, so
+    // every era division is an explicit branch. Note the input must be a year
+    // <= 0 — a pre-EPOCH date (1969) leaves the shifted year positive and does
+    // not reach the branch at all, which is how an earlier version of that test
+    // passed while both branches were broken.
+    let out = axon()
+        .args(["test", &ex("stdlib/date.ax")])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "date.ax tests should pass: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
+}
+
+/// R42 T10 — the userland `set.ax` module (a Set over the existing Dict).
+#[test]
+fn set_stdlib_module_tests_pass() {
+    // Not a builtin: Dict already provides the hashing, so a `Set` primitive
+    // would add a type to checker/infer/codegen/`value_as_literal` for no
+    // capability the language lacks. Members are STRINGS because dicts are
+    // string-keyed — `test_numeric_members_go_through_to_str` pins the
+    // consequence that `1` and `"1"` are the same member.
+    let out = axon()
+        .args(["test", &ex("stdlib/set.ax")])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "set.ax tests should pass: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+/// R42 T10 — the userland `path.ax` module, including its SECURITY constraint.
+#[test]
+fn path_stdlib_module_tests_pass() {
+    // `test_join_cannot_construct_a_traversing_path` is the load-bearing one.
+    // `@[contained]` statically refuses any path containing a `..` component
+    // (E1001), so a joiner able to ASSEMBLE one out of pieces — from `dir_list`
+    // output, say — would reconstruct the sandbox escape downstream of a check
+    // that already exists. `path_normalize` therefore returns "" for a path that
+    // climbs above its own root, and `path_join` normalizes its result.
+    let out = axon()
+        .args(["test", &ex("stdlib/path.ax")])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "path.ax tests should pass: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
+}
+
+/// R42 T11 — the smoke scenario: every slice composed into one pipeline.
+///
+/// The per-slice tests cover each in isolation; this covers the JOINS, which is
+/// where separately-built slices actually fail. A JSON array feeds a typed sum, a
+/// non-ASCII string leaf goes through the filesystem and comes back counted by
+/// CHARACTER, and a write/append/read round trip closes it.
+///
+/// Bounded wait rather than a plain `output()`: a hang is a failure, not something
+/// to sit through until CI times out with no attribution.
+#[test]
+fn r42_smoke_scenario_runs_end_to_end() {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+
+    let mut child = axon()
+        .args(["run", &ex("stdlib/r42_smoke.ax")])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn axon");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("try_wait") {
+            Some(s) => break s,
+            None => {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    panic!("r42_smoke.ax did not finish within 30s — a hang is a failure");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+
+    let mut stdout = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        let _ = o.read_to_string(&mut stdout);
+    }
+    let mut stderr = String::new();
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut stderr);
+    }
+
+    assert!(
+        status.success(),
+        "smoke scenario failed (exit {:?}):\n{stderr}",
+        status.code()
+    );
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>(),
+        vec![
+            "6",      // Slice 3: json_get_json -> json_arr_i64 -> arr_sum_i64
+            "4",      // Slices 2+4: 4 CHARACTERS of "café" (5 bytes) via a file
+            "onetwo", // Slice 4: write, then append, then read back
+        ],
+        "unexpected smoke output:\n{stdout}"
+    );
+}
+
+/// R42 T12 — the regex surface. What matters here is SEMANTICS and REFUSALS.
+///
+/// Leftmost-FIRST (Perl), not leftmost-longest: `a|ab` on "ab" is "a". Get that
+/// wrong and lazy quantifiers become meaningless, which is most of what models
+/// write. And backreferences/lookaround are refused because they need
+/// backtracking — the linear-time bound is a containment property here, not a
+/// performance preference: sandboxed model-authored code must not be able to burn
+/// unbounded CPU with no capability at all.
+#[test]
+fn regex_is_leftmost_first_and_refuses_backtracking_constructs() {
+    let out = axon().arg("run").arg(fixture("regex.ax")).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "a",
+            "ab", // leftmost-FIRST: alternation order is priority
+            "<a><b>",
+            "<a>",  // greedy vs lazy
+            "NONE", // no match is None, not an error
+            "true",
+            "1,22,333",      // is_match, find_all
+            "a|b|c",         // re_split
+            "12-345/12/345", // captures: 0 is the whole match
+            "nocap:",        // no match -> empty capture array
+            "a[1]b[22]",
+            "a$b",          // $1 references and $$ literal
+            "ERR-badgroup", // $2 against a one-group pattern is REFUSED,
+            // not silently expanded to ""
+            "<>", // ...but a group that exists and did not
+            // participate does expand to ""
+            "a<1>b",         // $0 is the whole match
+            "a0",            // $10 with 2 groups = group 1 then literal "0"
+            "ERR-ambiguous", // $10 with 10 groups is REFUSED, not guessed
+            "ERR-backref",
+            "ERR-lookahead",
+            "ERR-lookbehind",
+            "ERR-blowup", // {1,100000} expansion refused
+            "aaa",        // an ordinary counted repetition still works
+            "ERR-malformed",
+            "false", // (a+)+$ returns PROMPTLY — would hang on a
+                     // backtracking engine
+        ],
+        "unexpected output:\n{stdout}"
     );
 }

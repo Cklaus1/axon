@@ -4,7 +4,11 @@
 pub mod ai_routing;
 pub mod ast;
 pub mod builtins;
+/// R23 mint cert gate — solver-free certificate check of the kernel mint
+/// obligations, compiled in EVERY build (Z3 not required).
+pub mod cert_gate;
 pub mod checker;
+pub mod clock;
 #[cfg(feature = "codegen")]
 pub mod codegen;
 /// R21 — exact base-10 fixed-point `Decimal` arithmetic (money-safe, i128-backed).
@@ -30,14 +34,13 @@ pub mod mobile;
 /// R13 native FFI: the curated native-module registry (single source of truth
 /// shared by resolver/infer/checker/borrow/effects/codegen/interp).
 pub mod native;
+pub mod parse_help;
 pub mod parser;
+pub mod replay;
 pub mod resolver;
 /// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
 /// validated, total, capability-free `RewriteSpec` compiled to a verifiable pass.
 pub mod rewrite_dsl;
-/// R23 mint cert gate — solver-free certificate check of the kernel mint
-/// obligations, compiled in EVERY build (Z3 not required).
-pub mod cert_gate;
 /// SMT-backed `@[verify]` static proof (R9, `smt` feature → Z3).
 #[cfg(feature = "smt")]
 pub mod smt;
@@ -104,8 +107,28 @@ pub fn parse_source(src: &str) -> Result<ast::Program, AxonError> {
 /// where the parser stopped, so a caller can resolve it to `line:col` (parse
 /// errors are otherwise span-less). On a lexer error the offset is 0 (the lexer
 /// reports its own position in the message). `Ok` returns just the program.
+/// Recover the byte offset from a lexer error message of the form
+/// `… at 60..61`. Returns `None` when the message has no such span, in which
+/// case the caller falls back to 0 — the previous behaviour for every message.
+fn lex_error_offset(msg: &str) -> Option<usize> {
+    let at = msg.rfind(" at ")? + 4;
+    let rest = &msg[at..];
+    let end = rest.find("..")?;
+    rest[..end].trim().parse::<usize>().ok()
+}
+
 pub fn parse_source_located(src: &str) -> Result<ast::Program, (String, usize)> {
-    let raw = Lexer::tokenize_with_newlines(src).map_err(|e| (e.to_string(), 0usize))?;
+    // A lex error's offset used to be discarded (`0usize`), so every
+    // lexer-tier diagnostic reported line 1 column 1 no matter where the bad
+    // character was — the same "a hint that cannot say where is half a repair"
+    // defect AXON_FOR_RLM §2 fixed at the parse tier, one tier lower. The
+    // message already carries the span as `… at 60..61`, so the offset is
+    // recoverable without changing the lexer's error type.
+    let raw = Lexer::tokenize_with_newlines(src).map_err(|e| {
+        let msg = e.to_string();
+        let offset = lex_error_offset(&msg).unwrap_or(0);
+        (msg, offset)
+    })?;
     let mut tokens = Vec::with_capacity(raw.len());
     let mut spans = Vec::with_capacity(raw.len());
     let mut newlines = Vec::with_capacity(raw.len());
@@ -853,24 +876,56 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     let source_map = span::SourceMap::new(source.to_string());
     let mut out: Vec<PipelineDiagnostic> = Vec::new();
 
-    let mut program = match parse_source(source) {
+    // AXON_FOR_RLM §1/§2: parse with the LOCATED variant so a parse error
+    // resolves to a line:col and can carry a fix hint. The unlocated
+    // `parse_source` was why this diagnostic reported line 0 with no help — the
+    // offset it needs for both was thrown away one call earlier.
+    // M5: the parser records where it accepted a foreign `mut`. Clear first, so
+    // a previous parse's notes cannot leak into this one's diagnostics.
+    parser::clear_accepted_mut();
+    let mut program = match parse_source_located(source) {
         Ok(p) => p,
-        Err(e) => {
+        Err((msg, offset)) => {
+            let (line, col) = source_map.line_col(offset);
+            let help = parse_help::parse_help(&msg, source, offset);
             out.push(PipelineDiagnostic {
                 code: "E0000".into(),
-                message: e.to_string(),
+                message: msg,
                 file: file.to_string(),
-                line: 0,
-                col: 0,
+                line: line as u32,
+                col: col as u32,
                 severity: "error".into(),
                 caret: String::new(),
                 expected: None,
                 found: None,
-                help: None,
+                help,
             });
             return out;
         }
     };
+
+    // M5: surface each accepted `mut` as an INFO. The parser no longer refuses
+    // it — accepting asserts nothing false, since Axon locals are already
+    // reassignable — but a human reading the code should still learn that the
+    // keyword did nothing, so the note is emitted rather than the program
+    // silently compiling as if `mut` had never been written.
+    for offset in parser::take_accepted_mut() {
+        let (line, col) = source_map.line_col(offset);
+        out.push(PipelineDiagnostic {
+            code: error::I0002.to_string(),
+            message: "`mut` is not an Axon keyword and was ignored — bindings are \
+                      already reassignable"
+                .to_string(),
+            file: file.to_string(),
+            line: line as u32,
+            col: col as u32,
+            severity: "note".into(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: Some("drop it: `let x = …`, then assign with `x = …`".to_string()),
+        });
+    }
 
     let resolve_result = resolver::resolve_program(&program, file);
     for d in &resolve_result.errors {
@@ -900,7 +955,14 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
             caret,
             expected: None,
             found: None,
-            help: None,
+            // A resolver diagnostic's `fix` is its help text — the "did you
+            // mean" suggestion and (since the foreign-keyword table) the
+            // `const`/`var` hints. This dropped it, so every library consumer of
+            // `check_pipeline` saw resolver diagnostics with no help while the
+            // CLI's `run_check_pipeline_located` carried it. The two are
+            // documented as needing to stay in sync and had drifted, which is
+            // the same class of divergence this whole spec exists to close.
+            help: d.fix.clone(),
         });
     }
 
@@ -973,9 +1035,16 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
             col,
             severity: severity.into(),
             caret,
-            expected: None,
-            found: None,
-            help: None,
+            // O-RLM-12, second drift. A checker `Diagnostic` carries
+            // `expected`/`found`/`fix`; all three were dropped here while the
+            // CLI's `run_check_pipeline_located` carried them, so E0307 reached
+            // a library consumer with no help and no typed fields and reached a
+            // CLI user with both. Found by making the pipeline-agreement test
+            // bidirectional — the one-way version missed it, because it only
+            // asked whether the CLI had what the library had.
+            expected: e.expected.clone(),
+            found: e.found.clone(),
+            help: e.fix.clone(),
         });
     }
 

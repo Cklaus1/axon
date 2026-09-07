@@ -106,7 +106,12 @@ pub extern "C" fn __axon_gfx_window_open(w: i64, h: i64, title: AxonStr) -> Axon
     // SAFETY: `title` came from codegen's str ABI (the same contract every
     // str-taking axon-rt extern relies on).
     let t = unsafe { title.as_str() };
-    let r = with_gfx(|m| m.dispatch("window_open", &[GfxArg::Int(w), GfxArg::Int(h), GfxArg::Str(t.to_string())]));
+    let r = with_gfx(|m| {
+        m.dispatch(
+            "window_open",
+            &[GfxArg::Int(w), GfxArg::Int(h), GfxArg::Str(t.to_string())],
+        )
+    });
     expect_handle(r, "window_open")
 }
 

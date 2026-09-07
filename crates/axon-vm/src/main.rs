@@ -26,8 +26,8 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 use axon_attest::{
-    measure_kernel, measure_kernel_bytes, measure_host_stack, sign_report,
-    try_admit_job, verify_report, verify_extended, report_to_json, report_to_json_extended,
+    measure_host_stack, measure_kernel, measure_kernel_bytes, report_to_json,
+    report_to_json_extended, sign_report, try_admit_job, verify_extended, verify_report,
     SOFTWARE_TPM_HW_ROOT,
 };
 
@@ -663,7 +663,24 @@ fn main() {
             quorum,
             quorum_dir,
             chain_stamp,
-        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, expect_digest, extended_tcb, expect_axtcb1_ext, quorum, quorum_dir, chain_stamp),
+        } => cmd_run(
+            program,
+            fc_socket,
+            kernel,
+            initrd,
+            mem_mib,
+            vcpus,
+            principal,
+            vsock_port,
+            json,
+            no_attest,
+            expect_digest,
+            extended_tcb,
+            expect_axtcb1_ext,
+            quorum,
+            quorum_dir,
+            chain_stamp,
+        ),
         Cmd::Attest {
             kernel,
             policy,
@@ -678,9 +695,21 @@ fn main() {
             pin_baseline,
             pin_extended,
             repin,
-        } => cmd_attest(kernel, policy, run_prog, verify_digest, nonce, verify_axtcb1,
-                        extended_tcb, axon_os, axon_audit, verify_axtcb1_ext,
-                        pin_baseline, pin_extended, repin),
+        } => cmd_attest(
+            kernel,
+            policy,
+            run_prog,
+            verify_digest,
+            nonce,
+            verify_axtcb1,
+            extended_tcb,
+            axon_os,
+            axon_audit,
+            verify_axtcb1_ext,
+            pin_baseline,
+            pin_extended,
+            repin,
+        ),
         Cmd::Principal { cmd } => match cmd {
             PrincipalCmd::Add {
                 name,
@@ -692,24 +721,92 @@ fn main() {
             PrincipalCmd::List => cmd_principal_list(),
         },
         Cmd::Quorum { cmd } => match cmd {
-            QuorumCmd::Propose { run_id, prog, action, out, kernel, axon_os, axon_audit, broadcast, n, deadline_ms, json } =>
-                cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit, broadcast, n, deadline_ms, json),
-            QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen } =>
-                cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root, listen),
-            QuorumCmd::Check { responses_dir, n, run_id, expect_tcb, json } =>
-                cmd_quorum_check(responses_dir, n, &run_id, expect_tcb.as_deref(), json),
+            QuorumCmd::Propose {
+                run_id,
+                prog,
+                action,
+                out,
+                kernel,
+                axon_os,
+                axon_audit,
+                broadcast,
+                n,
+                deadline_ms,
+                json,
+            } => cmd_quorum_propose(
+                run_id,
+                prog,
+                action,
+                out,
+                kernel,
+                axon_os,
+                axon_audit,
+                broadcast,
+                n,
+                deadline_ms,
+                json,
+            ),
+            QuorumCmd::Vote {
+                request,
+                approve,
+                deny,
+                reason,
+                out,
+                kernel,
+                axon_os,
+                axon_audit,
+                lineage_root,
+                listen,
+            } => cmd_quorum_vote(
+                request,
+                approve,
+                deny,
+                reason,
+                out,
+                kernel,
+                axon_os,
+                axon_audit,
+                lineage_root,
+                listen,
+            ),
+            QuorumCmd::Check {
+                responses_dir,
+                n,
+                run_id,
+                expect_tcb,
+                json,
+            } => cmd_quorum_check(responses_dir, n, &run_id, expect_tcb.as_deref(), json),
         },
         Cmd::Chain { cmd } => match cmd {
-            ChainCmd::Stamp { prog, run_id, store, kernel } =>
-                cmd_chain_stamp(prog, run_id, store, kernel),
-            ChainCmd::Verify { store, genesis, expect_head, expect_count } =>
-                cmd_chain_verify(store, genesis, expect_head, expect_count),
-            ChainCmd::Show { store, vm_id, json, kernel } =>
-                cmd_chain_show(store, vm_id, json, kernel),
-            ChainCmd::Export { store, out, vm_id, kernel } =>
-                cmd_chain_export(store, out, vm_id, kernel),
-            ChainCmd::VerifyExport { file, expect_head, expect_count } =>
-                cmd_chain_verify_export(file, expect_head, expect_count),
+            ChainCmd::Stamp {
+                prog,
+                run_id,
+                store,
+                kernel,
+            } => cmd_chain_stamp(prog, run_id, store, kernel),
+            ChainCmd::Verify {
+                store,
+                genesis,
+                expect_head,
+                expect_count,
+            } => cmd_chain_verify(store, genesis, expect_head, expect_count),
+            ChainCmd::Show {
+                store,
+                vm_id,
+                json,
+                kernel,
+            } => cmd_chain_show(store, vm_id, json, kernel),
+            ChainCmd::Export {
+                store,
+                out,
+                vm_id,
+                kernel,
+            } => cmd_chain_export(store, out, vm_id, kernel),
+            ChainCmd::VerifyExport {
+                file,
+                expect_head,
+                expect_count,
+            } => cmd_chain_verify_export(file, expect_head, expect_count),
         },
     }
 }
@@ -740,7 +837,9 @@ fn cmd_attest(
     pin_extended: bool,
     repin: bool,
 ) {
-    let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
+    let ci_no_kvm = env::var("AXON_CI_NO_KVM")
+        .map(|v| v == "1")
+        .unwrap_or(false);
 
     // Pinning a boot baseline requires a REAL kernel image. In mock mode the
     // measurement is of synthetic bytes, so pinning it would bless something that
@@ -856,8 +955,8 @@ fn cmd_attest(
             .unwrap_or_else(|| PathBuf::from("."));
 
         let axon_os_path = axon_os_override.unwrap_or_else(|| exe_dir.join("axon-os"));
-        let axon_audit_path = axon_audit_override
-            .unwrap_or_else(|| exe_dir.join("axon-audit-writer"));
+        let axon_audit_path =
+            axon_audit_override.unwrap_or_else(|| exe_dir.join("axon-audit-writer"));
 
         // axon-audit is optional (R28 pending); pass None if it doesn't exist.
         let axon_audit_opt = if axon_audit_path.exists() {
@@ -888,15 +987,24 @@ fn cmd_attest(
                 let expected_arr: [u8; 32] = bytes.try_into().unwrap();
                 let expected_tcb = verify_axtcb1.as_deref().unwrap_or(&measurement.axtcb1);
                 match verify_report(&report, &expected_arr, expected_tcb) {
-                    Ok(()) => (true, "✓ attested: measurement matches, axtcb1 chained".to_string()),
+                    Ok(()) => (
+                        true,
+                        "✓ attested: measurement matches, axtcb1 chained".to_string(),
+                    ),
                     Err(e) => (false, format!("✗ ATTESTATION FAILED: {e}")),
                 }
             }
-            Ok(_) => (false, "invalid --verify-digest: must be exactly 64 hex chars (SHA-256)".to_string()),
+            Ok(_) => (
+                false,
+                "invalid --verify-digest: must be exactly 64 hex chars (SHA-256)".to_string(),
+            ),
             Err(e) => (false, format!("invalid --verify-digest hex: {e}")),
         }
     } else {
-        (true, "attestation report produced (no --verify-digest requested)".to_string())
+        (
+            true,
+            "attestation report produced (no --verify-digest requested)".to_string(),
+        )
     };
 
     // Optionally run a job inside the attested guest (mock in CI)
@@ -955,11 +1063,17 @@ fn cmd_attest(
         if let Some(ref expected_ext) = verify_axtcb1_ext {
             if let Some(ref ext) = extended_measurement {
                 match verify_extended(ext, expected_ext) {
-                    Ok(()) => (true, format!("{reason}; ✓ extended TCB: 4/4 components verified")),
+                    Ok(()) => (
+                        true,
+                        format!("{reason}; ✓ extended TCB: 4/4 components verified"),
+                    ),
                     Err(e) => (false, format!("✗ EXTENDED TCB FAILED: {e}")),
                 }
             } else {
-                (false, "✗ --verify-axtcb1-ext requires --extended-tcb".to_string())
+                (
+                    false,
+                    "✗ --verify-axtcb1-ext requires --extended-tcb".to_string(),
+                )
             }
         } else {
             (ok, reason)
@@ -1014,8 +1128,7 @@ fn cmd_run(
     let start = Instant::now();
 
     // Locate guest image files.
-    let kernel_path = kernel
-        .unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
+    let kernel_path = kernel.unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
     // Default initrd: prefer the gzipped image if present, else the uncompressed
     // `.cpio` that the build ships (the guest kernel's CPIO reader handles both). The
     // old hard-coded `.cpio.gz` default failed on every stock checkout (only `.cpio`
@@ -1037,11 +1150,7 @@ fn cmd_run(
     }
 
     // Generate a unique run-id.
-    let run_id = format!(
-        "vm-{}-{}",
-        process::id(),
-        start.elapsed().as_nanos()
-    );
+    let run_id = format!("vm-{}-{}", process::id(), start.elapsed().as_nanos());
 
     // Compute source hash for auditability.
     let source_hash = sha256_file(&program);
@@ -1071,9 +1180,7 @@ fn cmd_run(
     };
 
     // Resolve the principal.
-    let principal = principal_name
-        .as_ref()
-        .and_then(|n| load_principal(n));
+    let principal = principal_name.as_ref().and_then(|n| load_principal(n));
 
     // Build the seccomp BPF policy from the manifest's syscall_hint.
     let seccomp_b64 = if let Some(ref hints) = manifest.syscall_hint {
@@ -1190,7 +1297,7 @@ fn cmd_run(
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."));
-        let axon_os_path   = exe_dir.join("axon-os");
+        let axon_os_path = exe_dir.join("axon-os");
         let axon_audit_path = exe_dir.join("axon-audit-writer");
         let axon_audit_opt = if axon_audit_path.exists() {
             Some(axon_audit_path.as_path())
@@ -1258,7 +1365,10 @@ fn cmd_run(
         let votes = match quorum::io::collect_responses(&dir, required_n) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("axon-vm: quorum: failed to collect responses from {}: {e}", dir.display());
+                eprintln!(
+                    "axon-vm: quorum: failed to collect responses from {}: {e}",
+                    dir.display()
+                );
                 process::exit(2);
             }
         };
@@ -1321,9 +1431,8 @@ fn cmd_run(
     }
 
     // Choose or generate the Firecracker socket path.
-    let socket_path = fc_socket.unwrap_or_else(|| {
-        PathBuf::from(format!("/tmp/axon-vm-{}.sock", process::id()))
-    });
+    let socket_path =
+        fc_socket.unwrap_or_else(|| PathBuf::from(format!("/tmp/axon-vm-{}.sock", process::id())));
 
     // Launch Firecracker, configure the VM, and run the program.
     let result = run_in_firecracker(
@@ -1349,9 +1458,8 @@ fn cmd_run(
         .as_ref()
         .map(|r| r.outcome.as_str())
         .unwrap_or("launch-failed");
-    let ok =
-        matches!(result.as_ref(), Ok(r) if matches!(r.outcome, GuestOutcome::Exited(_)))
-            && exit_code == 0;
+    let ok = matches!(result.as_ref(), Ok(r) if matches!(r.outcome, GuestOutcome::Exited(_)))
+        && exit_code == 0;
 
     if json_out {
         let out = serde_json::json!({
@@ -1395,7 +1503,9 @@ fn cmd_run(
 /// rather than inventing a new mock — the CI label is printed to stderr so
 /// this is never mistaken for a real attestation.
 fn chain_genesis(kernel_path: &Path) -> String {
-    let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
+    let ci_no_kvm = env::var("AXON_CI_NO_KVM")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
@@ -1409,7 +1519,8 @@ fn chain_genesis(kernel_path: &Path) -> String {
              unavailable) — NOT a real attestation"
         );
         let mock_kernel = format!("axon-os-mock-kernel-ci:{}", kernel_path.display()).into_bytes();
-        let mock_axon_os = format!("axon-os-mock-binary-ci:{}", axon_os_path.display()).into_bytes();
+        let mock_axon_os =
+            format!("axon-os-mock-binary-ci:{}", axon_os_path.display()).into_bytes();
         let ext = axon_attest::measure_extended(axon_attest::ComponentPaths {
             kernel: mock_kernel,
             axon_os: mock_axon_os,
@@ -1418,10 +1529,16 @@ fn chain_genesis(kernel_path: &Path) -> String {
             axon_os_path: format!("<ci-mock> {}", axon_os_path.display()),
             axon_audit_path: None,
         })
-        .expect("measure_extended over injected bytes cannot fail (kernel/axon-os always non-empty)");
+        .expect(
+            "measure_extended over injected bytes cannot fail (kernel/axon-os always non-empty)",
+        );
         ext.axtcb1_ext
     } else {
-        let axon_audit_opt = if axon_audit_path.exists() { Some(axon_audit_path.as_path()) } else { None };
+        let axon_audit_opt = if axon_audit_path.exists() {
+            Some(axon_audit_path.as_path())
+        } else {
+            None
+        };
         match measure_host_stack(kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
             Ok(ext) => ext.axtcb1_ext,
             Err(e) => {
@@ -1464,7 +1581,12 @@ fn stamp_chain(
 }
 
 /// `axon-vm chain stamp` — hash the program, extend the chain, print the new tip.
-fn cmd_chain_stamp(prog: PathBuf, run_id: Option<String>, store_path: PathBuf, kernel: Option<PathBuf>) {
+fn cmd_chain_stamp(
+    prog: PathBuf,
+    run_id: Option<String>,
+    store_path: PathBuf,
+    kernel: Option<PathBuf>,
+) {
     if !prog.exists() {
         eprintln!("axon-vm chain stamp: program not found: {}", prog.display());
         process::exit(1);
@@ -1515,7 +1637,12 @@ fn cmd_chain_verify(
         // R31 boot root MUST pass --genesis explicitly (§4.1 of the spec).
         fs::read_to_string(&store_path)
             .ok()
-            .and_then(|content| content.lines().find(|l| !l.trim().is_empty()).map(str::to_string))
+            .and_then(|content| {
+                content
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .map(str::to_string)
+            })
             .and_then(|first_line| serde_json::from_str::<chain::ChainEntry>(&first_line).ok())
             .map(|e| e.prev_hash)
             .unwrap_or_default()
@@ -1556,13 +1683,20 @@ fn cmd_chain_verify(
 fn chain_boot_root(store_path: &Path, kernel: &Option<PathBuf>) -> String {
     let first_prev_hash = fs::read_to_string(store_path)
         .ok()
-        .and_then(|content| content.lines().find(|l| !l.trim().is_empty()).map(str::to_string))
+        .and_then(|content| {
+            content
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .map(str::to_string)
+        })
         .and_then(|first_line| serde_json::from_str::<chain::ChainEntry>(&first_line).ok())
         .map(|e| e.prev_hash);
     match first_prev_hash {
         Some(root) => root,
         None => {
-            let kernel_path = kernel.clone().unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
+            let kernel_path = kernel
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
             chain_genesis(&kernel_path)
         }
     }
@@ -1599,7 +1733,12 @@ fn cmd_chain_show(store_path: PathBuf, vm_id: String, json: bool, kernel: Option
 /// `axon-vm chain export` — write a self-contained `ChainExport` JSON file
 /// (schema `axon-chain-export/1`, spec §5.4) that an auditor can check with
 /// `chain verify-export` and no live VM. Wraps `ChainStore::export`.
-fn cmd_chain_export(store_path: PathBuf, out_path: PathBuf, vm_id: String, kernel: Option<PathBuf>) {
+fn cmd_chain_export(
+    store_path: PathBuf,
+    out_path: PathBuf,
+    vm_id: String,
+    kernel: Option<PathBuf>,
+) {
     let store = chain::ChainStore::new(&store_path);
     let boot_root = chain_boot_root(&store_path, &kernel);
     let exported_at_ms = std::time::SystemTime::now()
@@ -1634,22 +1773,24 @@ fn cmd_chain_export(store_path: PathBuf, out_path: PathBuf, vm_id: String, kerne
 
 /// `axon-vm chain verify-export` — verify an exported chain JSON (auditor
 /// side, no live VM required). Same pass/fail contract as `chain verify`.
-fn cmd_chain_verify_export(
-    file: PathBuf,
-    expect_head: Option<String>,
-    expect_count: Option<u64>,
-) {
+fn cmd_chain_verify_export(file: PathBuf, expect_head: Option<String>, expect_count: Option<u64>) {
     let content = match fs::read_to_string(&file) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("axon-vm chain verify-export: cannot read {}: {e}", file.display());
+            eprintln!(
+                "axon-vm chain verify-export: cannot read {}: {e}",
+                file.display()
+            );
             process::exit(1);
         }
     };
     let export: chain::ChainExport = match serde_json::from_str(&content) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("axon-vm chain verify-export: malformed JSON in {}: {e}", file.display());
+            eprintln!(
+                "axon-vm chain verify-export: malformed JSON in {}: {e}",
+                file.display()
+            );
             process::exit(1);
         }
     };
@@ -1691,14 +1832,20 @@ fn quorum_self_tcb(
     axon_os: &Option<PathBuf>,
     axon_audit: &Option<PathBuf>,
 ) -> String {
-    let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
-    let kernel_path = kernel.clone().unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
+    let ci_no_kvm = env::var("AXON_CI_NO_KVM")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let kernel_path = kernel
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
     let axon_os_path = axon_os.clone().unwrap_or_else(|| exe_dir.join("axon-os"));
-    let axon_audit_path = axon_audit.clone().unwrap_or_else(|| exe_dir.join("axon-audit-writer"));
+    let axon_audit_path = axon_audit
+        .clone()
+        .unwrap_or_else(|| exe_dir.join("axon-audit-writer"));
 
     if ci_no_kvm || !kernel_path.exists() || !axon_os_path.exists() {
         eprintln!(
@@ -1706,7 +1853,8 @@ fn quorum_self_tcb(
              unavailable) — NOT a real attestation"
         );
         let mock_kernel = format!("axon-os-mock-kernel-ci:{}", kernel_path.display()).into_bytes();
-        let mock_axon_os = format!("axon-os-mock-binary-ci:{}", axon_os_path.display()).into_bytes();
+        let mock_axon_os =
+            format!("axon-os-mock-binary-ci:{}", axon_os_path.display()).into_bytes();
         let ext = axon_attest::measure_extended(axon_attest::ComponentPaths {
             kernel: mock_kernel,
             axon_os: mock_axon_os,
@@ -1715,10 +1863,16 @@ fn quorum_self_tcb(
             axon_os_path: format!("<ci-mock> {}", axon_os_path.display()),
             axon_audit_path: None,
         })
-        .expect("measure_extended over injected bytes cannot fail (kernel/axon-os always non-empty)");
+        .expect(
+            "measure_extended over injected bytes cannot fail (kernel/axon-os always non-empty)",
+        );
         ext.axtcb1_ext
     } else {
-        let axon_audit_opt = if axon_audit_path.exists() { Some(axon_audit_path.as_path()) } else { None };
+        let axon_audit_opt = if axon_audit_path.exists() {
+            Some(axon_audit_path.as_path())
+        } else {
+            None
+        };
         match measure_host_stack(&kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
             Ok(ext) => ext.axtcb1_ext,
             Err(e) => {
@@ -1762,10 +1916,17 @@ fn cmd_quorum_propose(
     };
 
     if let Err(e) = quorum::io::write_vote_request(&req, &out) {
-        eprintln!("axon-vm quorum propose: failed to write {}: {e}", out.display());
+        eprintln!(
+            "axon-vm quorum propose: failed to write {}: {e}",
+            out.display()
+        );
         process::exit(2);
     }
-    eprintln!("✓ proposal written: {} (proposer axtcb1-ext: {})", out.display(), voter_tcb);
+    eprintln!(
+        "✓ proposal written: {} (proposer axtcb1-ext: {})",
+        out.display(),
+        voter_tcb
+    );
 
     let Some(peer_strs) = broadcast else { return };
 
@@ -1781,7 +1942,10 @@ fn cmd_quorum_propose(
     let required_n = n.unwrap_or(peers.len());
     let deadline = std::time::Duration::from_millis(deadline_ms);
 
-    eprintln!("broadcasting to {} peer(s), deadline {deadline_ms}ms ...", peers.len());
+    eprintln!(
+        "broadcasting to {} peer(s), deadline {deadline_ms}ms ...",
+        peers.len()
+    );
     let votes = quorum::vsock::broadcast_and_collect(&peers, &req, deadline);
     let result = quorum::logic::check_quorum(&votes, required_n, &req.run_id, None);
     report_quorum_result(result, required_n, json_out);
@@ -1856,15 +2020,14 @@ fn cmd_quorum_vote(
                 .as_nanos()
         )
     });
-    let build_resp = move |req: quorum::logic::VoteRequest, voter_tcb: &str| {
-        quorum::logic::VoteResponse {
+    let build_resp =
+        move |req: quorum::logic::VoteRequest, voter_tcb: &str| quorum::logic::VoteResponse {
             voter_tcb: voter_tcb.to_string(),
             run_id: req.run_id,
             approved: approve,
             reason,
             lineage_root,
-        }
-    };
+        };
 
     if let Some(port) = listen {
         let addr = format!("127.0.0.1:{port}");
@@ -1898,14 +2061,20 @@ fn cmd_quorum_vote(
     let req = match quorum::io::read_vote_request(&request) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("axon-vm quorum vote: failed to read {}: {e}", request.display());
+            eprintln!(
+                "axon-vm quorum vote: failed to read {}: {e}",
+                request.display()
+            );
             process::exit(2);
         }
     };
     let resp = build_resp(req, &voter_tcb);
 
     if let Err(e) = quorum::io::write_vote_response(&resp, &out) {
-        eprintln!("axon-vm quorum vote: failed to write {}: {e}", out.display());
+        eprintln!(
+            "axon-vm quorum vote: failed to write {}: {e}",
+            out.display()
+        );
         process::exit(2);
     }
     eprintln!(
@@ -2167,7 +2336,11 @@ fn run_in_firecracker(
     )?;
 
     // Start the VM.
-    fc_put(&api, "/actions", &serde_json::json!({"action_type": "InstanceStart"}))?;
+    fc_put(
+        &api,
+        "/actions",
+        &serde_json::json!({"action_type": "InstanceStart"}),
+    )?;
 
     // Bounded wait: the guest should run the program and power off (`reboot=k panic=1`
     // turns a finished/paniced guest into a Firecracker exit). A guest that never powers
@@ -2242,10 +2415,7 @@ fn run_in_firecracker(
     let _ = fs::remove_file(socket_path);
     let _ = fs::remove_file(&vsock_host_uds);
 
-    Ok(RunResult {
-        exit_code,
-        outcome,
-    })
+    Ok(RunResult { exit_code, outcome })
 }
 
 /// Read a single HTTP/1.1 response from a (keep-alive) stream without relying on the
@@ -2326,11 +2496,18 @@ fn wait_for_socket(path: &Path, timeout: Duration) -> Result<FcApi, Box<dyn std:
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if path.exists() {
-            return Ok(FcApi { socket_path: path.to_owned() });
+            return Ok(FcApi {
+                socket_path: path.to_owned(),
+            });
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    Err(format!("Firecracker socket not ready after {}s: {}", timeout.as_secs(), path.display()).into())
+    Err(format!(
+        "Firecracker socket not ready after {}s: {}",
+        timeout.as_secs(),
+        path.display()
+    )
+    .into())
 }
 
 /// PUT a JSON body to a Firecracker API endpoint.
@@ -2379,10 +2556,9 @@ fn fc_put(
         .unwrap_or(0);
 
     if !(200..300).contains(&status_code) {
-        return Err(format!(
-            "Firecracker API PUT {path} returned {status_line}\n{resp_str}"
-        )
-        .into());
+        return Err(
+            format!("Firecracker API PUT {path} returned {status_line}\n{resp_str}").into(),
+        );
     }
 
     Ok(())
@@ -2559,90 +2735,294 @@ pub fn bpf_allowlist(syscall_names: &[String]) -> Result<String, Box<dyn std::er
 
 // x86_64 Linux syscall table (most common; extend as needed).
 static SYSCALL_TABLE: &[(&str, u32)] = &[
-    ("read", 0), ("write", 1), ("open", 2), ("close", 3),
-    ("stat", 4), ("fstat", 5), ("lstat", 6), ("poll", 7),
-    ("lseek", 8), ("mmap", 9), ("mprotect", 10), ("munmap", 11),
-    ("brk", 12), ("rt_sigaction", 13), ("rt_sigprocmask", 14),
-    ("rt_sigreturn", 15), ("ioctl", 16), ("pread64", 17), ("pwrite64", 18),
-    ("readv", 19), ("writev", 20), ("access", 21), ("pipe", 22),
-    ("select", 23), ("sched_yield", 24), ("mremap", 25), ("msync", 26),
-    ("mincore", 27), ("madvise", 28), ("dup", 32), ("dup2", 33),
-    ("nanosleep", 35), ("getitimer", 36), ("alarm", 37), ("setitimer", 38),
-    ("getpid", 39), ("sendfile", 40), ("socket", 41), ("connect", 42),
-    ("accept", 43), ("sendto", 44), ("recvfrom", 45), ("sendmsg", 46),
-    ("recvmsg", 47), ("shutdown", 48), ("bind", 49), ("listen", 50),
-    ("getsockname", 51), ("getpeername", 52), ("socketpair", 53),
-    ("setsockopt", 54), ("getsockopt", 55), ("clone", 56), ("fork", 57),
-    ("vfork", 58), ("execve", 59), ("exit", 60), ("wait4", 61),
-    ("kill", 62), ("uname", 63), ("fcntl", 72), ("fsync", 74),
-    ("ftruncate", 77), ("getdents", 78), ("getcwd", 79), ("chdir", 80),
-    ("rename", 82), ("mkdir", 83), ("rmdir", 84), ("creat", 85),
-    ("link", 86), ("unlink", 87), ("symlink", 88), ("readlink", 89),
-    ("chmod", 90), ("chown", 92), ("umask", 95), ("gettimeofday", 96),
-    ("getrlimit", 97), ("getrusage", 98), ("sysinfo", 99), ("times", 100),
-    ("getuid", 102), ("syslog", 103), ("getgid", 104), ("setuid", 105),
-    ("setgid", 106), ("geteuid", 107), ("getegid", 108),
-    ("setpgid", 109), ("getppid", 110), ("getpgrp", 111), ("setsid", 112),
-    ("setreuid", 113), ("setregid", 114), ("getgroups", 115), ("setgroups", 116),
-    ("setresuid", 117), ("getresuid", 118), ("setresgid", 119), ("getresgid", 120),
-    ("getpgid", 121), ("setfsuid", 122), ("setfsgid", 123), ("getsid", 124),
-    ("capget", 125), ("capset", 126), ("rt_sigsuspend", 130),
-    ("sigaltstack", 131), ("utime", 132), ("mknod", 133), ("personality", 135),
-    ("statfs", 137), ("fstatfs", 138), ("getpriority", 140),
-    ("setpriority", 141), ("sched_setparam", 142), ("sched_getparam", 143),
-    ("sched_setscheduler", 144), ("sched_getscheduler", 145),
-    ("sched_get_priority_max", 146), ("sched_get_priority_min", 147),
-    ("sched_rr_get_interval", 148), ("mlock", 149), ("munlock", 150),
-    ("mlockall", 151), ("munlockall", 152), ("vhangup", 153),
-    ("pivot_root", 155), ("prctl", 157), ("arch_prctl", 158),
-    ("adjtimex", 159), ("setrlimit", 160), ("chroot", 161), ("sync", 162),
-    ("acct", 163), ("settimeofday", 164), ("umount2", 166), ("swapon", 167),
-    ("swapoff", 168), ("reboot", 169), ("sethostname", 170), ("setdomainname", 171),
-    ("iopl", 172), ("ioperm", 173), ("init_module", 175), ("delete_module", 176),
-    ("gettid", 186), ("readahead", 187), ("getxattr", 191), ("lgetxattr", 192),
-    ("fgetxattr", 193), ("listxattr", 194), ("llistxattr", 195), ("flistxattr", 196),
-    ("removexattr", 197), ("lremovexattr", 198), ("fremovexattr", 199),
-    ("tkill", 200), ("time", 201), ("futex", 202), ("sched_setaffinity", 203),
-    ("sched_getaffinity", 204), ("io_setup", 206), ("io_destroy", 207),
-    ("io_getevents", 208), ("io_submit", 209), ("io_cancel", 210),
-    ("lookup_dcookie", 212), ("epoll_create", 213), ("epoll_ctl_old", 214),
-    ("epoll_wait_old", 215), ("remap_file_pages", 216), ("getdents64", 217),
-    ("set_tid_address", 218), ("restart_syscall", 219), ("semtimedop", 220),
-    ("fadvise64", 221), ("timer_create", 222), ("timer_settime", 223),
-    ("timer_gettime", 224), ("timer_getoverrun", 225), ("timer_delete", 226),
-    ("clock_settime", 227), ("clock_gettime", 228), ("clock_getres", 229),
-    ("clock_nanosleep", 230), ("exit_group", 231), ("epoll_wait", 232),
-    ("epoll_ctl", 233), ("tgkill", 234), ("utimes", 235),
-    ("mbind", 237), ("set_mempolicy", 238), ("get_mempolicy", 239),
-    ("mq_open", 240), ("mq_unlink", 241), ("mq_timedsend", 242),
-    ("mq_timedreceive", 243), ("mq_notify", 244), ("mq_getsetattr", 245),
-    ("waitid", 247), ("add_key", 248), ("request_key", 249), ("keyctl", 250),
-    ("ioprio_set", 251), ("ioprio_get", 252), ("inotify_init", 253),
-    ("inotify_add_watch", 254), ("inotify_rm_watch", 255), ("migrate_pages", 256),
-    ("openat", 257), ("mkdirat", 258), ("mknodat", 259), ("fchownat", 260),
-    ("futimesat", 261), ("newfstatat", 262), ("unlinkat", 263), ("renameat", 264),
-    ("linkat", 265), ("symlinkat", 266), ("readlinkat", 267), ("fchmodat", 268),
-    ("faccessat", 269), ("pselect6", 270), ("ppoll", 271), ("unshare", 272),
-    ("set_robust_list", 273), ("get_robust_list", 274), ("splice", 275),
-    ("tee", 276), ("sync_file_range", 277), ("vmsplice", 278),
-    ("move_pages", 279), ("utimensat", 280), ("epoll_pwait", 281),
-    ("signalfd", 282), ("timerfd_create", 283), ("eventfd", 284),
-    ("fallocate", 285), ("timerfd_settime", 286), ("timerfd_gettime", 287),
-    ("accept4", 288), ("signalfd4", 289), ("eventfd2", 290),
-    ("epoll_create1", 291), ("dup3", 292), ("pipe2", 293),
-    ("inotify_init1", 294), ("preadv", 295), ("pwritev", 296),
-    ("rt_tgsigqueueinfo", 297), ("perf_event_open", 298), ("recvmmsg", 299),
-    ("fanotify_init", 300), ("fanotify_mark", 301), ("prlimit64", 302),
-    ("name_to_handle_at", 303), ("open_by_handle_at", 304), ("clock_adjtime", 305),
-    ("syncfs", 306), ("sendmmsg", 307), ("setns", 308), ("getcpu", 309),
-    ("process_vm_readv", 310), ("process_vm_writev", 311), ("kcmp", 312),
-    ("finit_module", 313), ("sched_setattr", 314), ("sched_getattr", 315),
-    ("renameat2", 316), ("seccomp", 317), ("getrandom", 318),
-    ("memfd_create", 319), ("kexec_file_load", 320), ("bpf", 321),
-    ("execveat", 322), ("userfaultfd", 323), ("membarrier", 324),
-    ("mlock2", 325), ("copy_file_range", 326), ("preadv2", 327),
-    ("pwritev2", 328), ("pkey_mprotect", 329), ("pkey_alloc", 330),
-    ("pkey_free", 331), ("statx", 332), ("io_pgetevents", 333),
+    ("read", 0),
+    ("write", 1),
+    ("open", 2),
+    ("close", 3),
+    ("stat", 4),
+    ("fstat", 5),
+    ("lstat", 6),
+    ("poll", 7),
+    ("lseek", 8),
+    ("mmap", 9),
+    ("mprotect", 10),
+    ("munmap", 11),
+    ("brk", 12),
+    ("rt_sigaction", 13),
+    ("rt_sigprocmask", 14),
+    ("rt_sigreturn", 15),
+    ("ioctl", 16),
+    ("pread64", 17),
+    ("pwrite64", 18),
+    ("readv", 19),
+    ("writev", 20),
+    ("access", 21),
+    ("pipe", 22),
+    ("select", 23),
+    ("sched_yield", 24),
+    ("mremap", 25),
+    ("msync", 26),
+    ("mincore", 27),
+    ("madvise", 28),
+    ("dup", 32),
+    ("dup2", 33),
+    ("nanosleep", 35),
+    ("getitimer", 36),
+    ("alarm", 37),
+    ("setitimer", 38),
+    ("getpid", 39),
+    ("sendfile", 40),
+    ("socket", 41),
+    ("connect", 42),
+    ("accept", 43),
+    ("sendto", 44),
+    ("recvfrom", 45),
+    ("sendmsg", 46),
+    ("recvmsg", 47),
+    ("shutdown", 48),
+    ("bind", 49),
+    ("listen", 50),
+    ("getsockname", 51),
+    ("getpeername", 52),
+    ("socketpair", 53),
+    ("setsockopt", 54),
+    ("getsockopt", 55),
+    ("clone", 56),
+    ("fork", 57),
+    ("vfork", 58),
+    ("execve", 59),
+    ("exit", 60),
+    ("wait4", 61),
+    ("kill", 62),
+    ("uname", 63),
+    ("fcntl", 72),
+    ("fsync", 74),
+    ("ftruncate", 77),
+    ("getdents", 78),
+    ("getcwd", 79),
+    ("chdir", 80),
+    ("rename", 82),
+    ("mkdir", 83),
+    ("rmdir", 84),
+    ("creat", 85),
+    ("link", 86),
+    ("unlink", 87),
+    ("symlink", 88),
+    ("readlink", 89),
+    ("chmod", 90),
+    ("chown", 92),
+    ("umask", 95),
+    ("gettimeofday", 96),
+    ("getrlimit", 97),
+    ("getrusage", 98),
+    ("sysinfo", 99),
+    ("times", 100),
+    ("getuid", 102),
+    ("syslog", 103),
+    ("getgid", 104),
+    ("setuid", 105),
+    ("setgid", 106),
+    ("geteuid", 107),
+    ("getegid", 108),
+    ("setpgid", 109),
+    ("getppid", 110),
+    ("getpgrp", 111),
+    ("setsid", 112),
+    ("setreuid", 113),
+    ("setregid", 114),
+    ("getgroups", 115),
+    ("setgroups", 116),
+    ("setresuid", 117),
+    ("getresuid", 118),
+    ("setresgid", 119),
+    ("getresgid", 120),
+    ("getpgid", 121),
+    ("setfsuid", 122),
+    ("setfsgid", 123),
+    ("getsid", 124),
+    ("capget", 125),
+    ("capset", 126),
+    ("rt_sigsuspend", 130),
+    ("sigaltstack", 131),
+    ("utime", 132),
+    ("mknod", 133),
+    ("personality", 135),
+    ("statfs", 137),
+    ("fstatfs", 138),
+    ("getpriority", 140),
+    ("setpriority", 141),
+    ("sched_setparam", 142),
+    ("sched_getparam", 143),
+    ("sched_setscheduler", 144),
+    ("sched_getscheduler", 145),
+    ("sched_get_priority_max", 146),
+    ("sched_get_priority_min", 147),
+    ("sched_rr_get_interval", 148),
+    ("mlock", 149),
+    ("munlock", 150),
+    ("mlockall", 151),
+    ("munlockall", 152),
+    ("vhangup", 153),
+    ("pivot_root", 155),
+    ("prctl", 157),
+    ("arch_prctl", 158),
+    ("adjtimex", 159),
+    ("setrlimit", 160),
+    ("chroot", 161),
+    ("sync", 162),
+    ("acct", 163),
+    ("settimeofday", 164),
+    ("umount2", 166),
+    ("swapon", 167),
+    ("swapoff", 168),
+    ("reboot", 169),
+    ("sethostname", 170),
+    ("setdomainname", 171),
+    ("iopl", 172),
+    ("ioperm", 173),
+    ("init_module", 175),
+    ("delete_module", 176),
+    ("gettid", 186),
+    ("readahead", 187),
+    ("getxattr", 191),
+    ("lgetxattr", 192),
+    ("fgetxattr", 193),
+    ("listxattr", 194),
+    ("llistxattr", 195),
+    ("flistxattr", 196),
+    ("removexattr", 197),
+    ("lremovexattr", 198),
+    ("fremovexattr", 199),
+    ("tkill", 200),
+    ("time", 201),
+    ("futex", 202),
+    ("sched_setaffinity", 203),
+    ("sched_getaffinity", 204),
+    ("io_setup", 206),
+    ("io_destroy", 207),
+    ("io_getevents", 208),
+    ("io_submit", 209),
+    ("io_cancel", 210),
+    ("lookup_dcookie", 212),
+    ("epoll_create", 213),
+    ("epoll_ctl_old", 214),
+    ("epoll_wait_old", 215),
+    ("remap_file_pages", 216),
+    ("getdents64", 217),
+    ("set_tid_address", 218),
+    ("restart_syscall", 219),
+    ("semtimedop", 220),
+    ("fadvise64", 221),
+    ("timer_create", 222),
+    ("timer_settime", 223),
+    ("timer_gettime", 224),
+    ("timer_getoverrun", 225),
+    ("timer_delete", 226),
+    ("clock_settime", 227),
+    ("clock_gettime", 228),
+    ("clock_getres", 229),
+    ("clock_nanosleep", 230),
+    ("exit_group", 231),
+    ("epoll_wait", 232),
+    ("epoll_ctl", 233),
+    ("tgkill", 234),
+    ("utimes", 235),
+    ("mbind", 237),
+    ("set_mempolicy", 238),
+    ("get_mempolicy", 239),
+    ("mq_open", 240),
+    ("mq_unlink", 241),
+    ("mq_timedsend", 242),
+    ("mq_timedreceive", 243),
+    ("mq_notify", 244),
+    ("mq_getsetattr", 245),
+    ("waitid", 247),
+    ("add_key", 248),
+    ("request_key", 249),
+    ("keyctl", 250),
+    ("ioprio_set", 251),
+    ("ioprio_get", 252),
+    ("inotify_init", 253),
+    ("inotify_add_watch", 254),
+    ("inotify_rm_watch", 255),
+    ("migrate_pages", 256),
+    ("openat", 257),
+    ("mkdirat", 258),
+    ("mknodat", 259),
+    ("fchownat", 260),
+    ("futimesat", 261),
+    ("newfstatat", 262),
+    ("unlinkat", 263),
+    ("renameat", 264),
+    ("linkat", 265),
+    ("symlinkat", 266),
+    ("readlinkat", 267),
+    ("fchmodat", 268),
+    ("faccessat", 269),
+    ("pselect6", 270),
+    ("ppoll", 271),
+    ("unshare", 272),
+    ("set_robust_list", 273),
+    ("get_robust_list", 274),
+    ("splice", 275),
+    ("tee", 276),
+    ("sync_file_range", 277),
+    ("vmsplice", 278),
+    ("move_pages", 279),
+    ("utimensat", 280),
+    ("epoll_pwait", 281),
+    ("signalfd", 282),
+    ("timerfd_create", 283),
+    ("eventfd", 284),
+    ("fallocate", 285),
+    ("timerfd_settime", 286),
+    ("timerfd_gettime", 287),
+    ("accept4", 288),
+    ("signalfd4", 289),
+    ("eventfd2", 290),
+    ("epoll_create1", 291),
+    ("dup3", 292),
+    ("pipe2", 293),
+    ("inotify_init1", 294),
+    ("preadv", 295),
+    ("pwritev", 296),
+    ("rt_tgsigqueueinfo", 297),
+    ("perf_event_open", 298),
+    ("recvmmsg", 299),
+    ("fanotify_init", 300),
+    ("fanotify_mark", 301),
+    ("prlimit64", 302),
+    ("name_to_handle_at", 303),
+    ("open_by_handle_at", 304),
+    ("clock_adjtime", 305),
+    ("syncfs", 306),
+    ("sendmmsg", 307),
+    ("setns", 308),
+    ("getcpu", 309),
+    ("process_vm_readv", 310),
+    ("process_vm_writev", 311),
+    ("kcmp", 312),
+    ("finit_module", 313),
+    ("sched_setattr", 314),
+    ("sched_getattr", 315),
+    ("renameat2", 316),
+    ("seccomp", 317),
+    ("getrandom", 318),
+    ("memfd_create", 319),
+    ("kexec_file_load", 320),
+    ("bpf", 321),
+    ("execveat", 322),
+    ("userfaultfd", 323),
+    ("membarrier", 324),
+    ("mlock2", 325),
+    ("copy_file_range", 326),
+    ("preadv2", 327),
+    ("pwritev2", 328),
+    ("pkey_mprotect", 329),
+    ("pkey_alloc", 330),
+    ("pkey_free", 331),
+    ("statx", 332),
+    ("io_pgetevents", 333),
     ("rseq", 334),
 ];
 
@@ -2792,7 +3172,11 @@ fn measure_and_attest_inner(
 // ── Helper: find Firecracker binary ──────────────────────────────────────────
 
 fn which_firecracker() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    for candidate in &["firecracker", "/usr/local/bin/firecracker", "/opt/firecracker/firecracker"] {
+    for candidate in &[
+        "firecracker",
+        "/usr/local/bin/firecracker",
+        "/opt/firecracker/firecracker",
+    ] {
         let path = PathBuf::from(candidate);
         if path.exists() {
             return Ok(path);
@@ -2875,7 +3259,11 @@ fn cmd_principal_add(
         cpu_pct,
     });
     save_registry(&reg);
-    println!("principal '{name}' added ({} → {})", registry_path().display(), budget_tokens);
+    println!(
+        "principal '{name}' added ({} → {})",
+        registry_path().display(),
+        budget_tokens
+    );
 }
 
 fn cmd_principal_list() {
@@ -2884,7 +3272,10 @@ fn cmd_principal_list() {
         println!("no principals registered (axon-vm principal add <name>)");
         return;
     }
-    println!("{:<20} {:>12}  {:>6}  effects", "name", "budget_tokens", "mem_mib");
+    println!(
+        "{:<20} {:>12}  {:>6}  effects",
+        "name", "budget_tokens", "mem_mib"
+    );
     println!("{}", "-".repeat(60));
     for p in &reg.principals {
         println!(
@@ -2903,7 +3294,7 @@ fn cmd_principal_list() {
 /// read the boot policy from the Linux cmdline without a virtio-net driver.
 fn embed_policy_in_cmdline(base_cmdline: &str, mmds: &MmdsPayload) -> String {
     let json = serde_json::to_string(mmds).unwrap_or_default();
-    let b64  = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+    let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
     format!("{base_cmdline} axon.policy={b64}")
 }
 
@@ -2918,7 +3309,9 @@ mod tests {
         // Allow write(1) + exit_group(231) — minimal Axon pure program.
         let names: Vec<String> = vec!["write".into(), "exit_group".into()];
         let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         // 1 LD + 2 JEQ + 1 KILL + 1 ALLOW = 5 instructions × 8 bytes = 40
         assert_eq!(bytes.len(), 40);
     }
@@ -2927,7 +3320,9 @@ mod tests {
     fn bpf_first_insn_is_ld_abs() {
         let names: Vec<String> = vec!["read".into()];
         let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         // First 2 bytes = opcode (LD_W_ABS = 0x0020 LE)
         assert_eq!(u16::from_le_bytes([bytes[0], bytes[1]]), 0x0020);
     }
@@ -2936,22 +3331,32 @@ mod tests {
     fn bpf_last_insn_is_ret_allow() {
         let names: Vec<String> = vec!["write".into()];
         let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         let last_insn = &bytes[bytes.len() - 8..];
         // RET_K = 0x0006
         assert_eq!(u16::from_le_bytes([last_insn[0], last_insn[1]]), 0x0006);
         // k = ALLOW = 0x7fff_0000
-        assert_eq!(u32::from_le_bytes([last_insn[4], last_insn[5], last_insn[6], last_insn[7]]), 0x7fff_0000);
+        assert_eq!(
+            u32::from_le_bytes([last_insn[4], last_insn[5], last_insn[6], last_insn[7]]),
+            0x7fff_0000
+        );
     }
 
     #[test]
     fn bpf_kill_insn_before_allow() {
         let names: Vec<String> = vec!["write".into()];
         let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         // Second-to-last instruction = KILL
         let kill_insn = &bytes[bytes.len() - 16..bytes.len() - 8];
-        assert_eq!(u32::from_le_bytes([kill_insn[4], kill_insn[5], kill_insn[6], kill_insn[7]]), 0x8000_0000);
+        assert_eq!(
+            u32::from_le_bytes([kill_insn[4], kill_insn[5], kill_insn[6], kill_insn[7]]),
+            0x8000_0000
+        );
     }
 
     #[test]
@@ -3023,7 +3428,10 @@ mod tests {
         // Empty input → well-known SHA256.
         let h = sha256_file(Path::new("/nonexistent_file_axon_vm_test"));
         // SHA256 of empty bytes
-        assert_eq!(h, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            h,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
@@ -3139,7 +3547,9 @@ mod tests {
         assert!(result.is_err(), "tampered kernel must fail attestation");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("tampered") || msg.contains("attestation failed") || msg.contains("mismatch"),
+            msg.contains("tampered")
+                || msg.contains("attestation failed")
+                || msg.contains("mismatch"),
             "error must describe attestation failure: {msg}"
         );
 
@@ -3157,7 +3567,10 @@ mod tests {
             None,
             Path::new("/nonexistent/axon-vm-test-baseline-no-attest"),
         );
-        assert!(result.is_ok(), "--no-attest must skip all attestation checks");
+        assert!(
+            result.is_ok(),
+            "--no-attest must skip all attestation checks"
+        );
     }
 
     /// P7-KRN-05: `AXON_CI_NO_KVM=1` must NOT bypass the boot attestation gate.
@@ -3366,16 +3779,19 @@ mod tests {
 
         let tmp = std::env::temp_dir();
         let pid = std::process::id();
-        let kernel_path  = tmp.join(format!("axon-r31-run-kernel-{pid}.bin"));
+        let kernel_path = tmp.join(format!("axon-r31-run-kernel-{pid}.bin"));
         let axon_os_path = tmp.join(format!("axon-r31-run-axon-os-{pid}.bin"));
 
-        std::fs::write(&kernel_path,  b"run-gate-kernel-bytes").unwrap();
+        std::fs::write(&kernel_path, b"run-gate-kernel-bytes").unwrap();
         std::fs::write(&axon_os_path, b"run-gate-axon-os-bytes").unwrap();
 
         // Measure succeeds when both required components exist (no axon-audit = zero-fill)
         let m = measure_host_stack(&kernel_path, Some(&axon_os_path), None)
             .expect("measure_host_stack must succeed with kernel + axon-os");
-        assert!(m.axtcb1_ext.starts_with("axtcb1-ext:"), "axtcb1_ext must have correct prefix");
+        assert!(
+            m.axtcb1_ext.starts_with("axtcb1-ext:"),
+            "axtcb1_ext must have correct prefix"
+        );
         assert_eq!(m.components.len(), 4);
 
         // verify_extended passes against self
@@ -3394,9 +3810,15 @@ mod tests {
         // Missing axon-os → measure_host_stack returns Err (simulates exit 12)
         let missing_os = tmp.join(format!("axon-r31-run-axon-os-missing-{pid}.bin"));
         let r = measure_host_stack(&kernel_path, Some(&missing_os), None);
-        assert!(r.is_err(), "missing axon-os must cause measure_host_stack to return Err (exit 12 path)");
+        assert!(
+            r.is_err(),
+            "missing axon-os must cause measure_host_stack to return Err (exit 12 path)"
+        );
         let msg = r.unwrap_err().to_string();
-        assert!(msg.contains("axon-os"), "error must name the missing component: {msg}");
+        assert!(
+            msg.contains("axon-os"),
+            "error must name the missing component: {msg}"
+        );
 
         let _ = std::fs::remove_file(&kernel_path);
         let _ = std::fs::remove_file(&axon_os_path);
@@ -3423,9 +3845,11 @@ mod tests {
 
         // The base64 blob round-trips to the original JSON.
         let b64_part = result.split("axon.policy=").nth(1).unwrap();
-        let decoded = base64::engine::general_purpose::STANDARD.decode(b64_part).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64_part)
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
-        assert_eq!(json["schema"],    "axon-vm-mmds/1");
+        assert_eq!(json["schema"], "axon-vm-mmds/1");
         assert_eq!(json["principal"], "test-agent");
         assert_eq!(json["budget_tokens"], 5000);
     }
