@@ -55,9 +55,11 @@ jobs:
       - name: cargo test (no codegen)
         run: cargo test --no-default-features -p axon-core
 
-      # Format check — fails the build if any file needs reformatting.
+      # Format check — fails the build if any file needs reformatting. --all, not
+      # -p axon-core: the per-crate scoping here is why 37 files of drift in the
+      # other crates went unseen until 2980206 swept them.
       - name: cargo fmt check
-        run: cargo fmt -p axon-core -- --check
+        run: cargo fmt --all -- --check
 
       # Lint — only flag things that are also blocked by RUSTFLAGS=-D warnings.
       - name: cargo clippy (no codegen)

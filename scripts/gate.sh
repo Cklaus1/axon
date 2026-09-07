@@ -3,9 +3,10 @@
 #
 # Every code change (mine or a subagent's) must pass THIS exact gate before it
 # is committed, so "green" means the same thing everywhere. Runs:
-#   1. the full test suite (interpreter path, --no-default-features)
-#   2. the native codegen build (cargo build -p axon-core)
-#   3. clippy as a hard error (lib by default; --strict adds --all-targets)
+#   1. cargo fmt --all --check (text-only, so it runs before anything builds)
+#   2. the full test suite (interpreter path, --no-default-features)
+#   3. the native codegen build (cargo build -p axon-core)
+#   4. clippy as a hard error (lib by default; --strict adds --all-targets)
 #
 # Determinism: AXON_SEED + AXON_AI_MOCK are pinned so seeded-RNG / AI-call tests
 # never flake. Speed: mold linker + sccache rustc cache are used IF installed
@@ -60,6 +61,14 @@ mkdir -p target && : > "$SKIPLOG"
 # compiler honest. Cheap enough to run on every gate, codegen or not.
 echo "── gate: VISION.md focus ──────────────────────────────────────────"
 ./scripts/vision_focus.sh || fail "VISION.md focus"
+
+# Formatting. This is deliberately BEFORE the build: it is pure text, costs
+# under a second, and a fmt failure needs no compiler to be true. It is also
+# --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
+# drift accumulated unseen in the crates nobody was checking (2980206). Adding a
+# crate to the workspace? --all picks it up with no edit here.
+echo "── gate: cargo fmt --all --check ──────────────────────────────────"
+cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --all)"
 
 echo "── gate: tests (--no-default-features) ─────────────────────────────"
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
