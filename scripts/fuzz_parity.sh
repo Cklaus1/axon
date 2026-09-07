@@ -50,7 +50,11 @@ N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
 # Locate the codegen binary. Prefer an already-built one (the gate builds it
 # before tests); if absent try one build; if THAT fails (no LLVM / build lock
 # held by a parent cargo), skip cleanly rather than report a false divergence.
-AXON="target/debug/axon"
+# AXON_BIN overrides the default location. Without this the harness silently
+# ignored it, so pointing at a codegen build while `target/debug/axon` was a
+# --no-default-features (interpreter-only) binary skipped the whole gate at
+# exit 0 — a vacuous pass, not a run.
+AXON="${AXON_BIN:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "fuzz_parity: codegen build unavailable (LLVM absent or build lock) — skipping"; exit 0
@@ -340,6 +344,12 @@ fuzz str_contains str 2 'str_contains(A, B)'
 fuzz str_starts   str 2 'str_starts_with(A, B)'
 fuzz str_ends     str 2 'str_ends_with(A, B)'
 fuzz str_index    str 2 'str_index_of(A, B)'
+# str_cmp is the ONLY lexicographic ordering primitive, so a native/interp
+# divergence here silently reorders every sorted output. Two arguments so the
+# fuzzer actually compares distinct strings, and a self-compare row to pin the
+# reflexive 0 that a byte-vs-char implementation split would break first.
+fuzz str_cmp      str 2 'str_cmp(A, B)'
+fuzz str_cmp_self str 1 'str_cmp(A, A)'
 # str_split → [str]; reduce to comparable scalars: the part count, and the
 # length of the first part (exercises the array-of-AxonStr build + indexing).
 fuzz str_split_n   str 1 'len(str_split(A, "l"))'
