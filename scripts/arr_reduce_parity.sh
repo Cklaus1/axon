@@ -37,10 +37,45 @@ check() {
   elif printf '%s' "$berr" | grep -q "E0910"; then
     # A regression: these MUST be lowered (not E0910-gated) — hard fail.
     echo "  FAIL $name (E0910 — arr_sum_i64/arr_contains lowering regressed)"; fail=1
+  elif printf '%s' "$berr" | grep -qE 'IR verification failed|error: could not compile|LLVM ERROR'; then
+    # A COMPILER bug, not an unavailable toolchain. This branch used to fall
+    # through to SKIP, and that is how `arr_max_by` over an array of structs
+    # emitted invalid IR ("Incorrect number of arguments passed to called
+    # function") while this harness printed a green PASS. A build that FAILS is
+    # not a build that could not be ATTEMPTED -- collapsing the two makes the
+    # harness vacuous exactly where it is most needed.
+    echo "  FAIL $name (native build error, not unavailability):"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
   else
     # Transient native-build unavailability (e.g. nested cargo-lock under
-    # `cargo test`) — skip, like the sibling parity harnesses.
-    echo "  SKIP $name (native build unavailable)"
+    # `cargo test`) — skip, like the sibling parity harnesses. Keep the reason
+    # visible: a silent skip and a pass look identical in the summary line.
+    echo "  SKIP $name (native build unavailable):"
+    printf '%s\n' "$berr" | head -2 | sed 's/^/        /'
+  fi
+}
+
+# Assert native REFUSES to build (E0910) rather than emitting wrong code. The
+# i64-array lowering for arr_max_by/arr_min_by returns the i64 ELEMENT, so it is
+# valid only for `[i64]`; a `[Struct]` must fall through to the refusal. Before
+# the element-type guard it did NOT, and produced a module that failed IR
+# verification -- which this harness reported as SKIP, so it passed green.
+# "Refuse, never miscompile" needs its own assertion shape: a plain `check`
+# cannot express it, because for these rows a successful build is the bug.
+check_refused() {
+  local name="$1" src="$2"
+  printf '%s\n' "$src" > "$WORK/$name.ax"
+  local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
+  if [ -f "$WORK/$name" ]; then
+    echo "  FAIL $name: native BUILT what it cannot lower (expected an E0910 refusal)"
+    fail=1
+  elif printf '%s' "$berr" | grep -q 'E0910'; then
+    echo "  OK   $name: refused (E0910), as required"
+  else
+    echo "  FAIL $name: expected an E0910 refusal, got:"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
   fi
 }
 
@@ -156,6 +191,27 @@ check maxby_v 'fn main() -> i64 { let a = [3, 1, 4, 1, 5, 9, 2]  arr_max_by(&a, 
 check minby_v 'fn main() -> i64 { let a = [3, 1, 4, 1, 5, 9, 2]  arr_min_by(&a, |x| i64_to_f64(x)) }'
 check maxby_n 'fn main() -> i64 { let a = [3, 1, 4, 9, 2]  arr_max_by(&a, |x| i64_to_f64(0 - x)) }'
 check maxby_t 'fn main() -> i64 { let a = [5, 3, 5, 1]  arr_max_by(&a, |x| i64_to_f64(x)) }'
+# arr_max_by/arr_min_by over an array of STRUCTS. Every case above uses an i64
+# array, and that gap hid a real codegen bug: the struct form emitted invalid IR
+# ("Incorrect number of arguments passed to called function: call void
+# @println()") while the interpreter answered correctly. Struct arrays are the
+# DOCUMENTED use -- the builtin returns "the ELEMENT, not the key", which is only
+# interesting when the element has fields.
+check_refused maxby_st 'type C = { s: i64 }
+fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  arr_max_by(&a, |c| i64_to_f64(c.s)).s }'
+check_refused minby_st 'type C = { s: i64 }
+fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  arr_min_by(&a, |c| i64_to_f64(c.s)).s }'
+
+# Predicate reductions over a STRUCT array. These SILENTLY MISCOMPILED (they
+# walked the elements as i64): count_if gave 0 where interp gave 2, any gave
+# false where interp gave true. A wrong answer, not a crash — so only a
+# refusal-expecting row catches a regression here.
+check_refused countif_st 'type C = { s: i64 }
+fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  println(to_str(arr_count_if(&a, |c| c.s > 2)))  0 }'
+check_refused all_st 'type C = { s: i64 }
+fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  println(to_str_bool(arr_all(&a, |c| c.s > 2)))  0 }'
+check_refused any_st 'type C = { s: i64 }
+fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  println(to_str_bool(arr_any(&a, |c| c.s > 2)))  0 }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"

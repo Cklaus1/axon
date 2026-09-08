@@ -26,11 +26,24 @@ check() {
   local name="$1" src="$2"
   printf '%s\n' "$src" > "$WORK/$name.ax"
   "$INTERP" "$WORK/$name.ax" >/dev/null 2>&1; local i=$?
-  if "$AXON" build "$WORK/$name.ax" -o "$WORK/$name" >/dev/null 2>&1; then
+  local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
+  if [ -f "$WORK/$name" ]; then
     "$WORK/$name" >/dev/null 2>&1; local n=$?
     if [ "$i" = "$n" ]; then echo "  OK   $name: interp=$i native=$n"
     else echo "  FAIL $name: interp=$i native=$n"; fail=1; fi
-  else echo "  SKIP $name (native build unavailable)"; fi
+  elif printf '%s' "$berr" | grep -qE 'IR verification failed|LLVM ERROR|E0910'; then
+    # A COMPILER refusal or bug, NOT an unavailable toolchain. This used to
+    # discard stderr entirely (`>/dev/null 2>&1`), so every codegen failure --
+    # including invalid IR -- printed SKIP and the harness still summarised
+    # PASS. A sibling harness hid a real `arr_max_by`-over-structs IR bug
+    # exactly this way.
+    echo "  FAIL $name (native build error, not unavailability):"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
+  else
+    echo "  SKIP $name (native build unavailable):"
+    printf '%s\n' "$berr" | head -2 | sed 's/^/        /'
+  fi
 }
 
 check len     'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  dict_len(d) }'
