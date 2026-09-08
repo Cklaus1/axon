@@ -185,12 +185,24 @@ impl<'ctx> super::Codegen<'ctx> {
                     let val = self.ir.builder.build_load(i64_ty, field_ptr, name).unwrap();
                     return Some(val);
                 }
-                // Genuinely unknown identifier — emit a diagnostic and return
-                // None so the caller can decide whether to recover or abort.
-                eprintln!(
-                    "codegen error [E0701]: identifier '{}' not found in current scope",
-                    name
+                // Genuinely unknown identifier. Record it in `codegen_errors`,
+                // not just on stderr: the build pipeline decides whether to
+                // abort by consulting that list, so a printed-but-unrecorded
+                // error let the build PRINT `codegen error [E0701]` and then
+                // emit a binary anyway. `let f = char_is_space  f(" ")` (a
+                // builtin is not a first-class value) is diagnosed by both
+                // engines, yet the interpreter panics while the binary this
+                // produced exited 0 in silence -- a divergence on a program the
+                // compiler had already rejected. Every other codegen-error site
+                // in the backend records; this was the one that only printed.
+                // The pipeline prints the whole list before aborting, so this
+                // records WITHOUT printing -- an eprintln! here would double it.
+                let msg = format!(
+                    "codegen error [E0701]: identifier '{name}' not found in current scope"
                 );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
+                }
                 None
             }
 
