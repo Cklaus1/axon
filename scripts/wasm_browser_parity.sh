@@ -69,8 +69,17 @@ fi
 declare -A PROGS
 PROGS[arith]='fn main() -> i64 { (21 + 21) * 2 - 4 }'
 PROGS[loop]='fn main() -> i64 { let s = 0  let i = 1  while i <= 10 { s = s + i  i = i + 1 }  s }'
-PROGS[str]='fn main() -> i64 { let u = str_to_upper("hi")  let r = str_reverse("abc")  str_len(u) + str_len(r) }'
-PROGS[dict]='fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 5)  dict_inc(d, "a")  dict_get_or(d, "a", 0) + dict_len(d) }'
+# The values below are read off an EXIT CODE, which cannot represent 2..=15 or
+# 101 -- a `main` returning one of those exits 1 instead
+# (governance/EXIT_CODES.md). `str` used to total 5 and `dict` 7: both engines
+# answered 1, agreed, and printed OK without either ever computing the right
+# number. The other harnesses in this class fixed it by printing the value from a
+# non-`main` probe, but a browser module is wasi-free (no stdout) and the linker
+# exports only `main` (`--export=main`, main.rs:2752), so there is nothing to
+# print with and nothing else to invoke. The values are scaled out of the band
+# instead, and the guard below makes that a checked property rather than luck.
+PROGS[str]='fn main() -> i64 { let u = str_to_upper("hi")  let r = str_reverse("abc")  str_len(u) * 100 + str_len(r) * 10 }'
+PROGS[dict]='fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 5)  dict_inc(d, "a")  dict_get_or(d, "a", 0) * 30 + dict_len(d) }'
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 pass=0; fail=0; ran=0
@@ -83,6 +92,14 @@ for name in "${!PROGS[@]}"; do
   linked="${src%.ax}.linked.wasm"
   [ -f "$linked" ] || { echo "  SKIP $name (object-only — needs JS glue / allocator)"; continue; }
   ran=$((ran+1))
+  # A value the exit code cannot carry makes this case blind: both engines would
+  # report 1 and agree. Fail rather than pass vacuously -- rescale the program.
+  if [ "$i_exit" -eq 1 ]; then
+    echo "  FAIL $name: interp exited 1 — either a real failure, or a return value"
+    echo "       in the reserved 2..=15/101 band (or outside 0..=255), which the"
+    echo "       exit code collapses to 1. This case cannot see a wrong answer."
+    fail=$((fail+1)); continue
+  fi
   # (2) WASI-FREE: a browser module must import nothing from wasi.
   if strings "$linked" | grep -qi wasi_snapshot; then
     echo "  FAIL $name: module imports WASI — not browser-safe"; fail=$((fail+1)); continue
