@@ -71,7 +71,9 @@ Request body:
 ```
 
 Runs `axon ast review --json <tempfile>`.
-Response: `axon-ast-review/1` schema.
+Response: `axon-ast-review/2` schema (bumped from /1: added `effect_set`, the
+concrete effect names, and `contained`, the `@[contained]` capability grant —
+see R17 §3. Both are additive; `effects` (bool) is retained).
 
 ### `POST /api/ast/approve`
 

@@ -529,7 +529,7 @@ enum AstAction {
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
 
-        /// Emit the review as stable JSON (`axon-ast-review/1`).
+        /// Emit the review as stable JSON (`axon-ast-review/2`).
         #[arg(long, help = "Machine-readable JSON output")]
         json: bool,
     },
@@ -5413,18 +5413,43 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
                 .collect();
             let has_verify = f.verify.is_some();
             let has_effect = f.effect_row.is_some();
+            // `effects` stays a bool for compatibility with any reader of
+            // `axon-ast-review/1`; `effect_set` is what a reviewer actually
+            // needs -- WHICH effects, not merely whether there are any. A fn
+            // returning `| {Hal}` and one returning `| {IO}` were the same
+            // JSON (R17 s3 files this as the stated limit of its threat model).
+            let effect_set = match &f.effect_row {
+                Some(e) => {
+                    let mut names: Vec<String> = e.effects.iter().map(|x| json_str(x)).collect();
+                    if let Some(v) = &e.row_var {
+                        names.push(json_str(&format!("...{v}")));
+                    }
+                    format!("[{}]", names.join(","))
+                }
+                None => "[]".to_string(),
+            };
+            // `contained` is null for an unconstrained fn. Absent-vs-empty
+            // matters: `null` is "declares no containment", whereas an object
+            // with empty allowlists is "declares containment that grants
+            // nothing" -- opposite meanings for a reviewer.
+            let contained = match &f.contained {
+                Some(c) => contained_json(c),
+                None => "null".to_string(),
+            };
             format!(
-                "{{\"name\":{},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{}}}",
+                "{{\"name\":{},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
                 json_str(&f.name),
                 f.name,
                 attrs.join(","),
                 has_verify,
                 has_effect,
+                effect_set,
+                contained,
             )
         }).collect::<Vec<_>>().join(",");
 
         println!(
-            "{{\"schema\":\"axon-ast-review/1\",\"path\":{},\"errors\":[{}],\"fns\":[{}]}}",
+            "{{\"schema\":\"axon-ast-review/2\",\"path\":{},\"errors\":[{}],\"fns\":[{}]}}",
             json_str(&file.display().to_string()),
             errors_json,
             fns_json,
@@ -5461,6 +5486,10 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
         }
         if let Some(e) = &f.effect_row {
             println!("    effects: {}", fmt_effect_row(e));
+        }
+        // The capability grant, which this report used to omit entirely.
+        if let Some(c) = &f.contained {
+            println!("    @[contained]: {}", fmt_contained(c));
         }
     }
     if errors.is_empty() {
@@ -6517,8 +6546,108 @@ fn fmt_verify(v: &axon_core::ast::VerifySpec) -> String {
 }
 
 /// Format an [`EffectRow`] for display.
+/// Render an effect row the way the SOURCE spells it -- `{IO, Net}`, `{IO, ...e}`.
+///
+/// This used to be `format!("{e:?}").chars().take(40)`: a Rust `Debug` dump,
+/// truncated mid-token. A two-effect row printed
+/// `EffectRow { effects: ["IO"], row_var: No` -- the `row_var` cut in half, and
+/// anything past 40 chars simply gone, with no ellipsis to say so. This is the
+/// approval artifact a human signs off on, so a row that silently loses its
+/// tail is a reviewer approving effects they were never shown.
 fn fmt_effect_row(e: &axon_core::ast::EffectRow) -> String {
-    format!("{e:?}").chars().take(40).collect::<String>()
+    let mut parts: Vec<String> = e.effects.clone();
+    if let Some(v) = &e.row_var {
+        parts.push(format!("...{v}"));
+    }
+    format!("{{{}}}", parts.join(", "))
+}
+
+/// Render a `@[contained(...)]` capability spec as the reviewer must read it.
+///
+/// `@[contained]` is parsed OUT of `f.attrs` into `f.contained` (parser.rs
+/// `parse_attrs_with_specs`), so a review that walks only `attrs` showed
+/// NOTHING for it -- not even the bare name. `fn narrow` granted
+/// `fs: [read("./data/")]` and `fn wide` granted `fs: [write("/")], net: ["*"],
+/// exec: any` rendered as byte-identical lines. The whole point of the
+/// `ast review` step is that a human authorises the capabilities before
+/// `deploy`, so the one attribute that GRANTS capability must not be the one
+/// attribute the report drops.
+fn fmt_contained(c: &axon_core::ast::ContainedSpec) -> String {
+    use axon_core::ast::NeverClause;
+    let mut parts: Vec<String> = Vec::new();
+    let quoted = |v: &Vec<String>| {
+        v.iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !c.fs_read.is_empty() {
+        parts.push(format!("read: [{}]", quoted(&c.fs_read)));
+    }
+    if !c.fs_write.is_empty() {
+        parts.push(format!("write: [{}]", quoted(&c.fs_write)));
+    }
+    if !c.net_allow.is_empty() {
+        parts.push(format!("net: [{}]", quoted(&c.net_allow)));
+    }
+    // Printed either way: `exec: none` is a grant decision a reviewer should
+    // see stated, not infer from an absence.
+    parts.push(format!(
+        "exec: {}",
+        if c.exec_allowed { "any" } else { "none" }
+    ));
+    if !c.native_grants.is_empty() {
+        parts.push(format!("native: [{}]", quoted(&c.native_grants)));
+    }
+    if !c.never.is_empty() {
+        let never: Vec<String> = c
+            .never
+            .iter()
+            .map(|n| match n {
+                NeverClause::Read(p) => format!("read(\"{p}\")"),
+                NeverClause::Write(p) => format!("write(\"{p}\")"),
+                NeverClause::Net(h) => format!("net(\"{h}\")"),
+                NeverClause::Exec => "exec".to_string(),
+                NeverClause::Spawn => "spawn".to_string(),
+            })
+            .collect();
+        parts.push(format!("never: [{}]", never.join(", ")));
+    }
+    parts.join(", ")
+}
+
+/// The same capability spec as a JSON object, for the `axon-ast-review/2`
+/// `contained` field. Structured rather than the human string, so the web
+/// approval pane (and R21's supervisor, which reads declared capabilities from
+/// this command) can gate on individual grants instead of matching prose.
+fn contained_json(c: &axon_core::ast::ContainedSpec) -> String {
+    use axon_core::ast::NeverClause;
+    let arr = |v: &Vec<String>| {
+        format!(
+            "[{}]",
+            v.iter().map(|s| json_str(s)).collect::<Vec<_>>().join(",")
+        )
+    };
+    let never: Vec<String> = c
+        .never
+        .iter()
+        .map(|n| match n {
+            NeverClause::Read(p) => json_str(&format!("read({p})")),
+            NeverClause::Write(p) => json_str(&format!("write({p})")),
+            NeverClause::Net(h) => json_str(&format!("net({h})")),
+            NeverClause::Exec => json_str("exec"),
+            NeverClause::Spawn => json_str("spawn"),
+        })
+        .collect();
+    format!(
+        "{{\"read\":{},\"write\":{},\"net\":{},\"exec\":{},\"native\":{},\"never\":[{}]}}",
+        arr(&c.fs_read),
+        arr(&c.fs_write),
+        arr(&c.net_allow),
+        c.exec_allowed,
+        arr(&c.native_grants),
+        never.join(",")
+    )
 }
 
 #[cfg(test)]

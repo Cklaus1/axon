@@ -385,7 +385,7 @@ fn e2e_full_flow_with_real_axon_binary() {
     let review_j: serde_json::Value = serde_json::from_str(&resp2)
         .unwrap_or_else(|_| panic!("ast/review not JSON: {resp2:.200}"));
     assert_eq!(
-        review_j["schema"], "axon-ast-review/1",
+        review_j["schema"], "axon-ast-review/2",
         "wrong review schema"
     );
     assert!(review_j["fns"].is_array(), "missing fns in review response");

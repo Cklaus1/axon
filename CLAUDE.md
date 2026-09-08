@@ -51,9 +51,10 @@ axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semv
 
 # Phase-10 Hello-Goal CLI flow (compile → review → approve → deploy):
 axon intent compile examples/goals/hello-goal.md   # prose .md → typed .ax skeleton (--out path; --json → axon-intent-compile/1)
-axon ast review    examples/goals/hello-goal.ax    # type-check + list fns/attrs/effects (--json → axon-ast-review/1)
+axon ast review    examples/goals/hello-goal.ax    # type-check + list fns/attrs/effects/@[contained] caps (--json → axon-ast-review/2)
 axon ast approve   examples/goals/hello-goal.ax    # record human sign-off (writes <file>.ax.approved)
-axon deploy        examples/goals/hello-goal.ax    # safety-gate pipeline → run (--gate verify; --json → axon-deploy/1)
+axon deploy        examples/goals/hello-goal.ax    # safety-gate pipeline → run (--gate verify; --json → axon-deploy/1,
+                                                   #   incl. gates_skipped/gates_override — an absent gate is not a passed gate)
 axon redteam       examples/goals/hello-goal.ax    # run redteam_check fn (--json → axon-redteam/1)
 ```
 

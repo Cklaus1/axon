@@ -21261,3 +21261,133 @@ fn ai_policy_reports_the_budget_that_is_actually_enforced() {
         "{stdout}"
     );
 }
+
+/// `axon ast review` is the HUMAN SIGN-OFF step of the Phase-10 flow
+/// (intent compile -> ast review -> ast approve -> deploy), so it is the place
+/// a person authorises capabilities before anything runs. It dropped the two
+/// fields that carry capability meaning:
+///
+///   1. `@[contained(...)]` is parsed OUT of `f.attrs` into `f.contained`
+///      (parser.rs `parse_attrs_with_specs`), and the report walked only
+///      `attrs` -- so the capability grant was absent entirely, not even a bare
+///      name. A fn granted `fs: [read("./data/")]` and one granted
+///      `fs: [write("/")], net: ["*"], exec: any` rendered IDENTICALLY.
+///   2. `effects` was `f.effect_row.is_some()`, a bare bool, so `| {Hal}` and
+///      `| {IO}` were the same JSON (R17 s3 files this as the stated limit of
+///      its threat model), and the human view printed a Rust `Debug` dump
+///      truncated at 40 chars -- losing the row tail with no ellipsis.
+#[test]
+fn ast_review_shows_the_capabilities_being_approved() {
+    let f = std::env::temp_dir().join(format!("axon_astrevcap_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
+         fn narrow(n: i64) -> i64 { n }\n\
+         @[contained(fs: [write(\"/\")], net: [\"*\"], exec: any)]\n\
+         fn wide(n: i64) -> i64 { n }\n\
+         fn multi(p: str) -> str | {IO, Net, AI, ...e} { p }\n\
+         fn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+
+    let out = axon()
+        .args(["ast", "review", f.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let j = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "ast review should exit 0: {j}");
+
+    let line = |name: &str| -> String {
+        let key = format!("\"name\":\"{name}\"");
+        let start = j
+            .find(&key)
+            .unwrap_or_else(|| panic!("no entry for `{name}`: {j}"));
+        // End at the next entry boundary. Depth-counted rather than searching
+        // for a literal, because `contained` is a nested object: a naive
+        // `find("}}")` matches nothing at all when that object is absent (the
+        // pre-fix shape), silently returning the rest of the document and
+        // making every per-fn assertion compare the same string.
+        let mut depth = 0i32;
+        let mut end = j.len();
+        for (i, c) in j[start..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        end = start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        j[start..end].to_string()
+    };
+
+    // The two fns differ ONLY in what they are permitted to do. If the report
+    // cannot tell them apart, approving one is approving the other.
+    //
+    // Compared with the name and signature STRIPPED: those always differ, so
+    // including them would make this assertion pass against the pre-fix build
+    // that emitted no capability information at all.
+    let caps = |name: &str| -> String {
+        let e = line(name);
+        let at = e
+            .find("\"attrs\"")
+            .unwrap_or_else(|| panic!("no attrs in `{name}` entry: {e}"));
+        e[at..].to_string()
+    };
+    assert_ne!(
+        caps("narrow"),
+        caps("wide"),
+        "fns with different capability grants must not render identically: {j}"
+    );
+
+    // The specific grants, not merely "they differ".
+    assert!(
+        line("narrow").contains("\"read\":[\"./data/\"]")
+            && line("narrow").contains("\"exec\":false"),
+        "narrow's grant: {j}"
+    );
+    assert!(
+        line("wide").contains("\"write\":[\"/\"]")
+            && line("wide").contains("\"net\":[\"*\"]")
+            && line("wide").contains("\"exec\":true"),
+        "wide's grant: {j}"
+    );
+
+    // Absent-vs-empty: a fn declaring no containment is `null`, NOT an object
+    // with empty lists. Those mean opposite things to a reviewer ("declares no
+    // containment" vs "declares containment granting nothing").
+    assert!(
+        line("multi").contains("\"contained\":null"),
+        "unconstrained fn must be null, not an empty grant: {j}"
+    );
+
+    // WHICH effects, including the row variable. The old 40-char Debug
+    // truncation cut this row short.
+    assert!(
+        line("multi").contains("\"effect_set\":[\"IO\",\"Net\",\"AI\",\"...e\"]"),
+        "effect_set must name every effect and the row var: {j}"
+    );
+    // The pre-existing bool survives for readers of the old schema.
+    assert!(line("multi").contains("\"effects\":true"), "{j}");
+    assert!(j.contains("axon-ast-review/2"), "schema bump: {j}");
+
+    // The HUMAN view is what a reviewer actually reads at sign-off.
+    let human = axon()
+        .args(["ast", "review", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let h = String::from_utf8_lossy(&human.stdout).to_string();
+    assert!(
+        h.contains("exec: any") && h.contains("net: [\"*\"]"),
+        "human view must state the grant: {h}"
+    );
+    assert!(
+        h.contains("{IO, Net, AI, ...e}"),
+        "human view must print the whole row, not a truncated Debug dump: {h}"
+    );
+    let _ = std::fs::remove_file(&f);
+}
