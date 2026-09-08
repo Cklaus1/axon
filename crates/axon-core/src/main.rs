@@ -2505,6 +2505,15 @@ fn mobile_emit_object(
     cg.declare_functions(&concrete);
     cg.emit_program(&concrete);
     if !cg.codegen_errors().is_empty() {
+        // Print each one. The native and wasm paths below both do; this path
+        // reported only a COUNT, so the user learned that N things were wrong
+        // and nothing about what. That was survivable while every codegen-error
+        // site also printed to stderr itself, and stopped being survivable when
+        // the E0701 site was corrected to record without printing (the pipeline
+        // is what prints). Same class as the swallowed `axon build` diagnostics.
+        for e in cg.codegen_errors() {
+            eprintln!("{e}");
+        }
         return Err(format!(
             "{} codegen error(s) emitting mobile object",
             cg.codegen_errors().len()
