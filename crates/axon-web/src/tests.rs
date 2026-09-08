@@ -185,6 +185,169 @@ fn html_state_machine_lockall_and_unlock() {
     }
 }
 
+/// The review pane's capability summary reads `j.fns` -- and a wrong field name
+/// there fails SILENTLY: the summary renders empty and the pane looks exactly
+/// as it did before the summary existed. So assert the name against the RUNNING
+/// server rather than against the HTML, which cannot tell a correct key from a
+/// plausible one. (The first draft of the summary read `j.functions`.)
+#[test]
+fn ast_review_response_uses_the_field_names_the_review_pane_reads() {
+    start_server_thread(18091);
+    let payload = "{\"content\":\"@[contained(fs: [read(\\\"./data/\\\")], exec: none)]\\nfn narrow(n: i64) -> i64 { n }\\nfn wide(n: i64) -> i64 { n }\\nfn main() { println(to_str(narrow(1) + wide(2))) }\"}";
+    let (status, body) = post_json(18091, "/api/ast/review", payload);
+    assert_eq!(status, 200, "status: {status}, body: {body:.300}");
+    let j: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.300}"));
+
+    // Skip when the axon binary is unavailable in this environment -- an empty
+    // fns array then means "nothing ran", not "the key is wrong", and asserting
+    // through it would turn a missing toolchain into a false failure.
+    let fns = match j.get("fns").and_then(|v| v.as_array()) {
+        Some(f) if !f.is_empty() => f.clone(),
+        _ => {
+            eprintln!("skip: no `fns` in review output (axon binary unavailable?): {body:.300}");
+            return;
+        }
+    };
+
+    // The three keys the pane indexes. `contained` must be PRESENT on every fn
+    // -- absent and null are different claims, and the pane distinguishes them.
+    for f in &fns {
+        assert!(f.get("name").is_some(), "fn entry lacks `name`: {f}");
+        assert!(
+            f.get("effect_set").is_some(),
+            "fn entry lacks `effect_set`: {f}"
+        );
+        assert!(
+            f.get("contained").is_some(),
+            "`contained` must be present (null when undeclared), not omitted: {f}"
+        );
+    }
+
+    // PRIMARY: the contained fn and the unconstrained one must be
+    // distinguishable through exactly the keys the pane reads.
+    let narrow = fns.iter().find(|f| f["name"] == "narrow").expect("narrow");
+    let wide = fns.iter().find(|f| f["name"] == "wide").expect("wide");
+    assert!(
+        narrow["contained"].is_object(),
+        "a fn with @[contained] must carry the grant object: {narrow}"
+    );
+    assert!(
+        wide["contained"].is_null(),
+        "a fn with no boundary must be null, not an empty grant object: {wide}"
+    );
+    assert_eq!(
+        narrow["contained"]["read"][0], "./data/",
+        "the read grant must survive to the reviewer: {narrow}"
+    );
+    assert_eq!(narrow["contained"]["exec"], serde_json::Value::Bool(false));
+}
+
+/// `axon redteam` distinguishes "the red team ran and found nothing"
+/// (`status: "safe"`) from "there was no red team" (`status: "no_redteam_fn"`).
+/// BOTH carry `caught: false` and neither sets `error`, so a pane keying its
+/// green branch on `caught` alone collapses them -- and a program with no
+/// `redteam_check` function at all rendered as "no adversarial issues found"
+/// and unlocked Deploy.
+///
+/// Same defect as the deploy pane's, one step earlier in the same flow: an
+/// absent check reported as a passed check. The reviewer must be told which of
+/// the two happened, because only one of them is evidence.
+#[test]
+fn redteam_pane_separates_no_redteam_fn_from_a_clean_pass() {
+    let html = crate::html::INDEX_HTML;
+    let handler = html
+        .split("async function runRedteam")
+        .nth(1)
+        .expect("runRedteam handler must exist");
+    let end = handler.find("async function").unwrap_or(handler.len());
+    let body: String = handler[..end]
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // The branch must exist and must read the field that carries the
+    // distinction. `caught` cannot express it -- both statuses set it false.
+    assert!(
+        body.contains("j.status === 'no_redteam_fn'"),
+        "the pane must branch on `status`, the only field separating an absent \
+         red team from a clean one; got:\n{body}"
+    );
+
+    // PRIMARY: the two outcomes must not render the same words. This is the
+    // whole test -- a message that says "no adversarial issues found" when
+    // nothing was examined is the defect, however the branch is spelled.
+    let absent_at = body.find("no_redteam_fn").expect("absent branch");
+    let absent_msg_end = body[absent_at..]
+        .find("} else")
+        .map(|i| absent_at + i)
+        .unwrap_or(body.len());
+    let absent_msg = &body[absent_at..absent_msg_end];
+    assert!(
+        !absent_msg.contains("no adversarial issues found"),
+        "the absent-red-team branch must not claim a clean result: {absent_msg}"
+    );
+    assert!(
+        absent_msg.contains("NOTHING WAS RED-TEAMED"),
+        "the absent-red-team branch must say so unmissably: {absent_msg}"
+    );
+}
+
+/// `axon-goal-improve/1`'s `ok` field means the program RAN, not that anything
+/// was optimized. A file with no `@[adaptive]` function runs cleanly and returns
+/// `ok: true, best_score: null, trajectory: []` -- and the pane reported
+/// "optimization complete".
+///
+/// Milder than the redteam case (Improve is a demonstration step, not a safety
+/// gate) but the same collapse: a message asserting a result that was never
+/// produced. `trajectory` is the field that carries the distinction -- the API
+/// filters it to adaptive fns with more than one eval, so a non-empty
+/// trajectory is exactly "something was actually optimized".
+#[test]
+fn improve_pane_separates_ran_from_actually_optimized() {
+    let html = crate::html::INDEX_HTML;
+    let handler = html
+        .split("async function runImprove")
+        .nth(1)
+        .expect("runImprove handler must exist");
+    let end = handler.find("async function").unwrap_or(handler.len());
+    let body: String = handler[..end]
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Scope to the DECISION branch. The handler also builds a summary string
+    // that reads `j.trajectory` for display, so a whole-body search for
+    // "trajectory" -- or any assertion of the form "the guard appears before
+    // the claim" -- is satisfied by the pre-fix code purely by source order.
+    // RED-proving caught exactly that: two earlier drafts of this test passed
+    // against the broken build. The question is not whether the trajectory is
+    // mentioned; it is whether the CLAIM depends on it.
+    let decision_at = body
+        .find("if (j.ok !== false")
+        .expect("the ok/error decision branch must exist");
+    let decision = &body[decision_at..];
+
+    // PRIMARY: within the success arm, "optimization complete" must be reached
+    // only through a trajectory test. Anything else prints a result for a run
+    // that produced none.
+    let claim_at = decision
+        .find("optimization complete")
+        .expect("the success message must exist");
+    let before_claim = &decision[..claim_at];
+    assert!(
+        before_claim.contains("trajectory") && before_claim.contains("length > 0"),
+        "'optimization complete' must sit behind a non-empty-trajectory test \
+         inside the success arm; the arm reads:\n{before_claim}"
+    );
+    assert!(
+        decision.contains("NOTHING WAS OPTIMIZED"),
+        "the no-adaptive-fn case must say so rather than claiming a result"
+    );
+}
+
 /// AUDIT T50 (P4-PROD-09/P4-PROD-10): the approval-flow gates must key on the
 /// fields the CLI schemas actually emit, and staging must be content-addressed.
 #[test]
@@ -227,14 +390,31 @@ fn approval_flow_gates_key_on_real_schema_fields_t50() {
     let flag_at = body
         .find("done.redteamed = true")
         .expect("the flag must be set somewhere");
-    assert!(
-        flag_at > passed_at,
-        "done.redteamed must be set INSIDE the pass branch, not after the if/else chain"
-    );
     let caught_at = body.find("if (caught)").expect("caught branch");
+    // Scope to the CAUGHT branch itself -- from `if (caught)` to the `} else`
+    // that closes it -- rather than to everything before the pass branch. The
+    // chain legitimately grew a third arm (`no_redteam_fn`) that sits between
+    // the two and sets the flag, so "before the pass branch" stopped meaning
+    // "on the caught path". The invariant under test was never about ordering:
+    // it is that a redteam which CAUGHT something must not unlock Deploy.
+    let caught_body = &body[caught_at..];
+    let caught_end = caught_body
+        .find("} else")
+        .expect("the caught branch must be closed by an else");
     assert!(
-        !body[caught_at..passed_at].contains("done.redteamed = true"),
+        !caught_body[..caught_end].contains("done.redteamed = true"),
         "done.redteamed must not be set on the CAUGHT path"
+    );
+    // And it must still be set somewhere at or after the caught branch closes,
+    // i.e. on one of the non-caught arms -- never unconditionally before the
+    // if/else chain, which is the original T50 defect.
+    assert!(
+        flag_at > caught_at,
+        "done.redteamed must be set inside a non-caught branch, not before the chain"
+    );
+    assert!(
+        body[passed_at..].contains("done.redteamed = true"),
+        "the pass branch itself must still set the flag"
     );
 
     // (3) `axon-deploy/1` reports `status`, never `error`. The deploy pane

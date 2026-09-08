@@ -278,7 +278,39 @@ async function reviewAst() {
   lockAll(); spin('s2');
   try {
     const j = await post('/api/ast/review', {content: axContent});
-    show('review-out', JSON.stringify(j, null, 2));
+    // This pane IS the sign-off step, and until now it showed only the raw
+    // JSON. The capabilities being granted -- the one thing the reviewer is
+    // actually approving -- sat inside a blob among parse metadata. Lead with
+    // them, then the JSON underneath for anything the summary omits.
+    //
+    // `contained: null` and an empty grant object mean OPPOSITE things and are
+    // printed differently: no boundary declared at all, versus a boundary that
+    // grants nothing. Collapsing them would present the unconstrained fn as
+    // the safest one on the page.
+    let caps = '';
+    // `fns`, not `functions` -- verified against the running CLI. A guess here
+    // fails SILENTLY: the summary just renders empty and the pane looks the
+    // way it did before the fix.
+    const fns = Array.isArray(j.fns) ? j.fns : [];
+    fns.forEach(f => {
+      const bits = [];
+      const es = Array.isArray(f.effect_set) ? f.effect_set : [];
+      if (es.length > 0) { bits.push('effects {' + es.join(', ') + '}'); }
+      const c = f.contained;
+      if (c === null || c === undefined) {
+        bits.push('NO @[contained] boundary');
+      } else {
+        const g = [];
+        ['read','write','net','native','never'].forEach(k => {
+          if (Array.isArray(c[k]) && c[k].length > 0) { g.push(k + ': ' + c[k].join(', ')); }
+        });
+        g.push('exec: ' + (c.exec ? 'any' : 'none'));
+        bits.push('@[contained] ' + g.join(' | '));
+      }
+      if (bits.length > 0) { caps += '  ' + f.name + ' — ' + bits.join('; ') + '\n'; }
+    });
+    const header = caps ? 'CAPABILITIES BEING APPROVED:\n' + caps + '\n' : '';
+    show('review-out', header + JSON.stringify(j, null, 2));
     // AUDIT T50 (P4-PROD-09). This gated on `j.error`, which the
     // `axon-ast-review/1` schema never emits — it reports `errors`, an ARRAY.
     // So a program that fails to type-check set done.reviewed = true and the
@@ -330,8 +362,18 @@ async function runImprove() {
     }
     show('improve-out', summary || JSON.stringify(j, null, 2));
     if (j.ok !== false && !j.error) {
-      const scoreLabel = (j.best_score !== undefined && j.best_score !== null) ? ' — best score: ' + j.best_score : '';
-      ok('s-improve', 'optimization complete' + scoreLabel);
+      // `ok` means the program RAN, not that anything was optimized. A file
+      // with no @[adaptive] function runs fine and yields best_score: null
+      // with an empty trajectory -- and this said "optimization complete".
+      // Same absent-vs-passed collapse as the redteam pane: report which of
+      // the two happened, since only one of them is a result.
+      const optimized = Array.isArray(j.trajectory) && j.trajectory.length > 0;
+      if (optimized) {
+        const scoreLabel = (j.best_score !== undefined && j.best_score !== null) ? ' — best score: ' + j.best_score : '';
+        ok('s-improve', 'optimization complete' + scoreLabel);
+      } else {
+        ok('s-improve', 'ran, but NOTHING WAS OPTIMIZED — no @[adaptive] fn with multiple evals');
+      }
       done.improved = true;
     } else {
       fail('s-improve', j.error || 'optimizer failed');
@@ -355,6 +397,20 @@ async function runRedteam() {
     // falsified the documented Acid-Test-4 gating claim.
     if (caught) {
       fail('s4', 'REDTEAM CAUGHT — ' + (reason || 'adversarial issue detected'));
+    } else if (j.status === 'no_redteam_fn') {
+      // The CLI distinguishes "the red team ran and found nothing" from "there
+      // was no red team": status is `safe` vs `no_redteam_fn`, and BOTH carry
+      // `caught: false`. Keying the green branch on `caught` alone rendered a
+      // file with no redteam_check function as "no adversarial issues found"
+      // and unlocked Deploy -- an absent check reported as a passed check, the
+      // same defect `gates_skipped` fixed one pane over.
+      //
+      // Still advisory, not blocking: a program legitimately may have nothing
+      // to red-team, and `axon redteam` itself exits 0 here. But the reviewer
+      // has to be told which of the two things happened, because only one of
+      // them is evidence.
+      ok('s4', 'no redteam_check function — NOTHING WAS RED-TEAMED');
+      done.redteamed = true;
     } else if (j.ok !== false && !j.error) {
       ok('s4', 'redteam passed — no adversarial issues found');
       done.redteamed = true;
