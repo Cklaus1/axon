@@ -2931,6 +2931,8 @@ pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
 /// * `op_ptr` / `op_len` — the source-level operator string (`">="`, `">"`,
 ///   `"<="`, `"<"`, `"=="`, `"!="`).  Used only for the message; the runtime
 ///   does no semantic interpretation.
+/// * `ident_ptr` / `ident_len` — the SUBJECT of the predicate as written in
+///   source (`"confidence"` or `"value"`).  Message-only, like `op`.
 /// * `bound` — the literal `f64` from the predicate.
 /// * `actual` — the runtime confidence extracted from the `Uncertain<T>`
 ///   value at the return site.
@@ -2940,10 +2942,21 @@ pub extern "C" fn __axon_verify_panic(
     fn_name_len: i64,
     op_ptr: *const u8,
     op_len: i64,
+    ident_ptr: *const u8,
+    ident_len: i64,
     bound: f64,
     actual: f64,
 ) -> ! {
-    let msg = format_verify_panic(fn_name_ptr, fn_name_len, op_ptr, op_len, bound, actual);
+    let msg = format_verify_panic(
+        fn_name_ptr,
+        fn_name_len,
+        op_ptr,
+        op_len,
+        ident_ptr,
+        ident_len,
+        bound,
+        actual,
+    );
     eprintln!("{msg}");
     std::process::exit(VERIFY_FAILED_EXIT_CODE);
 }
@@ -3253,13 +3266,23 @@ fn format_verify_panic(
     fn_name_len: i64,
     op_ptr: *const u8,
     op_len: i64,
+    ident_ptr: *const u8,
+    ident_len: i64,
     bound: f64,
     actual: f64,
 ) -> String {
     let fn_name = verify_slice_to_str(fn_name_ptr, fn_name_len);
     let op = verify_slice_to_str(op_ptr, op_len);
+    // The SUBJECT of the predicate, passed in from codegen. It used to be the
+    // hardcoded word "confidence", which was right only for the original
+    // `@[verify(confidence OP K)]` on an `Uncertain<T>` return. Once scalar
+    // returns were armed too, `@[verify(value > 100)] fn f(...) -> i64` failed
+    // with "confidence > 100 failed" -- naming a field the function does not
+    // have, against a predicate the author never wrote. The interpreter always
+    // reported the real subject; this is the native side catching up.
+    let ident = verify_slice_to_str(ident_ptr, ident_len);
     format!(
-        "axon: verify violation in {}: confidence {op} {bound} failed (actual={actual})",
+        "axon: verify violation in {}: {ident} {op} {bound} failed (actual={actual})",
         verify_fn_label(fn_name)
     )
 }
@@ -3308,11 +3331,14 @@ mod verify_panic_tests {
     fn message_contains_fn_name_op_bound_actual() {
         let fn_name = b"safe_extract";
         let op = b">=";
+        let ident = b"confidence";
         let msg = format_verify_panic(
             fn_name.as_ptr(),
             fn_name.len() as i64,
             op.as_ptr(),
             op.len() as i64,
+            ident.as_ptr(),
+            ident.len() as i64,
             0.8,
             0.42,
         );
@@ -3330,11 +3356,14 @@ mod verify_panic_tests {
         // matching the interpreter path.
         let fn_name = b"assert_deployable";
         let op = b">=";
+        let ident = b"confidence";
         let msg = format_verify_panic(
             fn_name.as_ptr(),
             fn_name.len() as i64,
             op.as_ptr(),
             op.len() as i64,
+            ident.as_ptr(),
+            ident.len() as i64,
             0.9,
             0.6,
         );
@@ -3346,8 +3375,42 @@ mod verify_panic_tests {
     }
 
     #[test]
+    fn message_names_the_predicate_subject_the_author_wrote() {
+        // `@[verify(value > 100)] fn f(n: i64) -> i64` used to fail with
+        // "confidence > 100 failed" on the native path -- the word was a
+        // literal in the format string, correct only for the original
+        // Uncertain-return form. It named a field the function does not have.
+        // The interpreter reported "value" throughout, so this was also a
+        // native<->interp message divergence on the same program.
+        let fn_name = b"f";
+        let op = b">";
+        let ident = b"value";
+        let msg = format_verify_panic(
+            fn_name.as_ptr(),
+            fn_name.len() as i64,
+            op.as_ptr(),
+            op.len() as i64,
+            ident.as_ptr(),
+            ident.len() as i64,
+            100.0,
+            6.0,
+        );
+        assert!(msg.contains("value > 100"), "msg: {msg}");
+        assert!(!msg.contains("confidence"), "hardcoded subject back: {msg}");
+    }
+
+    #[test]
     fn message_handles_null_ptrs_gracefully() {
-        let msg = format_verify_panic(std::ptr::null(), 0, std::ptr::null(), 0, 0.5, 0.1);
+        let msg = format_verify_panic(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            0.5,
+            0.1,
+        );
         // Should not panic; should contain placeholder text.
         assert!(msg.contains("<unknown>"), "msg: {msg}");
     }

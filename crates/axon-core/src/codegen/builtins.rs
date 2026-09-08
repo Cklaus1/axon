@@ -3500,6 +3500,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // ── ASI Layer-3: @[verify] runtime panic ──────────────────────────────
         //   __axon_verify_panic(fn_name_ptr, fn_name_len,
         //                       op_ptr, op_len,
+        //                       ident_ptr, ident_len,
         //                       bound: f64, actual: f64) -> noreturn
         //
         // Codegen injects a guarded call to this at every return site of a
@@ -3515,6 +3516,12 @@ impl<'ctx> super::Codegen<'ctx> {
                     i64_ty.into(), // fn_name_len
                     i8_ptr.into(), // op_ptr
                     i64_ty.into(), // op_len
+                    // The predicate SUBJECT as written (`confidence` / `value`).
+                    // The runtime used to hardcode "confidence" in the message,
+                    // which misnamed the failing thing for every scalar-return
+                    // `@[verify(value OP K)]`.
+                    i8_ptr.into(), // ident_ptr
+                    i64_ty.into(), // ident_len
                     f64_ty.into(), // bound
                     f64_ty.into(), // actual
                 ],

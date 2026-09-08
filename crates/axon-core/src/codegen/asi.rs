@@ -306,8 +306,16 @@ impl<'ctx> super::Codegen<'ctx> {
         let name_g =
             build_wrappers::w_global_string_ptr(&self.ir.builder, &fn_name, "verify_fn_name");
         let op_g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_str, "verify_op");
+        // Pass the predicate SUBJECT too. `ident` was destructured above and
+        // used to pick the struct field, then dropped -- so the runtime message
+        // fell back to the literal word "confidence", which is right only for
+        // the Uncertain-return form. A scalar `@[verify(value > 100)]` failed
+        // with "confidence > 100 failed", naming a field the function has not
+        // got, and diverging from the interpreter's message for the same run.
+        let ident_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &ident, "verify_ident");
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
         let op_len = i64_ty.const_int(op_str.len() as u64, false);
+        let ident_len = i64_ty.const_int(ident.len() as u64, false);
         let _ = build_wrappers::w_call(
             &self.ir.builder,
             panic_fn,
@@ -316,6 +324,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 name_len.into(),
                 op_g.into(),
                 op_len.into(),
+                ident_g.into(),
+                ident_len.into(),
                 bound_const.into(),
                 actual.into(),
             ],
