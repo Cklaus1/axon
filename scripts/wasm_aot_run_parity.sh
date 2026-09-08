@@ -97,18 +97,37 @@ PROGS[loop]='fn main() -> i64 { let s = 0  let i = 1  while i <= 10 { s = s + i 
 pass=0; fail=0; ran=0
 for name in "${!PROGS[@]}"; do
   src="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$src"
-  # interp exit value (the i64 main return becomes the process exit code, mod 256)
-  "$INTERP" "$src" >/dev/null 2>&1; i_exit=$?
+  # Read the interpreter's answer by INVOKING main the same way wasmtime does,
+  # rather than off the process exit code. `main`'s i64 return is not the exit
+  # code: values in 2..=15 and 101 are remapped to 1, as is anything outside
+  # 0..=255 (governance/EXIT_CODES.md). Two of the seven cases below were landing
+  # in that band and comparing 1 against 1 -- `float` truly returns 4 and
+  # `dict_closure` truly returns 15, and the harness would have printed OK for
+  # ANY wasm answer that also remapped to 1. Renaming main->probe and printing
+  # the value makes the comparison mean what the OK line claims.
+  probe_src="${src%.ax}_probe.ax"
+  sed 's/fn main() -> i64 {/fn probe() -> i64 {/' "$src" > "$probe_src"
+  printf 'fn main() { println(to_str(probe())) }\n' >> "$probe_src"
+  i_exit="$("$INTERP" "$probe_src" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+  # BOTH engines must read the same way. wasm implements the SAME exit remap, so
+  # rewriting only the interp side manufactures a divergence that is not there.
+  if [ -z "$i_exit" ]; then
+    echo "  DIFF $name: interp printed nothing (probe build broken?)"; fail=$((fail+1)); continue
+  fi
   # AOT-wasm: build (which links if pure-int) then run.
-  if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$src" >/dev/null 2>&1; then
+  if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$probe_src" >/dev/null 2>&1; then
     echo "  SKIP $name (wasm build failed)"; continue
   fi
-  linked="${src%.ax}.linked.wasm"
+  linked="${probe_src%.ax}.linked.wasm"
   if [ ! -f "$linked" ]; then echo "  SKIP $name (not linkable — has runtime externs)"; continue; fi
   ran=$((ran+1))
-  w_out="$("$WASMRT" --invoke main "$linked" 2>/dev/null | grep -vi experimental | head -1)"
-  # interp exit code is the value mod 256; the wasm --invoke prints the full i64.
-  if [ "$((i_exit))" = "$((w_out % 256))" ]; then
+  # `--invoke` prints the callee's return value AFTER the experimental warning.
+  # The probe's main returns nothing and PRINTS the answer, so cut at the warning
+  # and take the program's own stdout. Filtering the warning by content instead
+  # would also delete a legitimate program line.
+  w_out="$("$WASMRT" --invoke main "$linked" 2>&1 | sed '/experimental/,$d' | tr -d '[:space:]')"
+  # Both sides are now the full i64 value -- no mod 256, no exit remap.
+  if [ "$((i_exit))" = "$((w_out))" ]; then
     echo "  OK   $name: interp=$i_exit wasm=$w_out"
     pass=$((pass+1))
   else
