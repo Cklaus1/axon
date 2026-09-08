@@ -39,7 +39,7 @@ fi
 if ! cargo build -q -p axon-rt --target wasm32-wasip1 2>/dev/null; then
   echo "wasm_aot_stdout_parity: wasm32 axon-rt build unavailable — skipping"; exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 INTERP="target/debug/axon-run"
 
 # Builtins whose host the pure AOT-wasm path doesn't provide → skip those files.

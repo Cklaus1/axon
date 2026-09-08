@@ -27,7 +27,7 @@ command -v node >/dev/null 2>&1 || { echo "wasm_browser_io_parity: no node — s
 HOSTJS="scripts/wasm_browser_host.js"
 [ -f "$HOSTJS" ] || { echo "wasm_browser_io_parity: host harness missing — skipping"; exit 0; }
 
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_io_parity: codegen unavailable — skipping"; exit 0; }
 fi

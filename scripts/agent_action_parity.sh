@@ -35,7 +35,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "agent_action_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # Extract the discriminating fields of each agent_action record (fn|action|caps).
 extract() {

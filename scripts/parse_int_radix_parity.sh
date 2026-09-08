@@ -44,7 +44,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "parse_int_radix_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 I_OUT="$(AXON_AI_MOCK=1 "$AXON" run "$PROG" 2>&1)"; I_EXIT=$?
 I_OUT="$(printf '%s\n' "$I_OUT" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)

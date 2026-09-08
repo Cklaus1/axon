@@ -28,7 +28,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
 fi
 # axon-rt carries the __axon_arith_panic helper; make sure it's current.
 cargo build -q -p axon-rt 2>/dev/null || true
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # (label, body) — each body is a `fn main()` body. The interesting cases are the
 # faults (must panic exit 101 with a matching message) and the boundary cases

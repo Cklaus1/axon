@@ -61,7 +61,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   say "codegen axon binary unavailable — skipping (exit 0)"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 PROG="$WORK/w.ax"
 printf 'fn main() -> i64 { 21 + 21 }\n' > "$PROG"
 if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$PROG" >/dev/null 2>&1; then

@@ -36,7 +36,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   exit 0
 fi
 cargo build -q -p axon-rt 2>/dev/null || true
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # (1) Infinite recursion — must panic gracefully (exit 101) on BOTH engines.
 REC="$WORK/rec.ax"

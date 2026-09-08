@@ -32,7 +32,7 @@ fi
 if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
   echo "wasm_aot_run_parity: interp build unavailable — skipping"; exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 

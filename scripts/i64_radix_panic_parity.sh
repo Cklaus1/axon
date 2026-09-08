@@ -23,7 +23,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "i64_radix_panic_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 run_case() {
   local label="$1" prog_src="$2" expect_exit="$3"

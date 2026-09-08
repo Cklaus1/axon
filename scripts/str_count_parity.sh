@@ -23,7 +23,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "str_count_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 PROG="$WORK/sc.ax"
 cat > "$PROG" <<'AX'

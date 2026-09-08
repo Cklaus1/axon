@@ -36,7 +36,7 @@ fi
 if ! cargo build -q -p axon-rt --target wasm32-wasip1 2>/dev/null; then
   echo "wasm_aot_env_parity: wasm32 axon-rt build unavailable — skipping"; exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 

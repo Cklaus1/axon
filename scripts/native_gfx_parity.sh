@@ -32,7 +32,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "native_gfx_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # Probe: can this binary actually emit native code?
 printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"

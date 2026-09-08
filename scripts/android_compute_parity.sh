@@ -52,7 +52,7 @@ command -v "$ADB" >/dev/null 2>&1 || ADB="${ANDROID_HOME:-}/platform-tools/adb"
 
 echo "android_compute_parity: building codegen axon binary…"
 cargo build -q -p axon-core --bin axon 2>/dev/null || skip "codegen build unavailable (LLVM absent)"
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 printf 'fn main() -> i64 { 0 }\n' > /tmp/axon_android_probe.ax
 "$AXON" build /tmp/axon_android_probe.ax -o /tmp/axon_android_probe.bin --no-cache >/dev/null 2>&1 \
   || skip "this axon binary cannot emit native builds"

@@ -29,7 +29,7 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_browser_parity: no wasm runtime — skipping"; exit 0; }
 
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_parity: codegen unavailable — skipping"; exit 0; }
 fi

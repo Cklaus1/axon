@@ -37,7 +37,7 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_examples_parity: no wasm runtime — skipping"; exit 0; }
 
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "wasm_examples_parity: codegen build unavailable — skipping"; exit 0

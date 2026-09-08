@@ -45,7 +45,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "provenance_parity: codegen build unavailable (LLVM/inkwell absent) — skipping native half"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # ── Interpreter run → provenance. ─────────────────────────────────────────────
 IPROV="$WORK/icache"

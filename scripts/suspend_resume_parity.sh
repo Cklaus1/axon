@@ -37,7 +37,7 @@ echo "suspend_resume_parity: building interpreter axon binary…"
 if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "suspend_resume_parity: interpreter build failed — cannot run"; exit 1
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # ── 1. CLI stdin regression: str / loop / EOF (Slice-1 cases, end-to-end) ──────
 # Each pair is (program, piped-stdin, expected-exit). These run the str-typed

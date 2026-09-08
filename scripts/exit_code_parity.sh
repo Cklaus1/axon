@@ -28,12 +28,48 @@ cd "$ROOT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "exit_code_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "exit_code_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
+# Capture whether the CALLER chose the binary, before the default fills it in.
+# Testing `$AXON` after the assignment cannot distinguish the two: it is always
+# set by then. That bug skipped the build unconditionally and produced a full
+# sheet of "native build failed" against a stale interpreter-only binary.
+axon_was_overridden=0
+[ -n "${AXON+x}" ] && axon_was_overridden=1
+AXON="${AXON:-target/debug/axon}"
+
+# Only build when we are going to run what we build. An explicit $AXON is a
+# deliberate choice of binary -- typically a copy pinned outside the build tree
+# so a concurrent `cargo build` cannot swap the tool mid-run -- and rebuilding
+# `target/debug/axon` would be both useless and the very hazard the pin exists
+# to avoid.
+if [ "$axon_was_overridden" -eq 0 ]; then
+  echo "exit_code_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "exit_code_parity: codegen build unavailable (LLVM absent) — skipping"
+    exit 0
+  fi
 fi
-AXON="target/debug/axon"
+
+# The preflight above proves the DEFAULT binary can codegen; it proves nothing
+# about an overridden $AXON. This harness compares interpreter against native,
+# so an interpreter-only binary cannot be measured by it at all -- and without
+# this probe it fails every single case with "native build failed", which reads
+# like a parity divergence rather than the wrong binary. Ask the binary itself.
+echo 'fn main() -> i64 { 0 }' > "$WORK/_probe.ax"
+if ! probe_err="$("$AXON" build "$WORK/_probe.ax" -o "$WORK/_probe.bin" 2>&1)"; then
+  case "$probe_err" in
+    *"requires building axon with the \`codegen\` feature"*)
+      echo "exit_code_parity: \$AXON ($AXON) is an interpreter-only build — it cannot"
+      echo "  produce native binaries, so interp↔native parity is not measurable with it."
+      echo "  Skipping. Use a codegen-capable binary (\`cargo build -p axon-core\`)."
+      exit 0
+      ;;
+    *)
+      echo "exit_code_parity: \$AXON ($AXON) failed a trivial native build — skipping:"
+      echo "$probe_err" | head -3
+      exit 0
+      ;;
+  esac
+fi
 
 # case <name> <expected_exit> <program-source>
 fail=0

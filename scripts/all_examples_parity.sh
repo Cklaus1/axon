@@ -23,7 +23,7 @@ cd "$ROOT"
 # skip cleanly rather than report a false divergence. Prefer an already-built
 # binary if present (the gate builds it before running tests).
 echo "all_examples_parity: locating codegen axon binary…"
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "all_examples_parity: codegen build unavailable (LLVM absent or build lock) — skipping"

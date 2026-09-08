@@ -36,7 +36,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "goal_input_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # Interpreter provenance (the oracle — already logs input).
 IPROV="$WORK/icache"; mkdir -p "$IPROV"

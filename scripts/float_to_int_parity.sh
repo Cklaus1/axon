@@ -22,7 +22,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "float_to_int_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 # (label, body of fn main) — each prints f64_to_i64 of an edge value. Values are
 # built through arithmetic so nothing folds to a constant at compile time.

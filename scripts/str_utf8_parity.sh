@@ -55,7 +55,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
   echo "str_utf8_parity: codegen build unavailable (LLVM absent) — skipping"
   exit 0
 fi
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 
 interp_out="$("$AXON" run "$PROG" 2>/dev/null)"
 

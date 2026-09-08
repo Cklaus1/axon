@@ -50,7 +50,7 @@ N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
 # Locate the codegen binary. Prefer an already-built one (the gate builds it
 # before tests); if absent try one build; if THAT fails (no LLVM / build lock
 # held by a parent cargo), skip cleanly rather than report a false divergence.
-AXON="target/debug/axon"
+AXON="${AXON:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "fuzz_parity: codegen build unavailable (LLVM absent or build lock) — skipping"; exit 0
