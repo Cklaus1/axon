@@ -3949,9 +3949,8 @@ fn main() { }
             );
         }
         for n in [0, 1, 16, 49, 125, 3240, -1] {
-            assert_eq!(
+            assert!(
                 stated_exit_status(n).0 == returned_exit_status(n).0,
-                true,
                 "outside the reserved ranges the rules must not diverge (n={n})"
             );
         }
