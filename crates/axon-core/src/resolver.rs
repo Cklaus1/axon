@@ -268,6 +268,82 @@ impl SymbolTable {
         best.map(|(_, s)| s.to_string())
     }
 
+    /// A visible binding whose whole name sits INSIDE the unknown one, as
+    /// snake_case segments.
+    ///
+    /// `suggest` above is edit-distance and only catches typos. It cannot
+    /// catch the other way a name goes wrong, which is COMPOSITION: the author
+    /// wanted the data in `rows` and reached for `last_rows_data`, a name that
+    /// was never bound. Levenshtein puts those ten edits apart, so the
+    /// diagnostic fell through to "introduce `last_rows_data` with `let …`" --
+    /// advice that endorses the invention instead of pointing at the binding
+    /// that already holds the data.
+    ///
+    /// Measured against the RLM harness this is the dominant error class when
+    /// a caller is told a binding EXISTS but not what it holds: 7 of one arm's
+    /// 8 errors in an 8-run sweep were an invented derived name over a bound
+    /// one (`measurements/sweeps13-14-ablating-arm-a.txt`).
+    ///
+    /// Returns the candidate and whether it is a VALUE binding (as opposed to
+    /// a function or type), because the two need different repair advice.
+    ///
+    /// Containment is required on SEGMENTS rather than as a raw substring, so
+    /// `rows` matches `last_rows_data` but not `arrows`. Every segment of the
+    /// candidate must appear in the unknown name; the best candidate is the
+    /// one matching the most segments, then the shortest, then alphabetical.
+    pub fn suggest_composed(&self, name: &str) -> Option<(String, bool)> {
+        let parts: Vec<&str> = name.split('_').filter(|p| !p.is_empty()).collect();
+        // A single-segment name has no composition to see through. Reporting
+        // one would just be a noisier `suggest`.
+        if parts.len() < 2 {
+            return None;
+        }
+        let mut best: Option<(usize, usize, &str)> = None;
+        for scope in &self.scopes {
+            for (key, sym) in scope.iter() {
+                if key == name {
+                    continue;
+                }
+                // Builtins are deliberately out of scope. The measured class
+                // is a name the AUTHOR bound, and the builtin table is large
+                // and full of short segments (`len`, `min`, `max`), so
+                // including it would answer `row_len` with "use `len`
+                // directly" -- noise, and a different question from the one
+                // this tier exists to answer. `suggest` and
+                // `foreign_builtin_help` already cover builtin confusion.
+                if matches!(sym, Symbol::Builtin { .. }) {
+                    continue;
+                }
+                let kparts: Vec<&str> = key.split('_').filter(|p| !p.is_empty()).collect();
+                if kparts.is_empty() || kparts.len() >= parts.len() {
+                    continue;
+                }
+                if !kparts.iter().all(|kp| parts.contains(kp)) {
+                    continue;
+                }
+                let cand = (kparts.len(), key.len(), key.as_str());
+                let better = match best {
+                    None => true,
+                    Some((bn, blen, bkey)) => {
+                        cand.0 > bn
+                            || (cand.0 == bn
+                                && (cand.1 < blen || (cand.1 == blen && cand.2 < bkey)))
+                    }
+                };
+                if better {
+                    best = Some(cand);
+                }
+            }
+        }
+        // The bool is "this is a value binding", which decides the wording:
+        // telling the author to `let`-derive from a FUNCTION would be wrong
+        // advice, and a hint that is confidently wrong is worse than none.
+        best.map(|(_, _, key)| {
+            let is_value = matches!(self.lookup(key), Some(Symbol::Local { .. }));
+            (key.to_string(), is_value)
+        })
+    }
+
     /// Iterate over every symbol name currently visible (all scopes).
     ///
     /// Useful for diagnostics and future IDE tooling (dead_code suppressed
@@ -1137,6 +1213,24 @@ impl<'a> Resolver<'a> {
                         d = d.with_fix(format!(
                             "a name with a similar spelling exists — did you mean `{s}`?"
                         ));
+                    } else if let Some((s, is_value)) = self.table.suggest_composed(name) {
+                        // Ahead of the generic "introduce it" advice, because
+                        // for this shape that advice is actively wrong: it tells
+                        // the author to bind a NEW name when the thing is already
+                        // in scope under one whose name they just wrote down.
+                        d = d.with_fix(if is_value {
+                            format!(
+                                "nothing named `{name}` exists, but `{s}` is bound and its name \
+                                 is part of the one you wrote — use `{s}` directly, and derive \
+                                 from it with a `let` if you need something else"
+                            )
+                        } else {
+                            format!(
+                                "nothing named `{name}` exists, but `{s}` is in scope and its \
+                                 name is part of the one you wrote — did you mean to call \
+                                 `{s}`?"
+                            )
+                        });
                     } else {
                         d = d.with_fix(format!(
                             "introduce `{name}` with `let {name} = …`, or import it from a module"
@@ -2127,6 +2221,108 @@ fn collect_pattern_bindings(
 mod tests {
     use super::*;
     use crate::ast::*;
+
+    // ── suggest_composed: the invented-derived-name class ─────────────────
+    //
+    // These drive the SymbolTable directly rather than a whole program,
+    // because the interesting behaviour is entirely in candidate selection
+    // and a program-level test would only re-test the resolver plumbing.
+
+    fn table_with(names: &[&str]) -> SymbolTable {
+        let mut t = SymbolTable::new();
+        for n in names {
+            t.define(
+                (*n).to_string(),
+                Symbol::Local {
+                    name: (*n).to_string(),
+                },
+            );
+        }
+        t
+    }
+
+    #[test]
+    fn a_bound_name_inside_an_invented_one_is_offered() {
+        // The measured shape: `rows` is bound, the author writes
+        // `last_rows_data`. Ten edits apart, so `suggest` cannot see it.
+        let t = table_with(&["rows"]);
+        assert_eq!(t.suggest("last_rows_data"), None);
+        assert_eq!(
+            t.suggest_composed("last_rows_data"),
+            Some(("rows".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn containment_is_on_segments_not_raw_substring() {
+        // `rows` is a substring of `arrows`, but not a segment of it, and
+        // suggesting `arrows` for `rows_x` would send the author to an
+        // unrelated binding. A raw `contains` would do exactly that.
+        let t = table_with(&["arrows"]);
+        assert_eq!(t.suggest_composed("rows_x"), None);
+    }
+
+    #[test]
+    fn the_candidate_matching_more_segments_wins() {
+        // Both are contained; `region_rows` explains more of the name the
+        // author actually wrote, so it is the better place to send them.
+        let t = table_with(&["rows", "region_rows"]);
+        assert_eq!(
+            t.suggest_composed("last_region_rows_data"),
+            Some(("region_rows".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn a_single_segment_name_gets_no_composed_suggestion() {
+        // Nothing was composed, so there is no composition to see through --
+        // and `suggest` already covers this case properly.
+        let t = table_with(&["rows"]);
+        assert_eq!(t.suggest_composed("total"), None);
+        assert_eq!(t.suggest_composed("rows"), None);
+    }
+
+    #[test]
+    fn a_function_is_reported_as_a_call_not_as_something_to_let_derive_from() {
+        // The value wording ("derive from it with a `let`") is wrong advice
+        // for a function, and a confidently-wrong hint is worse than none.
+        let mut t = SymbolTable::new();
+        t.define(
+            "helper".to_string(),
+            Symbol::Fn {
+                name: "helper".to_string(),
+                param_names: vec!["a".to_string()],
+            },
+        );
+        assert_eq!(
+            t.suggest_composed("helper_twice"),
+            Some(("helper".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn builtins_are_not_composed_candidates() {
+        // The builtin table is large and full of short segments, so including
+        // it would answer `row_len` with "use `len`" -- a different question
+        // from the one this tier answers, and already covered by `suggest`.
+        let mut t = SymbolTable::new();
+        t.define(
+            "len".to_string(),
+            Symbol::Builtin {
+                name: "len".to_string(),
+            },
+        );
+        assert_eq!(t.suggest_composed("row_len"), None);
+    }
+
+    #[test]
+    fn a_candidate_is_never_offered_for_an_equal_or_longer_name() {
+        // A binding cannot be the "simpler thing you meant" if it is not
+        // strictly simpler. Without the length guard a name would suggest
+        // itself under a reordering.
+        let t = table_with(&["last_rows_data", "rows_data_last"]);
+        assert_eq!(t.suggest_composed("last_rows_data"), None);
+    }
 
     // ── AST construction helpers ──────────────────────────────────────────────
 
