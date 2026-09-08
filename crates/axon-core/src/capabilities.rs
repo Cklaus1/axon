@@ -285,6 +285,7 @@ fn check_fn<'a>(
         method_map,
         visited,
         visited_methods: std::collections::HashSet::new(),
+        site: fndef.span,
         errors,
     };
     check_expr(&fndef.body, &mut ctx);
@@ -337,6 +338,15 @@ struct CapCtx<'a, 'e> {
     /// Method names already descended into on this path (cycle guard, separate
     /// namespace from free-fn `visited` since a method and a fn can share a name).
     visited_methods: std::collections::HashSet<&'a str>,
+    /// The span of the fn whose body is currently being walked -- the
+    /// contained fn itself, or a helper it reached. `Expr::Call` carries no
+    /// span, so this is the finest location available without an AST change,
+    /// and it is the one that answers the reader's question: E1001 names the
+    /// offending call in its message ("`read_file(\"/etc/passwd\")` is not
+    /// permitted"), so what was missing was never WHICH call but WHERE. In a
+    /// transitive case it points at the helper that actually performs the I/O
+    /// rather than the @[contained] fn, which is the more useful of the two.
+    site: Span,
     errors: &'e mut Vec<CapabilityError>,
 }
 
@@ -809,7 +819,7 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             };
             if let Some(name) = callee_name {
                 // A builtin I/O call is checked against the spec directly.
-                check_call(name, args, ctx.spec, ctx.errors);
+                check_call(name, args, ctx.spec, ctx.site, ctx.errors);
                 // AUDIT T2 (finding F153 / P7-SEC-02). Several builtins dispatch
                 // to a user fn NAMED BY A STRING — `sandbox_run(sb, "job", 0)`,
                 // `scheduler_spawn("worker", 0)`, the whole `goal_run` family.
@@ -858,7 +868,10 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                         // so re-look-up the canonical key rather than the literal.
                         if let Some((canon, _)) = ctx.fn_map.get_key_value(target.as_str()) {
                             if ctx.visited.insert(canon) {
+                                let outer = ctx.site;
+                                ctx.site = helper.span;
                                 check_expr(&helper.body, ctx);
+                                ctx.site = outer;
                                 ctx.visited.remove(canon);
                             }
                         }
@@ -873,7 +886,10 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                             // A helper with its OWN @[contained] is checked under
                             // its own spec elsewhere; still descend so a stricter
                             // CALLER spec also constrains it (defense in depth).
+                            let outer = ctx.site;
+                            ctx.site = helper.span;
                             check_expr(&helper.body, ctx);
+                            ctx.site = outer;
                             ctx.visited.remove(name);
                         }
                     }
@@ -1034,6 +1050,7 @@ fn check_net_host(
     host: &str,
     call_display: &dyn Fn(&str) -> String,
     spec: &ContainedSpec,
+    site: Span,
     errors: &mut Vec<CapabilityError>,
 ) {
     // 1. never: net check.
@@ -1047,7 +1064,7 @@ fn check_net_host(
                          help: remove the `never: [net(\"{glob}\")]` clause, or remove the network call — a `never` rule is a hard deny that no allowlist can override",
                         call_display(host)
                     ),
-                    Span::dummy(),
+                    site,
                 ));
                 return;
             }
@@ -1062,7 +1079,7 @@ fn check_net_host(
                  help: Add `net: [\"{host}\"]` to the @[contained(...)] attribute to allow this call (or `net: [\"*.example.com\"]` for a host glob)",
                 call_display(host)
             ),
-            Span::dummy(),
+            site,
         ));
     } else if !spec.net_allow.iter().any(|g| host_matches_glob(host, g)) {
         errors.push(CapabilityError::new(
@@ -1077,7 +1094,7 @@ fn check_net_host(
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Span::dummy(),
+            site,
         ));
     }
 }
@@ -1118,7 +1135,13 @@ pub(crate) fn host_of(s: &str) -> String {
 }
 
 /// Validate a single I/O call against the spec.
-fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
+fn check_call(
+    name: &str,
+    args: &[Expr],
+    spec: &ContainedSpec,
+    site: Span,
+    errors: &mut Vec<CapabilityError>,
+) {
     // R22: a native net-connect call pins its host against the `net` allowlist
     // (the same mechanism as builtin net calls). This runs IN ADDITION to the
     // `native:M` grant gate (E1004 in `check_native_grants`).
@@ -1133,11 +1156,11 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
             errors.push(CapabilityError::new(
                 E1001,
                 format!("`{display_name}(<dynamic host>, ...)` is not permitted by @[contained]\n  help: {help}"),
-                Span::dummy(),
+                site,
             ));
         } else {
             let display = move |h: &str| format!("{display_name}(\"{h}\", ...)");
-            check_net_host(&host, &display, spec, errors);
+            check_net_host(&host, &display, spec, site, errors);
         }
     }
     // R42 T0 (Q5/B1): a builtin may touch MORE THAN ONE path, with a DIFFERENT
@@ -1194,7 +1217,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                                         "`read_file(\"{path}\")` is forbidden by `never: [read(\"{prefix}\")]`\n  \
                                          help: remove the `never: [read(\"{prefix}\")]` clause, or remove the read call — a `never` rule is a hard deny that no allowlist can override"
                                     ),
-                                    Span::dummy(),
+                                    site,
                                 ));
                                 return;
                             }
@@ -1209,7 +1232,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                                 "`read_file(\"{path}\")` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
                                  help: Add `fs: [read(\"{pfx}\")]` to the @[contained(...)] attribute to allow this read"
                             ),
-                            Span::dummy(),
+                            site,
                         ));
                     } else if !spec.fs_read.iter().any(|p| path_has_prefix(path, p)) {
                         errors.push(CapabilityError::new(
@@ -1224,7 +1247,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ),
-                            Span::dummy(),
+                            site,
                         ));
                     }
                 } else {
@@ -1246,7 +1269,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                     errors.push(CapabilityError::new(
                         E1001,
                         format!("`read_file(<dynamic path>)` is not permitted by @[contained]\n  help: {help}"),
-                        Span::dummy(),
+                        site,
                     ));
                 }
             }
@@ -1264,7 +1287,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                                         "`write_file(\"{path}\", ...)` is forbidden by `never: [write(\"{prefix}\")]`\n  \
                                          help: remove the `never: [write(\"{prefix}\")]` clause, or remove the write call — a `never` rule is a hard deny that no allowlist can override"
                                     ),
-                                    Span::dummy(),
+                                    site,
                                 ));
                                 return;
                             }
@@ -1278,7 +1301,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                                 "`write_file(\"{path}\", ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
                                  help: Add `fs: [write(\"{pfx}\")]` to the @[contained(...)] attribute to allow this write"
                             ),
-                            Span::dummy(),
+                            site,
                         ));
                     } else if !spec.fs_write.iter().any(|p| path_has_prefix(path, p)) {
                         errors.push(CapabilityError::new(
@@ -1293,7 +1316,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ),
-                            Span::dummy(),
+                            site,
                         ));
                     }
                 } else {
@@ -1311,7 +1334,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                     errors.push(CapabilityError::new(
                         E1001,
                         format!("`write_file(<dynamic path>, ...)` is not permitted by @[contained]\n  help: {help}"),
-                        Span::dummy(),
+                        site,
                     ));
                 }
             }
@@ -1353,7 +1376,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                     }
                 };
                 if let Some(host) = effective_host {
-                    check_net_host(host, &call_display, spec, errors);
+                    check_net_host(host, &call_display, spec, site, errors);
                 } else {
                     // Dynamic host (a non-AI net call like `http_get(url)` with a
                     // computed URL — AI builtins have a fixed `ai_host`, so they took
@@ -1369,7 +1392,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                     errors.push(CapabilityError::new(
                         E1001,
                         format!("`{name}(<dynamic argument>)` is not permitted by @[contained]\n  help: {help}"),
-                        Span::dummy(),
+                        site,
                     ));
                 }
             }
@@ -1383,7 +1406,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                             "`{name}(...)` is forbidden by `never: [exec]`\n  \
                              help: remove the `never: [exec]` clause, or remove the exec call — a `never` rule is a hard deny that no allowlist can override"
                         ),
-                        Span::dummy(),
+                        site,
                     ));
                 } else if !spec.exec_allowed {
                     errors.push(CapabilityError::new(
@@ -1392,7 +1415,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                             "`{name}(...)` is not permitted: `exec: none` or exec not specified in @[contained]\n  \
                              help: Add `exec: any` to the @[contained(...)] attribute to allow process spawning"
                         ),
-                        Span::dummy(),
+                        site,
                     ));
                 }
             }
@@ -1412,7 +1435,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                          help: read the environment OUTSIDE the contained boundary and pass the value \
                          in as an argument, so the sandboxed code only sees what you explicitly hand it"
                     ),
-                    Span::dummy(),
+                    site,
                 ));
             }
         }
@@ -1469,7 +1492,7 @@ mod tests {
             "Summarize these notes concisely for a tweet.".into(),
         ))];
         let mut errors = Vec::new();
-        check_call("ai_complete", &args, &spec, &mut errors);
+        check_call("ai_complete", &args, &spec, Span::dummy(), &mut errors);
         assert!(errors.is_empty(),
             "ai_complete under the anthropic grant must be allowed regardless of prompt: {errors:?}");
     }
@@ -1482,7 +1505,7 @@ mod tests {
         let spec = make_net_spec(vec!["api.other.com"]);
         let args = vec![Expr::Literal(crate::ast::Literal::Str("any prompt".into()))];
         let mut errors = Vec::new();
-        check_call("ai_complete", &args, &spec, &mut errors);
+        check_call("ai_complete", &args, &spec, Span::dummy(), &mut errors);
         assert_eq!(
             errors.len(),
             1,
@@ -1512,6 +1535,7 @@ mod tests {
                 "api.allowed.com".into(),
             ))],
             &spec,
+            Span::dummy(),
             &mut errors,
         );
         assert!(errors.is_empty(), "http_get to an allowed host: {errors:?}");
@@ -1522,6 +1546,7 @@ mod tests {
                 "api.evil.com".into(),
             ))],
             &spec,
+            Span::dummy(),
             &mut errors,
         );
         assert_eq!(
@@ -1538,7 +1563,7 @@ mod tests {
             "./data/x.txt".into(),
         ))];
         let mut errors = Vec::new();
-        check_call("read_file", &args, &spec, &mut errors);
+        check_call("read_file", &args, &spec, Span::dummy(), &mut errors);
         assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
     }
 
@@ -1557,7 +1582,7 @@ mod tests {
             Expr::Literal(crate::ast::Literal::Str("./out/leak".into())),
         ];
         let mut errors = Vec::new();
-        check_call("file_copy", &args, &spec, &mut errors);
+        check_call("file_copy", &args, &spec, Span::dummy(), &mut errors);
         assert!(
             errors
                 .iter()
@@ -1576,7 +1601,7 @@ mod tests {
             Expr::Literal(crate::ast::Literal::Str("./out/copy.txt".into())),
         ];
         let mut errors = Vec::new();
-        check_call("file_copy", &args, &spec, &mut errors);
+        check_call("file_copy", &args, &spec, Span::dummy(), &mut errors);
         assert!(
             errors.is_empty(),
             "a granted copy must be permitted, got: {errors:?}"
@@ -1594,7 +1619,7 @@ mod tests {
             Expr::Literal(crate::ast::Literal::Str("/tmp/leak.txt".into())),
         ];
         let mut errors = Vec::new();
-        check_call("file_copy", &args, &spec, &mut errors);
+        check_call("file_copy", &args, &spec, Span::dummy(), &mut errors);
         assert!(
             errors
                 .iter()
@@ -1613,7 +1638,7 @@ mod tests {
             Expr::Literal(crate::ast::Literal::Str("./out/moved.txt".into())),
         ];
         let mut errors = Vec::new();
-        check_call("file_rename", &args, &spec, &mut errors);
+        check_call("file_rename", &args, &spec, Span::dummy(), &mut errors);
         assert!(
             errors
                 .iter()
@@ -1630,7 +1655,7 @@ mod tests {
             Expr::Literal(crate::ast::Literal::Str("x".into())),
         ];
         let mut errors = Vec::new();
-        check_call("write_file", &args, &spec, &mut errors);
+        check_call("write_file", &args, &spec, Span::dummy(), &mut errors);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1001);
         // Bug #8: the message suggests the exact least-privilege clause.
@@ -1657,7 +1682,7 @@ mod tests {
             "/etc/shadow".into(),
         ))];
         let mut errors = Vec::new();
-        check_call("read_file", &args, &spec, &mut errors);
+        check_call("read_file", &args, &spec, Span::dummy(), &mut errors);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1004);
         // Bug #8: never-clause errors explain that no allowlist overrides them.
@@ -1695,7 +1720,7 @@ mod tests {
         let args = vec![Expr::Ident("path".into())];
 
         let mut errors = Vec::new();
-        check_call("read_file", &args, &spec, &mut errors);
+        check_call("read_file", &args, &spec, Span::dummy(), &mut errors);
         assert_eq!(
             errors.len(),
             1,
@@ -1704,7 +1729,7 @@ mod tests {
         assert_eq!(errors[0].code, E1001);
 
         let mut errors = Vec::new();
-        check_call("write_file", &args, &spec, &mut errors);
+        check_call("write_file", &args, &spec, Span::dummy(), &mut errors);
         assert_eq!(
             errors.len(),
             1,
@@ -1717,7 +1742,7 @@ mod tests {
             "./data/x.txt".into(),
         ))];
         let mut errors = Vec::new();
-        check_call("read_file", &lit, &spec, &mut errors);
+        check_call("read_file", &lit, &spec, Span::dummy(), &mut errors);
         assert!(
             errors.is_empty(),
             "a literal in-allowlist read must still be permitted"
@@ -1733,16 +1758,16 @@ mod tests {
         let dyn_arg = vec![Expr::Ident("p".into())];
 
         let mut e = Vec::new();
-        check_call("read_file", &dyn_arg, &empty, &mut e);
+        check_call("read_file", &dyn_arg, &empty, Span::dummy(), &mut e);
         assert_eq!(e.len(), 1, "dynamic read_file under fs:[] must be denied");
         assert_eq!(e[0].code, E1001);
 
         let mut e = Vec::new();
-        check_call("write_file", &dyn_arg, &empty, &mut e);
+        check_call("write_file", &dyn_arg, &empty, Span::dummy(), &mut e);
         assert_eq!(e.len(), 1, "dynamic write_file under fs:[] must be denied");
 
         let mut e = Vec::new();
-        check_call("ai_complete", &dyn_arg, &empty, &mut e);
+        check_call("ai_complete", &dyn_arg, &empty, Span::dummy(), &mut e);
         assert_eq!(
             e.len(),
             1,

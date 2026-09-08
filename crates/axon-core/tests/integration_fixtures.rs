@@ -2171,3 +2171,40 @@ fn e0308_reports_the_line_of_the_annotation_not_just_the_file() {
         "E0308 should point at line 2, where the `Widget` annotation is; got: {text}"
     );
 }
+
+/// E1001 named the offending call in its message but carried no location, so
+/// the flagship capability-sandbox demo -- whose whole point is "the compiler
+/// refuses this I/O" -- could not say WHERE the refused call was.
+///
+/// The second assertion is the one worth having: when the I/O happens inside a
+/// helper the contained fn reached, the diagnostic should point at the HELPER,
+/// not at the `@[contained]` fn. That is the line the author has to change.
+#[test]
+fn e1001_points_at_the_fn_that_performs_the_refused_io() {
+    let dir = std::env::temp_dir().join("axon_e1001_span_test");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("contained.ax");
+    std::fs::write(
+        &path,
+        "fn helper(p: str) -> str {\n    \
+         match read_file(p) { Ok(s) => s  Err(e) => \"\" }\n}\n\n\
+         @[contained(fs: [], exec: none)]\nfn sandboxed() -> str {\n    \
+         helper(\"/etc/passwd\")\n}\n\nfn main() { println(sandboxed()) }\n",
+    )
+    .unwrap();
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("run axon check");
+    let text = String::from_utf8_lossy(&out.stdout).to_string()
+        + &String::from_utf8_lossy(&out.stderr);
+
+    assert!(text.contains("E1001"), "expected E1001, got: {text}");
+    assert!(
+        text.contains("\"line\":1"),
+        "E1001 should point at `helper` (line 1), which is where the refused \
+         `read_file` actually is -- not at the @[contained] fn on line 6; got: {text}"
+    );
+}
