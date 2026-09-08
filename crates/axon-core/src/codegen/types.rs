@@ -89,8 +89,20 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Tuple → struct { T0, T1, ... }
             Type::Tuple(fields) => {
-                let field_tys: Vec<BasicTypeEnum<'ctx>> =
-                    fields.iter().filter_map(|f| self.llvm_type(f)).collect();
+                // `filter_map` here silently DROPPED any element with no LLVM
+                // lowering (`Dict`), shrinking the tuple while every consumer
+                // still indexes it by the SOURCE position. `(11, dict_new(), 22)`
+                // built a 2-field struct, so `t.2` GEP'd out of range and
+                // panicked the codegen worker on a bare `unwrap()`; had the
+                // dropped element sat last, the shifted indices would have
+                // stayed in range and read the WRONG element instead. Same bug
+                // as `declare_types` (structs) — a tuple with an un-lowerable
+                // element has no layout, so refuse it and let the caller's
+                // `None` path report E0910.
+                let mut field_tys: Vec<BasicTypeEnum<'ctx>> = Vec::with_capacity(fields.len());
+                for f in fields {
+                    field_tys.push(self.llvm_type(f)?);
+                }
                 let tuple_ty = self.ir.context.struct_type(&field_tys, false);
                 Some(tuple_ty.into())
             }

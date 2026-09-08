@@ -1348,7 +1348,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 "array"
             };
             let msg = format!(
-                "codegen error [E0910]: native codegen does not lower {what} concatenation                  (`+`). The interpreter supports it; run under `axon run`, or use                  str_join/arr_concat which do lower."
+                "codegen error [E0910]: native codegen does not lower {what} concatenation (`+`). The interpreter supports it; run under `axon run`, or use str_join/arr_concat which do lower."
             );
             if !self.codegen_errors.iter().any(|e| e == &msg) {
                 eprintln!("{msg}");
@@ -3696,6 +3696,24 @@ impl<'ctx> super::Codegen<'ctx> {
                    so an f64 or str value would be misread. The interpreter supports it; run \
                    under `axon run`."
             .to_string();
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            eprintln!("{msg}");
+            self.codegen_errors.push(msg);
+        }
+    }
+
+    /// `as_*` refusal: these convert SCALARS. A struct/str/array argument used to
+    /// fall through `return None`, out of the builtin arm and into the generic
+    /// user-call path, which emitted a call to a nonexistent function with the
+    /// wrong arity — "Incorrect number of arguments passed to called function!"
+    /// from the verifier, naming neither the builtin nor the file. The
+    /// interpreter panics with the actual reason; say the same at build time.
+    fn refuse_as_cast_nonscalar(&mut self, what: &str) {
+        let msg = format!(
+            "codegen error [E0910]: `{what}` expects a scalar (i64/f64/bool/fixed-width int); \
+             a struct, str, or array argument cannot be converted. The interpreter raises this \
+             as a runtime panic; native refuses at build time."
+        );
         if !self.codegen_errors.iter().any(|e| e == &msg) {
             eprintln!("{msg}");
             self.codegen_errors.push(msg);
@@ -7118,7 +7136,31 @@ impl<'ctx> super::Codegen<'ctx> {
                 .unwrap_or_default();
             let alloca = build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), name);
             for (fname, fexpr) in fields {
-                let idx = field_names.iter().position(|n| n == fname).unwrap_or(0) as u32;
+                // `unwrap_or(0)` mapped an UNKNOWN field name to index 0 and
+                // let the GEP below `unwrap()`-panic on it (`Err(GEPIndex)`),
+                // naming neither the struct nor the file. Two ways to get here:
+                // a genuinely misspelled field, or — the shipped case — a
+                // struct `declare_types` already REFUSED (E0910, un-lowerable
+                // field type), whose body is still opaque with no fields at
+                // all. Emission continues after a refusal by design (so one
+                // build reports every problem), so this site has to tolerate a
+                // struct that was never given a layout.
+                let Some(idx) = field_names
+                    .iter()
+                    .position(|n| n == fname)
+                    .map(|i| i as u32)
+                else {
+                    let msg = format!(
+                        "codegen error [E0910]: struct `{name}` has no field `{fname}` that \
+                         native codegen can lay out (an earlier E0910 on this struct explains \
+                         why). The interpreter supports it; run under `axon run`."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    return None;
+                };
                 // Set the Option/Result context from the field's DECLARED type so
                 // a sum-type field initializer (`Box { r: Err("x") }`) builds the
                 // field's full canonical layout, not a value-only `{i1,ptr}` that
@@ -7200,12 +7242,16 @@ impl<'ctx> super::Codegen<'ctx> {
             return Some(agg.into());
         }
 
-        // Emit each element.
+        // Emit each element. An element that fails to emit must SINK the whole
+        // literal: pushing only the successes built a SHORTER array than the
+        // source asked for, so `[10, <unlowerable>, 30]` became a 2-element
+        // array and `len` answered 2. Today every failing sub-expression also
+        // pushes a codegen error (which aborts the build), so this is belt and
+        // braces — but the guard has to live here, because the day one doesn't,
+        // the symptom is a wrong answer rather than a refusal.
         let mut vals: Vec<BasicValueEnum<'ctx>> = Vec::with_capacity(elems.len());
         for e in elems {
-            if let Some(v) = self.emit_expr(e, fn_val) {
-                vals.push(v);
-            }
+            vals.push(self.emit_expr(e, fn_val)?);
         }
         if vals.is_empty() {
             return None;
@@ -7982,7 +8028,10 @@ impl<'ctx> super::Codegen<'ctx> {
                             i64_ty,
                             "as_i64_ftoi",
                         ),
-                        _ => return None,
+                        _ => {
+                            self.refuse_as_cast_nonscalar(name);
+                            return None;
+                        }
                     };
                     return Some(out.into());
                 } else {
@@ -8007,7 +8056,10 @@ impl<'ctx> super::Codegen<'ctx> {
                                 "as_f64_itof",
                             )
                         }
-                        _ => return None,
+                        _ => {
+                            self.refuse_as_cast_nonscalar(name);
+                            return None;
+                        }
                     };
                     return Some(out.into());
                 }
@@ -8054,7 +8106,10 @@ impl<'ctx> super::Codegen<'ctx> {
                             i64_ty,
                             "cast_ftoi",
                         ),
-                        _ => return None,
+                        _ => {
+                            self.refuse_as_cast_nonscalar(name);
+                            return None;
+                        }
                     };
                     let out = self.coerce_to_fixed_width(as_i64_val.into(), &target);
                     return Some(out);
@@ -9843,15 +9898,56 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                 }
                 // Fallthrough: emit arg as-is if coercion wasn't possible.
-                if let Some(v) = self.emit_expr(a, fn_val) {
-                    arg_vals.push(v.into());
+                // Same rule as the non-dyn path below — an argument that fails
+                // to emit must SINK the call, not quietly shorten its argument
+                // list (which the IR verifier reports as a wrong argument
+                // count, naming neither the call nor the file).
+                match self.emit_expr(a, fn_val) {
+                    Some(v) => arg_vals.push(v.into()),
+                    None => {
+                        let msg = format!(
+                            "codegen error [E0910]: argument {} of the call to `{}` could not \
+                             be lowered by native codegen, so the call cannot be emitted. The \
+                             interpreter supports it; run under `axon run`.",
+                            i + 1,
+                            fn_v.get_name().to_string_lossy()
+                        );
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                        return None;
+                    }
                 }
                 continue;
             }
 
             let val = match self.emit_expr(a, fn_val) {
                 Some(v) => v,
-                None => continue,
+                // `continue` DROPPED the argument and emitted the call with a
+                // short argument list — `call void @println()` with no args,
+                // which dies in the IR verifier as "Incorrect number of
+                // arguments passed to called function!", naming neither the
+                // call nor the file. (Three shipped examples died exactly this
+                // way.) Same family as the struct/param/return desyncs: a
+                // filtered list joined by position against an unfiltered one.
+                // The sub-expression that failed already pushed its own
+                // codegen error in most cases; add one naming THIS call so the
+                // report says where, and bail rather than emit a short call.
+                None => {
+                    let msg = format!(
+                        "codegen error [E0910]: argument {} of the call to `{}` could not be \
+                         lowered by native codegen, so the call cannot be emitted. The \
+                         interpreter supports it; run under `axon run`.",
+                        i + 1,
+                        fn_v.get_name().to_string_lossy()
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    return None;
+                }
             };
             // Coerce argument types to match declared parameter types.
             let expected_ty = param_tys.get(i).copied();

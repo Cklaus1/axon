@@ -709,13 +709,67 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     fn declare_types(&mut self, program: &ast::Program) {
+        // PASS 1: create every named struct as an OPAQUE type first.
+        //
+        // Bodies are filled in pass 2. Without this, a field referring to a
+        // struct declared LATER in the file resolved to `None`
+        // (`llvm_type` line ~119 is `module.get_struct_type(name)`), which the
+        // old `filter_map` silently dropped — so `type Outer = { inner: Inner,
+        // tag: i64 }` written ABOVE `type Inner` desynced its own field
+        // indices, while the same two declarations in the other order worked.
+        // A source-order dependency is not something the language promises, so
+        // resolve the names before any body needs them.
         for item in &program.items {
             if let ast::Item::TypeDef(td) = item {
-                let field_types: Vec<BasicTypeEnum<'ctx>> = td
-                    .fields
-                    .iter()
-                    .filter_map(|f| self.llvm_type_from_axon(&f.ty))
-                    .collect();
+                if self.ir.module.get_struct_type(&td.name).is_none() {
+                    self.ir.context.opaque_struct_type(&td.name);
+                }
+            }
+        }
+
+        // PASS 2: fill each body, now that every name resolves.
+        for item in &program.items {
+            if let ast::Item::TypeDef(td) = item {
+                // `filter_map` used to DROP any field whose type has no LLVM
+                // lowering (`Dict`, today), while `struct_fields` /
+                // `struct_field_sem_types` below kept every field. The two then
+                // disagreed about what index a field name has, and every
+                // consumer indexes the LLVM struct with a position from the
+                // NAME list: `emit_struct_lit`, the FieldAccess read path
+                // (expr.rs), `sem_type_of_expr`. `type B = { n: i64, sums: Dict }`
+                // panicked the codegen worker with a bare
+                // `Result::unwrap() on Err(GEPIndex)` naming neither the struct
+                // nor the file; worse, with the un-lowerable field FIRST
+                // (`{ d: Dict, a: i64, b: i64 }`) the shifted indices stay in
+                // range, so reads and writes silently land on the wrong field.
+                // Refuse the type instead — E0910, naming the field.
+                let mut field_types: Vec<BasicTypeEnum<'ctx>> = Vec::with_capacity(td.fields.len());
+                let mut unlowerable: Option<(String, String)> = None;
+                for f in &td.fields {
+                    match self.llvm_type_from_axon(&f.ty) {
+                        Some(t) => field_types.push(t),
+                        None => {
+                            // `{:?}` on the semantic type leaked Rust Debug
+                            // (`Struct("Dict")`) into a user-facing diagnostic;
+                            // render it as the user wrote it instead.
+                            unlowerable = Some((f.name.clone(), crate::doc::render_type(&f.ty)));
+                            break;
+                        }
+                    }
+                }
+                if let Some((fname, fty)) = unlowerable {
+                    let msg = format!(
+                        "codegen error [E0910]: struct `{}` has field `{}` of type {} which native \
+                         codegen cannot lower, so the struct has no layout. The interpreter \
+                         supports it; run under `axon run`.",
+                        td.name, fname, fty
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    continue;
+                }
                 // R17 Slice 3: `@[packed]` lays the struct out with NO inter-field
                 // padding (alignment 1) — exact byte layout for a hardware
                 // descriptor (GDT/IDT entry). `@[repr(C)]` keeps the natural C
@@ -724,7 +778,12 @@ impl<'ctx> Codegen<'ctx> {
                 // allocation sites (the LLVM struct type itself only carries the
                 // packed bit). So packed drives the struct body's packed flag.
                 let packed = td.attrs.iter().any(|a| a.name == "packed");
-                let named_struct = self.ir.context.opaque_struct_type(&td.name);
+                // Created opaque in pass 1; `get_struct_type` therefore always
+                // hits. Fill the body now.
+                let named_struct = match self.ir.module.get_struct_type(&td.name) {
+                    Some(t) => t,
+                    None => self.ir.context.opaque_struct_type(&td.name),
+                };
                 named_struct.set_body(&field_types, packed);
                 let field_names: Vec<String> = td.fields.iter().map(|f| f.name.clone()).collect();
                 self.struct_fields.insert(td.name.clone(), field_names);
@@ -790,12 +849,34 @@ impl<'ctx> Codegen<'ctx> {
 
     fn declare_one_fn_named(&mut self, f: &ast::FnDef, name: &str) -> FunctionValue<'ctx> {
         // Build parameter type list.
-        let param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = f
-            .params
-            .iter()
-            .filter_map(|p| self.llvm_type_from_axon(&p.ty))
-            .map(|t| t.into())
-            .collect();
+        // Third site of the same bug as `declare_types`/`Type::Tuple`: this
+        // `filter_map` DROPPED any parameter with no LLVM lowering (`Dict`),
+        // shrinking the signature while the binding loop in `emit_fn_body`
+        // walks `f.params.iter().enumerate()` and calls `get_nth_param(i)` with
+        // the SOURCE position. `fn f(d: Dict, a: i64, b: i64)` bound `a` to the
+        // slot holding `b`, and `b` to nothing — a wrong answer, no diagnostic.
+        // A parameter whose type has no layout cannot be passed at all, so
+        // refuse the function.
+        let mut param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::with_capacity(f.params.len());
+        for p in &f.params {
+            match self.llvm_type_from_axon(&p.ty) {
+                Some(t) => param_tys.push(t.into()),
+                None => {
+                    let msg = format!(
+                        "codegen error [E0910]: fn `{}` has parameter `{}` of type {} which \
+                         native codegen cannot lower, so it has no calling convention. The \
+                         interpreter supports it; run under `axon run`.",
+                        name,
+                        p.name,
+                        crate::doc::render_type(&p.ty)
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                }
+            }
+        }
 
         // Build return type.
         // Special case: the entry-point `main` with no return annotation is
@@ -832,6 +913,31 @@ impl<'ctx> Codegen<'ctx> {
                     self.ir.module.add_function(name, fn_ty, None)
                 }
                 None => {
+                    // `Unit` and `Never` lower to `None` legitimately — those
+                    // ARE void functions. Any OTHER type reaching here has a
+                    // value the signature then silently drops: the caller
+                    // emitted `call void @f()` and the IR verifier died with
+                    // "Incorrect number of arguments passed to called
+                    // function!", naming neither `f` nor the file. Reached by
+                    // `fn mk() -> (i64, Dict, i64)` — a tuple with an
+                    // un-lowerable element has no layout, so the whole return
+                    // type resolved to nothing. Say which function and which
+                    // type instead.
+                    if !matches!(ret_sem, Type::Unit | Type::Never) {
+                        let msg = format!(
+                            "codegen error [E0910]: fn `{}` returns {} which native codegen \
+                             cannot lower. The interpreter supports it; run under `axon run`.",
+                            name,
+                            f.return_type
+                                .as_ref()
+                                .map(crate::doc::render_type)
+                                .unwrap_or_else(|| "()".to_string())
+                        );
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            eprintln!("{msg}");
+                            self.codegen_errors.push(msg);
+                        }
+                    }
                     let fn_ty = self.ir.context.void_type().fn_type(&param_tys, false);
                     self.ir.module.add_function(name, fn_ty, None)
                 }

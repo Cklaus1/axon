@@ -161,7 +161,7 @@ fn enum_signature(e: &EnumDef) -> String {
     s
 }
 
-fn render_type(ty: &AxonType) -> String {
+pub(crate) fn render_type(ty: &AxonType) -> String {
     match ty {
         AxonType::Named(n) | AxonType::TypeParam(n) => n.clone(),
         AxonType::DynTrait(n) => format!("dyn {n}"),

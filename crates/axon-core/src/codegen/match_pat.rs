@@ -119,6 +119,34 @@ impl<'ctx> super::Codegen<'ctx> {
         // we must add an `undef` incoming for that predecessor to keep the phi valid.
         if arm_results.len() == arms.len() && !arm_results.is_empty() {
             let val_ty = arm_results[0].0.get_type();
+            // A phi's operands must all have the RESULT type. This built the
+            // phi from arm 0 and added the rest regardless, so a match whose
+            // arms disagree emitted invalid IR and died in the verifier with
+            // "PHI node operands are not the same type as the result!" --- a
+            // message that names neither the match nor the file.
+            //
+            // The shape that gets here: native `dict_get` always yields
+            // `Option<i64>` (the v1 dict is int-valued), so
+            // `match dict_get(d, k) { Some(v) => v  None => 0.0 }` --- which
+            // the interpreter runs fine over an f64-valued dict --- gives an
+            // i64 arm and an f64 arm. Codegen cannot know a dict's value type
+            // statically, so it cannot fix the Option; what it CAN do is say
+            // so. Every program reaching here already failed to build, so
+            // refusing is strictly an error-message improvement.
+            if arm_results.iter().any(|(v, _)| v.get_type() != val_ty) {
+                let msg = "codegen error [E0910]: native codegen cannot lower a `match` whose \
+                           arms produce different types. A common cause is matching on \
+                           `dict_get`/`dict_remove` over a dict holding f64 or str values: \
+                           native's dict is int-valued (v1), so the `Some` arm is an i64 while \
+                           the default arm is not. The interpreter supports it; run under \
+                           `axon run`."
+                    .to_string();
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                return None;
+            }
             let phi = build_wrappers::w_phi(&self.ir.builder, val_ty, "match_val");
             for (v, bb) in &arm_results {
                 phi.add_incoming(&[(v, *bb)]);
