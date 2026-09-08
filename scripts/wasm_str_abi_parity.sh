@@ -57,10 +57,18 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 # A program that routes through 13 distinct str builtins (str scalars/transforms
 # plus str_split/str_join, which round-trip an ARRAY of AxonStr). The final i64
-# is the cross-engine oracle.
+# is the cross-engine oracle -- PRINTED, not returned from `main`.
+#
+# Step 4 below already spells out why: 2..=15 and 101 are reserved exit codes and
+# a value falling out of `main` in that band is remapped to 1
+# (governance/EXIT_CODES.md), so an exit-code comparison cannot tell a right
+# answer from a wrong one there. That comment said the sum "escapes that band at
+# 41 only by luck of the addends" and left it at luck. Drop or change any addend
+# and the oracle silently collapses to 1 on all three engines, which they would
+# then agree on. Printing it makes the escape unnecessary.
 SRC="$WORK/strmix.ax"
 cat > "$SRC" <<'AX'
-fn main() -> i64 {
+fn probe() -> i64 {
     let s = str_reverse("abc")
     let r = str_replace("aXbXc", "X", "-")
     let n = str_len(r)
@@ -75,15 +83,17 @@ fn main() -> i64 {
     let joined = str_join(parts, "-")
     n + str_len(s) + str_len(slc) + idx + str_len(rep) + str_len(up) + str_len(lo) + str_len(tr) + str_len(pd) + len(parts) + str_len(joined)
 }
+fn main() { println(to_str(probe())) }
 AX
 
-# 1) interpreter oracle (exit value = i64 main return, mod 256)
-"$INTERP" "$SRC" >/dev/null 2>&1; I_EXIT=$?
+# 1) interpreter oracle (printed, so the full i64 survives)
+I_EXIT="$("$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+[ -n "$I_EXIT" ] || { echo "wasm_str_abi_parity: FAIL — interp printed nothing"; exit 1; }
 echo "wasm_str_abi_parity: interp = $I_EXIT"
 
 # 2) native AOT
 if "$AXON" build "$SRC" -o "$WORK/native" >/dev/null 2>&1; then
-  "$WORK/native" >/dev/null 2>&1; N_EXIT=$?
+  N_EXIT="$("$WORK/native" 2>/dev/null | tail -1)"
   echo "wasm_str_abi_parity: native = $N_EXIT"
   if [ "$N_EXIT" != "$I_EXIT" ]; then
     echo "wasm_str_abi_parity: FAIL — native ($N_EXIT) != interp ($I_EXIT)"; exit 1
@@ -105,17 +115,16 @@ echo "wasm_str_abi_parity: wasm = $W_OUT"
 if [ -z "$W_OUT" ]; then
   echo "wasm_str_abi_parity: FAIL — wasm produced no output (trap?)"; exit 1
 fi
-if [ "$((W_OUT % 256))" != "$I_EXIT" ]; then
+if [ "$W_OUT" != "$I_EXIT" ]; then
   echo "wasm_str_abi_parity: FAIL — wasm ($W_OUT) != interp ($I_EXIT)"; exit 1
 fi
 
-# 4) str_cmp on STDOUT, deliberately not folded into the exit sum above.
+# 4) str_cmp, kept as its own case rather than folded into the sum above.
 #
-# str_cmp returns exactly -1/0/1. Every one of those is inside the 2..=15-and-101
-# band `governance/EXIT_CODES.md` reserves and remaps (and -1 is outside 0..=255,
-# which also remaps), so an exit-code comparison could not tell a correct answer
-# from a wrong one here. The sum in step 1 escapes that band at 41 only by luck
-# of the addends -- it is not a property the harness enforces.
+# str_cmp returns exactly -1/0/1, and folding those into one total would let a
+# sign error cancel against another addend. Separate cases keep each answer
+# individually observable. (Both this case and the sum above are read off
+# STDOUT; step 1's comment explains why an exit code cannot carry either.)
 #
 # This case exists because `4a600f2` shipped str_cmp with `data:` where AxonStr's
 # field is `ptr:` in its `#[cfg(target_arch = "wasm32")]` arm. Nothing native ever
