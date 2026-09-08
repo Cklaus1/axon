@@ -2096,9 +2096,14 @@ fn cmd_verify(file: PathBuf) {
         process::exit(0);
     }
     let mut any_violation = false;
+    // Count what was actually DISCHARGED, so the exit can distinguish "proved
+    // things" from "proved nothing and said so quietly".
+    let mut proven = 0usize;
+    let mut unproven = 0usize;
     for r in &results {
         match r {
             ProofResult::Proven { function } => {
+                proven += 1;
                 println!("  ✓ proven: `{function}` satisfies its @[verify] bound for all inputs");
             }
             ProofResult::Counterexample {
@@ -2118,6 +2123,7 @@ fn cmd_verify(file: PathBuf) {
                 );
             }
             ProofResult::Unsupported { function, reason } => {
+                unproven += 1;
                 eprintln!(
                     "  warning: [{}] @[verify] on `{function}` not statically provable — {reason}; runtime gate still applies",
                     axon_core::error::W1103
@@ -2133,6 +2139,7 @@ fn cmd_verify(file: PathBuf) {
         for r in axon_core::smt::prove_refinement_returns(&program, &refinements) {
             match r {
                 ProofResult::Proven { function } => {
+                    proven += 1;
                     println!("  ✓ proven: `{function}` returns a value satisfying its refinement for all inputs");
                 }
                 ProofResult::Counterexample {
@@ -2153,6 +2160,7 @@ fn cmd_verify(file: PathBuf) {
                     );
                 }
                 ProofResult::Unsupported { function, reason } => {
+                    unproven += 1;
                     eprintln!(
                         "  warning: [{}] refinement return on `{function}` not statically provable — {reason}",
                         axon_core::error::W1103
@@ -2168,6 +2176,7 @@ fn cmd_verify(file: PathBuf) {
         for r in axon_core::smt::prove_refinement_arg_forwarding(&program, &refinements) {
             match r {
                 ProofResult::Proven { function } => {
+                    proven += 1;
                     println!("  ✓ proven: `{function}` forwards an argument that satisfies the callee's refinement");
                 }
                 ProofResult::Counterexample {
@@ -2187,12 +2196,36 @@ fn cmd_verify(file: PathBuf) {
                         !std::io::stderr().is_terminal(),
                     );
                 }
-                ProofResult::Unsupported { .. } => { /* forwarding outside the fragment: runtime gate applies */
+                // The two sibling loops above warn on Unsupported; this one
+                // used to discard it. A `str`-refined value forwarded into a
+                // slot demanding a STRICTLY stronger `str` refinement produced
+                // an Unsupported here and nothing on screen -- the runtime gate
+                // does still apply, which is why this is W1103 and not an
+                // error, but silence reads as "checked and fine".
+                ProofResult::Unsupported { function, reason } => {
+                    unproven += 1;
+                    eprintln!(
+                        "  warning: [{}] refinement forwarding at `{function}` not statically provable — {reason}; runtime gate still applies",
+                        axon_core::error::W1103
+                    );
                 }
             }
         }
     }
 
+    // A proof tool must never exit 0 in silence. Before this, a file whose
+    // every obligation fell outside the fragment printed NOTHING and exited 0,
+    // while a file with no obligations at all printed an honest "nothing to
+    // prove" -- the program carrying MORE unproven safety obligations said
+    // LESS, and the two outcomes were indistinguishable on screen.
+    if !any_violation && proven == 0 {
+        println!(
+            "axon verify: NOTHING WAS STATICALLY PROVEN — {unproven} obligation(s) fell outside \
+             the provable fragment; each is enforced at RUNTIME instead (exit 6 on violation)"
+        );
+    } else if unproven > 0 {
+        println!("axon verify: {proven} proven, {unproven} left to the runtime gate");
+    }
     process::exit(if any_violation { 2 } else { 0 });
 }
 

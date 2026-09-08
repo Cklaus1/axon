@@ -814,8 +814,26 @@ pub fn prove_refinement_returns(
             // Float fragment: all params f64 (e.g. `fn norm(x: f64) -> NonNegF`).
             out.push(prove_one_refinement_return_f64(f, &body, pred, rname));
         }
-        // Mixed / other param types fall outside the v1 fragment — skipped
-        // (the runtime obligation / constant checker still applies).
+        // Mixed / other param types fall outside the v1 fragment. Report the
+        // skip rather than dropping it: pushing nothing here made `axon verify`
+        // print NOTHING for a file whose every obligation was unprovable, while
+        // a file with no obligations at all got an honest "nothing to prove".
+        // The file carrying MORE unproven safety obligations said LESS, and the
+        // two were indistinguishable to anyone reading the output.
+        //
+        // The runtime obligation does still apply, so this is a warning (W1103)
+        // and not an error — but it has to be said out loud, because "I could
+        // not check this" and "I checked this" are the two answers a proof tool
+        // exists to tell apart.
+        else {
+            out.push(ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: format!(
+                    "refinement `{rname}` is on a fn whose params are outside the \
+                     all-i64 / all-f64 fragment — no static proof was attempted"
+                ),
+            });
+        }
     }
     out
 }
@@ -1648,6 +1666,76 @@ mod tests {
 
     fn prove(src: &str) -> Vec<ProofResult> {
         prove_verify_bounds(&parse_source(src).expect("parse"))
+    }
+
+    /// An obligation the prover cannot reach must SAY SO, not vanish.
+    ///
+    /// `prove_refinement_returns` skipped any fn whose params fell outside the
+    /// all-i64 / all-f64 fragment by pushing nothing. Combined with `axon
+    /// verify` printing only what it was handed, a file whose every obligation
+    /// was out of fragment printed NOTHING and exited 0 -- while a file with no
+    /// obligations at all printed an honest "nothing to prove". The program
+    /// carrying MORE unproven safety obligations said LESS.
+    ///
+    /// The runtime gate does still enforce these, so Unsupported (W1103) is the
+    /// right severity. The point is that "I could not check this" and "I
+    /// checked this" are the two answers a proof tool exists to tell apart, and
+    /// an empty result set spells them identically.
+    #[test]
+    fn an_unreachable_refinement_return_reports_unsupported_rather_than_vanishing() {
+        let refine_returns = |src: &str| -> Vec<ProofResult> {
+            let p = parse_source(src).expect("parse");
+            let mut refs = std::collections::HashMap::new();
+            for item in &p.items {
+                if let Item::RefineDef(r) = item {
+                    refs.insert(r.name.clone(), (*r.predicate).clone());
+                }
+            }
+            prove_refinement_returns(&p, &refs)
+        };
+
+        // A str-param fn returning a str refinement: outside the numeric
+        // fragment, so no proof is attempted -- but it must be REPORTED.
+        let r = refine_returns(
+            "type Long = str where str_len(_) > 10\n\
+             fn make(s: str) -> Long { s }\n",
+        );
+        assert_eq!(
+            r.len(),
+            1,
+            "an out-of-fragment obligation must produce a result, not an empty \
+             set indistinguishable from having no obligations: {r:?}"
+        );
+        match &r[0] {
+            ProofResult::Unsupported { function, reason } => {
+                assert_eq!(function, "make");
+                assert!(
+                    reason.contains("fragment"),
+                    "the reason must say WHY it could not be proven: {reason}"
+                );
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+
+        // The in-fragment case must still be proven -- the fix must not have
+        // turned every obligation into a shrug.
+        let r = refine_returns(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn sq(x: i64) -> NonNeg { x * x }\n",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "an in-fragment obligation must still be PROVEN, not reported \
+             unsupported: {r:?}"
+        );
+
+        // And a fn with no refinement return still yields nothing: reporting a
+        // skip must not become reporting noise about fns that owe nothing.
+        let r = refine_returns("fn plain(x: i64) -> i64 { x }\n");
+        assert!(
+            r.is_empty(),
+            "a fn with no refinement obligation must produce no result: {r:?}"
+        );
     }
 
     #[test]

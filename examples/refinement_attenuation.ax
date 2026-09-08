@@ -5,12 +5,23 @@
 // obligation to any user-written attenuating function: "the value handed out is
 // never more than what was available."
 //
-// When built with the `smt` feature these contracts are PROVEN for all inputs
-// and the runtime check is elided; without it (or for contracts outside the
-// provable fragment) the predicate is enforced at runtime — a violation exits 6.
+// When built with the `smt` feature a contract INSIDE the provable fragment is
+// PROVEN for all inputs and the runtime check is elided; anything outside it is
+// enforced at runtime instead — a violation exits 6.
 //
-//   axon verify examples/refinement_attenuation.ax   # ✓ proven (smt feature)
-//   axon run    examples/refinement_attenuation.ax   # runs; check elided/enforced
+// The two fns below are on opposite sides of that line, deliberately:
+//   `carve`         — all params plain i64  → PROVEN statically
+//   `clamp_request` — a param carries its own refinement (`cap: i64 where …`),
+//                     which the v1 fragment does not admit → runtime-enforced
+//
+// Proving `clamp_request` needs the PRECONDITION `cap >= 0` encoded as an
+// assumption (its postcondition `_ >= 0` holds only because of it); the v1
+// encoder asserts no preconditions, so admitting the fn without them would
+// yield a spurious counterexample at cap=-5. A warning is the honest answer
+// until that lands. `axon verify` says which of the two happened per fn.
+//
+//   axon verify examples/refinement_attenuation.ax   # 1 proven, 1 left to the runtime gate
+//   axon run    examples/refinement_attenuation.ax   # runs; checks elided/enforced accordingly
 
 // Never carve out more than is available. `min_i64(g, avail) <= avail` holds for
 // ALL integers, so this is unconditionally provable.
