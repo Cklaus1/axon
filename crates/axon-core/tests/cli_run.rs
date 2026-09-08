@@ -12798,6 +12798,38 @@ fn dict_holds_struct_values_in_the_interpreter() {
 }
 
 #[test]
+fn dict_from_pairs_holds_non_int_values_in_the_interpreter() {
+    // `dict_from_pairs` hands its slice to a runtime that reads EVERY element
+    // as a `(str, i64)` --- there is no value tag. So an f64 value built
+    // cleanly and stored the double's BIT PATTERN as an integer, and a str
+    // value built cleanly and then died with a spurious "stack overflow" when
+    // the value str's `{len, ptr}` was read back as one i64. Native refuses
+    // both now (dict_parity pins that half); this pins what they MEAN.
+    //
+    // It escaped the `arr_*` sweep by taking a tuple array rather than a
+    // `[T]` slice --- the same name+arity dispatch hazard wearing a different
+    // parameter shape.
+    let src = "fn main() -> i64 {\n  \
+            let df = dict_from_pairs([(\"a\", 1.5), (\"b\", 2.5)])\n  \
+            let ds = dict_from_pairs([(\"a\", \"x\"), (\"b\", \"y\")])\n  \
+            let f = match dict_get(df, \"b\") { Some(v) => v  None => 0.0 }\n  \
+            let s = match dict_get(ds, \"a\") { Some(v) => v  None => \"\" }\n  \
+            let ok = dict_len(df) == 2 && dict_len(ds) == 2 && f > 2.4 && str_eq(s, \"x\")\n  \
+            if ok { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_dfp_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "dict_from_pairs with f64/str values: {:?}",
+        out
+    );
+}
+
+#[test]
 fn word_freq_demo_uses_dict_and_group_by() {
     // Demo #19. First demo to use the Dict primitive: count word
     // frequencies in a 14-word corpus, rank by count, print top-3.

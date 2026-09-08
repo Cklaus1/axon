@@ -3689,6 +3689,19 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// `dict_from_pairs` refusal: the runtime side reads `(str, i64)` only.
+    fn refuse_from_pairs_elem(&mut self) {
+        let msg = "codegen error [E0910]: native codegen supports `dict_from_pairs` only for \
+                   `[(str, i64)]` — the runtime reads the pairs as (str, i64) with no value tag, \
+                   so an f64 or str value would be misread. The interpreter supports it; run \
+                   under `axon run`."
+            .to_string();
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            eprintln!("{msg}");
+            self.codegen_errors.push(msg);
+        }
+    }
+
     /// Is this call argument statically an array OF ARRAYS of i64?
     ///
     /// `arr_flatten`'s lowering walks a 16-byte `{i64 len, ptr}` slice-struct
@@ -8492,6 +8505,21 @@ impl<'ctx> super::Codegen<'ctx> {
             // (str,i64) tuples and inserts each into a fresh dict. Returns the
             // i8* handle directly (no out-params).
             if name == "dict_from_pairs" && args.len() == 1 {
+                // The runtime reads `data` as `[StrI64Pair]` — a (str, i64)
+                // tuple — with no tag to say otherwise. A `[(str, f64)]`
+                // therefore stored the double's BIT PATTERN as an i64 (built
+                // clean, wrong answer), and a `[(str, str)]` read the value
+                // str's `{len,ptr}` as one i64 and died later with a bogus
+                // "stack overflow". Same name+arity dispatch hazard as the
+                // `arr_*` family: refuse what the lowering cannot represent.
+                if !matches!(
+                    self.arr_arg_slice_ty(&args[0]),
+                    Some(Type::Slice(ref e))
+                        if matches!(&**e, Type::Tuple(ts) if ts.len() == 2 && ts[1] == Type::I64)
+                ) {
+                    self.refuse_from_pairs_elem();
+                    return None;
+                }
                 let pairs = self.emit_expr(&args[0], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
                 let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());

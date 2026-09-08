@@ -133,6 +133,15 @@ fn main() -> i64 { let d = dict_new()  println(to_str(dict_get_or(d, "z", C { s:
 check_refused getor_f64 'fn main() -> i64 { let d = dict_new()  println(to_str_f64(dict_get_or(d, "z", 2.5)))  0 }'
 check_refused getor_str 'fn main() -> i64 { let d = dict_new()  println(dict_get_or(d, "z", "fallback"))  0 }'
 
+# dict_from_pairs lowers to __axon_dict_from_pairs(len, *const StrI64Pair) --- the
+# runtime reads EVERY pair as (str, i64), with no value tag. An f64 value built
+# clean and stored the double's bit pattern; a str value built clean and then died
+# with a bogus "stack overflow". Native must refuse anything but [(str, i64)].
+check_refused dfp_f64 'fn main() -> i64 { let d = dict_from_pairs([("a", 1.5), ("b", 2.5)])  println(to_str(dict_len(d)))  0 }'
+check_refused dfp_str 'fn main() -> i64 { let d = dict_from_pairs([("a", "x"), ("b", "y")])  println(to_str(dict_len(d)))  0 }'
+# ...but the [(str, i64)] path it DOES support must keep working.
+check dfp_i64 'fn main() -> i64 { let d = dict_from_pairs([("a", 7), ("b", 42)])  match dict_get(d, "b") { Some(v) => v + dict_len(d)  None => 0 - 1 } }'
+
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
 echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs/dict_map_values/dict_to_str/dict_filter/dict_each (int values, BTreeMap order) match the interpreter ✓"
 exit 0
