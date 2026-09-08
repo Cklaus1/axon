@@ -4903,9 +4903,13 @@ fn undefined_name_reports_one_diagnostic_with_suggestion() {
         String::from_utf8_lossy(&out2.stdout),
         String::from_utf8_lossy(&out2.stderr)
     );
+    // The subject here is that the array is REJECTED, not which of the two codes
+    // a wrong argument used to raise. It raised E0102 and E0306 together — one
+    // fact, twice — and the pair is now collapsed onto E0306, the half that
+    // carries the repair hint. Assert the rejection, which is what this guards.
     assert!(
-        msg2.contains("E0102"),
-        "to_str of a non-scalar array must still be a type error (E0102): {msg2}"
+        msg2.contains("E0306") || msg2.contains("E0102"),
+        "to_str of a non-scalar array must still be a type error: {msg2}"
     );
 }
 
@@ -6225,6 +6229,203 @@ fn wrong_arg_type_e0306_message_is_not_double_printed() {
     assert!(
         e0306_line.contains("has the wrong type (expected i64), found str"),
         "E0306 should carry the type pair exactly once via the appended suffix: {e0306_line}"
+    );
+}
+
+/// A wrong argument is ONE fact and must reach a consumer as one diagnostic —
+/// the one carrying the repair hint.
+///
+/// Infer reported the failed unification (E0102) and the checker reported the
+/// same argument (E0306) at the same span with the same expected/found. Both
+/// survived the byte-identical collapse above, because their messages differ.
+///
+/// This is not cosmetic. E0102 came FIRST and carries no `help`, so a consumer
+/// that reads one error per failure — the RLM harness does, deliberately, so a
+/// warning cannot be misreported as the cause — saw only the bare one. All six
+/// arm-B errors in sweep 8 reached the model as E0102 with an empty `help`,
+/// with the E0306 holding the hint discarded right behind them.
+#[test]
+fn a_wrong_argument_reports_once_and_keeps_its_repair_hint() {
+    let f = std::env::temp_dir().join(format!("axon_argpair_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { let n = str_len(5)\n  n }\n").unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let errors: Vec<&str> = msg
+        .lines()
+        .filter(|l| l.contains("\"severity\":\"error\""))
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "one wrong argument must produce exactly one error, not an E0102/E0306 pair: {msg}"
+    );
+    // The survivor must be the one with the hint. Asserting only "exactly one"
+    // would pass just as well if the pair collapsed onto the USELESS half.
+    assert!(
+        errors[0].contains("\"code\":\"E0306\""),
+        "the surviving diagnostic must be the richer E0306: {msg}"
+    );
+    assert!(
+        errors[0].contains("\"help\":\"expected `str`, found `i64`"),
+        "the survivor must carry the repair hint — that is the whole point: {msg}"
+    );
+}
+
+/// The collapse is not special to E0306. Every checker E03xx is a refined
+/// restatement of the same unification failure infer already reported as E0102,
+/// and each carries the hint that E0102 lacks.
+///
+/// E0303 is the case that forced keying on the span alone rather than the type
+/// pair: it reports `expected Result<T, E>` where the E0102 for the identical
+/// span says `Result<?3, str>` — an internal inference variable. Matching on
+/// the pair would have skipped exactly the diagnostic whose wording is worst.
+#[test]
+fn a_refined_checker_error_suppresses_the_bare_e0102_at_its_span() {
+    // (fixture, the refined code it must collapse onto)
+    let cases = [
+        (
+            "fn risky(x: Option<i64>) -> i64 {\n    x + 1\n}\nfn main() -> i64 { 0 }\n",
+            "E0301",
+        ),
+        (
+            "fn f() -> bool {\n    let n = parse_int(\"1\")?\n    true\n}\nfn main() -> i64 { 0 }\n",
+            "E0303",
+        ),
+        (
+            "fn should_be_int() -> i64 {\n    true\n}\nfn main() -> i64 { 0 }\n",
+            "E0307",
+        ),
+    ];
+
+    for (src, refined) in cases {
+        let f = std::env::temp_dir().join(format!(
+            "axon_refined_{refined}_{}.ax",
+            std::process::id()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        assert!(
+            msg.contains(&format!("\"code\":\"{refined}\"")),
+            "{refined} must still be reported: {msg}"
+        );
+        // The bare twin at that span is gone. Checked by span, not globally: an
+        // E0102 elsewhere in the file is a different failure and must survive.
+        let refined_span: Vec<(String, String)> = msg
+            .lines()
+            .filter(|l| l.contains(&format!("\"code\":\"{refined}\"")))
+            .filter_map(|l| {
+                let line = l.split("\"line\":").nth(1)?.split(',').next()?.to_string();
+                let col = l.split("\"col\":").nth(1)?.split(',').next()?.to_string();
+                Some((line, col))
+            })
+            .collect();
+        assert!(!refined_span.is_empty(), "{refined} must carry a span: {msg}");
+        for l in msg.lines().filter(|l| l.contains("\"code\":\"E0102\"")) {
+            // A span-less E0102 exists (`check_numeric_operand` emits line 0,
+            // col 0, which the serializer omits). It cannot collide with the
+            // refined error's span, so skip it rather than unwrapping — that
+            // unwrap is what failed here, in the test and not in the fix.
+            let (Some(line), Some(col)) = (
+                l.split("\"line\":").nth(1).and_then(|s| s.split(',').next()),
+                l.split("\"col\":").nth(1).and_then(|s| s.split(',').next()),
+            ) else {
+                continue;
+            };
+            assert!(
+                !refined_span.contains(&(line.to_string(), col.to_string())),
+                "a bare E0102 survived at {refined}'s own span: {msg}"
+            );
+        }
+    }
+}
+
+/// An E0102 that is the SOLE account of a failure must never be collapsed away.
+///
+/// The rule suppresses only when a hint-bearing partner covers the same span,
+/// so a mismatch with no checker twin still reports. Without this, "collapse the
+/// pair" would quietly become "sometimes report nothing at all" — the one
+/// failure mode a diagnostic filter must not have.
+#[test]
+fn an_unpaired_e0102_is_never_collapsed_away() {
+    let f = std::env::temp_dir().join(format!("axon_solo102_{}.ax", std::process::id()));
+    // An arithmetic mismatch: infer reports it, and no E03xx restates it.
+    std::fs::write(&f, "fn main() -> i64 {\n    let x = 1 + true\n    0\n}\n").unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("\"severity\":\"error\""),
+        "an unpaired type mismatch must still be an error, not silence: {msg}"
+    );
+}
+
+#[test]
+fn an_unlocated_error_never_suppresses_an_unlocated_e0102() {
+    // Several checker sites emit `.at(&file, 0, 0)` with no span attached, and
+    // the serializer OMITS `line`/`col` when they are 0 — that zero is a "no
+    // location" sentinel, not line zero. So an unlocated E0306 and an unlocated
+    // E0102 describing two SEPARATE failures share one key.
+    //
+    // Collapsing on that key would drop a real error that nothing else accounts
+    // for. This fixture holds both at once: a function passed by name (E0306,
+    // unlocated) and a non-numeric arithmetic operand (E0102, unlocated).
+    let f = std::env::temp_dir().join(format!("axon_nolocpair_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn helper(x: i64) -> i64 { x }\n         fn taker(g: fn(i64) -> i64) -> i64 { 1 }\n         fn main() -> i64 {\n         \x20   let a = taker(helper)\n         \x20   let b = 1 + true\n         \x20   a\n         }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let errors: Vec<&str> = msg
+        .lines()
+        .filter(|l| l.contains("\"severity\":\"error\""))
+        .collect();
+    assert!(
+        errors.iter().any(|l| l.contains("\"code\":\"E0306\"")),
+        "the by-name function argument must still be reported: {msg}"
+    );
+    // The point of the test. Both are unlocated; neither accounts for the other.
+    assert!(
+        errors
+            .iter()
+            .any(|l| l.contains("\"code\":\"E0102\"") && !l.contains("\"line\":")),
+        "the unlocated E0102 is a separate failure and must survive the \
+         same-span collapse: {msg}"
     );
 }
 

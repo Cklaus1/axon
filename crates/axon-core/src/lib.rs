@@ -1177,5 +1177,58 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
         });
     }
 
+    collapse_refined_type_errors(&mut out);
     out
+}
+
+/// Drop an E0102 that a hint-bearing checker diagnostic already accounts for at
+/// the same span.
+///
+/// E0102 is INFER's code for "unification failed here". The checker's E03xx
+/// block is the refined restatement of the same failure — E0301 (an unhandled
+/// `Option`), E0303 (`?` outside a `Result` fn), E0306 (a wrong argument),
+/// E0307 (a return mismatch). Each of those carries the repair `help`; the
+/// E0102 beside it carries none. One fact, reported twice, with the useless
+/// copy FIRST.
+///
+/// Order is what makes this more than cosmetic. A consumer that reads one error
+/// per failure — the RLM harness does, deliberately, so that an advisory
+/// warning cannot be misreported as the cause — always got the bare one.
+/// Measured across eight benchmark sweeps: 37 of 48 errors (77%) reached the
+/// model as a hint-free E0102 with its hint-bearing twin discarded a line
+/// later. The model had nothing to repair toward.
+///
+/// Keyed on the SPAN alone, not the type pair. The two describe one failure but
+/// not always in the same words: E0303 reports `expected Result<T, E>` where
+/// the E0102 for the identical span says `Result<?3, str>`, an internal
+/// inference variable that means nothing to a reader. Requiring the pair to
+/// match would skip exactly the cases whose wording is worst.
+///
+/// Only a HINT-BEARING partner suppresses, so an E0102 that is the sole account
+/// of a failure always survives rather than vanishing.
+///
+/// This lives here, not in the CLI, because `check_pipeline` and the CLI must
+/// agree diagnostic-for-diagnostic — `parse_help_probe` asserts it in both
+/// directions, and it is what caught this when the collapse was CLI-only.
+pub fn collapse_refined_type_errors(diags: &mut Vec<PipelineDiagnostic>) {
+    let refined: std::collections::HashSet<(String, u32, u32)> = diags
+        .iter()
+        // `line == 0` is the serializer's sentinel for "no location", not line
+        // zero. Several checker sites emit `.at(&file, 0, 0)` with no span, so an
+        // unlocated E0306 and an unlocated E0102 describing SEPARATE failures
+        // collide at the same key and the E0102 disappears — the one failure
+        // mode this filter must not have. An unknown location cannot prove it
+        // accounts for anything, so it never suppresses.
+        .filter(|d| {
+            d.severity == "error"
+                && d.code.starts_with("E03")
+                && d.help.is_some()
+                && d.line > 0
+        })
+        .map(|d| (d.file.clone(), d.line, d.col))
+        .collect();
+    if refined.is_empty() {
+        return;
+    }
+    diags.retain(|d| d.code != "E0102" || !refined.contains(&(d.file.clone(), d.line, d.col)));
 }

@@ -4760,6 +4760,27 @@ fn run_check_pipeline_located(
         });
     }
 
+    // Collapse the E0102/E0306 pair a wrong argument produces. Infer reports the
+    // failed unification and the checker reports the same argument, at the SAME
+    // span with the SAME expected/found — one fact, reported twice. E0306 is
+    // strictly richer: it carries the repair `help` that E0102 has none of.
+    //
+    // Order is why this matters rather than being cosmetic. E0102 is emitted
+    // FIRST, and a consumer that reads one error per failure (the RLM harness
+    // does, deliberately, so that a warning cannot be misreported as the cause)
+    // sees only the bare one. Measured on sweep 8: all six arm-B errors reached
+    // the model as E0102 with an empty `help`, while the E0306 holding the hint
+    // was emitted right behind them and discarded. The model had nothing to
+    // repair toward — the same defect, in a new place, as the dropped resolver
+    // `fix` that made every undefined name double-report.
+    //
+    // Shared with `check_pipeline` rather than reimplemented. The library and
+    // the CLI must agree diagnostic-for-diagnostic, and `parse_help_probe`
+    // asserts that in BOTH directions — it is what caught this collapse when it
+    // lived only here. See `collapse_refined_type_errors` for why the rule is
+    // keyed on the span alone.
+    axon_core::collapse_refined_type_errors(&mut diags);
+
     (diags, infer_ctx)
 }
 
