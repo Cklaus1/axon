@@ -11,7 +11,20 @@
 //!   axon-guest-init /usr/bin/axon run /axon/program.ax
 //!
 //! Environment variables exported to child (from MMDS payload):
-//!   AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID
+//!   AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS,
+//!   AXON_SOURCE_HASH
+//!
+//! Two of those are the guest's ENFORCED policy, not just labels:
+//! AXON_ALLOWED_EFFECTS is the run's effect ceiling (SandboxViolation, exit 8)
+//! and AXON_BUDGET_TOKENS its AI token cap (E1303, exit 5). Both were exported
+//! here and read by nothing for as long as they have existed, so a policy that
+//! capped tokens or restricted effects produced a guest that did neither and
+//! said nothing about it. The other three are LABELS, deliberately: AXON_PRINCIPAL
+//! is audit attribution, AXON_RUN_ID correlates records, and AXON_SOURCE_HASH
+//! carries the approved digest. None of the three grants or withholds anything,
+//! and nothing in the workspace reads them -- in particular the guest does NOT
+//! today check the loaded image against AXON_SOURCE_HASH (R36 S2 owns that; see
+//! its (i) clause). Do not read this list as a policy that is enforced.
 
 use std::ffi::CString;
 use std::io::{Read, Write};

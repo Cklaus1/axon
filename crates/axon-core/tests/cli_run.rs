@@ -20934,3 +20934,263 @@ fn regex_is_leftmost_first_and_refuses_backtracking_constructs() {
         "unexpected output:\n{stdout}"
     );
 }
+
+#[test]
+fn ambient_effect_ceiling_env_var_is_actually_enforced() {
+    // SECURITY. CLAUDE.md documented `AXON_ALLOWED_EFFECTS` as a
+    // "comma-separated effect ceiling enforced at runtime (the ambient
+    // counterpart to sandbox_create)" and NOTHING read the var. A run launched
+    // with `AXON_ALLOWED_EFFECTS=Pure` did the FS write and exited 0 — an inert
+    // control surface that reads as a safety mechanism is worse than an absent
+    // one, because a configured run behaves exactly like an unconfigured one
+    // and says nothing about it.
+    //
+    // The enforcement was never the missing half: call_builtin's F5 hook
+    // already refuses any effect outside the active sandbox's set. It is gated
+    // on `active_sandbox >= 0`, and no ambient path set that.
+    let dir = std::env::temp_dir();
+    let out_path = dir.join(format!("axon_ceiling_{}.txt", std::process::id()));
+    let src = format!(
+        "fn main() -> i64 {{\n  let ok = write_file(\"{}\", \"escaped\")\n  println(\"wrote\")\n  0\n}}\n",
+        out_path.to_str().unwrap()
+    );
+    let f = dir.join(format!("axon_ceiling_{}.ax", std::process::id()));
+    std::fs::write(&f, &src).unwrap();
+
+    let run = |ceiling: Option<&str>| -> (i32, String) {
+        let _ = std::fs::remove_file(&out_path);
+        let mut c = axon();
+        c.args(["run", f.to_str().unwrap()]);
+        match ceiling {
+            Some(v) => c.env("AXON_ALLOWED_EFFECTS", v),
+            None => c.env_remove("AXON_ALLOWED_EFFECTS"),
+        };
+        let out = c.output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // (1) A ceiling that does not grant IO refuses the write (exit 8) and the
+    // file is never created.
+    let (code, err) = run(Some("Pure"));
+    assert_eq!(
+        code, 8,
+        "AXON_ALLOWED_EFFECTS=Pure must refuse an FS write (SandboxViolation, exit 8): {err}"
+    );
+    assert!(
+        err.contains("write_file") && err.contains("IO"),
+        "the violation must name the builtin and the effect it needed: {err}"
+    );
+    assert!(
+        !out_path.exists(),
+        "the refused write must not have happened"
+    );
+
+    // (2) An EMPTY value is not the same as unset — it means "deny everything",
+    // which is a case an operator reaches for deliberately.
+    let (code_empty, _) = run(Some(""));
+    assert_eq!(
+        code_empty, 8,
+        "AXON_ALLOWED_EFFECTS= (empty) must deny every effect, not mean 'no ceiling'"
+    );
+
+    // (3) NEGATIVE CONTROL — a ceiling that GRANTS IO runs to completion.
+    // Without this, (1) would pass equally well if the var simply broke
+    // every run.
+    let (code_io, err_io) = run(Some("IO"));
+    assert_eq!(
+        code_io, 0,
+        "an IO-granting ceiling must permit it: {err_io}"
+    );
+    assert!(out_path.exists(), "the permitted write must have happened");
+
+    // (4) NEGATIVE CONTROL — unset changes nothing. The whole point of an
+    // ambient ceiling is that it is opt-in.
+    let (code_unset, err_unset) = run(None);
+    assert_eq!(
+        code_unset, 0,
+        "with the var unset the run must be unaffected: {err_unset}"
+    );
+    assert!(out_path.exists());
+
+    // (5) The ceiling is a CEILING: a program cannot mint its way out of it.
+    // (sandbox_create's escalation guard already covered nesting; this asserts
+    // the ambient entry participates in it as the outermost frame rather than
+    // being a bare default the first sandbox_create silently replaces.)
+    let esc = dir.join(format!("axon_ceiling_esc_{}.ax", std::process::id()));
+    std::fs::write(
+        &esc,
+        "fn inner(n: i64) -> i64 {\n  println(\"escaped\")\n  0\n}\n\
+         fn main() -> i64 {\n\
+           let p = principal_root(\"esc\", true, true, true, 1000)\n\
+           let sb = sandbox_create(p, \"IO\")\n\
+           sandbox_run(sb, \"inner\", 0)\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["run", esc.to_str().unwrap()])
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .unwrap();
+    let eerr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        8,
+        "a program must not widen out of the ambient ceiling: {eerr}"
+    );
+    assert!(
+        !eerr.contains("escaped"),
+        "the widened body must never have run: {eerr}"
+    );
+
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&esc);
+    let _ = std::fs::remove_file(&out_path);
+}
+
+#[test]
+fn ambient_token_budget_env_var_is_actually_enforced() {
+    // SECURITY, same class as the ceiling above. `axon-guest-init` set
+    // AXON_BUDGET_TOKENS from the VM's MMDS policy and NOTHING read it, so a
+    // VM operator who capped a run's tokens got no cap at all.
+    //
+    // Distinct from R3c's `@[ai(policy(budget: N))]`, which this program also
+    // carries (set high enough not to be the thing that fires): that is a
+    // per-fn CALL count the author declares, this is a run-wide TOKEN cap
+    // imposed from outside that the program cannot raise.
+    //
+    // Under AXON_AI_MOCK the token estimate is the deterministic prompt-length
+    // one, so the arithmetic below is stable: each prompt is 15 tokens.
+    let dir = std::env::temp_dir();
+    let f = dir.join(format!("axon_tokbudget_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(budget: 10))]\n\
+         fn ask(n: i64) -> i64 {\n\
+           let a = ai_complete(\"summarize the following text in one short sentence please\")\n\
+           let b = ai_complete(\"and now a second distinct question of similar length here\")\n\
+           n\n\
+         }\n\
+         fn main() -> i64 { let r = ask(1)  println(\"finished\")  0 }\n",
+    )
+    .unwrap();
+
+    let run = |cap: Option<&str>| -> (i32, String, String) {
+        let mut c = axon();
+        c.args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1");
+        match cap {
+            Some(v) => c.env("AXON_BUDGET_TOKENS", v),
+            None => c.env_remove("AXON_BUDGET_TOKENS"),
+        };
+        let out = c.output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // (1) NEGATIVE CONTROL FIRST — unset means no cap, so every assertion below
+    // is about the cap and not about the program being broken.
+    let (code, sout, serr) = run(None);
+    assert_eq!(code, 0, "unset must mean no cap: {serr}");
+    assert!(sout.contains("finished"), "{sout}");
+
+    // (2) A cap that admits the first call but not the second halts on the
+    // SECOND — proving the accounting is cumulative per-TOKEN, not per-call.
+    let (code20, sout20, serr20) = run(Some("20"));
+    assert_eq!(code20, 5, "over-budget must be AI-policy exit 5: {serr20}");
+    assert!(
+        serr20.contains("E1303") && serr20.contains("token budget of 20"),
+        "the halt must name the code and the cap: {serr20}"
+    );
+    assert!(
+        !sout20.contains("finished"),
+        "the run must not have completed: {sout20}"
+    );
+
+    // (3) NEGATIVE CONTROL — a cap large enough for both calls runs to
+    // completion. Without this, (2) passes for any cap that always fires.
+    let (code30, sout30, serr30) = run(Some("30"));
+    assert_eq!(code30, 0, "a sufficient cap must not fire: {serr30}");
+    assert!(sout30.contains("finished"), "{sout30}");
+
+    // (4) `0` is meaningful — no AI at all — and fires before the first call.
+    let (code0, _, serr0) = run(Some("0"));
+    assert_eq!(code0, 5, "a cap of 0 must refuse the first call: {serr0}");
+    assert!(serr0.contains("used 0"), "{serr0}");
+
+    // (5) A malformed value FAILS CLOSED. An operator typo (`1O000`) silently
+    // reverting to no-cap would recreate exactly the inert-surface bug this
+    // test exists for, one level down.
+    let (code_bad, _, serr_bad) = run(Some("1O000"));
+    assert_eq!(
+        code_bad, 5,
+        "a malformed cap must fail closed, not disarm the cap: {serr_bad}"
+    );
+    assert!(
+        serr_bad.contains("not an integer"),
+        "and it must say so, or the typo is unrecoverable: {serr_bad}"
+    );
+
+    let _ = std::fs::remove_file(&f);
+}
+
+/// W1310 says "warn once" in its own emit-site comment, and did not: it fired
+/// once per CALL. A `goal_run` search over an un-policied `@[adaptive]` fn
+/// therefore printed one identical line per evaluation -- 8 for 8 evals, and a
+/// real search runs hundreds. Repetition of a message that names only the fn
+/// carries no new information, and it buries the diagnostics that are NOT
+/// repetitions, which is the actual cost: the signal a warning exists to send
+/// is destroyed by its own volume.
+#[test]
+fn w1310_warns_once_per_fn_not_once_per_ai_call() {
+    // `a` calls ai_complete TWICE and is itself called TWICE (4 calls), `b`
+    // once. Both dimensions matter: per-call-site and per-invocation repeats
+    // are different bugs and a fix could close one and leave the other.
+    let prog = "fn a(n: i64) -> i64 {\n\
+                    let x = ai_complete(\"first question for the model to answer\")\n\
+                    let y = ai_complete(\"second question for the model to answer\")\n\
+                    n\n\
+                }\n\
+                fn b(n: i64) -> i64 {\n\
+                    let z = ai_complete(\"third question for the model to answer\")\n\
+                    n\n\
+                }\n\
+                fn main() -> i64 {\n\
+                    let p = a(1)\n\
+                    let q = a(2)\n\
+                    let r = b(3)\n\
+                    0\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_w1310_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+
+    let a_lines = err.matches("AI call in `a`").count();
+    let b_lines = err.matches("AI call in `b`").count();
+    assert_eq!(
+        a_lines, 1,
+        "W1310 must warn ONCE for `a` despite 2 call sites x 2 invocations; got {a_lines}: {err}"
+    );
+
+    // NEGATIVE CONTROL: deduplicating must not silence OTHER fns. A global
+    // warn-once flag would pass the assertion above and be plainly wrong --
+    // it would hide every un-policied fn but the first one encountered.
+    assert_eq!(
+        b_lines, 1,
+        "`b` is a different fn and must still be reported; got {b_lines}: {err}"
+    );
+
+    let _ = std::fs::remove_file(&f);
+}

@@ -551,6 +551,30 @@ pub struct Interp<'p> {
     /// (replacing the hardcoded 0). Read by the `ai_cost_spent()` builtin. This
     /// is per-TOKEN cost, distinct from R3c's per-CALL-count budget.
     ai_cost_micro: Cell<i64>,
+    /// Fns already warned about by W1310, so the warning is emitted once per fn
+    /// rather than once per CALL. The comment at the emit site always claimed
+    /// "warn once"; it did not, so a `goal_run` search over an un-policied
+    /// `@[adaptive]` fn printed one identical line per evaluation -- 8 lines for
+    /// 8 evals, hundreds for a real search -- burying the diagnostics that were
+    /// not repetitions. The text names only the fn, so every repeat after the
+    /// first carries no information a reader did not already have.
+    w1310_warned: RefCell<std::collections::HashSet<String>>,
+    /// Tokens consumed so far by `ai_complete`, against [`Interp::token_budget`].
+    ///
+    /// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token
+    /// µ$ at the tier's rate) and R3c's `ai_calls_this_fn` counts CALLS within
+    /// one fn. This is TOKENS across the whole run, because that is the unit an
+    /// ambient operator cap is denominated in.
+    tokens_used: Cell<i64>,
+    /// Ambient run-level token cap from `AXON_BUDGET_TOKENS`, or `None` for no
+    /// cap (the default). `Some(0)` is meaningful — it means "no AI at all" —
+    /// so this is deliberately not a sentinel `0`.
+    ///
+    /// The var was set by `axon-guest-init` from the VM's MMDS policy and read
+    /// by nothing, so a VM operator who capped a run's tokens got no cap: an
+    /// inert control surface that reads as a safety mechanism. Enforced
+    /// pre-dispatch beside the R3c per-fn budget gate.
+    token_budget: Option<i64>,
     /// Phase 6: the stack of active effect-handler frames installed by enclosing
     /// `with handler { … } { body }` expressions. When a builtin carrying effect
     /// `E` is dispatched, the nearest frame with an `on E` arm intercepts it
@@ -2505,6 +2529,9 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // Read the ambient effect ceiling once; both the sandbox registry
+        // and the active-handle field below are derived from it.
+        let ambient = ambient_sandbox();
         Interp {
             fns,
             structs,
@@ -2531,6 +2558,9 @@ impl<'p> Interp<'p> {
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
             ai_cost_micro: Cell::new(0),
+            w1310_warned: RefCell::new(std::collections::HashSet::new()),
+            tokens_used: Cell::new(0),
+            token_budget: parse_token_budget(),
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
@@ -2542,8 +2572,8 @@ impl<'p> Interp<'p> {
             stores: RefCell::new(Vec::new()),
             llm_gateways: RefCell::new(Vec::new()),
             goals: RefCell::new(Vec::new()),
-            sandboxes: RefCell::new(Vec::new()),
-            active_sandbox: Cell::new(-1),
+            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
+            sandboxes: RefCell::new(ambient),
             refine_preds,
             main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
@@ -3488,6 +3518,73 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 /// seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
 /// (the `srand` builtin) for reproducible runs.
 static RNG_STATE: AtomicU64 = AtomicU64::new(0);
+
+/// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
+///
+/// Unset means no cap. A malformed value FAILS CLOSED to `Some(0)` — no AI at
+/// all — rather than falling back to no-cap, because this is a safety control
+/// an operator sets from outside the program: a typo (`1O000`) silently
+/// disarming the cap is the same inert-surface failure the var had before
+/// anything read it, just one level down. The warning names the bad value so
+/// the typo is recoverable in one look.
+///
+/// A negative value clamps to 0, which is meaningful and distinct from unset.
+fn parse_token_budget() -> Option<i64> {
+    let raw = std::env::var("AXON_BUDGET_TOKENS").ok()?;
+    let t = raw.trim();
+    match t.parse::<i64>() {
+        Ok(n) => Some(n.max(0)),
+        Err(_) => {
+            eprintln!(
+                "warning: AXON_BUDGET_TOKENS={raw:?} is not an integer — failing closed \
+                 to a budget of 0 (no AI calls). Set a whole number of tokens, or unset \
+                 the variable for no cap."
+            );
+            Some(0)
+        }
+    }
+}
+
+/// Build the ambient sandbox from `AXON_ALLOWED_EFFECTS`, or an empty registry
+/// when the var is unset.
+///
+/// The var is the ambient counterpart to `sandbox_create`: a comma-separated
+/// effect ceiling for the whole run, for a caller who cannot edit the program to
+/// wrap it in an explicit sandbox. It was documented as "enforced at runtime"
+/// and nothing read it, so `AXON_ALLOWED_EFFECTS=Pure` let an FS write through
+/// and exited 0 — a control surface that reads as a safety mechanism while a run
+/// configured with it behaves exactly like an unconfigured one.
+///
+/// The enforcement was never the missing part: `call_builtin`'s F5 hook already
+/// refuses any effect outside the active sandbox's set (SandboxViolation, exit
+/// 8). It is gated on `active_sandbox >= 0` and nothing ambient ever set that.
+/// So this registers a sandbox and makes it active, reusing the same
+/// `SandboxEntry` and the same check as `sandbox_create` rather than adding a
+/// second enforcement path that could drift from it.
+///
+/// An EMPTY value is meaningful and is NOT the same as unset:
+/// `AXON_ALLOWED_EFFECTS=` means "pure only, deny every effect", while unset
+/// means "no ceiling at all". Distinguishing them matters because
+/// deny-everything is a case a caller reaches for deliberately.
+///
+/// The scope is unscoped (`Default`) — this grants effects without a path/host
+/// restriction, matching plain `sandbox_create`. Bound to principal handle 0 so
+/// audit attribution matches the rest of the run.
+fn ambient_sandbox() -> Vec<SandboxEntry> {
+    let Ok(raw) = std::env::var("AXON_ALLOWED_EFFECTS") else {
+        return Vec::new();
+    };
+    let allowed: std::collections::HashSet<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    vec![SandboxEntry {
+        principal: 0,
+        allowed,
+        scope: SandboxScope::default(),
+    }]
+}
 
 /// Initial seed for the RNG. Reproducibility (BUG_HUNT #11 / I-10):
 /// uses `AXON_SEED` (parsed as u64) when set for a deterministic run,

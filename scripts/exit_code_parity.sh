@@ -315,6 +315,181 @@ fn ask() -> i64 { let a = ai_complete("one")
  33 }
 fn main() -> i64 { ask() }'
 
+# ── @[verify] (exit 3) ───────────────────────────────────────────────────────
+# The summary line used to list 3 as NOT covered, which read as "native cannot
+# reach it". It can: `__axon_verify_panic` in axon-rt exits 3, and codegen arms
+# the check at every return site. Uncovered here meant untested, and the test
+# found a real message bug -- the runtime hardcoded the word "confidence" in the
+# failure text, so a scalar `@[verify(value OP K)]` reported a field the
+# function does not have, and disagreed with the interpreter about the same run.
+#
+# NOT check_msg. That helper requires byte-identical stderr, and these two
+# engines word the same failure differently -- "verify failed in `f`: value 6 >
+# 100 is false (value 6, input 3)" against "verify violation in `f`: value > 100
+# failed (actual=6)". That wording gap is real and pre-existing; converging it is
+# a separate change, and asserting equality here would just have failed for a
+# reason unrelated to what these rows are for. What each engine must not do is
+# NAME THE WRONG THING, so each side is checked against the subject the author
+# actually wrote.
+check_verify_subject() {
+  local name="$1" subject="$2" src="$3"
+  local prog="$WORK/$name.ax"
+  printf '%s\n' "$src" > "$prog"
+
+  "$AXON" run "$prog" >/dev/null 2>"$WORK/$name.ierr"
+  local i_exit=$?
+  local bin="$WORK/${name}_bin"
+  if ! "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then
+    echo "FAIL [$name]: native build failed (the interpreter exited $i_exit)"
+    fail=1
+    return
+  fi
+  "$bin" >/dev/null 2>"$WORK/$name.nerr"
+  local n_exit=$?
+
+  if [ "$i_exit" != "$n_exit" ]; then
+    echo "FAIL [$name]: interp exit=$i_exit but native exit=$n_exit (must match — I-2)"
+    fail=1
+  elif [ "$i_exit" != 3 ]; then
+    echo "FAIL [$name]: both exited $i_exit but expected 3 (@[verify])"
+    fail=1
+  elif ! grep -q "$subject" "$WORK/$name.nerr"; then
+    echo "FAIL [$name]: native did not name the subject '$subject': $(cat "$WORK/$name.nerr")"
+    fail=1
+  elif ! grep -q "$subject" "$WORK/$name.ierr"; then
+    echo "FAIL [$name]: interp did not name the subject '$subject': $(cat "$WORK/$name.ierr")"
+    fail=1
+  else
+    echo "  OK $name: both exit 3 and both name '$subject'"
+  fi
+}
+
+# Both predicate subjects, because they take different codegen paths (a scalar
+# return compares the value itself; an Uncertain return extracts a struct field)
+# and it was exactly the scalar one that was wrong.
+check_verify_subject verify_value_scalar 'value' \
+'@[verify(value > 100)]
+fn f(n: i64) -> i64 { n * 2 }
+fn main() -> i64 { let r = f(3)
+ r }'
+
+# The confidence form must keep saying "confidence" -- the fix threads the real
+# subject through rather than swapping one hardcoded word for another. The
+# confidence is runtime-sourced (`uncertain_dyn_i64`) on purpose: a literal one
+# is caught statically by E1101 and never reaches the runtime gate at all.
+check_verify_subject verify_confidence 'confidence' \
+'@[verify(confidence >= 0.8)]
+fn g(c: f64) -> Uncertain<i64> { uncertain_dyn_i64(7, c) }
+fn main() -> i64 { let u = g(0.4)
+ 0 }'
+
+# A diagnosed program must not produce a binary at all. `let f = some_builtin`
+# (a builtin is not a first-class value) is rejected by both engines, but the
+# codegen E0701 site PRINTED its error without recording it in `codegen_errors`
+# -- the list the build pipeline consults to decide whether to abort. So the
+# build printed `codegen error [E0701]` and emitted a binary anyway, and that
+# binary exited 0 in SILENCE where the interpreter panics. This asserts the
+# whole contract: interp fails, native build fails, and no file is left behind.
+# The last clause is the one that matters -- before the fix the first two were
+# already true and a working binary was still produced.
+name=no_binary_on_diag
+prog="$WORK/$name.ax"
+printf 'fn main() -> i64 {\n    let f = char_is_space\n    if f(" ") { 1 } else { 0 }\n}\n' > "$prog"
+"$AXON" run "$prog" >/dev/null 2>&1
+i_exit=$?
+out="$("$AXON" build "$prog" -o "$WORK/${name}_bin" --no-cache 2>&1)"
+b_status=$?
+if [ "$i_exit" -eq 0 ]; then
+  echo "FAIL [$name]: interp exited 0 — it must reject an unbound identifier"
+  fail=1
+elif [ "$b_status" -eq 0 ]; then
+  echo "FAIL [$name]: native BUILD SUCCEEDED on a program it diagnosed"
+  fail=1
+elif [ -f "$WORK/${name}_bin" ]; then
+  echo "FAIL [$name]: build reported failure but LEFT A BINARY at $WORK/${name}_bin"
+  fail=1
+elif ! printf '%s' "$out" | grep -q 'E0701'; then
+  echo "FAIL [$name]: build failed but not with E0701: $out"
+  fail=1
+else
+  echo "  OK $name: both engines reject it and no binary is produced"
+fi
+
+# ── Interpreter-only exit codes ──────────────────────────────────────────────
+#
+# Codes 4 (@[corrigible]), 7 (kernel-goal budget) and 8 (sandbox) were listed
+# below as "NOT covered", in the same breath as code 3 — and that reading was
+# what cost the last round: 3 was listed as uncovered too, which sounded like
+# "native cannot reach it", when in fact native reaches it fine and merely had
+# no test. Testing it then found a real message bug.
+#
+# These three are the OTHER case. Every builtin that can reach them
+# (corrigible_halt, kernel_goal_*, sandbox_*) is E0910-refused by codegen, so
+# native cannot reach them BY DESIGN. Lumping the two situations under one
+# "NOT covered" line hides which is which, and hides the fact that the refusal
+# is itself a parity property: the guarantee is not "both engines exit 4", it
+# is "the interpreter exits 4 and the native backend REFUSES TO BUILD rather
+# than emitting a binary that silently does something else". That refusal is a
+# promise, and an unasserted promise is how the E0701 hole stayed open — the
+# backend printed a codegen error and emitted a working binary anyway.
+check_interp_only() {
+  local name="$1" want="$2" builtin="$3" src="$4"
+  local prog="$WORK/$name.ax"
+  printf '%s\n' "$src" > "$prog"
+
+  "$AXON" run "$prog" >/dev/null 2>"$WORK/$name.ierr"
+  local i_exit=$?
+  local bin="$WORK/${name}_bin"
+  rm -f "$bin"
+  local out
+  out="$("$AXON" build "$prog" -o "$bin" --no-cache 2>&1)"
+  local b_status=$?
+
+  if [ "$i_exit" != "$want" ]; then
+    echo "FAIL [$name]: interp exited $i_exit, expected $want: $(cat "$WORK/$name.ierr")"
+    fail=1
+  elif [ "$b_status" -eq 0 ]; then
+    echo "FAIL [$name]: native BUILD SUCCEEDED on an interpreter-only program — \
+it must E0910-refuse, not emit a binary that cannot honour exit $want"
+    fail=1
+  elif [ -f "$bin" ]; then
+    echo "FAIL [$name]: build reported failure but LEFT A BINARY at $bin"
+    fail=1
+  elif ! printf '%s' "$out" | grep -q "E0910"; then
+    echo "FAIL [$name]: build failed but not with E0910 (so the refusal is \
+incidental, not the designed one): $out"
+    fail=1
+  elif ! printf '%s' "$out" | grep -q "\`$builtin\`"; then
+    echo "FAIL [$name]: E0910 did not name \`$builtin\`: $out"
+    fail=1
+  else
+    echo "  OK $name: interp exits $want; native E0910-refuses \`$builtin\`"
+  fi
+}
+
+check_interp_only corrigible_halt_4 4 corrigible_halt \
+'@[corrigible]
+fn work(n: i64) -> i64 { n }
+fn main() -> i64 { corrigible_halt()
+ work(1) }'
+
+# The principal's budget is 2 and each eval debits it, so the search exhausts it.
+check_interp_only kernel_goal_budget_7 7 kernel_goal_run \
+'@[adaptive]
+fn score(x: i64) -> i64 { x }
+fn main() -> i64 { let p = principal_root("p", true, true, true, 2)
+ let g = kernel_goal_create(p, "score", 100.0)
+ let r = kernel_goal_run(g, 50)
+ 0 }'
+
+# An EMPTY ceiling permits nothing, so the first effectful builtin is refused.
+check_interp_only sandbox_violation_8 8 sandbox_run \
+'fn inner(n: i64) -> i64 { println("x")
+ 0 }
+fn main() -> i64 { let p = principal_root("p", true, true, true, 100)
+ let sb = sandbox_create(p, "")
+ sandbox_run(sb, "inner", 0) }'
+
 if [ "$fail" -ne 0 ]; then
   echo "exit_code_parity: FAIL — interp↔native exit-code divergence"
   exit 1
@@ -326,5 +501,9 @@ fi
 # own coverage is how F141 shipped — exit 5 was "covered" by a line of prose.
 echo "exit_code_parity: covered — 0, 101 (crash), 6 (refinement), main's return,"
 echo "exit_code_parity:            5 (AI policy, via refusal)"
-echo "exit_code_parity: NOT covered — 3 (verify), 4 (corrigible), 7 (goal-budget), 8 (sandbox)"
+echo "exit_code_parity:            3 (@[verify], both predicate subjects)"
+echo "exit_code_parity:            4 (corrigible), 7 (goal-budget), 8 (sandbox) —"
+echo "exit_code_parity:              interpreter-only: interp reaches the code and"
+echo "exit_code_parity:              native E0910-REFUSES rather than mis-building"
+echo "exit_code_parity: NOT covered — none of the codes the interpreter can reach"
 echo "exit_code_parity: PASS"

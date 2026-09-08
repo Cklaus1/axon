@@ -5453,6 +5453,39 @@ impl<'p> Interp<'p> {
                     }
                     self.ai_calls_this_fn.set(used + 1);
                 }
+                // The ambient RUN-level token cap (`AXON_BUDGET_TOKENS`), checked
+                // in the same pre-dispatch window and for the same reason as the
+                // R3c gate above: a call that would exceed the cap must not reach
+                // a model, so nothing is charged and no response can arrive.
+                //
+                // The two gates are complementary, not redundant. R3c is a
+                // per-fn CALL count the program's own author declares; this is a
+                // run-wide TOKEN cap an operator imposes from outside, and a
+                // program cannot lower or raise it. `axon-guest-init` sets the
+                // var from the VM's MMDS policy and nothing read it, so a VM
+                // operator who capped a run's tokens got no cap at all.
+                //
+                // Uses the pre-dispatch ESTIMATE for the same reason R3c does:
+                // the decision has to be made before the call, and the real
+                // token count is only knowable after. The estimate is
+                // deterministic, so mock/replay/live runs all gate identically.
+                if let Some(cap) = self.token_budget {
+                    let used = self.tokens_used.get();
+                    if used.saturating_add(est_tokens) > cap {
+                        let who = if caller.is_empty() {
+                            "<main>".to_string()
+                        } else {
+                            caller.clone()
+                        };
+                        return ai_policy_err(format!(
+                            "[{}] `{who}` exceeded the run's token budget of {cap} \
+                             (used {used}, this call needs ~{est_tokens}) — raise \
+                             AXON_BUDGET_TOKENS or reduce AI work",
+                            crate::error::E1303,
+                        ));
+                    }
+                    self.tokens_used.set(used + est_tokens);
+                }
                 // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
                 // but its cost is unmetered and the call un-pinned — warn once so
                 // the audit gap is visible (only meaningful for live/mock calls).
@@ -5462,10 +5495,16 @@ impl<'p> Interp<'p> {
                     } else {
                         caller.clone()
                     };
-                    eprintln!(
-                        "warning: [{}] AI call in `{who}` has no @[ai(policy)] — cost is unmetered and the call is harder to audit",
-                        crate::error::W1310
-                    );
+                    // Once per FN, as the comment above has always said. It used
+                    // to fire once per CALL, so a goal search over an un-policied
+                    // @[adaptive] fn emitted one identical line per evaluation.
+                    // The message names only the fn, so repeats add nothing.
+                    if self.w1310_warned.borrow_mut().insert(who.clone()) {
+                        eprintln!(
+                            "warning: [{}] AI call in `{who}` has no @[ai(policy)] — cost is unmetered and the call is harder to audit",
+                            crate::error::W1310
+                        );
+                    }
                 }
                 // F2 (ROADMAP §9.5): deterministic REPLAY. With AXON_AI_REPLAY set,
                 // a previously-recorded (prompt, model) response is replayed
