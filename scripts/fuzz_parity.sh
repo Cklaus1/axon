@@ -76,11 +76,24 @@ fail=0
 # without this retry it was reported as a spurious "interp↔codegen divergence"
 # under heavy host load. Returns 0 on success, 1 on a persistent failure.
 nbuild() {
-  local src="$1" out="$2"
-  "$AXON" build "$src" -o "$out" --no-cache >/dev/null 2>&1 && return 0
-  # brief backoff, then one retry
-  sleep 1
-  "$AXON" build "$src" -o "$out" --no-cache >/dev/null 2>&1
+  local src="$1" out="$2" i
+  # KEEP THE ERROR. Both attempts used to discard stderr, so every failure
+  # reported the same bare "native build failed" -- which reads as a codegen
+  # bug and is usually the machine being busy. NBUILD_ERR lets the caller print
+  # what actually went wrong, so the two are told apart at a glance instead of
+  # by re-running the suite.
+  for i in 1 2 3; do
+    NBUILD_ERR="$("$AXON" build "$src" -o "$out" --no-cache 2>&1)" && return 0
+    # Three attempts with growing backoff, not one after a flat second. The
+    # startup probe already proved this binary emits native code, so a failure
+    # HERE is almost always transient: a build-lock or bitcode-cache race with
+    # another build sharing target/. One 1s retry was not enough under real
+    # load -- the suite failed with `sub_i64: native build failed` on a machine
+    # running 22 rustc processes, after nine builtins had already built and run
+    # clean. A binary that cannot codegen does not succeed nine times first.
+    sleep "$i"
+  done
+  return 1
 }
 
 # fuzz NAME DOMAIN ARITY EXPR
@@ -176,7 +189,8 @@ fuzz() {
 
   # native (build once, run)
   if ! nbuild "$src" "$WORK/$name.bin"; then
-    echo "  FAIL $name: native build failed"; fail=1; return
+    echo "  FAIL $name: native build failed after 3 attempts:"
+    echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>/dev/null)"; n_exit=$?
 
@@ -204,7 +218,8 @@ nan_case() {
   local i_out n_out
   i_out="$("$AXON" run "$src" 2>/dev/null)"
   if ! nbuild "$src" "$WORK/$name.bin"; then
-    echo "  FAIL $name: native build failed"; fail=1; return
+    echo "  FAIL $name: native build failed after 3 attempts:"
+    echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>/dev/null)"
   if [ "$i_out" != "$n_out" ]; then
@@ -236,7 +251,8 @@ expect_overflow() {
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
   i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"
   if ! nbuild "$src" "$WORK/$name.bin"; then
-    echo "  FAIL $name: native build failed"; fail=1; return
+    echo "  FAIL $name: native build failed after 3 attempts:"
+    echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
   if [ "$i_exit" != 101 ]; then
@@ -267,7 +283,8 @@ expect_equal() {
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
   i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   if ! nbuild "$src" "$WORK/$name.bin"; then
-    echo "  FAIL $name: native build failed"; fail=1; return
+    echo "  FAIL $name: native build failed after 3 attempts:"
+    echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
   if [ "$i_exit" != "$n_exit" ] || [ "$i_out" != "$n_out" ]; then
@@ -288,7 +305,8 @@ expect_runtime_panic() {
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
   i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   if ! nbuild "$src" "$WORK/$name.bin"; then
-    echo "  FAIL $name: native build failed"; fail=1; return
+    echo "  FAIL $name: native build failed after 3 attempts:"
+    echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
   if [ "$i_exit" != 101 ] || [ "$i_exit" != "$n_exit" ] || [ "$i_out" != "$n_out" ]; then

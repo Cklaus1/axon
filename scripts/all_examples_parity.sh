@@ -31,6 +31,32 @@ if [ ! -x "$AXON" ]; then
   fi
 fi
 
+# The located binary EXISTING is not the same as it being able to codegen, and
+# this harness reports the difference as findings. `target/debug/axon` is shared
+# with every other build of this workspace, and a concurrent
+# `--no-default-features` build leaves an INTERP-ONLY binary sitting at exactly
+# that path. Every `axon build` then fails, and the report says "29 BUILD-FAIL"
+# -- which reads as a compiler regression and is really two builds sharing one
+# output path.
+#
+# That is not hypothetical: it failed this way twice, and both times the failure
+# was investigated as an interp<->native divergence before the cause was found.
+# `exit_code_parity.sh` and `smt_discharge_parity.sh` already avoid it by
+# building into a private CARGO_TARGET_DIR; this harness prefers a prebuilt
+# binary instead, so it has to VERIFY the one it found.
+#
+# Probe with a trivial program rather than trusting the path. Skipping is
+# correct here: an interp-only binary means codegen is not under test in this
+# invocation, and a skip says so where 29 BUILD-FAILs actively mislead.
+_probe="$(mktemp -d)"; printf 'fn main() -> i64 { 0 }\n' > "$_probe/p.ax"
+if ! "$AXON" build "$_probe/p.ax" -o "$_probe/p" >/dev/null 2>&1; then
+  rm -rf "$_probe"
+  echo "all_examples_parity: \`$AXON\` cannot codegen (interp-only build, or LLVM absent) — skipping"
+  echo "all_examples_parity: this is a SKIP, not a pass: set AXON=<codegen binary> to actually run it."
+  exit 0
+fi
+rm -rf "$_probe"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
