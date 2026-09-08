@@ -2212,3 +2212,53 @@ fn e1001_points_at_the_fn_that_performs_the_refused_io() {
          `read_file` actually is -- not at the @[contained] fn on line 6; got: {text}"
     );
 }
+
+/// `let w: Widget = 1` used to type-check clean and RUN, printing `1`.
+///
+/// The same unknown name is rejected in a param, a return type and a struct
+/// field, so accepting it here was a hole in one of four annotation sites
+/// rather than a rule. It hid behind inference: an unresolved name becomes
+/// `Type::Deferred`, which unifies with anything, so the constraint that
+/// produces E0102 for the *known*-type mismatch `let w: str = 1` found nothing
+/// to report. Both halves are asserted below -- the new error, and the E0102
+/// that must keep working -- because a fix that swallowed the second would
+/// look identical from the first alone.
+#[test]
+fn e0308_rejects_an_unknown_type_in_a_let_annotation() {
+    let dir = std::env::temp_dir().join("axon_e0308_let");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let unknown = dir.join("unknown.ax");
+    std::fs::write(
+        &unknown,
+        "fn main() -> i64 {\n  let w: Widget = 1\n  0\n}\n",
+    )
+    .unwrap();
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let out = std::process::Command::new(axon_bin)
+        .arg("check")
+        .arg(&unknown)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stderr) + String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("E0308") && text.contains("Widget"),
+        "an unknown type in a let annotation must be refused, and must name the \
+         type so it can be found without a line number: {text}"
+    );
+
+    // The known-type mismatch keeps its own, more specific diagnostic.
+    let known = dir.join("known.ax");
+    std::fs::write(&known, "fn main() -> i64 {\n  let w: str = 1\n  0\n}\n").unwrap();
+    let out = std::process::Command::new(axon_bin)
+        .arg("check")
+        .arg(&known)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stderr) + String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("E0102"),
+        "a let annotation naming a KNOWN type that does not match must still be \
+         E0102, not the new unknown-type error: {text}"
+    );
+}

@@ -3010,6 +3010,26 @@ impl CheckCtx {
                 // (E1209), mirroring the param/return/field constant checks. A
                 // non-constant value defers to the runtime check (interp/codegen).
                 self.check_let_refinement(annot, name, value, &val_path);
+                // An unknown type in a LET annotation used to be accepted in
+                // silence: `let w: Widget = 1` type-checked clean and ran. The
+                // same name is rejected in a param, a return type or a struct
+                // field, so this was a hole in one of four annotation sites, not
+                // a deliberate rule. It survived because an unresolved name
+                // infers to `Type::Deferred`, which unifies with ANYTHING -- so
+                // the `constrain` that produces E0102 for `let w: str = 1` finds
+                // nothing to complain about here. That is the same
+                // Deferred-as-wildcard shape as the builtin type-param bug, at a
+                // different site.
+                //
+                // Reported with no span: `Expr::Let` carries no span field (no
+                // `Expr` variant does), so the diagnostic names the file and the
+                // type but not the line. That is worse than the param and field
+                // sites and better than silence -- the message names the offending
+                // type, which is usually enough to find it. Expression spans would
+                // fix it here and at several other sites at once.
+                if let Some(a) = annot {
+                    self.check_axon_type(a, &format!("{node_path}.ty"), None);
+                }
                 // R19 Slice B: when the annotation names a non-i64 fixed-width
                 // integer type (u8, u16, u32, u64, i8, i16, i32), use the ANNOTATION
                 // type for the scope binding rather than resolving the value's
