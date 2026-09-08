@@ -2012,12 +2012,35 @@ fn cmd_ai(action: AiAction) {
         };
         let (model, _ver) = tier.model();
         let fallback = ai_attr_value(f, "fallback").unwrap_or_default();
+        // The BUDGET, from the same `budget_from_attrs` the interpreter's meter
+        // and the native codegen refusal use -- so "is this fn metered?" has one
+        // answer in the reporter too. It was omitted because R3's acceptance
+        // list named `fn/tier/fallback/model` while the budget slice was still
+        // pending (R3 s9, "budget slice -- Phase 7"); R3c's E1301 then landed
+        // and this reporter was never revisited. The omission mattered: budget
+        // is the field with enforcement teeth, so two fns that differ in whether
+        // an ai_complete becomes FATAL printed IDENTICAL policy lines. An
+        // inspector reaching for `axon ai policy` to answer "is this run capped?"
+        // got a confident answer that could not express "no".
+        //
+        // Three distinct states, kept distinct:
+        //   null      -- no `budget:` field; the fn is unmetered
+        //   <number>  -- the ceiling; call n+1 is E1301
+        //   "invalid" -- malformed: W1311 at runtime and the fn runs UNMETERED.
+        // Rendering malformed as null would report it as a deliberate choice not
+        // to meter, hiding the typo that silently disarmed the cap.
+        let budget = match axon_core::ai_routing::budget_from_attrs(&f.attrs) {
+            None => "null".to_string(),
+            Some(Ok(n)) => n.to_string(),
+            Some(Err(_)) => json_lit("invalid"),
+        };
         println!(
-            "{{\"fn\":{},\"tier\":{},\"fallback\":{},\"model\":{}}}",
+            "{{\"fn\":{},\"tier\":{},\"fallback\":{},\"model\":{},\"budget\":{}}}",
             json_lit(&f.name),
             json_lit(tier.as_str()),
             json_lit(&fallback),
             json_lit(model),
+            budget,
         );
     }
     process::exit(0);

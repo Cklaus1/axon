@@ -21194,3 +21194,70 @@ fn w1310_warns_once_per_fn_not_once_per_ai_call() {
 
     let _ = std::fs::remove_file(&f);
 }
+
+/// `axon ai policy` reported fn/tier/fallback/model and NOT the budget -- the
+/// one field with enforcement teeth. Two fns that differ in whether an
+/// `ai_complete` becomes fatal (E1301 at call n+1 vs never) printed identical
+/// policy lines, so an inspector asking "is this run capped?" got a confident
+/// answer that could not express "no". The field was omitted because R3's
+/// acceptance list was written while the budget slice was still pending; R3c
+/// landed E1301 afterwards and the reporter was never revisited.
+#[test]
+fn ai_policy_reports_the_budget_that_is_actually_enforced() {
+    let f = std::env::temp_dir().join(format!("axon_aipolbud_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(tier: cheap, budget: 3))]\n\
+         fn capped() -> str { match ai_complete(\"p\") { Ok(s) => s  Err(e) => e } }\n\
+         @[ai(policy(tier: strong))]\n\
+         fn uncapped() -> str { match ai_complete(\"p\") { Ok(s) => s  Err(e) => e } }\n\
+         @[ai(policy(tier: cheap, budget: lots))]\n\
+         fn malformed() -> str { match ai_complete(\"p\") { Ok(s) => s  Err(e) => e } }\n\
+         fn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["ai", "policy", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "ai policy should exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    let line = |name: &str| -> String {
+        stdout
+            .lines()
+            .find(|l| l.contains(&format!("\"fn\":\"{name}\"")))
+            .unwrap_or_else(|| panic!("no line for `{name}`: {stdout}"))
+            .to_string()
+    };
+
+    // A declared ceiling is reported as a NUMBER, not a string -- a consumer
+    // comparing budgets should not have to parse around quoting.
+    assert!(
+        line("capped").contains("\"budget\":3"),
+        "declared ceiling: {stdout}"
+    );
+
+    // No `budget:` field means unmetered. `null` says that; omitting the key
+    // (the old behavior) makes "unmetered" and "not reported" indistinguishable.
+    assert!(
+        line("uncapped").contains("\"budget\":null"),
+        "unmetered fn must say so explicitly: {stdout}"
+    );
+
+    // Malformed is its OWN state. It is not null: at runtime it emits W1311 and
+    // the fn runs unmetered, so reporting it as null would present a typo that
+    // silently disarmed the cap as a deliberate choice not to meter.
+    assert!(
+        line("malformed").contains("\"budget\":\"invalid\""),
+        "malformed budget must be distinguishable from absent: {stdout}"
+    );
+
+    // The pre-existing fields must survive the addition.
+    assert!(line("capped").contains("\"tier\":\"cheap\""), "{stdout}");
+    assert!(
+        line("capped").contains("anthropic:claude-haiku"),
+        "{stdout}"
+    );
+}
