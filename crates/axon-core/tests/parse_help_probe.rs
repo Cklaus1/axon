@@ -569,3 +569,41 @@ fn array_plus_refuses_mismatched_and_nonsense() {
         assert!(!errs.is_empty(), "{label} must still be refused");
     }
 }
+
+#[test]
+fn a_collection_where_a_str_is_expected_is_not_told_to_cast() {
+    // The single most common error in the RLM harness: 11 of 18 errors in one
+    // 8-run sweep were `str_split`/`str_chars` on a `[Row]` or `[str]`. The
+    // shape is always the same — the raw text was parsed ONCE into an array,
+    // and a later step reaches for text again and grabs the parsed binding.
+    //
+    // The generic E0306 advice ("cast with `as str` if compatible") is ACTIVELY
+    // WRONG here: there is no such cast from a collection, so following the hint
+    // burns the whole repair round. Same defect as the int->str case beside it
+    // in the checker, and measured the same way.
+    let src = "type Row = { id: i64, region: str }\n\
+               fn main() -> i64 {\n    \
+               let rows = [Row { id: 1, region: \"north\" }]\n    \
+               let parts = str_split(rows, \"\\n\")\n    \
+               println(to_str(len(parts)))\n    0\n}\n";
+    let diags = check_pipeline(src, "probe.ax");
+    let d = diags
+        .iter()
+        .find(|d| d.code == "E0306")
+        .unwrap_or_else(|| panic!("the mismatch must be refused: {diags:?}"));
+    let help = d.help.as_ref().expect("must carry a repair route");
+    assert!(
+        !help.contains("cast with `as str`"),
+        "must not point at a cast that does not exist: {help}"
+    );
+    // Both repairs, because which one applies depends on whether the model
+    // wants the whole collection or the text of one element.
+    assert!(
+        help.contains("arr_"),
+        "must name the collection route: {help}"
+    );
+    assert!(
+        help.contains("xs[0]"),
+        "must name the index-one-element route: {help}"
+    );
+}

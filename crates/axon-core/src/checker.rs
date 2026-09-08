@@ -4453,6 +4453,26 @@ impl CheckCtx {
                          `char_at` (which returns a BYTE VALUE), use `str_slice(s, i, i + 1)` \
                          for a one-character `str` instead"
                     )
+                } else if matches!(param_ty, Type::Str) && matches!(arg_ty, Type::Slice(_)) {
+                    // A `str` parameter handed a COLLECTION. Same defect as the
+                    // int->str case above: the generic advice says "cast with `as
+                    // str`", and there is no such cast from an array. Measured
+                    // against the RLM harness this is the single most common error
+                    // the model produces -- 11 of 18 errors in one 8-run sweep were
+                    // `str_split`/`str_chars` on a `[Row]` or `[str]`, and every one
+                    // of them was told to cast.
+                    //
+                    // The shape is always the same: the raw text was parsed ONCE
+                    // into an array, and a later step reaches for text again and
+                    // grabs the parsed binding. The repair is never a cast; it is
+                    // either "use the arr_ functions" or "index one element out
+                    // first", so name both.
+                    format!(
+                        "expected `str`, found `{found_disp}` — there is no `as str` cast from a \
+                         collection. `{found_disp}` has already been parsed out of text; work on \
+                         it with the `arr_` functions, or index ONE element out first if you need \
+                         its text (`str_split(xs[0], \",\")`)"
+                    )
                 } else {
                     format!(
                         "expected `{expected_disp}`, found `{found_disp}` — \
