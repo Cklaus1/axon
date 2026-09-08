@@ -128,4 +128,51 @@ mod tests {
             );
         }
     }
+
+    /// The module header claims each certificate is "bound to its obligation by
+    /// content digest, so a mismatched/swapped cert is rejected". Both tests
+    /// above only exercise the direction where the gate says YES -- off is
+    /// silent, and the shipped pairs discharge. A gate that cannot be shown to
+    /// say NO has not been shown to be a gate at all.
+    ///
+    /// The swap is the realization that matters here: O1 and O2 are both
+    /// genuine, both validly certified, and both shipped in the same directory.
+    /// If the binding were by schema or by id-shape rather than by digest, each
+    /// cert would sail through against the other's obligation and the gate would
+    /// still look green on every test above.
+    #[test]
+    fn a_swapped_certificate_is_rejected_even_though_both_are_valid() {
+        for (tag, obl, wrong_cert) in [
+            ("O1", PINNED_MINT_O1_OBLIGATION, PINNED_MINT_CERTIFICATE),
+            ("O2", PINNED_MINT_OBLIGATION, PINNED_MINT_O1_CERTIFICATE),
+        ] {
+            let r = check_one_mint_obligation(tag, obl, wrong_cert, true);
+            assert!(
+                r.is_err(),
+                "{tag} discharged against the OTHER obligation's certificate -- \
+                 the digest binding is not holding"
+            );
+            // Fail closed with the R23 code, not some incidental parse error:
+            // a swapped cert must be reported as an undischarged obligation.
+            let (code, msg) = r.unwrap_err();
+            assert_eq!(code, crate::error::E1611, "{tag}: {msg}");
+        }
+    }
+
+    /// The same swap with the policy OFF must stay silent and successful.
+    /// Default behavior is documented as byte-unchanged, and a gate that
+    /// starts rejecting when nobody asked it to would break every default run.
+    #[test]
+    fn a_swapped_certificate_is_ignored_when_the_policy_is_off() {
+        assert!(
+            check_one_mint_obligation(
+                "O1",
+                PINNED_MINT_O1_OBLIGATION,
+                PINNED_MINT_CERTIFICATE,
+                false
+            )
+            .is_ok(),
+            "policy off must not fail closed"
+        );
+    }
 }
