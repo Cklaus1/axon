@@ -213,6 +213,33 @@ fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  println(to_str_
 check_refused any_st 'type C = { s: i64 }
 fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  println(to_str_bool(arr_any(&a, |c| c.s > 2)))  0 }'
 
+# The rest of the family, over a TWO-field struct. The one-field rows above
+# pass through an 8-byte element — exactly the i64 stride the lowerings assume
+# — so they agreed by coincidence on some of these. `t` is what makes the
+# divergence visible: an element-size probe needs an element whose size is not
+# the one being assumed. Every row below silently returned a wrong answer
+# before the element-type guard (arr_fold 13→0, arr_map 18→0, arr_reverse
+# picked the wrong element).
+W2='type C = { s: i64, t: i64 }
+fn main() -> i64 { let a = [C { s: 3, t: 30 }, C { s: 9, t: 90 }, C { s: 1, t: 10 }]'
+check_refused rev_st      "$W2  println(to_str(arr_reverse(&a)[0].t))  0 }"
+check_refused take_st     "$W2  println(to_str(arr_take(&a, 2)[1].t))  0 }"
+check_refused drop_st     "$W2  println(to_str(arr_drop(&a, 1)[0].t))  0 }"
+check_refused concat_st   "$W2  println(to_str(arr_concat(&a, &a)[3].t))  0 }"
+check_refused unique_st   "$W2  println(to_str(len(&arr_unique(&a))))  0 }"
+check_refused enum_st     "$W2  println(to_str(len(&arr_enumerate(&a))))  0 }"
+check_refused chunk_st    "$W2  println(to_str(arr_chunk(&a, 2)[0][1].t))  0 }"
+check_refused map_st      "$W2  println(to_str(arr_map(&a, |c| c.s * 2)[1]))  0 }"
+check_refused filter_st   "$W2  println(to_str(arr_filter(&a, |c| c.s > 2)[0].t))  0 }"
+check_refused takewh_st   "$W2  println(to_str(len(&arr_take_while(&a, |c| c.s > 2))))  0 }"
+check_refused dropwh_st   "$W2  println(to_str(len(&arr_drop_while(&a, |c| c.s > 2))))  0 }"
+check_refused fold_st     "$W2  println(to_str(arr_fold(&a, 0, |acc, c| acc + c.s)))  0 }"
+check_refused sortby_st   "$W2  println(to_str(arr_sort_by(&a, |x, y| x.s - y.s)[0].t))  0 }"
+check_refused zipwith_st  "$W2  let b = [1, 2, 3]  println(to_str(arr_zip_with(&a, &b, |c, n| c.s + n)[0]))  0 }"
+check_refused zip_st      "$W2  let b = [1, 2, 3]  println(to_str(len(&arr_zip(&a, &b))))  0 }"
+check_refused flatten_st 'type C = { s: i64, t: i64 }
+fn main() -> i64 { let a = [[C { s: 3, t: 30 }], [C { s: 9, t: 90 }]]  println(to_str(arr_flatten(&a)[1].t))  0 }'
+
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"
 exit 0

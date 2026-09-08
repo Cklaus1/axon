@@ -12713,6 +12713,91 @@ fn predicate_reductions_are_correct_over_struct_arrays() {
 }
 
 #[test]
+fn whole_arr_family_is_correct_over_wide_struct_arrays() {
+    // REGRESSION, and the wider half of the one above. Guarding the seven
+    // callback-taking `arr_*` lowerings was not the end of it: a sweep of the
+    // WHOLE family found eleven more that dispatched on name + arity and
+    // walked a `[Struct]` array at i64 stride --- arr_map/filter/take_while/
+    // drop_while, fold, zip_with, sort_by, reverse, take/drop, concat,
+    // unique, enumerate, zip, chunk, flatten. Most built cleanly and returned
+    // a wrong answer (arr_fold interp=13/native=0; arr_map interp=18/
+    // native=0; arr_reverse picked the wrong element).
+    //
+    // A ONE-FIELD struct hides this. `{ s: i64 }` is 8 bytes --- exactly the
+    // stride the lowering assumes --- so a probe over it agrees by
+    // coincidence. `t` is the whole point of this test: an element-size probe
+    // needs an element whose size is NOT the one being assumed.
+    //
+    // This pins the interpreter's answers; `arr_reduce_parity.sh` separately
+    // asserts native REFUSES these (E0910), which is the half a unit test
+    // cannot express.
+    let src = "type C = { s: i64, t: i64 }\n\
+        fn main() -> i64 {\n  \
+            let a = [C { s: 3, t: 30 }, C { s: 9, t: 90 }, C { s: 1, t: 10 }]\n  \
+            let rev = arr_reverse(&a)\n  \
+            let tk = arr_take(&a, 2)\n  \
+            let dp = arr_drop(&a, 1)\n  \
+            let cc = arr_concat(&a, &a)\n  \
+            let ft = arr_filter(&a, |c| c.s > 2)\n  \
+            let mp = arr_map(&a, |c| c.s * 2)\n  \
+            let fold = arr_fold(&a, 0, |acc, c| acc + c.s)\n  \
+            let srt = arr_sort_by(&a, |x, y| x.s - y.s)\n  \
+            let tw = arr_take_while(&a, |c| c.s > 2)\n  \
+            let dw = arr_drop_while(&a, |c| c.s > 2)\n  \
+            let ok_shape = rev[0].t == 10 && tk[1].t == 90 && dp[0].t == 90 && cc[3].t == 30\n  \
+            let ok_pred = len(&ft) == 2 && ft[0].t == 30 && mp[1] == 18\n  \
+            let ok_agg = fold == 13 && srt[0].t == 10 && len(&tw) == 2 && len(&dw) == 1\n  \
+            if ok_shape && ok_pred && ok_agg { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_arrfam_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "whole arr_* family over wide structs: {:?}",
+        out
+    );
+}
+
+#[test]
+fn dict_holds_struct_values_in_the_interpreter() {
+    // REGRESSION. The same element-type class as the two above, in the dict
+    // family. The native dict is a tagged union of i64/f64/str; a struct value
+    // has no tag, and `dict_set`'s fallback arm returned None --- which is
+    // INDISTINGUISHABLE from its success path, because dict_set yields `()`
+    // and so returns None on success too. The store silently VANISHED:
+    // dict_values gave len 0 against the interpreter's 2, and dict_map_values
+    // gave `none` against 30. Both wrong answers from a clean build.
+    //
+    // The interpreter has always been right here; this pins that, and
+    // `dict_parity.sh` asserts native REFUSES (E0910) rather than dropping.
+    let src = "type C = { s: i64, t: i64 }\n\
+        fn main() -> i64 {\n  \
+            let d = dict_new()\n  \
+            dict_set(d, \"a\", C { s: 3, t: 30 })\n  \
+            dict_set(d, \"b\", C { s: 9, t: 90 })\n  \
+            let got = match dict_get(d, \"a\") { Some(c) => c.t  None => 0 - 1 }\n  \
+            let e = dict_map_values(d, |c| c.t)\n  \
+            let mapped = match dict_get(e, \"b\") { Some(v) => v  None => 0 - 1 }\n  \
+            let fallback = dict_get_or(d, \"z\", C { s: 5, t: 50 }).t\n  \
+            let ok_read = dict_len(d) == 2 && len(&dict_values(d)) == 2 && got == 30\n  \
+            if ok_read && mapped == 90 && fallback == 50 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_dictstruct_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "dict with struct values: {:?}",
+        out
+    );
+}
+
+#[test]
 fn word_freq_demo_uses_dict_and_group_by() {
     // Demo #19. First demo to use the Dict primitive: count word
     // frequencies in a 14-word corpus, rank by count, print top-3.

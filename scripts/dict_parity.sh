@@ -46,6 +46,29 @@ check() {
   fi
 }
 
+# Rows where a successful native build IS the bug. The native dict is a tagged
+# union of i64/f64/str — a struct value has no tag. `dict_set`'s fallback arm
+# returned None, which is INDISTINGUISHABLE from its success path (dict_set
+# yields `()`), so the store silently VANISHED: dict_values then gave len 0
+# where the interpreter gives 2, and dict_map_values gave `none` where the
+# interpreter gives 30. Those are wrong ANSWERS, not crashes, so only a
+# refusal-expecting row catches a regression here.
+check_refused() {
+  local name="$1" src="$2"
+  printf '%s\n' "$src" > "$WORK/$name.ax"
+  local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
+  if [ -f "$WORK/$name" ]; then
+    echo "  FAIL $name: native BUILT a non-scalar dict value — it must refuse (E0910)"
+    fail=1
+  elif printf '%s' "$berr" | grep -q 'E0910'; then
+    echo "  OK   $name: native refuses (E0910), interp-only"
+  else
+    echo "  FAIL $name: expected an E0910 refusal, got:"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
+  fi
+}
+
 check len     'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  dict_len(d) }'
 check has_y   'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 9)  if dict_has(d, "x") { 1 } else { 0 } }'
 check has_n   'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 9)  if dict_has(d, "y") { 1 } else { 0 } }'
@@ -95,6 +118,20 @@ check ts_len   'fn main() -> i64 { let d = dict_new()  dict_set(d, "apple", 1)  
 check ts_ok    'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 5)  match dict_to_str(d) { Ok(s) => 1  Err(e) => 0 } }'
 check ts_err   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k=v", 1)  match dict_to_str(d) { Ok(s) => 0  Err(e) => 1 } }'
 check ts_empty 'fn main() -> i64 { let d = dict_new()  match dict_to_str(d) { Ok(s) => str_len(s)  Err(e) => 0 - 1 } }'
+
+# Non-scalar dict VALUES — must refuse, not silently drop the store.
+SV='type C = { s: i64, t: i64 }
+fn main() -> i64 { let d = dict_new()  dict_set(d, "a", C { s: 3, t: 30 })'
+check_refused set_st   "$SV  0 }"
+check_refused vals_st  "$SV  println(to_str(len(&dict_values(d))))  0 }"
+check_refused mapv_st  "$SV  let e = dict_map_values(d, |c| c.t)  println(to_str(dict_len(e)))  0 }"
+check_refused getor_st 'type C = { s: i64, t: i64 }
+fn main() -> i64 { let d = dict_new()  println(to_str(dict_get_or(d, "z", C { s: 5, t: 50 }).t))  0 }'
+# dict_get_or `select`s between an i64 payload and the default, so a non-i64
+# default is an operand-type mismatch by construction. These already failed —
+# as an IR-verifier crash; the guard turns that into an actionable E0910.
+check_refused getor_f64 'fn main() -> i64 { let d = dict_new()  println(to_str_f64(dict_get_or(d, "z", 2.5)))  0 }'
+check_refused getor_str 'fn main() -> i64 { let d = dict_new()  println(dict_get_or(d, "z", "fallback"))  0 }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
 echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs/dict_map_values/dict_to_str/dict_filter/dict_each (int values, BTreeMap order) match the interpreter ✓"
