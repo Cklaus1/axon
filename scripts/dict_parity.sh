@@ -106,6 +106,14 @@ check getor_mis 'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 7)  dic
 check rm_some   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 8)  match dict_remove(d, "k") { Some(v) => v  None => 0 - 1 } }'
 check rm_none   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 8)  match dict_remove(d, "z") { Some(v) => v  None => 0 - 1 } }'
 check rm_len    'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  dict_remove(d, "a")  dict_len(d) }'
+# dict_merge -- a native-capable builtin no harness compiled. Right-bias on a
+# collision and non-mutation of the inputs are the two properties worth pinning:
+# a lowering that merged in place would still give the right dict_len here, so
+# the src_len row is the one that would catch it.
+check merge_len  'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 1)  dict_set(a, "y", 2)  let b = dict_new()  dict_set(b, "y", 9)  dict_set(b, "z", 3)  dict_len(dict_merge(a, b)) }'
+check merge_bias 'fn main() -> i64 { let a = dict_new()  dict_set(a, "y", 2)  let b = dict_new()  dict_set(b, "y", 9)  dict_get_or(dict_merge(a, b), "y", 0) }'
+check merge_src  'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 1)  let b = dict_new()  dict_set(b, "z", 3)  let m = dict_merge(a, b)  dict_len(a) * 10 + dict_len(b) }'
+check merge_emp  'fn main() -> i64 { let a = dict_new()  let b = dict_new()  dict_set(b, "z", 3)  dict_len(dict_merge(a, b)) }'
 check keys_len  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let ks = dict_keys(d)  len(ks) }'
 check keys_sort 'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 1)  dict_set(d, "apple", 2)  let ks = dict_keys(d)  str_len(ks[0]) }'
 check keys_ord  'fn main() -> i64 { let d = dict_new()  dict_set(d, "bb", 1)  dict_set(d, "a", 2)  let ks = dict_keys(d)  str_len(ks[0]) }'

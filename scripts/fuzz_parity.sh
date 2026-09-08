@@ -393,6 +393,15 @@ fuzz str_trim_e    str 1 'str_trim_end(A)'           str
 fuzz str_reverse   str 1 'str_reverse(A)'            str
 fuzz str_repeat    str 1 'str_repeat(A, 3)'          str
 fuzz str_replace   str 1 'str_replace(A, "l", "L")'  str
+# str_pad_end / str_count / dict_merge -- the three native-capable builtins no
+# harness ever compiled. str_pad_start is here because its inline-IR lowering had
+# a real non-ASCII divergence (f59584b); its end-sibling was never exercised.
+# Widths straddle str_len(A) so both the pad and the already-long branch run.
+fuzz str_pad_end   str 1 'str_pad_end(A, 8, "*")'    str
+fuzz str_pad_end_l str 1 'str_pad_end(A, 2, "*")'    str
+fuzz str_pad_start str 1 'str_pad_start(A, 8, "*")'  str
+fuzz str_count     str 2 'str_count(A, B)'
+fuzz str_count_l   str 1 'str_count(A, "l")'
 fuzz str_slice_s   str 1 'str_slice(A, 0, str_len(A) / 2)' str
 fuzz char_at_s     str 1 'char_at(A, 0)'             # i64 result
 # str_eq -- no harness called it. Two forms deliberately: the two-corpus form is

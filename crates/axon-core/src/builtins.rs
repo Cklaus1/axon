@@ -1278,7 +1278,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "str_count",
         params: &[("s", "str"), ("needle", "str")],
         ret: "i64",
-        doc: "Return the number of non-overlapping occurrences of `needle` in `s`. Returns 0 if `needle` is empty or not found.",
+        doc: "Return the number of non-overlapping occurrences of `needle` in `s`. Returns 0 if `needle` is not found. An EMPTY needle matches at every char boundary, so `str_count(s, \"\")` is the char count plus one — both engines delegate to Rust's `str::matches`, which is where that convention comes from.",
     },
     BuiltinFn {
         name: "str_reverse",
