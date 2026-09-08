@@ -976,7 +976,10 @@ impl CheckCtx {
                 );
                 for field in &td.fields {
                     let path = format!("#typedef_{}.field_{}", td.name, field.name);
-                    self.check_axon_type(&field.ty, &path);
+                    // `TypeField` has no span of its own, so the typedef's is
+                    // the closest honest location -- the right `type` block,
+                    // if not the exact field line.
+                    self.check_axon_type(&field.ty, &path, Some(td.span));
                 }
                 self.current_generic_params = prev_generics;
             }
@@ -1122,13 +1125,15 @@ impl CheckCtx {
         // R08: validate parameter type annotations.
         for param in &f.params {
             let path = format!("#fn_{}.param_{}", f.name, param.name);
-            self.check_axon_type(&param.ty, &path);
+            self.check_axon_type(&param.ty, &path, Some(param.span));
         }
 
         // R08: validate return type annotation.
         if let Option::Some(ret_ty) = &f.return_type {
             let path = format!("#fn_{}.return_type", f.name);
-            self.check_axon_type(&ret_ty.clone(), &path);
+            // No span on the return annotation itself; the fn's is the
+            // closest honest one.
+            self.check_axon_type(&ret_ty.clone(), &path, Some(f.span));
         }
 
         // Resolve the declared return type for R03 / R07 checks. `enumify` maps
@@ -5013,7 +5018,12 @@ impl CheckCtx {
     // R08 — unknown type annotation
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_axon_type(&mut self, ty: &AxonType, node_path: &str) {
+    /// `span` locates the ANNOTATION for the reader. `AxonType` carries no
+    /// span of its own, so it has to come from the item that owns the
+    /// annotation -- a param, a return type, a struct field. Without it E0308
+    /// serialized with no line at all, and in a file with several functions
+    /// "unknown type 'Widget'" does not say which annotation is wrong.
+    fn check_axon_type(&mut self, ty: &AxonType, node_path: &str, span: Option<crate::span::Span>) {
         match ty {
             AxonType::Named(name) => {
                 // Suppress E0308 for names that are generic type parameters of the
@@ -5038,51 +5048,56 @@ impl CheckCtx {
                         Option::None => "check the type name".to_string(),
                     };
                     let file = self.file.clone();
-                    self.errors.push(
-                        CheckError::new(E0308, format!("unknown type '{name}'"))
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .fix(fix),
-                    );
+                    let mut e = CheckError::new(E0308, format!("unknown type '{name}'"))
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .fix(fix);
+                    // Same arrangement as the E0403 site above: `.at(file, 0, 0)`
+                    // is the serializer's "no location" sentinel, and
+                    // `with_span` is what actually puts a line on it.
+                    if let Some(sp) = span {
+                        e = e.with_span(sp);
+                    }
+                    self.errors.push(e);
                 }
             }
             AxonType::Result { ok, err } => {
-                self.check_axon_type(ok, &format!("{node_path}.ok"));
-                self.check_axon_type(err, &format!("{node_path}.err"));
+                self.check_axon_type(ok, &format!("{node_path}.ok"), span);
+                self.check_axon_type(err, &format!("{node_path}.err"), span);
             }
             AxonType::Option(inner) => {
-                self.check_axon_type(inner, &format!("{node_path}.inner"));
+                self.check_axon_type(inner, &format!("{node_path}.inner"), span);
             }
             AxonType::Chan(inner)
             | AxonType::Slice(inner)
             | AxonType::Ref(inner)
             | AxonType::RawPtr(inner) => {
-                self.check_axon_type(inner, &format!("{node_path}.inner"));
+                self.check_axon_type(inner, &format!("{node_path}.inner"), span);
             }
             AxonType::Generic { base, args } => {
                 // Validate the base name (deferred prefixes are always OK).
-                self.check_axon_type(&AxonType::Named(base.clone()), &format!("{node_path}.base"));
+                self.check_axon_type(&AxonType::Named(base.clone()), &format!("{node_path}.base"), span);
                 for (i, arg) in args.iter().enumerate() {
-                    self.check_axon_type(arg, &format!("{node_path}.arg_{i}"));
+                    self.check_axon_type(arg, &format!("{node_path}.arg_{i}"), span);
                 }
             }
             AxonType::Fn { params, ret } => {
                 for (i, p) in params.iter().enumerate() {
-                    self.check_axon_type(p, &format!("{node_path}.param_{i}"));
+                    self.check_axon_type(p, &format!("{node_path}.param_{i}"), span);
                 }
-                self.check_axon_type(ret, &format!("{node_path}.ret"));
+                self.check_axon_type(ret, &format!("{node_path}.ret"), span);
             }
             AxonType::TypeParam(_) | AxonType::DynTrait(_) => {}
             AxonType::Tuple(elems) => {
                 for (i, elem) in elems.iter().enumerate() {
-                    self.check_axon_type(elem, &format!("{node_path}.elem_{i}"));
+                    self.check_axon_type(elem, &format!("{node_path}.elem_{i}"), span);
                 }
             }
             AxonType::Union(members) => {
                 // Each branch of a union is independently checked; an unknown
                 // branch still triggers E0308 against that branch alone.
                 for (i, m) in members.iter().enumerate() {
-                    self.check_axon_type(m, &format!("{node_path}.union_{i}"));
+                    self.check_axon_type(m, &format!("{node_path}.union_{i}"), span);
                 }
             }
         }

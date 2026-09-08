@@ -2143,3 +2143,31 @@ fn r23_bpf_ungranted_helper_is_e2300() {
         errors.join("\n")
     );
 }
+
+/// E0308 used to serialize with no line at all, so in a file with several
+/// functions "unknown type 'Widget'" did not say WHICH annotation was wrong.
+/// `AxonType` carries no span, so the location has to be threaded in from the
+/// item that owns the annotation; this asserts it arrives.
+#[test]
+fn e0308_reports_the_line_of_the_annotation_not_just_the_file() {
+    let dir = std::env::temp_dir().join("axon_e0308_span_test");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("located.ax");
+    // The bad annotation is deliberately NOT on line 1: a diagnostic that
+    // defaulted to the top of the file would pass a line-1 assertion.
+    std::fs::write(&path, "fn ok(x: i64) -> i64 { x }\nfn bad(w: Widget) -> i64 { 0 }\n").unwrap();
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("run axon check");
+    let text = String::from_utf8_lossy(&out.stdout).to_string()
+        + &String::from_utf8_lossy(&out.stderr);
+
+    assert!(text.contains("E0308"), "expected E0308, got: {text}");
+    assert!(
+        text.contains("\"line\":2"),
+        "E0308 should point at line 2, where the `Widget` annotation is; got: {text}"
+    );
+}
