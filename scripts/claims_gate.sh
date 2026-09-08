@@ -91,7 +91,31 @@ doc_vars="$(grep -oE 'AXON_[A-Z_]+' "$DOC" | sort -u)"
 n_vars=$(echo "$doc_vars" | grep -c . || true)
 unread=""
 for v in $doc_vars; do
-  grep -rqE "\"$v\"" --include=*.rs crates/ || unread="$unread $v"
+  # A READ, not a mention. The old predicate was a bare grep for the quoted
+  # name, so `std::env::set_var("AXON_KILL_FILE", ...)` counted as reading it
+  # -- and that is exactly how the doc came to claim AXON_KILL_FILE tripped the
+  # @[corrigible] latch when no interpreter code reads the var at all.
+  #
+  # Two accepted shapes:
+  #   1. a direct read of the literal   -- std::env::var("AXON_SEED")
+  #   2. a read of a const bound to it  -- const RECORD_ENV_VAR = "AXON_RECORD"
+  #                                        … std::env::var(RECORD_ENV_VAR)
+  # Shape 2 is not optional: replay.rs uses it for AXON_RECORD/AXON_REPLAY, and
+  # a rule that flagged those correct sites would be worse than the loose one.
+  if grep -rqE "(env::var|env::var_os)\([^)]*\"$v\"" --include=*.rs crates/; then
+    continue
+  fi
+  # Find any const bound to this literal, then look for a read through its name.
+  consts="$(grep -rhoE "[A-Z_]+: &'?[a-z]* ?str = \"$v\"" --include=*.rs crates/ \
+            | sed -E 's/:.*//' | sort -u)"
+  found=0
+  for c in $consts; do
+    if grep -rqE "(env::var|env::var_os)\($c\)" --include=*.rs crates/; then
+      found=1
+      break
+    fi
+  done
+  [ "$found" -eq 1 ] || unread="$unread $v"
 done
 if [ "$n_vars" -lt 8 ]; then
   bad var_extraction "only $n_vars env vars extracted — the check would pass vacuously"
