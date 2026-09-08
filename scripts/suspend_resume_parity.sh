@@ -40,25 +40,43 @@ fi
 AXON="${AXON:-target/debug/axon}"
 
 # ── 1. CLI stdin regression: str / loop / EOF (Slice-1 cases, end-to-end) ──────
-# Each pair is (program, piped-stdin, expected-exit). These run the str-typed
-# host_await through `axon run`'s stdin/stdout driver (run_suspendable_stdio).
+# Each row is (program, piped-stdin, expected-VALUE). The value is printed, not
+# returned from `main`.
+#
+# These rows were written 2026-06-25, when returning 4 from `main` exited 4.
+# `b17e2bc` (2026-08-31, 389 commits later) made a value falling out of `main`
+# an ANSWER rather than a process status, so `governance/EXIT_CODES.md` now
+# remaps 2..=15 to exit 1 -- and all three expectations here (4, 6, 2) are in
+# that band. The harness went red at that commit and stayed red, because it is
+# wired into neither `gate.sh` nor `cli_run`.
+#
+# Verified rather than assumed: piping a 4-character and an 8-character line
+# both give exit 1, so the exit code cannot carry this result at all.
 cli_case() {
-  local label="$1" src="$2" input="$3" want_exit="$4"
+  local label="$1" src="$2" input="$3" want="$4"
   local prog="$WORK/$label.ax"
-  printf '%b\n' "$src" > "$prog"
-  printf '%b' "$input" | "$AXON" run "$prog" >/dev/null 2>&1
-  local got=$?
+  # Rename the row's `main` to `probe` and print its result, so the value is
+  # compared where it survives.
+  printf '%b\n' "${src/fn main() -> i64/fn probe() -> i64}" > "$prog"
+  printf 'fn main() { println(to_str(probe())) }\n' >> "$prog"
+  # `host_await(prompt)` writes its prompt to stdout with no newline, so the
+  # printed result lands on the same line after it ("name? 4"). Take the LAST
+  # whitespace-separated field rather than stripping a hardcoded prompt --
+  # the prompt is part of the contract under test and should not be silently
+  # discarded from the capture.
+  local raw; raw="$(printf '%b' "$input" | "$AXON" run "$prog" 2>/dev/null | grep -v '^axon: run-id ')"
+  local got; got="${raw##* }"
   ran=$((ran+1))
-  if [ "$got" != "$want_exit" ]; then
-    echo "suspend_resume_parity: FAIL [$label]: exit got=$got want=$want_exit"
+  if [ "$got" != "$want" ]; then
+    echo "suspend_resume_parity: FAIL [$label]: got=[$got] want=[$want]"
     fail=1
   else
-    echo "  ok  [$label] (exit $got)"
+    echo "  ok  [$label] (value $got)"
   fi
 }
 
 echo "── CLI stdin regression (str / loop / EOF) ───────────────────────────────"
-# str round-trip: read one line, echo its length back as the exit code.
+# str round-trip: read one line, print its length.
 cli_case str_roundtrip \
   'fn main() -> i64 { let r = host_await("name? ")  str_len(r) }' \
   'abcd' 4
@@ -66,7 +84,7 @@ cli_case str_roundtrip \
 cli_case loop_three \
   'fn main() -> i64 { let total = 0  let i = 0  while i < 3 { let s = host_await("? ")  total = total + str_len(s)  i = i + 1 }  total }' \
   'ab\ncde\nf' 6
-# EOF: host_await_opt stops the loop on end-of-input; 2 lines then EOF ⇒ exit 2.
+# EOF: host_await_opt stops the loop on end-of-input; 2 lines then EOF => 2.
 cli_case eof_terminates \
   'fn main() -> i64 { let n = 0  let go = 1  while go == 1 { match host_await_opt("? ") { None => { go = 0 } Some(s) => { n = n + 1 } } }  n }' \
   'x\ny' 2
