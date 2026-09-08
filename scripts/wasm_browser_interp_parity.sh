@@ -34,7 +34,16 @@ fi
 echo "wasm_browser_interp_parity: building axon-wasm (wasm32-unknown-unknown) + native axon…"
 cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/null \
   || { echo "axon-wasm wasm build failed — skipping"; exit 0; }
-cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
+# NOT --no-default-features. This writes to the SHARED `target/debug/axon`, which
+# every other harness reads via `AXON="${AXON:-target/debug/axon}"` behind an
+# `[ -x "$AXON" ]` guard. A codegen-less binary left at that path still EXISTS,
+# so the guard passes and nobody rebuilds -- they just fail to link and report
+# "toolchain absent". That silently un-asserted wasm_browser_io, wasm_browser and
+# wasm_examples (the three following this one in glob order): parity_all read 43
+# asserting where it should have read 46, and printed a reason that was not true.
+# This harness only needs an interpreter, so building the default (codegen) axon
+# costs it nothing and keeps ONE binary configuration across the suite.
+cargo build -q -p axon-core --bin axon 2>/dev/null \
   || { echo "native build failed — skipping"; exit 0; }
 WASM="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
 NATIVE="target/debug/axon"

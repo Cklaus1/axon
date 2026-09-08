@@ -51,8 +51,20 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>&1)"
 fi
 # Probe: can this binary link an unknown-unknown module at all?
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() -> i64 { 7 }\n' > "$PROBE"
-"$AXON" target build "$PROBE" --target wasm32-unknown-unknown >/dev/null 2>&1
-[ -f "${PROBE%.ax}.linked.wasm" ] || { echo "wasm_browser_parity: unknown-unknown link unavailable — skipping"; exit 0; }
+# Report WHY the link failed instead of calling every cause "unavailable".
+# E0907 means this `axon` was built --no-default-features, i.e. another
+# harness clobbered the shared target/debug/axon with a codegen-less binary.
+# That is a suite bug, not an absent toolchain, and it silently un-asserted
+# this harness while parity_all printed "SKIP (toolchain absent)".
+_probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
+if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
+  if echo "$_probe_err" | grep -q E0907; then
+    echo "wasm_browser_parity: FAIL — \$AXON ($AXON) has no codegen backend (E0907)."
+    echo "    A --no-default-features build clobbered the shared target/debug/axon."
+    exit 1
+  fi
+  echo "wasm_browser_parity: unknown-unknown link unavailable — skipping"; exit 0
+fi
 
 declare -A PROGS
 PROGS[arith]='fn main() -> i64 { (21 + 21) * 2 - 4 }'
