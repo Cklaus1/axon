@@ -34,7 +34,7 @@ trap 'rm -rf "$WORK"' EXIT
 # sheet of "native build failed" against a stale interpreter-only binary.
 axon_was_overridden=0
 [ -n "${AXON+x}" ] && axon_was_overridden=1
-AXON="${AXON:-target/debug/axon}"
+AXON="${AXON:-}"
 
 # Only build when we are going to run what we build. An explicit $AXON is a
 # deliberate choice of binary -- typically a copy pinned outside the build tree
@@ -43,10 +43,20 @@ AXON="${AXON:-target/debug/axon}"
 # to avoid.
 if [ "$axon_was_overridden" -eq 0 ]; then
   echo "exit_code_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+  # Build into a PRIVATE target dir, not `target/debug`. This harness needs a
+  # CODEGEN binary, but the suite that invokes it commonly runs
+  # `--no-default-features` -- so building in place makes the harness overwrite
+  # the very binary the surrounding `cargo test` is using, and the two fight
+  # over one path. That is a real, repeatable collision (it failed this test
+  # twice, and both times looked like an interp<->native divergence rather than
+  # two builds racing). Same remedy `smt_discharge_parity.sh` already uses for
+  # its differently-featured build.
+  if ! CARGO_TARGET_DIR="$WORK/cg-target" \
+       cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "exit_code_parity: codegen build unavailable (LLVM absent) — skipping"
     exit 0
   fi
+  AXON="$WORK/cg-target/debug/axon"
 fi
 
 # The preflight above proves the DEFAULT binary can codegen; it proves nothing
