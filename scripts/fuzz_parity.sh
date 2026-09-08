@@ -341,8 +341,18 @@ fuzz shr_i64   pos 2 'shr(A, B % 31)'
 fuzz mod_i64   pos 2 'A % (B % 1000 + 1)'
 # ── f64 math (printed through the shared %.6g to_str contract) ────────────────
 fuzz abs_f64   f64 1 'abs_f64(A)'
-fuzz floor_f64 f64 1 'floor(A)'
-fuzz ceil_f64  f64 1 'ceil(A)'
+fuzz floor      f64 1 'floor(A)'
+fuzz ceil       f64 1 'ceil(A)'
+# BUILTINS carries floor/floor_f64, ceil/ceil_f64 and sqrt/sqrt_f64 as SEPARATE
+# rows with identical signatures and semantics -- two surfaces for one operation,
+# each lowered independently. The two cases above used to be NAMED floor_f64 and
+# ceil_f64 while calling floor and ceil, so the summary claimed a coverage the
+# case did not provide and the _f64 spellings were never compiled by any harness.
+# Name each case after what it calls, and fuzz both surfaces.
+fuzz floor_f64  f64 1 'floor_f64(A)'
+fuzz ceil_f64   f64 1 'ceil_f64(A)'
+fuzz sqrt       f64 1 'sqrt(abs_f64(A))'
+fuzz sqrt_f64   f64 1 'sqrt_f64(abs_f64(A))'
 fuzz min_f64   f64 2 'min_f64(A, B)'
 fuzz max_f64   f64 2 'max_f64(A, B)'
 fuzz f2i       f64 1 'f64_to_i64(A)'
@@ -385,6 +395,13 @@ fuzz str_repeat    str 1 'str_repeat(A, 3)'          str
 fuzz str_replace   str 1 'str_replace(A, "l", "L")'  str
 fuzz str_slice_s   str 1 'str_slice(A, 0, str_len(A) / 2)' str
 fuzz char_at_s     str 1 'char_at(A, 0)'             # i64 result
+# str_eq -- no harness called it. Two forms deliberately: the two-corpus form is
+# almost always FALSE (random pairs rarely match), so on its own it would agree
+# on `false` without ever exercising the equal path. The second compares A to a
+# transform of itself, which is true whenever A has no upper-case, so both
+# branches get run.
+fuzz str_eq        str 2 'str_eq(A, B)'
+fuzz str_eq_self   str 1 'str_eq(A, str_to_lower(A))'
 # ── f64→f64 / f64→i64 conversions + rounding (scalar wrap) ─────────────────────
 fuzz round_f64     f64 1 'round_f64(A)'
 fuzz clamp_f64     f64 1 'clamp_f64(A, 0.0 - 100.0, 100.0)'
