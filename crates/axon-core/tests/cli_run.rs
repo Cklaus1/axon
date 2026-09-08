@@ -12635,6 +12635,51 @@ fn arr_max_by_min_by_take_drop_while_dict_each() {
 }
 
 #[test]
+fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
+    // `arr_sum_by(xs, key_fn)` — sum a projected field without materializing
+    // the mapped array, the `_by` sibling of arr_max_by/arr_min_by.
+    //
+    // Why it exists: "total one field over the matching rows" is the single
+    // most common shape in the RLM sweep, and with no name for it the written
+    // form was `arr_sum_i64(&arr_filter(..), |r| r.amount)` — a two-arg call to
+    // a one-arg builtin, i.e. a parse error at a high column. Four of the five
+    // parse failures in sweep 20b were this exact shape.
+    //
+    // The saturation case is the point of the test, not decoration:
+    // arr_sum_i64 SATURATES on i64 overflow (fuzz_parity.sh pins arr_sum_ovf ->
+    // i64::MAX in both interp and native). arr_sum_by is that reduction with a
+    // projection in front, so `arr_sum_by(xs, |x| x)` must equal
+    // `arr_sum_i64(xs)` on every input including the boundary — a checked_add
+    // panic here would be a silent divergence between two spellings of one
+    // operation.
+    let src = "type Row = { region: str, amount: i64 }\n\
+        fn main() -> i64 {\n  \
+            let rows = [\n    \
+                Row { region: \"north\", amount: 120 },\n    \
+                Row { region: \"south\", amount: 80 },\n    \
+                Row { region: \"north\", amount: 45 },\n  \
+            ]\n  \
+            let total = arr_sum_by(&rows, |r| r.amount)\n  \
+            let north = arr_sum_by(&arr_filter(&rows, |r| str_eq(r.region, \"north\")), |r| r.amount)\n  \
+            let empty: [i64] = []\n  \
+            let zero = arr_sum_by(&empty, |x| x)\n  \
+            let ovf = [9223372036854775807, 1]\n  \
+            let sat_by = arr_sum_by(&ovf, |x| x)\n  \
+            let sat_plain = arr_sum_i64(ovf)\n  \
+            let fs = [1.5, 2.25]\n  \
+            let fsum = arr_sum_by_f64(&fs, |x| x)\n  \
+            if total == 245 && north == 165 && zero == 0 \
+               && sat_by == sat_plain && sat_by == 9223372036854775807 \
+               && fsum > 3.7 && fsum < 3.8 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_sumby_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "arr_sum_by: {:?}", out);
+}
+
+#[test]
 fn word_freq_demo_uses_dict_and_group_by() {
     // Demo #19. First demo to use the Dict primitive: count word
     // frequencies in a 14-word corpus, rank by count, print top-3.

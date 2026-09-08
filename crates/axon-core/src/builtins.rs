@@ -640,6 +640,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Count elements where the predicate returns true. Equivalent to `len(arr_filter(xs, pred))` but doesn't materialize the filtered array.",
     },
     BuiltinFn {
+        name: "arr_sum_by",
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> i64")],
+        ret: "i64",
+        doc: "Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`.",
+    },
+    BuiltinFn {
+        name: "arr_sum_by_f64",
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> f64")],
+        ret: "f64",
+        doc: "Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`.",
+    },
+    BuiltinFn {
         name: "arr_zip_with",
         params: &[("xs", "[T]"), ("ys", "[U]"), ("f", "fn(T, U) -> V")],
         ret: "[V]",

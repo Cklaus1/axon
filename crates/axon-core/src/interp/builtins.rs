@@ -2261,6 +2261,68 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Bool(all));
             }
+            // `arr_sum_by(xs, key_fn)` — sum a projected numeric field.
+            // Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` without
+            // materializing the mapped array. The model reaches for this shape
+            // constantly ("total the amount over the north rows") and, absent a
+            // name for it, writes `arr_sum_i64(&arr_filter(..), |r| r.amount)`
+            // -- a two-arg call to a one-arg builtin -- which is a parse error
+            // at a high column. Four of five parse errors in one RLM sweep were
+            // this one intent, written four different invented ways; that is
+            // what a missing name looks like from the outside.
+            "arr_sum_by" | "arr_sum_by_f64" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => {
+                        return panic(format!(
+                            "{name}: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
+                };
+                let key_fn = args[1].clone();
+                let want_f64 = name == "arr_sum_by_f64";
+                let mut acc_i: i64 = 0;
+                let mut acc_f: f64 = 0.0;
+                for x in xs {
+                    let r = self.call_closure(key_fn.clone(), vec![x])?;
+                    match r {
+                        // Accept an Int for the f64 form: a projection like
+                        // `|r| r.amount` over an i64 field is the overwhelmingly
+                        // likely intent, and refusing it would trade one
+                        // confusing error for another.
+                        Value::Int(i) if want_f64 => acc_f += i as f64,
+                        // SATURATE, do not panic. `arr_sum_i64` uses
+                        // `saturating_add` in both interp and native
+                        // (`fuzz_parity.sh` pins that: arr_sum_ovf ->
+                        // i64::MAX). `arr_sum_by` is that same reduction with a
+                        // projection in front, so it must overflow the same way
+                        // -- otherwise `arr_sum_by(xs, |x| x)` and
+                        // `arr_sum_i64(xs)` disagree on identical input, which
+                        // is the sort of divergence the parity harnesses exist
+                        // to catch.
+                        Value::Int(i) => acc_i = acc_i.saturating_add(i),
+                        Value::Float(f) if want_f64 => acc_f += f,
+                        Value::Float(_) => {
+                            return panic(
+                                "arr_sum_by: key fn returned f64 — use `arr_sum_by_f64`"
+                                    .to_string(),
+                            )
+                        }
+                        other => {
+                            return panic(format!(
+                                "{name}: key fn must return a number, got {}",
+                                other.type_name()
+                            ))
+                        }
+                    }
+                }
+                if want_f64 {
+                    ok!(Value::Float(acc_f));
+                }
+                ok!(Value::Int(acc_i));
+            }
             // `arr_count_if(xs, pred)` — count elements where the
             // predicate returns true. Equivalent to `len(arr_filter(xs,
             // pred))` but doesn't materialize the filtered array.
