@@ -22,15 +22,36 @@ INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+# Compares BOTH stdout and exit code. Exit code alone is not enough: exit codes
+# 2..=15 and 101 are RESERVED (governance/EXIT_CODES.md), so a `main` returning
+# any of them is remapped to 1 with a note on stderr. Most rows here return a
+# small dict value — `len`→2, `inc`→3, `getor_hit`→7, `rm_some`→8 — which ALL
+# collapse to exit 1. Verified directly: a native binary returning 8 where the
+# interpreter returns 7 gave exit 1 on both sides, i.e. a wrong ANSWER passing
+# as parity. Printing the value sidesteps the ledger entirely, so every row now
+# carries its result on stdout as well.
 check() {
   local name="$1" src="$2"
-  printf '%s\n' "$src" > "$WORK/$name.ax"
-  "$INTERP" "$WORK/$name.ax" >/dev/null 2>&1; local i=$?
+  # Every row is `fn main() -> i64 { <expr> }` returning the value under test.
+  # Rename it to `probe` and print the result from a fresh `main`, so the value
+  # travels on stdout (comparable in full) rather than through the exit-code
+  # ledger (which collapses 2..=15 to 1). Rows that already print keep working:
+  # their prints simply appear before the probe line on both sides.
+  printf '%s\n' "${src/fn main() -> i64 {/fn probe() -> i64 {}" > "$WORK/$name.ax"
+  printf 'fn main() -> i64 { println(to_str(probe()))  0 }\n' >> "$WORK/$name.ax"
+  local io; io="$("$INTERP" "$WORK/$name.ax" 2>/dev/null)"; local i=$?
+  io="$(printf '%s\n' "$io" | grep -v '^axon: run-id ')"
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
-    "$WORK/$name" >/dev/null 2>&1; local n=$?
-    if [ "$i" = "$n" ]; then echo "  OK   $name: interp=$i native=$n"
-    else echo "  FAIL $name: interp=$i native=$n"; fail=1; fi
+    local no; no="$("$WORK/$name" 2>/dev/null)"; local n=$?
+    if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then
+      echo "  OK   $name: interp=$i native=$n out=[$(printf '%s' "$io" | tr '\n' '/')]"
+    else
+      echo "  FAIL $name: interp=$i native=$n"
+      echo "        interp out=[$io]"
+      echo "        native out=[$no]"
+      fail=1
+    fi
   elif printf '%s' "$berr" | grep -qE 'IR verification failed|LLVM ERROR|E0910'; then
     # A COMPILER refusal or bug, NOT an unavailable toolchain. This used to
     # discard stderr entirely (`>/dev/null 2>&1`), so every codegen failure --
@@ -141,6 +162,17 @@ check_refused dfp_f64 'fn main() -> i64 { let d = dict_from_pairs([("a", 1.5), (
 check_refused dfp_str 'fn main() -> i64 { let d = dict_from_pairs([("a", "x"), ("b", "y")])  println(to_str(dict_len(d)))  0 }'
 # ...but the [(str, i64)] path it DOES support must keep working.
 check dfp_i64 'fn main() -> i64 { let d = dict_from_pairs([("a", 7), ("b", 42)])  match dict_get(d, "b") { Some(v) => v + dict_len(d)  None => 0 - 1 } }'
+
+# Matching on dict_get/dict_remove over an f64- or str-valued dict is VALID Axon
+# (`axon check` passes, the interpreter runs it), but native's dict_get always
+# yields Option<i64>, so the Some arm is an i64 and the default arm is not. That
+# used to reach the LLVM verifier as "PHI node operands are not the same type as
+# the result!" --- a message naming neither the match nor the file. E0910 now.
+check_refused mphi_get_f64 'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1.5)  println(to_str(match dict_get(d, "a") { Some(v) => v  None => 0.0 }))  0 }'
+check_refused mphi_get_str 'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", "x")  println(match dict_get(d, "a") { Some(v) => v  None => "" })  0 }'
+check_refused mphi_rm_f64 'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1.5)  println(to_str(match dict_remove(d, "a") { Some(v) => v  None => 0.0 }))  0 }'
+# ...and a same-typed match over the SUPPORTED int dict must keep lowering.
+check mphi_get_i64 'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 7)  match dict_get(d, "a") { Some(v) => v  None => 0 - 1 } }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
 echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs/dict_map_values/dict_to_str/dict_filter/dict_each (int values, BTreeMap order) match the interpreter ✓"

@@ -25,15 +25,31 @@ INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+# Compares BOTH stdout and exit code. Exit code alone is not enough: exit codes
+# 2..=15 and 101 are RESERVED (governance/EXIT_CODES.md), so a `main` returning
+# one is remapped to 1 with a note on stderr — and most rows here return a small
+# count or sum that lands squarely in that band. Verified directly: native
+# binaries returning 2, 5, 8 and 15 ALL exited 1, so a lowering off by one in
+# that range passed as parity. Each row is `fn main() -> i64 { <expr> }`, so
+# rename it to `probe` and print the result from a fresh `main`: the value then
+# travels on stdout, where it can be compared in full.
 check() {
   local name="$1" src="$2"
-  printf '%s\n' "$src" > "$WORK/$name.ax"
-  "$INTERP" "$WORK/$name.ax" >/dev/null 2>&1; local i=$?
+  printf '%s\n' "${src/fn main() -> i64 {/fn probe() -> i64 {}" > "$WORK/$name.ax"
+  printf 'fn main() -> i64 { println(to_str(probe()))  0 }\n' >> "$WORK/$name.ax"
+  local io; io="$("$INTERP" "$WORK/$name.ax" 2>/dev/null)"; local i=$?
+  io="$(printf '%s\n' "$io" | grep -v '^axon: run-id ')"
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
-    "$WORK/$name" >/dev/null 2>&1; local n=$?
-    if [ "$i" = "$n" ]; then echo "  OK   $name: interp=$i native=$n"
-    else echo "  FAIL $name: interp=$i native=$n"; fail=1; fi
+    local no; no="$("$WORK/$name" 2>/dev/null)"; local n=$?
+    if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then
+      echo "  OK   $name: interp=$i native=$n out=[$(printf '%s' "$io" | tr '\n' '/')]"
+    else
+      echo "  FAIL $name: interp=$i native=$n"
+      echo "        interp out=[$io]"
+      echo "        native out=[$no]"
+      fail=1
+    fi
   elif printf '%s' "$berr" | grep -q "E0910"; then
     # A regression: these MUST be lowered (not E0910-gated) — hard fail.
     echo "  FAIL $name (E0910 — arr_sum_i64/arr_contains lowering regressed)"; fail=1
