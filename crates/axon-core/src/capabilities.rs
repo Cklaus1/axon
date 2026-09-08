@@ -346,6 +346,18 @@ struct CapCtx<'a, 'e> {
     /// permitted"), so what was missing was never WHICH call but WHERE. In a
     /// transitive case it points at the helper that actually performs the I/O
     /// rather than the @[contained] fn, which is the more useful of the two.
+    ///
+    /// The limit, so it is not rediscovered as a bug: several violations in ONE
+    /// fn body all report that fn's line. `agent_task_evil.ax` puts a
+    /// `read_file`, an `ai_complete` and an `exec` in one body and all three
+    /// come back on line 27. They stay distinguishable because each message
+    /// names its own call verbatim, but a reader jumping there lands on the
+    /// signature rather than the offending line. Fixing that needs a span on
+    /// `Expr::Call`, which no `Expr` variant carries today (65 construction
+    /// sites, and `spec/compiler-phase3.md` line 950 already contemplates
+    /// expression spans as future work). If they land, `check_call`'s `site`
+    /// parameter is the one place to thread the finer span through -- the emit
+    /// sites already take it.
     site: Span,
     errors: &'e mut Vec<CapabilityError>,
 }
