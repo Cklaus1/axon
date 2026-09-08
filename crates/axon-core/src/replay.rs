@@ -845,22 +845,48 @@ pub fn render_transcript(events: &[HostEvent], opts: &RenderOpts) -> String {
     // this run touch anything it should not have", not "what was event 34".
     let mut mutating: Vec<&str> = Vec::new();
     let mut failures = 0usize;
-    let mut reads: Vec<&str> = Vec::new();
+    let mut reads: Vec<String> = Vec::new();
     let mut net: Vec<&str> = Vec::new();
+    let first = |ev: &HostEvent| {
+        ev.args
+            .first()
+            .map(String::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     for ev in events {
         if ev.status == "err" {
             failures += 1;
         }
+        // Every method the journal can hold is named below. The catch-all arm
+        // used to be `_ => {}`, which is how `read` came to say "nothing" for
+        // a run that read two env vars, a line of stdin, and a directory: a
+        // channel missing from this match was missing from the summary,
+        // silently, while the event list above it told the truth. An
+        // unrecognised method now reports itself as unclassified rather than
+        // disappearing.
         match ev.method.as_str() {
-            "write_file" | "dir_create" | "file_copy" | "file_rename" => {
+            "write_file" | "dir_create" | "file_copy" | "file_rename" | "exec" => {
                 mutating.push(ev.args.first().map(String::as_str).unwrap_or(""))
             }
-            "exec" => mutating.push(ev.args.first().map(String::as_str).unwrap_or("")),
-            "read_file" => reads.push(ev.args.first().map(String::as_str).unwrap_or("")),
+            "read_file" => reads.push(first(ev)),
+            // env is the channel the redaction exists FOR — a journal holds
+            // every env-var value verbatim, which is why values are hidden by
+            // default. Naming the KEY (never the value) is the point: a
+            // reviewer has to see that SECRET_TOKEN was read even while its
+            // bytes stay redacted.
+            "env_var" => reads.push(format!("env {}", first(ev))),
+            "read_line" => reads.push("stdin".to_string()),
+            "dir_list" => reads.push(format!("dir {}", first(ev))),
+            "file_exists" => reads.push(format!("stat {}", first(ev))),
             "http_get" | "http_post" | "http_sse" | "http_sse_post" => {
                 net.push(ev.args.first().map(String::as_str).unwrap_or(""))
             }
-            _ => {}
+            // Deliberately not summarised: the clock is not a channel anyone
+            // audits for exposure, and it would swamp the line on any loop.
+            // Still listed event-by-event above.
+            "now_ms" | "sleep_ms" => {}
+            other => reads.push(format!("{other} (unclassified)")),
         }
     }
     let uniq = |mut v: Vec<&str>| -> Vec<String> {
@@ -868,9 +894,14 @@ pub fn render_transcript(events: &[HostEvent], opts: &RenderOpts) -> String {
         v.dedup();
         v.into_iter().map(String::from).collect()
     };
+    let uniq_owned = |mut v: Vec<String>| -> Vec<String> {
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
     out.push_str("\n── summary ───────────────────────────────────────────────\n");
     let m = uniq(mutating);
-    let r = uniq(reads);
+    let r = uniq_owned(reads);
     let n = uniq(net);
     out.push_str(&format!(
         "  changed the world : {}\n",
@@ -1528,6 +1559,76 @@ mod tests {
         assert!(
             ro.contains("changed the world : nothing"),
             "a read-only run must state that it changed nothing:\n{ro}"
+        );
+    }
+
+    /// The transcript's `read` line counted only `read_file`, so a run that
+    /// read two env vars, a line of stdin, listed a directory and stat'd a
+    /// path summarised as `read: nothing` -- while the event list directly
+    /// above it named all five. A summary that contradicts its own detail is
+    /// worse than no summary, because the summary is what gets read.
+    ///
+    /// env is the sharp end. Values are redacted by default precisely BECAUSE
+    /// a journal holds every env-var value verbatim; a reviewer being shielded
+    /// from the value still has to learn that SECRET_TOKEN was read at all.
+    /// Redaction protects the bytes, not the fact.
+    #[test]
+    fn the_summary_names_every_input_channel_not_just_read_file() {
+        let events = vec![
+            ev(0, "env_var", &["SECRET_TOKEN"], "some", &["hunter2"]),
+            ev(1, "read_line", &[], "ok", &["typed"]),
+            ev(2, "dir_list", &["./data"], "ok", &["a", "b"]),
+            ev(3, "file_exists", &["./cfg"], "val", &["true"]),
+            ev(4, "read_file", &["./in"], "ok", &["x"]),
+        ];
+        let t = render_transcript(&events, &RenderOpts::default());
+        let summary = &t[t.find("── summary").expect("summary section")..];
+        let read_line = summary
+            .lines()
+            .find(|l| l.trim_start().starts_with("read "))
+            .expect("read line");
+
+        // PRIMARY: this run read from five channels; the line must not claim
+        // otherwise. Asserting the negation directly, because "nothing" is the
+        // exact word the bug produced.
+        assert!(
+            !read_line.contains("nothing"),
+            "a run that read env/stdin/dir/stat/file must not summarise as reading nothing:\n{t}"
+        );
+        for expect in ["SECRET_TOKEN", "stdin", "./data", "./cfg", "./in"] {
+            assert!(
+                read_line.contains(expect),
+                "the read summary omits `{expect}`:\n{read_line}"
+            );
+        }
+        // The KEY is named, the VALUE stays redacted -- the whole point of the
+        // default. If this ever fails, the summary has become an exfiltration
+        // channel that bypasses --show-values.
+        assert!(
+            !t.contains("hunter2") && !t.contains("typed"),
+            "redaction must survive the summary -- values leaked:\n{t}"
+        );
+
+        // A run that genuinely reads nothing must still say so positively.
+        let wo = render_transcript(
+            &[ev(0, "write_file", &["/out", "b"], "ok", &[])],
+            &RenderOpts::default(),
+        );
+        assert!(
+            wo.contains("read              : nothing"),
+            "a write-only run must state that it read nothing:\n{wo}"
+        );
+
+        // The clock is deliberately excluded: it is not an exposure channel
+        // and would swamp the line on any loop. Pinning the exclusion so it
+        // stays a decision rather than drifting back into an oversight.
+        let clock = render_transcript(
+            &[ev(0, "now_ms", &[], "val", &["17"])],
+            &RenderOpts::default(),
+        );
+        assert!(
+            clock.contains("read              : nothing"),
+            "clock reads are intentionally not summarised as input channels:\n{clock}"
         );
     }
 
