@@ -3620,6 +3620,29 @@ impl<'ctx> super::Codegen<'ctx> {
         ))
     }
 
+    /// Is this call argument statically an array of i64?
+    ///
+    /// Gates every i64-only slice lowering that takes a callback:
+    /// `arr_max_by`/`arr_min_by`, `arr_count_if`/`arr_all`/`arr_any`,
+    /// `arr_find`, `arr_partition`. All of these dispatched on name + arity
+    /// alone and walked a `[Struct]` array as if its elements were i64 —
+    /// `arr_max_by` emitted invalid IR, but the predicate reductions built
+    /// fine and returned a WRONG ANSWER (`arr_count_if` interp=2 / native=0).
+    ///
+    /// Returns FALSE when the type is unknown, which is the safe direction: an
+    /// unproven element type falls through to the E0910 refusal rather than
+    /// into a lowering that assumes i64 — refuse, never miscompile. Unwraps a
+    /// leading `&` since these are conventionally called as `f(&xs, ...)`.
+    fn arr_arg_elem_is_i64(&self, arg: &ast::Expr) -> bool {
+        let inner = match arg {
+            ast::Expr::UnaryOp { op, operand } if matches!(op, ast::UnaryOp::Ref) => {
+                operand.as_ref()
+            }
+            other => other,
+        };
+        matches!(self.sem_type_of_expr(inner), Some(Type::Slice(e)) if *e == Type::I64)
+    }
+
     /// arr_max_by / arr_min_by(&a, key_fn) → the i64 ELEMENT that maximizes
     /// (resp. minimizes) the numeric key. `key_fn` returns f64, transported
     /// through the i64 lambda ABI as bitcast bits; we bitcast back to f64 to
@@ -8972,7 +8995,20 @@ impl<'ctx> super::Codegen<'ctx> {
             // arr_max_by / arr_min_by(&a, key_fn) → the i64 element maximizing /
             // minimizing the f64 key. key_fn returns f64, transported through the
             // i64 lambda ABI as bitcast bits (recovered with a bitcast back).
-            if (name == "arr_max_by" || name == "arr_min_by") && args.len() == 2 {
+            // ELEMENT-TYPE GUARD. `emit_arr_i64_max_by` returns the i64 ELEMENT,
+            // so it is only correct for an i64 array. Dispatching on name+arity
+            // alone sent `[Struct]` down it too, yielding an i64 where a struct
+            // was expected -- the module then failed IR verification with
+            // "Incorrect number of arguments passed to called function". Falling
+            // through instead reaches the E0910 refusal, which is the parity
+            // contract for what native cannot yet lower: refuse, never
+            // miscompile. (Struct arrays are the DOCUMENTED use of these two --
+            // "returns the ELEMENT, not the key" -- so this is the common case,
+            // and it was uncovered because every parity row used an i64 array.)
+            if (name == "arr_max_by" || name == "arr_min_by")
+                && args.len() == 2
+                && self.arr_arg_elem_is_i64(&args[0])
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9100,7 +9136,7 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             // arr_partition(&a, |x| pred) → ([yes], [no]): a tuple of two i64
             // slices — elements where the predicate is true / false.
-            if name == "arr_partition" && args.len() == 2 {
+            if name == "arr_partition" && args.len() == 2 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9110,7 +9146,7 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying
             // the predicate (Some), else None.
-            if name == "arr_find" && args.len() == 2 {
+            if name == "arr_find" && args.len() == 2 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9121,7 +9157,15 @@ impl<'ctx> super::Codegen<'ctx> {
             // arr_count_if / arr_all / arr_any — predicate reductions over an i64
             // slice. count_if → i64 count of true; all → i1 (false on first
             // false, short-circuits); any → i1 (true on first true).
-            if (name == "arr_count_if" || name == "arr_all" || name == "arr_any") && args.len() == 2
+            // ELEMENT-TYPE GUARD: `emit_arr_i64_pred` walks the slice as i64
+            // elements, so a `[Struct]` array read garbage and returned a wrong
+            // ANSWER (interp=2/native=0 for count_if; any=true/false) — a silent
+            // miscompile, worse than the invalid IR the `arr_max_by` sibling
+            // produced. Falling through reaches the E0910 refusal: refuse,
+            // never miscompile.
+            if (name == "arr_count_if" || name == "arr_all" || name == "arr_any")
+                && args.len() == 2
+                && self.arr_arg_elem_is_i64(&args[0])
             {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),

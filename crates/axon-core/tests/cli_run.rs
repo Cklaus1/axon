@@ -12680,6 +12680,39 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
 }
 
 #[test]
+fn predicate_reductions_are_correct_over_struct_arrays() {
+    // REGRESSION. arr_count_if / arr_all / arr_any over an array of STRUCTS
+    // SILENTLY MISCOMPILED in native codegen: the call site dispatched on name
+    // + arity alone and handed a `[Struct]` to the i64-only lowering, which
+    // walked the elements as i64. It BUILT CLEANLY and returned a wrong answer
+    // -- count_if gave 0 where the interpreter gives 2, any gave false where
+    // the interpreter gives true.
+    //
+    // Nothing caught it because every parity row used an i64 array. This test
+    // pins the interpreter's answers; `arr_reduce_parity.sh` separately asserts
+    // that native REFUSES these (E0910) rather than miscompiling them, which is
+    // the half a unit test cannot express.
+    let src = "type C = { s: i64 }\n\
+        fn main() -> i64 {\n  \
+            let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]\n  \
+            let n = arr_count_if(&a, |c| c.s > 2)\n  \
+            let all_big = arr_all(&a, |c| c.s > 2)\n  \
+            let any_big = arr_any(&a, |c| c.s > 2)\n  \
+            if n == 2 && !all_big && any_big { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_predstruct_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "struct predicate reductions: {:?}",
+        out
+    );
+}
+
+#[test]
 fn word_freq_demo_uses_dict_and_group_by() {
     // Demo #19. First demo to use the Dict primitive: count word
     // frequencies in a 14-word corpus, rank by count, print top-3.
