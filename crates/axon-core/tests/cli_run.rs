@@ -6307,10 +6307,8 @@ fn a_refined_checker_error_suppresses_the_bare_e0102_at_its_span() {
     ];
 
     for (src, refined) in cases {
-        let f = std::env::temp_dir().join(format!(
-            "axon_refined_{refined}_{}.ax",
-            std::process::id()
-        ));
+        let f =
+            std::env::temp_dir().join(format!("axon_refined_{refined}_{}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
         let out = axon()
             .args(["check", f.to_str().unwrap()])
@@ -6338,14 +6336,19 @@ fn a_refined_checker_error_suppresses_the_bare_e0102_at_its_span() {
                 Some((line, col))
             })
             .collect();
-        assert!(!refined_span.is_empty(), "{refined} must carry a span: {msg}");
+        assert!(
+            !refined_span.is_empty(),
+            "{refined} must carry a span: {msg}"
+        );
         for l in msg.lines().filter(|l| l.contains("\"code\":\"E0102\"")) {
             // A span-less E0102 exists (`check_numeric_operand` emits line 0,
             // col 0, which the serializer omits). It cannot collide with the
             // refined error's span, so skip it rather than unwrapping — that
             // unwrap is what failed here, in the test and not in the fix.
             let (Some(line), Some(col)) = (
-                l.split("\"line\":").nth(1).and_then(|s| s.split(',').next()),
+                l.split("\"line\":")
+                    .nth(1)
+                    .and_then(|s| s.split(',').next()),
                 l.split("\"col\":").nth(1).and_then(|s| s.split(',').next()),
             ) else {
                 continue;

@@ -1220,10 +1220,7 @@ pub fn collapse_refined_type_errors(diags: &mut Vec<PipelineDiagnostic>) {
         // mode this filter must not have. An unknown location cannot prove it
         // accounts for anything, so it never suppresses.
         .filter(|d| {
-            d.severity == "error"
-                && d.code.starts_with("E03")
-                && d.help.is_some()
-                && d.line > 0
+            d.severity == "error" && d.code.starts_with("E03") && d.help.is_some() && d.line > 0
         })
         .map(|d| (d.file.clone(), d.line, d.col))
         .collect();
