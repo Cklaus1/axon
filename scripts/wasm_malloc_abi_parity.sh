@@ -75,11 +75,21 @@ PROGS[combo]='fn main() -> i64 {
 
 fail=0; ran=0
 for name in arr tostr interp eprint combo; do
-  SRC="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$SRC"
-  "$INTERP" "$SRC" >/dev/null 2>&1; I=$?
+  # Compare PRINTED values, not exit codes. `main`'s i64 return is not the exit
+  # code: 2..=15 and 101 are remapped to 1, as is anything outside 0..=255
+  # (governance/EXIT_CODES.md). Two of these five cases were in that band --
+  # `tostr` truly returns 5 and `interp` truly returns 6 -- so all three engines
+  # reported 1 and agreed for the wrong reason. Any wasm answer that also
+  # remapped to 1 would have printed OK, in the harness that guards the
+  # malloc/snprintf/memcpy size_t ABI.
+  SRC="$WORK/$name.ax"
+  printf '%s\n' "${PROGS[$name]}" | sed 's/fn main() -> i64 {/fn probe() -> i64 {/' > "$SRC"
+  printf 'fn main() { println(to_str(probe())) }\n' >> "$SRC"
+  I="$("$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+  [ -n "$I" ] || { echo "  FAIL $name: interp printed nothing"; fail=1; continue; }
   # native
   if "$AXON" build "$SRC" -o "$WORK/$name.n" >/dev/null 2>&1; then
-    "$WORK/$name.n" >/dev/null 2>&1; N=$?
+    N="$("$WORK/$name.n" 2>/dev/null | tail -1)"
     if [ "$N" != "$I" ]; then echo "  FAIL $name: native=$N != interp=$I"; fail=1; fi
   fi
   # AOT-wasm
@@ -89,9 +99,18 @@ for name in arr tostr interp eprint combo; do
   L="${SRC%.ax}.linked.wasm"
   if [ ! -f "$L" ]; then echo "  FAIL $name: did NOT link (size_t ABI regressed)"; fail=1; continue; fi
   ran=$((ran+1))
-  W="$("$WASMRT" --invoke main "$L" 2>/dev/null | grep -vi experimental | head -1)"
+  # `--invoke` prints the callee's return AFTER the experimental warning; the
+  # probe's main prints the answer and returns nothing, so cut at the warning and
+  # keep the program's own stdout.
+  # NB 2>/dev/null, not 2>&1: the `eprint` case writes to stderr on purpose, and
+  # merging it would fold "to stderr" into the answer. The experimental warning
+  # is on stderr too, so discarding stderr both removes it and keeps the
+  # program's own stderr out of the comparison -- the --invoke return value is
+  # 0 for every probe (its main returns nothing) and prints on stdout, so take
+  # the FIRST line, which is the program's println.
+  W="$("$WASMRT" --invoke main "$L" 2>/dev/null | head -1 | tr -d '[:space:]')"
   if [ -z "$W" ]; then echo "  FAIL $name: wasm produced no output (trap?)"; fail=1; continue; fi
-  if [ "$((W % 256))" = "$I" ]; then
+  if [ "$W" = "$I" ]; then
     echo "  OK   $name: interp=$I native=${N:-n/a} wasm=$W"
   else
     echo "  FAIL $name: wasm=$W != interp=$I"; fail=1

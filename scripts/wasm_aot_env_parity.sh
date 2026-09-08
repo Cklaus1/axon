@@ -54,20 +54,29 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 # env_var returns Result<str,str>; on the SET key the result is str_len(value).
 SRC="$WORK/env.ax"
+# Print the answer rather than returning it from `main`. An i64 falling out of
+# `main` is NOT the exit code: 2..=15 and 101 are remapped to 1, as is anything
+# outside 0..=255 (governance/EXIT_CODES.md). The Err arm returns -1, which
+# remaps to 1 -- so an engine where env_var broke reports the same 1 as a dozen
+# other outcomes. This passed only because str_len("wasiworks") is 9 and 9 is
+# outside the band: shorten VAL to 5 characters and the check goes blind. Read
+# the printed value and neither the answer nor the failure mode is lossy.
 cat > "$SRC" <<'AX'
-fn main() -> i64 {
+fn probe() -> i64 {
     match env_var("AXON_AOT_ENV") { Ok(v) => str_len(v)  Err(e) => -1 }
 }
+fn main() { println(to_str(probe())) }
 AX
 VAL="wasiworks"   # str_len = 9
 
 # interpreter oracle (env on the process)
-I="$(AXON_AOT_ENV="$VAL" "$INTERP" "$SRC" >/dev/null 2>&1; echo $?)"
+I="$(AXON_AOT_ENV="$VAL" "$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+[ -n "$I" ] || { echo "wasm_aot_env_parity: FAIL — interp printed nothing"; exit 1; }
 echo "wasm_aot_env_parity: interp = $I"
 
 # native AOT
 if "$AXON" build "$SRC" -o "$WORK/native" >/dev/null 2>&1; then
-  AXON_AOT_ENV="$VAL" "$WORK/native" >/dev/null 2>&1; N=$?
+  N="$(AXON_AOT_ENV="$VAL" "$WORK/native" 2>/dev/null | tail -1)"
   echo "wasm_aot_env_parity: native = $N"
   if [ "$N" != "$I" ]; then echo "wasm_aot_env_parity: FAIL — native ($N) != interp ($I)"; exit 1; fi
 fi
@@ -80,10 +89,12 @@ L="${SRC%.ax}.linked.wasm"
 if [ ! -f "$L" ]; then
   echo "wasm_aot_env_parity: FAIL — env_var program did NOT link (strlen size_t regressed)"; exit 1
 fi
-W="$("$WASMRT" --env AXON_AOT_ENV="$VAL" --invoke main "$L" 2>/dev/null | grep -vi experimental | grep -oE '^-?[0-9]+$' | head -1)"
+# 2>/dev/null drops the experimental warning; the probe's main prints on stdout
+# and returns nothing, so the first line is the program's own output.
+W="$("$WASMRT" --env AXON_AOT_ENV="$VAL" --invoke main "$L" 2>/dev/null | grep -oE '^-?[0-9]+$' | head -1)"
 echo "wasm_aot_env_parity: wasm = ${W:-<none>}"
 if [ -z "$W" ]; then echo "wasm_aot_env_parity: FAIL — wasm produced no numeric output (trap?)"; exit 1; fi
-if [ "$((W % 256))" != "$I" ]; then echo "wasm_aot_env_parity: FAIL — wasm ($W) != interp ($I)"; exit 1; fi
+if [ "$W" != "$I" ]; then echo "wasm_aot_env_parity: FAIL — wasm ($W) != interp ($I)"; exit 1; fi
 
 echo "wasm_aot_env_parity: PASS — env_var (getenv+strlen size_t) runs identically on interp, native, AOT-wasm ✓"
 exit 0
