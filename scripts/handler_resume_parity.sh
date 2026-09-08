@@ -64,12 +64,18 @@ check() {
   fi
 }
 
+# Each row below prints its result instead of returning it from `main`.
+# The resume VALUE is the whole thing under test here, and it used to travel
+# only through the exit code -- where `governance/EXIT_CODES.md` remaps 2..=15
+# to 1. resume(7) and resume(9) both exited 1 with empty stdout, so the `diff`
+# below was comparing two empty files: a vacuous check on top of a lossy one.
+# Verified directly before changing it, rather than assumed.
 # resume substitutes a value-returning builtin's result.
-check resume_value 'fn main() -> i64 { with handler { on Random(p) => resume(7) } { random_i64(0, 9) } }'
+check resume_value 'fn probe() -> i64 { with handler { on Random(p) => resume(7) } { random_i64(0, 9) } }\nfn main() { println(to_str(probe())) }'
 # resume value flows through the surrounding expression (mid-expression).
-check resume_midexpr 'fn main() -> i64 { with handler { on Random(p) => resume(10) } { random_i64(0, 5) * 4 + 1 } }'
+check resume_midexpr 'fn probe() -> i64 { with handler { on Random(p) => resume(10) } { random_i64(0, 5) * 4 + 1 } }\nfn main() { println(to_str(probe())) }'
 # IO suppressed; the block tail is the value.
-check io_suppress 'fn main() -> i64 { with handler { on IO(p) => resume(0) } { println("NO")\n 5 } }'
+check io_suppress 'fn probe() -> i64 { with handler { on IO(p) => resume(0) } { println("NO")\n 5 } }\nfn main() { println(to_str(probe())) }'
 
 # An arm that REFERENCES the payload binding `p` must NOT be lowered (codegen
 # does not bind the payload) — it stays E0910-refused. Verify it is refused
