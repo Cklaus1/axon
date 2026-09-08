@@ -350,6 +350,12 @@ fuzz f2i       f64 1 'f64_to_i64(A)'
 # ln/log10 need a positive arg (abs+1 ≥ 1, avoids NaN — that path's its own
 # nan_case); exp's arg is bounded small so it can't overflow to inf.
 fuzz exp_f64   f64 1 'exp(min_f64(abs_f64(A), 700.0))'
+# pow (two-arg, llvm.pow.f64) — the ONE native-capable builtin no parity harness
+# called. Base kept non-negative and exponent small: a negative base with a
+# fractional exponent is NaN, and NaN==NaN compares false, so an unbounded domain
+# would report a divergence on every run rather than on a real one. The NaN and
+# inf edges are covered by nan_case/inf_case below.
+fuzz pow_f64   f64 2 'pow(abs_f64(A), max_f64(min_f64(abs_f64(B), 8.0), 0.0))'
 fuzz ln_f64    f64 1 'ln(abs_f64(A) + 1.0)'
 fuzz log10_f64 f64 1 'log10(abs_f64(A) + 1.0)'
 # ── str scalars (str → i64/bool/str) ──────────────────────────────────────────
