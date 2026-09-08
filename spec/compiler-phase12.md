@@ -103,7 +103,13 @@ Request body:
 ```
 
 Runs `axon deploy --json [--risk LEVEL] <tempfile>`.
-Response: `axon-deploy/1` schema (extended with `risk`, `stages_run`, `gate`).
+Response: `axon-deploy/1` schema (extended with `risk`, `stages_run`, `gate`,
+plus `gates_skipped` + `gates_override`). The last two are always present:
+`stages_run` alone cannot distinguish "the gates ran" from "there were no
+gates to run", and a High-risk deploy with no pipeline functions defined
+exits 0 with `stages_run: []`. `gates_skipped` names the required gates that
+were never defined (empty = fully gated); `gates_override` records that
+`--allow-missing-gates` was used to proceed past the fail-closed check.
 
 ### `GET /api/trace`
 

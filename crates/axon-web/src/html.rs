@@ -380,7 +380,17 @@ async function runDeploy() {
     // deploy refused by a gate therefore rendered as "deployed".
     const deployed = j.deployed === true || j.status === 'deployed';
     if (deployed) {
-      ok('s5', 'deployed' + (j.approved === false ? ' (NOT approved)' : ''));
+      // A deploy can SUCCEED having run no gate at all: at Risk >= High with
+      // the pipeline functions undefined, `axon deploy --allow-missing-gates`
+      // exits 0 with `stages_run: []`. Annotate it here for the same reason
+      // `approved === false` is annotated -- a green "deployed" that skipped
+      // its red team is the one success a reviewer must not read as routine.
+      const skipped = Array.isArray(j.gates_skipped) ? j.gates_skipped : [];
+      let note = j.approved === false ? ' (NOT approved)' : '';
+      if (skipped.length > 0) {
+        note += ' — GATES NOT RUN: ' + skipped.join(', ');
+      }
+      ok('s5', 'deployed' + note);
     } else {
       const why = j.gate ? ('gate: ' + j.gate) : (j.failed_reason || j.reason || j.status || j.error);
       fail('s5', why || 'deploy blocked by gate');

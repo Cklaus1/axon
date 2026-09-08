@@ -21391,3 +21391,118 @@ fn ast_review_shows_the_capabilities_being_approved() {
     );
     let _ = std::fs::remove_file(&f);
 }
+
+/// A High-risk `axon deploy` whose pipeline gate functions are not defined
+/// reported `status:"deployed", risk:"high", stages_run":[]` with exit 0 --
+/// byte-indistinguishable, to any JSON consumer, from a deploy whose gates
+/// actually ran. stderr said "an absent gate is NOT a passed gate", but the
+/// JSON is the machine-readable record: it is what the Phase-12 approval pane
+/// renders and what R21's supervisor reads, and stderr is not captured there.
+///
+/// The partial case was the sharper one: two of four gates defined emitted
+/// `stages_run:["redteam_check","assert_deployable"]`, which looks like a
+/// gated deploy unless the reader independently knows the risk->gate-set
+/// mapping and diffs it.
+#[test]
+fn deploy_json_records_which_gates_were_never_run() {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let prog = dir.join(format!("axon_depgate_{pid}.ax"));
+    // Net + FS => High risk => the full four-gate pipeline is required.
+    std::fs::write(
+        &prog,
+        "fn fetch(u: str, h: str) -> str { match http_get(u, h) { Ok(s) => s  Err(e) => e } }\n\
+         fn store(p: str, s: str) -> i64 { match write_file(p, s) { Ok(_) => 0  Err(_) => 1 } }\n\
+         fn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let all_gates = dir.join(format!("axon_depgate_all_{pid}.ax"));
+    std::fs::write(
+        &all_gates,
+        "fn simulate() -> i64 { 0 }\nfn stress() -> i64 { 0 }\n\
+         fn redteam_check() -> i64 { 0 }\nfn assert_deployable() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let some_gates = dir.join(format!("axon_depgate_some_{pid}.ax"));
+    std::fs::write(
+        &some_gates,
+        "fn redteam_check() -> i64 { 0 }\nfn assert_deployable() -> i64 { 0 }\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| -> String {
+        let out = axon().args(args).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    // (1) No gates defined at all, deployed via the override.
+    let none = run(&[
+        "deploy",
+        prog.to_str().unwrap(),
+        "--allow-missing-gates",
+        "--json",
+    ]);
+    assert!(
+        none.contains("\"risk\":\"high\"") && none.contains("\"status\":\"deployed\""),
+        "setup: expected a successful high-risk deploy: {none}"
+    );
+    assert!(
+        none.contains(
+            "\"gates_skipped\":[\"simulate\",\"stress\",\"redteam_check\",\"assert_deployable\"]"
+        ),
+        "every undefined gate must be named: {none}"
+    );
+    // Overriding a fail-closed safety check is an operator decision and
+    // belongs in the audit record, not only in an uncaptured stderr line.
+    assert!(
+        none.contains("\"gates_override\":true"),
+        "the --allow-missing-gates override must be recorded: {none}"
+    );
+
+    // (2) Partial: the case that most looks like a gated deploy.
+    let partial = run(&[
+        "deploy",
+        prog.to_str().unwrap(),
+        "--gates",
+        some_gates.to_str().unwrap(),
+        "--allow-missing-gates",
+        "--json",
+    ]);
+    assert!(
+        partial.contains("\"gates_skipped\":[\"simulate\",\"stress\"]"),
+        "a partially-gated deploy must name what it skipped: {partial}"
+    );
+
+    // (3) Fully gated: the field is present and EMPTY. Always emitting it lets
+    // a consumer check one field instead of reconstructing the expected set
+    // from the risk level.
+    let full = run(&[
+        "deploy",
+        prog.to_str().unwrap(),
+        "--gates",
+        all_gates.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        full.contains("\"gates_skipped\":[]") && full.contains("\"gates_override\":false"),
+        "a fully-gated deploy must say so explicitly: {full}"
+    );
+
+    // The three outcomes must be mutually distinguishable -- that is the whole
+    // defect. Compared from `stages_run` onward, since the path prefix differs
+    // between invocations only by flags.
+    let tail = |s: &str| -> String {
+        let i = s.find("\"stages_run\"").unwrap_or(0);
+        s[i..].to_string()
+    };
+    assert_ne!(tail(&none), tail(&full), "ungated vs fully gated: {none}");
+    assert_ne!(
+        tail(&partial),
+        tail(&full),
+        "partial vs fully gated: {partial}"
+    );
+
+    let _ = std::fs::remove_file(&prog);
+    let _ = std::fs::remove_file(&all_gates);
+    let _ = std::fs::remove_file(&some_gates);
+}

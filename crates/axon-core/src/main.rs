@@ -6224,6 +6224,34 @@ fn cmd_deploy(
         .map(|q| format!(",\"quorum\":{q}"))
         .unwrap_or_default();
 
+    // The gates that were NEVER DEFINED, and whether an operator overrode the
+    // fail-closed check to deploy anyway.
+    //
+    // stderr already said this ("an absent gate is NOT a passed gate"), but the
+    // JSON did not carry it, and the JSON is the machine-readable record --
+    // what the Phase-12 web pane renders and what R21's supervisor reads. A
+    // High-risk deploy with no gate functions at all emitted
+    // `status:"deployed", risk:"high", stages_run:[]` and exit 0:
+    // indistinguishable, to any consumer, from a deploy whose gates ran. The
+    // partial case is worse -- `stages_run:["redteam_check",
+    // "assert_deployable"]` at high risk looks like a gated deploy unless the
+    // reader independently knows the risk->gate-set mapping and diffs it.
+    //
+    // `gates_skipped` is always present (empty = every required gate was
+    // defined), so a consumer checks one field rather than reconstructing the
+    // expected set. `gates_override` records that --allow-missing-gates was
+    // used: overriding a fail-closed safety check is an operator decision that
+    // belongs in the audit record, not only in a stderr line nothing captures.
+    let skipped_json = missing_gates
+        .iter()
+        .map(|g| json_str(g))
+        .collect::<Vec<_>>()
+        .join(",");
+    let gates_field = format!(
+        ",\"gates_skipped\":[{skipped_json}],\"gates_override\":{}",
+        allow_missing_gates && !missing_gates.is_empty()
+    );
+
     let risk_name = risk_level_name(risk);
 
     if let Some((failed, code)) = failed_gate {
@@ -6236,7 +6264,8 @@ fn cmd_deploy(
             println!(
                 "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"blocked_gate\",\
                  \"gate\":\"{failed}\",\"exit_code\":{code},\"risk\":\"{risk_name}\",\
-                 \"stages_run\":[{stages_json}],\"approved\":{is_approved}{quorum_field}}}",
+                 \"stages_run\":[{stages_json}],\"approved\":{is_approved}\
+                 {gates_field}{quorum_field}}}",
                 json_str(&file.display().to_string()),
             );
         } else {
@@ -6278,7 +6307,8 @@ fn cmd_deploy(
         println!(
             "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"{status}\",\
              \"exit_code\":{exit_code},\"risk\":\"{risk_name}\",\
-             \"stages_run\":[{stages_json}],\"approved\":{is_approved}{quorum_field}}}",
+             \"stages_run\":[{stages_json}],\"approved\":{is_approved}\
+             {gates_field}{quorum_field}}}",
             json_str(&file.display().to_string()),
         );
     } else {
@@ -6294,6 +6324,14 @@ fn cmd_deploy(
         }
         if requires_full_pipeline && !stages_run.is_empty() {
             println!("  pipeline stages: {}", stages_run.join(" → "));
+        }
+        // Restate the skip in the REPORT, not only in the warning emitted
+        // earlier: the summary line is what gets pasted into a ticket.
+        if !missing_gates.is_empty() {
+            println!(
+                "  gates NOT run (undefined): {} — an absent gate is not a passed gate",
+                missing_gates.join(", ")
+            );
         }
     }
 
