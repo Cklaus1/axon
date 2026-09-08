@@ -31,8 +31,20 @@ AXON="${AXON:-target/debug/axon}"
 if [ ! -x "$AXON" ]; then
   cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_io_parity: codegen unavailable — skipping"; exit 0; }
 fi
-if ! cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>/dev/null; then
-  echo "wasm_browser_io_parity: unknown-unknown axon-rt unavailable — skipping"; exit 0
+# Distinguish an ABSENT target from a BROKEN build. The probe used to be
+# `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
+# said the same thing for both and threw away the compiler error naming which.
+# That is how a `data:`/`ptr:` typo in a `#[cfg(target_arch = "wasm32")]` arm
+# (4a600f2) took all 8 wasm_* harnesses dark for a day while parity_all printed
+# "SKIP (toolchain absent)" -- both wasm32 targets were installed the whole time.
+# A skip must be honest about WHY, or it is a silent loss of coverage.
+if ! rustup target list --installed 2>/dev/null | grep -qx "wasm32-unknown-unknown"; then
+  echo "wasm_browser_io_parity: wasm32-unknown-unknown target not installed - skipping"; exit 0
+fi
+if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>&1)"; then
+  echo "wasm_browser_io_parity: FAIL - axon-rt does NOT build for wasm32-unknown-unknown (target IS installed):"
+  echo "$_rt_err" | sed 's/^/    | /'
+  exit 1
 fi
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() { println("ok") }\n' > "$PROBE"
 "$AXON" target build "$PROBE" --target wasm32-unknown-unknown >/dev/null 2>&1
