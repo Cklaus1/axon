@@ -2155,15 +2155,19 @@ fn e0308_reports_the_line_of_the_annotation_not_just_the_file() {
     let path = dir.join("located.ax");
     // The bad annotation is deliberately NOT on line 1: a diagnostic that
     // defaulted to the top of the file would pass a line-1 assertion.
-    std::fs::write(&path, "fn ok(x: i64) -> i64 { x }\nfn bad(w: Widget) -> i64 { 0 }\n").unwrap();
+    std::fs::write(
+        &path,
+        "fn ok(x: i64) -> i64 { x }\nfn bad(w: Widget) -> i64 { 0 }\n",
+    )
+    .unwrap();
 
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
         .arg("check")
         .arg(&path)
         .output()
         .expect("run axon check");
-    let text = String::from_utf8_lossy(&out.stdout).to_string()
-        + &String::from_utf8_lossy(&out.stderr);
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
 
     assert!(text.contains("E0308"), "expected E0308, got: {text}");
     assert!(
@@ -2198,8 +2202,8 @@ fn e1001_points_at_the_fn_that_performs_the_refused_io() {
         .arg(&path)
         .output()
         .expect("run axon check");
-    let text = String::from_utf8_lossy(&out.stdout).to_string()
-        + &String::from_utf8_lossy(&out.stderr);
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
 
     assert!(text.contains("E1001"), "expected E1001, got: {text}");
     assert!(

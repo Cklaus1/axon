@@ -5076,7 +5076,11 @@ impl CheckCtx {
             }
             AxonType::Generic { base, args } => {
                 // Validate the base name (deferred prefixes are always OK).
-                self.check_axon_type(&AxonType::Named(base.clone()), &format!("{node_path}.base"), span);
+                self.check_axon_type(
+                    &AxonType::Named(base.clone()),
+                    &format!("{node_path}.base"),
+                    span,
+                );
                 for (i, arg) in args.iter().enumerate() {
                     self.check_axon_type(arg, &format!("{node_path}.arg_{i}"), span);
                 }
