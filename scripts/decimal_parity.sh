@@ -22,11 +22,18 @@ trap 'rm -rf "$WORK"' EXIT
 fail=0
 
 echo "decimal_parity: building interpreter axon binary…"
-if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
+# Own target dir. This harness builds the SAME shared path twice -- codegen-less
+# here, then with codegen at step 2 -- so it both thrashes the artifact that 35
+# other harnesses read and leaves its own $IAXON stale after that second build.
+# A codegen-less `axon` left at target/debug/axon is executable, so later
+# harnesses' `[ -x "$AXON" ]` guards pass, nobody rebuilds, and their native or
+# wasm builds answer E0907 while reporting "toolchain absent".
+if ! CARGO_TARGET_DIR="$WORK/interp-target" \
+     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "decimal_parity: interpreter build FAILED"
   exit 1
 fi
-IAXON="target/debug/axon"
+IAXON="$WORK/interp-target/debug/axon"
 
 # ── 1. interpreter correctness ───────────────────────────────────────────────
 # case <name> <expected_exit> <program>

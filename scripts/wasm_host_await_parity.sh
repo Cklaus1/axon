@@ -32,9 +32,15 @@ for c in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do command -v "$c" >/dev/null 
 if [ -z "$WASMTIME" ]; then echo "wasm_host_await_parity: wasmtime not found — skipping"; exit 0; fi
 
 echo "wasm_host_await_parity: building axon (native) + axon-run (wasm32-wasip1)…"
-cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null || { echo "native build failed — skipping"; exit 0; }
+# Own target dir. A --no-default-features `axon` written to the SHARED
+# target/debug/axon is codegen-less but still executable, so every harness that
+# follows in the same suite run passes its `[ -x "$AXON" ]` guard, never
+# rebuilds, and then fails its native/wasm build with E0907 -- which those
+# harnesses reported as "toolchain absent". Stable path so cargo can reuse.
+CARGO_TARGET_DIR="target/interp-only" \
+  cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null || { echo "native build failed — skipping"; exit 0; }
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 2>/dev/null || { echo "wasm build failed — skipping"; exit 0; }
-NATIVE="target/debug/axon"
+NATIVE="target/interp-only/debug/axon"
 WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 
 # (program, piped-stdin) pairs covering: a fixed-exchange prompt, EOF, and a

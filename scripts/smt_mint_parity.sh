@@ -34,11 +34,15 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "smt_mint_parity: building default + smt binaries…"
-if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
+# Own target dir -- a --no-default-features `axon` at the SHARED target/debug
+# path is codegen-less but executable, so later harnesses' `[ -x ]` guards pass
+# and their builds answer E0907. See smt_discharge_parity.sh.
+if ! CARGO_TARGET_DIR="$WORK/def-target" \
+     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "smt_mint_parity: default build failed — skipping"
   exit 0
 fi
-DEF="target/debug/axon"
+DEF="$WORK/def-target/debug/axon"
 if ! CARGO_TARGET_DIR="$WORK/smt-target" \
      cargo build -q -p axon-core --no-default-features --features smt --bin axon 2>/dev/null; then
   echo "smt_mint_parity: smt build failed — skipping"

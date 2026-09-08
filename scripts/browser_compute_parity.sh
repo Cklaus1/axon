@@ -66,9 +66,13 @@ command -v wasm-bindgen-test-runner >/dev/null 2>&1 \
 
 # ── Build native axon (oracle producer) ──────────────────────────────────────
 echo "browser_compute_parity: building native axon (oracle)…"
-cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
+# Own target dir -- see wasm_host_await_parity.sh. A codegen-less `axon` left
+# at the shared target/debug path makes later harnesses skip with a false
+# "toolchain absent" rather than rebuild. Stable path so cargo can reuse.
+CARGO_TARGET_DIR="target/interp-only" \
+  cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
   || { echo "browser_compute_parity: native build failed"; exit 1; }
-NATIVE="target/debug/axon"
+NATIVE="target/interp-only/debug/axon"
 
 # ── Generate the live native oracle table → tests/oracle.rs ──────────────────
 # Compute-only corpus: no host fs/ai/random/time/host_await — the cases the wasm

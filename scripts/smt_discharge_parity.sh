@@ -33,11 +33,18 @@ trap 'rm -rf "$WORK"' EXIT
 # runtime check enforced) and the SMT binary (discharge active). Separate target
 # dirs so the two builds don't thrash one artifact.
 echo "smt_discharge_parity: building default + smt binaries…"
-if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
+# Own target dir, like the smt build below. Writing a --no-default-features
+# `axon` to the SHARED target/debug/axon leaves a codegen-less binary there for
+# every harness that follows in the same suite run: it is executable, so their
+# `[ -x "$AXON" ]` guards pass and nobody rebuilds, and their next native or
+# wasm build answers E0907. This harness's own comment already prescribed
+# separate target dirs -- it just wasn't applied to this build too.
+if ! CARGO_TARGET_DIR="$WORK/def-target" \
+     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "smt_discharge_parity: default build failed — skipping"
   exit 0
 fi
-DEF="target/debug/axon"
+DEF="$WORK/def-target/debug/axon"
 if ! CARGO_TARGET_DIR="$WORK/smt-target" \
      cargo build -q -p axon-core --no-default-features --features smt --bin axon 2>/dev/null; then
   echo "smt_discharge_parity: smt build failed — skipping"

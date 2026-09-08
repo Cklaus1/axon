@@ -34,10 +34,14 @@ ran=0
 fail=0
 
 echo "suspend_resume_parity: building interpreter axon binary…"
-if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
+# Own target dir -- see decimal_parity.sh. A --no-default-features `axon` at the
+# shared target/debug path is codegen-less but executable, so later harnesses
+# skip with a false "toolchain absent" instead of rebuilding.
+if ! CARGO_TARGET_DIR="$WORK/interp-target" \
+     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "suspend_resume_parity: interpreter build failed — cannot run"; exit 1
 fi
-AXON="${AXON:-target/debug/axon}"
+AXON="${AXON:-$WORK/interp-target/debug/axon}"
 
 # ── 1. CLI stdin regression: str / loop / EOF (Slice-1 cases, end-to-end) ──────
 # Each row is (program, piped-stdin, expected-VALUE). The value is printed, not
