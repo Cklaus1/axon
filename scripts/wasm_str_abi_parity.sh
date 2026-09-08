@@ -97,5 +97,58 @@ if [ "$((W_OUT % 256))" != "$I_EXIT" ]; then
   echo "wasm_str_abi_parity: FAIL — wasm ($W_OUT) != interp ($I_EXIT)"; exit 1
 fi
 
-echo "wasm_str_abi_parity: PASS — 13 str builtins incl. str_to_upper/lower/trim/pad + str_split/str_join (array-of-str) run identically on interp, native, and AOT-wasm ✓"
+# 4) str_cmp on STDOUT, deliberately not folded into the exit sum above.
+#
+# str_cmp returns exactly -1/0/1. Every one of those is inside the 2..=15-and-101
+# band `governance/EXIT_CODES.md` reserves and remaps (and -1 is outside 0..=255,
+# which also remaps), so an exit-code comparison could not tell a correct answer
+# from a wrong one here. The sum in step 1 escapes that band at 41 only by luck
+# of the addends -- it is not a property the harness enforces.
+#
+# This case exists because `4a600f2` shipped str_cmp with `data:` where AxonStr's
+# field is `ptr:` in its `#[cfg(target_arch = "wasm32")]` arm. Nothing native ever
+# compiled that arm, and all 8 wasm_* harnesses skipped on the resulting build
+# failure while reporting "toolchain absent" -- so a whole day of green gates said
+# nothing about it. A cfg-gated arm needs a case that actually builds it.
+CMP="$WORK/strcmp.ax"
+cat > "$CMP" <<'AX'
+fn main() {
+    println(to_str(str_cmp("apple", "banana")))
+    println(to_str(str_cmp("banana", "apple")))
+    println(to_str(str_cmp("pear", "pear")))
+    println(to_str(str_cmp("", "a")))
+    println(to_str(str_cmp("abc", "abd")))
+}
+AX
+C_INTERP="$("$INTERP" "$CMP" 2>/dev/null | grep -v '^axon: run-id ' | tr '\n' ' ')"
+echo "wasm_str_abi_parity: str_cmp interp = [$C_INTERP]"
+if [ -z "$C_INTERP" ]; then
+  echo "wasm_str_abi_parity: FAIL — str_cmp produced no interpreter output"; exit 1
+fi
+
+if "$AXON" build "$CMP" -o "$WORK/ncmp" >/dev/null 2>&1; then
+  C_NATIVE="$("$WORK/ncmp" 2>/dev/null | tr '\n' ' ')"
+  if [ "$C_NATIVE" != "$C_INTERP" ]; then
+    echo "wasm_str_abi_parity: FAIL — str_cmp native [$C_NATIVE] != interp [$C_INTERP]"; exit 1
+  fi
+fi
+
+if "$AXON" target build --engine codegen --target wasm32-wasip1 "$CMP" >/dev/null 2>&1; then
+  C_LINKED="${CMP%.ax}.linked.wasm"
+  if [ ! -f "$C_LINKED" ]; then
+    echo "wasm_str_abi_parity: FAIL — str_cmp did NOT link (wasm32 ABI arm regressed)"; exit 1
+  fi
+  # `--invoke` prints the callee's RETURN VALUE after the experimental warning,
+  # and `main` here returns 0. Filtering `^0$` by content would also delete the
+  # program's own legitimate `str_cmp("pear","pear") == 0` -- which is exactly
+  # what it did on the first run of this case, faking a wasm divergence. Cut at
+  # the warning instead: everything before it is the program's stdout.
+  C_WASM="$("$WASMRT" --invoke main "$C_LINKED" 2>&1 | sed '/experimental/,$d' | tr '\n' ' ')"
+  if [ "$C_WASM" != "$C_INTERP" ]; then
+    echo "wasm_str_abi_parity: FAIL — str_cmp wasm [$C_WASM] != interp [$C_INTERP]"; exit 1
+  fi
+  echo "wasm_str_abi_parity: str_cmp wasm = [$C_WASM]"
+fi
+
+echo "wasm_str_abi_parity: PASS — 13 str builtins incl. str_to_upper/lower/trim/pad + str_split/str_join (array-of-str) + str_cmp ordering (on stdout) run identically on interp, native, and AOT-wasm ✓"
 exit 0

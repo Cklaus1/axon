@@ -1385,14 +1385,14 @@ pub extern "C" fn __axon_str_cmp(
     let a = unsafe {
         AxonStr {
             len: a_len,
-            data: a_ptr,
+            ptr: a_ptr,
         }
         .as_str()
     };
     let b = unsafe {
         AxonStr {
             len: b_len,
-            data: b_ptr,
+            ptr: b_ptr,
         }
         .as_str()
     };
