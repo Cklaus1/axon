@@ -3622,25 +3622,84 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Is this call argument statically an array of i64?
     ///
-    /// Gates every i64-only slice lowering that takes a callback:
+    /// Gates every i64-only slice lowering in the `arr_*` family. The callback
+    /// ones came first:
     /// `arr_max_by`/`arr_min_by`, `arr_count_if`/`arr_all`/`arr_any`,
     /// `arr_find`, `arr_partition`. All of these dispatched on name + arity
     /// alone and walked a `[Struct]` array as if its elements were i64 —
     /// `arr_max_by` emitted invalid IR, but the predicate reductions built
     /// fine and returned a WRONG ANSWER (`arr_count_if` interp=2 / native=0).
     ///
+    /// Then a sweep of the WHOLE family found eleven more, closure-taking and
+    /// not: `arr_map`/`arr_filter`/`arr_take_while`/`arr_drop_while`,
+    /// `arr_fold`, `arr_zip_with`, `arr_sort_by`, `arr_reverse`,
+    /// `arr_take`/`arr_drop`, `arr_concat`, `arr_unique`, `arr_enumerate`,
+    /// `arr_zip`, `arr_chunk` (and `arr_flatten` via the `_slice` sibling).
+    /// Every one is `[T]` at the source level and i64-stride in the lowering.
+    ///
+    /// A ONE-FIELD struct hid most of them: `{ s: i64 }` is 8 bytes, exactly
+    /// the i64 stride, so those probes agreed by coincidence. The second field
+    /// is what made the divergence visible — an element-size probe needs an
+    /// element whose size is not the one being assumed.
+    ///
     /// Returns FALSE when the type is unknown, which is the safe direction: an
     /// unproven element type falls through to the E0910 refusal rather than
-    /// into a lowering that assumes i64 — refuse, never miscompile. Unwraps a
-    /// leading `&` since these are conventionally called as `f(&xs, ...)`.
+    /// into a lowering that assumes i64 — refuse, never miscompile.
     fn arr_arg_elem_is_i64(&self, arg: &ast::Expr) -> bool {
+        matches!(self.arr_arg_slice_ty(arg), Some(Type::Slice(e)) if *e == Type::I64)
+    }
+
+    /// The static type of a slice-taking builtin argument, with a leading `&`
+    /// unwrapped — these are conventionally called as `f(&xs, ...)`.
+    fn arr_arg_slice_ty(&self, arg: &ast::Expr) -> Option<Type> {
         let inner = match arg {
-            ast::Expr::UnaryOp { op, operand } if matches!(op, ast::UnaryOp::Ref) => {
-                operand.as_ref()
-            }
+            ast::Expr::UnaryOp {
+                op: ast::UnaryOp::Ref,
+                operand,
+            } => operand.as_ref(),
             other => other,
         };
-        matches!(self.sem_type_of_expr(inner), Some(Type::Slice(e)) if *e == Type::I64)
+        self.sem_type_of_expr(inner)
+    }
+
+    /// Record an honest E0910 for a dict operation whose VALUE type native
+    /// codegen cannot represent.
+    ///
+    /// The dict runtime is a tagged union of exactly three scalars — i64
+    /// (tag 0), f64 (tag 1), str (tag 2). A struct/array/Option value has no
+    /// tag, and the call sites reacted to that badly: `dict_set`'s `_ =>
+    /// return None` arm is INDISTINGUISHABLE from its success path (it yields
+    /// `()`, so it returns `None` either way), which silently DROPPED the
+    /// store — `dict_values` then gave len 0 where the interpreter gives 2,
+    /// and `dict_map_values` gave `none` where the interpreter gives 30.
+    /// `dict_get`/`dict_get_or` over the same value produced invalid IR.
+    ///
+    /// Refusing explicitly is the only option that reads correctly at the
+    /// `dict_set` site: there is no "fall through to the generic gate" for a
+    /// call whose successful lowering also returns `None`.
+    fn refuse_dict_value(&mut self, what: &str) {
+        let msg = format!(
+            "codegen error [E0910]: native codegen cannot store a non-scalar value in a Dict \
+             (`{what}`) — the native dict is a tagged union of i64/f64/str. The interpreter \
+             supports it; run under `axon run`, or key a parallel array by index."
+        );
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            eprintln!("{msg}");
+            self.codegen_errors.push(msg);
+        }
+    }
+
+    /// Is this call argument statically an array OF ARRAYS of i64?
+    ///
+    /// `arr_flatten`'s lowering walks a 16-byte `{i64 len, ptr}` slice-struct
+    /// stride and concatenates the inner elements as i64. A `[[Struct]]` sent
+    /// down it produced invalid IR. Same safe direction as
+    /// [`Self::arr_arg_elem_is_i64`]: unknown ⇒ false ⇒ E0910 refusal.
+    fn arr_arg_elem_is_i64_slice(&self, arg: &ast::Expr) -> bool {
+        match self.arr_arg_slice_ty(arg) {
+            Some(Type::Slice(outer)) => matches!(&*outer, Type::Slice(e) if **e == Type::I64),
+            _ => false,
+        }
     }
 
     /// arr_max_by / arr_min_by(&a, key_fn) → the i64 ELEMENT that maximizes
@@ -8047,7 +8106,14 @@ impl<'ctx> super::Codegen<'ctx> {
                         };
                         (0i64, p, i8_ptr.const_null(), i64_ty.const_zero())
                     }
-                    _ => return None,
+                    // A struct/array/Option value has no runtime tag. Returning
+                    // None here would be READ AS SUCCESS (dict_set yields `()`,
+                    // so the lowered path returns None too) and the store would
+                    // vanish — a silent miscompile. Refuse honestly instead.
+                    _ => {
+                        self.refuse_dict_value("dict_set");
+                        return None;
+                    }
                 };
                 let f = self
                     .functions
@@ -8767,6 +8833,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let key = self.emit_expr(&args[1], fn_val)?;
                 let default = self.emit_expr(&args[2], fn_val)?;
+                // The lowering `select`s between the found payload and this
+                // default, so a non-scalar default reached `build_select` with
+                // mismatched operand types — "Invalid operands for select
+                // instruction". Unlike dict_set this one fails LOUDLY, but an
+                // honest E0910 beats an IR-verifier crash as the user-facing
+                // error. (str defaults are handled by the str arm below.)
+                if !matches!(default, BasicValueEnum::IntValue(_)) {
+                    self.refuse_dict_value("dict_get_or");
+                    return None;
+                }
                 let i64_ty = self.ir.context.i64_type();
                 let tag_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "go_tag");
                 let pay_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "go_pay");
@@ -8921,7 +8997,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // i64 buffer of the same length and copy src[len-1-i] → dst[i].
             // Returns a fresh `{len, ptr}` slice (i64-element arrays; the common
             // case — other element types stay E0910-gated below).
-            if name == "arr_reverse" && args.len() == 1 {
+            if name == "arr_reverse" && args.len() == 1 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
                         return Some(r);
@@ -8930,7 +9006,10 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             // arr_take(&a, n) / arr_drop(&a, n) — copy a contiguous i64 range into
             // a fresh slice. take = first min(n,len); drop = from min(n,len) on.
-            if (name == "arr_take" || name == "arr_drop") && args.len() == 2 {
+            if (name == "arr_take" || name == "arr_drop")
+                && args.len() == 2
+                && self.arr_arg_elem_is_i64(&args[0])
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -8976,6 +9055,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 name.as_str(),
                 "arr_map" | "arr_filter" | "arr_take_while" | "arr_drop_while"
             ) && args.len() == 2
+                && self.arr_arg_elem_is_i64(&args[0])
             {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
@@ -9022,7 +9102,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // arr_fold(&a, init, |acc, x| ...) — reduce with a 2-arg i64 closure.
             // acc starts at `init`; per element acc = f(acc, elem). Returns the
             // final i64 acc (no allocation).
-            if name == "arr_fold" && args.len() == 3 {
+            if name == "arr_fold" && args.len() == 3 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let (
                     Some(slice_val),
                     Some(BasicValueEnum::IntValue(init)),
@@ -9039,7 +9119,11 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             // arr_zip_with(a, b, |x, y| ...) — the first TWO-SLICE closure op.
             // result[i] = f(a[i], b[i]) for i in 0..min(len_a, len_b); i64 result.
-            if name == "arr_zip_with" && args.len() == 3 {
+            if name == "arr_zip_with"
+                && args.len() == 3
+                && self.arr_arg_elem_is_i64(&args[0])
+                && self.arr_arg_elem_is_i64(&args[1])
+            {
                 if let (Some(a_slice), Some(b_slice), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9053,7 +9137,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // arr_sort_by(&a, |x, y| cmp) — stable insertion sort with an i64
             // comparator (negative ⇒ x sorts before y). Builds a fresh sorted
             // slice by inserting each element at its position.
-            if name == "arr_sort_by" && args.len() == 2 {
+            if name == "arr_sort_by" && args.len() == 2 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9086,7 +9170,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             // arr_concat(a, b) → a ++ b (two i64 slices into one fresh slice).
-            if name == "arr_concat" && args.len() == 2 {
+            if name == "arr_concat"
+                && args.len() == 2
+                && self.arr_arg_elem_is_i64(&args[0])
+                && self.arr_arg_elem_is_i64(&args[1])
+            {
                 if let (Some(a_slice), Some(b_slice)) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9095,21 +9183,25 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             // arr_unique(&a) → first occurrence of each value (O(n²) seen-scan).
-            if name == "arr_unique" && args.len() == 1 {
+            if name == "arr_unique" && args.len() == 1 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_unique(slice_val, fn_val);
                 }
             }
             // arr_enumerate(&a) → [(i, a[i])] : a slice of {i64 idx, i64 val}
             // tuples (16-byte stride). The first nested/tuple-element arr_*.
-            if name == "arr_enumerate" && args.len() == 1 {
+            if name == "arr_enumerate" && args.len() == 1 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_enumerate(slice_val, fn_val);
                 }
             }
             // arr_zip(a, b) → [(a[i], b[i])] for i in 0..min(len) : a slice of
             // {i64, i64} tuples (16-byte stride).
-            if name == "arr_zip" && args.len() == 2 {
+            if name == "arr_zip"
+                && args.len() == 2
+                && self.arr_arg_elem_is_i64(&args[0])
+                && self.arr_arg_elem_is_i64(&args[1])
+            {
                 if let (Some(a_slice), Some(b_slice)) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -9119,14 +9211,15 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             // arr_flatten(&a) — [[i64]] → [i64]. Outer slice has 16-byte
             // {i64 len, ptr} slice-struct elements; concatenate all inner i64s.
-            if name == "arr_flatten" && args.len() == 1 {
+            if name == "arr_flatten" && args.len() == 1 && self.arr_arg_elem_is_i64_slice(&args[0])
+            {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_flatten(slice_val, fn_val);
                 }
             }
             // arr_chunk(&a, n) — [i64] → [[i64]] in chunks of n (last may be
             // shorter). n<=0 → exit(101) panic. Each chunk is a fresh slice.
-            if name == "arr_chunk" && args.len() == 2 {
+            if name == "arr_chunk" && args.len() == 2 && self.arr_arg_elem_is_i64(&args[0]) {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
