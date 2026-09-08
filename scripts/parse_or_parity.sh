@@ -30,17 +30,37 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 fail=0
 check() {
   local name="$1" src="$2"
-  printf '%s\n' "$src" > "$WORK/$name.ax"
-  "$INTERP" "$WORK/$name.ax" >/dev/null 2>&1; local i=$?
-  if "$AXON" build "$WORK/$name.ax" -o "$WORK/$name" >/dev/null 2>&1; then
-    "$WORK/$name" >/dev/null 2>&1; local n=$?
-    if [ "$i" = "$n" ]; then
-      echo "  OK   $name: interp=$i native=$n"
+  # Compare the VALUE on stdout, not the exit code. An exit code cannot carry
+  # a parsed result faithfully: `governance/EXIT_CODES.md` reserves 2..=15, so
+  # `float_ok`=10 and `float_df`=9 were both remapped to exit 1; the two bool
+  # rows return 1, which collides with that same remap value; and `int_neg`
+  # returns -7, which is outside 0..=255 and so is remapped to 1 as well
+  # (`governance/EXIT_CODES.md`, the same table). Five of the eight rows below
+  # could not distinguish a right answer from a wrong one. Rename the case's
+  # `main` to `probe` and print its result from a fresh `main`.
+  printf '%s\n' "${src/fn main() -> i64/fn probe() -> i64}" > "$WORK/$name.ax"
+  printf 'fn main() { println(to_str(probe())) }\n' >> "$WORK/$name.ax"
+  local io; io="$("$INTERP" "$WORK/$name.ax" 2>&1)"; local i=$?
+  io="$(printf '%s\n' "$io" | grep -v '^axon: run-id ')"
+  local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
+  if [ -f "$WORK/$name" ]; then
+    local no; no="$("$WORK/$name" 2>&1)"; local n=$?
+    if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then
+      echo "  OK   $name: interp==native (exit=$i out=$io)"
     else
-      echo "  FAIL $name: interp=$i native=$n"; fail=1
+      echo "  FAIL $name: interp(exit=$i out=[$io]) native(exit=$n out=[$no])"; fail=1
     fi
+  elif printf '%s' "$berr" | grep -qE 'IR verification failed|LLVM ERROR|E0910'; then
+    # A COMPILER refusal or bug, not an unavailable toolchain. Discarding
+    # stderr here made every codegen failure -- including invalid IR -- print
+    # SKIP while the harness still summarised PASS; a sibling harness hid a
+    # real `arr_max_by`-over-structs IR bug exactly that way.
+    echo "  FAIL $name (native build error, not unavailability):"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
   else
-    echo "  SKIP $name (native build unavailable)"
+    echo "  SKIP $name (native build unavailable):"
+    printf '%s\n' "$berr" | head -2 | sed 's/^/        /'
   fi
 }
 

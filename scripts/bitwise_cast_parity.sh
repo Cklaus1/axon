@@ -25,13 +25,25 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 fail=0
 check() {
   local name="$1" src="$2"
-  printf '%s\n' "$src" > "$WORK/$name.ax"
-  "$INTERP" "$WORK/$name.ax" >/dev/null 2>&1; local i=$?
+  # The value under test travels on STDOUT, not through the exit code.
+  # `governance/EXIT_CODES.md` reserves 2..=15 (and 101), and a `main`
+  # returning any of them is remapped to exit 1 -- so `bit_and(12,10)`=8 and
+  # `bit_or(12,10)`=14 both arrive as exit 1 on BOTH sides, and a native
+  # answer of 8 where the interpreter says 14 used to pass as parity. Seven of
+  # the eleven rows below sat in that blind zone. Rename the case's `main` to
+  # `probe` and print its result from a fresh `main` so the full value is
+  # comparable; the exit code is still compared alongside.
+  printf '%s\n' "${src/fn main() -> i64/fn probe() -> i64}" > "$WORK/$name.ax"
+  printf 'fn main() { println(to_str(probe())) }\n' >> "$WORK/$name.ax"
+  local io; io="$("$INTERP" "$WORK/$name.ax" 2>&1)"; local i=$?
+  io="$(printf '%s\n' "$io" | grep -v '^axon: run-id ')"
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
-    "$WORK/$name" >/dev/null 2>&1; local n=$?
-    if [ "$i" = "$n" ]; then echo "  OK   $name: interp=$i native=$n"
-    else echo "  FAIL $name: interp=$i native=$n"; fail=1; fi
+    local no; no="$("$WORK/$name" 2>&1)"; local n=$?
+    if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then echo "  OK   $name: interp==native (exit=$i out=$io)"
+    else
+      echo "  FAIL $name: interp(exit=$i out=[$io]) native(exit=$n out=[$no])"; fail=1
+    fi
   elif printf '%s' "$berr" | grep -qE 'IR verification failed|LLVM ERROR|E0910'; then
     # A COMPILER refusal or bug, NOT an unavailable toolchain. This used to
     # discard stderr entirely (`>/dev/null 2>&1`), so every codegen failure --
