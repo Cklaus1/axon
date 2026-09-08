@@ -369,6 +369,15 @@ fn a_named_fn_passed_to_a_higher_order_builtin_is_refused_at_check() {
     assert!(d.message.contains("passed by name"), "{}", d.message);
     let help = d.help.as_ref().expect("must name the working form");
     assert!(help.contains("|x| double(x)"), "{help}");
+    // A repair hint with nowhere to apply it is half a diagnostic. This site
+    // emitted `.at(&file, 0, 0)` and no span, and line 0 is the serializer's
+    // "no location" sentinel — so the reader got "wrap it in a lambda" without
+    // being told which call. Every sibling diagnostic in the same argument loop
+    // already carried the span.
+    assert!(
+        d.line > 0,
+        "the diagnostic must say WHERE, not just what to do: {d:?}"
+    );
 }
 
 #[test]

@@ -3232,10 +3232,17 @@ impl CheckCtx {
                                 format!("define it with `impl SomeTrait for {key} {{ fn {method}(self: {key}) … }}`, or call a free function"),
                             )
                         };
+                        // The sibling E0305 in this same chain carries
+                        // `current_span`; this one omitted it, and `.at(&file, 0,
+                        // 0)` alone is the serializer's "no location" sentinel. A
+                        // reader told to `match` on their `Option` instead of
+                        // calling `.unwrap()` needs to know WHICH call.
+                        let span = self.current_span;
                         self.errors.push(
                             CheckError::new(E0403, msg)
                                 .node(node_path)
                                 .at(&file, 0, 0)
+                                .with_span(span)
                                 .fix(hint),
                         );
                     } else if let Some(sig) = self.fn_sigs.get(&format!("{key}__{method}")).cloned()
@@ -4236,6 +4243,13 @@ impl CheckCtx {
                     let is_local = scope.contains_key(callee);
                     if !is_local && self.fn_sigs.contains_key(callee) {
                         let file = self.file.clone();
+                        // `.at(&file, 0, 0)` alone is a "no location" sentinel:
+                        // the serializer omits line/col when they are 0, so this
+                        // reached the reader with the repair hint and nowhere to
+                        // apply it. Every sibling diagnostic in this argument
+                        // loop already carries `current_span`; this one just
+                        // omitted it.
+                        let span = self.current_span;
                         self.errors.push(
                             CheckError::new(
                                 E0306,
@@ -4247,6 +4261,7 @@ impl CheckCtx {
                             )
                             .node(&arg_path)
                             .at(&file, 0, 0)
+                            .with_span(span)
                             .fix(format!("wrap it in a lambda — `|x| {callee}(x)`")),
                         );
                         continue;
