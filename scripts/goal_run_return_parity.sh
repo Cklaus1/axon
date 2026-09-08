@@ -36,15 +36,23 @@ for tgt in 999.0 100.0 50.0; do
   cat > "$PROG" <<AX
 @[adaptive]
 fn score(x: i64) -> i64 { 100 - (x - 50) * (x - 50) }
-fn main() -> i64 {
+fn probe() -> i64 {
     let b = goal_run("score", $tgt, 40)
     f64_to_i64(b)
 }
+fn main() {
+    println(to_str(probe()))
+}
 AX
 
-  # Interpreter (the oracle).
-  AXON_SEED=42 "$AXON" run "$PROG" >/dev/null 2>&1
-  iexit=$?
+  # Compare the PRINTED best score, not the exit code. `main` used to RETURN it,
+  # and a value falling out of `main` in 2..=15 or 101 is remapped to exit 1, as
+  # is anything outside 0..=255 (governance/EXIT_CODES.md). The regression this
+  # harness was written for returned -800 -- which becomes exit 1, so two
+  # different wrong answers in the band compare EQUAL and print a false PASS.
+  # Today's optima (100, 100, 51) happen to sit outside the band; that is luck
+  # about the objective, not a property of the check.
+  iout="$(AXON_SEED=42 "$AXON" run "$PROG" 2>/dev/null | grep -v '^axon: run-id ')"
 
   # Native.
   BIN="$WORK/g_bin_$tgt"
@@ -52,14 +60,16 @@ AX
     echo "goal_run_return_parity: native build failed — skipping"
     exit 0
   fi
-  AXON_SEED=42 "$BIN" >/dev/null 2>&1
-  nexit=$?
+  nout="$(AXON_SEED=42 "$BIN" 2>/dev/null)"
 
-  if [ "$iexit" -ne "$nexit" ]; then
-    echo "goal_run_return_parity: FAIL — target=$tgt interp returned $iexit but native returned $nexit (the hill-climb diverged)"
+  if [ -z "$iout" ]; then
+    echo "goal_run_return_parity: FAIL — target=$tgt interp printed nothing"
+    fail=1
+  elif [ "$iout" != "$nout" ]; then
+    echo "goal_run_return_parity: FAIL — target=$tgt interp returned '$iout' but native returned '$nout' (the hill-climb diverged)"
     fail=1
   else
-    echo "  target=$tgt: interp==native==$iexit ✓"
+    echo "  target=$tgt: interp==native==$iout ✓"
   fi
 done
 
