@@ -7024,6 +7024,178 @@ fn f3_ai_call_audit_record_carries_principal_and_effect_row() {
 }
 
 #[test]
+fn ai_audit_does_not_blend_two_principals_into_one_row() {
+    // The audit trail exists to answer "who made this call". It used to merge
+    // every record for a given (fn, src) into one row and keep "the principal
+    // that made the most recent call" — and since a `root` principal renders as
+    // NO annotation at all, a run where `untrusted_agent` called first and
+    // `root` called last reported no principal whatsoever. The log held the
+    // right answer; the summary blended two authorities and then printed the
+    // one that says nothing.
+    //
+    // Order matters here: root must call LAST, because that is the direction
+    // that erases rather than merely mislabels.
+    let prog = "fn ask(n: i64) -> i64 {\n\
+                  match ai_complete(\"q {to_str(n)}\") { Ok(s) => len(s)  Err(e) => 0 }\n\
+                }\n\
+                fn main() {\n\
+                  let r = principal_root(\"root\", true, true, true, 1000)\n\
+                  let agent = principal_mint(r, \"untrusted_agent\", true, false, false, 100)\n\
+                  principal_activate(agent)\n\
+                  println(to_str(ask(1)))\n\
+                  principal_activate(r)\n\
+                  println(to_str(ask(2)))\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_aip_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let cache = std::env::temp_dir().join(format!("axon_aip_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+
+    let run = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
+
+    let human = axon()
+        .args(["trace", "--ai"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let h = String::from_utf8_lossy(&human.stdout).to_string();
+    let jout = axon()
+        .args(["trace", "--ai", "--json"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let j = String::from_utf8_lossy(&jout.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&f);
+
+    // The non-root caller must be visible in the HUMAN view. This is the
+    // assertion that fails against the pre-fix binary.
+    assert!(
+        h.contains("untrusted_agent"),
+        "the non-root principal must appear in `trace --ai`: {h}"
+    );
+    // ...and at the top, not only buried in one of N rows.
+    assert!(
+        h.contains("non-root principals: untrusted_agent"),
+        "non-root principals must be summarised in the header: {h}"
+    );
+    // Both authorities survive as SEPARATE rows — one call each, not two
+    // calls attributed to whichever spoke last.
+    assert!(
+        j.contains("\"principal\":\"untrusted_agent\"") && j.contains("\"principal\":\"root\""),
+        "both principals must survive into by_fn: {j}"
+    );
+    assert_eq!(
+        j.matches("\"fn\":\"ask\"").count(),
+        2,
+        "one row per principal, not one blended row: {j}"
+    );
+    // Each row carries ONE call. Scoped to the by_fn array — the top-level
+    // `"calls":2` is the honest run total and must not be read as a row.
+    let by_fn = j.split("\"by_fn\":").nth(1).unwrap_or("");
+    assert_eq!(
+        by_fn.matches("\"calls\":1").count(),
+        2,
+        "a blended 2-call row means the principals were merged again: {j}"
+    );
+
+    // A run that is entirely root must NOT grow the header line — otherwise the
+    // line's presence stops being a signal and becomes decoration.
+    let prog2 = "fn ask() -> i64 {\n\
+                   match ai_complete(\"q\") { Ok(s) => len(s)  Err(e) => 0 }\n\
+                 }\n\
+                 fn main() { println(to_str(ask())) }\n";
+    let f2 = std::env::temp_dir().join(format!("axon_aipr_{}.ax", std::process::id()));
+    std::fs::write(&f2, prog2).unwrap();
+    let cache2 = std::env::temp_dir().join(format!("axon_aipr_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache2);
+    let r2 = axon()
+        .args(["run", f2.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache2)
+        .output()
+        .unwrap();
+    assert_eq!(
+        r2.status.code(),
+        Some(0),
+        "root-only run must succeed: {r2:?}"
+    );
+    let h2o = axon()
+        .args(["trace", "--ai"])
+        .env("XDG_CACHE_HOME", &cache2)
+        .output()
+        .unwrap();
+    let h2 = String::from_utf8_lossy(&h2o.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&cache2);
+    let _ = std::fs::remove_file(&f2);
+    assert!(
+        !h2.contains("non-root principals"),
+        "an all-root run must not claim a non-root principal: {h2}"
+    );
+}
+
+#[test]
+fn ai_audit_reports_every_tier_a_fn_routed_to_not_just_the_last() {
+    // Same silent collapse, on the routing axis. `tier`/`model` were
+    // last-writer-wins, so a fn whose tier changed between runs reported ONLY
+    // the newer routing — and the aggregated cost of the older, cheaper calls
+    // was printed underneath the expensive model's name. Editing the tier of a
+    // file in place is the ordinary way this happens.
+    let f = std::env::temp_dir().join(format!("axon_ait_{}.ax", std::process::id()));
+    let cache = std::env::temp_dir().join(format!("axon_ait_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let body = "fn ask() -> i64 {\n\
+                  match ai_complete(\"q\") { Ok(s) => len(s)  Err(e) => 0 }\n\
+                }\n\
+                fn main() { println(to_str(ask())) }\n";
+
+    for tier in ["cheap", "strong"] {
+        std::fs::write(
+            &f,
+            format!("@[ai(policy(tier: {tier}, budget: 50))]\n{body}"),
+        )
+        .unwrap();
+        let run = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap();
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "{tier} run must succeed: {run:?}"
+        );
+    }
+
+    let human = axon()
+        .args(["trace", "--ai"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let h = String::from_utf8_lossy(&human.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&f);
+
+    // Both routings must be named. Against the pre-fix binary this row read
+    // `[strong anthropic:claude-opus]` for two calls, one of which was haiku.
+    assert!(
+        h.contains("cheap+strong"),
+        "both tiers the fn routed to must be reported: {h}"
+    );
+    assert!(
+        h.contains("claude-haiku") && h.contains("claude-opus"),
+        "both models must be reported, not just the most recent: {h}"
+    );
+}
+
+#[test]
 fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
     // ROADMAP §10 — the FIRST acid test ("Hello Goal", engineering-v1): a single
     // CLI session demonstrating the full loop on SHIPPED PRIMITIVES — define → run

@@ -1610,7 +1610,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "principal_activate",
         params: &[("handle", "i64")],
         ret: "()",
-        doc: "F3 (Phase 9): set the named principal as the current audit context so capability audit records (ai_call, agent_action) carry its name. A negative or unknown handle resets to \"root\". Interp-only.",
+        doc: "F3 (Phase 9): set the named principal as the current audit context so capability audit records (ai_call, agent_action) carry its name. A negative or unknown handle is a PANIC (E1601), not a silent reset to \"root\" — audit attribution that fails open would let a bad handle launder a call back to the root authority. Interp-only.",
     },
     BuiltinFn {
         name: "principal_current_name",

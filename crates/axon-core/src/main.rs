@@ -3517,16 +3517,27 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
     }
 }
 
-/// Per-(fn, src) summary of the AI-call audit trail (`axon trace --ai`).
+/// Per-(fn, src, principal) summary of the AI-call audit trail (`axon trace --ai`).
+///
+/// The principal is part of the GROUP KEY, not a field overwritten as records
+/// stream by. It used to be the latter — "the principal that made the most
+/// recent call in this group" — and because a `root` principal renders as no
+/// annotation at all, a run where `untrusted_agent` called first and `root`
+/// called last reported NO principal whatsoever. The log held the right answer;
+/// the summary blended two authorities into one row and then printed the one
+/// that says nothing. An audit trail whose whole purpose is attribution must not
+/// merge records across the thing it attributes.
 struct AiTraceStat {
     func: String,
     src: String,
     calls: usize,
     cost_usd: f64,
-    tier: String,
-    model: String,
+    /// Every DISTINCT tier/model seen in this group, not the last one written.
+    /// A fn that routes to both `cheap` and `strong` reported only `strong`
+    /// before — the same silent collapse, on the routing axis.
+    tiers: std::collections::BTreeSet<String>,
+    models: std::collections::BTreeSet<String>,
     goal: String,
-    /// F3 (Phase 9): the principal that made the most recent call in this group.
     principal: String,
     live: usize,
     mock: usize,
@@ -3544,8 +3555,10 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         eprintln!("no provenance log found (run a program that calls ai_complete first).");
         process::exit(1);
     };
-    let mut order: Vec<(String, String)> = Vec::new();
-    let mut groups: HashMap<(String, String), AiTraceStat> = HashMap::new();
+    // Key includes the principal: see AiTraceStat's doc comment for why merging
+    // across it silently erased a non-root caller.
+    let mut order: Vec<(String, String, String)> = Vec::new();
+    let mut groups: HashMap<(String, String, String), AiTraceStat> = HashMap::new();
     let mut total = 0usize;
     let mut total_cost = 0.0f64;
     let (mut t_live, mut t_mock, mut t_replay, mut t_fallback) = (0usize, 0usize, 0usize, 0usize);
@@ -3553,7 +3566,14 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         if func.as_ref().is_some_and(|f| f != &r.func) {
             continue;
         }
-        let key = (r.func.clone(), r.src.clone());
+        // An absent principal field reads as "root" — the same default the
+        // recorder stamps — so an old log and a new one group identically.
+        let principal = if r.principal.is_empty() {
+            "root".to_string()
+        } else {
+            r.principal.clone()
+        };
+        let key = (r.func.clone(), r.src.clone(), principal.clone());
         if !groups.contains_key(&key) {
             order.push(key.clone());
             groups.insert(
@@ -3563,10 +3583,10 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
                     src: r.src.clone(),
                     calls: 0,
                     cost_usd: 0.0,
-                    tier: r.tier.clone(),
-                    model: r.model.clone(),
+                    tiers: std::collections::BTreeSet::new(),
+                    models: std::collections::BTreeSet::new(),
                     goal: r.goal.clone(),
-                    principal: r.principal.clone(),
+                    principal,
                     live: 0,
                     mock: 0,
                     replay: 0,
@@ -3577,17 +3597,17 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         let g = groups.get_mut(&key).unwrap();
         g.calls += 1;
         g.cost_usd += r.cost_usd;
+        // Collect, don't overwrite. Every distinct routing this group used has
+        // to survive into the report; picking one and dropping the rest is how
+        // a `strong`-tier call hid inside a row of `cheap` ones.
         if !r.tier.is_empty() {
-            g.tier = r.tier.clone();
+            g.tiers.insert(r.tier.clone());
         }
         if !r.model.is_empty() {
-            g.model = r.model.clone();
+            g.models.insert(r.model.clone());
         }
         if !r.goal.is_empty() {
             g.goal = r.goal.clone();
-        }
-        if !r.principal.is_empty() {
-            g.principal = r.principal.clone();
         }
         match r.mode.as_str() {
             "live" => {
@@ -3617,9 +3637,16 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
             .iter()
             .map(|k| {
                 let s = &groups[k];
+                // `tier`/`model` stay single-valued for the common case and
+                // become `a+b` when a group genuinely mixed routings — a
+                // consumer that used to read an arbitrary one of them now sees
+                // that there was more than one.
                 format!(
                     "{{\"fn\":\"{}\",\"src\":\"{}\",\"calls\":{},\"cost_usd\":{},\"tier\":\"{}\",\"model\":\"{}\",\"goal\":\"{}\",\"principal\":\"{}\",\"live\":{},\"mock\":{},\"replay\":{},\"fallback\":{}}}",
-                    s.func, s.src, s.calls, s.cost_usd, s.tier, s.model, s.goal, s.principal, s.live, s.mock, s.replay, s.fallback,
+                    s.func, s.src, s.calls, s.cost_usd,
+                    s.tiers.iter().cloned().collect::<Vec<_>>().join("+"),
+                    s.models.iter().cloned().collect::<Vec<_>>().join("+"),
+                    s.goal, s.principal, s.live, s.mock, s.replay, s.fallback,
                 )
             })
             .collect();
@@ -3637,6 +3664,22 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
     println!(
         "# ai-audit: {total} ai_complete call(s), ${total_cost:.6} total  (live {t_live}  mock {t_mock}  replay {t_replay}  fallback {t_fallback})",
     );
+    // Lead with the non-root principals. A per-row `principal:` annotation is
+    // easy to scroll past in a log with thousands of rows, and a reader asking
+    // "did anything run as something other than root?" deserves that answer at
+    // the top rather than by scanning. Nothing is printed when everything ran
+    // as root, so the line's presence is itself the signal.
+    let non_root: std::collections::BTreeSet<&str> = order
+        .iter()
+        .map(|(_, _, p)| p.as_str())
+        .filter(|p| *p != "root")
+        .collect();
+    if !non_root.is_empty() {
+        println!(
+            "#   non-root principals: {}",
+            non_root.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
     for k in &order {
         let s = &groups[k];
         let from = if s.src.is_empty() {
@@ -3656,7 +3699,15 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         };
         println!(
             "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}{goal}{principal}",
-            s.func, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
+            s.func,
+            s.calls,
+            s.cost_usd,
+            s.tiers.iter().cloned().collect::<Vec<_>>().join("+"),
+            s.models.iter().cloned().collect::<Vec<_>>().join("+"),
+            s.live,
+            s.mock,
+            s.replay,
+            s.fallback,
         );
     }
 }
