@@ -1,6 +1,19 @@
 # Spec — make the model-natural accumulator statement legal, then re-measure
 
-**Status:** DRAFT · 2026-08-07
+> **SUPERSEDED 2026-09-16 by `governance/specs/R44-accumulating-session.md`.**
+> Kept because its findings are load-bearing and were nearly lost: R44's first draft
+> re-derived this fork from scratch without knowing this document or the working
+> prototype existed, and got it wrong in four places as a result.
+>
+> Status of its two items:
+> * **N1 (bindings live in `main`'s scope, not module scope) — STILL OPEN**, and it is
+>   R44 §4 S1. Module-level `let` still refuses assignment (`E0001`), verified 2026-09-16.
+> * **N2 (`+` on `str` and `[T]`) — LANDED.** `"a" + "b"` → `ab` and `rows = rows + [2]`
+>   both run today.
+>
+> Read R44 for the current design; read this for why N1 is shaped the way it is.
+
+**Status:** DRAFT · 2026-08-07 · SUPERSEDED (see above)
 **Source:** adversarial review (fable) of the interpreter for RLM, plus this
 session's measurements. Prototype patch at
 `scratchpad/option2-interp.patch` (prior session), demonstrated working.

@@ -1,19 +1,26 @@
 # R44 — The accumulating typed session
 
 **Spec ID:** `R44-accumulating-session`
-**Status:** Draft — §12 Q1 (the persistence fork) must be confirmed against a Slice-0 spike before Slice 1 opens
-**Risk class:** Structural. Introduces a process that outlives a single program execution — a new lifetime
-in a compiler that has only ever been one-shot. Not a language feature: no `.ax` syntax changes.
-**Author / date:** 2026-09-16, from `AXON_FOR_RLM.md` §5, whose gate (§"honest sequencing" step 2) is passed.
+**Status:** Draft — §12 Q1 (the persistence fork) reopened by review; Slice 0 must clear before Slice 1
+**Risk class:** Structural. Changes where a session's bindings live (module scope → `main`'s scope) and,
+in its v2 stage, the lifetime discipline of `Interp`. Not a language feature: no `.ax` syntax changes.
+**Author / date:** 2026-09-16, from `AXON_FOR_RLM.md` §5.
+**Review:** adversarial review folded in 2026-09-16. It found the persistence model as first written
+**cannot borrow-check** (§2.2), the redefinition rule **type-unsound** (§4.2), the whole-module re-check
+**not idempotent** (§4.3), and — the one that mattered most — that this spec's decisive fork had already
+been **prototyped, specced and tested in-repo** and the first draft did not know (§1.1). Four further
+corrections in §5, §9, §11, §13. A fifth defect, fatal to the first draft's §3 and not caught by the
+review, was found by running the example: **module-scope bindings cannot be assigned** (§1.2).
 
 ```spec-meta
 id: R44-accumulating-session
 status-claim: Draft
 depends-on: R7b-axonhost, R6-capability-security
 blocks: none
-blocked-by: R44 §12 Q1 (persistence fork must clear a Slice-0 spike before Slice 1 opens)
-supersedes: none
-related: R15-resume-runtime, R41-polyglot-runtime, R38-embedded-agent-runtime, R28-capability-audit-ledger, R42-stdlib-gaps
+blocked-by: R44 §12 Q1 (persistence fork reopened; Slice 0 must resolve it before Slice 1 opens)
+supersedes: tasks/spec-rlm-accumulator.md (DRAFT 2026-08-07 — absorbed; its N1 is this spec's §4 S1,
+  its N2 has since landed, its prototype is this spec's v1 substrate)
+related: R15-resume-runtime, R41-polyglot-runtime, R38-embedded-agent-runtime, R28-capability-audit-ledger, R42-stdlib-gaps, R43-bytes-and-binary
 reserves: E2400-E2404, confirmed free at spec time (grepped `E2[0-9]{3}` across crates/ and every
   governance/specs `reserves:` line — taken bands are E20xx [R41], E21xx [R16], E22xx [R42/R43],
   E23xx [eBPF], E37xx [R37]; E24xx is the next contiguous free band)
@@ -24,118 +31,152 @@ reserves: E2400-E2404, confirmed free at spec time (grepped `E2[0-9]{3}` across 
 ## 1. Why this spec exists
 
 `axon run` compiles a file and executes it. There is no namespace between invocations, so Axon fails
-the defining RLM property — **bind a name in one call, read it in the next**. `AXON_FOR_RLM.md` §5
-states the consequence precisely:
+the defining RLM property — **bind a name in one call, read it in the next**. `AXON_FOR_RLM.md` §5:
 
 > As it stands it is a `run_code` tool, which is `RLM_MODE_SPEC.md` §10's *stateless alternative*.
 
-Four of that document's five recommendations have landed. §1/§2/§3 are verifiable today —
+Four of that document's five recommendations have landed (§1/§2/§3 verifiably: `axon run` on a `let mut`
+emits a located `I0002` carrying a repair hint). §5 is the one that changes what Axon *is*.
+
+### 1.1 This is NOT greenfield — correcting the first draft's largest error
+
+The first draft of this spec analysed the decisive fork (§2) from first principles and chose a design,
+unaware that **the rejected option was already built, specced, and under test in this repo**:
+
+| Prior art | Where | What it is |
+|---|---|---|
+| Working prototype | `interp.rs:2195-2275` | `AXON_DUMP_BINDINGS` / `AXON_DUMP_SHAPES`, commented *"PROTOTYPE (RLM session option 2)"* |
+| Dedicated field | `interp.rs:643-645` | `Interp.main_locals` — snapshots `main`'s top-level locals for exactly this purpose |
+| Prior spec | `tasks/spec-rlm-accumulator.md` | DRAFT 2026-08-07, from a previous fable review; N1 (session scoping) + N2 (`+` concatenation) |
+| Tests | `cli_run.rs:20533+` | `dicts_round_trip_through_a_dump_and_aliases_are_refused` |
+| Downstream reference | `R43-bytes-and-binary.md:249` | already reasons about "the session dump" as a shipped thing |
+
+**The first draft's §2 rejected value-serialisation on the grounds that `Dict` "cannot be carried at
+all", and the prototype carries `Dict`.** It refuses only *aliased* dicts — two bindings reaching the
+same `Rc<RefCell<..>>`, which would reconstruct as two independent dicts and silently break write
+visibility — with the R15 `Chan` precedent cited in its own comments. The disqualifier is **aliasing,
+not `Dict`**. A spec that rules out an option on a property the in-repo implementation of that option
+does not have is not analysis, it is invention.
+
+This spec therefore **supersedes `tasks/spec-rlm-accumulator.md`** and is scoped as: *promote the
+prototype to a specified, gated feature, and add the property it does not have — whole-module
+re-checking.*
+
+### 1.2 The wall that breaks the obvious design
+
+Verified by running it, not by reading:
 
 ```
-$ axon run mut.ax
-I0002  `mut` is not an Axon keyword and was ignored — bindings are already reassignable
-       help: drop it: `let x = …`, then assign with `x = …`
+let rows = [1]
+fn main() { rows = arr_concat(&rows, &[2]) }
+
+E0001  cannot assign to function name `rows` — only mutable local bindings can be reassigned
 ```
 
-— and §5 is the one that changes what Axon *is* rather than how well it does what it already does.
+Module-level `let` registers as `Symbol::Fn` and assignment to a non-`Symbol::Local` is refused. So
+**accumulating a session's bindings as module-level `let` items — the first draft's S1 — makes the
+single most common statement a model writes (`rows = rows + [record]`) permanently illegal.**
+`tasks/spec-rlm-accumulator.md` found this and its N1 is the fix: a cell's bindings compose **inside
+`main`**, where mutation is legal. That is adopted here as §4 S1.
 
-### 1.1 Why this is not "add a REPL"
+Its sibling N2 (`+` on `str` and `[T]`) **has since landed** — `"a" + "b"` → `ab` and
+`rows = rows + [2]` both run today. Only N1 remains open.
 
-A REPL is the shape an *interpreted, dynamically typed* language offers. Copying it would waste the
-only structural advantage Axon has here. The differentiated property is:
+### 1.3 The product, stated once
+
+Not a REPL — that is the shape an interpreted, dynamically typed language offers, and copying it wastes
+the only structural advantage Axon has. The product is:
 
 > **Every prior binding in the session is re-type-checked before the new cell runs.**
-> Using a binding at the wrong type is a compile error before anything executes.
 
-Python's kernel cannot do that, and the measurement already recorded the cost. On the Python side of
-the `tasks_hard` run the model reused `rows`, guessed its shape wrong, and scored **3/5 against
-stateless's 5/5** — *because a name carries no type*. Statefulness made Python worse. A session that
-carries types is the only shape in which state is a net win, and it is the entire argument for
-building this rather than a REPL.
+Python's kernel cannot do that, and the measurement recorded the cost: on the Python side of the
+`tasks_hard` run the model reused `rows`, guessed its shape wrong, and scored **3/5 against stateless's
+5/5** — *because a name carries no type*. Statefulness made Python **worse**. A session that carries
+types is the only shape in which state is a net win.
 
-**This spec is therefore about the checker's reach, not about a prompt.** The prompt is incidental;
-"the accumulated module is re-checked in full on every cell" is the product.
-
-### 1.2 What is already in place
-
-Sized against the code, not the summary:
-
-* **Top-level `let` works.** `let top = 41` followed by `fn main() { println(to_str(top + 1)) }`
-  prints `42`. So a session accumulates ordinary module items — there is no new binding form to design.
-* **Globals initialise separately from `main`.** `Interp::init_globals()` exists and is already called
-  independently of the entry point by `run_named_fn_as_bool` (`interp.rs`), which builds an `Interp`,
-  initialises globals, and calls an arbitrary named function. A cell executor is that call shape.
-* **The whole-module check is one function.** `run_check_pipeline_located(&mut program, &src, &file)`
-  already type-checks an entire `Program` and returns located diagnostics. Re-checking the accumulated
-  module is calling it on a bigger `Program`, not writing a new analysis.
-
-**Two visibility caveats, checked rather than assumed.** `init_globals` is a private method
-(`interp.rs:2600`, no `pub`) and `run_check_pipeline_located` is a private free function in
-**`main.rs`**, not in the library. So the session driver either lives in `main.rs` alongside the other
-`cmd_*` functions — the path of least resistance, and correct for v1 — or both are lifted into
-`axon-core` first. Lifting is the better shape if R38 ("Axon Embedded") is ever picked up, since an
-embeddable session needs them library-side; it is **not** required by this spec and should not be
-bundled into it. Named here so the choice is deliberate rather than discovered in Slice 1.
-* **A long-lived, line-oriented host loop already ships.** `run_suspendable_stdio` (R15) keeps an
-  interpreter alive across host round-trips. The session driver is the same lifetime, differently framed.
-
-So the missing piece is narrow: **a process that holds one `Interp` across cells, and a protocol for
-feeding it cells.** That is the whole of the work, and it is why the persistence fork (§2) is the only
-decisive question.
+**This spec is about the checker's reach.** Persistence (§2) is the substrate; the re-check is the point.
 
 ---
 
-## 2. The decisive fork — how does a binding made in cell N survive into cell N+1?
+## 2. The decisive fork — REOPENED by review
 
-Three designs, and the choice is expensive to reverse because it fixes the process model.
+How does a binding made in cell N survive into cell N+1? The first draft chose (b) and called the work
+"narrow". Review established it is not narrow; it is currently **unimplementable**.
 
-### (a) Re-execute the whole accumulated module each cell
+### 2.1 (a) Re-execute the whole accumulated module each cell — rejected
 
-Concatenate cells; run the result. No persistence mechanism at all, and it needs no new lifetime.
+Concatenate cells; run the result. **Rejected: it re-runs every prior side effect.** A cell that writes
+a file writes it again on every subsequent cell. For a host whose purpose is running model-authored code
+that touches the world, that is a correctness failure, not a slow path. O(n²) in cells besides.
 
-**Rejected: it re-runs side effects.** A cell that writes a file writes it again on every subsequent
-cell; a cell that POSTs, POSTs again. For a host whose entire purpose is running model-authored code
-that touches the world, silently repeating every prior effect on every turn is not a performance
-characteristic, it is a correctness failure. Cost is also O(n²) in cells.
+### 2.2 (b) Persist one live `Interp` across cells — BLOCKED, not chosen
 
-Worth stating because it is the design anyone reaches for first, and it is cheap enough that its
-failure mode has to be named rather than assumed obvious.
+**`Interp<'p>` borrows the `Program`.** `interp.rs:469-477`:
 
-### (b) Persist a live `Interp` across cells in one long-lived process — **CHOSEN**
+```rust
+pub struct Interp<'p> {
+    fns: HashMap<String, &'p FnDef>,
+    structs: HashMap<String, &'p TypeDef>,
+    enums: HashMap<String, &'p EnumDef>,
+    methods: HashMap<(String, String), &'p FnDef>,
+    global_defs: Vec<(String, &'p Expr)>,
+    …
+}
+```
 
-The session is a process. It holds one `Interp`; each cell appends items to the accumulated `Program`,
-re-checks the whole module, and executes only the new tail against the live interpreter state.
+built by `Interp::build(program: &'p Program)` (`interp.rs:2490`). Two independent blockers follow:
 
-**Why it wins: no value ever crosses a boundary, so no value ever needs to be serialisable.** This is
-the load-bearing property. Four `Value` variants are not plain data —
+1. **Appending to the accumulated `Program` while an `Interp` borrows it is rejected by borrowck.**
+   `program.items` is a `Vec<Item>`; pushing may reallocate, and the `Interp` holds references into it.
+2. **The whole-module re-check needs `&mut program`** — `run_check_pipeline_located(&mut program, …)`
+   (`main.rs:4464`) — while the live `Interp` holds it immutably.
 
-| Variant | Why it cannot be serialised |
-|---|---|
-| `Closure` | captures `Rc<RefCell<Env>>`; the capture is persistent across calls by design (AUDIT T40) |
-| `Chan` | `Rc<RefCell<VecDeque<Value>>>` — identity-shared mutable state |
-| `Dict` | `Rc<RefCell<BTreeMap<..>>>` — identity-shared mutable state |
-| `Handle` | a slab index into live interpreter-side state (R13); unforgeable *because* it is bound to one `Interp` |
+The first draft cited `run_named_fn_as_bool` as evidence for (b). It is evidence *against*: it
+**rebuilds** an `Interp` per call and re-runs `init_globals`, which `mem::take`s `global_defs` and
+evaluates **all** of them — re-running every prior top-level `let`'s side effects, which is precisely
+what (a) was rejected over. There is no incremental "evaluate only cell N's new lets" path.
 
-— and under (b) none of that matters, because the `Rc`s stay in the same heap the whole session.
+§12 Q1 previously framed the risk as `RefCell` stale borrows. **That was the wrong hazard.** The
+blocker is the `'p` lifetime, visible in the signature the draft itself quoted.
 
-Semantics are preserved by construction rather than by a re-implementation that must be kept in sync.
-That is the same reasoning R12 used to reject a preemptive scheduler and R10 used to make the
-interpreter the equivalence oracle: **a second mechanism that must agree with the first is an I-2
-divergence risk.**
+### 2.3 (c) Materialise values between one-shot runs — **CHOSEN for v1**
 
-### (c) Serialise top-level values to a session file between one-shot CLI invocations
+Each cell runs as an ordinary program; on success its bindings are written back as source literals and
+prepended to the next cell. **This is the shipped prototype** (`interp.rs:2195-2275`).
 
-Keeps the existing one-shot CLI shape — each cell is still `axon <something> file.ax`.
+It survives the objection the first draft raised against it, and it has a property neither (a) nor (b)
+has, which review surfaced indirectly and is decisive:
 
-**Rejected on the same table.** It carries `Int`/`Str`/`Array`/`Struct` fine and cannot carry the
-other four at all. `Dict` alone disqualifies it — it is ordinary in model-written code. The precedent
-is direct and recent: **R15 Slice 2** crossed full `Value` payloads over a suspend via a deep-clone
-`SendValue` and **refused a `Chan` payload with a clear error rather than corrupting it**. Applying
-that precedent here would mean a session in which a `Dict` binding cannot survive a cell — a hole in
-the headline feature, in the values most likely to hold the session's accumulated work.
+> **Materialisation pins a binding's type by construction.**
 
-**(c) is retained as a fallback only if §12 Q1's spike shows (b) cannot hold the process model**, in
-which case the refusal set is explicit and documented, not discovered.
+Under (b), the accumulated text still says `let x = make()` while the heap holds the old value — so
+redefining `make` silently re-types `x` with no error (§4.2, the soundness hole). Under (c), `x` was
+written back as the literal `1`; re-checking types it `i64` because it *is* `i64`. **Text and heap
+cannot diverge, because there is only text.**
+
+Its refusal set is real and must be *reported, not hidden*: closures, `Chan`, aliased dicts, `Handle`.
+The prototype already ships the answer — `AXON_DUMP_SHAPES` describes **every** binding including the
+ones it could not persist, on the reasoning that *a name the model can see but not reuse is the case it
+most needs told about*. That becomes §4 S10.
+
+### 2.4 (d) Refactor `Interp` off `&'p Program` — the fourth option, v2's gate
+
+Rc/arena/append-only-`Box` items, so the interpreter no longer borrows the program it runs. This is the
+option the first draft never considered, and it is what (b) actually costs. It buys what (c) cannot
+carry — closures and aliased mutable state across cells — at the price of a lifetime refactor of the
+interpreter's core struct.
+
+### 2.5 Resolution
+
+**Staged, and the stages are independently valuable:**
+
+* **v1 = (c).** Ships on an existing prototype. Delivers §1.3's product — the re-check is orthogonal to
+  how values persist. Pins types for free. Refusal set is documented and *announced* (S10).
+* **v2 = (b), gated on (d).** Opened only if measurement shows the refusal set actually bites. Not
+  specced here; §12 Q4.
+
+The first draft's argument for (b) — "no value crosses a boundary, so semantics hold by construction" —
+remains true and remains the reason v2 is the eventual shape. It is just not reachable without (d).
 
 ---
 
@@ -144,28 +185,29 @@ which case the refusal set is explicit and documented, not discovered.
 No `.ax` syntax changes. One new verb.
 
 ```bash
-axon session                      # start an interactive session on stdin/stdout
+axon session                      # interactive session on stdin/stdout
 axon session --protocol jsonl     # line-oriented protocol for a host driver (the RLM case)
-axon session --require-contained  # composes with R44's sibling (AXON_FOR_RLM §4)
-axon session --record run.journal # one journal for the WHOLE session (§6)
+axon session --require-contained  # composes with AXON_FOR_RLM §4 (separate spec)
+axon session --record run.journal # one journal for the WHOLE session (§5)
 ```
 
-A **cell** is a fragment of Axon source: zero or more module items (`let` / `fn` / `type` / `mod`),
-optionally followed by a trailing expression. The trailing expression is the cell's *value* and is
-what gets printed — the one affordance borrowed from REPLs, because a session whose every cell must
-declare a function to see a number is not usable.
+A **cell** is a fragment: zero or more module items (`fn` / `type`), zero or more statements (including
+`let` and assignment), optionally a trailing expression whose value is displayed.
 
 ```
 > let rows = [3, 1, 2]
 > fn total(xs: &[i64]) -> i64 { arr_sum_by(xs, |v| v) }
 > total(&rows)
 6
-> let rows = "now a string"
-E2400  redefining `rows` as `str` breaks 1 earlier binding in this session
-       help: `total(&rows)` at cell 3 requires `[i64]`; rename, or redefine `total` in the same cell
+> rows = rows + [10]              // legal: cell statements live in main's scope (§1.2)
+> total(&rows)
+16
+> fn total(xs: &[i64]) -> str { "oops" }
+E2400  redefining `total` breaks 1 earlier item in this session
+       help: `total(&rows)` at cell 3 requires `-> i64`; rename, or update the caller in the same cell
 ```
 
-That last diagnostic is the product. It is the thing Python's kernel structurally cannot say.
+The `rows = rows + [10]` line is the one that does not work today and is the reason §4 S1 exists.
 
 ---
 
@@ -173,14 +215,17 @@ That last diagnostic is the product. It is the thing Python's kernel structurall
 
 | # | Behaviour | Rule |
 |---|---|---|
-| S1 | **Accumulation** | Items in cell N join the accumulated `Program`. Order is cell order. |
-| S2 | **Whole-module check** | Every cell re-runs `run_check_pipeline_located` over the **entire** accumulated program, not the new tail. This is the feature; it is not an optimisation target (§10). |
-| S3 | **Tail-only execution** | Only items introduced by cell N execute. Prior cells are never re-executed, so no side effect repeats. |
-| S4 | **Check-before-execute** | A cell that fails the check does not execute, and **does not accumulate**. The session state after a failed cell is byte-identical to before it. |
-| S5 | **Redefinition replaces, and must not break the past** | Redefining a name replaces it. If any *earlier* accumulated item no longer type-checks against the new definition, that is **E2400** and S4 applies. Shadowing is not offered: two live meanings for one name in an audit-facing session is the ambiguity the type system exists to remove. |
-| S6 | **Trailing expression** | A cell's trailing expression is evaluated after its items and rendered with the existing display path. A cell with no trailing expression prints nothing. |
-| S7 | **Failure isolation** | A runtime panic in cell N leaves cells 1..N-1 intact and the session live. The failing cell does not accumulate (S4). Bindings it created before panicking are discarded (§12 Q2). |
-| S8 | **Effects are per-cell** | `@[contained]`, effect rows, `AXON_ALLOWED_EFFECTS` and `--require-contained` apply to each cell as they would to a program. A session cannot be used to launder an effect past a ceiling by splitting it across cells. |
+| S1 | **Where bindings live** | A cell's `let`s and statements compose **inside `main`**, not at module scope — module-scope bindings cannot be assigned (§1.2, E0001). `fn` / `type` / `impl` / `trait` items accumulate at module scope as usual. |
+| S2 | **Whole-module check** | Every cell re-checks the **entire** accumulated program. This is the feature, not an optimisation target (§10). |
+| S3 | **Tail-only execution** | Prior cells are not re-executed. Prior *values* arrive materialised (§2.3), not by re-running the code that made them, so no side effect repeats. |
+| S4 | **Check-before-execute** | A cell failing the check does not execute and does not accumulate. State after is byte-identical to before. |
+| S5 | **Redefinition replaces, and must not break the past** | Redefining a name replaces it. If any earlier accumulated **item** stops type-checking, that is **E2400** and S4 applies. Shadowing is not offered. |
+| S6 | **Trailing expression** | Evaluated after the cell's statements, rendered via the existing display path. None ⇒ no output. |
+| S7 | **Failure isolation** | A runtime panic in cell N leaves cells 1..N-1 intact and the session live. **Scope is bounded — see §4.4.** |
+| S8 | **Effects are per-cell** | `@[contained]`, effect rows, `AXON_ALLOWED_EFFECTS`, `--require-contained` apply per cell. A session must not launder an effect past a ceiling by splitting it across cells. |
+| S9 | **The re-check must be idempotent** | See §4.3 — it is not, today. |
+| S10 | **Non-persistable bindings are NAMED, never silently dropped** | A binding that cannot cross a cell (closure / `Chan` / aliased dict / `Handle`) is reported with its name, its shape, and the reason. The prototype's `AXON_DUMP_SHAPES` is this; it is promoted from a debug env var to a guaranteed part of the cell result. |
+| S11 | **No warning storm** | Prelude bindings must not emit `W0006 unused variable` per cell. Inherited from the prior spec's known-costs list; a warning that grows with session length is its own defect. |
 
 ### 4.1 S5 is the whole spec, stated as a test
 
@@ -190,55 +235,99 @@ cell 2:  fn g() -> i64 { f() + 1 }
 cell 3:  fn f() -> str { "one" }      ← E2400: cell 2's `g` no longer type-checks
 ```
 
-A dynamic kernel accepts cell 3 and fails at cell 4 when `g()` is next called — or worse, returns a
-wrong answer. Axon refuses cell 3, names `g`, and leaves the session in its cell-2 state. **If the
-implementation cannot produce this, the spec is not done, regardless of what else works.**
+A dynamic kernel accepts cell 3 and fails at cell 4, or returns a wrong answer. Axon refuses cell 3,
+names `g`, and leaves the session in its cell-2 state. **If the implementation cannot produce this, the
+spec is not done.**
+
+### 4.2 The soundness hole S5 must not reintroduce
+
+Review found the first draft's S5 unsound. `infer.rs:1662-1671` types module-level `let`s by
+**re-inferring their bodies** against the current program. Under a live-`Interp` design (b):
+
+```
+cell 1:  fn make() -> i64 { 1 }
+         let x = make()              // live value: Int(1)
+cell 2:  fn make() -> str { "s" }    // every earlier ITEM still type-checks;
+                                     // `let x = make()` re-infers x : str. No E2400.
+cell 3:  str_len(x)                  // type-checks; runtime holds Int(1). Wrong answer.
+```
+
+The re-checked text and the live heap diverge, **with a false compile-time blessing on top** — the exact
+Python failure mode this spec claims to eliminate.
+
+**v1 is immune by construction** (§2.3): `x` is materialised as the literal `1`, so cell 2 re-types it
+`i64` because it is. **This immunity is a requirement, not a happy accident** — if v2 (b) is ever built,
+it must pin each binding's type at execution time and fire E2400 when a redefinition would change a
+*live binding's* pinned type, not merely when an item stops checking. Recorded here so v2 cannot be
+built without confronting it.
+
+### 4.3 S9 — the re-check is not idempotent today
+
+`run_check_pipeline_located` **mutates** the Program. `load_use_decls` (`lib.rs:483-534`) *prepends*
+every imported module's items into `program.items`, and its `already_loaded` set is a **local per call**
+(`lib.rs:513`). The `UseDecl` items remain. So checking the same accumulated Program twice re-loads and
+re-prepends → duplicate `fn` definitions → **E0002 on cell 2 for any session that used `use` in cell 1**.
+`fill_captures` (`main.rs:4618`) likewise mutates lambda capture lists.
+
+The first draft claimed re-checking "is calling it on a bigger `Program`, not writing a new analysis".
+That is false. Either the session re-parses accumulated **source** into a fresh `Program` each cell (v1
+does this naturally, since v1 is text), or the pipeline needs an idempotent mode. **Slice 1 must prove
+idempotency with a session whose cell 1 contains a `use`.**
+
+### 4.4 S7's honest scope — what rollback cannot undo
+
+"Byte-identical" holds for **check-tier** failures (S4). For a **runtime** failure it does not, and the
+first draft's Q2 promise ("all-or-nothing is the rule a user can state") was false. A panicking cell may
+already have:
+
+* mutated a **pre-existing** `Dict`/`Chan` through its shared `Rc<RefCell<..>>` — sharing is the
+  documented design (`interp.rs:36+`);
+* written files, sent HTTP, appended provenance, spent AI budget (`ai_cost_micro`);
+* tripped `corrigible_halted` — a **deliberately one-way latch** (`interp.rs:507-514`) that rollback
+  is **forbidden** to clear.
+
+**S7 therefore states:** the cell's items and new bindings are discarded; **effects and mutations to
+prior shared state are not undone**; the corrigibility latch survives rollback by design. Saying so is
+the requirement — a session that claimed transactionality it does not have would be worse than one that
+never claimed it.
 
 ---
 
 ## 5. Audit, replay and containment
 
-The item most likely to be missed, so it is a requirement rather than a note.
-
 | # | Rule |
 |---|---|
-| A1 | A session is **one run-id**, stamped once at session start — not one per cell. Every provenance record carries a `cell` index. |
-| A2 | `--record` writes **one journal for the whole session**. `AXON_RECORD` and a session are not mutually exclusive; cell boundaries are journal events. |
-| A3 | `axon replay` of a session journal reproduces **the whole session**, cell by cell, and diverges (exit 11) on the first cell whose host interactions depart — the existing divergence machinery, unchanged. |
-| A4 | The R28 capability ledger flushes **once at session end** and its integrity check covers every cell. A session must not be a way to make capability use less legible than a single run. |
-| A5 | `axon trace --ai` attributes AI calls to `(fn, src, principal)` as today, with `src` naming the session and the cell. Per `a9261f1`, a summary must not merge records across the thing it attributes — a session adds a dimension and must not lose one. |
-
-A2/A3 are what keep this from regressing the auditability story. A session that cannot be replayed
-would trade Axon's strongest differentiator for its missing one.
+| A1 | A session is **one run-id**, stamped at session start, not one per cell. Every provenance record carries a `cell` index. |
+| A2 | `--record` writes **one journal for the whole session**; cell boundaries are journal events. |
+| A3 | Replaying a session reproduces it cell by cell, diverging (exit 11) at the first departing cell. **This is NEW machinery, not "the existing divergence machinery unchanged"** — a host journal records `AxonHost` calls and their outcomes, *not the cells' code*, so the session transcript must also be persisted and fed back. A2's cell-boundary events are themselves a journal format change. Scoped in Slice 4; sized honestly here because the first draft understated it. |
+| A4 | The R28 ledger flushes **once at session end**; its integrity check covers every cell. |
+| A5 | `axon trace --ai` keeps `(fn, src, principal)` attribution and adds the cell. Per `a9261f1`, a summary must not merge records across the thing it attributes — a session adds a dimension and must not lose one. |
 
 ---
 
 ## 6. Error codes
 
-Reserved band **E2400–E2404**, confirmed free at spec time. Exact allocation settles at implementation;
-re-grep before use.
+Reserved band **E2400–E2404**. Re-grep before allocating.
 
 | Code | Meaning |
 |---|---|
 | `E2400` | redefinition breaks an earlier accumulated item (§4.1) — the headline diagnostic |
-| `E2401` | cell references a name never bound in this session (distinct from a plain unresolved name: the help should say whether an *earlier cell failed to accumulate*, which is the confusing case) |
-| `E2402` | cell is not a valid fragment (parse tier, session-specific framing) |
-| `E2403` | session protocol error (malformed cell frame under `--protocol jsonl`) |
-| `E2404` | reserved for the (c)-fallback refusal set, unused if §2 (b) holds |
+| `E2401` | cell references a name never bound in this session; help must distinguish *never bound* from *bound but not persistable* (S10) and from *an earlier cell failed to accumulate* |
+| `E2402` | cell is not a valid fragment (parse tier, session framing) |
+| `E2403` | session protocol error (malformed frame under `--protocol jsonl`) |
+| `E2404` | a binding could not cross the cell boundary and was named rather than dropped (S10) — a **note**, not an error, unless the next cell references it |
 
-No new exit codes. A failing cell is exit 2 in one-shot mode, matching `check`/`run`; in interactive
-mode the session stays live and the code is carried in the protocol frame.
+No new exit codes. A failing cell is exit 2 in one-shot mode; interactive sessions stay live and carry
+the code in the protocol frame.
 
 ---
 
 ## 7. Invariants touched
 
-* **I-2 (one execution semantics).** Upheld and load-bearing: (b) reuses the interpreter rather than
-  re-implementing state transfer. **Native codegen does not participate** — a session is interpreter-only
-  and `axon build` is unaffected. No parity harness is needed because there is no second engine to diverge
-  from; that is a consequence of the §2 choice, and is the reason it should not be revisited casually.
-* **I-11 (capability boundary).** Upheld via S8. Explicitly tested, not assumed.
-* **I-13 (provenance is not opt-out-able).** Upheld via A1–A5.
+* **I-2.** v1 adds no second execution semantics: a cell is an ordinary program run. Native codegen does
+  not participate; `axon build` is unaffected. v2 (b)+(d) would touch `Interp`'s core and must re-argue this.
+* **I-11.** Upheld via S8, tested not assumed.
+* **I-13.** Upheld via A1–A5.
 
 ---
 
@@ -246,14 +335,12 @@ mode the session stays live and the code is carried in the protocol frame.
 
 | Slice | Content | Gate |
 |---|---|---|
-| **0** | **Spike, kill-gated.** Hold one `Interp` across two cells in one process; bind a `Dict` in cell 1, mutate it in cell 2. Answers §12 Q1 and nothing else. | The `Dict` mutation is visible in cell 2. If it is not, (b) is wrong and §2 reopens **before** Slice 1. |
-| **1** | Accumulate + whole-module re-check + tail execution (S1–S4). No redefinition handling yet — a redefinition is refused outright. | S1–S4 tests; §4.1 cells 1–2 pass, cell 3 refused (by any diagnostic). |
-| **2** | **S5 + E2400** — redefinition replaces, and breaking an earlier item is named with the *earlier* item's identity. | §4.1 exactly, including that the session is byte-identical to its cell-2 state afterward. |
-| **3** | Trailing-expression values (S6), failure isolation (S7). | A panic in cell N leaves N-1 usable. |
-| **4** | Audit/replay/containment (§5 A1–A5, S8). | A recorded session replays whole; a split effect is refused at the ceiling. |
+| **0** | **Spike, kill-gated.** NOT "does a Dict's `Rc` survive" — review noted that passes almost automatically and tests the wrong hazard. The spike must: **append an item to an accumulated program and re-check it while prior session state lives**, with a `use` in cell 1 (§4.3) and an assignment to a persisted binding in cell 2 (§1.2). | Both work, or §2 re-opens before Slice 1. A green spike that dodged §4.3 is a failed spike. |
+| **1** | S1 (bindings inside `main`) + S2/S3/S4 + S9 idempotency + S11. | §1.2's `rows = rows + [10]` works across a cell boundary; a `use` in cell 1 does not E0002 cell 2; no W0006 storm. |
+| **2** | **S5 + E2400**, naming the *earlier* item. | §4.1 exactly, including unchanged session state afterward. |
+| **3** | S6 trailing values, S7 + §4.4 scoping, S10 non-persistable reporting (promote `AXON_DUMP_SHAPES`). | A panic in cell N leaves N-1 usable; a closure binding is NAMED, not silently absent. |
+| **4** | §5 A1–A5 + S8. Includes A3's new machinery. | A recorded session replays whole; a split effect is refused at the ceiling. |
 | **5** | `--protocol jsonl` host driver. | An external host drives 20 cells and reads per-cell results. |
-
-Slices 1–2 are the product. 3–5 make it usable and keep the audit story intact.
 
 ---
 
@@ -261,45 +348,51 @@ Slices 1–2 are the product. 3–5 make it usable and keep the audit story inta
 
 ```
 DONE = §4.1 passes EXACTLY — cell 3 refused, `g` named, session state unchanged
-   AND no prior cell's side effect re-runs when a later cell executes (S3), proved by a cell
-       that appends to a file and a later cell that does not
-   AND a Dict/Closure/Chan binding survives a cell boundary with IDENTITY preserved, not a copy
+   AND §1.2 passes — `rows = rows + [record]` works and the value survives to the next cell
+   AND §4.3 passes — a session whose cell 1 contains a `use` does not E0002 on cell 2
+   AND no prior cell's side effect re-runs when a later cell executes (S3)
+   AND a non-persistable binding is NAMED with its shape and reason (S10), never silently absent
+   AND §4.4 is documented in the user-facing text, not just here — rollback must not claim
+       transactionality it does not have
    AND a recorded session replays whole (A3), and a tampered cell diverges at that cell with exit 11
-   AND a split effect is refused at the ceiling (S8), proving a session is not an effect-laundering seam
+   AND a split effect is refused at the ceiling (S8)
    AND the full suite is green IN EVERY CONFIGURATION THE GATE RUNS, each reported with its
        configuration — per R42 §12.1, "the suite passes" is not a claim until it names which
        suite, built how
-   AND measured per-task, not as a total: the session arm is reported against the stateless arm
-       task by task, with the stateless control's own score printed alongside
+   AND measured per-task against the stateless arm, with the stateless control's score printed
 ```
 
 The last clause is not optional. The arm sweeps were **stopped on 2026-09-08** because the thesis came
 out unsupported and the stateless control *won* the error column — a metric a control can win is
-measuring structure, not reuse. **Do not justify this spec with a projected score, and do not report
-one from the existing harness without fixing it first.** Build it because the capability is absent and
-its gate is passed; measure it separately, afterwards, with a control that is inert on the metric.
+measuring structure, not reuse. **Do not justify this spec with a projected score.** Build it because
+the capability is absent and its gate is passed; measure afterwards, with a control inert on the metric.
 
 ---
 
 ## 10. Performance budget
 
-Re-checking the whole module every cell is O(cells × items). At a session length a model actually
-produces (tens of cells, hundreds of items) this is milliseconds, and `run_check_pipeline_located`
-already runs on every `axon run`.
+Re-checking the whole module every cell is O(cells × items) — milliseconds at session lengths a model
+produces, and `run_check_pipeline_located` already runs on every `axon run`.
 
-**Deliberately not optimised, and deliberately not made incremental.** Incremental re-check is a second
-analysis that must agree with the first — the I-2 failure mode. If profiling ever demands it, the
-honest move is to make the whole check faster, not to add a cache that can disagree with it. Revisit
-only with a measurement, and record the measurement here.
+**Deliberately not made incremental.** An incremental re-check is a second analysis that must agree with
+the first — the I-2 failure mode. If profiling demands it, make the whole check faster rather than add a
+cache that can disagree. Revisit only with a measurement, recorded here.
+
+One real risk inherited from the prior spec: **repeated string/array concatenation in an accumulation
+loop may be O(n²)** now that `+` is defined on both. Measure before a session invites that pattern.
 
 ---
 
 ## 11. Rollout & rollback
 
-Additive. A new verb; `run`/`check`/`build` are untouched, so rollback is removing the verb. No `.ax`
-source written against a session is invalid outside one — a session transcript concatenates into an
-ordinary module, which is a property worth keeping as a test (**a session's accumulated program must
-be a file `axon check` accepts**).
+Additive. New verb; `run`/`check`/`build` untouched, so rollback is removing the verb.
+
+The first draft claimed "a session transcript concatenates into an ordinary module `axon check`
+accepts". **False, two ways:** `Item` has no expression variant (`ast.rs:19-37`), so a trailing
+expression is a parse error; and a session containing a redefinition concatenates into a module with two
+`fn f` definitions → E0002. The salvageable and *useful* version: **the accumulated program a session
+exports — post-replacement, statements composed into `main` — must be a file `axon check` accepts.**
+That is worth keeping as a test, because an exportable session is how a session's work leaves the session.
 
 ---
 
@@ -307,48 +400,56 @@ be a file `axon check` accepts**).
 
 | # | Question | Default if undecided |
 |---|---|---|
-| **Q1** | **Can one `Interp` be held across cells without stale-borrow hazards?** `interp.rs` uses `RefCell` pervasively, and R15's §3 risk note flags exactly this for cross-call-boundary state. Slice 0 exists to answer it. | (b). Fall back to (c) with a documented refusal set only if the spike fails. |
-| Q2 | A cell that panics **midway** — are bindings it created before the panic discarded, or kept? S7 says discarded (all-or-nothing per cell). Is that right when the panic is in a trailing expression *after* several successful `let`s? | Discarded. All-or-nothing is the rule a user can state; "some of cell 4 happened" is not. |
-| Q3 | Does `--require-contained` (AXON_FOR_RLM §4, unbuilt) belong in this spec or its own? | Its own — it is meaningful for one-shot `check` too. Ship independently; S8 only requires they compose. |
-| Q4 | Should a session persist to disk so it can be resumed after the process exits? | No for v1. That reopens the whole serialisation problem §2(c) was rejected over. Revisit only with a concrete ask. |
-| Q5 | Multi-file / `mod` imports inside a session — does `AXON_PATH` resolution happen per cell or once? | Per cell, matching `run`. Flagged because a cached resolution would be a way for cell N to see a module cell 1 could not. |
+| **Q1** | **REPLACED.** Was "can one `Interp` be held across cells without stale `RefCell` borrows" — the wrong hazard (§2.2). Now: **does the v1 (c) substrate carry a real session?** Slice 0 answers it against §4.3 and §1.2. | v1 = (c) on the shipped prototype. |
+| Q2 | **REVISED.** Was "are partial-cell bindings discarded" — answered in §4.4 (discarded; effects are not undone; the latch survives). Remaining: should a cell that *effected* before failing be marked in the transcript, so a replay shows it? | Yes — mark it. An invisible partial cell is the same absent-vs-passed defect audited across seven surfaces this cycle. |
+| Q3 | Does `--require-contained` belong here or in its own spec? | Its own — it is meaningful for one-shot `check` too. S8 only requires they compose. |
+| Q4 | When does v2 (b)+(d) open? | Only when measurement shows S10's refusal set actually bites — i.e. real sessions lose real work to closures/aliased dicts. Not before. |
+| Q5 | Does a session persist to disk for resumption after the process exits? | Under v1 this is nearly free (the session *is* text). Ship it if Slice 1 gets it for nothing; do not build machinery for it. |
+| Q6 | `mod` imports per cell or once? | Per cell, matching `run` — but §4.3 makes this load-bearing, not cosmetic. |
+| Q7 | S1 moves bindings into `main`'s scope. The prior spec flagged the cost: **declared `fn`s can no longer see session bindings** (they could via the globals fallback, `eval.rs:74`). Accept? | Accept — it forces parameters and fails closed. But it is a behaviour change and must be in the user-facing text, not only here. |
 
 ---
 
 ## 13. Dependency DAG
 
 ```
-R44 Slice 0 (spike, kill-gate Q1)
-  └── Slice 1 (accumulate + whole-module check + tail exec)
+R44 Slice 0 (spike — kill-gate Q1 against §4.3 + §1.2)
+  └── Slice 1 (S1 bindings-in-main, S2/S3/S4, S9 idempotency, S11)
         └── Slice 2 (S5 + E2400)          ← the product
-              ├── Slice 3 (trailing values, failure isolation)
-              ├── Slice 4 (audit/replay/containment)   [needs R28 ledger, landed]
-              └── Slice 5 (jsonl protocol)              [needs Slice 3]
+              ├── Slice 3 (trailing values, §4.4 scoping, S10 reporting)
+              ├── Slice 4 (audit/replay/containment — incl. A3's new machinery)
+              └── Slice 5 (jsonl protocol)
 
-AXON_FOR_RLM §4 (--require-contained)  — independent, composes at S8, ship in parallel
+AXON_FOR_RLM §4 (--require-contained)  — independent, composes at S8
+(d) Interp lifetime refactor ──► v2 (b)   — NOT scoped here; Q4 gates it
 ```
 
-No spec blocks R44. R44 blocks nothing. It is a leaf, which is the main argument for doing it now
-rather than after any of the six Draft platform specs.
+R44 is a leaf: nothing blocks it, it blocks nothing. That is the main argument for doing it before any
+of the six Draft platform specs.
 
-**R15 is deliberately NOT a dependency edge**, though it is cited three times. A cell runs to
-completion and returns; nothing suspends mid-cell, so the resume runtime is not on this path. R15 is
-*precedent* (its `SendValue` refusal is the model for §2's rejection of serialisation) and a *shape*
-(`run_suspendable_stdio` proves the interpreter survives a long-lived loop). Recorded because citing
-a spec heavily and then not depending on it looks like an omission, and a false edge pollutes the DAG
-for everyone downstream.
+**R15 is cited but deliberately NOT a dependency edge.** A cell runs to completion; nothing suspends
+mid-cell. R15 is *precedent* (its `SendValue` `Chan` refusal is the model the prototype already follows)
+and was mis-cited in the first draft as a *shape* — `run_suspendable_stdio` inverts control the wrong
+way: the program calls `host_await` and the host supplies **data**, whereas a session is the host
+supplying **code**. Recorded so the false edge is not re-added.
 
 ---
 
 ## 14. Evidence ledger
 
-Empty — Draft. No implementation code before §12 Q1 clears Slice 0 (`BUILD_PROTOCOL.md` Gate 1).
+Draft — no implementation code before Q1 clears Slice 0 (`BUILD_PROTOCOL.md` Gate 1).
 
-| Claim | Evidence | Commit |
+| Claim | Evidence | Where |
 |---|---|---|
-| Top-level `let` works today | `let top = 41` + `fn main()` reading it prints `42` | verified 2026-09-16, pre-spec |
-| `init_globals` is separable from `main` | `interp::run_named_fn_as_bool` builds an `Interp`, calls `init_globals`, then an arbitrary fn | `crates/axon-core/src/interp.rs` |
-| Four `Value` variants are not plain data | `Closure` / `Chan` / `Dict` / `Handle` all hold `Rc<RefCell<..>>` or a live slab index | `crates/axon-core/src/interp.rs:36+` |
-| Refusing a non-transferable value over a boundary is the house precedent | R15 Slice 2 `SendValue` refuses a `Chan` payload rather than corrupting it | `b097c0e` |
-| AXON_FOR_RLM §1/§2/§3 have landed | `axon run mut.ax` emits a located `I0002` with `help` | verified 2026-09-16, pre-spec |
-| AXON_FOR_RLM §4 has NOT landed | an uncontained `read_file("/etc/passwd")` passes `axon check` silently, exit 0 | verified 2026-09-16, pre-spec |
+| Module-scope bindings cannot be assigned | `let rows = [1]` + `rows = arr_concat(…)` → `E0001 cannot assign to function name` | run 2026-09-16 |
+| `+` on `str` and `[T]` has landed | `"a" + "b"` → `ab`; `rows = rows + [2]` → len 2 | run 2026-09-16 |
+| A session prototype already exists | `AXON_DUMP_BINDINGS`/`AXON_DUMP_SHAPES`, `Interp.main_locals` | `interp.rs:643, 2195-2275` |
+| …and it carries Dicts, refusing only aliased ones | alias detection + skip-with-reason, R15 `Chan` precedent in-comment | `interp.rs:2233-2275`; test `cli_run.rs:20533` |
+| `Interp` borrows the `Program` | `Interp<'p>` holds `&'p FnDef`/`&'p Expr`; `build(program: &'p Program)` | `interp.rs:469-477, 2490` |
+| The re-check mutates the Program | `load_use_decls` prepends imports; `already_loaded` is per-call | `lib.rs:483-534` |
+| Module-level `let`s are typed by re-inferring their bodies | `infer_program` → `infer_expr(value, …)` per `Item::LetDef` | `infer.rs:1662-1671` |
+| `corrigible_halted` is a one-way latch | documented as such | `interp.rs:507-514` |
+| `Item` has no expression variant | enum listing | `ast.rs:19-37` |
+| `init_globals` is private; `run_check_pipeline_located` is private in main.rs | signatures | `interp.rs:2600`; `main.rs:4464` |
+| E24xx is free | zero hits outside this spec across `crates/` + `governance/specs/` | grep 2026-09-16 |
+| AXON_FOR_RLM §1/§2/§3 landed; §4 has not | `axon run` emits located `I0002`; uncontained `/etc/passwd` read passes `check` exit 0 | runs 2026-09-16 |
