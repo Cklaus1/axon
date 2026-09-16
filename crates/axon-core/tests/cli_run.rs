@@ -21678,3 +21678,203 @@ fn deploy_json_records_which_gates_were_never_run() {
     let _ = std::fs::remove_file(&all_gates);
     let _ = std::fs::remove_file(&some_gates);
 }
+
+// ── R44 Slice 1: the accumulating typed session ──────────────────────────────
+
+/// Drive `axon session` with `cells`, returning (stdout, stderr).
+fn session(cells: &[&str]) -> (String, String) {
+    session_in(cells, None)
+}
+
+fn session_in(cells: &[&str], dir: Option<&std::path::Path>) -> (String, String) {
+    use std::io::Write;
+    let mut cmd = axon();
+    cmd.arg("session");
+    if let Some(d) = dir {
+        cmd.env("AXON_PATH", d);
+    }
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let si = child.stdin.as_mut().unwrap();
+        for c in cells {
+            si.write_all(c.as_bytes()).unwrap();
+            si.write_all(b"\n\n").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+#[test]
+fn session_carries_a_binding_from_one_cell_to_the_next() {
+    // The defining RLM property: bind a name in one call, read it in the next.
+    // Without this Axon is a `run_code` tool, not a session (AXON_FOR_RLM §5).
+    let (out, err) = session(&["let rows = [1, 2]", "println(to_str(len(&rows)))"]);
+    assert!(
+        out.contains('2'),
+        "the second cell must see `rows`: stdout={out:?} stderr={err:?}"
+    );
+}
+
+#[test]
+fn session_allows_assigning_to_a_persisted_binding() {
+    // R44 §1.2 — the wall that shaped the design. A module-level `let` registers
+    // as a function name and assigning to it is refused (E0001), so composing a
+    // session's bindings at module scope would make `rows = rows + [x]` — the
+    // single most common statement a model writes — permanently illegal.
+    // Bindings therefore live in `main`'s scope.
+    let (out, err) = session(&[
+        "let rows = [1, 2]",
+        "rows = rows + [99]",
+        "println(to_str(arr_sum_by(&rows, |v| v)))",
+    ]);
+    assert!(
+        out.contains("102"),
+        "1+2+99 = 102; assignment to a persisted binding must work and must \
+         persist again: stdout={out:?} stderr={err:?}"
+    );
+    assert!(
+        !err.contains("E0001"),
+        "E0001 means the binding landed at module scope again: {err}"
+    );
+}
+
+#[test]
+fn session_re_check_is_idempotent_across_a_use_import() {
+    // R44 §4.3 — `load_use_decls` PREPENDS imported items into the program and
+    // its `already_loaded` set is a local per call, so re-checking one
+    // long-lived Program would duplicate every import and E0002 on cell 2.
+    // v1 re-parses fresh text per cell, which is what makes this pass; the test
+    // pins that property rather than the implementation.
+    let dir = std::env::temp_dir().join(format!("axon_sess_use_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join("helper.ax"),
+        "fn double(n: i64) -> i64 { n * 2 }\n",
+    )
+    .unwrap();
+
+    let (out, err) = session_in(
+        &[
+            "mod helper\nuse helper.{double}\nlet v = double(21)\nprintln(to_str(v))",
+            "println(to_str(v + 1))",
+            "println(to_str(double(5)))",
+        ],
+        Some(&dir),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !err.contains("E0002"),
+        "a `use` in cell 1 must not duplicate on cell 2's re-check: {err}"
+    );
+    assert!(
+        out.contains("42") && out.contains("43") && out.contains("10"),
+        "all three cells must run: stdout={out:?} stderr={err:?}"
+    );
+}
+
+#[test]
+fn session_does_not_emit_an_unused_warning_storm() {
+    // R44 §4 S11. A prelude binding the current cell does not read is session
+    // state, not an unused variable, and warning per binding per cell produces
+    // noise that GROWS with session length — on the stderr the model reads.
+    let (out, err) = session(&[
+        "let a = 1\nlet b = 2\nlet c = 3",
+        "println(to_str(a))",
+        "println(to_str(b))",
+        "println(to_str(c))",
+    ]);
+    // Assert the session RAN before asserting it was quiet. A binary with no
+    // `session` verb emits nothing at all, which satisfies "zero warnings"
+    // vacuously — the assertion would pass on the very code it exists to guard.
+    assert!(
+        out.contains('1') && out.contains('2') && out.contains('3'),
+        "the session must actually have run all three cells: stdout={out:?} stderr={err:?}"
+    );
+    assert_eq!(
+        err.matches("W0006").count(),
+        0,
+        "session bindings must not be reported unused: {err}"
+    );
+}
+
+#[test]
+fn session_still_lints_an_unused_binding_inside_a_declared_fn() {
+    // The suppression above must be SCOPED, not blanket — otherwise it trades a
+    // warning storm for a silently dropped lint. A binding inside a function a
+    // cell declares really is local, and still gets W0006.
+    let (_, err) = session(&[
+        "fn f() -> i64 {\n    let dead = 5\n    7\n}",
+        "println(to_str(f()))",
+    ]);
+    assert!(
+        err.contains("W0006") && err.contains("dead"),
+        "a genuinely-local unused binding must still be linted: {err}"
+    );
+}
+
+#[test]
+fn session_failed_cell_does_not_accumulate() {
+    // R44 §4 S4: a cell that fails to check does not execute and does not
+    // accumulate — state after is byte-identical to before it.
+    let (out, err) = session(&[
+        "let good = 7",
+        "let bad = \"x\" + 1",
+        "println(to_str(good))",
+    ]);
+    assert!(err.contains("E0102"), "the bad cell must be refused: {err}");
+    assert!(
+        out.contains('7'),
+        "the session must survive a failed cell: stdout={out:?} stderr={err:?}"
+    );
+}
+
+#[test]
+fn session_names_a_binding_it_could_not_persist() {
+    // R44 §4 S10 — a name the model can see but cannot reuse is the case it most
+    // needs told about. Silently dropping it produces a later "cannot find name"
+    // with no explanation of where it went.
+    let (_, err) = session(&[
+        "let f = |x| x + 1\nprintln(to_str(f(1)))",
+        "println(\"next\")",
+    ]);
+    assert!(
+        err.contains("did not persist") && err.contains('f'),
+        "a non-persistable binding must be named: {err}"
+    );
+    // ...and the reason must be readable. It used to be the Rust `Debug` of the
+    // value — `Closure { params: ["x"], body: BinOp { op: Add, … } }` — which
+    // buries the one word that matters.
+    assert!(
+        !err.contains("BinOp") && !err.contains("captured:"),
+        "the skip reason must be a shape, not a Debug dump: {err}"
+    );
+}
+
+#[test]
+fn session_materialisation_pins_a_bindings_type() {
+    // R44 §4.2 — the soundness property v1 gets by construction, and the reason
+    // the fork resolved the way it did.
+    //
+    // A design that kept live values would re-infer `let x = make()` against the
+    // NEW `make` while the heap still held the old value: cell 3 would type-check
+    // against `str` and find an `i64` at runtime — a wrong answer with a
+    // compile-time blessing on top. Because the binding is carried as the literal
+    // it evaluated to, redefining `make` cannot re-type it.
+    let (out, err) = session(&[
+        "fn make() -> i64 { 1 }\nlet x = make()",
+        "fn make2() -> str { \"s\" }\nprintln(to_str(x + 1))",
+    ]);
+    assert!(
+        out.contains('2'),
+        "x must still be the i64 it was bound to: stdout={out:?} stderr={err:?}"
+    );
+}

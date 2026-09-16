@@ -331,6 +331,27 @@ enum Command {
         show_values: bool,
     },
 
+    /// R44 — an accumulating typed session: bind a name in one cell, read it in
+    /// the next.
+    ///
+    /// The point is not a REPL. Every cell re-type-checks the WHOLE accumulated
+    /// program, so using a binding at the wrong type is a compile error before
+    /// anything executes — the property a dynamically typed kernel structurally
+    /// cannot offer.
+    ///
+    /// Cells are read from stdin, one per blank-line-terminated block (or one
+    /// per line under `--protocol jsonl`). A cell that fails to check does not
+    /// execute and does not accumulate.
+    Session {
+        /// Emit one JSON frame per cell instead of human output, for a host driver.
+        #[arg(long, value_name = "FORMAT", help = "Output protocol: jsonl")]
+        protocol: Option<String>,
+
+        /// Print the accumulated program after each cell (debugging the session).
+        #[arg(long, help = "Echo the composed program for each cell")]
+        show_program: bool,
+    },
+
     /// Summarize the provenance log: per-`@[adaptive]`-fn score trajectory.
     ///
     /// Reads `$XDG_CACHE_HOME/axon/provenance.jsonl` (written by `@[adaptive]`
@@ -802,6 +823,10 @@ fn dispatch(command: Command) {
             diff,
             show_values,
         } => cmd_replay(journal, diff, show_values),
+        Command::Session {
+            protocol,
+            show_program,
+        } => cmd_session(protocol, show_program),
         Command::Trace {
             func,
             path,
@@ -3826,6 +3851,346 @@ fn cmd_replay(journal: PathBuf, diff: Option<PathBuf>, show_values: bool) {
     }
 }
 
+/// R44 §4 S11 — the 1-based line range of `main`'s body in the program currently
+/// being checked, or `None` outside a session.
+///
+/// W0006 ("unused variable") is wrong for every binding in this range, for two
+/// different reasons that happen to have the same fix:
+///
+/// A PRELUDE binding the current cell does not read is not unused, it is session
+/// state carried forward — and warning per binding per cell produces a storm that
+/// grows with session length, on the stderr the model reads. A binding the
+/// CURRENT cell just made is also session state: the whole point of a session is
+/// that it is available to the next cell, so "its value is never read" is a claim
+/// about one cell that the session falsifies.
+///
+/// The range covers `main`'s body only. A `let` inside a function a cell
+/// declares still gets the lint, because that binding really is local. Scoping
+/// by line range rather than by name is deliberate: the session composed the
+/// program and knows which lines it wrote, whereas matching a name out of a
+/// diagnostic's prose would break the moment that prose changed.
+static SESSION_PRELUDE_LINES: std::sync::Mutex<Option<(usize, usize)>> =
+    std::sync::Mutex::new(None);
+
+fn set_session_prelude_lines(r: Option<(usize, usize)>) {
+    if let Ok(mut g) = SESSION_PRELUDE_LINES.lock() {
+        *g = r;
+    }
+}
+
+/// True when this diagnostic is an unused-binding warning about a line the
+/// session itself wrote.
+fn suppressed_as_session_prelude(code: &str, line: u32) -> bool {
+    if code != "W0006" {
+        return false;
+    }
+    match SESSION_PRELUDE_LINES.lock() {
+        Ok(g) => matches!(*g, Some((lo, hi)) if line as usize >= lo && line as usize <= hi),
+        Err(_) => false,
+    }
+}
+
+/// R44 — the accumulating typed session.
+///
+/// State is TEXT, deliberately. Module items (`mod`/`use`/`fn`/`type`/`impl`)
+/// accumulate as source; bindings are materialised back as source literals after
+/// each cell. Two properties fall out of that choice and both are load-bearing:
+///
+/// **Types are pinned.** A binding arrives in the next cell as the literal it
+/// evaluated to, so redefining the function that produced it cannot silently
+/// re-type it. A design that kept live values would re-infer `let x = make()`
+/// against the NEW `make` while the heap still held the old value — a wrong
+/// answer with a compile-time blessing on top (R44 §4.2).
+///
+/// **The re-check is idempotent.** Each cell is parsed fresh, so
+/// `load_use_decls` — which PREPENDS imported items into the program and tracks
+/// "already loaded" per call — runs exactly once per cell. Re-checking one
+/// long-lived program would duplicate every import and E0002 on cell 2
+/// (R44 §4.3).
+struct Session {
+    /// Module-scope items, accumulated in cell order.
+    items: String,
+    /// Bindings from prior cells, as `let name = <literal>` lines.
+    prelude: String,
+    /// Names the previous cell could NOT persist, with the reason (R44 §4 S10).
+    skipped: Vec<String>,
+    cell_no: usize,
+}
+
+impl Session {
+    fn new() -> Self {
+        Session {
+            items: String::new(),
+            prelude: String::new(),
+            skipped: Vec::new(),
+            cell_no: 0,
+        }
+    }
+
+    /// Split a cell into (module items, statements).
+    ///
+    /// Module items must sit at module scope; statements must sit inside `main`,
+    /// because a module-level `let` registers as a function name and assigning to
+    /// it is refused (`E0001`) — which would make `rows = rows + [x]`, the single
+    /// most common statement a model writes, permanently illegal (R44 §1.2).
+    fn split_cell(src: &str) -> (String, String) {
+        let mut items = String::new();
+        let mut stmts = String::new();
+        let mut depth = 0i32;
+        let mut in_item = false;
+        for line in src.lines() {
+            let t = line.trim_start();
+            if depth == 0 && !in_item {
+                in_item = t.starts_with("fn ")
+                    || t.starts_with("type ")
+                    || t.starts_with("mod ")
+                    || t.starts_with("use ")
+                    || t.starts_with("impl ")
+                    || t.starts_with("trait ")
+                    || t.starts_with("handler ")
+                    || t.starts_with("@[");
+            }
+            let target = if in_item { &mut items } else { &mut stmts };
+            target.push_str(line);
+            target.push('\n');
+            depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+            if depth <= 0 {
+                depth = 0;
+                // A single-line item (`mod x`, `use x.{y}`, a one-line fn) ends
+                // here; a braced one ends when its braces close.
+                in_item = false;
+            }
+        }
+        (items, stmts)
+    }
+
+    /// The full program this cell runs as: accumulated items, then a `main`
+    /// holding the prelude followed by the cell's own statements.
+    ///
+    /// Also returns the 1-based line range the prelude occupies, so W0006 can be
+    /// suppressed over exactly those lines (R44 §4 S11). A prelude binding the
+    /// current cell happens not to read is not an unused variable — it is
+    /// session state — and warning per binding per cell produces a storm that
+    /// grows with session length, on the stderr the model reads.
+    fn compose(&self, cell_items: &str, cell_stmts: &str) -> (String, (usize, usize)) {
+        let mut out = String::new();
+        out.push_str(&self.items);
+        out.push_str(cell_items);
+        out.push_str("fn main() {\n");
+        // +1 because `out` so far ends with a newline, so the next line written
+        // is line count+1; the prelude starts there.
+        let body_start = out.lines().count() + 1;
+        let mut n = 0usize;
+        for line in self.prelude.lines() {
+            out.push_str("    ");
+            out.push_str(line);
+            out.push('\n');
+            n += 1;
+        }
+        for line in cell_stmts.lines() {
+            out.push_str("    ");
+            out.push_str(line);
+            out.push('\n');
+            n += 1;
+        }
+        out.push_str("}\n");
+        let range = if n == 0 {
+            (0, 0)
+        } else {
+            (body_start, body_start + n - 1)
+        };
+        (out, range)
+    }
+}
+
+/// One cell's outcome, for both the human and the jsonl renderers.
+struct CellResult {
+    ok: bool,
+    stdout: String,
+    diagnostics: Vec<String>,
+    /// Bindings that could not cross the boundary, NAMED rather than dropped.
+    skipped: Vec<String>,
+}
+
+fn cmd_session(protocol: Option<String>, show_program: bool) {
+    use std::io::BufRead;
+    let jsonl = protocol.as_deref() == Some("jsonl");
+    if let Some(p) = protocol.as_deref() {
+        if p != "jsonl" {
+            eprintln!("error: unknown --protocol `{p}` (supported: jsonl)");
+            process::exit(2);
+        }
+    }
+
+    let mut sess = Session::new();
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+
+    if !jsonl {
+        println!("axon session — the accumulated program is re-type-checked every cell.");
+        println!("Blank line runs the cell; Ctrl-D exits.");
+    }
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        if jsonl {
+            // One cell per line; `\n` inside the cell is escaped.
+            let cell = line.replace("\\n", "\n");
+            if cell.trim().is_empty() {
+                continue;
+            }
+            let r = run_cell(&mut sess, &cell, show_program);
+            println!("{}", render_cell_jsonl(&sess, &r));
+            continue;
+        }
+        if line.trim().is_empty() {
+            if buf.trim().is_empty() {
+                continue;
+            }
+            let r = run_cell(&mut sess, &buf, show_program);
+            render_cell_human(&r);
+            buf.clear();
+            continue;
+        }
+        buf.push_str(&line);
+        buf.push('\n');
+    }
+    // A trailing cell with no blank line after it still runs — losing the last
+    // cell because the input ended without a newline would be a silent drop.
+    if !jsonl && !buf.trim().is_empty() {
+        let r = run_cell(&mut sess, &buf, show_program);
+        render_cell_human(&r);
+    }
+}
+
+/// Check, then run, then accumulate — in that order, and only advancing on success.
+fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
+    sess.cell_no += 1;
+    let (cell_items, cell_stmts) = Session::split_cell(cell);
+    let (src, prelude_lines) = sess.compose(&cell_items, &cell_stmts);
+    set_session_prelude_lines(Some(prelude_lines));
+    if show_program {
+        eprintln!("--- cell {} ---\n{src}", sess.cell_no);
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "axon_session_{}_{}.ax",
+        std::process::id(),
+        sess.cell_no
+    ));
+    if std::fs::write(&path, &src).is_err() {
+        return CellResult {
+            ok: false,
+            stdout: String::new(),
+            diagnostics: vec!["could not write the composed cell to a temp file".into()],
+            skipped: Vec::new(),
+        };
+    }
+
+    let mut program = match parse_source_located_cli(&src, &path) {
+        Ok(p) => p,
+        Err(diag) => {
+            let _ = std::fs::remove_file(&path);
+            set_session_prelude_lines(None);
+            return CellResult {
+                ok: false,
+                stdout: String::new(),
+                diagnostics: vec![format!("[{}] {}", diag.code, diag.message)],
+                skipped: Vec::new(),
+            };
+        }
+    };
+    let (errors, _) = run_check_pipeline_located(&mut program, &src, &path);
+    if !errors.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        set_session_prelude_lines(None);
+        // The cell did not execute and does not accumulate: session state is
+        // byte-identical to before it (R44 §4 S4).
+        return CellResult {
+            ok: false,
+            stdout: String::new(),
+            diagnostics: errors
+                .iter()
+                .map(|e| format!("[{}] {}", e.code, e.message))
+                .collect(),
+            skipped: Vec::new(),
+        };
+    }
+
+    let prev = axon_core::interp::set_session_capture(true);
+    let (code, out) = axon_core::interp::run_program_capturing(&program);
+    axon_core::interp::set_session_capture(prev);
+    set_session_prelude_lines(None);
+    let _ = std::fs::remove_file(&path);
+
+    let captured = axon_core::interp::take_session_result();
+    let ok = code == 0 && captured.is_some();
+    let mut skipped = Vec::new();
+    if let Some((bindings, _shapes)) = captured {
+        // A binding that could not be persisted is NAMED, never silently
+        // dropped: a name the model can see but not reuse is the case it most
+        // needs told about (R44 §4 S10).
+        for l in bindings.lines() {
+            if let Some(rest) = l.strip_prefix("// SKIPPED ") {
+                skipped.push(rest.to_string());
+            }
+        }
+        if ok {
+            sess.items.push_str(&cell_items);
+            sess.prelude = bindings;
+            sess.skipped = skipped.clone();
+        }
+    }
+    CellResult {
+        ok,
+        stdout: out,
+        diagnostics: Vec::new(),
+        skipped,
+    }
+}
+
+fn render_cell_human(r: &CellResult) {
+    print!("{}", r.stdout);
+    for d in &r.diagnostics {
+        eprintln!("  {d}");
+    }
+    for s in &r.skipped {
+        eprintln!("  note: did not persist — {s}");
+    }
+    if !r.ok && r.diagnostics.is_empty() {
+        eprintln!("  (cell failed at runtime; session is unchanged)");
+    }
+}
+
+fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
+    let esc = |s: &str| {
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+    };
+    let diags: Vec<String> = r
+        .diagnostics
+        .iter()
+        .map(|d| format!("\"{}\"", esc(d)))
+        .collect();
+    let skips: Vec<String> = r
+        .skipped
+        .iter()
+        .map(|d| format!("\"{}\"", esc(d)))
+        .collect();
+    format!(
+        "{{\"schema\":\"axon-session/1\",\"cell\":{},\"ok\":{},\"stdout\":\"{}\",\"diagnostics\":[{}],\"not_persisted\":[{}]}}",
+        sess.cell_no,
+        r.ok,
+        esc(&r.stdout),
+        diags.join(","),
+        skips.join(","),
+    )
+}
+
 fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
@@ -4605,6 +4970,9 @@ fn run_check_pipeline_located(
             found: None,
             help: warn.fix.clone(),
         };
+        if suppressed_as_session_prelude(&d.code, d.line) {
+            continue;
+        }
         if !std::io::stderr().is_terminal() {
             eprintln!("{}", d.json());
         } else {

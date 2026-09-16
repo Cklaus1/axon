@@ -1,7 +1,7 @@
 # R44 — The accumulating typed session
 
 **Spec ID:** `R44-accumulating-session`
-**Status:** Draft — §12 Q1 (the persistence fork) reopened by review; Slice 0 must clear before Slice 1
+**Status:** Implementing — **Slice 0 CLEARED** and **Slice 1 LANDED** (2026-09-16). §12 Q1 resolved: v1 = (c)
 **Risk class:** Structural. Changes where a session's bindings live (module scope → `main`'s scope) and,
 in its v2 stage, the lifetime discipline of `Interp`. Not a language feature: no `.ax` syntax changes.
 **Author / date:** 2026-09-16, from `AXON_FOR_RLM.md` §5.
@@ -14,13 +14,14 @@ review, was found by running the example: **module-scope bindings cannot be assi
 
 ```spec-meta
 id: R44-accumulating-session
-status-claim: Draft
+status-claim: Implementing
 depends-on: R7b-axonhost, R6-capability-security
 blocks: none
-blocked-by: R44 §12 Q1 (persistence fork reopened; Slice 0 must resolve it before Slice 1 opens)
+blocked-by: none
 supersedes: tasks/spec-rlm-accumulator.md (DRAFT 2026-08-07 — absorbed; its N1 is this spec's §4 S1,
   its N2 has since landed, its prototype is this spec's v1 substrate)
 related: R15-resume-runtime, R41-polyglot-runtime, R38-embedded-agent-runtime, R28-capability-audit-ledger, R42-stdlib-gaps, R43-bytes-and-binary
+evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slice 1, ALL PASS 2026-09-16; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
 reserves: E2400-E2404, confirmed free at spec time (grepped `E2[0-9]{3}` across crates/ and every
   governance/specs `reserves:` line — taken bands are E20xx [R41], E21xx [R16], E22xx [R42/R43],
   E23xx [eBPF], E37xx [R37]; E24xx is the next contiguous free band)
@@ -335,10 +336,10 @@ the code in the protocol frame.
 
 | Slice | Content | Gate |
 |---|---|---|
-| **0** | **Spike, kill-gated.** NOT "does a Dict's `Rc` survive" — review noted that passes almost automatically and tests the wrong hazard. The spike must: **append an item to an accumulated program and re-check it while prior session state lives**, with a `use` in cell 1 (§4.3) and an assignment to a persisted binding in cell 2 (§1.2). | Both work, or §2 re-opens before Slice 1. A green spike that dodged §4.3 is a failed spike. |
-| **1** | S1 (bindings inside `main`) + S2/S3/S4 + S9 idempotency + S11. | §1.2's `rows = rows + [10]` works across a cell boundary; a `use` in cell 1 does not E0002 cell 2; no W0006 storm. |
+| **0** | ✅ **CLEARED 2026-09-16.** Spiked all four hazards against a composed session, not a mock: H1 assignment to a persisted binding, H2 a `use` in cell 1, H3 type pinning, H4 what redefinition does today. | **PASSED.** H1 `rows = rows + [99]` → len 2→3, sum 102. H2 no E0002. H3 `let x = 1` materialised; `x + 1` = 2 after `make` was redefined. H4 E0002+E0102 — Slice 2's work, as specced. |
+| **1** | ✅ **LANDED 2026-09-16.** `axon session` verb; S1 bindings-in-`main`; S2/S3/S4; S9 idempotency; S10 non-persistable reporting (pulled forward from Slice 3 — it fell out of the materialiser for free); S11 no warning storm. | **PASSED.** 8 regression tests, each RED against a HEAD-built binary. |
 | **2** | **S5 + E2400**, naming the *earlier* item. | §4.1 exactly, including unchanged session state afterward. |
-| **3** | S6 trailing values, S7 + §4.4 scoping, S10 non-persistable reporting (promote `AXON_DUMP_SHAPES`). | A panic in cell N leaves N-1 usable; a closure binding is NAMED, not silently absent. |
+| **3** | S6 trailing values, S7 + §4.4 scoping. (S10 landed early in Slice 1.) | A panic in cell N leaves N-1 usable. |
 | **4** | §5 A1–A5 + S8. Includes A3's new machinery. | A recorded session replays whole; a split effect is refused at the ceiling. |
 | **5** | `--protocol jsonl` host driver. | An external host drives 20 cells and reads per-cell results. |
 
@@ -400,7 +401,7 @@ That is worth keeping as a test, because an exportable session is how a session'
 
 | # | Question | Default if undecided |
 |---|---|---|
-| **Q1** | **REPLACED.** Was "can one `Interp` be held across cells without stale `RefCell` borrows" — the wrong hazard (§2.2). Now: **does the v1 (c) substrate carry a real session?** Slice 0 answers it against §4.3 and §1.2. | v1 = (c) on the shipped prototype. |
+| **Q1** | ✅ **RESOLVED 2026-09-16 by the Slice-0 spike.** v1 = (c). All four hazards passed; §4.3 and §4.2 turned out not to bite v1 *at all* — a fresh parse per cell makes the re-check idempotent for free, and materialisation pins types for free. Both are now regression-tested rather than assumed. | — |
 | Q2 | **REVISED.** Was "are partial-cell bindings discarded" — answered in §4.4 (discarded; effects are not undone; the latch survives). Remaining: should a cell that *effected* before failing be marked in the transcript, so a replay shows it? | Yes — mark it. An invisible partial cell is the same absent-vs-passed defect audited across seven surfaces this cycle. |
 | Q3 | Does `--require-contained` belong here or in its own spec? | Its own — it is meaningful for one-shot `check` too. S8 only requires they compose. |
 | Q4 | When does v2 (b)+(d) open? | Only when measurement shows S10's refusal set actually bites — i.e. real sessions lose real work to closures/aliased dicts. Not before. |
@@ -437,7 +438,39 @@ supplying **code**. Recorded so the false edge is not re-added.
 
 ## 14. Evidence ledger
 
-Draft — no implementation code before Q1 clears Slice 0 (`BUILD_PROTOCOL.md` Gate 1).
+Slice 0 cleared and Slice 1 landed 2026-09-16. Slices 2–5 remain.
+
+**Slice 0 — the kill-gated spike.** Composed a real session (module items accumulated as text,
+bindings materialised back) and ran all four hazards:
+
+| Hazard | Result |
+|---|---|
+| H1 §1.2 — assignment to a persisted binding | PASS — `rows = rows + [99]` → len 2→3, then sum 102 in a later cell |
+| H2 §4.3 — a `use` in cell 1 breaking cell 2 | PASS — no E0002; a fresh parse per cell makes the re-check idempotent |
+| H3 §4.2 — type pinning | PASS — `let x = 1` materialised; `x + 1` = 2 after `make` was redefined |
+| H4 — redefinition today | E0002 + E0102, i.e. Slice 2's work, as specced |
+
+§4.3 and §4.2 turned out **not to bite v1 at all**. Both are now regression-tested rather than
+assumed, because a property that holds by accident is one a later refactor removes silently.
+
+**Slice 1 — landed.** `axon session` (+ `--protocol jsonl`, `--show-program`); the prototype's
+materialiser promoted from env-var-only to an API (`set_session_capture` / `take_session_result`);
+S1 bindings-in-`main`; S4 failed cells do not accumulate; S10 non-persistable bindings named (pulled
+forward — it fell out of the materialiser for free); S11 no warning storm.
+
+8 regression tests, **each RED against a HEAD-built binary**. One initially passed vacuously — with
+no `session` verb the binary emits nothing, which satisfies "zero warnings" trivially — and now
+asserts the session ran before asserting it was quiet.
+
+Two defects found while building, both worth recording because neither would have surfaced from
+reading:
+
+* `SESSION_RESULT` was first a `thread_local`. `on_deep_stack` runs the program on a separate thread
+  (the interpreter needs a bigger stack), so every cell read `None` and the symptom was *"every cell
+  failed at runtime"* — a misleading enough presentation to be worth the comment now in the source.
+* `value_as_literal`'s skip reason was the Rust `Debug` of the value, so a closure that could not
+  persist reported `Closure { params: ["x"], body: BinOp { op: Add, … } }`. It is a shape now — the
+  message exists to tell a reader what happened to their binding.
 
 | Claim | Evidence | Where |
 |---|---|---|

@@ -1216,7 +1216,11 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
         // value only if it can write it down, and these cannot be written as a
         // literal today. Reported by name so the caller can say WHICH binding
         // was dropped, which is the whole contract of a skip list.
-        other => Err(format!("{other:?} has no literal form")),
+        // The SHAPE, not the Rust `Debug`. This message is read by a person (or
+        // a model) deciding what to do about a binding that did not survive a
+        // cell; `Closure { params: ["x"], body: BinOp { op: Add, left: … } }`
+        // tells them nothing actionable and buries the one word that matters.
+        other => Err(format!("a {} has no literal form", value_shape(other))),
     }
 }
 
@@ -2176,6 +2180,160 @@ fn pin_ai_net_allowlist(_program: &Program) {}
 /// original and a transformed program — collapsing 6 and 7 both to 1 would make
 /// a meaning-changing rewrite look equivalent — and the interpreter's own tests,
 /// which use the return as the cheapest way to read a computed result out.
+/// R44 Slice 1 — session capture, the API twin of `AXON_DUMP_BINDINGS`.
+///
+/// The prototype this grew from was driven entirely by env vars, which is fine
+/// for an external driver but absurd for `axon session`: the session process
+/// would have to set an environment variable on itself to talk to its own
+/// interpreter, and then read its own answer back off the filesystem. This flag
+/// is the same signal delivered in-process. The env vars still work — they are
+/// the surface existing tests and external drivers already use.
+static SESSION_CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `(materialised_bindings, shape_inventory)` from the most recent session run.
+///
+/// Taken, not read: leaving a stale result behind would let a cell that produced
+/// nothing silently inherit the previous cell's bindings.
+///
+/// A `Mutex`, NOT a `thread_local` — `on_deep_stack` runs the program on a
+/// separate thread (the interpreter needs a bigger stack than the default), so a
+/// thread-local result is stashed on a thread the caller never sees and every
+/// cell reads `None`. That mistake presents exactly as "every cell failed at
+/// runtime", which is a misleading enough symptom to be worth the comment.
+static SESSION_RESULT: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
+/// Enable in-process session capture (R44). Returns the previous setting.
+pub fn set_session_capture(on: bool) -> bool {
+    SESSION_CAPTURE.swap(on, std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) fn session_capture() -> bool {
+    SESSION_CAPTURE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Take the `(bindings, shapes)` produced by the last session run, clearing it.
+///
+/// `None` means the run did not complete successfully — which is exactly the
+/// case in which the session must NOT advance (R44 §4 S4).
+pub fn take_session_result() -> Option<(String, String)> {
+    SESSION_RESULT.lock().ok().and_then(|mut g| g.take())
+}
+
+/// Every binding visible at the end of `main`, as `name → shape`.
+///
+/// Describes EVERY binding, including ones [`materialise_bindings`] had to skip:
+/// a closure or an aliased dict cannot be persisted, but its structure can still
+/// be described, and a name the model can see but not reuse is the case it most
+/// needs told about (R44 §4 S10).
+fn describe_bindings(interp: &Interp) -> String {
+    let locals = interp.main_locals.borrow();
+    let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
+    for (k, v) in locals.iter() {
+        merged.insert(k, v);
+    }
+    let mut names: Vec<&&String> = merged.keys().collect();
+    names.sort();
+    let mut out = String::new();
+    for name in names {
+        out.push_str(&format!("{name}: {}\n", value_shape(merged[*name])));
+    }
+    out
+}
+
+/// The session's bindings as Axon source literals, for the next cell's prelude.
+///
+/// `main`'s final top-level locals override globals of the same name — a cell
+/// that mutated a binding persists the mutated value.
+fn materialise_bindings(interp: &Interp) -> String {
+    let locals = interp.main_locals.borrow();
+    let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
+    for (k, v) in locals.iter() {
+        merged.insert(k, v);
+    }
+    let mut names: Vec<&&String> = merged.keys().collect();
+    names.sort();
+
+    // A `Dict` is `Rc<RefCell<..>>` — SHARED MUTABLE state. Writing two aliasing
+    // bindings out as two `dict_from_pairs(..)` calls would reconstruct them as
+    // two INDEPENDENT dicts, so a later `dict_set(a, ..)` would stop being
+    // visible through `b`. That is a silent semantic change across a cell
+    // boundary, which is exactly the class of thing this session refuses rather
+    // than fudges (the same call R15 made for `Chan`). So: find every dict
+    // reachable from more than one binding and skip it with a reason.
+    let mut seen: HashMap<*const (), usize> = HashMap::new();
+    fn count_dicts(v: &Value, seen: &mut HashMap<*const (), usize>) {
+        match v {
+            Value::Dict(d) => {
+                let key = Rc::as_ptr(d) as *const ();
+                let e = seen.entry(key).or_insert(0);
+                *e += 1;
+                // Descend only the FIRST time this dict is seen. A dict can
+                // contain itself (`dict_set(d, "self", d)`), and an
+                // unconditional recursion would not terminate — a hang at
+                // session-dump time, which is worse than the aliasing bug this
+                // guard exists to prevent.
+                if *e == 1 {
+                    for inner in d.borrow().values() {
+                        count_dicts(inner, seen);
+                    }
+                }
+            }
+            Value::Array(items) | Value::Tuple(items) => {
+                for it in items {
+                    count_dicts(it, seen);
+                }
+            }
+            Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
+                for f in fields.values() {
+                    count_dicts(f, seen);
+                }
+            }
+            Value::Some(i) | Value::Ok(i) | Value::Err(i) => count_dicts(i, seen),
+            _ => {}
+        }
+    }
+    for name in &names {
+        count_dicts(merged[**name], &mut seen);
+    }
+    let is_aliased = |v: &Value| -> bool {
+        matches!(v, Value::Dict(d) if seen.get(&(Rc::as_ptr(d) as *const ())).copied().unwrap_or(0) > 1)
+    };
+
+    let mut lines = String::new();
+    for name in names {
+        // A binding that SHADOWS A BUILTIN must not persist. It is legal Axon
+        // inside one cell — `let len = 5` merely warns (W0002) — but once it
+        // reaches the prelude, every later cell that calls `len(xs)` dies with
+        // E0306 "cannot call non-function value", and the session never
+        // recovers. Measured: one task naming a variable `len` poisoned 14 of
+        // the following cells in a tasks_hard run, which scored as Axon failing
+        // tasks it can actually do.
+        //
+        // Skipping loses the value, which is why it is REPORTED — the
+        // alternative is a session that silently breaks a builtin for every cell
+        // after this one.
+        if crate::builtins::is_known_builtin(name) {
+            lines.push_str(&format!(
+                "// SKIPPED {name}: shadows the builtin `{name}`; persisting it would \
+                 break every later call to it\n"
+            ));
+            continue;
+        }
+        if is_aliased(merged[*name]) {
+            lines.push_str(&format!(
+                "// SKIPPED {name}: dict is shared with another binding; writing it out \
+                 would split it into independent copies\n"
+            ));
+            continue;
+        }
+        match value_as_literal(merged[*name]) {
+            Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
+            Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),
+        }
+    }
+    lines
+}
+
 fn run_program_inner(
     program: &Program,
     discharged: crate::verify::Discharged,
@@ -2192,122 +2350,25 @@ fn run_program_inner(
         return 2;
     }
     let outcome = interp.init_globals().and_then(|()| interp.run_main());
-    // §5: hand the session its bindings back, as literals. Written after
-    // `run_main` so a cell's own top-level `let`s are included at their final
-    // values. Only on success — a cell that failed must not mutate the session.
+    // R44 Slice 1: materialise the session's bindings. Two consumers now — the
+    // AXON_DUMP_* env vars (the original prototype surface, kept so existing
+    // tests and external drivers keep working) and `axon session`, which calls
+    // the API rather than setting an env var on itself to talk to its own
+    // interpreter. Only on success: a cell that failed must not mutate the
+    // session (R44 §4 S4).
     if outcome.is_ok() {
-        // The SHAPE inventory (arm A) — a sibling of the literal dump, not a
-        // part of it. It describes EVERY binding, including the ones the
-        // literal dump skipped: a closure or an aliased dict cannot be
-        // persisted, but its structure can still be described, and a name the
-        // model can see but not reuse is the case it most needs told about.
-        if outcome.is_ok() {
-            if let Ok(spath) = std::env::var("AXON_DUMP_SHAPES") {
-                let locals = interp.main_locals.borrow();
-                let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
-                for (k, v) in locals.iter() {
-                    merged.insert(k, v);
-                }
-                let mut snames: Vec<&&String> = merged.keys().collect();
-                snames.sort();
-                let mut sl = String::new();
-                for name in snames {
-                    sl.push_str(&format!("{name}: {}\n", value_shape(merged[*name])));
-                }
-                let _ = std::fs::write(spath, sl);
+        if session_capture() {
+            let b = materialise_bindings(&interp);
+            let s = describe_bindings(&interp);
+            if let Ok(mut g) = SESSION_RESULT.lock() {
+                *g = Some((b, s));
             }
         }
+        if let Ok(spath) = std::env::var("AXON_DUMP_SHAPES") {
+            let _ = std::fs::write(spath, describe_bindings(&interp));
+        }
         if let Ok(path) = std::env::var("AXON_DUMP_BINDINGS") {
-            let mut lines = String::new();
-            // PROTOTYPE (RLM session option 2): main's final top-level locals
-            // override globals of the same name — a cell that mutated a local
-            // persists the mutated value.
-            let locals = interp.main_locals.borrow();
-            let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
-            for (k, v) in locals.iter() {
-                merged.insert(k, v);
-            }
-            let mut names: Vec<&&String> = merged.keys().collect();
-            names.sort();
-            // A `Dict` is `Rc<RefCell<..>>` — SHARED MUTABLE state. Writing two
-            // aliasing bindings out as two `dict_from_pairs(..)` calls would
-            // reconstruct them as two INDEPENDENT dicts, so a later
-            // `dict_set(a, ..)` would stop being visible through `b`. That is a
-            // silent semantic change across a cell boundary, which is exactly
-            // the class of thing this session refuses rather than fudges (the
-            // same call R15 made for `Chan`). So: find every dict reachable
-            // from more than one binding and skip it with a reason.
-            let mut seen: HashMap<*const (), usize> = HashMap::new();
-            fn count_dicts(v: &Value, seen: &mut HashMap<*const (), usize>) {
-                match v {
-                    Value::Dict(d) => {
-                        let key = Rc::as_ptr(d) as *const ();
-                        let e = seen.entry(key).or_insert(0);
-                        *e += 1;
-                        // Descend only the FIRST time this dict is seen. A dict
-                        // can contain itself (`dict_set(d, "self", d)`), and an
-                        // unconditional recursion would not terminate — a hang
-                        // at session-dump time, which is worse than the aliasing
-                        // bug this guard exists to prevent.
-                        if *e == 1 {
-                            for inner in d.borrow().values() {
-                                count_dicts(inner, seen);
-                            }
-                        }
-                    }
-                    Value::Array(items) | Value::Tuple(items) => {
-                        for it in items {
-                            count_dicts(it, seen);
-                        }
-                    }
-                    Value::Struct { fields, .. } | Value::Enum { fields, .. } => {
-                        for f in fields.values() {
-                            count_dicts(f, seen);
-                        }
-                    }
-                    Value::Some(i) | Value::Ok(i) | Value::Err(i) => count_dicts(i, seen),
-                    _ => {}
-                }
-            }
-            for name in &names {
-                count_dicts(merged[**name], &mut seen);
-            }
-            let is_aliased = |v: &Value| -> bool {
-                matches!(v, Value::Dict(d) if seen.get(&(Rc::as_ptr(d) as *const ())).copied().unwrap_or(0) > 1)
-            };
-            for name in names {
-                // A binding that SHADOWS A BUILTIN must not persist. It is legal
-                // Axon inside one cell — `let len = 5` merely warns (W0002) —
-                // but once it reaches the prelude, every later cell that calls
-                // `len(xs)` dies with E0306 "cannot call non-function value",
-                // and the session never recovers. Measured: one task naming a
-                // variable `len` poisoned 14 of the following cells in a
-                // tasks_hard run, which scored as Axon failing tasks it can
-                // actually do.
-                //
-                // Skipping loses the value, which is why it is REPORTED — the
-                // alternative is a session that silently breaks a builtin for
-                // every cell after this one.
-                if crate::builtins::is_known_builtin(name) {
-                    lines.push_str(&format!(
-                        "// SKIPPED {name}: shadows the builtin `{name}`; persisting it would \
-                         break every later call to it\n"
-                    ));
-                    continue;
-                }
-                if is_aliased(merged[*name]) {
-                    lines.push_str(&format!(
-                        "// SKIPPED {name}: dict is shared with another binding; writing it out \
-                         would split it into independent copies\n"
-                    ));
-                    continue;
-                }
-                match value_as_literal(merged[*name]) {
-                    Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
-                    Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),
-                }
-            }
-            let _ = std::fs::write(path, lines);
+            let _ = std::fs::write(path, materialise_bindings(&interp));
         }
     }
     // Two different things, deliberately judged by two different rules: a status
@@ -2964,7 +3025,8 @@ impl<'p> Interp<'p> {
         // frame's final locals for the dump.
         let capture = f.name == "main"
             && self.call_depth.get() == 1
-            && (std::env::var("AXON_DUMP_BINDINGS").is_ok()
+            && (session_capture()
+                || std::env::var("AXON_DUMP_BINDINGS").is_ok()
                 || std::env::var("AXON_DUMP_SHAPES").is_ok());
         let body_result = if capture {
             if let Expr::Block(stmts) = &f.body {
