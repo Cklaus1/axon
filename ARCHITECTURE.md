@@ -54,17 +54,40 @@ to implement a builtin in one engine and assume the other follows.
 
 ## 3. Pipeline
 
+```mermaid
+flowchart TD
+    SRC[".ax source"] --> LEX["lexer.rs<br/>logos tokenizer"]
+    LEX --> PAR["parser.rs<br/>recursive descent"]
+    PAR --> AST["AST<br/>ast.rs"]
+    AST --> RES["resolver.rs<br/>names, scopes, lints"]
+    RES --> INF["infer.rs<br/>Hindley-Milner"]
+    INF --> CHK["checker.rs<br/>semantic rules, refinements"]
+    CHK --> CAP["capabilities.rs / effects.rs<br/>contained + effect rows"]
+    CAP --> INTERP["interp.rs<br/>tree-walking"]
+    CAP --> CODEGEN["codegen/ + cc link<br/>LLVM IR via inkwell"]
+    INTERP -. "is the reference semantics for" .-> CODEGEN
+
+    PAR -. "E0000" .-> D[ ]
+    RES -. "E0001 E0002 E0003" .-> D
+    INF -. "E0102 E0306 E0307" .-> D
+    CHK -. "E12xx E1207-9 E13xx" .-> D
+    CAP -. "E1001-E1004 E1310" .-> D
+    CODEGEN -. "E0910 refuse-if-unlowerable" .-> D
+    D(["diagnostics<br/>axon-diag/1"])
+
+    style INTERP fill:#2d6a4f,color:#fff
+    style CODEGEN fill:#40404a,color:#fff
+    style D fill:#7a3b2e,color:#fff
 ```
-.ax source
-  → lexer.rs      logos tokenizer
-  → parser.rs     recursive descent → AST (ast.rs)
-  → resolver.rs   name resolution, scopes, unused-binding lints
-  → infer.rs      Hindley-Milner, constraint solving (types.rs)
-  → checker.rs    semantic rules, refinements, diagnostics
-  → capabilities.rs / effects.rs   @[contained] + effect-row enforcement
-  → [ interp.rs         tree-walking execution        ]   ← default
-  → [ codegen/ + link   LLVM IR via inkwell → cc      ]   ← axon build
-```
+
+The dotted edges are the point: **each phase owns an error band**, so a code tells you where it came
+from. `E0000` is the parse tier — historically where 100% of a model's failures landed, which is why
+parse diagnostics carry `help` naming the foreign-language habit (`mut`, `const`, `def`) rather than
+the token that confused the parser.
+
+Codegen's edge is the unusual one. `E0910` is not a failure to compile; it is a **refusal**: a
+construct the interpreter supports and codegen cannot faithfully lower is rejected at build time
+rather than mis-lowered. Sound-by-refusal is the house pattern.
 
 Rough sizes, to calibrate where the mass is: `checker.rs` ~8k lines, `main.rs` ~7.9k (the CLI, 25
 verbs), `interp.rs` ~5.1k, `parser.rs` ~4.8k, `builtins.rs` ~3.1k, `resolver.rs` ~3k. `axon-core` is
@@ -140,6 +163,34 @@ for it sat in the repo, and rejected the right answer on a property that impleme
 
 ## 6. The safety architecture
 
+```mermaid
+flowchart LR
+    subgraph COMPILE["compile time"]
+        direction TB
+        L1["1 · static capability<br/>@[contained]<br/><b>E1001-E1004</b>"]
+        L2["2 · effect rows<br/>fn f() -> T | {IO, Net}<br/><b>E1310</b>"]
+    end
+    subgraph RUN["run time"]
+        direction TB
+        L3["3 · runtime sandbox<br/>sandbox_run / AXON_ALLOWED_EFFECTS<br/><b>exit 8</b>"]
+    end
+    subgraph AFTER["after the fact"]
+        direction TB
+        L4["4 · provenance + replay<br/>AXON_RECORD / AXON_REPLAY<br/><b>exit 11 on divergence</b>"]
+    end
+
+    CODE["AI-written .ax"] --> L1 --> L2 --> L3 --> L4
+    L1 -. "refuses I/O outside the grant,<br/>transitively" .-> X1["build fails"]
+    L2 -. "refuses an effect<br/>hidden behind a helper" .-> X1
+    L3 -. "refuses an effect above<br/>the ambient ceiling" .-> X2["run halts"]
+    L4 -. "the run cannot claim<br/>to be one that did not happen" .-> X3["audit"]
+
+    style L1 fill:#2d4a6a,color:#fff
+    style L2 fill:#2d4a6a,color:#fff
+    style L3 fill:#6a4a2d,color:#fff
+    style L4 fill:#4a2d6a,color:#fff
+```
+
 Four layers, deliberately redundant:
 
 1. **Static capability check.** `@[contained(fs: […], net: […], exec: none, never: […])]` is
@@ -167,6 +218,52 @@ The 15 numbered invariants in `governance/ARCHITECTURE_INVARIANTS.md` (I-1 … I
 commits and reviews (`preserves I-7`). A change that breaks one is wrong by definition, even if its
 tests pass; the correct move is to propose the invariant change explicitly, as `R13-native-ffi.md`
 did when native FFI forced I-11 from *total* to *edge-enforced + trusted-within*.
+
+---
+
+## 6.5 The accumulating session (R44), as a worked mechanism
+
+The newest subsystem, and the one whose shape is least guessable from its name. A session is **text**,
+not a live interpreter — which is what buys two properties that a live-value design cannot have.
+
+```mermaid
+sequenceDiagram
+    participant H as host / human
+    participant S as axon session
+    participant C as checker
+    participant I as interpreter
+
+    H->>S: cell N (items + statements)
+    S->>S: items replace by name<br/>statements go inside main
+    Note over S: prelude = prior bindings,<br/>materialised as literals
+    S->>C: check the WHOLE accumulated program
+    alt an earlier item no longer type-checks
+        C-->>S: E2400 naming the broken item
+        S-->>H: refused — session unchanged
+    else clean
+        C-->>I: run only the new tail
+        I-->>S: stdout + final bindings
+        S->>S: materialise bindings for cell N+1
+        S-->>H: axon-session/1 frame
+    end
+```
+
+**Why materialise rather than keep values live?** Two reasons, both discovered by building it:
+
+* **Types get pinned.** A binding arrives in the next cell as the literal it evaluated to. Keeping
+  live values would re-infer `let x = make()` against a *redefined* `make` while the heap still held
+  the old value — a wrong answer with a compile-time blessing on top.
+* **The re-check stays idempotent.** Each cell is parsed fresh, so `load_use_decls` — which *prepends*
+  imported items and tracks "already loaded" per call — runs exactly once. Re-checking one long-lived
+  program would duplicate every import and fail cell 2 with `E0002`.
+
+The cost is honest and reported, never silent: a closure, a `Chan`, an aliased dict or a native
+`Handle` cannot cross a cell boundary, so each is **named with its reason** rather than dropped. A
+name the model can see but not reuse is the case it most needs told about.
+
+A live-`Interp` design (carrying closures across cells) is possible but blocked: `Interp<'p>` holds
+`&'p FnDef` references into the `Program`, so appending to the accumulated program while the
+interpreter borrows it cannot borrow-check. That is spec R44 §2.4 — a real refactor, not a tweak.
 
 ---
 
