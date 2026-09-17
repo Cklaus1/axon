@@ -376,7 +376,20 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
 /// enumerate them: `axon reference` could list 25 verbs and 338 builtins and
 /// not one of the ~138 codes a user actually hits.
 ///
-/// A code marked RESERVED is declared but emitted nowhere. Listing those as if
+/// A code marked RESERVED is declared but emitted nowhere, and its description
+/// says WHERE the condition is actually reported instead — established by
+/// probing the real compiler, not by reading the specs that reserved the code.
+/// ELEVEN of the thirteen are duplicates of codes that already exist and give
+/// better messages (E0803's condition is E0504's "fn `render` requires `T: Show`,
+/// but `i64` does not implement `Show`"); TWO belong to unbuilt features
+/// (E0912 browser AOT link, E1701/E1703 HAL — three codes, two features). Only
+/// E0801 (generic instantiation depth) names a bound nothing enforces, and it
+/// would take polymorphic recursion to reach.
+///
+/// So none should be wired: a reader who meets one in an old log needs a
+/// POINTER, not a second implementation of a diagnostic that already exists.
+///
+/// Listing those as if
 /// they were live would be the same defect the reference exists to fix — a
 /// document that cannot say "no".
 ///
@@ -399,12 +412,12 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0307", "return type mismatch between the declared type and the body"),
     ("E0308", "unknown type named in a signature or annotation"),
     ("E0309", "type-check rule violation (Phase-1 R08)"),
-    ("E0310", "RESERVED — superseded by W0006 (unused variable); not emitted"),
-    ("E0311", "RESERVED — dead code after return; not emitted"),
-    ("E0312", "RESERVED — superseded by E0304 (non-exhaustive match); not emitted"),
-    ("E0313", "RESERVED — superseded by E0306 (calling a non-function value); not emitted"),
-    ("E0314", "RESERVED — superseded by E0102 (arithmetic on non-numeric type); not emitted"),
-    ("E0315", "RESERVED — superseded by E0102 (assignment type mismatch); not emitted"),
+    ("E0310", "RESERVED — the condition is reported as W0006 (unused variable); never emitted under this code"),
+    ("E0311", "RESERVED — the condition is reported as W0005 (unreachable code), with a help; never emitted under this code"),
+    ("E0312", "RESERVED — the condition is reported as E0304 (non-exhaustive match); never emitted under this code"),
+    ("E0313", "RESERVED — the condition is reported as E0306 (cannot call a non-function value); never emitted under this code"),
+    ("E0314", "RESERVED — the condition is reported as E0102 (arithmetic on non-numeric type); never emitted under this code"),
+    ("E0315", "RESERVED — the condition is reported as E0102 (assignment type mismatch); never emitted under this code"),
     ("E0401", "struct has no field"),
     ("E0402", "indexing a non-indexable (non-array) type"),
     ("E0403", "calling a data field as a method (`p.x()`)"),
@@ -423,9 +436,9 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0702", "comptime integer division by zero"),
     ("E0703", "comptime integer overflow"),
     ("E0800", "LSP: source could not be parsed (document-level diagnostic)"),
-    ("E0801", "generic instantiation depth exceeded — RESERVED, not currently emitted"),
-    ("E0802", "cannot infer type argument — RESERVED, not currently emitted"),
-    ("E0803", "type argument does not satisfy bound — RESERVED, not currently emitted"),
+    ("E0801", "RESERVED — generic instantiation depth; no bound is enforced today (would need polymorphic recursion to trigger)"),
+    ("E0802", "RESERVED — the condition is reported as E0102 (type mismatch in the argument); never emitted under this code"),
+    ("E0803", "RESERVED — the condition is reported as E0504 (trait bound not satisfied), with a better message; never emitted under this code"),
     ("E0901", "module not found (AXON_PATH search failed)"),
     ("E0902", "circular import between source files"),
     ("E0903", "duplicate top-level name across files"),
@@ -433,10 +446,10 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0905", "cross-compilation needs sysroot (cross.toml missing)"),
     ("E0906", "cache entry corrupt or wrong compiler version"),
     ("E0907", "AOT wasm build needs the native codegen backend (R7)"),
-    ("E0908", "no engine supports the requested target triple (R7) — RESERVED, not currently emitted"),
+    ("E0908", "RESERVED — the condition is reported as E0904 (target not supported by this LLVM build); never emitted under this code"),
     ("E0910", "builtin / construct has no native codegen lowering — honest abort, runs under the interpreter"),
     ("E0911", "browser target (--host browser): a browser-incompatible builtin can't run in the tab — clean refusal mirroring E0910 (R7c)"),
-    ("E0912", "browser AOT link failed, wasm-bindgen/export step (R7c) — RESERVED, not currently emitted"),
+    ("E0912", "RESERVED — browser AOT link failure (R7c); the feature is unbuilt, so the condition cannot arise"),
     ("W0913", "sleep_ms is a no-op on the browser host (main thread can't block) (R7c)"),
     ("E1001", "I/O call not permitted by @[contained] spec"),
     ("E1002", "@[contained] clause is malformed"),
@@ -488,9 +501,9 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E2204", "base64/hex decode: invalid input, or bytes that are not valid UTF-8"),
     ("E2205", "re_replace_all: replacement references a capture group the pattern does not have"),
     ("E1700", "raw pointer `*T`, volatile_*, ptr_from_addr, or @[hal] used in a `surface` file"),
-    ("E1701", "@[hal] fn calls a hardware primitive without the Hal capability (R17) — RESERVED, not currently emitted"),
+    ("E1701", "RESERVED — @[hal] capability check (R17); the feature is unbuilt, so the condition cannot arise"),
     ("E1702", "freestanding build has no @[entry] or @[panic_handler]"),
-    ("E1703", "surface caller reaches a Hal-effected fn without declaring | {Hal} (R17) — RESERVED, not currently emitted"),
+    ("E1703", "RESERVED — surface caller reaching a Hal-effected fn (R17); the feature is unbuilt, so the condition cannot arise"),
     ("E1704", "@[no_alloc] fn reaches a heap-allocating builtin (ISR/early-boot alloc-free guarantee)"),
     ("E1706", "R17 Slice 2: atomic ordering arg is not a compile-time literal in 0..=4"),
     ("E1707", "R17 §12 Q7: fn_addr's argument is not a compile-time string literal, or names no known function"),
