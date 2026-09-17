@@ -55,39 +55,34 @@ to implement a builtin in one engine and assume the other follows.
 ## 3. Pipeline
 
 ```mermaid
-flowchart TD
-    SRC[".ax source"] --> LEX["lexer.rs<br/>logos tokenizer"]
-    LEX --> PAR["parser.rs<br/>recursive descent"]
-    PAR --> AST["AST<br/>ast.rs"]
-    AST --> RES["resolver.rs<br/>names, scopes, lints"]
-    RES --> INF["infer.rs<br/>Hindley-Milner"]
-    INF --> CHK["checker.rs<br/>semantic rules, refinements"]
-    CHK --> CAP["capabilities.rs / effects.rs<br/>contained + effect rows"]
-    CAP --> INTERP["interp.rs<br/>tree-walking"]
-    CAP --> CODEGEN["codegen/ + cc link<br/>LLVM IR via inkwell"]
-    INTERP -. "is the reference semantics for" .-> CODEGEN
-
-    PAR -. "E0000" .-> D[ ]
-    RES -. "E0001 E0002 E0003" .-> D
-    INF -. "E0102 E0306 E0307" .-> D
-    CHK -. "E12xx E1207-9 E13xx" .-> D
-    CAP -. "E1001-E1004 E1310" .-> D
-    CODEGEN -. "E0910 refuse-if-unlowerable" .-> D
-    D(["diagnostics<br/>axon-diag/1"])
-
-    style INTERP fill:#2d6a4f,color:#fff
-    style CODEGEN fill:#40404a,color:#fff
-    style D fill:#7a3b2e,color:#fff
+flowchart LR
+    SRC([".ax<br/>source"]) --> LEX["lexer.rs<br/>tokenize"] --> PAR["parser.rs<br/>recursive<br/>descent"]
+    PAR --> RES["resolver.rs<br/>names,<br/>scopes"] --> INF["infer.rs<br/>Hindley-<br/>Milner"]
+    INF --> CHK["checker.rs<br/>semantic rules,<br/>refinements"]
+    style SRC fill:#e8ecf2
 ```
 
-The dotted edges are the point: **each phase owns an error band**, so a code tells you where it came
-from. `E0000` is the parse tier — historically where 100% of a model's failures landed, which is why
-parse diagnostics carry `help` naming the foreign-language habit (`mut`, `const`, `def`) rather than
-the token that confused the parser.
+```mermaid
+flowchart LR
+    CHK["checker.rs"] --> CAP["capabilities.rs<br/>effects.rs<br/>@[contained] +<br/>effect rows"]
+    CAP --> INTERP["<b>interp.rs</b><br/>tree-walking<br/><i>the reference<br/>semantics</i>"]
+    CAP --> CODEGEN["codegen/ + cc<br/>LLVM via inkwell<br/><i>E0910 refuses what<br/>it cannot lower</i>"]
+    INTERP -. "every divergence is<br/>a codegen bug (I-2)" .-> CODEGEN
+    style INTERP fill:#2d6a4f,color:#fff
+    style CODEGEN fill:#40404a,color:#fff
+    style CHK fill:#e8ecf2
+```
 
-Codegen's edge is the unusual one. `E0910` is not a failure to compile; it is a **refusal**: a
-construct the interpreter supports and codegen cannot faithfully lower is rejected at build time
-rather than mis-lowered. Sound-by-refusal is the house pattern.
+**Each phase owns an error band**, so a code tells you which one rejected your program:
+
+| Phase | Codes |
+|---|---|
+| `parser.rs` | `E0000` — the parse tier, historically where 100% of a model's failures landed, which is why it carries `help` naming the foreign habit (`mut`, `const`, `def`) rather than the confusing token |
+| `resolver.rs` | `E0001`–`E0003`, `W0005` unreachable, `W0006` unused |
+| `infer.rs` | `E0102` type mismatch, `E0305`–`E0308` |
+| `checker.rs` | `E0304` non-exhaustive, `E0401`, `E0504` bounds, `E12xx` capabilities/purity, `E13xx` AI policy + effects |
+| `capabilities.rs` | `E1001`–`E1005` (`E1005` = `--require-contained`, R45), `E1310` effect subsumption |
+| `codegen/` | `E0910` — **a refusal, not a failure**: a construct the interpreter supports and codegen cannot faithfully lower is rejected at build time rather than mis-lowered. Sound-by-refusal is the house pattern |
 
 Rough sizes, to calibrate where the mass is: `checker.rs` ~8k lines, `main.rs` ~7.9k (the CLI, 25
 verbs), `interp.rs` ~5.1k, `parser.rs` ~4.8k, `builtins.rs` ~3.1k, `resolver.rs` ~3k. `axon-core` is

@@ -1,23 +1,46 @@
 #!/usr/bin/env python3
 """Bundle the finalized Axon docs into one PDF.
 
-Deliberately dependency-light (reportlab only): pandoc/LaTeX are not installed
-on this host and requiring them would make the bundle un-regenerable. Mermaid
-blocks are rendered as labelled source rather than images — a diagram that
-silently vanished from the PDF would be worse than one shown as its definition,
-and the .md files remain the place diagrams actually render.
+Mermaid blocks are RENDERED to images when a renderer is available and embedded;
+otherwise they fall back to labelled source. The fallback is deliberate and
+loud — a diagram that silently vanished would be worse than one shown as its
+definition — and every fallback is counted and reported at the end, so "no
+diagrams rendered" can never look like "there were no diagrams".
 
-Usage: python3 scripts/docs_pdf.py [OUT.pdf]
+Renderer: `mmdc` (@mermaid-js/mermaid-cli), found via $MMDC or on PATH. It drives
+headless Chrome, which needs --no-sandbox in this container; the flags go in a
+puppeteer config written next to the temp files. Without them Chrome exits 1 and
+EVERY diagram silently becomes source — which is why the fallback is counted.
+
+    npm install --prefix /somewhere @mermaid-js/mermaid-cli
+    MMDC=/somewhere/node_modules/.bin/mmdc python3 scripts/docs_pdf.py out.pdf
+
+Diagram shape matters more than resolution. A long node chain is either very tall
+(9 nodes top-down rendered 1:3.95) or very flat (the same chain left-to-right,
+1:0.07 — text unreadable once scaled to a 6.9in column). Keep each diagram to
+~5 nodes so it lands near 1:0.2–1:0.8, and put tabular content (error-code bands)
+in a TABLE rather than in node labels. `direction LR` inside a subgraph does not
+help: mermaid ignores it when external edges cross the subgraph.
+
+Body text stays reportlab-only: pandoc and LaTeX are not installed here, and
+requiring them would make the bundle un-regenerable.
+
+Usage:  python3 scripts/docs_pdf.py [OUT.pdf]
+Env:    MMDC=/path/to/mmdc   (optional; skips rendering if absent)
 """
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Preformatted, PageBreak, Table, TableStyle,
+    SimpleDocTemplate, Paragraph, Spacer, Preformatted, PageBreak, Table, TableStyle, Image,
 )
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,6 +56,58 @@ DOCS = [
     ("governance/ARCHITECTURE_INVARIANTS.md", "Invariants — the rules no change may break"),
     ("governance/EXIT_CODES.md", "Exit codes"),
 ]
+
+# ── Mermaid rendering ────────────────────────────────────────────────────────
+
+MMDC = os.environ.get("MMDC") or shutil.which("mmdc")
+RENDERED = []        # diagrams successfully embedded
+UNRENDERED = []      # diagrams that fell back to source, with the reason
+
+_TMP = tempfile.mkdtemp(prefix="axon_mmd_")
+_PCONF = os.path.join(_TMP, "puppeteer.json")
+with open(_PCONF, "w", encoding="utf-8") as _fh:
+    # Chrome cannot sandbox inside this container; without these it exits 1 and
+    # every diagram silently becomes source.
+    json.dump({"args": ["--no-sandbox", "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage"]}, _fh)
+
+
+def render_mermaid(source: str, idx: int):
+    """Render one mermaid block to a PNG path, or None with the reason recorded."""
+    if not MMDC:
+        UNRENDERED.append(f"#{idx}: no mmdc on PATH (set $MMDC)")
+        return None
+    src = os.path.join(_TMP, f"d{idx}.mmd")
+    out = os.path.join(_TMP, f"d{idx}.png")
+    with open(src, "w", encoding="utf-8") as fh:
+        fh.write(source)
+    env = dict(os.environ)
+    env.setdefault("PUPPETEER_EXECUTABLE_PATH", shutil.which("google-chrome") or "")
+    try:
+        r = subprocess.run(
+            [MMDC, "-i", src, "-o", out, "-b", "white", "-s", "3", "-p", _PCONF],
+            capture_output=True, text=True, timeout=180, env=env,
+        )
+    except Exception as e:                                    # noqa: BLE001
+        UNRENDERED.append(f"#{idx}: {type(e).__name__}: {str(e)[:70]}")
+        return None
+    if r.returncode != 0 or not os.path.exists(out):
+        tail = (r.stderr or r.stdout or "").strip().splitlines()
+        UNRENDERED.append(f"#{idx}: mmdc exit {r.returncode}: {tail[-1][:70] if tail else '?'}")
+        return None
+    RENDERED.append(idx)
+    return out
+
+
+def diagram_flowable(png: str):
+    """Scale a rendered diagram to the text column, preserving aspect ratio."""
+    from reportlab.lib.utils import ImageReader
+    iw, ih = ImageReader(png).getSize()
+    avail_w = 6.9 * inch
+    avail_h = 7.6 * inch          # leave room for a caption on its own page
+    scale = min(avail_w / iw, avail_h / ih, 1.0)
+    return Image(png, width=iw * scale, height=ih * scale)
+
 
 ss = getSampleStyleSheet()
 BODY = ParagraphStyle("body", parent=ss["BodyText"], fontSize=9.2, leading=13, spaceAfter=5)
@@ -153,8 +228,17 @@ def render(md: str, flow: list) -> None:
             i += 1
             flush_table()
             if lang == "mermaid":
+                idx = len(RENDERED) + len(UNRENDERED) + 1
+                png = render_mermaid("\n".join(block), idx)
+                if png:
+                    flow.append(Spacer(1, 6))
+                    flow.append(diagram_flowable(png))
+                    flow.append(Spacer(1, 8))
+                    i += 0            # block already consumed
+                    continue
                 flow.append(para(
-                    "<i>Diagram (Mermaid) — renders in the Markdown source:</i>", BODY))
+                    "<i>Diagram (Mermaid) — could not be rendered; source follows. "
+                    "It renders in the Markdown original.</i>", BODY))
             body = "\n".join(block)
             # Long code lines would run off the page; reportlab will not wrap
             # Preformatted, so truncation is visible rather than silent.
@@ -238,6 +322,14 @@ def main() -> int:
     ).build(flow, onFirstPage=footer, onLaterPages=footer)
 
     print(f"wrote {out} ({os.path.getsize(out) // 1024} KB, {len(included)} documents)")
+    if RENDERED or UNRENDERED:
+        print(f"diagrams: {len(RENDERED)} rendered, {len(UNRENDERED)} fell back to source")
+        for u in UNRENDERED:
+            print(f"  UNRENDERED {u}")
+    else:
+        # Distinguish "no diagrams" from "rendering did nothing" — the two look
+        # identical in a PDF and only one of them is fine.
+        print("diagrams: none found in the bundled documents")
     if DEGRADED:
         print(f"NOTE: {len(DEGRADED)} paragraph(s) fell back to plain text:")
         for d in DEGRADED[:5]:
