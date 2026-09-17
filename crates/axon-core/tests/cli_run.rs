@@ -22010,3 +22010,140 @@ fn session_annotated_fn_keys_on_its_name_not_its_attribute() {
         "the redefinition must take effect: stdout={out:?} stderr={err:?}"
     );
 }
+
+#[test]
+fn session_displays_a_trailing_expression_value() {
+    // R44 §4 S6 — the one affordance borrowed from REPLs. A session whose every
+    // cell must declare a function to see a number is not usable.
+    let (out, err) = session(&[
+        "let rows = [3, 1, 2]",
+        "fn total(xs: &[i64]) -> i64 { arr_sum_by(xs, |v| v) }",
+        "total(&rows)",
+        "rows",
+        "\"hello\"",
+        "1 + 2 == 3",
+    ]);
+    for want in ["6", "[3, 1, 2]", "\"hello\"", "true"] {
+        assert!(
+            out.contains(want),
+            "trailing expression `{want}` must be displayed: stdout={out:?} stderr={err:?}"
+        );
+    }
+}
+
+#[test]
+fn session_trailing_expression_does_not_leak_its_reserved_binding() {
+    // The value is captured through a reserved binding. It must not survive into
+    // the prelude — it is the cell's answer, not something the user bound, and a
+    // later cell referencing it would be depending on an implementation detail.
+    let (out, err) = session(&["1 + 1", "__axon_cell_value"]);
+    assert!(
+        out.contains('2'),
+        "the first cell must display its value: stdout={out:?}"
+    );
+    assert!(
+        err.contains("cannot find name"),
+        "the reserved binding must not be visible to a later cell: {err}"
+    );
+}
+
+#[test]
+fn session_cell_ending_in_println_shows_no_unit_value() {
+    // A cell ending in `println(..)` has already said what it had to say.
+    // Reporting "unit has no binding form" would be noise about an internal
+    // detail the user never wrote.
+    // Precondition: trailing-expression display must actually be working, or
+    // "no unit shown" holds trivially and the test guards nothing.
+    let (out, err) = session(&["1 + 1", "println(\"just this\")"]);
+    assert!(
+        out.contains('2'),
+        "precondition: trailing values must display at all: stdout={out:?} stderr={err:?}"
+    );
+    assert!(out.contains("just this"), "stdout={out:?}");
+    assert!(
+        !out.contains("unit") && !err.contains("unit has no binding form"),
+        "a unit-valued cell must display nothing extra: stdout={out:?} stderr={err:?}"
+    );
+    assert_eq!(
+        out.matches("just this").count(),
+        1,
+        "and must not double-print: stdout={out:?}"
+    );
+}
+
+#[test]
+fn session_assignment_is_not_treated_as_a_trailing_expression() {
+    // `rows = rows + [2]` is a statement. Wrapping it as a value would be a
+    // parse error, turning a working cell into a failing one.
+    let (out, err) = session(&["let rows = [1]", "rows = rows + [2]", "len(&rows)"]);
+    assert!(
+        out.contains('2'),
+        "the assignment must still take effect: stdout={out:?} stderr={err:?}"
+    );
+    assert!(!err.contains("E0"), "no error expected: {err}");
+}
+
+#[test]
+fn session_survives_a_runtime_panic_and_is_honest_about_what_rolled_back() {
+    // R44 §4 S7 + §4.4. The session stays live and the failed cell's bindings are
+    // discarded — but a cell that panicked may already have written a file, and
+    // claiming "session is unchanged" would be a promise the session cannot keep.
+    let dir = std::env::temp_dir().join(format!("axon_sess_eff_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let marker = dir.join("made.txt");
+    let _ = std::fs::remove_file(&marker);
+
+    let (out, err) = session(&[
+        "let good = 5",
+        &format!(
+            "let w = write_file(\"{}\", \"x\")\nlet arr = [1]\nprintln(to_str(arr[99]))",
+            marker.display()
+        ),
+        "println(to_str(good))",
+    ]);
+    let file_survived = marker.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        out.contains('5'),
+        "the session must survive a runtime panic: stdout={out:?} stderr={err:?}"
+    );
+    assert!(
+        file_survived,
+        "precondition: the cell's write must actually have happened before it panicked"
+    );
+    // The message must not claim the world was restored.
+    assert!(
+        !err.contains("session is unchanged"),
+        "a runtime failure must not claim transactionality it cannot deliver: {err}"
+    );
+    assert!(
+        err.contains("not undone"),
+        "the failure message must say what rollback does NOT cover: {err}"
+    );
+}
+
+#[test]
+fn session_probe_diagnostics_never_reach_the_user() {
+    // The trailing-expression rewrite is decided by type-checking a candidate
+    // program in a temp file. Those diagnostics are about a program the session
+    // wrote on the user's behalf, in a file they never named.
+    // Precondition: the probe must actually have run — it only runs when a
+    // trailing expression is present and displays. Without that, "no probe
+    // output" is true of a binary that has no probe.
+    // The cell's trailing expression must NOT reference the prelude binding.
+    // If it does, the probe program has no unused binding and emits no warning,
+    // so the test passes whether or not the probe is silenced — verified by
+    // mutation: an earlier version used `rows` as the trailing expression and a
+    // deliberately un-silenced probe survived it.
+    let (out, err) = session(&["let rows = [3, 1, 2]", "\"hello\""]);
+    assert!(
+        out.contains("\"hello\""),
+        "precondition: the trailing expression must display, which is what runs \
+         the probe: stdout={out:?} stderr={err:?}"
+    );
+    assert!(
+        !err.contains("axon_session_probe"),
+        "probe diagnostics must not be shown: {err}"
+    );
+}

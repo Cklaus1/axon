@@ -134,9 +134,35 @@ if ! grep -q E2400 "$TMP/err"; then fail "precondition failed: nothing was blame
 elif grep -q "expected bool" "$TMP/err"; then pass "a separate mistake survives the promotion"
 else fail "the unrelated error was swallowed: $(cat "$TMP/err")"; fi
 
-echo "== Slice-1/2 regression tests =="
+echo "== S6: trailing expression values =="
+got=$(sess 'let rows = [3, 1, 2]' 'fn total(xs: &[i64]) -> i64 { arr_sum_by(xs, |v| v) }' 'total(&rows)' 'rows' '"hello"')
+ok=1
+for want in '6' '\[3, 1, 2\]' '"hello"'; do
+    echo "$got" | grep -q "$want" || { fail "trailing value $want not displayed"; ok=0; }
+done
+[ "$ok" -eq 1 ] && pass "scalar, array and str trailing values display"
+if grep -q axon_session_probe "$TMP/err"; then fail "probe diagnostics leaked to the user"
+else pass "probe diagnostics stay internal"; fi
+
+got=$(sess 'println("just this")')
+if [ "$(echo "$got" | grep -c 'just this')" -eq 1 ]; then pass "a unit-valued cell neither double-prints nor shows unit"
+else fail "unit handling wrong: $got"; fi
+
+echo "== S7/§4.4: runtime failure is survivable AND honestly scoped =="
+marker="$TMP/effect_marker.txt"
+sess 'let good = 5' "let w = write_file(\"$marker\", \"x\")
+let arr = [1]
+println(to_str(arr[99]))" 'println(to_str(good))' >"$TMP/s7out"
+if grep -q 5 "$TMP/s7out"; then pass "the session survived a runtime panic"
+else fail "the session did not survive: $(cat "$TMP/s7out")"; fi
+if [ ! -f "$marker" ]; then fail "precondition: the cell's write never happened"
+elif grep -q "session is unchanged" "$TMP/err"; then fail "claims transactionality it cannot deliver"
+elif grep -q "not undone" "$TMP/err"; then pass "the failure message scopes what rollback covers"
+else fail "the failure message says nothing about un-undone effects"; fi
+
+echo "== Slice-1/2/3 regression tests =="
 if (cd "$ROOT" && cargo test -p axon-core --test cli_run session_ 2>&1 | grep -q "test result: ok"); then
-    pass "cli_run session_* green (13 tests)"
+    pass "cli_run session_* green (19 tests)"
 else
     fail "cli_run session_* not green"
 fi

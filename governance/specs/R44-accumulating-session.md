@@ -1,7 +1,7 @@
 # R44 — The accumulating typed session
 
 **Spec ID:** `R44-accumulating-session`
-**Status:** Implementing — **Slices 0, 1 and 2 LANDED** (2026-09-16/17). §12 Q1 resolved: v1 = (c). Slice 2 is the product.
+**Status:** Implementing — **Slices 0–3 LANDED** (2026-09-16/17). §12 Q1 resolved: v1 = (c). Slice 2 is the product.
 **Risk class:** Structural. Changes where a session's bindings live (module scope → `main`'s scope) and,
 in its v2 stage, the lifetime discipline of `Interp`. Not a language feature: no `.ax` syntax changes.
 **Author / date:** 2026-09-16, from `AXON_FOR_RLM.md` §5.
@@ -21,7 +21,7 @@ blocked-by: none
 supersedes: tasks/spec-rlm-accumulator.md (DRAFT 2026-08-07 — absorbed; its N1 is this spec's §4 S1,
   its N2 has since landed, its prototype is this spec's v1 substrate)
 related: R15-resume-runtime, R41-polyglot-runtime, R38-embedded-agent-runtime, R28-capability-audit-ledger, R42-stdlib-gaps, R43-bytes-and-binary
-evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slices 1-2, ALL PASS 2026-09-17; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
+evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slices 1-3, ALL PASS 2026-09-17; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
 reserves: E2400-E2404, confirmed free at spec time (grepped `E2[0-9]{3}` across crates/ and every
   governance/specs `reserves:` line — taken bands are E20xx [R41], E21xx [R16], E22xx [R42/R43],
   E23xx [eBPF], E37xx [R37]; E24xx is the next contiguous free band)
@@ -339,7 +339,7 @@ the code in the protocol frame.
 | **0** | ✅ **CLEARED 2026-09-16.** Spiked all four hazards against a composed session, not a mock: H1 assignment to a persisted binding, H2 a `use` in cell 1, H3 type pinning, H4 what redefinition does today. | **PASSED.** H1 `rows = rows + [99]` → len 2→3, sum 102. H2 no E0002. H3 `let x = 1` materialised; `x + 1` = 2 after `make` was redefined. H4 E0002+E0102 — Slice 2's work, as specced. |
 | **1** | ✅ **LANDED 2026-09-16.** `axon session` verb; S1 bindings-in-`main`; S2/S3/S4; S9 idempotency; S10 non-persistable reporting (pulled forward from Slice 3 — it fell out of the materialiser for free); S11 no warning storm. | **PASSED.** 8 regression tests, each RED against a HEAD-built binary. |
 | **2** | ✅ **LANDED 2026-09-17.** S5 + E2400. Items became named, replaceable units (`SessionItem`) with per-item line spans, so a check error can be attributed to the item that owns it and promoted when that item belongs to an earlier cell. | **PASSED.** §4.1 exactly: cell 3 refused, `g` named with its cell, cell 4's `g()` still returns 2. |
-| **3** | S6 trailing values, S7 + §4.4 scoping. (S10 landed early in Slice 1.) | A panic in cell N leaves N-1 usable. |
+| **3** | ✅ **LANDED 2026-09-17.** S6 trailing values (via a reserved capture binding + a conservative rewrite with a type-check probe and unwrapped retry); S7 + §4.4 honest failure scoping. (S10 landed early in Slice 1.) | **PASSED.** Scalar/array/str values display; a `println` cell shows no unit; a panic leaves cell N−1 usable and the message no longer claims the world was restored. |
 | **4** | §5 A1–A5 + S8. Includes A3's new machinery. | A recorded session replays whole; a split effect is refused at the ceiling. |
 | **5** | `--protocol jsonl` host driver. | An external host drives 20 cells and reads per-cell results. |
 
@@ -453,6 +453,20 @@ bindings materialised back) and ran all four hazards:
 §4.3 and §4.2 turned out **not to bite v1 at all**. Both are now regression-tested rather than
 assumed, because a property that holds by accident is one a later refactor removes silently.
 
+**Slice 3 — landed.** Trailing-expression values and honest failure scoping.
+
+The value is captured through a reserved binding and stripped from the prelude, so it is the cell's
+answer rather than something the user bound. The rewrite that produces it is deliberately
+conservative — and additionally **type-checks a candidate program first and retries unwrapped if it
+does not check**, so the heuristic cannot cost a working cell. That probe's diagnostics are silenced:
+they are about a program the session wrote on the user's behalf, in a temp file the user never named.
+
+§4.4 became user-facing, which was the point of writing it down. A runtime failure used to report
+*"session is unchanged"* — true for a cell refused at check time, false for one that already wrote a
+file. It now says the bindings were discarded but *"anything it already did to the outside world was
+not undone"*, and a test asserts the written file really does survive, so the claim is checked in
+both directions rather than merely softened.
+
 **Slice 2 — landed (the product).** Accumulated items became named, replaceable units with per-item
 line spans in the composed program, so a check error can be attributed to the item that owns it and
 promoted to **E2400** when that item belongs to an earlier cell. §4.1 now reads:
@@ -479,7 +493,7 @@ materialiser promoted from env-var-only to an API (`set_session_capture` / `take
 S1 bindings-in-`main`; S4 failed cells do not accumulate; S10 non-persistable bindings named (pulled
 forward — it fell out of the materialiser for free); S11 no warning storm.
 
-13 regression tests (8 from Slice 1, 5 from Slice 2), **each RED against the prior commit**.
+19 regression tests (8 Slice 1, 5 Slice 2, 6 Slice 3), **each RED against the prior commit**.
 
 Two of them were initially worthless and only mutation testing found it:
 
@@ -491,8 +505,15 @@ Two of them were initially worthless and only mutation testing found it:
   blame exists and therefore unsuppressable either way. It now uses a checker-phase error in a cell
   that genuinely breaks an earlier item, and kills the mutant.
 
-Recorded because both failures share a shape: an assertion that passes on correct code and on the
-broken code it was written to catch. Running the mutant is what distinguishes them.
+Slice 3 added two more of the same kind, both caught the same way. The probe-silence guard survived a
+deliberately un-silenced mutant because its cell's trailing expression *referenced* the prelude
+binding — so the probe program had no unused binding, emitted no warning, and the test passed either
+way. It now uses a trailing expression that leaves the prelude binding unread.
+
+Recorded because all four failures share a shape: an assertion that passes on correct code **and** on
+the broken code it was written to catch. RED-against-the-prior-commit does not distinguish them —
+running the mutant does. Guard tests for defects a feature *introduces* are exactly the ones
+RED-proving cannot validate, because they pass before the feature exists.
 
 Two defects found while building, both worth recording because neither would have surfaced from
 reading:

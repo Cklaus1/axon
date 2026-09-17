@@ -3872,6 +3872,20 @@ fn cmd_replay(journal: PathBuf, diff: Option<PathBuf>, show_values: bool) {
 static SESSION_PRELUDE_LINES: std::sync::Mutex<Option<(usize, usize)>> =
     std::sync::Mutex::new(None);
 
+/// True while the trailing-expression PROBE is running. The probe only needs a
+/// yes/no answer, so its diagnostics are never the user's — they are about a
+/// program the session rewrote on their behalf, in a temp file they never named.
+/// Letting them through produced warnings citing `axon_session_probe_*.ax`.
+static SESSION_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn set_session_quiet(on: bool) -> bool {
+    SESSION_QUIET.swap(on, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn session_quiet() -> bool {
+    SESSION_QUIET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn set_session_prelude_lines(r: Option<(usize, usize)>) {
     if let Ok(mut g) = SESSION_PRELUDE_LINES.lock() {
         *g = r;
@@ -3881,6 +3895,9 @@ fn set_session_prelude_lines(r: Option<(usize, usize)>) {
 /// True when this diagnostic is an unused-binding warning about a line the
 /// session itself wrote.
 fn suppressed_as_session_prelude(code: &str, line: u32) -> bool {
+    if session_quiet() {
+        return true;
+    }
     if code != "W0006" {
         return false;
     }
@@ -4127,6 +4144,10 @@ struct CellResult {
     diagnostics: Vec<String>,
     /// Bindings that could not cross the boundary, NAMED rather than dropped.
     skipped: Vec<String>,
+    /// The value of the cell's trailing expression, rendered (R44 §4 S6).
+    /// `None` when the cell had no trailing expression, or it evaluated to unit
+    /// — a cell ending in `println(..)` has already said what it had to say.
+    value: Option<String>,
 }
 
 fn cmd_session(protocol: Option<String>, show_program: bool) {
@@ -4184,9 +4205,104 @@ fn cmd_session(protocol: Option<String>, show_program: bool) {
 }
 
 /// Check, then run, then accumulate — in that order, and only advancing on success.
+/// Does this composed program type-check? Used only to decide whether the
+/// trailing-expression rewrite is safe, so its diagnostics are discarded — the
+/// real check runs afterwards on whichever form was chosen and reports properly.
+fn session_probe_checks(src: &str, cell_no: usize) -> bool {
+    let path = std::env::temp_dir().join(format!(
+        "axon_session_probe_{}_{}.ax",
+        std::process::id(),
+        cell_no
+    ));
+    if std::fs::write(&path, src).is_err() {
+        return false;
+    }
+    let prev = set_session_quiet(true);
+    let ok = match parse_source_located_cli(src, &path) {
+        Ok(mut program) => run_check_pipeline_located(&mut program, src, &path)
+            .0
+            .is_empty(),
+        Err(_) => false,
+    };
+    set_session_quiet(prev);
+    let _ = std::fs::remove_file(&path);
+    ok
+}
+
+/// The reserved binding a trailing expression's value is captured through.
+///
+/// Chosen to be un-writable by accident and un-shadowable in practice; it is
+/// stripped from the prelude and from the shape inventory before either is
+/// shown, so it never looks like a binding the user made.
+const CELL_VALUE: &str = "__axon_cell_value";
+
+/// Rewrite a cell's last line as `let __axon_cell_value = <expr>` when it looks
+/// like a trailing expression (R44 §4 S6).
+///
+/// Conservative by design. A missed trailing expression just means no value is
+/// displayed — the behaviour before this existed — whereas wrapping something
+/// that is not an expression turns a working cell into a failing one. The caller
+/// additionally RETRIES unwrapped if the wrapped form does not check, so this
+/// heuristic cannot cost the user a cell either way.
+fn wrap_trailing_expr(stmts: &str) -> Option<String> {
+    let lines: Vec<&str> = stmts.lines().collect();
+    let last_idx = lines.iter().rposition(|l| !l.trim().is_empty())?;
+    let last = lines[last_idx].trim();
+    if last.is_empty() {
+        return None;
+    }
+    // Statement keywords, and anything opening or closing a block: a cell
+    // ending in `}` is a multi-line construct, not an expression to display.
+    for kw in [
+        "let ", "return", "while ", "for ", "fn ", "type ", "mod ", "use ", "impl ", "trait ",
+        "handler ", "@[",
+    ] {
+        if last.starts_with(kw) {
+            return None;
+        }
+    }
+    if last.ends_with('{') || last.ends_with('}') || last.ends_with(',') {
+        return None;
+    }
+    // A bare assignment (`rows = rows + [1]`) is a statement. Comparisons are
+    // not — `==`/`!=`/`<=`/`>=` all contain `=` and must not be mistaken for one.
+    if let Some(eq) = last.find('=') {
+        let before = last.as_bytes().get(eq.wrapping_sub(1)).copied();
+        let after = last.as_bytes().get(eq + 1).copied();
+        let is_comparison = matches!(before, Some(b'!') | Some(b'<') | Some(b'>') | Some(b'='))
+            || after == Some(b'=');
+        if !is_comparison {
+            return None;
+        }
+    }
+    // Only when the braces balance on that line — otherwise it is a fragment of
+    // something larger and binding it would be a parse error.
+    if last.matches('{').count() != last.matches('}').count()
+        || last.matches('(').count() != last.matches(')').count()
+    {
+        return None;
+    }
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    out[last_idx] = format!("let {CELL_VALUE} = {last}");
+    Some(out.join("\n") + "\n")
+}
+
 fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
     sess.cell_no += 1;
-    let (cell_items, cell_stmts) = Session::split_cell(cell);
+    let (cell_items, original_stmts) = Session::split_cell(cell);
+
+    // Try the trailing-expression form first; fall back to the literal cell if
+    // it does not check, so the heuristic can never cost a working cell.
+    let mut cell_stmts = original_stmts.clone();
+    let mut wrapped = false;
+    if let Some(w) = wrap_trailing_expr(&original_stmts) {
+        let probe = sess.compose(&cell_items, &w);
+        if session_probe_checks(&probe.src, sess.cell_no) {
+            cell_stmts = w;
+            wrapped = true;
+        }
+    }
+    let _ = wrapped;
     let composed = sess.compose(&cell_items, &cell_stmts);
     let src = composed.src.clone();
     set_session_prelude_lines(Some(composed.body));
@@ -4205,6 +4321,7 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
             stdout: String::new(),
             diagnostics: vec!["could not write the composed cell to a temp file".into()],
             skipped: Vec::new(),
+            value: None,
         };
     }
 
@@ -4218,6 +4335,7 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
                 stdout: String::new(),
                 diagnostics: vec![format!("[{}] {}", diag.code, diag.message)],
                 skipped: Vec::new(),
+                value: None,
             };
         }
     };
@@ -4232,6 +4350,7 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
             stdout: String::new(),
             diagnostics: attribute_errors(sess, &composed, &cell_items, &errors),
             skipped: Vec::new(),
+            value: None,
         };
     }
 
@@ -4244,7 +4363,26 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
     let captured = axon_core::interp::take_session_result();
     let ok = code == 0 && captured.is_some();
     let mut skipped = Vec::new();
+    let mut value: Option<String> = None;
     if let Some((bindings, _shapes)) = captured {
+        // Pull the trailing expression's value out, and keep the reserved name
+        // out of the prelude — it is this cell's answer, not a binding the user
+        // made, and carrying it forward would make it visible to later cells.
+        let mut kept = String::new();
+        for l in bindings.lines() {
+            if let Some(lit) = l.strip_prefix(&format!("let {CELL_VALUE} = ")) {
+                value = Some(lit.to_string());
+            } else if l.starts_with(&format!("// SKIPPED {CELL_VALUE}:")) {
+                // Unit, or anything with no literal form. A cell whose trailing
+                // expression was `println(..)` has already printed; showing
+                // "unit has no binding form" would be noise about an internal
+                // detail the user never wrote.
+            } else {
+                kept.push_str(l);
+                kept.push('\n');
+            }
+        }
+        let bindings = kept;
         // A binding that could not be persisted is NAMED, never silently
         // dropped: a name the model can see but not reuse is the case it most
         // needs told about (R44 §4 S10).
@@ -4278,6 +4416,7 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
         stdout: out,
         diagnostics: Vec::new(),
         skipped,
+        value,
     }
 }
 
@@ -4350,6 +4489,9 @@ fn attribute_errors(
 
 fn render_cell_human(r: &CellResult) {
     print!("{}", r.stdout);
+    if let Some(v) = &r.value {
+        println!("{v}");
+    }
     for d in &r.diagnostics {
         eprintln!("  {d}");
     }
@@ -4357,7 +4499,17 @@ fn render_cell_human(r: &CellResult) {
         eprintln!("  note: did not persist — {s}");
     }
     if !r.ok && r.diagnostics.is_empty() {
-        eprintln!("  (cell failed at runtime; session is unchanged)");
+        // R44 §4.4 — say what rollback actually covers. This used to read
+        // "session is unchanged", which is true for a cell refused at CHECK time
+        // and false for one that failed at RUNTIME: by then it may have written
+        // files, sent HTTP, spent budget, mutated a dict a previous cell still
+        // holds, or tripped the corrigibility latch, which is one-way by design
+        // and must survive a rollback. Claiming transactionality the session
+        // cannot deliver is worse than not claiming it.
+        eprintln!(
+            "  (cell failed at runtime — its bindings were discarded, but anything it \
+             already did to the outside world was not undone)"
+        );
     }
 }
 
@@ -4377,11 +4529,16 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
         .iter()
         .map(|d| format!("\"{}\"", esc(d)))
         .collect();
+    let value = match &r.value {
+        Some(v) => format!("\"{}\"", esc(v)),
+        None => "null".to_string(),
+    };
     format!(
-        "{{\"schema\":\"axon-session/1\",\"cell\":{},\"ok\":{},\"stdout\":\"{}\",\"diagnostics\":[{}],\"not_persisted\":[{}]}}",
+        "{{\"schema\":\"axon-session/1\",\"cell\":{},\"ok\":{},\"stdout\":\"{}\",\"value\":{},\"diagnostics\":[{}],\"not_persisted\":[{}]}}",
         sess.cell_no,
         r.ok,
         esc(&r.stdout),
+        value,
         diags.join(","),
         skips.join(","),
     )
