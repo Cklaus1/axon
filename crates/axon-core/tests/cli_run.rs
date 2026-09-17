@@ -22498,3 +22498,89 @@ fn session_jsonl_surfaces_a_refused_cell_without_ending_the_session() {
         out[2]
     );
 }
+
+#[test]
+fn axon_reference_is_in_sync_with_the_binary() {
+    // The documentation gate, and it is a TEST rather than a shell script on
+    // purpose: CI runs `cargo test`, `cargo fmt`, `cargo clippy` and a parity
+    // job — it runs no shell gates at all. `scripts/claims_gate.sh` has never
+    // been wired into CI either, which is part of how the drift got here.
+    //
+    // What drifted: the binary had 24 verbs while CLAUDE.md named 13, and
+    // `axon session` — six slices of work — appeared in no user-facing document.
+    // Nothing failed, because claims_gate checks only that a NAMED verb exists,
+    // never that an existing verb is named. A doc that can omit silently is one
+    // an agent reads as complete.
+    let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    let doc_path = std::path::Path::new(&root).join("AXON_REFERENCE.md");
+
+    let out = axon().arg("reference").output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "`axon reference` must succeed: {out:?}"
+    );
+    let generated = String::from_utf8_lossy(&out.stdout).to_string();
+
+    // A truncated generator would otherwise "match" a correspondingly broken
+    // checked-in file, and the gate would report success on two empty things.
+    assert!(
+        generated.lines().count() > 50,
+        "the generator produced only {} lines — broken",
+        generated.lines().count()
+    );
+    assert!(
+        generated.contains("axon session") && generated.contains("| `println("),
+        "the reference must actually enumerate verbs and builtins"
+    );
+
+    let checked_in = std::fs::read_to_string(&doc_path).unwrap_or_default();
+    if checked_in != generated {
+        // Show the first divergence rather than the whole file.
+        let want: Vec<&str> = generated.lines().collect();
+        let have: Vec<&str> = checked_in.lines().collect();
+        let mut detail = String::new();
+        for i in 0..want.len().max(have.len()) {
+            let w = want.get(i).copied().unwrap_or("<missing>");
+            let h = have.get(i).copied().unwrap_or("<missing>");
+            if w != h {
+                detail = format!(
+                    "first difference at line {}:\n  binary: {w}\n  doc:    {h}",
+                    i + 1
+                );
+                break;
+            }
+        }
+        panic!(
+            "AXON_REFERENCE.md has drifted from the binary.\n{detail}\n\n\
+             Fix: cargo run -p axon-core --bin axon -- reference > AXON_REFERENCE.md"
+        );
+    }
+}
+
+#[test]
+fn axon_reference_json_is_machine_readable() {
+    // The JSON form is what an AI consumer reads to learn this build's surface
+    // without parsing Markdown tables.
+    let out = axon().args(["reference", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let j = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        j.contains("\"schema\":\"axon-reference/1\""),
+        "schema must be stamped: {}",
+        &j[..j.len().min(200)]
+    );
+    for want in ["\"verbs\":[", "\"builtins\":[", "\"attributes\":["] {
+        assert!(j.contains(want), "missing section {want}");
+    }
+    // A builtin's full signature must survive into JSON, since the Markdown
+    // table escapes pipes and collapses newlines.
+    assert!(
+        j.contains("\"name\":\"println\""),
+        "builtins must carry their names"
+    );
+    assert!(
+        j.contains("\"params\":[") && j.contains("\"ret\":\""),
+        "builtins must carry signatures, not just names"
+    );
+}
