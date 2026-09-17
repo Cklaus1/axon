@@ -24020,3 +24020,67 @@ fn every_consuming_verb_reports_a_tampered_module_and_deploy_refuses() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_denied_capability_audit_is_refused_by_every_verb_not_just_check() {
+    // `check_locked_imports` states, in its own comment, that a denied audit is
+    // "always enforced (not just under --locked): once a module is locked with a
+    // denied verdict, RUNNING it is a hard error regardless of mode."
+    //
+    // It was not true of `axon run` — the verb that sentence names. The function
+    // had one caller, `cmd_check`, so the verdict bound the verb that type-checks
+    // and nothing else. Measured on a module `axon lock` recorded as
+    // `audit = "denied:…"` for an undeclared network surface:
+    //
+    //   check  exit 2, E1204      run    exit 0, ran it
+    //   build  exit 1 (unrelated) test   exit 0, reported success
+    //
+    // A denied module is not a stale one. It is one a review already rejected, so
+    // unlike a hash mismatch it is fatal in every mode, not a warning.
+    let dir = std::env::temp_dir().join(format!("axon_denied_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // `http_get` with no `@[contained(net: …)]` is what the audit denies.
+    std::fs::write(
+        dir.join("dnet.ax"),
+        "fn fetch(u: str) -> str { match http_get(u, \"\") { Ok(s) => s  Err(e) => \"\" } }\n",
+    )
+    .unwrap();
+    let app = dir.join("dapp.ax");
+    std::fs::write(
+        &app,
+        "mod dnet\nuse dnet.{fetch}\n\nfn main() { println(fetch(\"http://example.com\")) }\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        let mut c = axon();
+        for a in args {
+            c.arg(a);
+        }
+        let o = c.env("AXON_PATH", &dir).output().unwrap();
+        let mut all = String::from_utf8_lossy(&o.stdout).to_string();
+        all.push_str(&String::from_utf8_lossy(&o.stderr));
+        (o.status.code().unwrap_or(-1), all)
+    };
+    let path = app.to_str().unwrap().to_string();
+
+    let (lc, lo) = run(&["lock", &path]);
+    assert_eq!(lc, 0, "lock must succeed: {lo}");
+    assert!(
+        lo.contains("denied"),
+        "the fixture only tests anything if the audit actually DENIES it — \
+         a probe that fails to set up reads exactly like a passing one: {lo}"
+    );
+
+    for verb in ["check", "run", "test", "build", "deploy"] {
+        let (code, out) = run(&[verb, &path]);
+        assert!(
+            out.contains("E1204"),
+            "`axon {verb}` must refuse a denied module: {out}"
+        );
+        assert_eq!(code, 2, "`axon {verb}` must exit 2: {out}");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

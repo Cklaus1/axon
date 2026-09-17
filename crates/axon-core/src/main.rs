@@ -1510,6 +1510,14 @@ fn check_locked_imports(
 /// (E1201). Deploying bytes that disagree with the lockfile is the exact event a
 /// lockfile exists to prevent, so that is the one place silence-or-warning is not
 /// a defensible answer.
+///
+/// `fatal` governs the TAMPER verdict only. A `denied:` capability audit (E1204)
+/// comes back in every mode, because a denied module is not a stale one — it is
+/// one a review already rejected — and `check_locked_imports` says so in its own
+/// comment: "once a module is locked with a denied verdict, running it is a hard
+/// error regardless of mode". That was not true of `axon run`, the verb the
+/// sentence names. Callers must therefore REPORT what comes back rather than
+/// discard it; `report_lock_errors` is the shared way to do that.
 fn verify_lock_tamper(
     file: &Path,
     program: &axon_core::ast::Program,
@@ -1519,6 +1527,22 @@ fn verify_lock_tamper(
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
     let (resolved, _unresolved) = axon_core::resolve_use_files_transitive(program, &search_dirs);
     check_locked_imports(file, &resolved, fatal, use_json, true)
+}
+
+/// Print whatever `verify_lock_tamper` returned and refuse, or return if clean.
+///
+/// Anything in that vector is fatal by construction: in warn mode the advisory
+/// diagnostics were already emitted as W1210 and are NOT in it, so a non-empty
+/// result means a denied capability audit (E1204) or a malformed lockfile —
+/// verdicts rather than staleness.
+fn report_lock_errors(errors: &[String], use_json: bool) {
+    if errors.is_empty() {
+        return;
+    }
+    for e in errors {
+        emit_error(e, use_json);
+    }
+    process::exit(2);
 }
 
 // ── improve (R10 self-improving compiler) ────────────────────────────────────────
@@ -3182,7 +3206,9 @@ fn cmd_build(
     // Of every verb, this is the one that emits an artifact which outlives the
     // command — so a module that no longer matches the lockfile gets said out
     // loud before it is compiled in (warning; see `verify_lock_tamper`).
-    let _ = verify_lock_tamper(first, &program, false, !std::io::stderr().is_terminal());
+    let lock_json = !std::io::stderr().is_terminal();
+    let lock_errors = verify_lock_tamper(first, &program, false, lock_json);
+    report_lock_errors(&lock_errors, lock_json);
 
     // R23 eBPF: `--target bpf` (or `bpfel`/`bpfeb`) takes a dedicated, focused
     // path — the hosted IR pipeline (provenance hooks, main wrapper, host
@@ -5301,7 +5327,9 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // exists and disagrees is surfaced. This WARNS rather than halting — dev mode
     // is deliberately permissive per R6 §4.2, and `axon check --locked` remains
     // the fail-closed gate — but silence was not a defensible third option.
-    let _ = verify_lock_tamper(&file, &program, false, !std::io::stderr().is_terminal());
+    let lock_json = !std::io::stderr().is_terminal();
+    let lock_errors = verify_lock_tamper(&file, &program, false, lock_json);
+    report_lock_errors(&lock_errors, lock_json);
 
     // R23: gate the kernel mint obligations on a SOLVER-FREE certificate check
     // before running anything — in EVERY build (Z3 not required). Off by default
@@ -5702,7 +5730,9 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     // A test run that passes against bytes nobody locked is a green light for the
     // wrong artifact, so the lock check happens here too (warning; see
     // `verify_lock_tamper`).
-    let _ = verify_lock_tamper(&files[0], &program, false, !std::io::stderr().is_terminal());
+    let lock_json = !std::io::stderr().is_terminal();
+    let lock_errors = verify_lock_tamper(&files[0], &program, false, lock_json);
+    report_lock_errors(&lock_errors, lock_json);
 
     // Abort on type errors before running any tests.
     let primary_file = &files[0];
