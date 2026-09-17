@@ -23060,3 +23060,252 @@ fn session_transcript_still_replays_with_outcome_markers() {
         "and reproduce the recorded value with the env var absent: {rout}"
     );
 }
+
+#[test]
+fn session_honours_require_contained_per_cell() {
+    // R45 §4 claimed "composes with R44: `axon session --require-contained`
+    // applies it per cell" while the flag DID NOT EXIST on `session`. A false
+    // claim in a spec marked Landed — the same documentation drift the reference
+    // gate exists to prevent, introduced by me in the same session. The test
+    // exists so the claim cannot go stale again.
+    let (out1, err1, _) = session_full(
+        &["println(match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"x\" })"],
+        &[],
+        &["--require-contained"],
+    );
+    assert!(
+        err1.contains("E1005"),
+        "un-granted I/O in a cell must be refused: stdout={out1:?} stderr={err1}"
+    );
+
+    // Anti-laundering (R44 §4 S8): declaring the helper in one cell and calling
+    // it from another must not escape. The accumulated program is re-checked, so
+    // the helper is reachable from the new entry point.
+    let (_, err2, _) = session_full(
+        &[
+            "fn sneaky() -> str { match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"\" } }",
+            "println(sneaky())",
+        ],
+        &[],
+        &["--require-contained"],
+    );
+    assert!(
+        err2.contains("E1005"),
+        "a session must not launder I/O by splitting it across cells: {err2}"
+    );
+
+    // ...and a LATER cell is still gated, not just the first.
+    let (out3, err3, _) = session_full(
+        &[
+            "println(\"cell 1 fine\")",
+            "println(match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"x\" })",
+        ],
+        &[],
+        &["--require-contained"],
+    );
+    assert!(
+        out3.contains("cell 1 fine"),
+        "the clean cell must run: {out3:?}"
+    );
+    assert!(
+        err3.contains("E1005"),
+        "the later cell must be gated too: {err3}"
+    );
+
+    // Without the flag, nothing changes.
+    let (out4, err4, _) = session_full(&["println(\"plain\")"], &[], &[]);
+    assert!(
+        out4.contains("plain") && !err4.contains("E1005"),
+        "off by default: stdout={out4:?} stderr={err4}"
+    );
+}
+
+#[test]
+fn session_transcript_records_the_flags_it_was_recorded_under() {
+    // "The (journal, transcript) pair is self-contained" was only true if the
+    // FLAGS came with it. A session recorded under --require-contained has cells
+    // that were refused at check time and performed no I/O; replay the same
+    // transcript WITHOUT the flag and those cells run, reach the world, and
+    // diverge from the journal. Verified: exit 11 without, exit 0 with.
+    //
+    // The divergence machinery catching it is the system working — but an
+    // auditor should not have to discover the flags by bisection.
+    let dir = std::env::temp_dir().join(format!("axon_flags_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let j = dir.join("j.journal");
+    let t = dir.join("t.ax");
+
+    let cells = [
+        "let v = 41",
+        "println(match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"x\" })",
+        "v + 1",
+    ];
+    session_full(
+        &cells,
+        &[("AXON_RECORD", j.to_str().unwrap())],
+        &["--require-contained", "--transcript", t.to_str().unwrap()],
+    );
+    let text = std::fs::read_to_string(&t).unwrap_or_default();
+    assert!(
+        text.contains("recorded with:  axon session --require-contained"),
+        "the transcript must name the flags it was recorded under: {text}"
+    );
+    assert!(
+        text.contains("Replaying with DIFFERENT flags is a different session"),
+        "...and say why that matters: {text}"
+    );
+    // A plain session must not claim flags it did not use.
+    let t2 = dir.join("plain.ax");
+    session_full(&["let x = 1"], &[], &["--transcript", t2.to_str().unwrap()]);
+    let plain = std::fs::read_to_string(&t2).unwrap_or_default();
+    assert!(
+        plain.contains("recorded with:  axon session\n") && !plain.contains("--require-contained"),
+        "a plain session must record no flags: {plain}"
+    );
+
+    // Same flags: replays clean.
+    let (_, _, same) = session_full(
+        &[&text],
+        &[("AXON_REPLAY", j.to_str().unwrap())],
+        &["--require-contained"],
+    );
+    assert_eq!(same, 0, "replay under the recorded flags must succeed");
+
+    // Different flags: the refused cell now runs and diverges, loudly.
+    let (_, derr, diff) = session_full(&[&text], &[("AXON_REPLAY", j.to_str().unwrap())], &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        diff, 11,
+        "replaying under different flags must DIVERGE, not silently differ: {derr}"
+    );
+}
+
+#[test]
+fn rlm_host_end_to_end_typed_contained_replayable_session() {
+    // The whole stack, composed the way an RLM host would actually drive it —
+    // because R44 (session), R45 (containment), the host journal and the
+    // transcript had each been tested alone and never TOGETHER.
+    //
+    // One driver, one process: JSON frames in, axon-session/1 frames out, every
+    // cell capability-gated, the whole session journalled and replayable.
+    let dir = std::env::temp_dir().join(format!("axon_rlm_e2e_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let journal = dir.join("run.journal");
+    let transcript = dir.join("session.ax");
+
+    let frames = [
+        // 1. state the host will rely on later
+        frame("let rows = [3, 1, 2]"),
+        // 2. a declaration, accumulated
+        frame("fn total(xs: &[i64]) -> i64 { arr_sum_by(xs, |v| v) }"),
+        // 3. a value read back — the defining RLM property
+        frame("total(&rows)"),
+        // 4. mutate the persisted binding
+        frame("rows = rows + [94]"),
+        // 5. a second ITEM that depends on the first. This matters: E2400 fires
+        //    when an accumulated ITEM stops type-checking, and a call made in a
+        //    cell's STATEMENTS does not accumulate — so without this, redefining
+        //    `total` below would break nothing and be legitimately accepted.
+        //    (The first draft of this test asserted otherwise and was wrong.)
+        frame("fn report() -> i64 { total(&[1, 2]) + 1 }"),
+        // 6. REFUSED: un-granted I/O (R45)
+        frame("println(match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"x\" })"),
+        // 7. REFUSED: a redefinition that breaks `report` (R44 E2400)
+        frame("fn total(xs: &[i64]) -> str { \"broken\" }"),
+        // 8. the session survived both refusals with its state intact
+        frame("total(&rows)"),
+    ];
+    let refs: Vec<&str> = frames.iter().map(String::as_str).collect();
+
+    use std::io::Write;
+    let mut child = axon()
+        .args([
+            "session",
+            "--protocol",
+            "jsonl",
+            "--require-contained",
+            "--transcript",
+            transcript.to_str().unwrap(),
+        ])
+        .env("AXON_RECORD", journal.to_str().unwrap())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let si = child.stdin.as_mut().unwrap();
+        for f in &refs {
+            si.write_all(f.as_bytes()).unwrap();
+            si.write_all(b"\n").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    let frames_out: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+
+    assert_eq!(
+        frames_out.len(),
+        8,
+        "one frame out per frame in: {frames_out:?}"
+    );
+
+    // 3: typed state carried across cells.
+    assert!(
+        frames_out[2].contains("\"value\":\"6\""),
+        "cell 3 must read the binding from cell 1: {}",
+        frames_out[2]
+    );
+    // 6: containment refused it, and the host can SEE that it was refused.
+    assert!(
+        frames_out[5].contains("\"ok\":false") && frames_out[5].contains("E1005"),
+        "cell 6 must be refused by --require-contained: {}",
+        frames_out[5]
+    );
+    // 7: the type system refused it BEFORE executing, naming what broke.
+    assert!(
+        frames_out[6].contains("\"ok\":false") && frames_out[6].contains("E2400"),
+        "cell 7 must be refused before executing: {}",
+        frames_out[6]
+    );
+    assert!(
+        frames_out[6].contains("report"),
+        "and must name the accumulated item it would have broken: {}",
+        frames_out[6]
+    );
+    // 8: state intact after both refusals — 3+1+2+94.
+    assert!(
+        frames_out[7].contains("\"value\":\"100\""),
+        "the session must survive both refusals with state intact: {}",
+        frames_out[7]
+    );
+
+    // The transcript records every cell WITH its outcome...
+    let t = std::fs::read_to_string(&transcript).unwrap_or_default();
+    assert!(
+        t.contains("cell 6 REFUSED") && t.contains("cell 7 REFUSED") && t.contains("cell 8 ok"),
+        "the transcript must record what happened to each cell: {t}"
+    );
+    // ...and the journal makes the whole session replayable.
+    assert!(
+        journal.exists(),
+        "the session must have written its journal"
+    );
+
+    // Replayed with the SAME flags it was recorded under — the transcript header
+    // says which, because a cell refused under --require-contained runs without
+    // it, reaches the world, and diverges from the journal (verified: exit 11).
+    let (rout, _, rcode) = session_full(
+        &[&t],
+        &[("AXON_REPLAY", journal.to_str().unwrap())],
+        &["--require-contained"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(rcode, 0, "the recorded session must replay: {rout}");
+    assert!(
+        rout.contains('6') && rout.contains("100"),
+        "and reproduce its values: {rout}"
+    );
+}

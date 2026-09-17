@@ -399,6 +399,19 @@ enum Command {
         #[arg(long, help = "Echo the composed program for each cell")]
         show_program: bool,
 
+        /// R45 — hold every cell to a deny-all capability grant unless it
+        /// declares one. R44 §4 S8: an ambient ceiling applies PER CELL, so a
+        /// session cannot be used to launder an effect by splitting it up.
+        ///
+        /// Same limit as `check`/`run`: functions dispatched by name at runtime
+        /// are not statically reachable from a cell's entry point.
+        #[arg(
+            long,
+            help = "Require an explicit @[contained] grant for I/O in every cell (E1005). \
+                    Does NOT cover functions dispatched by name at runtime."
+        )]
+        require_contained: bool,
+
         /// Write each cell as it runs, so a recorded session is self-contained.
         ///
         /// A host journal records what the session TOUCHED, not what it RAN — so
@@ -893,8 +906,12 @@ fn dispatch(command: Command) {
         Command::Session {
             protocol,
             show_program,
+            require_contained,
             transcript,
-        } => cmd_session(protocol, show_program, transcript),
+        } => {
+            axon_core::capabilities::set_require_contained(require_contained);
+            cmd_session(protocol, show_program, transcript)
+        }
         Command::Trace {
             func,
             path,
@@ -4506,6 +4523,36 @@ fn cmd_reference(json: bool) {
 }
 
 fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<PathBuf>) {
+    // The transcript must say HOW it was recorded, not just what was typed.
+    //
+    // A session recorded under `--require-contained` has cells that were refused
+    // at check time and therefore performed no I/O. Replay the same transcript
+    // WITHOUT the flag and those cells run, reach the world, and diverge from the
+    // journal — exit 11. The divergence machinery catches it, which is the system
+    // working, but "the (journal, transcript) pair is self-contained" was only
+    // true if the flags came with it. Now they do.
+    if let Some(t) = &transcript {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(t)
+        {
+            use std::io::Write;
+            let flags = if axon_core::capabilities::require_contained_enabled() {
+                " --require-contained"
+            } else {
+                ""
+            };
+            let _ = writeln!(
+                f,
+                "// axon-session transcript — cells in order, each followed by its outcome.\n\
+                 // recorded with:  axon session{flags}\n\
+                 // to replay:      AXON_REPLAY=<journal> axon session{flags} < this-file\n\
+                 // Replaying with DIFFERENT flags is a different session: a cell refused\n\
+                 // here may run there, reach the world, and diverge from the journal (exit 11).\n"
+            );
+        }
+    }
     use std::io::BufRead;
     let jsonl = protocol.as_deref() == Some("jsonl");
     if let Some(p) = protocol.as_deref() {

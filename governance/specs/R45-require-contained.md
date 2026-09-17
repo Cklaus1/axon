@@ -16,7 +16,7 @@ supersedes: none
 related: R44-accumulating-session, R11-capability-minting, R13-native-ffi
 reserves: E1005 (confirmed free at spec time — grepped across crates/ and every governance/specs
   `reserves:` line; E1001-E1004 are R6's, E1005 is the next free code in that band)
-evidence: cargo test -p axon-core --test cli_run require_contained (7 tests, ALL PASS 2026-09-17; each RED against the pre-flag binary, and the off-by-default guard mutation-proved against an always-on mutant)
+evidence: cargo test -p axon-core --test cli_run require_contained (7 tests) + session_honours_require_contained_per_cell + rlm_host_end_to_end_typed_contained_replayable_session (ALL PASS 2026-09-17; each RED against the pre-flag binary, and the off-by-default guard mutation-proved against an always-on mutant)
 ```
 
 ---
@@ -130,8 +130,16 @@ axon run   --require-contained prog.ax    # same gate before execution
 Default **off**. It is a host's decision, not a language change: a flag that altered the meaning of
 existing source by default would break every program in §2's 17%.
 
-Composes with R44: `axon session --require-contained` applies it per cell, which R44 §4 S8 already
-requires of every ambient ceiling.
+```bash
+axon session --require-contained           # per cell (R44 §4 S8)
+```
+
+> **Correction, 2026-09-17.** This section claimed the session composition while the flag existed
+> only on `check` and `run` — a false claim in a spec marked Landed, which is precisely the drift
+> `AXON_REFERENCE.md`'s gate exists to prevent, introduced in the same session that built the gate.
+> The flag is now on `session` too, verified to apply **per cell** and to refuse a helper declared in
+> one cell and called from another. `session_honours_require_contained_per_cell` pins it so the claim
+> cannot go stale again.
 
 ---
 

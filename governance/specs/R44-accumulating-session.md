@@ -299,7 +299,7 @@ never claimed it.
 | # | Rule |
 |---|---|
 | A1 | A session is **one run-id**, stamped at session start, not one per cell. Every provenance record carries a `cell` index. |
-| A2 | `--record` writes **one journal for the whole session**; cell boundaries are journal events. |
+| A2 | `--record` writes **one journal for the whole session**; cell boundaries are journal events. `--transcript` records the cells AND the flags the session ran under — a session recorded with `--require-contained` has cells refused at check time that performed no I/O, so replaying the same transcript without the flag runs them, reaches the world, and diverges (exit 11, verified). The pair is self-contained only with the flags, and the header now carries them. |
 | A3 | Replaying a session reproduces it cell by cell, diverging (exit 11) at the first departing cell. **This is NEW machinery, not "the existing divergence machinery unchanged"** — a host journal records `AxonHost` calls and their outcomes, *not the cells' code*, so the session transcript must also be persisted and fed back. A2's cell-boundary events are themselves a journal format change. Scoped in Slice 4; sized honestly here because the first draft understated it. |
 | A4 | The R28 ledger flushes **once at session end**; its integrity check covers every cell. |
 | A5 | `axon trace --ai` keeps `(fn, src, principal)` attribution and adds the cell. Per `a9261f1`, a summary must not merge records across the thing it attributes — a session adds a dimension and must not lose one. |

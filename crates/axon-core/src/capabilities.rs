@@ -227,6 +227,12 @@ pub fn set_require_contained(on: bool) -> bool {
     REQUIRE_CONTAINED.swap(on, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Public reader for the R45 flag — the session transcript records whether it
+/// was recorded under it, since replaying without it is a different session.
+pub fn require_contained_enabled() -> bool {
+    require_contained()
+}
+
 fn require_contained() -> bool {
     REQUIRE_CONTAINED.load(std::sync::atomic::Ordering::Relaxed)
 }
