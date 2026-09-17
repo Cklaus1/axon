@@ -2176,6 +2176,17 @@ fn cmd_ai(action: AiAction) {
 }
 
 /// Minimal JSON string literal for the CLI's hand-rolled output (no serde_json).
+///
+/// The `< 0x20` arm is not decoration. Without it a `\r` reached the output RAW
+/// and the line was not valid JSON — reachable from ordinary source:
+///
+///   @[ai(policy(fallback: "a\rb"))]
+///   axon ai policy -> {"fn":"q",...,"fallback":"a<0x0d>b",...}
+///   python: Invalid control character at ... (char 38)
+///
+/// RFC 8259 forbids every character U+0000..U+001F raw in a string. Three of the
+/// five hand-rolled escapers in this workspace already had this arm; this one and
+/// `json_str` did not, which is what an inconsistently-copied helper looks like.
 fn json_lit(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -2184,7 +2195,11 @@ fn json_lit(s: &str) -> String {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }
@@ -8005,14 +8020,11 @@ fn json_field(src: &str, key: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// As [`json_lit`] — including the U+0000..U+001F arm a replace-chain cannot
+/// express. Used by the `redteam` / `deploy` / `ast` JSON records, whose
+/// `message` fields carry program output.
 fn json_str(s: &str) -> String {
-    let escaped = s
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    format!("\"{escaped}\"")
+    json_lit(s)
 }
 
 /// FNV-1a 64-bit hash → hex string (portable, no-dep file fingerprint).

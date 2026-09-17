@@ -23547,3 +23547,53 @@ fn session_jsonl_refuses_a_lone_surrogate_in_an_input_frame() {
         out[0]
     );
 }
+
+#[test]
+fn json_emitting_verbs_escape_control_characters() {
+    // The same defect as the session protocol's, in a sibling emitter: `json_lit`
+    // escaped `"` `\` `\n` `\t` and passed everything else through RAW, so a
+    // control character reached the output and the line stopped being JSON.
+    //
+    // Reachable from ordinary source — a `\r` in a fallback string:
+    //   @[ai(policy(fallback: "a\rb"))]
+    //   {"fn":"q",...,"fallback":"a<0x0d>b",...}   <- invalid
+    //
+    // Three of the five hand-rolled escapers in this workspace already had the
+    // U+0000..U+001F arm and two did not. That is what an inconsistently-copied
+    // helper looks like, so the test checks the OUTPUT rather than the helper.
+    let f = std::env::temp_dir().join(format!("axon_esc_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(tier: cheap, budget: 3, fallback: \"a\\rb\"))]\n\
+         fn q() -> str { \"x\" }\n\
+         fn main() { println(q()) }\n",
+    )
+    .unwrap();
+
+    let out = axon()
+        .args(["ai", "policy", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    assert!(
+        line.contains("\"fallback\""),
+        "precondition: the policy line must be emitted at all: {line:?}"
+    );
+    // No raw control character may appear anywhere in the record.
+    let raw: Vec<u32> = line
+        .chars()
+        .map(|c| c as u32)
+        .filter(|c| *c < 0x20)
+        .collect();
+    assert!(
+        raw.is_empty(),
+        "raw control char(s) {raw:?} in a JSON record — not parseable: {line}"
+    );
+    // ...and the carriage return must survive as an ESCAPE, not be dropped.
+    assert!(
+        line.contains("\\r"),
+        "the control character must be escaped, not deleted: {line}"
+    );
+}
