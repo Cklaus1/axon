@@ -24084,3 +24084,63 @@ fn a_denied_capability_audit_is_refused_by_every_verb_not_just_check() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_mint_certificate_policy_is_enforced_on_every_verb_that_executes() {
+    // R23's cert gate checks the binary's OWN pinned mint-TCB obligations, so it
+    // is an operator policy about the compiler rather than about the program.
+    // `AXON_REQUIRE_CERTS=1` makes it fail closed — and it was wired into `run`
+    // and the native build path only. Measured before the fix:
+    //
+    //   run 1   build 1   test 0   deploy 0   goal 0   session 0
+    //
+    // `deploy` is the pointed omission: an operator who turns the policy on to
+    // stop an unverified mint TCB from running had it enforced on the rehearsal
+    // and skipped on the ship.
+    //
+    // The legibility line the gate prints under the policy is the observable —
+    // if it is absent the gate did not run.
+    let dir = std::env::temp_dir().join(format!("axon_certgate_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("cg.ax");
+    std::fs::write(&prog, "fn main() { println(\"hi\") }\n").unwrap();
+    let path = prog.to_str().unwrap().to_string();
+
+    let run = |certs: bool, args: &[&str]| {
+        let mut c = axon();
+        for a in args {
+            c.arg(a);
+        }
+        if certs {
+            c.env("AXON_REQUIRE_CERTS", "1");
+        } else {
+            c.env_remove("AXON_REQUIRE_CERTS");
+        }
+        let o = c.output().unwrap();
+        let mut all = String::from_utf8_lossy(&o.stdout).to_string();
+        all.push_str(&String::from_utf8_lossy(&o.stderr));
+        all
+    };
+
+    const LINE: &str = "certificate-checked";
+    for verb in ["run", "test", "build", "deploy"] {
+        let out = run(true, &[verb, &path]);
+        assert!(
+            out.contains(LINE),
+            "`axon {verb}` must run the mint cert gate under AXON_REQUIRE_CERTS: {out}"
+        );
+    }
+
+    // Policy OFF must stay byte-silent — the gate is free by default, which is
+    // what makes wiring it into more verbs cost nothing.
+    for verb in ["run", "test", "deploy"] {
+        let out = run(false, &[verb, &path]);
+        assert!(
+            !out.contains("certificate"),
+            "`axon {verb}` must say nothing about certs when the policy is off: {out}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

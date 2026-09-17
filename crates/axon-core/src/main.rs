@@ -3421,6 +3421,18 @@ fn find_entry_fn(program: &axon_core::ast::Program) -> Option<String> {
 /// `axon goal <file.md>` — the Phase-10 two-track flow in one command:
 /// compile structured prose → `.ax` (via `axon-surface`) → type-check → run.
 fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
+    // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
+    //
+    // It ran on `run` and the native build path and nowhere else, so under
+    // `AXON_REQUIRE_CERTS=1` — a fail-closed operator policy — `test`, `deploy`,
+    // `goal` and `session` all executed program code without it. `deploy` is the
+    // pointed one: it is strictly more consequential than `run`, and an operator
+    // who turns the policy on to stop an unverified mint TCB from running would
+    // have had it enforced on the rehearsal and skipped on the ship.
+    //
+    // No-op unless the policy is set, so this costs nothing by default.
+    axon_core::cert_gate::enforce_or_exit();
+
     // Stamp provenance with the goal file's identity so `trace` keeps this
     // run's metrics distinct from other programs' (BUG_HUNT #4).
     axon_core::interp::set_provenance_source(file.display().to_string());
@@ -4607,6 +4619,18 @@ fn cmd_reference(json: bool) {
 }
 
 fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<PathBuf>) {
+    // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
+    //
+    // It ran on `run` and the native build path and nowhere else, so under
+    // `AXON_REQUIRE_CERTS=1` — a fail-closed operator policy — `test`, `deploy`,
+    // `goal` and `session` all executed program code without it. `deploy` is the
+    // pointed one: it is strictly more consequential than `run`, and an operator
+    // who turns the policy on to stop an unverified mint TCB from running would
+    // have had it enforced on the rehearsal and skipped on the ship.
+    //
+    // No-op unless the policy is set, so this costs nothing by default.
+    axon_core::cert_gate::enforce_or_exit();
+
     // The transcript must say HOW it was recorded, not just what was typed.
     //
     // A session recorded under `--require-contained` has cells that were refused
@@ -5701,6 +5725,18 @@ struct TestOutcome {
 }
 
 fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool) {
+    // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
+    //
+    // It ran on `run` and the native build path and nowhere else, so under
+    // `AXON_REQUIRE_CERTS=1` — a fail-closed operator policy — `test`, `deploy`,
+    // `goal` and `session` all executed program code without it. `deploy` is the
+    // pointed one: it is strictly more consequential than `run`, and an operator
+    // who turns the policy on to stop an unverified mint TCB from running would
+    // have had it enforced on the rehearsal and skipped on the ship.
+    //
+    // No-op unless the policy is set, so this costs nothing by default.
+    axon_core::cert_gate::enforce_or_exit();
+
     if files.is_empty() {
         eprintln!("error: no source files specified");
         process::exit(1);
@@ -7470,6 +7506,19 @@ fn cmd_deploy(
     if std::env::var("AXON_STRICT").is_err() {
         std::env::set_var("AXON_STRICT", "1");
     }
+
+    // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
+    //
+    // It ran on `run` and the native build path and nowhere else, so under
+    // `AXON_REQUIRE_CERTS=1` — a fail-closed operator policy — `test`, `deploy`,
+    // `goal` and `session` all executed program code without it. `deploy` is the
+    // pointed one: it is strictly more consequential than `run`, and an operator
+    // who turns the policy on to stop an unverified mint TCB from running would
+    // have had it enforced on the rehearsal and skipped on the ship.
+    //
+    // No-op unless the policy is set, so this costs nothing by default.
+    axon_core::cert_gate::enforce_or_exit();
+
     validate_ax_extension(&file);
     let src = read_source(&file);
 
