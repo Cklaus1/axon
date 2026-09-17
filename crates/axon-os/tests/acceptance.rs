@@ -20,6 +20,16 @@ fn axon_os_bin() -> PathBuf {
 }
 
 /// The interpreter the supervisor drives. Returns None (⇒ skip) if not built.
+/// Locate the `axon` binary these acceptance tests drive.
+///
+/// Returning `None` makes every caller `return` — a SILENT skip that reports
+/// GREEN, in tests named for security properties ("overreach denied", "tamper
+/// detected"). `acceptance_gate.sh` then says "88 axon-os tests pass" whether
+/// they ran or not, and the two outcomes are indistinguishable.
+///
+/// It still skips rather than fails, because running this suite standalone
+/// without a built compiler is legitimate. But it SAYS so now: a green run that
+/// checked nothing must not look like a green run that checked everything.
 fn axon_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("AXON_BIN") {
         let p = PathBuf::from(p);
@@ -28,7 +38,15 @@ fn axon_bin() -> Option<PathBuf> {
         }
     }
     let p = workspace_root().join("target/debug/axon");
-    p.exists().then_some(p)
+    if p.exists() {
+        return Some(p);
+    }
+    eprintln!(
+        "axon-os acceptance: SKIPPING — no axon binary at {} (build it, or set AXON_BIN). \
+         This test reports PASS without having checked anything.",
+        p.display()
+    );
+    None
 }
 
 fn examples() -> PathBuf {
