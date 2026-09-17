@@ -23851,3 +23851,75 @@ fn fmt_is_idempotent_and_check_clean_across_the_whole_example_corpus() {
         "fmt produced source that no longer type-checks: {broke_check:?}"
     );
 }
+
+#[test]
+fn run_reports_a_tampered_module_but_stays_quiet_without_a_lockfile() {
+    // R6 supply chain. `axon run` performed NO lockfile verification — not even
+    // the warning `axon check` emits — so a module whose bytes changed since
+    // `axon lock` EXECUTED SILENTLY, on the verb whose entire job is execution,
+    // while the verb that merely type-checks reported it.
+    //
+    //   axon check app.ax            -> W1210 content hash mismatch
+    //   axon check --locked app.ax   -> E1201, exit 2
+    //   axon run app.ax              -> exit 0, nothing at all      <- the gap
+    let dir = std::env::temp_dir().join(format!("axon_lockrun_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let helper = dir.join("lockhelper.ax");
+    let app = dir.join("app.ax");
+    std::fs::write(&helper, "fn double(n: i64) -> i64 { n * 2 }\n").unwrap();
+    std::fs::write(
+        &app,
+        "mod lockhelper\nuse lockhelper.{double}\n\nfn main() { println(to_str(double(21))) }\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        let mut c = axon();
+        for a in args {
+            c.arg(a);
+        }
+        let o = c.env("AXON_PATH", &dir).output().unwrap();
+        let mut all = String::from_utf8_lossy(&o.stdout).to_string();
+        all.push_str(&String::from_utf8_lossy(&o.stderr));
+        (o.status.code().unwrap_or(-1), all)
+    };
+
+    // No lockfile yet: `run` must stay SILENT. A program with imports and no
+    // lockfile is the ordinary dev case; warning on every run would be noise,
+    // which is presumably why the check was omitted entirely.
+    let (code, out) = run(&["run", app.to_str().unwrap()]);
+    assert_eq!(code, 0, "clean run must succeed: {out}");
+    assert!(out.contains("42"), "program must actually run: {out}");
+    assert!(
+        !out.contains("W1210"),
+        "no lockfile is not a warning on `run`: {out}"
+    );
+
+    // Lock it, then TAMPER with the module.
+    let (lc, lo) = run(&["lock", app.to_str().unwrap()]);
+    assert_eq!(lc, 0, "lock must succeed: {lo}");
+    std::fs::write(
+        &helper,
+        "fn double(n: i64) -> i64 { n * 2 }\n\
+         fn backdoor() -> str { match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"\" } }\n",
+    )
+    .unwrap();
+
+    // `run` must now SAY SO. It warns rather than halting: dev mode is
+    // deliberately permissive (R6 §4.2) and `check --locked` is the fail-closed
+    // gate — but silence was not a defensible third option.
+    let (code2, out2) = run(&["run", app.to_str().unwrap()]);
+    assert!(
+        out2.contains("W1210") && out2.contains("content hash mismatch"),
+        "a tampered module must be reported when RUN: {out2}"
+    );
+    assert_eq!(code2, 0, "…as a warning, not a failure (dev mode): {out2}");
+
+    // And the fail-closed gate still fails closed.
+    let (code3, out3) = run(&["check", "--locked", app.to_str().unwrap()]);
+    assert_eq!(code3, 2, "--locked must still be fatal: {out3}");
+    assert!(out3.contains("E1201"), "{out3}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1139,7 +1139,7 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // a missing entry (E1202) or a hash mismatch (E1201) is FATAL. In dev mode a
     // missing lock entry is only W1210 (a warning — bytes unverified/unaudited),
     // so existing programs without a lockfile keep working until a user opts in.
-    let lock_errors = check_locked_imports(&file, &resolved_imports, locked, use_json);
+    let lock_errors = check_locked_imports(&file, &resolved_imports, locked, use_json, false);
 
     // Type-check pipeline. R8 typed end-to-end: use the LOCATED form so the
     // JSON a tool/agent consumes carries file/line/col (resolved from each
@@ -1390,6 +1390,12 @@ fn check_locked_imports(
     resolved: &[axon_core::ResolvedModule],
     locked: bool,
     use_json: bool,
+    // When true, report ONLY a hash mismatch (tamper) and stay silent about a
+    // missing lock entry. `axon run` uses this: a program with imports and no
+    // lockfile is the ordinary dev case and must not warn on every run, but a
+    // lockfile that EXISTS and disagrees is never noise — the author opted into
+    // verification and a mismatch is exactly what they asked to hear about.
+    tamper_only: bool,
 ) -> Vec<String> {
     use axon_core::lockfile::{module_hash, parse_lock};
     if resolved.is_empty() {
@@ -1461,6 +1467,7 @@ fn check_locked_imports(
                     emit_error(&format!("[{}] {msg}", axon_core::error::W1210), use_json);
                 }
             }
+            None if tamper_only => {}
             None => {
                 // No lock entry. Fatal under --locked (E1202), warn in dev (W1210).
                 if locked {
@@ -5245,6 +5252,30 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
 
     if !args.is_empty() {
         eprintln!("warning: `axon run` does not yet forward arguments to the program");
+    }
+
+    // R6 supply chain: `axon run` performed NO lockfile verification at all —
+    // not even the warning `axon check` emits. So a module whose bytes changed
+    // since `axon lock` EXECUTED silently, on the verb whose whole job is
+    // execution, while the verb that merely type-checks reported it. The gap sat
+    // exactly where it mattered most.
+    //
+    // Tamper-only: a program with imports and no lockfile stays silent (that is
+    // the ordinary dev case and `check` already covers it), but a lockfile that
+    // exists and disagrees is surfaced. This WARNS rather than halting — dev mode
+    // is deliberately permissive per R6 §4.2, and `axon check --locked` remains
+    // the fail-closed gate — but silence was not a defensible third option.
+    {
+        let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+        let (resolved_imports, _unresolved) =
+            axon_core::resolve_use_files_transitive(&program, &search_dirs);
+        let _ = check_locked_imports(
+            &file,
+            &resolved_imports,
+            false,
+            !std::io::stderr().is_terminal(),
+            true,
+        );
     }
 
     // R23: gate the kernel mint obligations on a SOLVER-FREE certificate check
