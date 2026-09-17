@@ -124,7 +124,10 @@ jobs:
   # Lint-gating the remaining crates is a separate, larger change — tracked
   # rather than bundled here, so this job reports what it actually measures.
   workspace-test:
-    name: Test all 19 crates (no LLVM)
+    # No count in the name: it ran `cargo test --workspace`, which DISCOVERS
+    # members, while the name asserted "19 crates" — a number nothing checks and
+    # that goes wrong the moment a crate is added. The discovery is the truth.
+    name: Test the whole workspace (no LLVM)
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: ""

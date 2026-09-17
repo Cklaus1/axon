@@ -2,11 +2,21 @@
 # gate.sh — the single, atomic build gate for axon-core.
 #
 # Every code change (mine or a subagent's) must pass THIS exact gate before it
-# is committed, so "green" means the same thing everywhere. Runs:
-#   1. cargo fmt --all --check (text-only, so it runs before anything builds)
-#   2. the full test suite (interpreter path, --no-default-features)
-#   3. the native codegen build (cargo build -p axon-core)
-#   4. clippy as a hard error (lib by default; --strict adds --all-targets)
+# is committed, so "green" means the same thing everywhere.
+#
+# WHAT IT RUNS: read the `── gate: …` banners as it executes. They are the
+# authoritative list; this header is not. It said four stages while the script
+# ran eight — omitting the VISION.md focus check, the serde-json feature builds,
+# the runtime-crate clippy and (added 2026-09-17) the clippy-coverage check, plus
+# the parity suite under --strict. A duplicated list in a comment drifts from the
+# code beside it, which is the defect this gate exists to catch elsewhere; so the
+# list is not duplicated any more.
+#
+# In rough order: VISION.md focus · cargo fmt · the full test suite
+# (--no-default-features) · the native codegen build · serde-json feature builds
+# · clippy (lib, then every runtime crate, then the coverage check that every
+# workspace crate is gated or excused) · and under --strict, --all-targets clippy
+# and the whole parity suite (I-2).
 #
 # Determinism: AXON_SEED + AXON_AI_MOCK are pinned so seeded-RNG / AI-call tests
 # never flake. Speed: mold linker + sccache rustc cache are used IF installed
