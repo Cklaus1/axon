@@ -1,7 +1,7 @@
 # R44 — The accumulating typed session
 
 **Spec ID:** `R44-accumulating-session`
-**Status:** Implementing — **Slices 0–4 LANDED** (2026-09-16/17). Only Slice 5 (jsonl driver) remains. §12 Q1 resolved: v1 = (c). Slice 2 is the product.
+**Status:** Landed — all slices (0–5) complete (2026-09-16/17). §12 Q1 resolved: v1 = (c). §12 Q1 resolved: v1 = (c). Slice 2 is the product.
 **Risk class:** Structural. Changes where a session's bindings live (module scope → `main`'s scope) and,
 in its v2 stage, the lifetime discipline of `Interp`. Not a language feature: no `.ax` syntax changes.
 **Author / date:** 2026-09-16, from `AXON_FOR_RLM.md` §5.
@@ -14,14 +14,14 @@ review, was found by running the example: **module-scope bindings cannot be assi
 
 ```spec-meta
 id: R44-accumulating-session
-status-claim: Implementing
+status-claim: Landed
 depends-on: R7b-axonhost, R6-capability-security
 blocks: none
 blocked-by: none
 supersedes: tasks/spec-rlm-accumulator.md (DRAFT 2026-08-07 — absorbed; its N1 is this spec's §4 S1,
   its N2 has since landed, its prototype is this spec's v1 substrate)
 related: R15-resume-runtime, R41-polyglot-runtime, R38-embedded-agent-runtime, R28-capability-audit-ledger, R42-stdlib-gaps, R43-bytes-and-binary
-evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slices 1-4, ALL PASS 2026-09-17; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
+evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slices 1-5, ALL PASS 2026-09-17; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
 reserves: E2400-E2404, confirmed free at spec time (grepped `E2[0-9]{3}` across crates/ and every
   governance/specs `reserves:` line — taken bands are E20xx [R41], E21xx [R16], E22xx [R42/R43],
   E23xx [eBPF], E37xx [R37]; E24xx is the next contiguous free band)
@@ -341,7 +341,7 @@ the code in the protocol frame.
 | **2** | ✅ **LANDED 2026-09-17.** S5 + E2400. Items became named, replaceable units (`SessionItem`) with per-item line spans, so a check error can be attributed to the item that owns it and promoted when that item belongs to an earlier cell. | **PASSED.** §4.1 exactly: cell 3 refused, `g` named with its cell, cell 4's `g()` still returns 2. |
 | **3** | ✅ **LANDED 2026-09-17.** S6 trailing values (via a reserved capture binding + a conservative rewrite with a type-check probe and unwrapped retry); S7 + §4.4 honest failure scoping. (S10 landed early in Slice 1.) | **PASSED.** Scalar/array/str values display; a `println` cell shows no unit; a panic leaves cell N−1 usable and the message no longer claims the world was restored. |
 | **4** | ✅ **LANDED 2026-09-17.** A1 one run-id + cell-indexed provenance; A2 one journal per session; A3 `--transcript` + replay/divergence; A4 ledger flush at session end; A5 falls out of the cell field. S8 was already true and is now pinned. | **PASSED.** A tampered cell diverges at event 0 with exit 11; `AXON_ALLOWED_EFFECTS=Pure` refuses `println` inside a cell. |
-| **5** | `--protocol jsonl` host driver. | An external host drives 20 cells and reads per-cell results. |
+| **5** | ✅ **LANDED 2026-09-17.** JSON-framed input (`{"cell": "…"}`), E2403 on a malformed frame, `axon-session/1` reply per cell. | **PASSED.** 21 cells driven with state carried throughout; a refused cell is reported without ending the session. |
 
 ---
 
@@ -453,6 +453,19 @@ bindings materialised back) and ran all four hazards:
 §4.3 and §4.2 turned out **not to bite v1 at all**. Both are now regression-tested rather than
 assumed, because a property that holds by accident is one a later refactor removes silently.
 
+**Slice 5 — landed.** The jsonl host driver, and the bug that made it unusable.
+
+`--protocol jsonl` took a raw line and turned every `\n` in it into a real newline. That splits
+`println("a\nb")` into two lines, the second of which the composer indents into the middle of the
+program — **so the cell that ran was not the cell the host sent**, and it reported success. A `\n`
+escape in a string is common enough that the protocol was unusable for exactly the hosts it exists to
+serve, and nothing said so.
+
+The frame is now JSON, so JSON's own escaping carries the cell intact and a multi-line cell rides in
+one frame. A malformed frame is refused with **E2403** and a specific reason — "malformed" alone tells
+a driver nothing about which of its frames to fix — rather than guessed at, because guessing means
+running a mangled cell and reporting `ok:true`.
+
 **Slice 4 — landed.** Audit, replay and containment.
 
 Two findings, both the defect class this cycle has been chasing:
@@ -520,7 +533,7 @@ materialiser promoted from env-var-only to an API (`set_session_capture` / `take
 S1 bindings-in-`main`; S4 failed cells do not accumulate; S10 non-persistable bindings named (pulled
 forward — it fell out of the materialiser for free); S11 no warning storm.
 
-23 regression tests (8 Slice 1, 5 Slice 2, 6 Slice 3, 4+1 Slice 4), **each RED against the prior commit** except the guards noted below.
+28 regression tests (8 Slice 1, 5 Slice 2, 6 Slice 3, 4+1 Slice 4, 5 Slice 5), **each RED against the prior commit** except the guards noted below.
 
 Two of them were initially worthless and only mutation testing found it:
 

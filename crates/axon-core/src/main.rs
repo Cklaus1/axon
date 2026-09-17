@@ -4161,6 +4161,81 @@ struct CellResult {
     value: Option<String>,
 }
 
+/// Read the `cell` string out of one JSON input frame (R44 Slice 5).
+///
+/// `--protocol jsonl` used to take a raw line and turn every `\n` in it into a
+/// real newline. That corrupts any cell containing a `\n` escape in a string
+/// literal — `println("a\nb")` became two lines, the second of which the
+/// composer then indented into the middle of the program. It is a common enough
+/// shape that the protocol was unusable for the hosts it exists to serve.
+///
+/// So the frame is JSON, and JSON's own escaping carries the cell intact. A
+/// malformed frame is reported (E2403) rather than guessed at: a driver that
+/// sent something unparseable needs to hear so, not watch a mangled cell run.
+fn parse_cell_frame(line: &str) -> Result<String, String> {
+    let t = line.trim();
+    if !t.starts_with('{') {
+        return Err(
+            "expected a JSON object per line, e.g. {\"cell\": \"let x = 1\"} — a raw line \
+             cannot carry a multi-line cell unambiguously"
+                .to_string(),
+        );
+    }
+    let key = "\"cell\"";
+    let kpos = t
+        .find(key)
+        .ok_or_else(|| "frame has no `cell` field".to_string())?;
+    let after = t[kpos + key.len()..].trim_start();
+    let after = after
+        .strip_prefix(':')
+        .ok_or_else(|| "`cell` is not followed by `:`".to_string())?
+        .trim_start();
+    let body = after
+        .strip_prefix('"')
+        .ok_or_else(|| "`cell` value is not a string".to_string())?;
+
+    let mut out = String::new();
+    let mut chars = body.chars();
+    loop {
+        match chars.next() {
+            None => return Err("unterminated string in `cell`".to_string()),
+            Some('"') => break,
+            Some('\\') => match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('b') => out.push('\u{8}'),
+                Some('f') => out.push('\u{c}'),
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some('/') => out.push('/'),
+                Some('u') => {
+                    let hex: String = (0..4).filter_map(|_| chars.next()).collect();
+                    if hex.len() != 4 {
+                        return Err("truncated \\u escape in `cell`".to_string());
+                    }
+                    let cp = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| format!("invalid \\u escape `{hex}` in `cell`"))?;
+                    // Lone surrogates have no scalar value. Refusing beats
+                    // substituting U+FFFD, which would silently alter the cell.
+                    match char::from_u32(cp) {
+                        Some(c) => out.push(c),
+                        None => {
+                            return Err(format!(
+                                "\\u{hex} is not a Unicode scalar value (lone surrogate?)"
+                            ))
+                        }
+                    }
+                }
+                Some(other) => return Err(format!("unknown escape `\\{other}` in `cell`")),
+                None => return Err("frame ends inside an escape".to_string()),
+            },
+            Some(c) => out.push(c),
+        }
+    }
+    Ok(out)
+}
+
 fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<PathBuf>) {
     use std::io::BufRead;
     let jsonl = protocol.as_deref() == Some("jsonl");
@@ -4211,8 +4286,24 @@ fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<
             Err(_) => break,
         };
         if jsonl {
-            // One cell per line; `\n` inside the cell is escaped.
-            let cell = line.replace("\\n", "\n");
+            if line.trim().is_empty() {
+                continue;
+            }
+            let cell = match parse_cell_frame(&line) {
+                Ok(c) => c,
+                Err(why) => {
+                    sess.cell_no += 1;
+                    let r = CellResult {
+                        ok: false,
+                        stdout: String::new(),
+                        diagnostics: vec![format!("[{}] {why}", axon_core::error::E2403)],
+                        skipped: Vec::new(),
+                        value: None,
+                    };
+                    println!("{}", render_cell_jsonl(&sess, &r));
+                    continue;
+                }
+            };
             if cell.trim().is_empty() {
                 continue;
             }

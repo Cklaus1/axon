@@ -198,9 +198,37 @@ if grep -q "sandbox violation" "$TMP/s8err" && ! grep -q "should not appear" "$T
     pass "a session is not an effect-laundering seam"
 else fail "the ceiling did not apply: $(cat "$TMP/s8err")"; fi
 
-echo "== Slice-1/2/3/4 regression tests =="
+echo "== Slice 5: the jsonl host driver =="
+# The escape that used to corrupt the protocol: a raw-line frame turned `\n`
+# inside a string literal into a real newline, so the cell that ran was not the
+# cell the host sent.
+printf '{"cell":"println(\\"a\\\\nb\\")"}\n' | "$AXON" session --protocol jsonl 2>/dev/null >"$TMP/j1"
+if grep -q '"stdout":"a\\nb\\n"' "$TMP/j1"; then pass "an escaped newline reaches the lexer intact"
+else fail "the frame was corrupted: $(cat "$TMP/j1")"; fi
+
+printf '{"cell":"let rows = [1, 2]\\nrows = rows + [3]\\nlen(&rows)"}\n' \
+  | "$AXON" session --protocol jsonl 2>/dev/null >"$TMP/j2"
+if grep -q '"value":"3"' "$TMP/j2"; then pass "a multi-line cell rides in one frame"
+else fail "multi-line frame failed: $(cat "$TMP/j2")"; fi
+
+printf 'not json\n{"nope":1}\n' | "$AXON" session --protocol jsonl 2>/dev/null >"$TMP/j3"
+if [ "$(grep -c E2403 "$TMP/j3")" -eq 2 ]; then pass "a malformed frame is refused, not guessed at"
+else fail "bad frames not refused: $(cat "$TMP/j3")"; fi
+
+# 20+ cells, state carried throughout.
+: > "$TMP/drive.jsonl"
+echo '{"cell":"let acc = [0]"}' >> "$TMP/drive.jsonl"
+echo '{"cell":"fn bump(xs: &[i64], n: i64) -> [i64] { xs + [n] }"}' >> "$TMP/drive.jsonl"
+i=1; while [ $i -le 18 ]; do echo "{\"cell\":\"acc = bump(&acc, $i)\"}" >> "$TMP/drive.jsonl"; i=$((i+1)); done
+echo '{"cell":"len(&acc)"}' >> "$TMP/drive.jsonl"
+"$AXON" session --protocol jsonl < "$TMP/drive.jsonl" 2>/dev/null >"$TMP/j4"
+n_ok=$(grep -c '"ok":true' "$TMP/j4")
+if [ "$n_ok" -eq 21 ] && grep -q '"value":"19"' "$TMP/j4"; then pass "21 cells driven, state carried throughout"
+else fail "driver run: $n_ok/21 ok, tail: $(tail -1 "$TMP/j4")"; fi
+
+echo "== Slice-1..5 regression tests =="
 if (cd "$ROOT" && cargo test -p axon-core --test cli_run session_ 2>&1 | grep -q "test result: ok"); then
-    pass "cli_run session_* green (23 tests)"
+    pass "cli_run session_* green (28 tests)"
 else
     fail "cli_run session_* not green"
 fi

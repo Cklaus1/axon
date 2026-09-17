@@ -22352,3 +22352,149 @@ fn session_honours_an_ambient_effect_ceiling_per_cell() {
         "the refused effect must not have happened: {out:?}"
     );
 }
+
+/// Drive `axon session --protocol jsonl`, returning one parsed frame per cell.
+fn session_jsonl(frames: &[&str]) -> Vec<String> {
+    use std::io::Write;
+    let mut child = axon()
+        .args(["session", "--protocol", "jsonl"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let si = child.stdin.as_mut().unwrap();
+        for f in frames {
+            si.write_all(f.as_bytes()).unwrap();
+            si.write_all(b"\n").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// JSON-encode one cell into an input frame.
+fn frame(cell: &str) -> String {
+    let esc = cell
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("{{\"cell\":\"{esc}\"}}")
+}
+
+#[test]
+fn session_jsonl_does_not_corrupt_an_escaped_newline_in_a_string() {
+    // The protocol used to take a raw line and turn every `\n` in it into a real
+    // newline. That splits `println("a\nb")` into two lines, the second of which
+    // the composer indents into the middle of the program — so the cell that ran
+    // was not the cell the host sent. Common enough to make the protocol
+    // unusable for the hosts it exists to serve.
+    let frames = session_jsonl(&[&frame("println(\"a\\nb\")")]);
+    assert_eq!(frames.len(), 1, "one frame per cell: {frames:?}");
+    assert!(
+        frames[0].contains("\"ok\":true"),
+        "the cell must run: {}",
+        frames[0]
+    );
+    // Exactly what the same cell prints in human mode.
+    assert!(
+        frames[0].contains("\"stdout\":\"a\\nb\\n\""),
+        "the escape must reach the lexer intact: {}",
+        frames[0]
+    );
+}
+
+#[test]
+fn session_jsonl_carries_a_multi_line_cell_in_one_frame() {
+    // A raw-line protocol cannot express this at all, which is why the frame is
+    // JSON rather than a line with ad-hoc escaping.
+    let frames = session_jsonl(&[&frame("let rows = [1, 2]\nrows = rows + [3]\nlen(&rows)")]);
+    assert!(
+        frames[0].contains("\"value\":\"3\""),
+        "the whole cell must run as one: {}",
+        frames[0]
+    );
+}
+
+#[test]
+fn session_jsonl_reports_a_malformed_frame_rather_than_guessing() {
+    // A driver that sent something unparseable needs to hear so. Guessing at it
+    // would run a mangled cell and report success.
+    let frames = session_jsonl(&[
+        "not json at all",
+        "{\"nope\":1}",
+        "{\"cell\":\"unterminated",
+    ]);
+    assert_eq!(frames.len(), 3, "every bad frame gets a reply: {frames:?}");
+    for (i, f) in frames.iter().enumerate() {
+        assert!(
+            f.contains("\"ok\":false") && f.contains("E2403"),
+            "frame {i} must be refused with E2403: {f}"
+        );
+    }
+    // Each reason must be specific — "malformed" alone tells a driver nothing
+    // about which of its frames to fix.
+    assert!(frames[1].contains("no `cell` field"), "{}", frames[1]);
+    assert!(frames[2].contains("unterminated"), "{}", frames[2]);
+}
+
+#[test]
+fn session_jsonl_drives_twenty_cells_and_carries_state_throughout() {
+    // R44 Slice 5's gate: an external host drives 20+ cells and reads per-cell
+    // results. State must survive every one of them, not just the first few.
+    let mut frames_in: Vec<String> = vec![
+        frame("let acc = [0]"),
+        frame("fn bump(xs: &[i64], n: i64) -> [i64] { xs + [n] }"),
+    ];
+    for i in 1..=18 {
+        frames_in.push(frame(&format!("acc = bump(&acc, {i})")));
+    }
+    frames_in.push(frame("len(&acc)"));
+    let refs: Vec<&str> = frames_in.iter().map(String::as_str).collect();
+    let out = session_jsonl(&refs);
+
+    assert_eq!(out.len(), 21, "one frame out per frame in: {}", out.len());
+    for (i, f) in out.iter().enumerate() {
+        assert!(f.contains("\"ok\":true"), "cell {} failed: {f}", i + 1);
+        assert!(
+            f.contains(&format!("\"cell\":{}", i + 1)),
+            "frames must be indexed in order: {f}"
+        );
+    }
+    assert!(
+        out[20].contains("\"value\":\"19\""),
+        "the accumulator must have grown across all 18 cells: {}",
+        out[20]
+    );
+}
+
+#[test]
+fn session_jsonl_surfaces_a_refused_cell_without_ending_the_session() {
+    // A driver must be able to tell "this cell was refused" from "the session
+    // died", and keep going.
+    let out = session_jsonl(&[
+        &frame("let good = 7"),
+        &frame("let bad = \"x\" + 1"),
+        &frame("good"),
+    ]);
+    assert_eq!(
+        out.len(),
+        3,
+        "the session must survive the bad cell: {out:?}"
+    );
+    assert!(out[1].contains("\"ok\":false"), "{}", out[1]);
+    assert!(
+        out[1].contains("E0102"),
+        "the reason must be carried: {}",
+        out[1]
+    );
+    assert!(
+        out[2].contains("\"value\":\"7\""),
+        "state must be intact after a refused cell: {}",
+        out[2]
+    );
+}
