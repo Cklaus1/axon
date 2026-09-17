@@ -21878,3 +21878,135 @@ fn session_materialisation_pins_a_bindings_type() {
         "x must still be the i64 it was bound to: stdout={out:?} stderr={err:?}"
     );
 }
+
+#[test]
+fn session_redefinition_that_breaks_an_earlier_item_is_e2400() {
+    // R44 §4.1 — THE product, and the case the spec says the implementation is
+    // judged on. `f` redefined in cell 3 does not break cell 3; it breaks `g`,
+    // written in cell 2, which calls it. A dynamic kernel accepts cell 3 and
+    // fails later somewhere else, or returns a wrong answer.
+    let (out, err) = session(&[
+        "fn f() -> i64 { 1 }\nprintln(to_str(f()))",
+        "fn g() -> i64 { f() + 1 }\nprintln(to_str(g()))",
+        "fn f() -> str { \"one\" }\nprintln(\"after\")",
+        "println(to_str(g()))",
+    ]);
+    assert!(
+        err.contains("E2400"),
+        "the redefinition must be refused: {err}"
+    );
+    // Naming the BROKEN item is the whole difference from a raw type error: the
+    // raw diagnostic points at `g` and says "type mismatch", leaving the reader
+    // to work out that a redefinition in a later cell is why.
+    assert!(
+        err.contains('g') && err.contains("cell 2"),
+        "E2400 must name the broken item and the cell it came from: {err}"
+    );
+    assert!(
+        !out.contains("after"),
+        "the refused cell must not execute: stdout={out:?}"
+    );
+    // ...and the session survives with the OLD definition, so `g` still works.
+    assert!(
+        out.matches('2').count() >= 2,
+        "g() must still return 2 in cell 4 — the session is unchanged: stdout={out:?} stderr={err:?}"
+    );
+}
+
+#[test]
+fn session_redefinition_replaces_rather_than_duplicating() {
+    // Accumulating items by appending would give the composed program two
+    // `fn f` definitions and E0002 — a true statement about the text and a
+    // useless one about what the user did.
+    let (out, err) = session(&[
+        "fn f() -> i64 { 1 }\nprintln(to_str(f()))",
+        "fn f() -> i64 { 99 }\nprintln(to_str(f()))",
+        "println(to_str(f()))",
+    ]);
+    assert!(
+        !err.contains("E0002"),
+        "redefinition must replace, not duplicate: {err}"
+    );
+    assert!(
+        out.contains("99"),
+        "the new definition must take effect: stdout={out:?} stderr={err:?}"
+    );
+    // The replacement must PERSIST — cell 3 sees 99, not 1.
+    assert_eq!(
+        out.matches("99").count(),
+        2,
+        "the replacement must survive into later cells: stdout={out:?}"
+    );
+}
+
+#[test]
+fn session_does_not_swallow_an_unrelated_error_in_a_redefining_cell() {
+    // The E2400 promotion suppresses knock-on diagnostics of the break it just
+    // explained. It must not suppress a genuinely separate mistake in the same
+    // cell — that would trade a confusing error for a hidden one.
+    // The cell must BOTH break an earlier item (so the suppression path is
+    // actually entered) AND contain a separate mistake. An earlier version of
+    // this test redefined `f` harmlessly, so nothing was ever blamed, the
+    // suppression never ran, and a deliberately over-suppressing mutant passed
+    // it — a guard that cannot fail is not a guard.
+    let (_, err) = session(&[
+        "fn f() -> i64 { 1 }",
+        "fn g() -> i64 { f() + 1 }",
+        "fn f() -> str { \"one\" }\nlet bad = 1 + true",
+    ]);
+    assert!(
+        err.contains("E2400"),
+        "precondition: the redefinition must break `g`, or the suppression path \
+         is never entered and this tests nothing: {err}"
+    );
+    // A CHECKER-phase error, deliberately. Resolver-phase errors are emitted
+    // before any blame exists, so they cannot be suppressed and cannot detect
+    // over-suppression either — two earlier versions of this test used one and
+    // a blanket-suppression mutant survived both.
+    assert!(
+        err.contains("expected bool"),
+        "a separate mistake in the same cell must survive the E2400 promotion: {err}"
+    );
+}
+
+#[test]
+fn session_e2400_reports_the_cause_once_not_three_times() {
+    // The checker reports this break three times — twice located inside `g` and
+    // once with no resolvable span at all. Printing all three tells the reader
+    // nothing the first told them, and the unlocated one cannot even be traced
+    // to a line.
+    let (_, err) = session(&[
+        "fn f() -> i64 { 1 }",
+        "fn g() -> i64 { f() + 1 }",
+        "fn f() -> str { \"one\" }",
+    ]);
+    assert_eq!(
+        err.matches("E2400").count(),
+        1,
+        "the cause must be stated once: {err}"
+    );
+    assert_eq!(
+        err.matches("E0102").count(),
+        0,
+        "knock-on diagnostics of an explained break must not be repeated raw: {err}"
+    );
+}
+
+#[test]
+fn session_annotated_fn_keys_on_its_name_not_its_attribute() {
+    // `@[test] fn t()` must key on `t`, so re-running the cell replaces it.
+    // Keying on the first line would make every redefinition a new item named
+    // `@[test]` and stack duplicates until E0002.
+    let (out, err) = session(&[
+        "@[test]\nfn t() { assert_eq(1, 1) }\nfn v() -> i64 { 1 }\nprintln(to_str(v()))",
+        "@[test]\nfn t() { assert_eq(2, 2) }\nfn v() -> i64 { 7 }\nprintln(to_str(v()))",
+    ]);
+    assert!(
+        !err.contains("E0002"),
+        "an annotated fn must key on its name: {err}"
+    );
+    assert!(
+        out.contains('7'),
+        "the redefinition must take effect: stdout={out:?} stderr={err:?}"
+    );
+}

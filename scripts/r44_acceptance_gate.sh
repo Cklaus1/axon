@@ -105,9 +105,38 @@ sess 'fn f() -> i64 {
 if grep -q W0006 "$TMP/err" && grep -q dead "$TMP/err"; then pass "a genuinely-local unused binding is still linted"
 else fail "the lint was muted wholesale, not scoped to session state"; fi
 
-echo "== Slice-1 regression tests =="
+echo "== S5/E2400 (§4.1): redefinition that breaks an earlier item =="
+got=$(sess 'fn f() -> i64 { 1 }
+println(to_str(f()))' 'fn g() -> i64 { f() + 1 }
+println(to_str(g()))' 'fn f() -> str { "one" }
+println("after")' 'println(to_str(g()))')
+if grep -q E2400 "$TMP/err"; then pass "the breaking redefinition is refused"
+else fail "E2400 not emitted — the redefinition was accepted"; fi
+if grep -q "cell 2" "$TMP/err" && grep -q '`g`' "$TMP/err"; then pass "E2400 names the broken item and its cell"
+else fail "E2400 did not name what broke: $(cat "$TMP/err")"; fi
+if echo "$got" | grep -q after; then fail "the refused cell executed anyway"
+else pass "the refused cell did not execute"; fi
+# ...and the session survives with the OLD definition.
+if [ "$(echo "$got" | grep -c '^2$')" -ge 2 ]; then pass "g() still works after the refusal — session unchanged"
+else fail "the session did not survive the refusal: $got"; fi
+
+echo "== S5: a SAFE redefinition replaces and persists =="
+got=$(sess 'fn f() -> i64 { 1 }
+println(to_str(f()))' 'fn f() -> i64 { 99 }' 'println(to_str(f()))')
+if grep -q E0002 "$TMP/err"; then fail "E0002 — redefinition duplicated instead of replacing"
+elif echo "$got" | grep -q 99; then pass "the replacement took effect and persisted"
+else fail "expected 99, got: $got"; fi
+
+echo "== E2400 must not swallow an unrelated error =="
+sess 'fn f() -> i64 { 1 }' 'fn g() -> i64 { f() + 1 }' 'fn f() -> str { "one" }
+let bad = 1 + true' >/dev/null
+if ! grep -q E2400 "$TMP/err"; then fail "precondition failed: nothing was blamed"
+elif grep -q "expected bool" "$TMP/err"; then pass "a separate mistake survives the promotion"
+else fail "the unrelated error was swallowed: $(cat "$TMP/err")"; fi
+
+echo "== Slice-1/2 regression tests =="
 if (cd "$ROOT" && cargo test -p axon-core --test cli_run session_ 2>&1 | grep -q "test result: ok"); then
-    pass "cli_run session_* green"
+    pass "cli_run session_* green (13 tests)"
 else
     fail "cli_run session_* not green"
 fi

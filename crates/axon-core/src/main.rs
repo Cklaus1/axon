@@ -3907,9 +3907,24 @@ fn suppressed_as_session_prelude(code: &str, line: u32) -> bool {
 /// "already loaded" per call — runs exactly once per cell. Re-checking one
 /// long-lived program would duplicate every import and E0002 on cell 2
 /// (R44 §4.3).
+/// One accumulated module-scope item: its declared name and its source text.
+///
+/// Named, because a session must be able to REPLACE `fn f` when a later cell
+/// redefines it. Appending would give the program two `fn f` definitions and
+/// E0002, which is a true statement about the composed text and a useless one
+/// about what the user did (R44 §4 S5).
+struct SessionItem {
+    /// The declared name — `f` for `fn f(..)`, `Point` for `type Point = ..`.
+    /// `use`/`mod` lines key on their own text, since they declare no new name.
+    name: String,
+    text: String,
+    /// The cell that most recently defined it, for the E2400 message.
+    cell: usize,
+}
+
 struct Session {
-    /// Module-scope items, accumulated in cell order.
-    items: String,
+    /// Module-scope items, accumulated in cell order, one entry per name.
+    items: Vec<SessionItem>,
     /// Bindings from prior cells, as `let name = <literal>` lines.
     prelude: String,
     /// Names the previous cell could NOT persist, with the reason (R44 §4 S10).
@@ -3920,7 +3935,7 @@ struct Session {
 impl Session {
     fn new() -> Self {
         Session {
-            items: String::new(),
+            items: Vec::new(),
             prelude: String::new(),
             skipped: Vec::new(),
             cell_no: 0,
@@ -3933,8 +3948,9 @@ impl Session {
     /// because a module-level `let` registers as a function name and assigning to
     /// it is refused (`E0001`) — which would make `rows = rows + [x]`, the single
     /// most common statement a model writes, permanently illegal (R44 §1.2).
-    fn split_cell(src: &str) -> (String, String) {
-        let mut items = String::new();
+    fn split_cell(src: &str) -> (Vec<(String, String)>, String) {
+        let mut items: Vec<(String, String)> = Vec::new();
+        let mut cur = String::new();
         let mut stmts = String::new();
         let mut depth = 0i32;
         let mut in_item = false;
@@ -3950,18 +3966,60 @@ impl Session {
                     || t.starts_with("handler ")
                     || t.starts_with("@[");
             }
-            let target = if in_item { &mut items } else { &mut stmts };
-            target.push_str(line);
-            target.push('\n');
+            if in_item {
+                cur.push_str(line);
+                cur.push('\n');
+            } else {
+                stmts.push_str(line);
+                stmts.push('\n');
+            }
             depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
             if depth <= 0 {
                 depth = 0;
                 // A single-line item (`mod x`, `use x.{y}`, a one-line fn) ends
                 // here; a braced one ends when its braces close.
+                if in_item && !cur.is_empty() {
+                    items.push((Self::item_name(&cur), std::mem::take(&mut cur)));
+                }
                 in_item = false;
             }
         }
+        if !cur.is_empty() {
+            items.push((Self::item_name(&cur), cur));
+        }
         (items, stmts)
+    }
+
+    /// The name an item declares, used as its replacement key.
+    ///
+    /// Attributes are skipped, so `@[test]\nfn t() {}` keys on `t` — otherwise a
+    /// cell re-running an annotated function would stack duplicates. `use` and
+    /// `mod` declare no new name, so they key on their own trimmed text: that
+    /// still de-duplicates a repeated `mod helper` (which would E0002) without
+    /// pretending they are redefinable.
+    fn item_name(text: &str) -> String {
+        for line in text.lines() {
+            let t = line.trim_start();
+            for kw in ["fn ", "type ", "impl ", "trait ", "handler "] {
+                if let Some(rest) = t.strip_prefix(kw) {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !name.is_empty() {
+                        return name;
+                    }
+                }
+            }
+            if t.starts_with("use ") || t.starts_with("mod ") {
+                return t.trim_end().to_string();
+            }
+        }
+        // Unrecognised shape: key on the whole text so it is never mistaken for
+        // a redefinition of something else. Worst case it accumulates twice and
+        // the checker says so, which is better than silently replacing an item
+        // this parser did not understand.
+        text.trim().to_string()
     }
 
     /// The full program this cell runs as: accumulated items, then a `main`
@@ -3972,13 +4030,48 @@ impl Session {
     /// current cell happens not to read is not an unused variable — it is
     /// session state — and warning per binding per cell produces a storm that
     /// grows with session length, on the stderr the model reads.
-    fn compose(&self, cell_items: &str, cell_stmts: &str) -> (String, (usize, usize)) {
+    fn compose(&self, cell_items: &[(String, String)], cell_stmts: &str) -> Composed {
         let mut out = String::new();
-        out.push_str(&self.items);
-        out.push_str(cell_items);
+        let mut spans: Vec<ItemSpan> = Vec::new();
+
+        // The accumulated items, with any this cell redefines swapped in place.
+        // In place, not appended: keeping source order stable means the E2400
+        // message can say "defined earlier" and be telling the truth.
+        let mut emitted: Vec<&str> = Vec::new();
+        for it in &self.items {
+            let replacement = cell_items.iter().find(|(n, _)| *n == it.name);
+            let (text, cell) = match replacement {
+                Some((_, t)) => (t.as_str(), self.cell_no),
+                None => (it.text.as_str(), it.cell),
+            };
+            let start = out.lines().count() + 1;
+            out.push_str(text);
+            spans.push(ItemSpan {
+                name: it.name.clone(),
+                start,
+                end: out.lines().count(),
+                cell,
+                redefined_now: replacement.is_some(),
+            });
+            emitted.push(&it.name);
+        }
+        // Items this cell introduces that are genuinely new.
+        for (name, text) in cell_items {
+            if emitted.contains(&name.as_str()) {
+                continue;
+            }
+            let start = out.lines().count() + 1;
+            out.push_str(text);
+            spans.push(ItemSpan {
+                name: name.clone(),
+                start,
+                end: out.lines().count(),
+                cell: self.cell_no,
+                redefined_now: true,
+            });
+        }
+
         out.push_str("fn main() {\n");
-        // +1 because `out` so far ends with a newline, so the next line written
-        // is line count+1; the prelude starts there.
         let body_start = out.lines().count() + 1;
         let mut n = 0usize;
         for line in self.prelude.lines() {
@@ -3994,13 +4087,37 @@ impl Session {
             n += 1;
         }
         out.push_str("}\n");
-        let range = if n == 0 {
+        let body = if n == 0 {
             (0, 0)
         } else {
             (body_start, body_start + n - 1)
         };
-        (out, range)
+        Composed {
+            src: out,
+            body,
+            spans,
+        }
     }
+}
+
+/// Where one accumulated item landed in the composed program.
+struct ItemSpan {
+    name: String,
+    start: usize,
+    end: usize,
+    /// The cell that defined the text currently occupying this span.
+    cell: usize,
+    /// True when THIS cell supplied that text — so an error inside it is an
+    /// ordinary error about what the user just wrote, not an E2400 about
+    /// something they broke at a distance.
+    redefined_now: bool,
+}
+
+struct Composed {
+    src: String,
+    /// 1-based line range of `main`'s body (R44 §4 S11).
+    body: (usize, usize),
+    spans: Vec<ItemSpan>,
 }
 
 /// One cell's outcome, for both the human and the jsonl renderers.
@@ -4070,8 +4187,9 @@ fn cmd_session(protocol: Option<String>, show_program: bool) {
 fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
     sess.cell_no += 1;
     let (cell_items, cell_stmts) = Session::split_cell(cell);
-    let (src, prelude_lines) = sess.compose(&cell_items, &cell_stmts);
-    set_session_prelude_lines(Some(prelude_lines));
+    let composed = sess.compose(&cell_items, &cell_stmts);
+    let src = composed.src.clone();
+    set_session_prelude_lines(Some(composed.body));
     if show_program {
         eprintln!("--- cell {} ---\n{src}", sess.cell_no);
     }
@@ -4112,10 +4230,7 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
         return CellResult {
             ok: false,
             stdout: String::new(),
-            diagnostics: errors
-                .iter()
-                .map(|e| format!("[{}] {}", e.code, e.message))
-                .collect(),
+            diagnostics: attribute_errors(sess, &composed, &cell_items, &errors),
             skipped: Vec::new(),
         };
     }
@@ -4139,7 +4254,21 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
             }
         }
         if ok {
-            sess.items.push_str(&cell_items);
+            // Replace in place, then append what is genuinely new. Order is the
+            // order compose() emitted, so "defined earlier" stays true.
+            for (name, text) in &cell_items {
+                match sess.items.iter_mut().find(|i| i.name == *name) {
+                    Some(existing) => {
+                        existing.text = text.clone();
+                        existing.cell = sess.cell_no;
+                    }
+                    None => sess.items.push(SessionItem {
+                        name: name.clone(),
+                        text: text.clone(),
+                        cell: sess.cell_no,
+                    }),
+                }
+            }
             sess.prelude = bindings;
             sess.skipped = skipped.clone();
         }
@@ -4150,6 +4279,73 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
         diagnostics: Vec::new(),
         skipped,
     }
+}
+
+/// Turn check errors into messages, promoting to **E2400** any error that lands
+/// in an item an EARLIER cell wrote.
+///
+/// R44 §4.1 — the product. `fn f` redefined in cell 3 with a different return
+/// type does not break cell 3; it breaks `g`, written in cell 2, which calls it.
+/// The raw diagnostic points at `g` and says "type mismatch", which is true and
+/// leaves the reader to work out that a redefinition three cells later is why.
+/// Naming the redefinition, the broken item, and the cell it came from is the
+/// whole difference between this and a dynamic kernel that accepts the cell and
+/// fails later somewhere else.
+fn attribute_errors(
+    sess: &Session,
+    composed: &Composed,
+    cell_items: &[(String, String)],
+    errors: &[axon_core::PipelineDiagnostic],
+) -> Vec<String> {
+    let redefined: Vec<&str> = cell_items
+        .iter()
+        .filter(|(n, _)| sess.items.iter().any(|i| i.name == *n))
+        .map(|(n, _)| n.as_str())
+        .collect();
+
+    let mut out = Vec::new();
+    let mut blamed: Vec<&str> = Vec::new();
+    for e in errors {
+        let line = e.line as usize;
+        let owner = composed
+            .spans
+            .iter()
+            .find(|sp| line >= sp.start && line <= sp.end);
+        match owner {
+            // An error inside an item an earlier cell wrote, in a cell that
+            // redefined something: the redefinition is the cause.
+            Some(sp) if !sp.redefined_now && !redefined.is_empty() => {
+                if !blamed.contains(&sp.name.as_str()) {
+                    blamed.push(&sp.name);
+                    let culprits = redefined.join("`, `");
+                    out.push(format!(
+                        "[{}] redefining `{culprits}` breaks `{}`, defined earlier in this \
+                         session (cell {}) — {}",
+                        axon_core::error::E2400,
+                        sp.name,
+                        sp.cell,
+                        e.message,
+                    ));
+                }
+            }
+            // An error with no resolvable span (line 0) once the cause has
+            // already been named is a knock-on of that same break — the checker
+            // reports the mismatch twice more, once unlocated. Repeating it adds
+            // noise without adding information, and the E2400 above already says
+            // what happened. Errors that DO resolve to a span are still shown:
+            // a genuinely unrelated mistake in the same cell must not be hidden
+            // just because a redefinition also went wrong.
+            None if !blamed.is_empty() && line == 0 => {}
+            _ => out.push(format!("[{}] {}", e.code, e.message)),
+        }
+    }
+    if !blamed.is_empty() {
+        out.push(format!(
+            "note: the session is unchanged — `{}` still has its previous definition",
+            redefined.join("`, `"),
+        ));
+    }
+    out
 }
 
 fn render_cell_human(r: &CellResult) {
