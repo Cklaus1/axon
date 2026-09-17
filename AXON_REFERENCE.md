@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 138 diagnostic codes (125 live, 13 reserved).
+The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 138 diagnostic codes (125 live, 13 reserved), 47 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -67,6 +67,60 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[interrupt]`
 - `@[bpf]`
 - `@[enclave]`
+
+## Environment variables (47)
+
+Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
+
+| Variable | Effect |
+|---|---|
+| `AXON_SEED` | seed the RNG (u64) so `random_*` runs reproduce |
+| `AXON_MAX_DEPTH` | recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it |
+| `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
+| `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
+| `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |
+| `AXON_RECORD` | path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records |
+| `AXON_REPLAY` | serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD |
+| `AXON_AI_REPLAY` | path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call |
+| `AXON_AI_MOCK` | use deterministic stub AI responses instead of live calls (the real per-token cost is still metered) |
+| `AXON_AI_PROVIDER` | live-AI codec: `anthropic` or `openai` |
+| `AXON_AI_BASE_URL` | gateway URL for live AI calls |
+| `AXON_AI_API_KEY` | API key for live AI calls |
+| `AXON_AI_MODEL_CHEAP` | override the model `@[ai(tier: cheap)]` resolves to |
+| `AXON_AI_MODEL_BALANCED` | override the model `@[ai(tier: balanced)]` resolves to |
+| `AXON_AI_MODEL_STRONG` | override the model `@[ai(tier: strong)]` resolves to |
+| `AXON_BUDGET_TOKENS` | run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0 |
+| `AXON_DOTENV` | path to a `.env` file to load for AI configuration |
+| `AXON_DOTENV_WALK` | walk parent directories looking for a `.env` file |
+| `AXON_INTENT_GEN` | let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`) |
+| `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only |
+| `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
+| `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
+| `AXON_AUDIT_LEDGER` | path to the R28 capability audit ledger |
+| `AXON_AUDIT_DETERMINISTIC` | use a counter instead of a clock for ledger timestamps, so audit output is reproducible in tests |
+| `AXON_KILL_FILE` | kill file the axon-os supervisor polls; its EXISTENCE trips nothing — the job stops only once its CONTENT reads `{"latch":"tripped"}` |
+| `AXON_GOAL_CONTINUE` | resume a `goal` search from the best prior input in the provenance log (set automatically by `axon goal --iterate`) |
+| `AXON_DUMP_BINDINGS` | write a cell's final bindings back as Axon source literals — the session substrate, also usable by an external driver |
+| `AXON_DUMP_SHAPES` | write a `name: shape` inventory of every binding, including ones that could not be persisted |
+| `AXON_PROOF_TIMEOUT_MS` | per-obligation SMT solver timeout; 0 selects the Z3-free runtime-check fallback |
+| `AXON_PROOF_DEPTH` | SMT unrolling/search depth bound |
+| `AXON_HOST_SOCKET` | guest-kernel hypercall bridge socket; takes priority over AXON_VM_VSOCK_PORT for `host_await` |
+| `AXON_VM_VSOCK_PORT` | vsock port for `host_await` inside an axon-vm microVM (set by the launcher) |
+| `AXON_VM_ALLOWED_EFFECTS` | effect ceiling delivered to a guest via the VM's MMDS policy |
+| `AXON_VM_TIMEOUT_SECS` | wall-clock bound on a microVM run |
+| `AXON_VM_SOCKET_TIMEOUT_SECS` | bound on waiting for the VM's control socket |
+| `AXON_VM_DEBUG` | verbose microVM launch diagnostics |
+| `AXON_VM_QUIET` | suppress microVM launch chatter |
+| `AXON_CONFIG_DIR` | override the config directory the VM reads its Principal registry from |
+| `AXON_CI_NO_KVM` | force mock mode where /dev/kvm is unavailable (CI) |
+| `AXON_OS_TIMEOUT_MS` | axon-os bound on a supervised job (`run_bounded`) |
+| `AXON_WASM_RT` | path to the wasm runtime used to execute a built wasm artifact |
+| `AXON_ANDROID_API` | Android API level for the NDK cross-link |
+| `AXON_NATIVE_TRACE` | trace native-FFI module calls (gfx mock) |
+| `AXON_BIN` | path to the `axon` binary an out-of-process synthesizer should invoke |
+| `AXON_INTENT_TIMEOUT_MS` | bound on the `axon intent` subprocess synthesizer |
+| `AXON_TEST_DOTENV_VAR` | (test fixture) name of a variable the .env loader test expects to find |
+| `AXON_TEST_DOTENV_NEW` | (test fixture) asserts the .env loader does not clobber an already-set variable |
 
 ## Diagnostic codes (138, of which 125 live)
 

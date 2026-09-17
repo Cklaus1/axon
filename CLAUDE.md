@@ -95,13 +95,20 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 
 ### Interpreter env vars
 
-A SELECTION — the source reads ~54 `AXON_*` vars (VM/TEE/CI/proof-tuning ones are
-not listed). Gated by `scripts/claims_gate.sh`: every var named here must actually
-be read by the code. The omission direction is deliberately not gated (that is a
-judgement call about table length) — which is exactly why this says "a selection"
-rather than implying completeness. A doc that implies completeness turns an omission
-into an apparent absence, and that cost 3 of 8 tasks on the RLM benchmark when the
-language card did it.
+A SELECTION of the **47** `AXON_*` vars the shipped code reads. The exhaustive
+list — with what each one does — is in `AXON_REFERENCE.md`, generated from
+`env_registry::ALL_ENV_VARS` and gated in BOTH directions: a var read without a
+registry row fails the build, and a registry row for a var nothing reads fails
+too. That second direction is not theoretical — `AXON_ALLOWED_EFFECTS` and
+`AXON_BUDGET_TOKENS` were both documented as enforced while being read by nothing
+at all, and only a behavioural diff caught it.
+
+`scripts/claims_gate.sh` still checks that every var named HERE is read by the
+code. The omission direction is deliberately not gated *for this table* (that is
+a judgement call about table length) — which is why this says "a selection"
+rather than implying completeness. A doc that implies completeness turns an
+omission into an apparent absence, and that cost 3 of 8 tasks on the RLM
+benchmark when the language card did it.
 
 | Var | Effect |
 |---|---|

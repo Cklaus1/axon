@@ -4289,6 +4289,7 @@ fn cmd_reference(json: bool) {
 
     let attrs = axon_core::builtins::DEFERRED_ATTRS;
     let codes = axon_core::error::ALL_CODES;
+    let envs = axon_core::env_registry::ALL_ENV_VARS;
 
     if json {
         let esc = |s: &str| {
@@ -4330,13 +4331,18 @@ fn cmd_reference(json: bool) {
                 )
             })
             .collect();
+        let es: Vec<String> = envs
+            .iter()
+            .map(|(n, d)| format!("{{\"name\":\"{}\",\"description\":\"{}\"}}", esc(n), esc(d)))
+            .collect();
         println!(
-            "{{\"schema\":\"axon-reference/1\",\"version\":\"{}\",\"verbs\":[{}],\"builtins\":[{}],\"attributes\":[{}],\"diagnostics\":[{}]}}",
+            "{{\"schema\":\"axon-reference/1\",\"version\":\"{}\",\"verbs\":[{}],\"builtins\":[{}],\"attributes\":[{}],\"diagnostics\":[{}],\"env_vars\":[{}]}}",
             esc(env!("CARGO_PKG_VERSION")),
             vs.join(","),
             bs.join(","),
             as_.join(","),
             cs.join(","),
+            es.join(","),
         );
         return;
     }
@@ -4354,13 +4360,14 @@ fn cmd_reference(json: bool) {
         .count();
     println!(
         "The complete surface of this build — {} CLI verbs, {} builtins, {} attributes, \
-         {} diagnostic codes ({} live, {} reserved).",
+         {} diagnostic codes ({} live, {} reserved), {} environment variables.",
         verbs.len(),
         builtins.len(),
         attrs.len(),
         codes.len(),
         live,
         codes.len() - live,
+        envs.len(),
     );
     println!();
     println!(
@@ -4385,6 +4392,22 @@ fn cmd_reference(json: bool) {
     println!();
     for a in attrs {
         println!("- `@[{a}]`");
+    }
+    println!();
+
+    println!("## Environment variables ({})", envs.len());
+    println!();
+    println!(
+        "Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a \
+         variable that quietly does nothing cannot appear here, and one that changes \
+         behaviour cannot be left out."
+    );
+    println!();
+    println!("| Variable | Effect |");
+    println!("|---|---|");
+    for (n, d) in envs {
+        let doc = d.replace('|', "\\|");
+        println!("| `{n}` | {doc} |");
     }
     println!();
 

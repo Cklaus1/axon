@@ -22534,6 +22534,13 @@ fn axon_reference_is_in_sync_with_the_binary() {
         "the reference must actually enumerate verbs and builtins"
     );
     assert!(
+        generated.contains("| `AXON_ALLOWED_EFFECTS`")
+            && generated.contains("Environment variables"),
+        "the reference must enumerate env vars — AXON_ALLOWED_EFFECTS and \
+         AXON_BUDGET_TOKENS were both documented as enforced while being read by \
+         nothing at all, which is the failure a registry exists to prevent"
+    );
+    assert!(
         generated.contains("| `E1001`") && generated.contains("Diagnostic codes"),
         "the reference must enumerate diagnostic codes — they were introspectable \
          by no tool at all before the ALL_CODES registry"
@@ -22580,6 +22587,7 @@ fn axon_reference_json_is_machine_readable() {
         "\"builtins\":[",
         "\"attributes\":[",
         "\"diagnostics\":[",
+        "\"env_vars\":[",
     ] {
         assert!(j.contains(want), "missing section {want}");
     }

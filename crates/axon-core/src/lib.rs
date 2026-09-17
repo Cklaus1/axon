@@ -15,6 +15,7 @@ pub mod codegen;
 pub mod decimal;
 /// Versioned machine-stable diagnostic JSON (R8): `axon-diag/1` schema.
 pub mod diag_schema;
+pub mod env_registry;
 pub mod error;
 pub mod host;
 /// Self-improving-compiler pass verification harness (R10): G1 oracle + G2 caps.
