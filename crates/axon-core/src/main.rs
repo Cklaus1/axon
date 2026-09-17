@@ -4790,6 +4790,40 @@ fn run_cell(
     // sugar for its body would be convenient right up to the cell that also
     // declares items or expects arguments, and a session that quietly rewrites
     // what you typed is worse than one that explains itself.
+    // The reserved capture namespace. A cell binding `__axon_cell_value` had its
+    // value silently absorbed by the trailing-expression machinery and then
+    // vanish from the prelude — displayed once, gone next cell, no note. Nobody
+    // types this by accident, but a silent vanish is the one shape this session
+    // is not allowed to have.
+    if let Some(bad) = original_stmts
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("let "))
+        .map(|r| {
+            r.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or("")
+        })
+        .find(|n| n.starts_with("__axon_"))
+    {
+        mark_transcript(
+            transcript,
+            sess.cell_no,
+            "REFUSED: bound a reserved `__axon_` name",
+        );
+        return CellResult {
+            ok: false,
+            stdout: String::new(),
+            diagnostics: vec![format!(
+                "[{}] `{bad}` is in the `__axon_` namespace the session reserves for itself \
+                 (it is how a cell's trailing-expression value is captured). Binding it would \
+                 make the value disappear between cells with no diagnostic. Rename it.",
+                axon_core::error::E2402
+            )],
+            skipped: Vec::new(),
+            value: None,
+        };
+    }
+
     if let Some((name, _)) = cell_items.iter().find(|(n, _)| n == "main") {
         let _ = name;
         mark_transcript(

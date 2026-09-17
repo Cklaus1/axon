@@ -23369,3 +23369,112 @@ fn session_handles_a_comment_only_and_a_whitespace_cell() {
     );
     assert!(!err.contains("panic"), "no panic: {err}");
 }
+
+#[test]
+fn require_contained_follows_a_call_into_an_impl_method() {
+    // The security-critical laundering route, and it was UNTESTED. A model that
+    // cannot put its I/O in a helper or an imported module would try a method
+    // next. capabilities.rs walks MethodCall by NAME across every impl — an
+    // over-approximation that cannot produce a false negative, which is the
+    // property a security boundary needs.
+    let prog = "trait Leaky { fn leak(self) -> str }\n\
+                type Box = { n: i64 }\n\
+                impl Leaky for Box {\n\
+                    fn leak(self: Box) -> str { match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"\" } }\n\
+                }\n\
+                fn main() { let b = Box { n: 1 }  println(b.leak()) }\n";
+
+    let (off, _) = check_rc(prog, false, None);
+    assert_eq!(
+        off, 0,
+        "precondition: without the flag this program is valid and silently reads \
+         /etc/passwd — if it does not compile, the test below proves nothing"
+    );
+
+    let (on, err) = check_rc(prog, true, None);
+    assert_eq!(on, 2, "I/O inside an impl method must be refused: {err}");
+    assert!(err.contains("E1005"), "{err}");
+    assert!(
+        err.contains("read_file"),
+        "the diagnostic must name the call, not just the method: {err}"
+    );
+}
+
+#[test]
+fn require_contained_refuses_exec_network_and_env() {
+    // Each is a distinct capability row, and a gate that covered only `fs` would
+    // still read as "contained".
+    for (what, src) in [
+        ("exec", "fn main() { println(match exec(\"ls\", &[]) { Ok(o) => o  Err(e) => \"\" }) }\n"),
+        ("net", "fn main() { println(match http_get(\"https://x.test/\") { Ok(o) => o  Err(e) => \"\" }) }\n"),
+        ("env", "fn main() { println(match env_var(\"SECRET\") { Ok(v) => v  Err(e) => \"\" }) }\n"),
+    ] {
+        let (code, err) = check_rc(src, true, None);
+        assert_eq!(code, 2, "{what} must be refused: {err}");
+        assert!(err.contains("E1005"), "{what}: {err}");
+    }
+    // ...and a program that touches nothing still passes, so the gate is not
+    // simply refusing everything.
+    let (ok, err) = check_rc("fn main() { println(to_str(1 + 1)) }\n", true, None);
+    assert_eq!(ok, 0, "pure code must pass: {err}");
+}
+
+#[test]
+fn session_materialisation_round_trips_awkward_values() {
+    // State crosses cells as SOURCE LITERALS, so anything that does not
+    // round-trip corrupts the session silently — the worst failure this design
+    // can have. Probed rather than assumed.
+    let (out, err) = {
+        let (o, e, _) = session_full(
+            &[
+                "let s = \"he said \\\"hi\\\" and c:\\\\path\"",
+                "let f = 0.1 + 0.2",
+                "let nz = 0.0 * (0.0 - 1.0)",
+                "let big = 9223372036854775807",
+                "s",
+                "f",
+                "nz",
+                "big",
+            ],
+            &[],
+            &[],
+        );
+        (o, e)
+    };
+    assert!(
+        out.contains("he said \\\"hi\\\" and c:\\\\path"),
+        "quotes and backslashes must survive: {out:?} {err}"
+    );
+    assert!(
+        out.contains("0.30000000000000004"),
+        "float precision must survive exactly, not round: {out:?}"
+    );
+    assert!(out.contains("-0.0"), "negative zero must survive: {out:?}");
+    assert!(
+        out.contains("9223372036854775807"),
+        "i64::MAX must survive: {out:?}"
+    );
+}
+
+#[test]
+fn session_refuses_a_binding_in_the_reserved_namespace() {
+    // `__axon_cell_value` is how a trailing-expression value is captured. A cell
+    // binding it had the value absorbed and then vanish from the prelude — shown
+    // once, gone next cell, no diagnostic. Nobody types it by accident, but a
+    // silent vanish is the one shape this session must not have.
+    let (out, err, _) = session_full(
+        &["let __axon_cell_value = 99", "println(\"next\")"],
+        &[],
+        &[],
+    );
+    assert!(err.contains("E2402"), "must be refused: {err}");
+    assert!(
+        err.contains("reserves for itself"),
+        "and must say why: {err}"
+    );
+    assert!(out.contains("next"), "the session must survive: {out:?}");
+
+    // A normal binding is untouched.
+    let (out2, _, _) = session_full(&["let ok_name = 5", "ok_name"], &[], &[]);
+    assert!(out2.contains('5'), "ordinary bindings still work: {out2:?}");
+}
