@@ -23478,3 +23478,72 @@ fn session_refuses_a_binding_in_the_reserved_namespace() {
     let (out2, _, _) = session_full(&["let ok_name = 5", "ok_name"], &[], &[]);
     assert!(out2.contains('5'), "ordinary bindings still work: {out2:?}");
 }
+
+#[test]
+fn session_jsonl_frames_are_valid_json_even_with_control_chars_in_stdout() {
+    // The escaper handled `\`, `"` and newline — the three that happened to come
+    // up — so a cell printing a TAB emitted a raw 0x09 inside the JSON string and
+    // the frame was NOT valid JSON. A strict parser rejects it outright.
+    //
+    // A program printing a tab is completely ordinary (table output, TSV,
+    // indentation), so the protocol broke for the host drivers it exists to
+    // serve, silently, on output the program was right to produce.
+    let out = session_jsonl(&[
+        &frame("println(\"a\tb\")"),
+        &frame("println(\"carriage\rreturn\")"),
+        &frame("println(\"日本語 ★ café\")"),
+    ]);
+    assert_eq!(out.len(), 3, "one frame per cell: {out:?}");
+
+    for (i, line) in out.iter().enumerate() {
+        // A minimal JSON string-validity check: no raw control chars (U+0000
+        // through U+001F) may appear anywhere in the frame. RFC 8259 forbids
+        // them unescaped, and that is exactly what broke.
+        let bad: Vec<u32> = line
+            .chars()
+            .map(|c| c as u32)
+            .filter(|c| *c < 0x20)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "frame {} contains raw control char(s) {bad:?} — not valid JSON: {line}",
+            i + 1
+        );
+        assert!(
+            line.starts_with('{') && line.ends_with('}'),
+            "frame {} is not a JSON object: {line}",
+            i + 1
+        );
+    }
+    // The tab must survive as an ESCAPE, not be dropped.
+    assert!(
+        out[0].contains("\\t"),
+        "the tab must be escaped, not deleted: {}",
+        out[0]
+    );
+    // Non-ASCII stays raw — escaping it to \u would be legal but mangles the
+    // text a reader sees in the transcript.
+    assert!(
+        out[2].contains("日本語") && out[2].contains('★'),
+        "multibyte text must pass through unescaped: {}",
+        out[2]
+    );
+}
+
+#[test]
+fn session_jsonl_refuses_a_lone_surrogate_in_an_input_frame() {
+    // \ud800 has no Unicode scalar value. Substituting U+FFFD would silently
+    // alter the cell the host sent; refusing says so.
+    let out = session_jsonl(&["{\"cell\":\"println(\\\"\\ud800\\\")\"}"]);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert!(
+        out[0].contains("\"ok\":false") && out[0].contains("E2403"),
+        "a lone surrogate must be refused: {}",
+        out[0]
+    );
+    assert!(
+        out[0].contains("surrogate"),
+        "and the reason must name it: {}",
+        out[0]
+    );
+}

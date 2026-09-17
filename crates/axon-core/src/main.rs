@@ -5114,10 +5114,34 @@ fn render_cell_human(r: &CellResult) {
 }
 
 fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
+    // Escape EVERY character JSON forbids raw in a string, not the three that
+    // happened to come up. The previous version handled `\`, `"` and newline —
+    // so a cell printing a TAB emitted a raw 0x09 inside the string and the
+    // frame was not valid JSON. `json.loads` rejects it outright:
+    //
+    //   {"stdout":"a<TAB>b\n"}  ->  Invalid control character at ... (char 57)
+    //
+    // A program printing a tab is completely ordinary — table output, TSV,
+    // indentation — so the protocol broke for the host drivers it exists to
+    // serve, silently, on output the program was right to produce. RFC 8259
+    // requires escaping U+0000 through U+001F; everything above that is legal
+    // raw, which keeps `日本語` and `★` intact rather than \u-mangling them.
     let esc = |s: &str| {
-        s.replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
+        let mut out = String::with_capacity(s.len() + 8);
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\u{8}' => out.push_str("\\b"),
+                '\u{c}' => out.push_str("\\f"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out
     };
     let diags: Vec<String> = r
         .diagnostics
