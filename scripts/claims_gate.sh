@@ -61,7 +61,17 @@ fi
 # The failure this prevents is an agent confidently invoking a command that was
 # renamed or never shipped, then treating the error as its own mistake.
 if [ ! -x "$AXON" ]; then
-  echo "  SKIP verbs — no axon binary at $AXON"
+  # A skip here silently drops the check this script mainly exists for, while
+  # still exiting 0 — so "claims_gate: PASS" can mean "verified every verb" or
+  # "verified nothing", and the two read identically. CLAIMS_GATE_REQUIRE=1 makes
+  # the absence fatal instead, which is what CI sets (it has a binary, and a run
+  # that silently stopped checking verbs would be worse than a red build).
+  # Mirrors BROWSER_PARITY_REQUIRE=1 in browser_compute_parity.sh.
+  if [ "${CLAIMS_GATE_REQUIRE:-0}" = 1 ]; then
+    bad "verbs" "no axon binary at $AXON and CLAIMS_GATE_REQUIRE=1 — build it first: cargo build -p axon-core --no-default-features --bin axon"
+  else
+    echo "  SKIP verbs — no axon binary at $AXON (set CLAIMS_GATE_REQUIRE=1 to make this fatal)"
+  fi
 else
   HELP="$("$AXON" --help 2>&1)"
   claimed="$(grep -oE '^axon [a-z][a-z-]*' "$DOC" | awk '{print $2}' | sort -u)"
