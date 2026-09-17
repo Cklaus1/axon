@@ -4288,6 +4288,7 @@ fn cmd_reference(json: bool) {
     builtins.sort_by(|a, b| a.name.cmp(b.name));
 
     let attrs = axon_core::builtins::DEFERRED_ATTRS;
+    let codes = axon_core::error::ALL_CODES;
 
     if json {
         let esc = |s: &str| {
@@ -4318,12 +4319,24 @@ fn cmd_reference(json: bool) {
             })
             .collect();
         let as_: Vec<String> = attrs.iter().map(|a| format!("\"{}\"", esc(a))).collect();
+        let cs: Vec<String> = codes
+            .iter()
+            .map(|(c, d)| {
+                format!(
+                    "{{\"code\":\"{}\",\"description\":\"{}\",\"reserved\":{}}}",
+                    esc(c),
+                    esc(d),
+                    d.contains("RESERVED")
+                )
+            })
+            .collect();
         println!(
-            "{{\"schema\":\"axon-reference/1\",\"version\":\"{}\",\"verbs\":[{}],\"builtins\":[{}],\"attributes\":[{}]}}",
+            "{{\"schema\":\"axon-reference/1\",\"version\":\"{}\",\"verbs\":[{}],\"builtins\":[{}],\"attributes\":[{}],\"diagnostics\":[{}]}}",
             esc(env!("CARGO_PKG_VERSION")),
             vs.join(","),
             bs.join(","),
             as_.join(","),
+            cs.join(","),
         );
         return;
     }
@@ -4335,11 +4348,19 @@ fn cmd_reference(json: bool) {
     println!();
     println!("# Axon Reference");
     println!();
+    let live = codes
+        .iter()
+        .filter(|(_, d)| !d.contains("RESERVED"))
+        .count();
     println!(
-        "The complete surface of this build — {} CLI verbs, {} builtins, {} attributes.",
+        "The complete surface of this build — {} CLI verbs, {} builtins, {} attributes, \
+         {} diagnostic codes ({} live, {} reserved).",
         verbs.len(),
         builtins.len(),
-        attrs.len()
+        attrs.len(),
+        codes.len(),
+        live,
+        codes.len() - live,
     );
     println!();
     println!(
@@ -4364,6 +4385,25 @@ fn cmd_reference(json: bool) {
     println!();
     for a in attrs {
         println!("- `@[{a}]`");
+    }
+    println!();
+
+    println!(
+        "## Diagnostic codes ({}, of which {} live)",
+        codes.len(),
+        live
+    );
+    println!();
+    println!(
+        "A code marked **reserved** is declared but emitted nowhere in this build. Listing \
+         those as if they were live would be the same defect this reference exists to fix."
+    );
+    println!();
+    println!("| Code | Meaning |");
+    println!("|---|---|");
+    for (c, d) in codes {
+        let doc = d.replace('|', "\\|");
+        println!("| `{c}` | {doc} |");
     }
     println!();
 

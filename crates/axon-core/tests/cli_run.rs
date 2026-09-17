@@ -22533,6 +22533,11 @@ fn axon_reference_is_in_sync_with_the_binary() {
         generated.contains("axon session") && generated.contains("| `println("),
         "the reference must actually enumerate verbs and builtins"
     );
+    assert!(
+        generated.contains("| `E1001`") && generated.contains("Diagnostic codes"),
+        "the reference must enumerate diagnostic codes — they were introspectable \
+         by no tool at all before the ALL_CODES registry"
+    );
 
     let checked_in = std::fs::read_to_string(&doc_path).unwrap_or_default();
     if checked_in != generated {
@@ -22570,9 +22575,26 @@ fn axon_reference_json_is_machine_readable() {
         "schema must be stamped: {}",
         &j[..j.len().min(200)]
     );
-    for want in ["\"verbs\":[", "\"builtins\":[", "\"attributes\":["] {
+    for want in [
+        "\"verbs\":[",
+        "\"builtins\":[",
+        "\"attributes\":[",
+        "\"diagnostics\":[",
+    ] {
         assert!(j.contains(want), "missing section {want}");
     }
+    // A reserved code must be FLAGGED, not merely listed. 13 codes are declared
+    // and emitted nowhere; presenting them as supported would claim diagnostics
+    // this compiler cannot produce.
+    assert!(
+        j.contains("\"reserved\":true") && j.contains("\"reserved\":false"),
+        "diagnostics must distinguish live codes from reserved ones"
+    );
+    assert!(
+        j.contains("\"code\":\"E1001\""),
+        "the capability codes must be enumerable — they are the ones a sandboxed \
+         program actually hits"
+    );
     // A builtin's full signature must survive into JSON, since the Markdown
     // table escapes pipes and collapses newlines.
     assert!(

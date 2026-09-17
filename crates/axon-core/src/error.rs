@@ -368,6 +368,270 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     prev[n]
 }
 
+/// Every diagnostic code this compiler defines, with a one-line description.
+///
+/// THE SOURCE OF TRUTH for what a code means. Before this existed the meanings
+/// lived only in `//` comments beside each `pub const`, so no tool could
+/// enumerate them: `axon reference` could list 25 verbs and 338 builtins and
+/// not one of the ~138 codes a user actually hits.
+///
+/// A code marked RESERVED is declared but emitted nowhere. Listing those as if
+/// they were live would be the same defect the reference exists to fix — a
+/// document that cannot say "no".
+///
+/// Gated by `every_error_code_is_in_the_registry`: adding a `pub const` without
+/// a row here fails the build.
+pub const ALL_CODES: &[(&str, &str)] = &[
+    ("E0101", "type inference failed to resolve a type"),
+    ("E0102", "type mismatch (arithmetic operands, let annotation, or unification)"),
+    ("E0000", "generic parse/IO error with no more-specific code (CLI + LSP)"),
+    ("E0001", "cannot find name in this scope"),
+    ("E0002", "the name is defined more than once in this module"),
+    ("E0003", "module not found on AXON_PATH"),
+    ("E0004", "reserved (Phase 2): use of a non-exported item across modules"),
+    ("E0301", "type-check failure with no more-specific code"),
+    ("E0302", "a `Result` returned by a call is unused — warns by default, error under AXON_STRICT"),
+    ("E0303", "type-check rule violation (Phase-1 R03)"),
+    ("E0304", "non-exhaustive match — a variant has no arm"),
+    ("E0305", "wrong number of arguments supplied to a function"),
+    ("E0306", "cannot call a non-function value"),
+    ("E0307", "return type mismatch between the declared type and the body"),
+    ("E0308", "unknown type named in a signature or annotation"),
+    ("E0309", "type-check rule violation (Phase-1 R08)"),
+    ("E0310", "RESERVED — superseded by W0006 (unused variable); not emitted"),
+    ("E0311", "RESERVED — dead code after return; not emitted"),
+    ("E0312", "RESERVED — superseded by E0304 (non-exhaustive match); not emitted"),
+    ("E0313", "RESERVED — superseded by E0306 (calling a non-function value); not emitted"),
+    ("E0314", "RESERVED — superseded by E0102 (arithmetic on non-numeric type); not emitted"),
+    ("E0315", "RESERVED — superseded by E0102 (assignment type mismatch); not emitted"),
+    ("E0401", "struct has no field"),
+    ("E0402", "indexing a non-indexable (non-array) type"),
+    ("E0403", "calling a data field as a method (`p.x()`)"),
+    ("E0404", "enum-variant literal names a nonexistent variant"),
+    ("E0405", "literal pattern's type can't match the match subject"),
+    ("E0406", "a field is set more than once in a struct literal"),
+    ("E0407", "integer division/remainder by a literal zero"),
+    ("E0501", "trait method not implemented"),
+    ("E0502", "impl block missing method"),
+    ("E0503", "dyn trait cannot be used as value type"),
+    ("E0504", "trait bound not satisfied"),
+    ("E0601", "use of moved value"),
+    ("E0602", "cannot move borrowed value"),
+    ("E0603", "borrow conflict"),
+    ("E0701", "expression not comptime-evaluable"),
+    ("E0702", "comptime integer division by zero"),
+    ("E0703", "comptime integer overflow"),
+    ("E0800", "LSP: source could not be parsed (document-level diagnostic)"),
+    ("E0801", "generic instantiation depth exceeded — RESERVED, not currently emitted"),
+    ("E0802", "cannot infer type argument — RESERVED, not currently emitted"),
+    ("E0803", "type argument does not satisfy bound — RESERVED, not currently emitted"),
+    ("E0901", "module not found (AXON_PATH search failed)"),
+    ("E0902", "circular import between source files"),
+    ("E0903", "duplicate top-level name across files"),
+    ("E0904", "--target triple not supported by this LLVM build"),
+    ("E0905", "cross-compilation needs sysroot (cross.toml missing)"),
+    ("E0906", "cache entry corrupt or wrong compiler version"),
+    ("E0907", "AOT wasm build needs the native codegen backend (R7)"),
+    ("E0908", "no engine supports the requested target triple (R7) — RESERVED, not currently emitted"),
+    ("E0910", "builtin / construct has no native codegen lowering — honest abort, runs under the interpreter"),
+    ("E0911", "browser target (--host browser): a browser-incompatible builtin can't run in the tab — clean refusal mirroring E0910 (R7c)"),
+    ("E0912", "browser AOT link failed, wasm-bindgen/export step (R7c) — RESERVED, not currently emitted"),
+    ("W0913", "sleep_ms is a no-op on the browser host (main thread can't block) (R7c)"),
+    ("E1001", "I/O call not permitted by @[contained] spec"),
+    ("E1002", "@[contained] clause is malformed"),
+    ("E1003", "capability path is not parseable"),
+    ("E1004", "call hits a never: clause (hard violation)"),
+    ("E1101", "verify bound not satisfied (runtime gate)"),
+    ("E1102", "verify bound statically VIOLABLE — SMT counterexample (R9)"),
+    ("E1201", "on-disk module bytes ≠ axon.lock hash (tamper)"),
+    ("E1202", "use with no lockfile entry under --locked"),
+    ("E1203", "import declares capabilities beyond the importer's grant"),
+    ("E1204", "lockfile audit verdict is `denied`"),
+    ("E1205", "axon.lock is malformed / unknown version"),
+    ("E1206", "a @[sensitive] value flows into an external AI call (PRD §4 privacy)"),
+    ("E1207", "a @[pure] function performs/contains an impure operation (Phase 5 §2, P01/P02)"),
+    ("E1208", "a @[total] function has no strictly-decreasing measure at a recursive call (Phase 5 §3)"),
+    ("E1209", "a constant argument provably violates a refinement-type predicate (Phase 5 §1 R02)"),
+    ("E1210", "a `sql_query` template is not a string literal — user data must be a bound parameter, never concatenated SQL (injection)"),
+    ("E1300", "ai_* call unreachable and no @[ai(policy(fallback))] in scope"),
+    ("E1301", "ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c)"),
+    ("E1302", "tier: resolves to a tier with no host-configured model"),
+    ("E1303", "run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap"),
+    ("E1306", "raw effect-row syntax `| {…}` used in a `surface`-marked file"),
+    ("E1310", "effect-row leak: call performs effect E ∉ the caller's declared row"),
+    ("E1316", "@[contained(...)] deprecation notice; prefer `| {…}` effect-row syntax"),
+    ("E1610", "a kernel capability-mint obligation (attenuation / budget-carve) is not SMT-discharged — the minter has been weakened (I-12 tripwire)"),
+    ("E1611", "TCB attestation mismatch at boot: the kernel obligation digest ≠ the pinned manifest (the proven TCB changed without a manifest update — I-12)"),
+    ("E1401", "G1 correctness: pass changes observable output on a corpus member"),
+    ("E1402", "G2 safety: pass adds a capability the original lacked (I-12)"),
+    ("E1403", "G3 regression: pass breaks an existing test"),
+    ("E1404", "graduation requires multi-sig of root Principals (I-12)"),
+    ("E1405", "pass manifest hash mismatch at boot (TCB attestation)"),
+    ("E1406", "correctness judged by AI — forbidden; the oracle is the interpreter"),
+    ("E1407", "AI proposed a template name not in the closed registry (rejected before verify)"),
+    ("E1408", "a graduated/verified pass name is absent from the template registry (tamper / version skew)"),
+    ("E1409", "RewriteSpec empty / not provably total (proposes no transform)"),
+    ("E1411", "RewriteSpec rule name outside the closed reviewed vocabulary"),
+    ("E1412", "RewriteSpec could express a capability (grammar violation — defense in design)"),
+    ("E1413", "RewriteSpec over the rule-count budget (runaway proposal rejected, never run)"),
+    ("E1500", "metric must name an @[adaptive] fn"),
+    ("E1503", "target/max_evals/holdout must parse as numbers"),
+    ("E1504", "#[goal] fn must have zero params"),
+    ("E1505", "unknown #[goal(strategy: …)] — not hill_climb|random|multistart|tournament|bayesian"),
+    ("E1900", "R19: integer literal out of range for its fixed-width/unsigned annotation"),
+    ("E2200", "str_slice byte range splits a UTF-8 character (runtime panic text)"),
+    ("E2201", "malformed JSON where a document was required (Err-string prefix)"),
+    ("E2202", "JSON type mismatch at a path/element (Err-string prefix)"),
+    ("E2203", "regex construct requiring backtracking, or a pattern too large once counted repetitions expand"),
+    ("E2204", "base64/hex decode: invalid input, or bytes that are not valid UTF-8"),
+    ("E2205", "re_replace_all: replacement references a capture group the pattern does not have"),
+    ("E1700", "raw pointer `*T`, volatile_*, ptr_from_addr, or @[hal] used in a `surface` file"),
+    ("E1701", "@[hal] fn calls a hardware primitive without the Hal capability (R17) — RESERVED, not currently emitted"),
+    ("E1702", "freestanding build has no @[entry] or @[panic_handler]"),
+    ("E1703", "surface caller reaches a Hal-effected fn without declaring | {Hal} (R17) — RESERVED, not currently emitted"),
+    ("E1704", "@[no_alloc] fn reaches a heap-allocating builtin (ISR/early-boot alloc-free guarantee)"),
+    ("E1706", "R17 Slice 2: atomic ordering arg is not a compile-time literal in 0..=4"),
+    ("E1707", "R17 §12 Q7: fn_addr's argument is not a compile-time string literal, or names no known function"),
+    ("E1710", "--host mobile but the mobile toolchain is absent: the Android NDK (linker on PATH) for an *-android triple, or Xcode `xcrun` for an *-apple-ios triple"),
+    ("E1711", "axon-rt / a native module not cross-built for the device triple (iOS-specific staging code)"),
+    ("E1712", "mobile cross-link failed (iOS xcframework or Android jniLibs packaging)"),
+    ("E1800", "`use native::M` for an unregistered module name"),
+    ("E1801", "native call arg/ret type not FFI-representable"),
+    ("E1802", "handle of module A passed where module B's handle expected"),
+    ("E1803", "arithmetic / forging on a `Handle` (opaque, unconstructable)"),
+    ("E1810", "`tee_unseal` (Secret declassification) called outside an `@[enclave]` fn"),
+    ("E2300", "a BPF helper not on the Axon capability allowlist is called from a @[bpf] program"),
+    ("E2301", "a construct outside the BPF-lowerable subset appears in a @[bpf] body"),
+    ("E2302", "@[bpf(kind: K)] has an unknown program kind"),
+    ("E2400", "redefining a name in a session breaks an item an earlier cell wrote"),
+    ("E2403", "malformed `axon session --protocol jsonl` input frame"),
+    ("W0001", "unknown attribute"),
+    ("W0002", "variable shadowing"),
+    ("W0003", "user fn shadows a builtin (builtin takes precedence)"),
+    ("W0004", "unreachable match arm (a duplicate pattern already covers it)"),
+    ("W0005", "unreachable code after a return/break/continue"),
+    ("W0006", "unused local binding (`let x = …` never read)"),
+    ("W0701", "uncertainty discarded (Uncertain<T>.value used without checking .confidence)"),
+    ("W1103", "@[verify] outside the SMT-provable fragment (R9); runtime gate applies"),
+    ("W1311", "@[ai(policy(budget: N))] value is not a non-negative integer; ignored"),
+    ("W1210", "use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)"),
+    ("W1410", "pass claims `faster` but the perf gate (G4) was not run"),
+    ("W2001", "@[goal] string is vague (no file ref, no measurable criterion, or < 5 words)"),
+    ("W1310", "live AI call by a fn with no @[ai(policy)] (un-metered/un-pinned)"),
+    ("I0001", "deferred attribute (AI annotations)"),
+    ("I0002", "a foreign keyword was accepted as a no-op (`let mut x`)"),
+];
+
+#[cfg(test)]
+mod registry_tests {
+    use super::ALL_CODES;
+
+    /// Every `pub const` code must have a row in [`ALL_CODES`].
+    ///
+    /// This is the OMISSION direction, and it is the one that matters. The
+    /// pre-existing duplicate check verified that codes listed in a test array
+    /// were distinct — it could not notice a code that was never listed. That
+    /// asymmetry is exactly how 11 CLI verbs went undocumented while a gate
+    /// reported PASS.
+    #[test]
+    fn every_error_code_is_in_the_registry() {
+        let src = include_str!("error.rs");
+        let mut declared: Vec<&str> = Vec::new();
+        for line in src.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix("pub const ") {
+                if let Some(name) = rest.split(':').next() {
+                    let n = name.trim();
+                    let is_code = n.len() >= 5
+                        && matches!(n.as_bytes()[0], b'E' | b'W' | b'I')
+                        && n[1..].chars().all(|c| c.is_ascii_digit());
+                    if is_code {
+                        declared.push(n);
+                    }
+                }
+            }
+        }
+        // Guard the guard: a scan that found nothing would satisfy the
+        // assertion below vacuously.
+        assert!(
+            declared.len() > 100,
+            "expected to find many codes, found {}",
+            declared.len()
+        );
+        let registered: std::collections::HashSet<&str> =
+            ALL_CODES.iter().map(|(c, _)| *c).collect();
+        let missing: Vec<&str> = declared
+            .iter()
+            .copied()
+            .filter(|c| !registered.contains(c))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these codes have no ALL_CODES row: {missing:?}\n\
+             Add `(\"CODE\", \"one-line description\"),` to ALL_CODES."
+        );
+    }
+
+    #[test]
+    fn the_registry_has_no_duplicates_and_no_empty_descriptions() {
+        let mut seen = std::collections::HashSet::new();
+        for (code, desc) in ALL_CODES {
+            assert!(seen.insert(*code), "duplicate registry row: {code}");
+            assert!(
+                !desc.trim().is_empty(),
+                "{code} has an empty description — a code with no meaning is \
+                 worse than an undocumented one, because it looks documented"
+            );
+        }
+    }
+
+    /// A code the registry calls live must actually be emitted somewhere.
+    ///
+    /// Thirteen codes were declared and referenced nowhere. A reference that
+    /// listed them as supported would be claiming a diagnostic the compiler
+    /// cannot produce — the same defect as a report that cannot say "no".
+    #[test]
+    fn a_code_not_marked_reserved_is_actually_emitted() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+        let mut corpus = String::new();
+        fn walk(dir: &std::path::Path, out: &mut String) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs")
+                    && p.file_name().is_some_and(|f| f != "error.rs")
+                {
+                    if let Ok(t) = std::fs::read_to_string(&p) {
+                        out.push_str(&t);
+                    }
+                }
+            }
+        }
+        walk(std::path::Path::new(root), &mut corpus);
+        assert!(
+            corpus.len() > 100_000,
+            "corpus scan failed — guard is vacuous"
+        );
+
+        let unemitted: Vec<&str> = ALL_CODES
+            .iter()
+            .filter(|(_, d)| !d.contains("RESERVED"))
+            .map(|(c, _)| *c)
+            .filter(|c| !corpus.contains(*c))
+            .collect();
+        assert!(
+            unemitted.is_empty(),
+            "these codes are not marked RESERVED but are emitted nowhere: {unemitted:?}\n\
+             Either emit them, or append ` — RESERVED, not currently emitted` to \
+             their description."
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
