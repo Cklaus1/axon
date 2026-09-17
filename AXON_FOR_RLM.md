@@ -121,6 +121,18 @@ unannotated function as `@[contained(fs: [], net: [], exec: none)]` and requires
 annotation to widen. The host then passes a flag instead of editing source, and the annotation
 becomes a *grant* rather than an *opt-in*.
 
+> **LANDED 2026-09-17** as `--require-contained` on `check` and `run` (`R45-require-contained.md`),
+> with one correction to the recommendation above. "Every unannotated function" is the design that
+> does not survive contact: imported module items are merged into one `Program`, so it false-positives
+> on a module that merely *contains* I/O the program never calls, and any real library breaks. The
+> default is applied to **`main`**, and the existing transitive walk covers everything reachable from
+> it — including imported helpers, so nothing is laundered. Violations are **E1005**, distinct from
+> E1001, because "not permitted by `@[contained]`" blames an annotation the author never wrote.
+>
+> Known limit, stated in the flag's own `--help`: functions dispatched **by name at runtime**
+> (`sandbox_run` targets, the `redteam_check` / `assert_deployable` deploy gates) are not statically
+> reachable from `main` and are not covered unless separately annotated. This is not total containment.
+
 This is the difference between "§3's gate problem relocated" and "§3's gate problem solved".
 
 ---
@@ -171,6 +183,12 @@ So the honest sequencing for Axon-as-RLM-engine is:
    actually lands;
 3. only if that clears a usable bar, build the accumulating session (5) and `--require-contained`
    (4), which are the two that would make Axon genuinely differentiated rather than merely safe.
+
+> **All five are now landed** (2026-09-16/17). §1/§2/§3 shipped earlier — a parse-tier `mut`
+> diagnostic carrying `help`, and `run` no longer stripping it. §5 is `axon session`
+> (`R44-accumulating-session.md`, all six slices). §4 is `--require-contained`
+> (`R45-require-contained.md`). Step 2's gate — "re-run R9 with a proper LLM-shaped language card and
+> see where fluency lands" — was cleared at **7/8**, which is what authorised steps 4 and 5.
 
 Step 2 is a gate, not a formality. If a good primer leaves Axon at 3/8, the containment quality does
 not matter for this use.

@@ -92,6 +92,7 @@ pub const E1001: &str = "E1001"; // I/O call not permitted by @[contained] spec
 pub const E1002: &str = "E1002"; // @[contained] clause is malformed
 pub const E1003: &str = "E1003"; // capability path is not parseable
 pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
+pub const E1005: &str = "E1005"; // R45: un-granted capability reached from an entry point under --require-contained
 
 // Verify errors (ASI Layer-2: @[verify])
 pub const E1101: &str = "E1101"; // verify bound not satisfied (runtime gate)
@@ -441,6 +442,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E1002", "@[contained] clause is malformed"),
     ("E1003", "capability path is not parseable"),
     ("E1004", "call hits a never: clause (hard violation)"),
+    ("E1005", "R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded"),
     ("E1101", "verify bound not satisfied (runtime gate)"),
     ("E1102", "verify bound statically VIOLABLE — SMT counterexample (R9)"),
     ("E1201", "on-disk module bytes ≠ axon.lock hash (tamper)"),

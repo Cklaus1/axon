@@ -22651,3 +22651,179 @@ fn architecture_doc_names_every_crate() {
         missing.len()
     );
 }
+
+// ── R45: --require-contained ────────────────────────────────────────────────
+
+/// Write `src` to a temp .ax and check it, optionally with --require-contained.
+fn check_rc(src: &str, flag: bool, path_dir: Option<&std::path::Path>) -> (i32, String) {
+    // A per-call counter, NOT src.len(): two tests with same-length sources
+    // collided on one filename and raced — whichever finished first deleted the
+    // other's file, and the loser reported "No such file or directory" as if the
+    // compiler had failed. Tests in this file run in parallel by default.
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let f = std::env::temp_dir().join(format!(
+        "axon_rc_{}_{}.ax",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&f, src).unwrap();
+    let mut cmd = axon();
+    cmd.arg("check");
+    if flag {
+        cmd.arg("--require-contained");
+    }
+    if let Some(d) = path_dir {
+        cmd.env("AXON_PATH", d);
+    }
+    let out = cmd.arg(f.to_str().unwrap()).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+const LEAK: &str = "fn leak() -> str { match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"\" } }\nfn main() { println(leak()) }\n";
+
+#[test]
+fn require_contained_refuses_ungranted_io_and_is_off_by_default() {
+    // AXON_FOR_RLM §4. Containment is opt-in, so the compiler is a boundary only
+    // over code that asked to be bounded — a /etc/passwd read with no annotation
+    // passes `check` silently, exit 0, no diagnostic of any kind.
+    let (off, _) = check_rc(LEAK, false, None);
+    assert_eq!(
+        off, 0,
+        "precondition: without the flag this must still pass, or the test below \
+         proves nothing about the flag"
+    );
+
+    let (on, err) = check_rc(LEAK, true, None);
+    assert_eq!(on, 2, "the flag must refuse un-granted I/O: {err}");
+    assert!(err.contains("E1005"), "must be E1005, not E1001: {err}");
+    // E1005 exists because E1001's wording blames an annotation the author never
+    // wrote. The message must name the entry point and keep the actionable help.
+    assert!(
+        err.contains("main") && err.contains("declares no capabilities"),
+        "E1005 must name the entry point and why: {err}"
+    );
+    assert!(
+        err.contains("fs: [read("),
+        "the help naming the clause that would permit it must survive: {err}"
+    );
+}
+
+#[test]
+fn require_contained_lets_an_explicit_grant_through() {
+    // R45 §5 S2 — the flag sets a DEFAULT, it does not impose a ceiling.
+    let granted = "@[contained(fs: [read(\"/etc/\")], net: [], exec: none)]\n\
+                   fn main() { println(match read_file(\"/etc/hostname\") { Ok(s) => s  Err(e) => \"\" }) }\n";
+    let (code, err) = check_rc(granted, true, None);
+    assert_eq!(code, 0, "an explicit grant must be honoured: {err}");
+}
+
+#[test]
+fn require_contained_does_not_false_positive_on_an_unused_import() {
+    // R45 §2 — the measured reason the obvious design (default on EVERY function)
+    // was rejected. `load_use_decls` merges imported items into one Program, so
+    // "every function" includes every function of every imported module: a module
+    // that merely CONTAINS a read_file would fail a program that never calls it,
+    // and any real library would break.
+    let dir = std::env::temp_dir().join(format!("axon_rc_mod_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join("rclib.ax"),
+        "fn helper_reads(p: str) -> str { match read_file(p) { Ok(s) => s  Err(e) => \"\" } }\n\
+         fn pure_helper(n: i64) -> i64 { n * 2 }\n",
+    )
+    .unwrap();
+
+    let unused =
+        "mod rclib\nuse rclib.{pure_helper}\nfn main() { println(to_str(pure_helper(21))) }\n";
+    let (code, err) = check_rc(unused, true, Some(&dir));
+    assert_eq!(
+        code, 0,
+        "importing a module that contains I/O the program never calls must pass: {err}"
+    );
+
+    // ...but CALLING it must not launder the capability.
+    let used = "mod rclib\nuse rclib.{helper_reads}\nfn main() { println(helper_reads(\"/etc/passwd\")) }\n";
+    let (code2, err2) = check_rc(used, true, Some(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        code2, 2,
+        "calling the imported helper must be refused: {err2}"
+    );
+    assert!(err2.contains("E1005"), "{err2}");
+}
+
+#[test]
+fn require_contained_cannot_be_laundered_through_a_local_helper() {
+    // The whole point of the transitive walk: moving the I/O one call away must
+    // not escape the boundary. LEAK already does exactly this — `main` calls
+    // `leak`, and `leak` does the read.
+    let (code, err) = check_rc(LEAK, true, None);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("read_file"),
+        "the diagnostic must name the call that was refused, not just the fn: {err}"
+    );
+}
+
+#[test]
+fn require_contained_leaves_a_library_and_a_pure_program_alone() {
+    // R45 §5 S6: no entry point, nothing to contain.
+    let (lib, e1) = check_rc("fn only_a_helper(n: i64) -> i64 { n + 1 }\n", true, None);
+    assert_eq!(lib, 0, "a library with no main must be unaffected: {e1}");
+
+    let (pure, e2) = check_rc("fn main() { println(\"hi\") }\n", true, None);
+    assert_eq!(pure, 0, "a program that touches nothing must pass: {e2}");
+}
+
+#[test]
+fn require_contained_is_honoured_by_run_not_only_check() {
+    // `check` is what AXON_FOR_RLM §4 named, but `run` is the path an RLM host
+    // actually drives. A gate that only guards the path nobody takes is theatre.
+    let f = std::env::temp_dir().join(format!("axon_rc_run_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() { println(match read_file(\"/etc/hostname\") { Ok(s) => s  Err(e) => \"x\" }) }\n",
+    )
+    .unwrap();
+
+    let off = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert_eq!(
+        off.status.code(),
+        Some(0),
+        "precondition: without the flag the program runs"
+    );
+
+    let on = axon()
+        .args(["run", "--require-contained", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(on.status.code(), Some(2), "run must honour the flag");
+    assert!(
+        String::from_utf8_lossy(&on.stderr).contains("E1005"),
+        "and refuse before executing"
+    );
+}
+
+#[test]
+fn require_contained_help_names_the_limit_it_does_not_cover() {
+    // R45 §7 — not optional. Functions dispatched BY NAME at runtime
+    // (`sandbox_run` targets, the `redteam_check`/`assert_deployable` deploy
+    // gates) are not statically reachable from `main` and are not covered.
+    // A flag called "require contained" that quietly does not is the
+    // absent-vs-passed defect this cycle spent seven surfaces fixing.
+    let out = axon().args(["check", "--help"]).output().unwrap();
+    let h = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        h.contains("--require-contained"),
+        "flag must be listed: {h}"
+    );
+    assert!(
+        h.contains("NOT cover") || h.contains("not cover"),
+        "the help must state what the flag does NOT cover: {h}"
+    );
+}

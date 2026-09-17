@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 138 diagnostic codes (125 live, 13 reserved), 47 environment variables.
+The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 139 diagnostic codes (126 live, 13 reserved), 47 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -122,7 +122,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEST_DOTENV_VAR` | (test fixture) name of a variable the .env loader test expects to find |
 | `AXON_TEST_DOTENV_NEW` | (test fixture) asserts the .env loader does not clobber an already-set variable |
 
-## Diagnostic codes (138, of which 125 live)
+## Diagnostic codes (139, of which 126 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -187,6 +187,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1002` | @[contained] clause is malformed |
 | `E1003` | capability path is not parseable |
 | `E1004` | call hits a never: clause (hard violation) |
+| `E1005` | R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded |
 | `E1101` | verify bound not satisfied (runtime gate) |
 | `E1102` | verify bound statically VIOLABLE — SMT counterexample (R9) |
 | `E1201` | on-disk module bytes ≠ axon.lock hash (tamper) |

@@ -18,6 +18,20 @@ pub const E1001: &str = "E1001";
 pub const E1002: &str = "E1002";
 pub const E1003: &str = "E1003";
 pub const E1004: &str = "E1004";
+/// R45 — an un-granted capability reached from an entry point under
+/// `--require-contained`.
+///
+/// Distinct from E1001 on purpose. E1001 means "you granted capabilities and
+/// reached outside them" — widen the grant. E1005 means "you granted nothing and
+/// this build requires a grant" — declare what you need. A host should be able to
+/// tell those apart, and the E1001 wording ("not permitted by @[contained]")
+/// describes a restriction the author cannot see in their own source when no
+/// annotation exists.
+///
+/// Re-exported from `error.rs` rather than declared again: that module is the
+/// registry `every_emitted_error_code_is_registered` reads, and a second `pub
+/// const` for the same code would be a second source of truth for what it means.
+pub use crate::error::E1005;
 pub const E1203: &str = "E1203"; // import widens the importer's capability surface (R6 §4.4)
 
 // ── Diagnostic ───────────────────────────────────────────────────────────────
@@ -200,6 +214,36 @@ fn dir_prefix(path: &str) -> &str {
 // ── Core check ───────────────────────────────────────────────────────────────
 
 /// Run the capability check on all functions in `program` and return diagnostics.
+/// R45 — when set, an entry point with no `@[contained]` is checked against a
+/// deny-all default rather than being exempt.
+///
+/// Process-global, matching how the other ambient controls in this codebase are
+/// delivered. Default OFF: a flag that altered the meaning of existing source by
+/// default would refuse 17% of the example corpus.
+static REQUIRE_CONTAINED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enable the R45 deny-all default. Returns the previous setting.
+pub fn set_require_contained(on: bool) -> bool {
+    REQUIRE_CONTAINED.swap(on, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn require_contained() -> bool {
+    REQUIRE_CONTAINED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The deny-all spec an un-annotated entry point is held to under R45.
+fn deny_all_spec(span: crate::span::Span) -> ContainedSpec {
+    ContainedSpec {
+        fs_read: Vec::new(),
+        fs_write: Vec::new(),
+        net_allow: Vec::new(),
+        exec_allowed: false,
+        never: Vec::new(),
+        native_grants: Vec::new(),
+        span,
+    }
+}
+
 pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
     let mut errors = Vec::new();
     // Map fn-name → FnDef so a `@[contained]` fn's capability check can follow
@@ -270,10 +314,29 @@ fn check_fn<'a>(
     method_map: &'a std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
     errors: &mut Vec<CapabilityError>,
 ) {
+    // R45: the default applies to `main` ONLY, and the existing transitive walk
+    // covers everything it reaches — including imported helpers. Applying it to
+    // every function would fail on a module that merely CONTAINS I/O the program
+    // never calls (measured: a false positive on unused code, spec §2 option a),
+    // and an entry-file-only rule is not expressible because `FnDef` carries no
+    // origin marker after the import merge (§2 option b).
+    //
+    // A function nothing calls cannot do anything, so requiring it to be
+    // annotated protects nobody.
+    let synthesized;
     let spec = match &fndef.contained {
         Some(s) => s,
-        None => return, // no @[contained] — no restrictions
+        None => {
+            if !require_contained() || fndef.name != "main" {
+                return; // no @[contained] — no restrictions
+            }
+            synthesized = deny_all_spec(fndef.span);
+            &synthesized
+        }
     };
+    // Whether this fn's spec was WRITTEN or synthesized decides which code its
+    // violations carry (E1001 vs E1005, spec §3).
+    let synthesized_spec = fndef.contained.is_none();
     // Walk the function body AND every user helper it transitively reaches,
     // checking each against this fn's spec. `visited` starts with the contained
     // fn itself so a self/mutual recursion can't loop.
@@ -288,7 +351,46 @@ fn check_fn<'a>(
         site: fndef.span,
         errors,
     };
+    let before = ctx.errors.len();
     check_expr(&fndef.body, &mut ctx);
+
+    // R45 §3 — relabel violations of a SYNTHESIZED spec.
+    //
+    // Done centrally rather than at each of the eight emission sites: a rule
+    // applied per-site is a rule that misses one. The original help text is kept
+    // verbatim — it already names the exact clause that would permit the call,
+    // which is the actionable part — and only the framing changes, because
+    // "not permitted by @[contained]" describes a restriction the author cannot
+    // see in their own source when they wrote no annotation.
+    if synthesized_spec {
+        for e in ctx.errors[before..].iter_mut() {
+            if e.code != E1001 {
+                continue;
+            }
+            e.code = E1005;
+            let help = e
+                .message
+                .split_once("\n  help: ")
+                .map(|(_, h)| h.to_string());
+            let what = e
+                .message
+                .split_once("` is ")
+                .map(|(lhs, _)| format!("{lhs}`"))
+                .unwrap_or_else(|| "this call".to_string());
+            e.message = match help {
+                Some(h) => format!(
+                    "{what} is reached from `{}`, which declares no capabilities — \
+                     --require-contained needs an explicit grant\n  help: {h}",
+                    fndef.name
+                ),
+                None => format!(
+                    "{what} is reached from `{}`, which declares no capabilities — \
+                     --require-contained needs an explicit grant",
+                    fndef.name
+                ),
+            };
+        }
+    }
 }
 
 /// R13 native FFI: enforce that every native `M::*` call in `fndef`'s body is

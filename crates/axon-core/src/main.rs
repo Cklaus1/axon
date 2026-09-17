@@ -72,6 +72,21 @@ enum Command {
         /// `fn f() -> T | {IO, Net}`; this flag surfaces migration opportunities.
         #[arg(long, help = "Warn on deprecated @[contained] annotations (E1316)")]
         effects_strict: bool,
+
+        /// R45 — hold `main` to a deny-all capability grant unless it declares
+        /// one, so containment is a GRANT rather than an opt-in.
+        ///
+        /// Checks everything reachable from `main`, including imported helpers.
+        /// LIMIT: functions dispatched by name at runtime (`sandbox_run`
+        /// targets, and the `redteam_check` / `assert_deployable` deploy gates)
+        /// are not statically reachable from `main` and are NOT covered unless
+        /// they carry their own `@[contained]`. This is not total containment.
+        #[arg(
+            long,
+            help = "Require an explicit @[contained] grant for I/O reachable from main (E1005). \
+                    Does NOT cover functions dispatched by name at runtime."
+        )]
+        require_contained: bool,
     },
 
     /// Write `axon.lock` pinning each `use`d module to its content hash (R6).
@@ -244,6 +259,21 @@ enum Command {
         /// Enable O2 optimizations (default: O0 / debug).
         #[arg(long, short = 'r', help = "Optimized release build")]
         release: bool,
+
+        /// R45 — hold `main` to a deny-all capability grant unless it declares
+        /// one, so containment is a GRANT rather than an opt-in.
+        ///
+        /// Checks everything reachable from `main`, including imported helpers.
+        /// LIMIT: functions dispatched by name at runtime (`sandbox_run`
+        /// targets, and the `redteam_check` / `assert_deployable` deploy gates)
+        /// are not statically reachable from `main` and are NOT covered unless
+        /// they carry their own `@[contained]`. This is not total containment.
+        #[arg(
+            long,
+            help = "Require an explicit @[contained] grant for I/O reachable from main (E1005). \
+                    Does NOT cover functions dispatched by name at runtime."
+        )]
+        require_contained: bool,
 
         /// Arguments forwarded to the compiled binary.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -792,7 +822,11 @@ fn dispatch(command: Command) {
             json,
             locked,
             effects_strict,
-        } => cmd_check(file, json, locked, effects_strict),
+            require_contained,
+        } => {
+            axon_core::capabilities::set_require_contained(require_contained);
+            cmd_check(file, json, locked, effects_strict)
+        }
         Command::Lock { file } => cmd_lock(file),
         Command::VerifyLock { file } => cmd_verify_lock(file),
         Command::Build {
@@ -830,8 +864,12 @@ fn dispatch(command: Command) {
         Command::Run {
             file,
             release,
+            require_contained,
             args,
-        } => cmd_run(file, release, args),
+        } => {
+            axon_core::capabilities::set_require_contained(require_contained);
+            cmd_run(file, release, args)
+        }
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
         Command::Lsp => cmd_lsp(),
