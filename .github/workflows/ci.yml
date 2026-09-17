@@ -65,6 +65,21 @@ jobs:
       - name: cargo clippy (no codegen)
         run: cargo clippy --no-default-features -p axon-core -- -D warnings
 
+      # The runtime crates. CI linted ONLY axon-core, so a clippy error in
+      # axon-rt lived on the branch from 2026-09-08 to 2026-09-17 with every
+      # CI run green — `scripts/gate.sh --strict` catches it, and CI does not
+      # run gate.sh. The crate list mirrors gate.sh's, which now has its own
+      # coverage check asserting every workspace member is gated or excused.
+      # axon-guest-kernel is excluded: freestanding no_std, unlintable on the
+      # host target (built by scripts/build-guest-image.sh with -Z build-std).
+      - name: cargo clippy (runtime crates)
+        run: |
+          cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx \
+            -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest \
+            -p axon-ledger -p axon-intent -p axon-os -p axon-web \
+            -p axon-audit -p axon-certcheck -p axon-signal \
+            -p axon-guest-init -p axon-wasm --all-targets -- -D warnings
+
   # AUDIT T7. Every job above passes `-p axon-core`, so CI covered 1 of the 19
   # workspace crates. axon-os (the supervisor/gate), axon-attest, axon-vm,
   # axon-web, axon-guest-kernel and the rest were never built or tested by CI —

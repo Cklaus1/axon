@@ -114,10 +114,46 @@ echo "── gate: clippy runtime crates (-D warnings) ────────�
 # axon-signal); axon-os alone carried ~11 warnings including a dead function.
 # Third recorded sighting of this class, so the fix is the list AND this note.
 # Adding a new crate to the workspace? Add it here in the same commit.
-cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock -p axon-domain \
-  -p axon-vm -p axon-attest -p axon-ledger -p axon-intent -p axon-os -p axon-web \
-  -p axon-audit -p axon-certcheck -p axon-signal --all-targets -- -D warnings \
+# axon-gfx, axon-guest-init and axon-wasm joined 2026-09-17 (FOURTH sighting of
+# this class, which is why the check below now exists rather than another note).
+# axon-gfx and axon-guest-init were already clean. axon-wasm needed one fix: its
+# generated `tests/oracle.rs` is `include!`d by the browser test and read only on
+# wasm32, but living under tests/ cargo ALSO builds it as a host integration test
+# with no test fns, where the static is genuinely unused — so the crate could not
+# be lint-gated at all.
+cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
+  -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
+  -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
+  -p axon-guest-init -p axon-wasm --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
+
+# COVERAGE CHECK — the note above has been written three times and the list
+# drifted anyway, because a comment cannot fail a build. Every workspace member
+# must be either lint-gated above (or as axon-core separately) or named here with
+# a reason. Adding a crate without doing one of those now turns the gate RED.
+echo "── gate: clippy coverage (every crate gated or excused) ──────────"
+# axon-guest-kernel: freestanding no_std. On the host target clippy fails with
+# "unwinding panics are not supported without std" and a duplicate `panic_impl`
+# lang item — artifacts of the wrong target, not lints. It is built and checked
+# by scripts/build-guest-image.sh with -Z build-std and its own target spec.
+CLIPPY_EXCUSED="axon-guest-kernel"
+# tr: `sort -u` is newline-separated, and the `case` glob below matches on
+# SPACES. Without it nothing ever matches — the check fails closed (every crate
+# "uncovered") rather than open, but it would still have been wrong.
+_gated="$(grep -oE '\-p axon-[a-z-]+' "$0" | awk '{print $2}' | sort -u | tr '\n' ' ')"
+_missing=""
+for _c in $(ls crates); do
+  case " $_gated $CLIPPY_EXCUSED " in
+    *" $_c "*) ;;
+    *) _missing="$_missing $_c" ;;
+  esac
+done
+if [ -n "$_missing" ]; then
+  echo "gate: these crates are neither clippy-gated nor excused:$_missing"
+  echo "gate: add them to the clippy line above, or to CLIPPY_EXCUSED with a reason."
+  fail "clippy coverage"
+fi
+echo "  ✓ all $(ls crates | wc -l) workspace crates are lint-gated or excused"
 
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"
