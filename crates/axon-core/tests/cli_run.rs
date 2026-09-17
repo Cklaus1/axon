@@ -23744,3 +23744,110 @@ fn goal_run_doc_states_the_zero_means_unlimited_trap() {
         "...and must tell a caller with a computed budget what to do: {entry:.300}"
     );
 }
+
+#[test]
+fn fmt_is_idempotent_and_check_clean_across_the_whole_example_corpus() {
+    // `fmt::tests::fmt_idempotent` proves the property on ONE three-line
+    // function. That cannot catch a non-idempotent attribute, trait, refinement,
+    // effect row, match arm, closure or string interpolation — i.e. everything
+    // the formatter actually has to get right.
+    //
+    // This runs the real corpus: format each example twice and require the two
+    // passes to be byte-identical, then require the formatted file to still
+    // type-check. A formatter that changes meaning is worse than one that
+    // changes layout, so both halves matter.
+    let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    let ex = std::path::Path::new(&root).join("examples");
+    let dir = std::env::temp_dir().join(format!("axon_fmtidem_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+
+    let mut checked = 0usize;
+    let mut non_idempotent: Vec<String> = Vec::new();
+    let mut broke_check: Vec<String> = Vec::new();
+
+    for entry in std::fs::read_dir(&ex)
+        .expect("examples/ must exist")
+        .flatten()
+    {
+        let src = entry.path();
+        if src.extension().is_none_or(|e| e != "ax") {
+            continue;
+        }
+        let name = src.file_name().unwrap().to_string_lossy().to_string();
+        let work = dir.join(&name);
+        if std::fs::copy(&src, &work).is_err() {
+            continue;
+        }
+
+        // Pass 1. A file the formatter refuses is not this test's business.
+        let p1 = axon()
+            .args(["fmt", work.to_str().unwrap()])
+            .output()
+            .unwrap();
+        if !p1.status.success() {
+            continue;
+        }
+        let once = std::fs::read_to_string(&work).unwrap_or_default();
+
+        // Pass 2 must change nothing.
+        let _ = axon()
+            .args(["fmt", work.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let twice = std::fs::read_to_string(&work).unwrap_or_default();
+        if once != twice {
+            non_idempotent.push(name.clone());
+        }
+
+        // ...and the formatted file must still type-check. `check` is the
+        // strongest semantic assertion available without running every example
+        // (several need a network, a model, or an interactive host).
+        let orig_ok = axon()
+            .args(["check", src.to_str().unwrap()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if orig_ok {
+            let fmt_ok = axon()
+                .args(["check", work.to_str().unwrap()])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !fmt_ok {
+                broke_check.push(name.clone());
+            }
+        }
+        checked += 1;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Non-vacuity floor: a scan that formatted nothing would satisfy both
+    // assertions below perfectly.
+    //
+    // 12, not 40: `axon fmt` REFUSES any file containing comments, because the
+    // AST-based formatter would delete them (deliberate — see
+    // `fmt_refuses_to_delete_comments`). 27 of the 42 examples carry comments,
+    // so ~15 are formattable. The floor sits just below that, and a first draft
+    // of this test set it at 20 from a miscounted shell probe that had
+    // incremented its counter BEFORE the format rather than after.
+    assert!(
+        checked >= 12,
+        "expected to format the comment-free examples (~15), only managed {checked}"
+    );
+    // NOT mutation-proved, and worth saying why. The cheap lever — making the
+    // formatter append whitespace — provably CANNOT break idempotence here,
+    // because pass 2 re-parses the file and whitespace is not in the AST, so the
+    // canonical text is identical either way (verified: the mutant produced
+    // byte-identical passes). A real non-idempotence is canonical-text drift
+    // (`a+b` one pass, `a + b` the next), which this byte comparison does catch,
+    // but constructing that requires a semantic change to the emitter rather
+    // than a one-line mutation.
+    assert!(
+        non_idempotent.is_empty(),
+        "fmt is not idempotent on: {non_idempotent:?} (second pass differs from first)"
+    );
+    assert!(
+        broke_check.is_empty(),
+        "fmt produced source that no longer type-checks: {broke_check:?}"
+    );
+}
