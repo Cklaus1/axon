@@ -87,7 +87,11 @@ fi
 # A documented-but-unread var is the worst kind of wrong: it looks like a
 # supported control surface, so a run is configured with it and behaves as if
 # unconfigured — silently.
-doc_vars="$(grep -oE 'AXON_[A-Z_]+' "$DOC" | sort -u)"
+# `AXON_[A-Z_]+` NOT followed by a filename extension. Without the exclusion
+# this matched `AXON_REFERENCE.md` — a document, not an environment variable —
+# and reported it as a var the code never reads. A gate that fires on a filename
+# teaches the reader to discount it, which costs more than the check is worth.
+doc_vars="$(grep -oE 'AXON_[A-Z_]+(\.[a-z]+)?' "$DOC" | grep -vE '\.[a-z]+$' | sort -u)"
 n_vars=$(echo "$doc_vars" | grep -c . || true)
 unread=""
 for v in $doc_vars; do

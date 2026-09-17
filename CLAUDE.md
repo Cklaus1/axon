@@ -17,9 +17,16 @@ AI-optimized, statically-typed systems language. Compiles to native via LLVM 17.
 
 ## Commands
 
-A SELECTION. `axon --help` is authoritative — there are more verbs than these
-(`fmt`, `doc`, `lsp`, `lock`, `verify`, `improve`, `target`, `cache`, `ai`). Checked by
-`scripts/claims_gate.sh`: every verb named here must exist.
+A SELECTION. **`AXON_REFERENCE.md` is the exhaustive, generated list** — every verb,
+every builtin with its signature, every attribute, produced by `axon reference`
+from the compiler's own tables and gated against drift in BOTH directions by
+`axon_reference_is_in_sync_with_the_binary`. Read that when you need to know
+whether this build supports something; read this for the curated path.
+
+`scripts/claims_gate.sh` checks that every verb named HERE exists. It does not
+check the reverse, which is how 11 verbs — including `session` — came to be
+absent from this file with nothing failing. The reference gate closes that
+direction. For architecture and design rationale, see `ARCHITECTURE.md`.
 
 ```bash
 # Build the fast interpreter CLI (no LLVM/codegen — sub-second):
@@ -47,6 +54,18 @@ axon replay a.journal --diff b.journal    # where did two runs depart? Reports t
 axon trace                                # summarize the provenance log: per-@[adaptive]-fn score trajectory (--fn NAME, --json)
 axon trace --ai                           # AI-call audit trail: per-fn ai_complete calls, tier→model, mode (live/mock/replay/fallback), metered cost, and the goal each served (--json → axon-ai-audit/1)
 axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
+axon session                              # R44: an accumulating typed session — bind a name in one
+                                          #   cell, read it in the next. Every cell re-type-checks the
+                                          #   WHOLE accumulated program, so redefining a name in a way
+                                          #   that breaks an earlier binding is a compile error BEFORE
+                                          #   anything executes (E2400) — the property a dynamically
+                                          #   typed kernel cannot offer. Bindings live in `main`'s scope
+                                          #   (module-level `let` refuses assignment, E0001) and are
+                                          #   materialised back as literals between cells, which pins
+                                          #   their types. `--protocol jsonl` for a host driver
+                                          #   (one JSON frame in, one `axon-session/1` frame out);
+                                          #   `--transcript PATH` + AXON_RECORD gives a replayable pair.
+axon reference                            # the complete surface of THIS build (--json → axon-reference/1)
 axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
 
 # Phase-10 Hello-Goal CLI flow (compile → review → approve → deploy):

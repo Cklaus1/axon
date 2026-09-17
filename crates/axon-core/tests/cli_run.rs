@@ -22584,3 +22584,40 @@ fn axon_reference_json_is_machine_readable() {
         "builtins must carry signatures, not just names"
     );
 }
+
+#[test]
+fn architecture_doc_names_every_crate() {
+    // ARCHITECTURE.md is narrative and cannot be generated — but its crate table
+    // IS mechanically checkable, and a crate table is exactly the kind of thing
+    // that silently goes stale when someone adds a crate. Gating the checkable
+    // part of a hand-written doc is cheaper than discovering it wrong.
+    let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    let doc = std::fs::read_to_string(std::path::Path::new(&root).join("ARCHITECTURE.md"))
+        .expect("ARCHITECTURE.md must exist");
+    let crates_dir = std::path::Path::new(&root).join("crates");
+    let mut missing = Vec::new();
+    let mut found = 0usize;
+    for entry in std::fs::read_dir(&crates_dir).expect("crates/ must exist") {
+        let e = entry.unwrap();
+        if !e.file_type().unwrap().is_dir() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        found += 1;
+        if !doc.contains(&name) {
+            missing.push(name);
+        }
+    }
+    // Guard the guard: if the scan found nothing, the assertion below would pass
+    // vacuously against a doc that names no crates at all.
+    assert!(
+        found >= 10,
+        "precondition: expected to scan many crates, found {found}"
+    );
+    assert!(
+        missing.is_empty(),
+        "ARCHITECTURE.md's crate table is missing {} crate(s): {missing:?}\n\
+         Add them to the table in §4.",
+        missing.len()
+    );
+}
