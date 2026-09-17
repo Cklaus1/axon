@@ -110,8 +110,13 @@ scripts/gate.sh --strict      # the full strict gate
   `too_many_arguments` clippy error in `axon-rt` that CI does not catch, because
   CI runs `cargo check/test/fmt/clippy` and a parity job, not `gate.sh`. Running
   the narrower per-crate clippy reports "clean" without reaching it.
-- `verify_all_specs.sh --run all`: **CLEAN** — every non-Draft spec's `evidence:`
-  command was actually re-run and passed, not merely present.
+- `verify_all_specs.sh --run all`: **CLEAN** — 14 evidence commands actually
+  re-run, 47 checks passed, 0 failed. Precisely: a spec whose `evidence:` is a
+  single script pointer is EXECUTED; one whose evidence is prose (R24-tee-target
+  names a test, a script and a CI workflow) gets a `note:` telling you to re-run
+  it by hand. So "CLEAN" means *nothing that could be re-run failed*, not *every
+  claim in every spec was re-proved* — the tool says which is which, and an
+  earlier version of this line rounded that up.
 - `parity_all.sh`: **51 passed / 2 skipped / 0 failed** of 53. The 2 skips are
   `android_compute_parity` (NDK absent) and `browser_compute_parity` (needs
   headless Chrome + chromedriver), both reporting "(toolchain absent)" — the
