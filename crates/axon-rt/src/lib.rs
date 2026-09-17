@@ -2948,12 +2948,9 @@ pub extern "C" fn __axon_verify_panic(
     actual: f64,
 ) -> ! {
     let msg = format_verify_panic(
-        fn_name_ptr,
-        fn_name_len,
-        op_ptr,
-        op_len,
-        ident_ptr,
-        ident_len,
+        verify_slice_to_str(fn_name_ptr, fn_name_len),
+        verify_slice_to_str(op_ptr, op_len),
+        verify_slice_to_str(ident_ptr, ident_len),
         bound,
         actual,
     );
@@ -3261,26 +3258,20 @@ pub extern "C" fn __axon_random_inverted_panic(lo: i64, hi: i64) -> ! {
 
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
-fn format_verify_panic(
-    fn_name_ptr: *const u8,
-    fn_name_len: i64,
-    op_ptr: *const u8,
-    op_len: i64,
-    ident_ptr: *const u8,
-    ident_len: i64,
-    bound: f64,
-    actual: f64,
-) -> String {
-    let fn_name = verify_slice_to_str(fn_name_ptr, fn_name_len);
-    let op = verify_slice_to_str(op_ptr, op_len);
-    // The SUBJECT of the predicate, passed in from codegen. It used to be the
-    // hardcoded word "confidence", which was right only for the original
-    // `@[verify(confidence OP K)]` on an `Uncertain<T>` return. Once scalar
-    // returns were armed too, `@[verify(value > 100)] fn f(...) -> i64` failed
-    // with "confidence > 100 failed" -- naming a field the function does not
-    // have, against a predicate the author never wrote. The interpreter always
-    // reported the real subject; this is the native side catching up.
-    let ident = verify_slice_to_str(ident_ptr, ident_len);
+///
+/// Takes `&str`, not the three `(ptr, len)` pairs the C ABI delivers. Those made
+/// it an 8-argument function — over clippy's limit, which had the repo's own
+/// `gate.sh --strict` RED since 2026-09-08 — and pushed the unsafe slice
+/// conversion past the ABI boundary into a pure formatting helper. It belongs at
+/// the boundary, done once, which is where it is now.
+///
+/// `ident` is the SUBJECT of the predicate, passed in from codegen. It used to be
+/// the hardcoded word "confidence", right only for the original
+/// `@[verify(confidence OP K)]` on an `Uncertain<T>` return. Once scalar returns
+/// were armed too, `@[verify(value > 100)] fn f(..) -> i64` failed with
+/// "confidence > 100 failed" — naming a field the function does not have, against
+/// a predicate the author never wrote.
+fn format_verify_panic(fn_name: &str, op: &str, ident: &str, bound: f64, actual: f64) -> String {
     format!(
         "axon: verify violation in {}: {ident} {op} {bound} failed (actual={actual})",
         verify_fn_label(fn_name)
@@ -3333,12 +3324,9 @@ mod verify_panic_tests {
         let op = b">=";
         let ident = b"confidence";
         let msg = format_verify_panic(
-            fn_name.as_ptr(),
-            fn_name.len() as i64,
-            op.as_ptr(),
-            op.len() as i64,
-            ident.as_ptr(),
-            ident.len() as i64,
+            core::str::from_utf8(fn_name).unwrap(),
+            core::str::from_utf8(op).unwrap(),
+            core::str::from_utf8(ident).unwrap(),
             0.8,
             0.42,
         );
@@ -3358,12 +3346,9 @@ mod verify_panic_tests {
         let op = b">=";
         let ident = b"confidence";
         let msg = format_verify_panic(
-            fn_name.as_ptr(),
-            fn_name.len() as i64,
-            op.as_ptr(),
-            op.len() as i64,
-            ident.as_ptr(),
-            ident.len() as i64,
+            core::str::from_utf8(fn_name).unwrap(),
+            core::str::from_utf8(op).unwrap(),
+            core::str::from_utf8(ident).unwrap(),
             0.9,
             0.6,
         );
@@ -3386,12 +3371,9 @@ mod verify_panic_tests {
         let op = b">";
         let ident = b"value";
         let msg = format_verify_panic(
-            fn_name.as_ptr(),
-            fn_name.len() as i64,
-            op.as_ptr(),
-            op.len() as i64,
-            ident.as_ptr(),
-            ident.len() as i64,
+            core::str::from_utf8(fn_name).unwrap(),
+            core::str::from_utf8(op).unwrap(),
+            core::str::from_utf8(ident).unwrap(),
             100.0,
             6.0,
         );
@@ -3401,17 +3383,15 @@ mod verify_panic_tests {
 
     #[test]
     fn message_handles_null_ptrs_gracefully() {
-        let msg = format_verify_panic(
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            0,
-            0.5,
-            0.1,
-        );
-        // Should not panic; should contain placeholder text.
+        // Null-pointer handling lives in `verify_slice_to_str`, which is where
+        // the C ABI boundary is. It used to be reachable only through
+        // `format_verify_panic` because that took the raw pairs itself; the
+        // coverage is kept, aimed at the code that actually does the work.
+        let unknown = verify_slice_to_str(std::ptr::null(), 0);
+        assert_eq!(unknown, "<unknown>", "a null name must not panic");
+
+        // ...and the placeholder must survive into the message the user sees.
+        let msg = format_verify_panic(unknown, unknown, unknown, 0.5, 0.1);
         assert!(msg.contains("<unknown>"), "msg: {msg}");
     }
 }
