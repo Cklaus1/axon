@@ -1,7 +1,7 @@
 # Axon — Status
 
-**Last updated**: 2026-06-28
-**Branch**: `main`
+**Last updated**: 2026-09-17
+**Branch**: `diag-hint-and-location`
 **Version**: `axon 0.1.0`
 
 This is the single current-status document. For **forward planning** see `ROADMAP.md`;
@@ -36,19 +36,28 @@ serde derives are decoupled.
 
 ## Scale
 
+Measured 2026-09-17, not carried forward. The commands are below each figure's
+row in `ARCHITECTURE.md` §8 — re-measure rather than trusting this table, which is
+exactly the kind that drifts.
+
 | Metric | Value |
 |--------|-------|
-| Workspace crates | 19 (`axon-core` is ~105K LOC; ~150K total) |
-| `.ax` examples | 158 |
-| `@[test]` functions in examples | 447 |
-| Rust `#[test]` files | 117 |
-| Parity / acceptance gate scripts | 86 (`scripts/*.sh`); 49 are `*_parity.sh` |
-| Spec docs | 14 (`spec/`) |
+| Workspace crates | 19 (`axon-core` ~99.7K LOC; ~146.8K across `crates/*/src`) |
+| `.ax` examples | 174 |
+| `@[test]` functions in examples | 462 |
+| Rust files containing `#[test]` | 131 |
+| Gate / harness scripts | 110 (`scripts/*.sh`); 54 are `*parity*.sh` |
+| Spec docs | 14 (`spec/`) + 66 governance specs (`governance/specs/R*.md`) |
+
+For the **exhaustive, generated** surface — every CLI verb, builtin, attribute,
+diagnostic code and environment variable — see `AXON_REFERENCE.md`. It is produced
+by `axon reference` from the compiler's own tables and gated in both directions,
+so unlike this table it cannot go stale silently.
 
 ## Phase / Roadmap Completion
 
-Phases 1–14+ and the R-series (through R31, with R32–R34 specced) are tracked as
-complete in the `CLAUDE.md` Phase Status table — 19 phase rows. Highlights:
+Phases 1–14+ and the R-series (through R34) are tracked as complete in the
+`CLAUDE.md` Phase Status table — 19 phase rows. Highlights:
 refinement types + SMT discharge (Phase 5), row-polymorphic effects + suspend/resume
 runtime across native/wasi/browser (Phase 6), kernel services (Phase 7), the Layer-3
 self-improving compiler, the Phase-10 prose→AST surface + Hello-Goal CLI flow, the
@@ -56,6 +65,30 @@ web approval UI (Phase 12), and the Tier-2 distributed/probabilistic/simulation 
 (Phase 14+). The latest landed work is the ASI safety stack (R26–R31): confidential
 microVM substrate + attestation, corrigibility kill-switch, audit ledger, and extended
 TCB attestation.
+
+**Landed since (2026-09-16/17):**
+
+- **R44 — the accumulating typed session** (`axon session`, all six slices). Bind a
+  name in one cell, read it in the next; every cell re-type-checks the WHOLE
+  accumulated program, so redefining a name in a way that breaks an earlier
+  binding is a compile error before anything executes (**E2400**). `--protocol
+  jsonl` for a host driver, `--transcript` + `AXON_RECORD` for a replayable pair.
+- **R45 — `--require-contained`** on `check` / `run` / `session`: containment
+  becomes a GRANT rather than an opt-in (**E1005**). Applies to `main` and
+  everything it transitively reaches. Known limit, stated in `--help`: functions
+  dispatched by name at runtime are not covered.
+- **A generated, gated reference.** `axon reference` emits the whole surface from
+  the compiler's own tables; `ALL_CODES` and `ALL_ENV_VARS` make diagnostic codes
+  and environment variables introspectable for the first time. A new verb,
+  builtin, code or variable fails the test suite until it is documented.
+- **`ARCHITECTURE.md`** (how it is put together and why) and **`COMPARISON.md`**
+  (against Rust/Go/C/C++/Python/JS-TS, and against seccomp/gVisor/Firecracker/WASM).
+- Ten inspection-surface defects, all of one class: an absent or unknown fact
+  reported as a benign one. The worst was `axon redteam` reporting "safe" on a
+  file `axon deploy` blocks — the two verbs read the same `redteam_check` through
+  different mechanisms.
+
+With R44 and R45, all five of `AXON_FOR_RLM.md`'s recommendations are landed.
 
 > **Caveat (verify claims against gates).** Status docs in this repo have historically
 > lagged code in both directions. Treat the gate suite — not prose — as the source of
@@ -71,7 +104,19 @@ scripts/acceptance_gate.sh    # axon-os R21 §10 acceptance (presence + anti-stu
 scripts/gate.sh --strict      # the full strict gate
 ```
 
-**Last verified run (2026-06-28):**
+**Last verified run (2026-09-17):**
+
+- `gate.sh --strict`: **PASSED.** Note it had been RED since 2026-09-08 — a
+  `too_many_arguments` clippy error in `axon-rt` that CI does not catch, because
+  CI runs `cargo check/test/fmt/clippy` and a parity job, not `gate.sh`. Running
+  the narrower per-crate clippy reports "clean" without reaching it.
+- `verify_all_specs.sh --run all`: **CLEAN** — every non-Draft spec's `evidence:`
+  command was actually re-run and passed, not merely present.
+- `cargo test -p axon-core`: 661 lib + 551 `cli_run`, 0 failed (default features);
+  653 + 540 + 132 + 24 + 8, 0 failed under `--no-default-features` (the config CI
+  runs).
+
+**Earlier verified run (2026-06-28):**
 
 - `parity_all.sh`: **0 failed** of 49. With the wasm rust targets registered and a
   codegen `axon` binary present, **47 pass / 2 skip** — all 13 `wasm_*` harnesses

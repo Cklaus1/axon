@@ -48,6 +48,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Order matters: this is a reading order, not a directory listing.
 DOCS = [
     ("ARCHITECTURE.md", "Architecture — how it is put together, and why"),
+    ("STATUS.md", "Status — what is built, and what verified it"),
     ("COMPARISON.md", "Compared — against languages and sandboxing substrates"),
     ("CLAUDE.md", "Working notes — the curated command path"),
     ("AXON_REFERENCE.md", "Reference — the complete generated surface"),
