@@ -112,6 +112,14 @@ scripts/gate.sh --strict      # the full strict gate
   the narrower per-crate clippy reports "clean" without reaching it.
 - `verify_all_specs.sh --run all`: **CLEAN** — every non-Draft spec's `evidence:`
   command was actually re-run and passed, not merely present.
+- `parity_all.sh`: **51 passed / 2 skipped / 0 failed** of 53. The 2 skips are
+  `android_compute_parity` (NDK absent) and `browser_compute_parity` (needs
+  headless Chrome + chromedriver), both reporting "(toolchain absent)" — the
+  documented expected set. A first reading of 50/3 was a FLAKE from concurrent
+  cargo builds competing for `target/debug/axon`; the clean re-run is 51/2.
+  Re-run parity on an otherwise idle box, and read the named SKIP lines rather
+  than the count.
+- `acceptance_gate.sh`: **OK** — every R21 §0 check present, unstubbed and green.
 - `cargo test -p axon-core`: 661 lib + 551 `cli_run`, 0 failed (default features);
   653 + 540 + 132 + 24 + 8, 0 failed under `--no-default-features` (the config CI
   runs).
