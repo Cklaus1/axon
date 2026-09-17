@@ -2077,13 +2077,17 @@ fn cmd_ai(action: AiAction) {
             process::exit(2);
         }
     };
+    let mut reported = 0usize;
+    let mut fns = 0usize;
     for item in &program.items {
         let axon_core::ast::Item::FnDef(f) = item else {
             continue;
         };
+        fns += 1;
         if !f.attrs.iter().any(|a| a.name == "ai") {
             continue;
         }
+        reported += 1;
         // Resolve the tier (default balanced); an unknown name is E1302.
         let tier = match ai_attr_value(f, "tier") {
             None => Tier::Balanced,
@@ -2134,6 +2138,21 @@ fn cmd_ai(action: AiAction) {
             json_lit(&fallback),
             json_lit(model),
             budget,
+        );
+    }
+    // Silence is not an answer. A file with no `@[ai(policy)]` printed ZERO
+    // BYTES and exited 0, which is indistinguishable from "the command did
+    // nothing" or "I pointed it at the wrong file" — the same defect `axon
+    // verify` had, where a program carrying MORE unproven obligations said LESS
+    // than one carrying none.
+    //
+    // On stderr, deliberately: stdout is JSONL and a prose line in it would
+    // break every consumer that parses this verb's output.
+    if reported == 0 {
+        eprintln!(
+            "axon ai policy: no `@[ai(policy(...))]` on any of the {fns} function(s) in {} \
+             — every AI call in this file is UNMETERED and untiered",
+            file.display()
         );
     }
     process::exit(0);
@@ -7706,26 +7725,63 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
                 json_str(&file.display().to_string()),
             );
         } else {
+            // NOT "(pass)". Nothing was run, and a reader scanning for the word
+            // reads it as "the adversarial check passed" — which is the
+            // absent-vs-passed collapse, in the one verb whose entire job is to
+            // say whether something adversarial was found. The JSON arm above
+            // has always been honest (`status: no_redteam_fn`); only the human
+            // line claimed a result it did not have.
+            //
+            // The web UI had the same defect more severely (it rendered this as
+            // "no adversarial issues found" AND unlocked Deploy) and was fixed
+            // in 3d51a44; this is the CLI half.
             println!(
-                "redteam: {} — no redteam_check function found (pass)",
+                "redteam: {} — NOT RUN: no `redteam_check` function in this file. \
+                 This is not a pass; nothing was checked.",
                 file.display()
             );
         }
         return;
     }
 
-    // Run the full program (redteam_check is called by the main flow or main()).
+    // TWO signals, because there are two ways a red team reports a catch and
+    // this verb used to see only one.
+    //
+    // It ran the whole program and read the process exit code, on the assumption
+    // that `main` calls `redteam_check` and exits non-zero. `axon deploy` does
+    // something different: it CALLS `redteam_check` as a gate and treats a
+    // `false` return as a block. So the same function had two contracts, and the
+    // verb whose entire job is this check was the LESS sensitive of the two:
+    //
+    //   fn redteam_check() -> bool { false }     // catches something
+    //   fn main() { println("main ran fine") }   // ...but main succeeds
+    //
+    //   axon redteam  ->  "safe",  exit 0        <- a false all-clear
+    //   axon deploy   ->  BLOCKED at gate 'redteam_check', exit 1
+    //
+    // Now the gate is called the same way `deploy` calls it, AND the program is
+    // still run. Caught if EITHER fires: strictly more sensitive than before, so
+    // nothing that used to be caught can stop being caught.
+    let gate = axon_core::interp::run_named_fn_as_bool(&program, "redteam_check");
+    let gate_caught = matches!(gate, Some(code) if code != 0);
     let exit_code = axon_core::interp::run_program(&program);
-    let caught = exit_code != 0;
+    let run_caught = exit_code != 0;
+    let caught = gate_caught || run_caught;
     let status = if caught { "caught" } else { "safe" };
+    let by = match (gate_caught, run_caught) {
+        (true, true) => " (redteam_check returned false, and the program exited non-zero)",
+        (true, false) => " (redteam_check returned false)",
+        (false, true) => " (the program exited non-zero)",
+        (false, false) => "",
+    };
 
     if json_flag {
         println!(
-            "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"{status}\",\"exit_code\":{exit_code},\"caught\":{caught}}}",
+            "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"{status}\",\"exit_code\":{exit_code},\"caught\":{caught},\"caught_by_gate\":{gate_caught},\"caught_by_run\":{run_caught}}}",
             json_str(&file.display().to_string()),
         );
     } else {
-        println!("redteam: {} — {status}", file.display());
+        println!("redteam: {} — {status}{by}", file.display());
     }
 
     if caught {

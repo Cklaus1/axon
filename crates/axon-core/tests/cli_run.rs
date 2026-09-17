@@ -22827,3 +22827,146 @@ fn require_contained_help_names_the_limit_it_does_not_cover() {
         "the help must state what the flag does NOT cover: {h}"
     );
 }
+
+/// Write `src` to a uniquely-named temp .ax and run `axon <args> <file>`.
+fn run_verb(args: &[&str], src: &str) -> (i32, String) {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let f = std::env::temp_dir().join(format!(
+        "axon_aud_{}_{}.ax",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&f, src).unwrap();
+    let mut cmd = axon();
+    for a in args {
+        cmd.arg(a);
+    }
+    let out = cmd.arg(f.to_str().unwrap()).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let mut all = String::from_utf8_lossy(&out.stdout).to_string();
+    all.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code().unwrap_or(-1), all)
+}
+
+/// A red team that CATCHES something, in a program whose `main` succeeds.
+const RT_CATCHES: &str =
+    "fn redteam_check() -> bool { false }\nfn main() { println(\"main ran fine\") }\n";
+
+#[test]
+fn redteam_and_deploy_agree_on_the_same_redteam_check() {
+    // `axon deploy` CALLS `redteam_check` as a gate and blocks on a false
+    // return. `axon redteam` used to run the whole program and read only the
+    // process exit code — so the same function had two contracts, and the verb
+    // whose entire job is this check was the LESS sensitive of the two:
+    //
+    //   axon redteam  ->  "safe", exit 0        <- a false all-clear
+    //   axon deploy   ->  BLOCKED, exit 1
+    //
+    // Someone running `axon redteam` as their check got a clean answer on a
+    // program the deploy pipeline refuses.
+    let (rt_code, rt_out) = run_verb(&["redteam"], RT_CATCHES);
+    let (dep_code, _) = run_verb(&["deploy"], RT_CATCHES);
+
+    assert_eq!(
+        dep_code, 1,
+        "precondition: deploy must block on this file, or the comparison is empty"
+    );
+    assert_eq!(
+        rt_code, 1,
+        "redteam must not report safe on a file deploy blocks: {rt_out}"
+    );
+    assert!(
+        rt_out.contains("caught") && rt_out.contains("redteam_check returned false"),
+        "and it must say WHICH signal fired: {rt_out}"
+    );
+}
+
+#[test]
+fn redteam_still_catches_a_program_that_exits_nonzero() {
+    // The original mechanism must keep working — the fix is strictly ADDITIVE,
+    // so nothing that used to be caught can stop being caught.
+    let (code, out) = run_verb(
+        &["redteam"],
+        "fn redteam_check() -> bool { true }\nfn main() -> i64 { println(\"bad\")  1 }\n",
+    );
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("the program exited non-zero"),
+        "the run signal must be named: {out}"
+    );
+}
+
+#[test]
+fn redteam_reports_a_genuinely_safe_program_as_safe() {
+    // The fix must not make everything "caught" — a gate that always fires is
+    // as useless as one that never does.
+    let (code, out) = run_verb(
+        &["redteam"],
+        "fn redteam_check() -> bool { true }\nfn main() { println(\"ok\") }\n",
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("safe"), "{out}");
+}
+
+#[test]
+fn redteam_does_not_call_an_absent_check_a_pass() {
+    // The word "(pass)" for a check that never ran is the absent-vs-passed
+    // collapse, in the one verb whose job is saying whether something
+    // adversarial was found. The JSON arm was always honest
+    // (`status: no_redteam_fn`); only the human line claimed a result.
+    let (code, out) = run_verb(&["redteam"], "fn main() { println(\"hi\") }\n");
+    assert_eq!(code, 0, "an absent check is not an error: {out}");
+    assert!(
+        !out.contains("(pass)"),
+        "an absent check must not be called a pass: {out}"
+    );
+    assert!(
+        out.contains("NOT RUN") && out.contains("not a pass"),
+        "it must say plainly that nothing was checked: {out}"
+    );
+}
+
+#[test]
+fn ai_policy_says_so_when_a_file_declares_no_policy() {
+    // A file with no `@[ai(policy)]` printed ZERO BYTES and exited 0 —
+    // indistinguishable from "the command did nothing" or "wrong file". Same
+    // defect `axon verify` had, where the program carrying MORE unproven
+    // obligations said LESS than one carrying none.
+    let (code, all) = run_verb(&["ai", "policy"], "fn main() { println(\"hi\") }\n");
+    assert_eq!(code, 0, "no policy is not an error: {all}");
+    assert!(
+        all.contains("no `@[ai(policy"),
+        "silence is not an answer: {all:?}"
+    );
+    assert!(
+        all.contains("UNMETERED"),
+        "and it must say what that MEANS for the run: {all}"
+    );
+}
+
+#[test]
+fn ai_policy_keeps_stdout_pure_jsonl() {
+    // The "nothing found" notice goes to stderr on purpose: stdout is JSONL and
+    // a prose line in it would break every consumer that parses this verb.
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let f = std::env::temp_dir().join(format!(
+        "axon_aip_{}_{}.ax",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&f, "fn main() { println(\"hi\") }\n").unwrap();
+    let out = axon()
+        .args(["ai", "policy", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+        "stdout must stay JSONL-only: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no `@[ai(policy"),
+        "...while stderr carries the notice"
+    );
+}
