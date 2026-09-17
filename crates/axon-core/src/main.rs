@@ -350,6 +350,16 @@ enum Command {
         /// Print the accumulated program after each cell (debugging the session).
         #[arg(long, help = "Echo the composed program for each cell")]
         show_program: bool,
+
+        /// Write each cell as it runs, so a recorded session is self-contained.
+        ///
+        /// A host journal records what the session TOUCHED, not what it RAN — so
+        /// `AXON_RECORD` alone leaves an auditor holding half the evidence and no
+        /// way to know it. With the transcript, the pair replays:
+        ///   axon session --transcript t.ax          # AXON_RECORD=j.journal
+        ///   AXON_REPLAY=j.journal axon session < t.ax
+        #[arg(long, value_name = "PATH", help = "Write each cell to PATH as it runs")]
+        transcript: Option<PathBuf>,
     },
 
     /// Summarize the provenance log: per-`@[adaptive]`-fn score trajectory.
@@ -826,7 +836,8 @@ fn dispatch(command: Command) {
         Command::Session {
             protocol,
             show_program,
-        } => cmd_session(protocol, show_program),
+            transcript,
+        } => cmd_session(protocol, show_program, transcript),
         Command::Trace {
             func,
             path,
@@ -4150,7 +4161,7 @@ struct CellResult {
     value: Option<String>,
 }
 
-fn cmd_session(protocol: Option<String>, show_program: bool) {
+fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<PathBuf>) {
     use std::io::BufRead;
     let jsonl = protocol.as_deref() == Some("jsonl");
     if let Some(p) = protocol.as_deref() {
@@ -4159,6 +4170,31 @@ fn cmd_session(protocol: Option<String>, show_program: bool) {
             process::exit(2);
         }
     }
+
+    // R44 §5 A1 — a session is ONE run, not one per cell. The run-id is stamped
+    // once here and every record inside carries its cell index, so the audit
+    // trail can say WHICH cell did a thing. Stamping per cell instead would give
+    // a session of 40 cells 40 unrelated run-ids and no way to tell they were
+    // the same sitting.
+    let run_id = generate_run_id();
+    let seed = effective_seed();
+    if std::env::var("AXON_SEED").is_err() {
+        std::env::set_var("AXON_SEED", seed.to_string());
+    }
+    axon_core::interp::append_run_start_jsonl(&run_id, seed, "<session>");
+    eprintln!("axon: session run-id {run_id}");
+
+    // R44 §5 A2 — ONE journal for the whole session, installed once here rather
+    // than per cell. Before this, `AXON_RECORD=… axon session` wrote no journal
+    // at all and said nothing about it: the user asked to record and got silence,
+    // which reads as "recorded" until someone looks for the file.
+    let replay_mode = match axon_core::replay::install_from_env() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
 
     let mut sess = Session::new();
     let stdin = std::io::stdin();
@@ -4180,7 +4216,7 @@ fn cmd_session(protocol: Option<String>, show_program: bool) {
             if cell.trim().is_empty() {
                 continue;
             }
-            let r = run_cell(&mut sess, &cell, show_program);
+            let r = run_cell(&mut sess, &cell, show_program, transcript.as_ref());
             println!("{}", render_cell_jsonl(&sess, &r));
             continue;
         }
@@ -4188,7 +4224,7 @@ fn cmd_session(protocol: Option<String>, show_program: bool) {
             if buf.trim().is_empty() {
                 continue;
             }
-            let r = run_cell(&mut sess, &buf, show_program);
+            let r = run_cell(&mut sess, &buf, show_program, transcript.as_ref());
             render_cell_human(&r);
             buf.clear();
             continue;
@@ -4199,8 +4235,30 @@ fn cmd_session(protocol: Option<String>, show_program: bool) {
     // A trailing cell with no blank line after it still runs — losing the last
     // cell because the input ended without a newline would be a silent drop.
     if !jsonl && !buf.trim().is_empty() {
-        let r = run_cell(&mut sess, &buf, show_program);
+        let r = run_cell(&mut sess, &buf, show_program, transcript.as_ref());
         render_cell_human(&r);
+    }
+
+    // R44 §5 A4 — the ledger flushes ONCE, at session end, covering every cell.
+    // A session must not be a way to make capability use less legible than a
+    // single run is.
+    if let Err(e) = axon_audit::flush_ledger() {
+        eprintln!("error: audit ledger integrity check failed: {e}");
+    }
+    // A replay that diverged is not the session it claims to be, and saying so
+    // must not depend on the program's cooperation — same guard `axon run` uses,
+    // decided from state no cell can reach.
+    if let Some(d) = axon_core::replay::finish() {
+        if !d.already_reported {
+            eprintln!("axon: replay divergence: {}", d.report);
+        }
+        process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+    }
+    if replay_mode == axon_core::replay::Mode::Recording {
+        eprintln!(
+            "axon: recorded host journal to {}",
+            std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
+        );
     }
 }
 
@@ -4287,8 +4345,27 @@ fn wrap_trailing_expr(stmts: &str) -> Option<String> {
     Some(out.join("\n") + "\n")
 }
 
-fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
+fn run_cell(
+    sess: &mut Session,
+    cell: &str,
+    show_program: bool,
+    transcript: Option<&PathBuf>,
+) -> CellResult {
     sess.cell_no += 1;
+    // Written BEFORE the cell runs, and whether or not it succeeds: a transcript
+    // that silently omitted the cell that failed would replay a different session
+    // from the one recorded, and the journal would diverge with no clue why.
+    if let Some(t) = transcript {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(t)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{cell}");
+        }
+    }
+    axon_core::interp::set_session_cell(sess.cell_no);
     let (cell_items, original_stmts) = Session::split_cell(cell);
 
     // Try the trailing-expression form first; fall back to the literal cell if
@@ -4358,6 +4435,7 @@ fn run_cell(sess: &mut Session, cell: &str, show_program: bool) -> CellResult {
     let (code, out) = axon_core::interp::run_program_capturing(&program);
     axon_core::interp::set_session_capture(prev);
     set_session_prelude_lines(None);
+    axon_core::interp::set_session_cell(0);
     let _ = std::fs::remove_file(&path);
 
     let captured = axon_core::interp::take_session_result();

@@ -1,7 +1,7 @@
 # R44 — The accumulating typed session
 
 **Spec ID:** `R44-accumulating-session`
-**Status:** Implementing — **Slices 0–3 LANDED** (2026-09-16/17). §12 Q1 resolved: v1 = (c). Slice 2 is the product.
+**Status:** Implementing — **Slices 0–4 LANDED** (2026-09-16/17). Only Slice 5 (jsonl driver) remains. §12 Q1 resolved: v1 = (c). Slice 2 is the product.
 **Risk class:** Structural. Changes where a session's bindings live (module scope → `main`'s scope) and,
 in its v2 stage, the lifetime discipline of `Interp`. Not a language feature: no `.ax` syntax changes.
 **Author / date:** 2026-09-16, from `AXON_FOR_RLM.md` §5.
@@ -21,7 +21,7 @@ blocked-by: none
 supersedes: tasks/spec-rlm-accumulator.md (DRAFT 2026-08-07 — absorbed; its N1 is this spec's §4 S1,
   its N2 has since landed, its prototype is this spec's v1 substrate)
 related: R15-resume-runtime, R41-polyglot-runtime, R38-embedded-agent-runtime, R28-capability-audit-ledger, R42-stdlib-gaps, R43-bytes-and-binary
-evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slices 1-3, ALL PASS 2026-09-17; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
+evidence: scripts/r44_acceptance_gate.sh (Slice 0 hazards + Slices 1-4, ALL PASS 2026-09-17; refuses to run at all against a binary without the verb, so its negative assertions cannot pass vacuously)
 reserves: E2400-E2404, confirmed free at spec time (grepped `E2[0-9]{3}` across crates/ and every
   governance/specs `reserves:` line — taken bands are E20xx [R41], E21xx [R16], E22xx [R42/R43],
   E23xx [eBPF], E37xx [R37]; E24xx is the next contiguous free band)
@@ -340,7 +340,7 @@ the code in the protocol frame.
 | **1** | ✅ **LANDED 2026-09-16.** `axon session` verb; S1 bindings-in-`main`; S2/S3/S4; S9 idempotency; S10 non-persistable reporting (pulled forward from Slice 3 — it fell out of the materialiser for free); S11 no warning storm. | **PASSED.** 8 regression tests, each RED against a HEAD-built binary. |
 | **2** | ✅ **LANDED 2026-09-17.** S5 + E2400. Items became named, replaceable units (`SessionItem`) with per-item line spans, so a check error can be attributed to the item that owns it and promoted when that item belongs to an earlier cell. | **PASSED.** §4.1 exactly: cell 3 refused, `g` named with its cell, cell 4's `g()` still returns 2. |
 | **3** | ✅ **LANDED 2026-09-17.** S6 trailing values (via a reserved capture binding + a conservative rewrite with a type-check probe and unwrapped retry); S7 + §4.4 honest failure scoping. (S10 landed early in Slice 1.) | **PASSED.** Scalar/array/str values display; a `println` cell shows no unit; a panic leaves cell N−1 usable and the message no longer claims the world was restored. |
-| **4** | §5 A1–A5 + S8. Includes A3's new machinery. | A recorded session replays whole; a split effect is refused at the ceiling. |
+| **4** | ✅ **LANDED 2026-09-17.** A1 one run-id + cell-indexed provenance; A2 one journal per session; A3 `--transcript` + replay/divergence; A4 ledger flush at session end; A5 falls out of the cell field. S8 was already true and is now pinned. | **PASSED.** A tampered cell diverges at event 0 with exit 11; `AXON_ALLOWED_EFFECTS=Pure` refuses `println` inside a cell. |
 | **5** | `--protocol jsonl` host driver. | An external host drives 20 cells and reads per-cell results. |
 
 ---
@@ -453,6 +453,33 @@ bindings materialised back) and ran all four hazards:
 §4.3 and §4.2 turned out **not to bite v1 at all**. Both are now regression-tested rather than
 assumed, because a property that holds by accident is one a later refactor removes silently.
 
+**Slice 4 — landed.** Audit, replay and containment.
+
+Two findings, both the defect class this cycle has been chasing:
+
+* **`AXON_RECORD=… axon session` wrote no journal and said nothing about it.** The user asked to
+  record and got silence, which reads as "recorded" until someone goes looking for the file. The
+  journal is now installed once at session start, so a session produces ONE journal covering every
+  cell — A2 as specced.
+* **A3 needed less machinery than §5 claimed, and one thing §5 missed.** Replay works today: feed the
+  same cells back under `AXON_REPLAY` and the session reproduces with the environment stripped; a
+  tampered cell diverges at the first departing event with exit 11. But a journal records what the
+  session TOUCHED, not what it RAN, so `AXON_RECORD` alone leaves an auditor holding half the
+  evidence **and no way to know it**. `--transcript PATH` writes each cell as it runs — before it
+  runs, and whether or not it succeeds, since a transcript that omitted the failing cell would replay
+  a different session and the journal would diverge with no clue why. The `(journal, transcript)`
+  pair is self-contained.
+
+A1 stamps one run-id per session and a `cell` index on every provenance record. The stamp is inert
+outside a session (0 means "not a session", nothing is emitted), and a test with a deliberately
+always-emitting mutant confirms that guard works — otherwise every existing provenance consumer would
+see a new field on records that have no cells.
+
+S8 turned out to be **already true**: each cell is an ordinary program run, so `AXON_ALLOWED_EFFECTS`
+applies to it unchanged. It is pinned by a test rather than claimed, because "a session cannot launder
+an effect across cells" is exactly the kind of property that holds until someone optimises the cell
+loop.
+
 **Slice 3 — landed.** Trailing-expression values and honest failure scoping.
 
 The value is captured through a reserved binding and stripped from the prelude, so it is the cell's
@@ -493,7 +520,7 @@ materialiser promoted from env-var-only to an API (`set_session_capture` / `take
 S1 bindings-in-`main`; S4 failed cells do not accumulate; S10 non-persistable bindings named (pulled
 forward — it fell out of the materialiser for free); S11 no warning storm.
 
-19 regression tests (8 Slice 1, 5 Slice 2, 6 Slice 3), **each RED against the prior commit**.
+23 regression tests (8 Slice 1, 5 Slice 2, 6 Slice 3, 4+1 Slice 4), **each RED against the prior commit** except the guards noted below.
 
 Two of them were initially worthless and only mutation testing found it:
 

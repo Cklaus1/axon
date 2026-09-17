@@ -160,9 +160,47 @@ elif grep -q "session is unchanged" "$TMP/err"; then fail "claims transactionali
 elif grep -q "not undone" "$TMP/err"; then pass "the failure message scopes what rollback covers"
 else fail "the failure message says nothing about un-undone effects"; fi
 
-echo "== Slice-1/2/3 regression tests =="
+echo "== A1 (§5): one run-id, cell-indexed provenance =="
+CACHE="$TMP/cache"
+printf '@[adaptive]\nfn score(n: i64) -> i64 { n * 2 }\nprintln(to_str(score(3)))\n\nprintln(to_str(score(5)))\n\n' \
+  | XDG_CACHE_HOME="$CACHE" "$AXON" session >"$TMP/a1out" 2>/dev/null
+LOG="$CACHE/axon/provenance.jsonl"
+if ! grep -q 6 "$TMP/a1out"; then fail "precondition: the session did not run"
+elif [ "$(grep -c '"event":"run_start"' "$LOG")" -eq 1 ]; then pass "a session is ONE run"
+else fail "expected exactly 1 run_start, got $(grep -c '"event":"run_start"' "$LOG")"; fi
+if grep -q '"cell":1' "$LOG" && grep -q '"cell":2' "$LOG"; then pass "records carry their cell index"
+else fail "cell indices missing from provenance"; fi
+
+echo "== A2/A3 (§5): one journal, and the transcript replays =="
+J="$TMP/sess.journal"; T="$TMP/sess.ax"
+printf 'let v = match env_var("R44_GATE_VAR") { Ok(x) => x  Err(e) => "unset" }\nprintln(v)\n\nprintln("second")\n\n' \
+  | AXON_RECORD="$J" R44_GATE_VAR=recorded "$AXON" session --transcript "$T" >"$TMP/recout" 2>/dev/null
+if ! grep -q recorded "$TMP/recout"; then fail "precondition: the recording run did not read the var"
+elif [ -f "$J" ]; then pass "a session writes its journal"
+else fail "AXON_RECORD wrote no journal"; fi
+if [ -s "$T" ]; then pass "the transcript holds the cells"
+else fail "no transcript written"; fi
+# Replay with the var UNSET — the journal must supply it.
+AXON_REPLAY="$J" "$AXON" session <"$T" >"$TMP/rpout" 2>/dev/null
+rc=$?
+if [ $rc -eq 0 ] && grep -q recorded "$TMP/rpout"; then pass "the (journal, transcript) pair replays"
+else fail "replay failed (rc=$rc): $(cat "$TMP/rpout")"; fi
+# ...and a tampered cell must be caught, not quietly re-run.
+sed 's/R44_GATE_VAR/R44_OTHER_VAR/' "$T" > "$TMP/tampered.ax"
+AXON_REPLAY="$J" "$AXON" session <"$TMP/tampered.ax" >/dev/null 2>"$TMP/diverr"
+rc=$?
+if [ $rc -eq 11 ] && grep -q divergence "$TMP/diverr"; then pass "a tampered cell diverges with exit 11"
+else fail "tampered replay exited $rc without a divergence"; fi
+
+echo "== S8 (§4): an ambient effect ceiling applies per cell =="
+printf 'println("should not appear")\n\n' | AXON_ALLOWED_EFFECTS=Pure "$AXON" session >"$TMP/s8out" 2>"$TMP/s8err"
+if grep -q "sandbox violation" "$TMP/s8err" && ! grep -q "should not appear" "$TMP/s8out"; then
+    pass "a session is not an effect-laundering seam"
+else fail "the ceiling did not apply: $(cat "$TMP/s8err")"; fi
+
+echo "== Slice-1/2/3/4 regression tests =="
 if (cd "$ROOT" && cargo test -p axon-core --test cli_run session_ 2>&1 | grep -q "test result: ok"); then
-    pass "cli_run session_* green (19 tests)"
+    pass "cli_run session_* green (23 tests)"
 else
     fail "cli_run session_* not green"
 fi

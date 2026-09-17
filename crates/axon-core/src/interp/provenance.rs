@@ -32,6 +32,29 @@ pub fn provenance_log_path() -> Option<std::path::PathBuf> {
 /// [`set_provenance_source`]; defaults to "" (unknown) when unset.
 static PROVENANCE_SOURCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// R44 §5 A1 — the session cell every subsequent provenance record belongs to.
+///
+/// 0 means "not a session", and nothing is stamped, so an ordinary `axon run`
+/// writes byte-identical records to before. A session is ONE run (one run-id,
+/// stamped once at session start); the cell index is what makes a record inside
+/// it locatable. Without it a session's audit trail is a flat list with no way
+/// to say which cell did a thing — which is the same absent-vs-unknown collapse
+/// this cycle spent seven surfaces fixing.
+static SESSION_CELL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Set the cell index stamped onto subsequent provenance records. 0 clears it.
+pub fn set_session_cell(n: usize) {
+    SESSION_CELL.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `,"cell":N` when inside a session, empty otherwise.
+fn cell_field() -> String {
+    match SESSION_CELL.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => String::new(),
+        n => format!(",\"cell\":{n}"),
+    }
+}
+
 /// Record the source program's identity (e.g. its file path) for provenance.
 /// Idempotent — only the first call takes effect, matching one program per
 /// process.
@@ -91,7 +114,8 @@ pub(super) fn append_provenance_jsonl(
         None => String::new(),
     };
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":{ev},\"zone\":{z},\"payload\":{p},\"score\":{s}{inp}{label_field}{src_field}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":{ev},\"zone\":{z},\"payload\":{p},\"score\":{s}{inp}{label_field}{src_field}{cf}}}\n",
+        cf = cell_field(),
         f = json_quote(fn_name),
         ev = json_quote(&format!("{zone}_return")),
         z = json_quote(zone),
@@ -137,7 +161,8 @@ pub(super) fn append_agent_action_jsonl(
     };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\
-         \"action\":{a},\"caps_used\":{c},\"effect_row\":{er},\"principal\":{pr}{src_field}}}\n",
+         \"action\":{a},\"caps_used\":{c},\"effect_row\":{er},\"principal\":{pr}{src_field}{cf}}}\n",
+        cf = cell_field(),
         f = json_quote(fn_name),
         a = json_quote(action),
         c = json_quote(caps_used),
@@ -213,7 +238,8 @@ pub(super) fn append_ai_call_jsonl(
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"ai_call\",\"tier\":{t},\"model\":{m},\
          \"model_version\":{mv},\"params_hash\":{ph},\"prompt_hash\":{prh},\"mode\":{md},\
-         \"reason\":{rs},\"cost_usd\":{cost},\"effect_row\":{er},\"principal\":{pr}{goal_field}{src_field}}}\n",
+         \"reason\":{rs},\"cost_usd\":{cost},\"effect_row\":{er},\"principal\":{pr}{goal_field}{src_field}{cf}}}\n",
+        cf = cell_field(),
         f = json_quote(fn_name),
         t = json_quote(tier),
         m = json_quote(model),
@@ -550,9 +576,10 @@ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
     let ts = now_ms().max(0) as u64;
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":\"__run__\",\"event\":\"run_start\",\
-         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}}}\n",
+         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}{cf}}}\n",
         rid = json_quote(run_id),
         src = json_quote(src),
+        cf = cell_field(),
     );
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)

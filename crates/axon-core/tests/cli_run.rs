@@ -22147,3 +22147,208 @@ fn session_probe_diagnostics_never_reach_the_user() {
         "probe diagnostics must not be shown: {err}"
     );
 }
+
+/// Drive `axon session` with extra env and args; returns (stdout, stderr, code).
+fn session_full(cells: &[&str], envs: &[(&str, &str)], args: &[&str]) -> (String, String, i32) {
+    use std::io::Write;
+    let mut cmd = axon();
+    cmd.arg("session");
+    for a in args {
+        cmd.arg(a);
+    }
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let si = child.stdin.as_mut().unwrap();
+        for c in cells {
+            si.write_all(c.as_bytes()).unwrap();
+            si.write_all(b"\n\n").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn session_is_one_run_with_cell_indexed_provenance() {
+    // R44 §5 A1. A session is ONE run — stamping per cell would give a 40-cell
+    // session 40 unrelated run-ids and no way to tell they were one sitting.
+    // The cell index is what makes a record inside it locatable; without it the
+    // audit trail is a flat list that cannot say which cell did a thing.
+    let cache = std::env::temp_dir().join(format!("axon_sess_prov_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let (out, err, _) = session_full(
+        &[
+            "@[adaptive]\nfn score(n: i64) -> i64 { n * 2 }\nprintln(to_str(score(3)))",
+            "println(to_str(score(5)))",
+            "println(to_str(score(7)))",
+        ],
+        &[("XDG_CACHE_HOME", cache.to_str().unwrap())],
+        &[],
+    );
+    let log =
+        std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+
+    assert!(
+        out.contains('6') && out.contains("10") && out.contains("14"),
+        "precondition: all three cells must run: stdout={out:?} stderr={err:?}"
+    );
+    assert_eq!(
+        log.matches("\"event\":\"run_start\"").count(),
+        1,
+        "a session is ONE run: {log}"
+    );
+    for n in 1..=3 {
+        assert!(
+            log.contains(&format!("\"cell\":{n}")),
+            "every cell's records must carry its index — cell {n} missing: {log}"
+        );
+    }
+}
+
+#[test]
+fn ordinary_run_provenance_gains_no_cell_field() {
+    // The cell stamp must be inert outside a session, or every existing
+    // provenance consumer sees a new field on records that have no cells.
+    let f = std::env::temp_dir().join(format!("axon_nocell_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[adaptive]\nfn score(n: i64) -> i64 { n * 2 }\nfn main() { println(to_str(score(3))) }\n",
+    )
+    .unwrap();
+    let cache = std::env::temp_dir().join(format!("axon_nocell_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let run = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let log =
+        std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
+    assert!(
+        log.contains("adaptive_return"),
+        "precondition: the run must have logged something: {log}"
+    );
+    assert!(
+        !log.contains("\"cell\":"),
+        "a non-session run must not carry a cell index: {log}"
+    );
+}
+
+#[test]
+fn session_records_one_journal_and_replays_from_its_transcript() {
+    // R44 §5 A2/A3. `AXON_RECORD=… axon session` used to write NO journal and say
+    // nothing about it — the user asked to record and got silence, which reads as
+    // "recorded" until someone goes looking for the file.
+    //
+    // A journal records what the session TOUCHED, not what it RAN, so the
+    // transcript is the other half of the evidence; the pair must replay.
+    let dir = std::env::temp_dir().join(format!("axon_sess_rec_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let journal = dir.join("j.journal");
+    let transcript = dir.join("t.ax");
+
+    let cells = [
+        "let v = match env_var(\"AXON_SESSION_TEST_VAR\") { Ok(x) => x  Err(e) => \"unset\" }\nprintln(v)",
+        "println(\"second\")",
+    ];
+    let (out, _, _) = session_full(
+        &cells,
+        &[
+            ("AXON_RECORD", journal.to_str().unwrap()),
+            ("AXON_SESSION_TEST_VAR", "recorded-value"),
+        ],
+        &["--transcript", transcript.to_str().unwrap()],
+    );
+    assert!(
+        out.contains("recorded-value"),
+        "precondition: the recording run must read the var: {out:?}"
+    );
+    assert!(journal.exists(), "a session must write its journal");
+    let t = std::fs::read_to_string(&transcript).unwrap_or_default();
+    assert!(
+        t.contains("AXON_SESSION_TEST_VAR") && t.contains("second"),
+        "the transcript must hold every cell: {t:?}"
+    );
+
+    // Replay from the transcript with the var UNSET — the journal supplies it.
+    let (rout, _, rcode) = session_full(&[&t], &[("AXON_REPLAY", journal.to_str().unwrap())], &[]);
+    assert_eq!(rcode, 0, "a faithful replay must exit 0: {rout:?}");
+    assert!(
+        rout.contains("recorded-value"),
+        "replay must reproduce the recorded value with the env var absent: {rout:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn session_replay_diverges_on_a_tampered_cell() {
+    // The other half of A3, and the one that matters: a replay that diverged is
+    // not the session it claims to be. An auditor must never be handed a
+    // transcript of a session that did not happen, with a clean exit to vouch.
+    let dir = std::env::temp_dir().join(format!("axon_sess_div_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let journal = dir.join("j.journal");
+
+    let (_, _, _) = session_full(
+        &["let v = match env_var(\"AXON_DIV_A\") { Ok(x) => x  Err(e) => \"unset\" }\nprintln(v)"],
+        &[
+            ("AXON_RECORD", journal.to_str().unwrap()),
+            ("AXON_DIV_A", "value-a"),
+        ],
+        &[],
+    );
+    assert!(journal.exists(), "precondition: the journal must exist");
+
+    // Same shape, different env key — the first point at which the two differ.
+    let (_, err, code) = session_full(
+        &["let v = match env_var(\"AXON_DIV_B\") { Ok(x) => x  Err(e) => \"unset\" }\nprintln(v)"],
+        &[("AXON_REPLAY", journal.to_str().unwrap())],
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        code, 11,
+        "a diverging session replay must exit 11, not 0: stderr={err}"
+    );
+    assert!(
+        err.contains("divergence") && err.contains("AXON_DIV_B"),
+        "the divergence must name where the two departed: {err}"
+    );
+}
+
+#[test]
+fn session_honours_an_ambient_effect_ceiling_per_cell() {
+    // R44 §4 S8 — a session must not be a way to launder an effect past a
+    // ceiling by splitting it across cells.
+    let (out, err, _) = session_full(
+        &["println(\"should not appear\")"],
+        &[("AXON_ALLOWED_EFFECTS", "Pure")],
+        &[],
+    );
+    assert!(
+        err.contains("sandbox violation"),
+        "the ceiling must apply inside a session: stdout={out:?} stderr={err:?}"
+    );
+    assert!(
+        !out.contains("should not appear"),
+        "the refused effect must not have happened: {out:?}"
+    );
+}

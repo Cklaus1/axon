@@ -3568,8 +3568,8 @@ use provenance::*;
 pub(crate) use provenance::sha256_hex;
 pub use provenance::{
     append_run_start_jsonl, best_recorded_score, find_run_start, provenance_log_path,
-    read_ai_calls, read_provenance, set_provenance_source, AiCallRecord, ProvRecord,
-    RunStartRecord,
+    read_ai_calls, read_provenance, set_provenance_source, set_session_cell, AiCallRecord,
+    ProvRecord, RunStartRecord,
 };
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
