@@ -5,9 +5,45 @@ use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 
+/// Resolve the `axon` binary these tests proxy to.
+///
+/// This used to be `env::var("AXON_BIN").unwrap_or("true")` — literally
+/// `/bin/true`, which outputs nothing and exits 0. So a module whose own doc
+/// comment says "exercise every route" exercised them against a binary that does
+/// NOTHING: 17 tests passing in 0.1s, proving the server's routing and its JSON
+/// merging and not one thing about the CLI it wraps.
+///
+/// That mattered. `intent compile --json` reported a path and wrote no file, and
+/// this suite was green throughout — the defect only surfaced when the e2e test
+/// was run with a real binary by hand.
+///
+/// Now: explicit `AXON_BIN` wins (except the "true" sentinel), else the
+/// workspace build is auto-discovered, else `/bin/true` with a LOUD note. The
+/// fallback is announced rather than silent, because "these tests passed" and
+/// "these tests ran against nothing" must not look the same.
+fn resolve_axon_bin() -> String {
+    if let Ok(b) = std::env::var("AXON_BIN") {
+        if b != "true" && !b.is_empty() {
+            return b;
+        }
+    }
+    let workspace =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/axon");
+    if let Ok(p) = workspace.canonicalize() {
+        if p.exists() {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    eprintln!(
+        "axon-web tests: NO axon binary found (built target/debug/axon, or set AXON_BIN) — \
+         falling back to /bin/true. Routing and HTML assertions still mean something; \
+         anything that proxies to the CLI does NOT."
+    );
+    "true".into()
+}
+
 fn start_server_thread(port: u16) {
-    let axon_bin = std::env::var("AXON_BIN").unwrap_or_else(|_| "true".into());
-    start_server_thread_with(port, axon_bin);
+    start_server_thread_with(port, resolve_axon_bin());
 }
 
 fn start_server_thread_with(port: u16, axon_bin: String) {
