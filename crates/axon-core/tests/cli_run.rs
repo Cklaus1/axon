@@ -23672,3 +23672,75 @@ fn intent_compile_json_writes_the_file_it_reports() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn goal_run_max_evals_zero_means_unlimited_not_none() {
+    // `hill_climb_i64` has `let unlimited = max_evals <= 0`, so 0 is UNLIMITED.
+    // That is deliberate, but the builtin's doc said "for up to `max_evals`
+    // evaluations" — which is false for 0, and false in the dangerous direction:
+    // a caller whose computed budget REACHES ZERO because it is exhausted gets
+    // the LARGEST search rather than none.
+    //
+    // Measured, fresh provenance each time: max_evals=0 -> 28 evaluations,
+    // max_evals=20 -> 12. Zero does more work than twenty.
+    //
+    // This test pins the BEHAVIOUR so a future change to the semantics is a
+    // deliberate decision rather than a silent one, and pins that the doc keeps
+    // saying so.
+    let dir = std::env::temp_dir().join(format!("axon_goal_{}", std::process::id()));
+    let src = "@[adaptive]\n\
+               fn plain(n: i64) -> i64 { 100 - (n - 50) * (n - 50) }\n\
+               fn main() { println(to_str_f64(goal_run(\"plain\", 100.0, BUDGET))) }\n";
+
+    let evals_for = |budget: &str, tag: &str| -> usize {
+        let cache = dir.join(tag);
+        let _ = std::fs::remove_dir_all(&cache);
+        let f = dir.join(format!("g{tag}.ax"));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(&f, src.replace("BUDGET", budget)).unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "run must succeed: {out:?}");
+        std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+            .unwrap_or_default()
+            .matches("adaptive_return")
+            .count()
+    };
+
+    let zero = evals_for("0", "zero");
+    let twenty = evals_for("20", "twenty");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(twenty > 0 && zero > 0, "precondition: both must evaluate");
+    assert!(
+        zero > twenty,
+        "max_evals=0 is UNLIMITED, so it must do MORE work than a budget of 20 \
+         (got zero={zero}, twenty={twenty}). If this now fails because 0 means \
+         'no evaluations', that is a SEMANTIC CHANGE — update the builtin doc and \
+         every caller that relies on 0 meaning unlimited."
+    );
+}
+
+#[test]
+fn goal_run_doc_states_the_zero_means_unlimited_trap() {
+    // The generated reference is what a reader (or a model) consults. It said
+    // "for up to `max_evals` evaluations" and nothing about 0. A doc that is
+    // wrong in the unsafe direction is worse than one that is silent.
+    let out = axon().args(["reference", "--json"]).output().unwrap();
+    let j = String::from_utf8_lossy(&out.stdout);
+    let pos = j
+        .find("\"name\":\"goal_run\"")
+        .expect("goal_run must be listed");
+    let entry = &j[pos..(pos + 1600).min(j.len())];
+    assert!(
+        entry.contains("UNLIMITED"),
+        "goal_run's doc must warn that max_evals <= 0 is unlimited: {entry:.300}"
+    );
+    assert!(
+        entry.contains("CLAMP"),
+        "...and must tell a caller with a computed budget what to do: {entry:.300}"
+    );
+}
