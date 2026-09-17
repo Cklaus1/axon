@@ -120,6 +120,15 @@ scripts/gate.sh --strict      # the full strict gate
   Re-run parity on an otherwise idle box, and read the named SKIP lines rather
   than the count.
 - `acceptance_gate.sh`: **OK** — every R21 §0 check present, unstubbed and green.
+
+> **CI does not run the parity suite.** The job was named "Codegen +
+> native/interp parity" and runs `cargo build` + `cargo test` only — it has never
+> invoked `parity_all.sh`. Invariant I-2 is therefore enforced by someone
+> remembering to run it locally, not by the pipeline. The name is corrected and
+> `.github/workflows/ci.yml` records what closing the gap costs
+> (`PARITY_SKIP_WASM=1 EXPECT_MIN_PASS=38`, ~15 min/run; 38 is measured, and the
+> default floor of 40 rejects that run by design). Run `scripts/parity_all.sh`
+> before trusting a green CI on anything touching codegen.
 - `cargo test -p axon-core`: 661 lib + 551 `cli_run`, 0 failed (default features);
   653 + 540 + 132 + 24 + 8, 0 failed under `--no-default-features` (the config CI
   runs).

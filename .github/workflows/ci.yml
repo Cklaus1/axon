@@ -166,7 +166,25 @@ jobs:
   # LLVM must be pinned to 17: the apt `llvm` metapackage resolves to 18, which
   # does not match inkwell 0.4's `llvm17-0` feature and fails to link.
   codegen:
-    name: Codegen + native/interp parity (LLVM 17)
+    # NAME CORRECTED 2026-09-17. It read "Codegen + native/interp parity" and
+    # ran `cargo build` + `cargo test` — it has never invoked parity_all.sh or
+    # any of the 53 *_parity.sh harnesses. So invariant I-2 (interp and codegen
+    # agree byte-for-byte), the load-bearing property of this project, is NOT
+    # enforced by CI; it is enforced by someone remembering to run
+    # `scripts/parity_all.sh` locally. A job name is a claim, and this one was
+    # false in the direction that matters.
+    #
+    # TO CLOSE THE GAP (a real decision, not an oversight to sweep up):
+    #   - add a step `PARITY_SKIP_WASM=1 EXPECT_MIN_PASS=38 bash scripts/parity_all.sh`
+    #   - 38 is MEASURED, not guessed: with the wasm harnesses skipped this box
+    #     runs 38 passed / 15 skipped / 0 failed. The suite's default floor of 40
+    #     rejects that run by design, which is why the override is required and
+    #     why the script tells you to set it explicitly "and say why".
+    #   - cost is ~15 min per run; the wasm tier additionally needs wasm targets,
+    #     wasmtime and wasm-bindgen-test-runner (scripts/setup-environments.sh).
+    #   - the first CI run IS the verification: these 38 pass on this box, and
+    #     nobody has yet observed them on a GitHub runner.
+    name: Codegen build + tests (LLVM 17) — NOT the parity suite
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: ""
