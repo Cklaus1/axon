@@ -6728,6 +6728,21 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
 
     let out_path = out.unwrap_or_else(|| file.with_extension("ax"));
 
+    // WRITE FIRST, REPORT SECOND — in BOTH modes.
+    //
+    // The `--json` branch below used to `return` before this write, so the JSON
+    // form emitted `"path": "…/goal.ax"` and `"ax_bytes": 3415` and produced NO
+    // FILE. A report replaced the work, and it advertised an artifact that was
+    // never there — to the machine consumer that is the only reason `--json`
+    // exists. `axon-web`'s /api/intent/compile then handed its caller a path to
+    // nothing, which is why the approval flow could not proceed past step 1.
+    //
+    // The two modes must differ only in how they SAY what happened.
+    std::fs::write(&out_path, &ax_src).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {e}", out_path.display());
+        process::exit(1);
+    });
+
     if json_flag {
         // axon-intent-compile/1 schema (extended with `generated` + `stubs` fields)
         let sections: Vec<String> = goal.sections.keys().map(|k| format!("{k:?}")).collect();
@@ -6746,10 +6761,6 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         return;
     }
 
-    std::fs::write(&out_path, &ax_src).unwrap_or_else(|e| {
-        eprintln!("error writing {}: {e}", out_path.display());
-        process::exit(1);
-    });
     let gen_note = if llm_generated {
         " (LLM-generated)"
     } else {

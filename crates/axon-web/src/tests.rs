@@ -553,10 +553,22 @@ fn e2e_full_flow_with_real_axon_binary() {
         String::new()
     };
 
-    if ax_body.is_empty() {
-        // Can't proceed without .ax content; compile step alone proves the integration
-        return;
-    }
+    // ASSERT, do not return. This used to bail green with the comment "the
+    // compile step alone proves the integration" — so a test named
+    // `e2e_full_flow` covered ONE of its four steps and reported success.
+    //
+    // That silence hid a real product defect for as long as it existed:
+    // `axon intent compile --json` emitted `"path"` and `"ax_bytes": 3415` and
+    // WROTE NO FILE (the json branch returned before the write), so the server
+    // handed back a path to nothing and review/approve/deploy never ran. A test
+    // that skips the rest of the flow when step 1 half-fails cannot report the
+    // one thing it exists to report.
+    assert!(
+        !ax_body.is_empty(),
+        "intent/compile reported path {ax_path:?} but it is empty or unreadable — \
+         the remaining steps (review, approve, deploy) cannot run, and this test \
+         must not pass while they are skipped"
+    );
 
     // Step 2: ast review
     let body2 = serde_json::json!({"content": ax_body}).to_string();

@@ -23597,3 +23597,78 @@ fn json_emitting_verbs_escape_control_characters() {
         "the control character must be escaped, not deleted: {line}"
     );
 }
+
+#[test]
+fn intent_compile_json_writes_the_file_it_reports() {
+    // The `--json` branch RETURNED BEFORE THE WRITE. So the machine-readable
+    // form — the only reason `--json` exists — emitted
+    //
+    //   {"schema":"axon-intent-compile/1","path":"…/goal.ax","ax_bytes":3415,…}
+    //
+    // and produced no file. A report replaced the work and advertised an
+    // artifact that was never there. `axon-web`'s /api/intent/compile then
+    // handed its caller a path to nothing, so the approval flow could not get
+    // past step 1 — Acid Test 2's own pipeline, broken through the JSON path.
+    //
+    // The human form always wrote it, which is what made this survive: the
+    // behaviour differed between two modes that should differ only in how they
+    // SAY what happened.
+    let dir = std::env::temp_dir().join(format!("axon_ic_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    // The REAL goal file, not an invented one: `intent compile` requires a full
+    // section set (Inputs, Outputs, Constraints, Budget, Verify, Redteam, Effect
+    // surface, Provenance) and a hand-written stub is rejected before it ever
+    // reaches the write path this test is about.
+    let md = dir.join("goal.md");
+    std::fs::write(
+        &md,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/goals/hello-goal.md"
+        )),
+    )
+    .unwrap();
+    let expected = dir.join("goal.ax");
+
+    for json in [false, true] {
+        let _ = std::fs::remove_file(&expected);
+        let mut cmd = axon();
+        cmd.args(["intent", "compile"]);
+        if json {
+            cmd.arg("--json");
+        }
+        let out = cmd.arg(md.to_str().unwrap()).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "intent compile (json={json}) must succeed: {out:?}"
+        );
+        let body = std::fs::read_to_string(&expected).unwrap_or_default();
+        assert!(
+            !body.is_empty(),
+            "intent compile (json={json}) reported success but wrote no file at {}",
+            expected.display()
+        );
+        assert!(
+            body.contains("fn "),
+            "the written .ax must be real source (json={json}): {body:.80}"
+        );
+
+        // In JSON mode, the reported path and byte count must MATCH what landed
+        // on disk — a record that is right about the bytes and wrong about their
+        // existence is the defect this test exists for.
+        if json {
+            let rec = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            assert!(
+                rec.contains(&format!("\"ax_bytes\":{}", body.len())),
+                "reported ax_bytes must equal the bytes actually written ({}): {rec}",
+                body.len()
+            );
+            assert!(
+                rec.contains(expected.to_str().unwrap()),
+                "reported path must be the file that was written: {rec}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
