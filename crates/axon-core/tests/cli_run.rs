@@ -23923,3 +23923,100 @@ fn run_reports_a_tampered_module_but_stays_quiet_without_a_lockfile() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn every_consuming_verb_reports_a_tampered_module_and_deploy_refuses() {
+    // The companion to `run_reports_a_tampered_module_but_stays_quiet_without_a_lockfile`.
+    // `check` verified the lockfile and NOTHING else did, so the check ran on the
+    // verb that type-checks and not on the verbs that execute, test against,
+    // compile into a shipping binary, or deploy. Measured before the fix, with a
+    // module edited after `axon lock`:
+    //
+    //   run    exit 0, silent        test   exit 0, silent
+    //   build  exit 0, silent        deploy exit 0, silent, status "deployed"
+    let dir = std::env::temp_dir().join(format!("axon_lockverbs_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let helper = dir.join("vlh.ax");
+    let app = dir.join("vapp.ax");
+    let pristine = "fn double(n: i64) -> i64 { n * 2 }\n";
+    std::fs::write(&helper, pristine).unwrap();
+    std::fs::write(
+        &app,
+        "mod vlh\nuse vlh.{double}\n\nfn main() { println(to_str(double(21))) }\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        let mut c = axon();
+        for a in args {
+            c.arg(a);
+        }
+        let o = c.env("AXON_PATH", &dir).output().unwrap();
+        let mut all = String::from_utf8_lossy(&o.stdout).to_string();
+        all.push_str(&String::from_utf8_lossy(&o.stderr));
+        (o.status.code().unwrap_or(-1), all)
+    };
+    let path = app.to_str().unwrap().to_string();
+
+    // Before there is a lockfile at all, every verb must stay quiet: a program
+    // with imports and no lockfile is the ordinary dev state, and warning there
+    // would put W1210 on the common case.
+    for verb in ["run", "test", "build"] {
+        let (_, out) = run(&[verb, &path]);
+        assert!(
+            !out.contains("W1210"),
+            "{verb} must be quiet unlocked: {out}"
+        );
+    }
+
+    let (lc, lo) = run(&["lock", &path]);
+    assert_eq!(lc, 0, "lock must succeed: {lo}");
+    std::fs::write(
+        &helper,
+        "fn double(n: i64) -> i64 { n * 2 }\n\
+         fn exfil() -> str { match read_file(\"/etc/passwd\") { Ok(s) => s  Err(e) => \"\" } }\n",
+    )
+    .unwrap();
+
+    // Authoring verbs WARN — permissive, matching dev-mode `check`.
+    for verb in ["run", "test", "build"] {
+        let (_, out) = run(&[verb, &path]);
+        assert!(
+            out.contains("W1210") && out.contains("content hash mismatch"),
+            "`axon {verb}` must report a tampered module: {out}"
+        );
+    }
+
+    // Deploy REFUSES. The gate chain decides whether this program ships; a lock
+    // mismatch means the program being gated is not the one that was reviewed,
+    // so every verdict the chain produces is about the wrong artifact.
+    let (_, _) = run(&["ast", "approve", &path]);
+    let (dc, dout) = run(&["deploy", &path]);
+    assert_eq!(dc, 2, "deploy must fail closed on tamper: {dout}");
+    assert!(dout.contains("E1201"), "{dout}");
+    assert!(
+        !dout.contains("\"status\":\"deployed\"") && !dout.contains("deployed: "),
+        "a blocked deploy must not also report success: {dout}"
+    );
+    // The JSON surface axon-web parses stays well-formed and names the cause.
+    let (_, djson) = run(&["deploy", "--json", &path]);
+    assert!(
+        djson.contains("\"schema\":\"axon-deploy/1\"")
+            && djson.contains("\"status\":\"lock_error\""),
+        "deploy --json must keep its schema and say why: {djson}"
+    );
+
+    // Restore the locked bytes: the signal is keyed on CONTENT, not on the mere
+    // presence of a lockfile, so everything must go quiet again.
+    std::fs::write(&helper, pristine).unwrap();
+    for verb in ["run", "test", "build"] {
+        let (_, out) = run(&[verb, &path]);
+        assert!(!out.contains("W1210"), "`{verb}` after restore: {out}");
+    }
+    let (dc2, dout2) = run(&["deploy", &path]);
+    assert_ne!(dc2, 2, "deploy must pass once bytes match again: {dout2}");
+    assert!(!dout2.contains("E1201"), "{dout2}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

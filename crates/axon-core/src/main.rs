@@ -1490,6 +1490,37 @@ fn check_locked_imports(
     errors
 }
 
+/// Verify that imported modules still hash to what `axon.lock` pinned — for the
+/// verbs that CONSUME a program rather than merely check one.
+///
+/// `axon check` did this and nothing else did, so the verification happened on
+/// the verb that type-checks and NOT on the verbs that execute, test against,
+/// compile into a shipping binary, or deploy. A module whose bytes changed after
+/// `axon lock` therefore ran, passed its tests, and linked — silently.
+///
+/// Always TAMPER-ONLY: a missing lock entry says nothing here. A program with
+/// imports and no lockfile is the ordinary dev state (11 of the shipped examples
+/// import something), and warning on it would put W1210 on the common case until
+/// people stopped reading it. A lockfile that EXISTS and disagrees is different
+/// in kind: the author opted into verification, and a mismatch is precisely what
+/// they asked to be told.
+///
+/// `fatal` splits authoring from shipping, the same way `AXON_STRICT` does a few
+/// lines into `cmd_deploy`: `run`/`test`/`build` warn (W1210), `deploy` refuses
+/// (E1201). Deploying bytes that disagree with the lockfile is the exact event a
+/// lockfile exists to prevent, so that is the one place silence-or-warning is not
+/// a defensible answer.
+fn verify_lock_tamper(
+    file: &Path,
+    program: &axon_core::ast::Program,
+    fatal: bool,
+    use_json: bool,
+) -> Vec<String> {
+    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    let (resolved, _unresolved) = axon_core::resolve_use_files_transitive(program, &search_dirs);
+    check_locked_imports(file, &resolved, fatal, use_json, true)
+}
+
 // ── improve (R10 self-improving compiler) ────────────────────────────────────────
 
 /// Default manifest path: `./passes.manifest`.
@@ -3147,6 +3178,11 @@ fn cmd_build(
         }
         process::exit(2);
     }
+
+    // Of every verb, this is the one that emits an artifact which outlives the
+    // command — so a module that no longer matches the lockfile gets said out
+    // loud before it is compiled in (warning; see `verify_lock_tamper`).
+    let _ = verify_lock_tamper(first, &program, false, !std::io::stderr().is_terminal());
 
     // R23 eBPF: `--target bpf` (or `bpfel`/`bpfeb`) takes a dedicated, focused
     // path — the hosted IR pipeline (provenance hooks, main wrapper, host
@@ -5265,18 +5301,7 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // exists and disagrees is surfaced. This WARNS rather than halting — dev mode
     // is deliberately permissive per R6 §4.2, and `axon check --locked` remains
     // the fail-closed gate — but silence was not a defensible third option.
-    {
-        let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
-        let (resolved_imports, _unresolved) =
-            axon_core::resolve_use_files_transitive(&program, &search_dirs);
-        let _ = check_locked_imports(
-            &file,
-            &resolved_imports,
-            false,
-            !std::io::stderr().is_terminal(),
-            true,
-        );
-    }
+    let _ = verify_lock_tamper(&file, &program, false, !std::io::stderr().is_terminal());
 
     // R23: gate the kernel mint obligations on a SOLVER-FREE certificate check
     // before running anything — in EVERY build (Z3 not required). Off by default
@@ -5673,6 +5698,11 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         }
         process::exit(2);
     }
+
+    // A test run that passes against bytes nobody locked is a green light for the
+    // wrong artifact, so the lock check happens here too (warning; see
+    // `verify_lock_tamper`).
+    let _ = verify_lock_tamper(&files[0], &program, false, !std::io::stderr().is_terminal());
 
     // Abort on type errors before running any tests.
     let primary_file = &files[0];
@@ -7452,6 +7482,39 @@ fn cmd_deploy(
             for d in &errors {
                 emit_pipeline_diag(d);
             }
+        }
+        process::exit(2);
+    }
+
+    // R6 supply chain, fail-closed. Unlike `run`/`test`/`build`, which warn, a
+    // deploy REFUSES on a module whose bytes no longer match `axon.lock`. The
+    // gate chain below decides whether this program should ship; a lockfile
+    // mismatch means the program being gated is not the program that was
+    // reviewed, which makes every verdict the chain produces about the wrong
+    // artifact. Same inversion, and the same reason, as the `AXON_STRICT` default
+    // at the top of this function.
+    //
+    // A MISSING lock entry still says nothing (tamper-only), so deploying a
+    // program that was never locked is unchanged — that is a policy question for
+    // `--locked`, not a tamper signal.
+    let lock_errors = verify_lock_tamper(&file, &program, true, json_flag);
+    if !lock_errors.is_empty() {
+        if json_flag {
+            let errs = lock_errors
+                .iter()
+                .map(|e| json_str(e))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"lock_error\",\"errors\":[{}]}}",
+                json_str(&file.display().to_string()),
+                errs,
+            );
+        } else {
+            for e in &lock_errors {
+                eprintln!("error{e}");
+            }
+            eprintln!("error: deploy blocked — locked module contents changed");
         }
         process::exit(2);
     }
