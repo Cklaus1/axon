@@ -4715,6 +4715,10 @@ fn run_cell(
     // Written BEFORE the cell runs, and whether or not it succeeds: a transcript
     // that silently omitted the cell that failed would replay a different session
     // from the one recorded, and the journal would diverge with no clue why.
+    //
+    // The OUTCOME is appended afterwards (see `mark_transcript` below), so a
+    // process that dies mid-cell leaves the cell body with no marker — which is
+    // itself the honest record: that cell did not complete.
     if let Some(t) = transcript {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
@@ -4722,7 +4726,7 @@ fn run_cell(
             .open(t)
         {
             use std::io::Write;
-            let _ = writeln!(f, "{cell}");
+            let _ = write!(f, "{cell}");
         }
     }
     axon_core::interp::set_session_cell(sess.cell_no);
@@ -4767,6 +4771,11 @@ fn run_cell(
         Err(diag) => {
             let _ = std::fs::remove_file(&path);
             set_session_prelude_lines(None);
+            mark_transcript(
+                transcript,
+                sess.cell_no,
+                "REFUSED at parse — did not execute, did not accumulate",
+            );
             return CellResult {
                 ok: false,
                 stdout: String::new(),
@@ -4782,6 +4791,11 @@ fn run_cell(
         set_session_prelude_lines(None);
         // The cell did not execute and does not accumulate: session state is
         // byte-identical to before it (R44 §4 S4).
+        mark_transcript(
+            transcript,
+            sess.cell_no,
+            "REFUSED at check — did not execute, did not accumulate",
+        );
         return CellResult {
             ok: false,
             stdout: String::new(),
@@ -4849,6 +4863,18 @@ fn run_cell(
             sess.skipped = skipped.clone();
         }
     }
+    // A cell that failed at RUNTIME is the one an auditor most needs flagged: it
+    // may already have written files or sent requests before it died, and §4.4
+    // is explicit that rollback does not undo those.
+    mark_transcript(
+        transcript,
+        sess.cell_no,
+        if ok {
+            "ok"
+        } else {
+            "FAILED at runtime — bindings discarded, but any effects it already had were NOT undone"
+        },
+    );
     CellResult {
         ok,
         stdout: out,
@@ -4923,6 +4949,28 @@ fn attribute_errors(
         ));
     }
     out
+}
+
+/// Append a cell's outcome to the transcript, then the blank line that separates
+/// cells.
+///
+/// R44 §12 Q2. Without this every cell reads identically, so an auditor cannot
+/// tell that a refused cell contributed nothing — the same absent-vs-passed
+/// collapse the rest of this cycle was spent closing, in the artifact whose whole
+/// job is to say what happened.
+///
+/// The marker is an Axon comment, so feeding the transcript back still replays:
+/// it joins the preceding cell and the lexer ignores it.
+fn mark_transcript(transcript: Option<&PathBuf>, cell_no: usize, outcome: &str) {
+    let Some(t) = transcript else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(t)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "// axon-session: cell {cell_no} {outcome}\n");
+    }
 }
 
 fn render_cell_human(r: &CellResult) {

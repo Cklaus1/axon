@@ -22970,3 +22970,93 @@ fn ai_policy_keeps_stdout_pure_jsonl() {
         "...while stderr carries the notice"
     );
 }
+
+#[test]
+fn session_transcript_marks_each_cell_with_its_outcome() {
+    // R44 §12 Q2. Every cell used to read identically, so an auditor holding the
+    // transcript could not tell that a refused cell contributed nothing — the
+    // same absent-vs-passed collapse the rest of this cycle closed, in the
+    // artifact whose whole job is to say what happened.
+    //
+    // The three outcomes are kept distinct because they mean different things
+    // about the WORLD: a check-refused cell did nothing at all, while a
+    // runtime-failed cell may already have written files (§4.4).
+    let dir = std::env::temp_dir().join(format!("axon_tr_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let t = dir.join("t.ax");
+
+    let (_, _, _) = session_full(
+        &[
+            "let good = 7",
+            "let bad = \"x\" + 1",
+            "let arr = [1]\nprintln(to_str(arr[99]))",
+            "println(to_str(good))",
+        ],
+        &[],
+        &["--transcript", t.to_str().unwrap()],
+    );
+    let text = std::fs::read_to_string(&t).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        text.contains("cell 1 ok"),
+        "a clean cell must be marked ok: {text}"
+    );
+    assert!(
+        text.contains("cell 2 REFUSED at check") && text.contains("did not accumulate"),
+        "a refused cell must say it contributed nothing: {text}"
+    );
+    assert!(
+        text.contains("cell 3 FAILED at runtime") && text.contains("NOT undone"),
+        "a runtime failure must say what rollback does NOT cover: {text}"
+    );
+    assert!(
+        text.contains("cell 4 ok"),
+        "the session must continue after both failures: {text}"
+    );
+    // The bodies must still be there — marking must not replace recording.
+    assert!(
+        text.contains("let good = 7") && text.contains("let bad ="),
+        "every cell body must survive, including the failed ones: {text}"
+    );
+}
+
+#[test]
+fn session_transcript_still_replays_with_outcome_markers() {
+    // The markers are Axon comments so the transcript stays feedable. If they
+    // broke replay they would have traded an audit gap for a worse one: a
+    // transcript that documents what happened and can no longer reproduce it.
+    let dir = std::env::temp_dir().join(format!("axon_trr_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let t = dir.join("t.ax");
+    let j = dir.join("j.journal");
+
+    let (out, _, _) = session_full(
+        &[
+            "let v = match env_var(\"AXON_TR_VAR\") { Ok(x) => x  Err(e) => \"unset\" }\nprintln(v)",
+            "println(\"second\")",
+        ],
+        &[
+            ("AXON_RECORD", j.to_str().unwrap()),
+            ("AXON_TR_VAR", "recorded"),
+        ],
+        &["--transcript", t.to_str().unwrap()],
+    );
+    assert!(
+        out.contains("recorded"),
+        "precondition: the run read the var"
+    );
+    let text = std::fs::read_to_string(&t).unwrap_or_default();
+    assert!(
+        text.contains("axon-session: cell"),
+        "markers must be present"
+    );
+
+    let (rout, _, rcode) = session_full(&[&text], &[("AXON_REPLAY", j.to_str().unwrap())], &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(rcode, 0, "a marked transcript must still replay: {rout}");
+    assert!(
+        rout.contains("recorded"),
+        "and reproduce the recorded value with the env var absent: {rout}"
+    );
+}
