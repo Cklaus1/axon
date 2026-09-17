@@ -23309,3 +23309,63 @@ fn rlm_host_end_to_end_typed_contained_replayable_session() {
         "and reproduce its values: {rout}"
     );
 }
+
+#[test]
+fn session_refuses_a_cell_that_declares_its_own_main_and_says_why() {
+    // NOT an exotic case: a model writing Axon knows programs have a `fn main`
+    // and will reach for it, and model-written code is this feature's whole
+    // audience. The raw diagnostic was "the name `main` is defined more than
+    // once in this module" — blaming a duplicate the author never wrote and
+    // CANNOT SEE, because the other `main` is the one the session composes.
+    // Same class as E1005: a message describing a constraint invisible in the
+    // reader's own source.
+    let (out, err, _) = session_full(
+        &[
+            "let x = 7",
+            "fn main() { println(\"nope\") }",
+            "println(to_str(x))",
+        ],
+        &[],
+        &[],
+    );
+    assert!(err.contains("E2402"), "must be refused with E2402: {err}");
+    assert!(
+        !err.contains("E0002"),
+        "the raw duplicate-definition error must not reach the user: {err}"
+    );
+    // The message has to TEACH the model, not just refuse it.
+    assert!(
+        err.contains("top level IS the body") && err.contains("persist into the next cell"),
+        "the message must explain what to write instead: {err}"
+    );
+    assert!(
+        !out.contains("nope"),
+        "the refused cell must not execute: {out:?}"
+    );
+    // ...and the session survives, with its earlier binding intact.
+    assert!(
+        out.contains('7'),
+        "state must survive the refusal: stdout={out:?} stderr={err}"
+    );
+}
+
+#[test]
+fn session_handles_a_comment_only_and_a_whitespace_cell() {
+    // Neither should crash or corrupt the session — a driver that sends a
+    // comment or a stray blank is not making an error.
+    let (out, err, _) = session_full(
+        &[
+            "let v = 3",
+            "// just a comment",
+            "   ",
+            "println(to_str(v))",
+        ],
+        &[],
+        &[],
+    );
+    assert!(
+        out.contains('3'),
+        "the session must survive filler cells: stdout={out:?} stderr={err}"
+    );
+    assert!(!err.contains("panic"), "no panic: {err}");
+}

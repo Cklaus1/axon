@@ -4779,6 +4779,39 @@ fn run_cell(
     axon_core::interp::set_session_cell(sess.cell_no);
     let (cell_items, original_stmts) = Session::split_cell(cell);
 
+    // A cell that declares `fn main` collides with the one the session composes
+    // around it, and the raw diagnostic is "the name `main` is defined more than
+    // once in this module" — blaming a duplicate the author never wrote and
+    // cannot see, since the other `main` is generated. This is not an exotic
+    // case: a model writing Axon knows programs have a `main` and will reach for
+    // it, and the session's whole audience is model-written code.
+    //
+    // Refused rather than silently unwrapped: treating `fn main() { .. }` as
+    // sugar for its body would be convenient right up to the cell that also
+    // declares items or expects arguments, and a session that quietly rewrites
+    // what you typed is worse than one that explains itself.
+    if let Some((name, _)) = cell_items.iter().find(|(n, _)| n == "main") {
+        let _ = name;
+        mark_transcript(
+            transcript,
+            sess.cell_no,
+            "REFUSED: cell declared its own `fn main`",
+        );
+        return CellResult {
+            ok: false,
+            stdout: String::new(),
+            diagnostics: vec![format!(
+                "[{}] a session cell must not declare `fn main` — the session composes one \
+                 around your statements, so writing your own collides with it. Drop the \
+                 wrapper and write the statements directly: a cell's top level IS the body \
+                 of `main`, and bindings there persist into the next cell.",
+                axon_core::error::E2402
+            )],
+            skipped: Vec::new(),
+            value: None,
+        };
+    }
+
     // Try the trailing-expression form first; fall back to the literal cell if
     // it does not check, so the heuristic can never cost a working cell.
     let mut cell_stmts = original_stmts.clone();

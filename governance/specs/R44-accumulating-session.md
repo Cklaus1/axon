@@ -314,7 +314,7 @@ Reserved band **E2400–E2404**. Re-grep before allocating.
 |---|---|
 | `E2400` | redefinition breaks an earlier accumulated item (§4.1) — the headline diagnostic |
 | `E2401` | cell references a name never bound in this session; help must distinguish *never bound* from *bound but not persistable* (S10) and from *an earlier cell failed to accumulate* |
-| `E2402` | cell is not a valid fragment (parse tier, session framing) |
+| `E2402` | cell is not a usable fragment. **Landed 2026-09-17** for the case that actually bites: a cell declaring its own `fn main`. That collides with the one the session composes, and the raw diagnostic — "the name `main` is defined more than once" — blames a duplicate the author never wrote and cannot see. Not exotic: a model writing Axon knows programs have a `main`, and model-written code is this feature's audience. Refused rather than silently unwrapped, because a session that rewrites what you typed is worse than one that explains itself |
 | `E2403` | session protocol error (malformed frame under `--protocol jsonl`) |
 | `E2404` | a binding could not cross the cell boundary and was named rather than dropped (S10) — a **note**, not an error, unless the next cell references it |
 

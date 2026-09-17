@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 139 diagnostic codes (126 live, 13 reserved), 47 environment variables.
+The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 140 diagnostic codes (127 live, 13 reserved), 47 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -122,7 +122,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEST_DOTENV_VAR` | (test fixture) name of a variable the .env loader test expects to find |
 | `AXON_TEST_DOTENV_NEW` | (test fixture) asserts the .env loader does not clobber an already-set variable |
 
-## Diagnostic codes (139, of which 126 live)
+## Diagnostic codes (140, of which 127 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -251,6 +251,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E2301` | a construct outside the BPF-lowerable subset appears in a @[bpf] body |
 | `E2302` | @[bpf(kind: K)] has an unknown program kind |
 | `E2400` | redefining a name in a session breaks an item an earlier cell wrote |
+| `E2402` | a session cell is not a usable fragment — today this means it declares its own `fn main`, which collides with the one the session composes around the cell's statements |
 | `E2403` | malformed `axon session --protocol jsonl` input frame |
 | `W0001` | unknown attribute |
 | `W0002` | variable shadowing |
