@@ -261,12 +261,35 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
     // "unexpected token: Hash, expected expression", which names the token and
     // not the habit — and a reader who does not already know Axon's comment
     // syntax cannot get there from the token name.
-    if msg.contains("unexpected token: Hash") {
-        return Some(
-            "`#` does not start a comment in Axon (that is Python/shell/Ruby) — \
-             line comments are `//`, and `///` documents the item below it"
-                .to_string(),
-        );
+    // Keyed on the LINE, not on the token, because the token depends on where
+    // the `#` sits. Inside a body it is "unexpected token: Hash, expected
+    // expression"; at module level the parser is trying to read an attribute
+    // and reports "unexpected token: Ident(\"a\"), expected LBracket" — and a
+    // `#!/usr/bin/env` shebang reports `Bang`. The first version of this rule
+    // matched only the Hash spelling, so it fired inside a function and stayed
+    // silent on the file-header comment, which is where people actually write
+    // one. Found by running a whole model-shaped file rather than one line.
+    //
+    // `#[` is excluded: that is a real attribute, and its own errors should not
+    // be answered with comment advice.
+    //
+    // BOTH signals are needed, and keying on only one is how this rule has now
+    // been wrong twice: the token alone misses a `#` at module level (the
+    // parser is mid-attribute and never reports `Hash`), and the line-start
+    // alone misses `fn main() { # a comment`, where the `#` is not the first
+    // thing on its line. The second miss was caught by the test written for the
+    // first.
+    {
+        let t = line.trim_start();
+        let starts_line = t.starts_with('#') && !t.starts_with("#[");
+        let is_hash_token = msg.contains("unexpected token: Hash");
+        if starts_line || is_hash_token {
+            return Some(
+                "`#` does not start a comment in Axon (that is Python/shell/Ruby) — \
+                 line comments are `//`, and `///` documents the item below it"
+                    .to_string(),
+            );
+        }
     }
 
     // `s += "b"` / `i -= 1` — compound assignment.

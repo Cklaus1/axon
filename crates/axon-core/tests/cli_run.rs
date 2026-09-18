@@ -27640,3 +27640,72 @@ fn an_effect_cannot_be_laundered_through_an_impl_method() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_hash_comment_hint_fires_wherever_the_hash_is() {
+    // The `#`-comment rule was first keyed on the TOKEN ("unexpected token:
+    // Hash"), which is only how it lexes inside a function body. At module
+    // level the parser is reading an attribute and reports "unexpected token:
+    // Ident(...), expected LBracket"; a `#!` shebang reports `Bang`. So the
+    // rule fired inside a function and stayed silent on the FILE-HEADER
+    // comment, which is where people actually write one.
+    //
+    // Found by running a whole model-shaped file instead of one line — the
+    // unit probe that motivated the original rule had put the `#` inside a
+    // body, so it tested the position that already worked.
+    let dir = std::env::temp_dir().join(format!("axon_hashpos_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let help = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .find(|l| l.contains("\"severity\":\"error\""))
+            .unwrap_or("<no error>")
+            .to_string()
+    };
+
+    for (label, src) in [
+        (
+            "module level",
+            "# a comment\nfn main() { println(\"x\") }\n",
+        ),
+        (
+            "inside a body",
+            "fn main() {\n    # a comment\n    println(\"x\")\n}\n",
+        ),
+        (
+            "shebang",
+            "#!/usr/bin/env axon\nfn main() { println(\"x\") }\n",
+        ),
+        // Not at the start of its line — the case the line-based widening
+        // broke, and the reason BOTH signals are checked rather than either.
+        (
+            "mid-line in a body",
+            "fn main() { # a comment\nprintln(\"x\") }\n",
+        ),
+    ] {
+        let h = help(src);
+        assert!(
+            h.contains("does not start a comment") && h.contains("`//`"),
+            "`#` at {label} must name the habit: {h}"
+        );
+    }
+
+    // A real attribute must NOT be answered with comment advice.
+    let attr = help("#[bogus]\nfn main() { println(\"x\") }\n");
+    assert!(
+        !attr.contains("does not start a comment"),
+        "`#[...]` is an attribute, not a comment attempt: {attr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

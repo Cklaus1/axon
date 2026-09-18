@@ -1470,16 +1470,26 @@ pub fn floor_division_comment_offsets(source: &str) -> Vec<usize> {
                     last.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
                 let rest_end = source[i..].find('\n').map_or(source.len(), |n| i + n);
                 let body = source[i + 2..rest_end].trim();
-                let is_bare_number = !body.is_empty()
+                // An OPERAND, not prose: one whitespace-free token. `2`,
+                // `len(scores)` and `n` qualify; `count of items` does not.
+                //
+                // The first version required a bare NUMBER, tuned on `7 // 2`.
+                // That missed the shape real code actually takes —
+                // `total // len(scores)` — which is exactly what an end-to-end
+                // run produced, checking clean and computing `total`. Widening
+                // to "no internal whitespace" keeps prose comments out while
+                // catching the operand case; verified against the corpus, not
+                // assumed.
+                let is_operand = !body.is_empty()
+                    && !body.chars().any(char::is_whitespace)
                     && body
                         .chars()
-                        .all(|c| c.is_ascii_digit() || c == '.' || c == '_')
-                    && body.chars().any(|c| c.is_ascii_digit());
+                        .all(|c| c.is_ascii_alphanumeric() || "._()[]&".contains(c));
                 let spaced_like_an_operator = source[line_start..i].ends_with(' ')
                     && !source[line_start..i].ends_with("  ")
                     && source[i + 2..rest_end].starts_with(' ')
                     && !source[i + 2..rest_end].starts_with("  ");
-                if trails_an_expression && is_bare_number && spaced_like_an_operator {
+                if trails_an_expression && is_operand && spaced_like_an_operator {
                     out.push(i);
                 }
                 // Skip to end of line: the remainder is comment text.
@@ -1501,7 +1511,13 @@ mod floor_division_scan_tests {
     fn the_floor_division_shape_is_caught() {
         assert_eq!(scan("let x = 7 // 2\n").len(), 1);
         assert_eq!(scan("let x = a // 2\n").len(), 1);
-        assert_eq!(scan("let x = a // b\n").len(), 0, "body must be numeric");
+        // The shape real code takes. The first rule required a bare NUMBER and
+        // missed this — an end-to-end run of a model-shaped file produced
+        // `let avg = total // len(scores)`, which checked CLEAN and computed
+        // `total`. An operand is any whitespace-free token, borrow included.
+        assert_eq!(scan("let avg = total // len(scores)\n").len(), 1);
+        assert_eq!(scan("let avg = total // len(&xs)\n").len(), 1);
+        assert_eq!(scan("let x = a // b\n").len(), 1);
     }
 
     /// The discriminators, each measured against the repo's own corpus rather
@@ -1519,6 +1535,8 @@ mod floor_division_scan_tests {
         assert_eq!(scan("let x = 7 // count of items\n").len(), 0);
         assert_eq!(scan("// 2\n").len(), 0);
         assert_eq!(scan("let x = 7 // 2 items\n").len(), 0);
+        // Prose is what the operand test excludes: more than one token.
+        assert_eq!(scan("let avg = total // number of scores\n").len(), 0);
     }
 
     /// A `//` inside a string is text, not a comment, and must never be read
