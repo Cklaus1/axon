@@ -25713,3 +25713,100 @@ fn a_foreign_collection_name_is_pointed_at_the_builtin_that_exists() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `for c in s { … }` over a STRING blamed indexing.
+///
+/// The collection form of `for` desugars into an index loop over a generated
+/// `__forarr_N`, so iterating a string surfaced as
+///
+///     E0402 cannot index a value of type str
+///     help: indexing `a[i]` is only valid on an array/slice `[T]`
+///
+/// describing a construct the author never wrote, and leaking the desugaring at
+/// the one moment it has to be invisible. Iterating a string is the first thing
+/// three of the six RLM benchmark tasks do.
+#[test]
+fn iterating_a_string_is_explained_as_a_loop_not_as_an_index() {
+    let dir = std::env::temp_dir().join(format!("axon_forstr_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let diag = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .find(|l| l.contains("\"code\":\"E0402\""))
+            .unwrap_or("")
+            .to_string()
+    };
+
+    let d = diag(
+        "forstr",
+        "fn main() {\n  let s = \"ab\"\n  for c in s { println(c) }\n}\n",
+    );
+    assert!(
+        d.contains("`for x in …` iterates") && d.contains("no character type"),
+        "the message must be about the LOOP the author wrote: {d}"
+    );
+    assert!(
+        d.contains("str_slice(s, i, i + 1)") && d.contains("char_at"),
+        "and give the two ways to walk a string: {d}"
+    );
+    // NOT `str_split(s, "")`. Its own doc says an empty separator returns `[s]`
+    // — the whole string as one element — so recommending it as a way to get
+    // characters reads as a repair and silently gives you one. Running the hint
+    // is what caught it, which is why this assertion exists.
+    assert!(
+        !d.contains("str_split"),
+        "an empty-separator split does not yield characters: {d}"
+    );
+
+    // A direct index into a `str` is a different mistake and keeps its own
+    // framing; only the for-in case may claim to be a loop.
+    let d = diag(
+        "strix",
+        "fn main() {\n  let s = \"ab\"\n  println(to_str(s[0]))\n}\n",
+    );
+    assert!(d.contains("cannot index"), "{d}");
+    assert!(!d.contains("`for x in"), "{d}");
+
+    // The recommended repairs must run and agree with the task they serve.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let s = \"abc\"\n  \
+         for i in 0..str_len(s) { println(str_slice(s, i, i + 1)) }\n  \
+         println(to_str(char_at(s, 0)))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let got = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(
+        got.contains("a\nb\nc") && got.contains("97"),
+        "the hint's forms must walk the string and give the byte: {got}"
+    );
+
+    // Iterating an ARRAY is the supported form and must stay clean — this is
+    // what the for-in desugar is for.
+    let f2 = dir.join("forarr.ax");
+    std::fs::write(
+        &f2,
+        "fn main() {\n  let xs = [10,20,30]\n  for x in xs { println(to_str(x)) }\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f2.to_str().unwrap()]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains("10\n20\n30"),
+        "for-in over an array must keep working"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

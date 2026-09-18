@@ -3763,15 +3763,62 @@ impl CheckCtx {
                     || matches!(recv_ty, Type::Unknown | Type::Var(_));
                 if !indexable {
                     let file = self.file.clone();
-                    self.errors.push(
-                        CheckError::new(
-                            E0402,
-                            format!("cannot index a value of type {}", recv_ty.display()),
+                    // `for c in s { … }` over a STRING. The collection form of
+                    // `for` desugars into an index loop over `__forarr_N`, so
+                    // the failure surfaced as "cannot index a value of type str"
+                    // with advice about `a[i]` — describing a construct the
+                    // author never wrote, and leaking the desugaring at the one
+                    // moment it should be invisible. The generated name is the
+                    // marker that this is a loop rather than an index.
+                    let from_for_in = matches!(
+                        receiver.as_ref(),
+                        Expr::Ident(n) if n.starts_with("__forarr_")
+                    );
+                    let (msg, hint) = if from_for_in && recv_ty == Type::Str {
+                        (
+                            "`for x in …` iterates an ARRAY, and a `str` is not one — \
+                             Axon has no character type to iterate over"
+                                .to_string(),
+                            // NOT "split it into characters first": `str_split`
+                            // with an empty separator returns `[s]`, the whole
+                            // string as one element (its own doc says so), so
+                            // that advice reads as a way to get characters and
+                            // silently gives you one. Running the hint is what
+                            // caught it.
+                            "walk it by index: \
+                             `for i in 0..str_len(s) { let c = str_slice(s, i, i + 1) … }`. \
+                             `char_at(s, i)` gives the byte value instead, as an `i64`"
+                                .to_string(),
                         )
-                        .node(node_path)
-                        .at(&file, 0, 0)
-                        .with_span(self.current_span)
-                        .fix("indexing `a[i]` is only valid on an array/slice `[T]`"),
+                    } else if from_for_in {
+                        (
+                            format!(
+                                "`for x in …` iterates an array, but this is a {}",
+                                recv_ty.display()
+                            ),
+                            "iterate an array (`for x in xs`) or a range \
+                             (`for i in 0..n`)"
+                                .to_string(),
+                        )
+                    } else {
+                        (
+                            format!("cannot index a value of type {}", recv_ty.display()),
+                            if recv_ty == Type::Str {
+                                "a `str` is not indexable — take a one-character slice with \
+                                 `str_slice(s, i, i + 1)`, or the byte value with \
+                                 `char_at(s, i)`"
+                                    .to_string()
+                            } else {
+                                "indexing `a[i]` is only valid on an array/slice `[T]`".to_string()
+                            },
+                        )
+                    };
+                    self.errors.push(
+                        CheckError::new(E0402, msg)
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(self.current_span)
+                            .fix(hint),
                     );
                 }
                 // A CONSTANT index that can be proved out of range.
