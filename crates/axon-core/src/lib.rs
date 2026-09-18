@@ -1258,6 +1258,7 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     }
 
     collapse_refined_type_errors(&mut out);
+    collapse_unresolved_duplicates(&mut out);
     out
 }
 
@@ -1320,6 +1321,42 @@ pub fn collapse_refined_type_errors(diags: &mut Vec<PipelineDiagnostic>) {
         return;
     }
     diags.retain(|d| d.code != "E0102" || !refined.contains(&(d.file.clone(), d.line, d.col)));
+}
+
+/// Drop the LESS-RESOLVED of two identical "cannot be used directly" errors at
+/// one span.
+///
+/// `if found != None` reports twice at the same line and column — once for the
+/// `Option<i64>` on the left, once for the `None` on the right, whose inner type
+/// never resolves:
+///
+///   E0301 value of type `Option<i64>` cannot be used directly
+///   E0301 value of type `Option<<unknown>>` cannot be used directly
+///
+/// One mistake, one fix, two errors, and the second names a type the reader
+/// cannot act on — `<unknown>` is the printer saying it does not know, and
+/// `Option<<unknown>>` reads like a malformed type rather than a missing one.
+/// Comparing an `Option` against `None` is an ordinary habit (there is no
+/// `is_some` builtin here — matching really is the answer), so this is a
+/// message a reader meets while doing something reasonable.
+///
+/// Keyed on (file, line, col, code) so it only ever collapses genuine
+/// duplicates of the SAME diagnostic at the SAME place, and keeps the one whose
+/// type is fully known.
+pub fn collapse_unresolved_duplicates(diags: &mut Vec<PipelineDiagnostic>) {
+    let has_resolved: std::collections::HashSet<(String, u32, u32, String)> = diags
+        .iter()
+        .filter(|d| d.line > 0 && !d.message.contains("<unknown>"))
+        .map(|d| (d.file.clone(), d.line, d.col, d.code.clone()))
+        .collect();
+    if has_resolved.is_empty() {
+        return;
+    }
+    diags.retain(|d| {
+        !d.message.contains("<unknown>")
+            || d.line == 0
+            || !has_resolved.contains(&(d.file.clone(), d.line, d.col, d.code.clone()))
+    });
 }
 
 #[cfg(test)]

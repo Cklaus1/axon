@@ -27931,3 +27931,61 @@ fn the_dict_habit_is_named_at_its_source_not_only_downstream() {
     assert!(!ok.contains("an index is an `i64`"), "{ok}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn one_mistake_does_not_report_twice_at_the_same_span() {
+    // `if found != None` reported E0301 TWICE at the same line and column —
+    // once for the `Option<i64>` on the left, once for the `None` on the right,
+    // whose inner type never resolves:
+    //
+    //   E0301 value of type `Option<i64>` cannot be used directly
+    //   E0301 value of type `Option<<unknown>>` cannot be used directly
+    //
+    // One mistake, one fix, two errors — and the second names a type the reader
+    // cannot act on. `<unknown>` is the printer saying it does not know, and
+    // `Option<<unknown>>` reads like a malformed type rather than a missing one.
+    //
+    // Comparing an `Option` to `None` is an ordinary thing to try: there is no
+    // `is_some` builtin here, so matching really is the answer, and this is a
+    // message met while doing something reasonable.
+    let dir = std::env::temp_dir().join(format!("axon_dupspan_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let errs = |src: &str| -> Vec<String> {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .filter(|l| l.contains("\"severity\":\"error\""))
+            .map(|l| l.to_string())
+            .collect()
+    };
+
+    let e = errs("fn f() -> Option<i64> { Some(1) }\nfn main() {\n  let found = f()\n  if found != None { println(\"yes\") }\n}\n");
+    assert_eq!(e.len(), 1, "one mistake, one error: {e:?}");
+    assert!(
+        e[0].contains("Option<i64>") && !e[0].contains("<unknown>"),
+        "the surviving error must be the one naming a real type: {:?}",
+        e[0]
+    );
+
+    // An unresolved-type error with NO resolved twin must SURVIVE — suppressing
+    // it would trade a duplicate for a silence, which is the worse trade and the
+    // one failure mode this filter must not have.
+    let lone = errs(
+        "fn main() {\n  let d = dict_new()\n  let v = dict_get(d, \"a\")\n  println(v + 1)\n}\n",
+    );
+    assert!(
+        !lone.is_empty(),
+        "a lone unresolved-type error must not be dropped"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

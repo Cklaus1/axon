@@ -6557,6 +6557,7 @@ fn run_check_pipeline_located(
     // lived only here. See `collapse_refined_type_errors` for why the rule is
     // keyed on the span alone.
     axon_core::collapse_refined_type_errors(&mut diags);
+    axon_core::collapse_unresolved_duplicates(&mut diags);
 
     (diags, infer_ctx)
 }
