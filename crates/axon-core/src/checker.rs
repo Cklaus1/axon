@@ -3461,6 +3461,24 @@ impl CheckCtx {
                     Type::Struct(n) | Type::Enum(n) => Some(n.clone()),
                     other => method_lookup_key(other).map(|s| s.to_string()),
                 };
+                // A GENERIC PARAMETER is not a type whose methods are known here:
+                // `fn describe<T: Shape>(s: T) { s.name() }` gets its methods from
+                // the BOUND, and `type_methods` is keyed by concrete type. Without
+                // this guard the check reported "no method `name` on type `T`" and
+                // advised "define it with `impl SomeTrait for T`" — impossible, you
+                // cannot write an impl for a type parameter.
+                //
+                // The repo's own `phase62_trait_bounds.ax` — the fixture FOR this
+                // feature, whose body is exactly `item.describe()` — failed to
+                // check. It is referenced by no test, which is why a method check
+                // added on 2026-09-17 could break it silently.
+                //
+                // Skipping is the sound direction (the bound is what authorises the
+                // call). A stronger version would look the method up on the
+                // declared bound and reject one the trait does not declare; that
+                // needs the bounds threaded here, which `current_generic_params`
+                // (a bare name set) does not carry.
+                let method_key = method_key.filter(|k| !self.current_generic_params.contains(k));
                 if let Some(key) = method_key {
                     let key = key.as_str();
                     let has_method = self

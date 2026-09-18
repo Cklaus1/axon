@@ -28263,3 +28263,100 @@ fn a_mismatch_against_an_ai_typed_param_names_expected_and_found_correctly() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_trait_bound_authorises_calling_its_methods_on_a_type_parameter() {
+    // `fn describe<T: Shape>(s: T) { s.name() }` is the whole point of a bound,
+    // and it was refused:
+    //
+    //     E0403 no method `name` on type `T`
+    //     help: define it with `impl SomeTrait for T { fn name(self: T) … }`
+    //
+    // You cannot write an impl for a type parameter, so the advice named an
+    // impossible fix. `type_methods` is keyed by CONCRETE type; a generic
+    // parameter's methods come from its bound, and the checker already has
+    // `current_generic_params` — it uses it to suppress E0308 for exactly this
+    // reason, two checks away.
+    //
+    // The repo's own `phase62_trait_bounds.ax` — the fixture FOR this feature,
+    // whose body is literally `item.describe()` — did not check. It is
+    // referenced by NO test, which is how a method check added on 2026-09-17
+    // could break the feature it documents and stay green. Gated below.
+    let dir = std::env::temp_dir().join(format!("axon_tbound_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    std::fs::write(
+        &f,
+        "trait Shape { fn area(self) -> f64\nfn name(self) -> str }\n\
+         type Circle = { r: f64 }\ntype Square = { side: f64 }\n\
+         impl Shape for Circle {\n  fn area(self: Circle) -> f64 { 3.0 * self.r * self.r }\n  \
+         fn name(self: Circle) -> str { \"circle\" }\n}\n\
+         impl Shape for Square {\n  fn area(self: Square) -> f64 { self.side * self.side }\n  \
+         fn name(self: Square) -> str { \"square\" }\n}\n\
+         fn describe<T: Shape>(s: T) -> str { \"{s.name()}={to_str_f64(s.area())}\" }\n\
+         fn main() {\n  println(describe(Circle { r: 2.0 }))\n  \
+         println(describe(Square { side: 3.0 }))\n}\n",
+    )
+    .unwrap();
+    let c = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let cm = format!(
+        "{}{}",
+        String::from_utf8_lossy(&c.stdout),
+        String::from_utf8_lossy(&c.stderr)
+    );
+    assert!(
+        !cm.contains("E0403"),
+        "a bound method call on a type parameter must be allowed: {cm}"
+    );
+    let r = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        out.contains("circle=12") && out.contains("square=9"),
+        "and must dispatch to each impl: {out}"
+    );
+
+    // An UNSATISFIED bound must still be rejected — the guard skips the method
+    // check for a type parameter, it does not stop bounds being enforced.
+    let bad = axon()
+        .args(["check", &fixture("trait_bounds.ax")])
+        .output()
+        .unwrap();
+    let bm = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(bm.contains("E0504"), "an unmet bound must still fail: {bm}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_phase62_trait_bounds_fixture_is_gated() {
+    // It was referenced by no test at all — a fixture documenting a phase
+    // feature, with nothing checking it. That is how it came to be broken
+    // without a single failure anywhere.
+    let f = fixture("phase62_trait_bounds.ax");
+    let c = axon().args(["check", &f]).output().unwrap();
+    let cm = format!(
+        "{}{}",
+        String::from_utf8_lossy(&c.stdout),
+        String::from_utf8_lossy(&c.stderr)
+    );
+    assert!(
+        !cm.contains("\"severity\":\"error\""),
+        "the Phase-62 fixture must check clean: {cm}"
+    );
+    // `main` returns 1 per passing sub-test, so 2 means both passed. `axon run`
+    // remaps 2..=15 onto exit 1, so the exit code cannot say which — assert on
+    // what the program computes instead.
+    let r = axon().args(["run", &f]).output().unwrap();
+    assert!(
+        r.status.code() == Some(1),
+        "both sub-tests pass => main returns 2 => remapped exit 1, got {:?}",
+        r.status.code()
+    );
+}
