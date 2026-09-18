@@ -6398,7 +6398,9 @@ fn closest_name<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
         .iter()
         .filter_map(|c| {
             let d = levenshtein(name, c);
-            if d <= 3 {
+            // Same length-scaled cutoff the resolver uses — a flat `<= 3` here
+            // would suggest `pow` for `rows` exactly as it did there.
+            if d <= crate::error::suggestion_cutoff(name) {
                 Option::Some((d, c.as_str()))
             } else {
                 Option::None

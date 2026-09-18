@@ -24230,3 +24230,77 @@ fn an_unresolved_name_reports_once_without_a_cascading_type_error() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A "did you mean" suggestion is advice, and wrong advice is worse than none.
+///
+/// The cutoff was a FLAT Levenshtein ≤ 3, which on a four-character name admits
+/// candidates sharing one character. Measured against a scope holding
+/// `calculate`, `total` and the builtins, every short name that was not a typo
+/// still drew a confident suggestion — eight for eight:
+///
+///   rows → `pow`   data → `Var`   idx → `lidt`   foo → `floor`
+///   nope → `exp`   item → `exec`  bar  → `Var`   val → `Var`
+///
+/// This language's diagnostics are model-consumed. An invented name is the
+/// signal that the model reached for something the language does not have, and
+/// it was being answered with an unrelated builtin presented as the likely fix.
+#[test]
+fn a_spelling_suggestion_is_offered_for_typos_and_withheld_for_inventions() {
+    let dir = std::env::temp_dir().join(format!("axon_suggest_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let suggestion_for = |name: &str| -> Option<String> {
+        let f = dir.join(format!("s_{name}.ax"));
+        std::fs::write(
+            &f,
+            format!(
+                "fn calculate(x: i64) -> i64 {{ x }}\n\
+                 fn main() {{\n  let total = 1\n  println(to_str({name} + total))\n}}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .find(|l| l.contains("\"code\":\"E0001\""))
+            .and_then(|l| l.split("did you mean `").nth(1))
+            .and_then(|r| r.split('`').next())
+            .map(|s| s.to_string())
+    };
+
+    // Real typos must still be caught — the point is a tighter cutoff, not a
+    // silent one. Deleting the suggester outright would pass the half below.
+    for (typo, want) in [
+        ("calculat", "calculate"),
+        ("calcualte", "calculate"),
+        ("totl", "total"),
+        ("tota", "total"),
+    ] {
+        assert_eq!(
+            suggestion_for(typo).as_deref(),
+            Some(want),
+            "`{typo}` is a typo of `{want}` and must still be suggested"
+        );
+    }
+
+    // Invented names must draw silence. `bar` is deliberately absent: it is one
+    // edit from `Var`, which is a plausible typo under any rule that suggests
+    // anything, so demanding silence there would be asserting taste.
+    for invented in ["nope", "foo", "rows", "data", "item", "idx", "val"] {
+        assert_eq!(
+            suggestion_for(invented).as_deref(),
+            None,
+            "`{invented}` is not a typo of anything in scope — a confident wrong \
+             suggestion steers a model that invented a name it needed"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

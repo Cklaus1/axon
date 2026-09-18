@@ -345,11 +345,42 @@ impl AxonError {
 
 // ── Levenshtein distance ──────────────────────────────────────────────────────
 
+/// The distance past which [`levenshtein`] stops computing and SATURATES.
+///
+/// Read this before comparing a `levenshtein` result against anything: the
+/// function is bounded, not exact. Two names 10 edits apart come back as 4, so a
+/// caller testing `dist <= 4` accepts every string in the program. That is not
+/// hypothetical — scaling the suggestion cutoff by name length produced exactly
+/// 4 for a 14-character name and turned `suggest("last_rows_data")` from `None`
+/// into `Some("rows")`, caught by a unit test that had pinned the old answer.
+pub const LEVENSHTEIN_CUTOFF: usize = 3;
+
+/// How far a name may be from a candidate before a "did you mean" suggestion is
+/// noise rather than help, scaled to the length of the name the AUTHOR wrote.
+///
+/// A flat cutoff is meaningless on short names: at `<= 3`, a four-character name
+/// matches anything sharing one character, which is how `rows` came to suggest
+/// `pow` and `idx` to suggest `lidt`. `max(len, 3) / 3` is rustc's rule.
+///
+/// Clamped to [`LEVENSHTEIN_CUTOFF`] because the distance function saturates
+/// there — an unclamped value of 4 or more does not mean "be more generous", it
+/// means "accept everything". The clamp binds only for names of 12 characters or
+/// more, where a bounded distance cannot tell near from far anyway.
+pub fn suggestion_cutoff(name: &str) -> usize {
+    std::cmp::min(
+        std::cmp::max(name.chars().count(), 3) / 3,
+        LEVENSHTEIN_CUTOFF,
+    )
+}
+
 /// Classic Wagner-Fischer Levenshtein distance using rolling-row DP.
-/// Returns early when the distance exceeds `cutoff` (default 3) to avoid
-/// allocating large matrices for clearly-unrelated names.
+///
+/// BOUNDED: returns `LEVENSHTEIN_CUTOFF + 1` for names further apart than the
+/// cutoff, rather than the true distance, to avoid allocating large matrices for
+/// clearly-unrelated names. Compare results against [`suggestion_cutoff`], never
+/// against a literal.
 pub fn levenshtein(a: &str, b: &str) -> usize {
-    const CUTOFF: usize = 3;
+    const CUTOFF: usize = LEVENSHTEIN_CUTOFF;
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     if a.len().abs_diff(b.len()) > CUTOFF {
@@ -651,6 +682,47 @@ mod registry_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::{levenshtein, suggestion_cutoff, LEVENSHTEIN_CUTOFF};
+
+    /// `levenshtein` SATURATES. Pinning that is the point: a caller who compares
+    /// its result against a number larger than the cutoff accepts everything,
+    /// and the failure is silent because the function still returns a plausible
+    /// small integer.
+    #[test]
+    fn levenshtein_saturates_rather_than_returning_a_true_distance() {
+        // Ten edits apart, reported as four.
+        assert_eq!(
+            levenshtein("last_rows_data", "rows"),
+            LEVENSHTEIN_CUTOFF + 1
+        );
+        assert_eq!(levenshtein("a", "abcdefghijklmnop"), LEVENSHTEIN_CUTOFF + 1);
+        // Below the cutoff it is exact.
+        assert_eq!(levenshtein("prntln", "println"), 1);
+        assert_eq!(levenshtein("println", "println"), 0);
+    }
+
+    /// Which is why the suggestion cutoff can never reach the saturation value:
+    /// at `LEVENSHTEIN_CUTOFF + 1` every pair of names looks similar.
+    #[test]
+    fn the_suggestion_cutoff_never_reaches_the_saturation_value() {
+        for name in [
+            "a",
+            "xy",
+            "rows",
+            "calculate",
+            "last_rows_data",
+            &"z".repeat(64),
+        ] {
+            assert!(
+                suggestion_cutoff(name) <= LEVENSHTEIN_CUTOFF,
+                "cutoff for `{name}` must stay under saturation"
+            );
+        }
+        // Scaled, not flat: a short name gets a tight cutoff.
+        assert_eq!(suggestion_cutoff("rows"), 1);
+        assert_eq!(suggestion_cutoff("calculate"), 3);
+    }
+
     use super::*;
 
     #[test]

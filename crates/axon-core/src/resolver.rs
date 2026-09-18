@@ -228,10 +228,35 @@ impl SymbolTable {
         None
     }
 
-    /// Return the name from the table that is closest (Levenshtein distance
-    /// ≤ 3) to `name`, or `None` if no such name exists.
+    /// Return the name from the table that is closest to `name` — within a
+    /// LENGTH-SCALED Levenshtein cutoff of `max(len, 3) / 3` — or `None`.
     ///
     /// Used to generate "did you mean …?" suggestions in E0001 diagnostics.
+    ///
+    /// **The cutoff scales, because a flat one is meaningless on short names.**
+    /// It was a flat `≤ 3`, which for a four-character name admits candidates
+    /// sharing one character. Measured against a scope holding `calculate`,
+    /// `total` and the builtins, every short name that was NOT a typo still drew
+    /// a confident suggestion:
+    ///
+    ///   rows → `pow`    data → `Var`    idx → `lidt`    foo → `floor`
+    ///   nope → `exp`    item → `exec`   bar  → `Var`    val → `Var`
+    ///
+    /// Eight for eight. That is worse than saying nothing: this language's
+    /// diagnostics are model-consumed, and an invented name — the signal that
+    /// the model reached for something the language does not have — was being
+    /// answered with an unrelated builtin stated as the likely fix. A reader
+    /// who takes the advice writes `pow` where they meant a list.
+    ///
+    /// The cutoff is clamped to the distance function's own saturation point —
+    /// see `suggestion_cutoff`, where the reason is spelled out.
+    ///
+    /// `max(len, 3) / 3` is rustc's cutoff. It keeps every real typo in the same
+    /// measurement (`calculat`/`calcualte` → `calculate`, `totl`/`tota` →
+    /// `total`) and drops seven of the eight above. The survivor is `bar` →
+    /// `Var` at edit distance ONE, which is a plausible typo by any rule that
+    /// suggests anything at all; the cutoff is not trying to encode taste, only
+    /// to stop three-of-four characters differing from counting as "similar".
     ///
     /// **Ties break lexicographically, and that is load-bearing.** `scope.keys()`
     /// iterates a `HashMap`, whose order depends on a per-process random seed.
@@ -252,7 +277,9 @@ impl SymbolTable {
         for scope in &self.scopes {
             for key in scope.keys() {
                 let dist = levenshtein(name, key);
-                if dist <= 3 {
+                // Scaled to the name the author actually wrote, not to the
+                // candidate: the question is how much of THEIR word survives.
+                if dist <= crate::error::suggestion_cutoff(name) {
                     let better = match best {
                         None => true,
                         Some((prev_dist, prev_key)) => {
