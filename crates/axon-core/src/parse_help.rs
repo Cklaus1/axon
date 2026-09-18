@@ -222,6 +222,44 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
         }
     }
 
+    // `c := 0` — Go's short variable declaration, WITHOUT a `let`.
+    //
+    // The `let c := 0` spelling is handled above, but that arm keys on the
+    // parser having wanted an identifier after `:` — which only happens once
+    // `let` has been consumed. Written the way Go actually writes it there is no
+    // `let`, the `:` arrives where an expression was expected, and the reader got
+    // `unexpected token: Colon, expected expression` with no help. `:=` is named
+    // in AXON_FOR_RLM §1's list of foreign habits to catch by name.
+    if msg.contains("unexpected token: Colon")
+        && msg.contains("expected expression")
+        && line.contains(":=")
+    {
+        let name = line.split(":=").next().unwrap_or("x").trim();
+        let name = if name.is_empty() || name.contains(' ') {
+            "x"
+        } else {
+            name
+        };
+        return Some(format!(
+            "Axon has no `:=` — a binding is introduced with `let`. Write \
+             `let {name} = …`, then reassign with `{name} = …` (no `let`)"
+        ));
+    }
+
+    // `fn add(a, b) -> i64` — parameters with no type annotation.
+    //
+    // Axon infers inside a body but never across a function signature, so every
+    // parameter needs its type. Python and JS habits produce this constantly. The
+    // parser says `unexpected token: Comma, expected Colon` (or `RParen` for a
+    // single parameter), which names the punctuation and not the rule.
+    if msg.contains("expected Colon") && w.first() == Some(&"fn") {
+        return Some(
+            "every parameter needs a type — Axon infers inside a body but never \
+             across a signature. Write `fn add(a: i64, b: i64) -> i64 { … }`"
+                .to_string(),
+        );
+    }
+
     // `def f():` / `function f() {` at item position.
     if msg.contains("expected item") {
         if let Some(seen) = w.first() {
@@ -257,6 +295,59 @@ mod tests {
         .expect("mut must produce help — it is the measured dominant failure");
         assert!(h.contains("`mut` is not an Axon keyword"), "{h}");
         assert!(h.contains("let count = "), "echoes the real name: {h}");
+    }
+
+    #[test]
+    fn go_style_walrus_without_let_is_named() {
+        // The `let c := 0` arm keys on the parser wanting an identifier after
+        // `:`, which only happens once `let` has been consumed. Written the way
+        // Go actually writes it there is no `let`, so that arm never fired and
+        // the reader got `unexpected token: Colon, expected expression` bare.
+        let src = "fn main() {\n    c := 0\n}\n";
+        let offset = src.find(":=").unwrap();
+        let h = parse_help("unexpected token: Colon, expected expression", src, offset)
+            .expect("bare `:=` must produce help");
+        assert!(h.contains("no `:=`"), "{h}");
+        assert!(h.contains("let c = "), "echoes the real name: {h}");
+    }
+
+    #[test]
+    fn a_colon_that_is_not_a_walrus_gets_no_walrus_help() {
+        // Guard the rule against blaming `:=` for any misplaced colon. A wrong
+        // hint sends the reader to a line that is already correct.
+        let src = "fn main() {\n    dict_set(m, \"a\" 1)\n}\n";
+        let offset = src.find('a').unwrap();
+        let h = parse_help("unexpected token: Colon, expected expression", src, offset);
+        assert!(
+            h.is_none() || !h.as_deref().unwrap().contains(":="),
+            "{h:?}"
+        );
+    }
+
+    #[test]
+    fn an_untyped_parameter_is_named() {
+        // Axon infers inside a body but never across a signature. The parser
+        // reported `unexpected token: Comma, expected Colon` — the punctuation,
+        // not the rule.
+        let src = "fn add(a, b) -> i64 { a + b }\n";
+        let offset = src.find(',').unwrap();
+        let h = parse_help("unexpected token: Comma, expected Colon", src, offset)
+            .expect("an untyped parameter must produce help");
+        assert!(h.contains("every parameter needs a type"), "{h}");
+        // The suggested repair must itself be valid Axon — asserted end-to-end
+        // by the CLI test, pinned here so the wording cannot drift off it.
+        assert!(h.contains("fn add(a: i64, b: i64) -> i64"), "{h}");
+    }
+
+    #[test]
+    fn a_single_untyped_parameter_is_named_too() {
+        // One parameter yields `RParen` rather than `Comma`; keying on the
+        // `expected Colon` half covers both.
+        let src = "fn f(a) -> i64 { a }\n";
+        let offset = src.find(')').unwrap();
+        let h = parse_help("unexpected token: RParen, expected Colon", src, offset)
+            .expect("a single untyped parameter must produce help too");
+        assert!(h.contains("every parameter needs a type"), "{h}");
     }
 
     #[test]

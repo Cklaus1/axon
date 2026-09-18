@@ -232,6 +232,19 @@ fn the_character_literal_advice_actually_compiles() {
             "enum + match instead of runtime type introspection",
             "type Shape = Num { v: i64 } | Text { v: str }\nfn main() -> i64 {\n    let x = Shape::Num { v: 7 }\n    match x { Shape::Num { v } => println(to_str(v))  Shape::Text { v } => println(v) }\n    0\n}\n",
         ),
+        // The `:=` hint tells the reader to declare with `let` and then to
+        // reassign with a bare name — two statements, and the second is the half
+        // a reader coming from Go is least sure of.
+        (
+            "let then bare reassignment",
+            "fn main() -> i64 {\n    let c = 0\n    c = c + 1\n    println(to_str(c))\n    0\n}\n",
+        ),
+        // The untyped-parameter hint prints a whole signature. It is quoted
+        // verbatim into the diagnostic, so it must be valid verbatim.
+        (
+            "fully annotated signature",
+            "fn add(a: i64, b: i64) -> i64 { a + b }\nfn main() -> i64 {\n    println(to_str(add(1, 2)))\n    0\n}\n",
+        ),
     ] {
         let diags = check_pipeline(src, "advice.ax");
         let errors: Vec<_> = diags.iter().filter(|d| d.severity == "error").collect();
