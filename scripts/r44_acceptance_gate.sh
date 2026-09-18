@@ -130,8 +130,18 @@ else fail "expected 99, got: $got"; fi
 echo "== E2400 must not swallow an unrelated error =="
 sess 'fn f() -> i64 { 1 }' 'fn g() -> i64 { f() + 1 }' 'fn f() -> str { "one" }
 let bad = 1 + true' >/dev/null
+# The marker is "non-numeric type bool", matched on a line that is NOT the
+# E2400 — that line QUOTES the knock-on it explains and mentions the same
+# phrase for the `str` return. Matching the TYPE is what distinguishes the
+# separate mistake from an echo of the suppressed one.
+#
+# It was "expected bool" until the checker's non-numeric-operand diagnostic
+# moved E0102 -> E0301 to carry a hint, at which point the bare E0102 that
+# carried those words collapsed into it and this check failed. The property
+# never changed; the string it happened to be spelled with did.
 if ! grep -q E2400 "$TMP/err"; then fail "precondition failed: nothing was blamed"
-elif grep -q "expected bool" "$TMP/err"; then pass "a separate mistake survives the promotion"
+elif grep -v E2400 "$TMP/err" | grep -q "non-numeric type bool"; then
+    pass "a separate mistake survives the promotion"
 else fail "the unrelated error was swallowed: $(cat "$TMP/err")"; fi
 
 echo "== S6: trailing expression values =="
