@@ -1487,9 +1487,21 @@ impl InferCtx {
                 let cond_ty = self.infer_expr(cond, scope, ret_ty);
                 self.constrain(cond_ty, Type::Bool, "while condition");
                 scope.push();
+                // Track the span per statement, exactly as `Expr::Block` does.
+                // Without this every type error inside a loop body carried the
+                // LOOP's span, so the diagnostic named the `for`/`while` line
+                // instead of the failing line. Two consequences, both measured:
+                // the reader is sent to a line that is already correct, and
+                // `collapse_refined_type_errors` — which keys on the span —
+                // could not pair the bare E0102 with the hint-bearing checker
+                // diagnostic for the same failure, so both were reported with
+                // the useless one first.
+                let outer_span = self.current_stmt_span;
                 for stmt in body {
+                    self.current_stmt_span = stmt.span;
                     self.infer_expr(&stmt.expr, scope, ret_ty);
                 }
+                self.current_stmt_span = outer_span;
                 scope.pop();
                 Type::Unit
             }
@@ -1505,9 +1517,21 @@ impl InferCtx {
                 let expr_ty = self.infer_expr(expr, scope, ret_ty);
                 scope.push();
                 self.bind_pattern_with_subj(pattern, scope, Some(&expr_ty));
+                // Track the span per statement, exactly as `Expr::Block` does.
+                // Without this every type error inside a loop body carried the
+                // LOOP's span, so the diagnostic named the `for`/`while` line
+                // instead of the failing line. Two consequences, both measured:
+                // the reader is sent to a line that is already correct, and
+                // `collapse_refined_type_errors` — which keys on the span —
+                // could not pair the bare E0102 with the hint-bearing checker
+                // diagnostic for the same failure, so both were reported with
+                // the useless one first.
+                let outer_span = self.current_stmt_span;
                 for stmt in body {
+                    self.current_stmt_span = stmt.span;
                     self.infer_expr(&stmt.expr, scope, ret_ty);
                 }
+                self.current_stmt_span = outer_span;
                 scope.pop();
                 Type::Unit
             }
@@ -1526,9 +1550,21 @@ impl InferCtx {
                 self.constrain(end_ty, Type::I64, "for range end");
                 scope.push();
                 scope.bind(var.clone(), Type::I64);
+                // Track the span per statement, exactly as `Expr::Block` does.
+                // Without this every type error inside a loop body carried the
+                // LOOP's span, so the diagnostic named the `for`/`while` line
+                // instead of the failing line. Two consequences, both measured:
+                // the reader is sent to a line that is already correct, and
+                // `collapse_refined_type_errors` — which keys on the span —
+                // could not pair the bare E0102 with the hint-bearing checker
+                // diagnostic for the same failure, so both were reported with
+                // the useless one first.
+                let outer_span = self.current_stmt_span;
                 for stmt in body {
+                    self.current_stmt_span = stmt.span;
                     self.infer_expr(&stmt.expr, scope, ret_ty);
                 }
+                self.current_stmt_span = outer_span;
                 scope.pop();
                 Type::Unit
             }
