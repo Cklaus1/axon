@@ -26473,3 +26473,71 @@ fn trace_replay_says_unverifiable_for_a_record_with_no_digest() {
         "an unverifiable replay must say it is unverifiable: {se}"
     );
 }
+
+#[test]
+fn goal_continuation_does_not_resume_from_another_programs_search() {
+    // `AXON_GOAL_CONTINUE` (set automatically by `axon goal --iterate` for runs
+    // 2..N) resumes a hill-climb from the best prior input in the provenance
+    // log. That log is ONE accumulating file shared by every program on the
+    // machine, and the lookup joined on the `@[adaptive]` fn NAME alone —
+    // `score`, which most of `examples/asi/` uses. So an unrelated program's
+    // optimum became this program's start position.
+    let tag = format!("axon_goalcont_{}", std::process::id());
+    let dir = std::env::temp_dir().join(&tag);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A: optimum at 900. B: optimum at 5, with a flat plateau above 500 that
+    // traps a hill-climb started from A's answer.
+    let a = dir.join("a.ax");
+    let b = dir.join("b.ax");
+    std::fs::write(
+        &a,
+        "@[adaptive]\nfn score(n: i64) -> i64 { 1000 - abs_i64(n - 900) }\n\
+         fn main() { let b = goal_run(\"score\", 1000.0, 40) println(\"{to_str(b)}\") }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &b,
+        "@[adaptive]\nfn score(n: i64) -> i64 { if n > 500 { 400 } else { 1000 - abs_i64(n - 5) } }\n\
+         fn main() { let b = goal_run(\"score\", 1000.0, 40) println(\"{to_str(b)}\") }\n",
+    )
+    .unwrap();
+
+    let run = |cache: &std::path::Path, file: &std::path::Path, cont: bool| -> String {
+        let mut c = axon();
+        c.args(["run", file.to_str().unwrap()])
+            .env("XDG_CACHE_HOME", cache);
+        if cont {
+            c.env("AXON_GOAL_CONTINUE", "1");
+        }
+        let o = c.output().unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+
+    let clean = dir.join("clean");
+    let shared = dir.join("shared");
+    std::fs::create_dir_all(&clean).unwrap();
+    std::fs::create_dir_all(&shared).unwrap();
+
+    let control = run(&clean, &b, true);
+    let _ = run(&shared, &a, false);
+    let after = run(&shared, &b, true);
+    // Continuation must still WORK for the same source: a second run of B on
+    // its own log resumes from B's own best rather than restarting at 0.
+    let repeat = run(&shared, &b, true);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        control, "1000",
+        "precondition: B alone must find its optimum"
+    );
+    assert_eq!(
+        after, control,
+        "an unrelated program with a same-named `@[adaptive]` fn must not move \
+         this program's search: got {after}, alone it gets {control}"
+    );
+    assert_eq!(
+        repeat, "1000",
+        "continuation must still resume within one source, not be disabled"
+    );
+}

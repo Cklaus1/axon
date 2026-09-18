@@ -292,10 +292,27 @@ pub(super) fn read_best_input(fn_name: &str, target: f64) -> Option<i64> {
     let path = provenance_log_path()?;
     let content = std::fs::read_to_string(&path).ok()?;
     let needle = format!("\"fn\":{}", json_quote(fn_name));
+    // The join key is (fn, src), NOT fn alone. The provenance log is a single
+    // accumulating file shared by every program on the machine, and `score` is
+    // the most common `@[adaptive]` fn name there is (most of `examples/asi/`
+    // uses it). Matching on the name alone resumes one program's hill-climb
+    // from a DIFFERENT program's optimum for a different objective — measured:
+    // a program returning 1000 on a clean log returned 400 after an unrelated
+    // file with a same-named `score` ran first, because the foreign start
+    // position sat on a plateau. `trace` already groups by (func, src) for
+    // exactly this reason; the continuation reader did not.
+    let here = provenance_source();
+    let src_needle = format!("\"src\":{}", json_quote(here));
     let mut best_input: Option<i64> = None;
     let mut best_dist = f64::INFINITY;
     for line in content.lines() {
         if !line.contains(&needle) {
+            continue;
+        }
+        // A record that cannot be attributed to THIS source is skipped rather
+        // than assumed to be ours — including records written before `src`
+        // existed. Resuming from an unattributable position is the defect.
+        if here.is_empty() || !line.contains(&src_needle) {
             continue;
         }
         let (Some(input), Some(score)) = (
@@ -322,10 +339,20 @@ pub(super) fn read_best_input(fn_name: &str, target: f64) -> Option<i64> {
 pub fn best_recorded_score(since_ts_ms: u64) -> Option<f64> {
     let path = provenance_log_path()?;
     let content = std::fs::read_to_string(&path).ok()?;
+    // Scope by SOURCE as well as time. `--iterate` can run for minutes, and the
+    // provenance log is shared machine-wide: a concurrent unrelated program's
+    // higher score would be read as this search improving, then as it
+    // converging when that program stopped. Same (fn, src) join the
+    // continuation reader needs — see `read_best_input`.
+    let here = provenance_source();
+    let src_needle = format!("\"src\":{}", json_quote(here));
     let mut best: Option<f64> = None;
     for line in content.lines() {
         let ts = extract_json_num(line, "\"ts_ms\":").unwrap_or(0.0);
         if (ts as u64) < since_ts_ms {
+            continue;
+        }
+        if here.is_empty() || !line.contains(&src_needle) {
             continue;
         }
         if let Some(s) = extract_json_num(line, "\"score\":") {
