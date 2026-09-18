@@ -24387,3 +24387,119 @@ fn a_function_whose_body_ends_in_return_type_checks() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `xs.len()` is the shape every other language the reader knows uses, and
+/// Axon's builtins are free functions. The generic E0403 hint answered it with
+///
+///   define it with `impl SomeTrait for str { fn len(self: str) … }`
+///
+/// — telling the reader to implement a function the language already ships,
+/// for six of the most common method names there are.
+#[test]
+fn a_builtin_called_as_a_method_is_pointed_at_the_free_function() {
+    let dir = std::env::temp_dir().join(format!("axon_methodhint_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let help_for = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .find(|l| l.contains("\"code\":\"E0403\""))
+            .unwrap_or("")
+            .to_string()
+    };
+
+    for (name, src, want) in [
+        (
+            "arrlen",
+            "fn main() {\n  let xs = [1,2]\n  println(to_str(xs.len()))\n}\n",
+            "len(xs)",
+        ),
+        (
+            "strlen",
+            "fn main() {\n  let s = \"ab\"\n  println(to_str(s.len()))\n}\n",
+            "str_len(s)",
+        ),
+        (
+            "trim",
+            "fn main() {\n  let s = \" a \"\n  println(s.trim())\n}\n",
+            "str_trim(s)",
+        ),
+        (
+            "push",
+            "fn main() {\n  let xs = [1,2]\n  let ys = xs.push(3)\n}\n",
+            "arr_push(xs, …)",
+        ),
+        (
+            "split",
+            "fn main() {\n  let s = \"a,b\"\n  let p = s.split(\",\")\n}\n",
+            "str_split(s, …)",
+        ),
+        // Not an exact name — reached through the single-unambiguous-match pass.
+        (
+            "upper",
+            "fn main() {\n  let s = \"a\"\n  println(s.upper())\n}\n",
+            "str_to_upper(s)",
+        ),
+    ] {
+        let line = help_for(name, src);
+        assert!(
+            line.contains(want),
+            "`{name}` must be pointed at `{want}`: {line}"
+        );
+        assert!(
+            !line.contains("impl SomeTrait"),
+            "`{name}` must not be told to implement a builtin that exists: {line}"
+        );
+    }
+
+    // A method with no builtin behind it keeps the generic advice — the hint
+    // must not invent a function name. Without this, a suggester that returned
+    // something for everything would pass every assertion above.
+    let line = help_for(
+        "nosuch",
+        "fn main() {\n  let n = 1\n  println(to_str(n.foo()))\n}\n",
+    );
+    assert!(
+        line.contains("impl SomeTrait"),
+        "an unknown method keeps the generic advice: {line}"
+    );
+
+    // Option/Result have their own tailored advice and must not be overridden.
+    let line = help_for(
+        "opt",
+        "fn f() -> Option<i64> { Some(1) }\nfn main() { println(to_str(f().unwrap())) }\n",
+    );
+    assert!(line.contains("match on it instead"), "{line}");
+
+    // Every suggestion above must COMPILE — the standard this codebase adopted
+    // after a hint shipped naming a return type the builtin did not have.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let xs = [1, 2]\n  let s = \" a,b \"\n\
+         \x20 println(to_str(len(xs)))\n  println(to_str(str_len(s)))\n\
+         \x20 println(str_trim(s))\n  let ys = arr_push(xs, 3)\n\
+         \x20 println(to_str(len(ys)))\n  let p = str_split(s, \",\")\n\
+         \x20 println(to_str(len(p)))\n  println(str_to_upper(s))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert!(
+        o.status.success(),
+        "the recommended repairs must compile and run: {}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

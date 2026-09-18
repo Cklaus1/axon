@@ -3251,6 +3251,23 @@ impl CheckCtx {
                                 format!("`Result` has no method `{method}` — Axon has no null/unwrap; Result is destructured by matching"),
                                 "match on it instead: `match res { Ok(v) => …  Err(e) => … }`".to_string(),
                             )
+                        } else if let Some(free) = free_fn_for_method(key, method) {
+                            // `xs.len()`, `s.trim()`, `xs.push(3)` — method-call
+                            // syntax over a builtin. Universal across Rust, Python
+                            // and JS, and the generic advice below told the reader
+                            // to WRITE AN IMPL for a function that already exists.
+                            let recv = match receiver.as_ref() {
+                                Expr::Ident(n) => n.clone(),
+                                _ => "x".to_string(),
+                            };
+                            let rest = if args.is_empty() { "" } else { ", …" };
+                            (
+                                format!(
+                                    "no method `{method}` on type `{}` — Axon builtins are free functions, not methods",
+                                    recv_ty.display()
+                                ),
+                                format!("write `{free}({recv}{rest})` instead of `{recv}.{method}(…)`"),
+                            )
                         } else {
                             (
                                 format!("no method `{method}` on type `{}`", recv_ty.display()),
@@ -5973,6 +5990,52 @@ fn const_eval_int(e: &Expr) -> Option<i64> {
         }
         _ => None,
     }
+}
+
+/// The free builtin a method-style call was probably reaching for.
+///
+/// `xs.len()` / `s.trim()` / `xs.push(3)` is the shape every other language the
+/// reader knows uses, and Axon's builtins are free functions. The generic
+/// fallback hint answered it with "define it with `impl SomeTrait for str …`" —
+/// telling the reader to implement a function the language already ships.
+///
+/// Exact names first (`str_trim` for `s.trim()`, then a bare `len`). The
+/// containment pass exists for `s.upper()` → `str_to_upper`, and fires ONLY when
+/// exactly one builtin in the receiver's namespace matches: more than one and we
+/// cannot tell which, and a hint is advice someone will act on. Everything it can
+/// return is a real entry in `BUILTINS`, so the suggestion cannot name a function
+/// that does not exist.
+fn free_fn_for_method(key: &str, method: &str) -> Option<&'static str> {
+    let exists = |n: &str| {
+        crate::builtins::BUILTINS
+            .iter()
+            .find(|b| b.name == n)
+            .map(|b| b.name)
+    };
+    let prefix = match key {
+        "str" => Some("str_"),
+        "[]" => Some("arr_"),
+        _ => None,
+    };
+    if let Some(p) = prefix {
+        if let Some(n) = exists(&format!("{p}{method}")) {
+            return Some(n);
+        }
+    }
+    if let Some(n) = exists(method) {
+        return Some(n);
+    }
+    if let Some(p) = prefix {
+        let mut hits = crate::builtins::BUILTINS
+            .iter()
+            .filter(|b| b.name.starts_with(p) && b.name.contains(method));
+        if let Some(b) = hits.next() {
+            if hits.next().is_none() {
+                return Some(b.name);
+            }
+        }
+    }
+    None
 }
 
 fn method_lookup_key(ty: &Type) -> Option<&'static str> {
