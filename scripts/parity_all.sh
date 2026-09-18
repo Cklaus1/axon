@@ -73,7 +73,19 @@ for h in scripts/*_parity.sh; do
     # On failure, always show the harness output — that's the divergence.
     echo "$out" | sed 's/^/        | /'
   elif echo "$last_line" | grep -qiE "skip|unavailable"; then
-    printf "  SKIP  %-30s (toolchain absent)\n" "$name"
+    # Print the harness's OWN reason, not a guess.
+    #
+    # This said "(toolchain absent)" for every skip. Two harnesses are OPT-IN
+    # rather than unavailable — `browser_compute_parity` skips unless
+    # `BROWSER_PARITY=1` and says so on that very line — and labelling that
+    # "toolchain absent" tells the reader the environment cannot do it. On this
+    # host it can: `BROWSER_PARITY=1` builds the oracle and runs
+    # wasm-bindgen-test in headless Chrome. A reader, or a CI author, who
+    # believed the label would leave real verification switched off.
+    #
+    # Trimmed to the part after the harness name, so the column stays readable.
+    reason="$(echo "$last_line" | sed "s/^$name: *//" | cut -c1-58)"
+    printf "  SKIP  %-30s (%s)\n" "$name" "${reason:-reason not stated}"
     skip=$((skip+1))
   else
     printf "  PASS  %-30s\n" "$name"
