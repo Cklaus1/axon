@@ -232,6 +232,28 @@ fn the_character_literal_advice_actually_compiles() {
             "enum + match instead of runtime type introspection",
             "type Shape = Num { v: i64 } | Text { v: str }\nfn main() -> i64 {\n    let x = Shape::Num { v: 7 }\n    match x { Shape::Num { v } => println(to_str(v))  Shape::Text { v } => println(v) }\n    0\n}\n",
         ),
+        // The five hints added for the remaining hint-free parse failures. Each
+        // recommends a construct by name, so each construct must exist.
+        (
+            "interpolation instead of an f-string",
+            "fn main() -> i64 {\n    let n = 1\n    println(\"n={to_str(n)}\")\n    0\n}\n",
+        ),
+        (
+            "assignment written out instead of `+=`",
+            "fn main() -> i64 {\n    let s = \"a\"\n    s = s + \"b\"\n    println(s)\n    0\n}\n",
+        ),
+        (
+            "range for and while, instead of a three-clause for",
+            "fn main() -> i64 {\n    for i in 0..2 { println(to_str(i)) }\n    let j = 0\n    while j < 2 { j = j + 1 }\n    0\n}\n",
+        ),
+        (
+            "dict_from_pairs instead of a dict literal",
+            "fn main() -> i64 {\n    let d = dict_from_pairs([(\"a\", 1), (\"b\", 2)])\n    println(to_str(dict_get_or(d, \"a\", 0)))\n    0\n}\n",
+        ),
+        (
+            "dict_new/dict_set and matching dict_get",
+            "fn main() -> i64 {\n    let e = dict_new()\n    dict_set(e, \"a\", 1)\n    match dict_get(e, \"a\") { Some(v) => println(to_str(v))  None => println(\"no\") }\n    0\n}\n",
+        ),
         // The `:=` hint tells the reader to declare with `let` and then to
         // reassign with a bare name — two statements, and the second is the half
         // a reader coming from Go is least sure of.

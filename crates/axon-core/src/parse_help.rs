@@ -179,6 +179,18 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
         );
     }
 
+    // `f"n={n}"` — a Python f-string. Axon interpolates in ORDINARY string
+    // literals, so the `f` prefix is read as an identifier and the string that
+    // follows it is unexpected.
+    if msg.contains("unexpected token: Str(") && line.contains("f\"") {
+        return Some(
+            "Axon has no `f\"…\"` prefix — every string literal interpolates. \
+             Write `\"n={to_str(n)}\"`; the braces take an EXPRESSION, and a \
+             non-`str` value needs `to_str(…)` inside them"
+                .to_string(),
+        );
+    }
+
     if msg.contains("unexpected character '''") {
         return Some(
             "Axon has no character literals — `'a'` is not valid, and string \
@@ -220,6 +232,69 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
                  logical operators `&&`, `||` and `!`"
             ));
         }
+    }
+
+    // `s += "b"` / `i -= 1` — compound assignment.
+    //
+    // Axon has no compound-assignment operators, so the `=` lands where an
+    // expression was expected. Measured on a model-plausible corpus as one of
+    // five parse-tier failures that carried no `help` at all.
+    if msg.contains("unexpected token: Eq") && msg.contains("expected expression") {
+        for op in ["+=", "-=", "*=", "/=", "%="] {
+            if let Some((lhs, rhs)) = line.split_once(op) {
+                let name = lhs.trim();
+                let bare = op.trim_end_matches('=');
+                if !name.is_empty() && !name.contains(' ') {
+                    return Some(format!(
+                        "Axon has no `{op}` — write the assignment out: \
+                         `{name} = {name} {bare} {}`",
+                        rhs.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    // `i++` — increment. `i--` is NOT handled here: it parses as a subtraction
+    // and fails later as a type error, a different tier this table never sees.
+    // The hint names both so the reader learns the rule, not the one case.
+    if msg.contains("unexpected token: Plus") && line.contains("++") {
+        let name = line.split("++").next().unwrap_or("i").trim();
+        let name = if name.is_empty() || name.contains(' ') {
+            "i"
+        } else {
+            name
+        };
+        return Some(format!(
+            "Axon has no `++` or `--` — write `{name} = {name} + 1` (bindings are \
+             reassignable, so no marker is needed)"
+        ));
+    }
+
+    // `for (i = 0; i < n; i = i + 1)` — the C/Java/JS three-clause loop.
+    if msg.contains("expected identifier") && w.first() == Some(&"for") && line.contains(';') {
+        return Some(
+            "Axon has no three-clause `for` — iterate a range with \
+             `for i in 0..n { … }`, or write the counter loop with `while`: \
+             `let i = 0` then `while i < n { … i = i + 1 }`"
+                .to_string(),
+        );
+    }
+
+    // `let d = {"a": 1}` — a dict LITERAL. Checked after the `:=` rules above,
+    // which share this parser message and are distinguished by the `:=` itself.
+    if msg.contains("unexpected token: Colon")
+        && msg.contains("expected expression")
+        && line.contains("{\"")
+    {
+        return Some(
+            "Axon has no dict literal — build one from pairs with \
+             `dict_from_pairs([(\"a\", 1), (\"b\", 2)])`, or start empty and fill \
+             it: `let d = dict_new()` then `dict_set(d, \"a\", 1)`. Reading back \
+             gives an `Option`, so use `dict_get_or(d, \"a\", 0)` or match on \
+             `dict_get(d, \"a\")`"
+                .to_string(),
+        );
     }
 
     // `c := 0` — Go's short variable declaration, WITHOUT a `let`.
@@ -295,6 +370,67 @@ mod tests {
         .expect("mut must produce help — it is the measured dominant failure");
         assert!(h.contains("`mut` is not an Axon keyword"), "{h}");
         assert!(h.contains("let count = "), "echoes the real name: {h}");
+    }
+
+    #[test]
+    fn the_five_remaining_hint_free_parse_failures_are_named() {
+        // Measured on a corpus of model-plausible wrong programs: five of the
+        // ten first-errors carried no `help` at all, and all five were these.
+        // Each is a construct the reader knows from another language and Axon
+        // simply does not have, so naming it converts a dead end into one edit.
+        for (label, msg, src, want) in [
+            (
+                "f-string",
+                "unexpected token: Str(\"n={n}\"), expected RParen",
+                "fn main() {\n    println(f\"n={n}\")\n}\n",
+                "every string literal interpolates",
+            ),
+            (
+                "compound assign",
+                "unexpected token: Eq, expected expression",
+                "fn main() {\n    s += \"b\"\n}\n",
+                "s = s + \"b\"",
+            ),
+            (
+                "increment",
+                "unexpected token: Plus, expected expression",
+                "fn main() {\n    i++\n}\n",
+                "i = i + 1",
+            ),
+            (
+                "three-clause for",
+                "unexpected token: LParen, expected identifier",
+                "fn main() {\n    for (i = 0; i < 2; i = i + 1) { }\n}\n",
+                "for i in 0..n",
+            ),
+            (
+                "dict literal",
+                "unexpected token: Colon, expected expression",
+                "fn main() {\n    let d = {\"a\": 1}\n}\n",
+                "dict_from_pairs",
+            ),
+        ] {
+            let offset = src.find('\n').map(|i| i + 5).unwrap_or(0);
+            let h = parse_help(msg, src, offset)
+                .unwrap_or_else(|| panic!("`{label}` must produce help"));
+            assert!(h.contains(want), "`{label}`: {h}");
+        }
+    }
+
+    #[test]
+    fn a_colon_in_a_dict_literal_does_not_collide_with_the_walrus_rules() {
+        // Both share the parser's `unexpected token: Colon, expected expression`,
+        // so the ORDER of the two rules is load-bearing: the `:=` rules run
+        // first and are keyed on the `:=` itself.
+        let walrus = "fn main() {\n    c := 0\n}\n";
+        let h = parse_help(
+            "unexpected token: Colon, expected expression",
+            walrus,
+            walrus.find(":=").unwrap(),
+        )
+        .expect("walrus still handled");
+        assert!(h.contains("no `:=`"), "{h}");
+        assert!(!h.contains("dict"), "a walrus is not a dict literal: {h}");
     }
 
     #[test]
