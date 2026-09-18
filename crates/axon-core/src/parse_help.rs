@@ -297,6 +297,37 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
         );
     }
 
+    // `s[1:3]` / `s[::-1]` — Python slice syntax.
+    //
+    // Both die inside the brackets, on different tokens: a single `:` arrives
+    // where the parser wanted `]`, and `::` where it wanted an expression.
+    // Keyed on the bracket so an ordinary type annotation cannot match.
+    if (msg.contains("unexpected token: Colon, expected RBracket")
+        || (msg.contains("unexpected token: ColonColon") && line.contains('[')))
+        && line.contains('[')
+    {
+        let reversing = line.contains("::-1") || line.contains(":: -1");
+        return Some(if reversing {
+            "Axon has no slice syntax — `[::-1]` does not reverse. Use \
+             `str_reverse(s)` for a string or `arr_reverse(xs)` for an array"
+                .to_string()
+        } else {
+            "Axon has no `[a:b]` slice syntax — take a range with \
+             `str_slice(s, start, end)` for a string, or index one element with \
+             `xs[i]` for an array"
+                .to_string()
+        });
+    }
+
+    // `if cond: body` / `while cond: body` — a Python colon block.
+    if msg.contains("unexpected token: Colon, expected LBrace") {
+        let kw = w.first().copied().unwrap_or("if");
+        return Some(format!(
+            "Axon blocks are braces, not a colon — write `{kw} … {{ … }}`. The \
+             body is an expression, so the block's last line is its value"
+        ));
+    }
+
     // `c := 0` — Go's short variable declaration, WITHOUT a `let`.
     //
     // The `let c := 0` spelling is handled above, but that arm keys on the
@@ -431,6 +462,52 @@ mod tests {
         .expect("walrus still handled");
         assert!(h.contains("no `:=`"), "{h}");
         assert!(!h.contains("dict"), "a walrus is not a dict literal: {h}");
+    }
+
+    #[test]
+    fn python_slice_syntax_is_named() {
+        // `s[1:3]` and `s[::-1]` die inside the brackets on DIFFERENT tokens —
+        // a lone `:` where `]` was wanted, and `::` where an expression was.
+        let src = "fn main() {\n    println(s[1:3])\n}\n";
+        let h = parse_help(
+            "unexpected token: Colon, expected RBracket",
+            src,
+            src.find(':').unwrap(),
+        )
+        .expect("a slice must produce help");
+        assert!(h.contains("str_slice(s, start, end)"), "{h}");
+
+        let src = "fn main() {\n    println(s[::-1])\n}\n";
+        let h = parse_help(
+            "unexpected token: ColonColon, expected expression",
+            src,
+            src.find("::").unwrap(),
+        )
+        .expect("a reversing slice must produce help");
+        assert!(
+            h.contains("str_reverse(s)") && h.contains("arr_reverse(xs)"),
+            "reversal is a different repair from slicing: {h}"
+        );
+    }
+
+    #[test]
+    fn a_python_colon_block_is_named_with_the_keyword_the_author_used() {
+        for (kw, src) in [
+            ("if", "fn main() {\n    if i > 0: println(\"y\")\n}\n"),
+            ("while", "fn main() {\n    while i > 0: println(\"y\")\n}\n"),
+        ] {
+            let h = parse_help(
+                "unexpected token: Colon, expected LBrace",
+                src,
+                src.find(':').unwrap(),
+            )
+            .unwrap_or_else(|| panic!("`{kw}` colon block must produce help"));
+            assert!(h.contains("braces"), "{h}");
+            assert!(
+                h.contains(&format!("`{kw} … {{ … }}`")),
+                "the hint must echo the keyword the author wrote: {h}"
+            );
+        }
     }
 
     #[test]
