@@ -26541,3 +26541,68 @@ fn goal_continuation_does_not_resume_from_another_programs_search() {
         "continuation must still resume within one source, not be disabled"
     );
 }
+
+#[test]
+fn contained_net_allowlist_is_not_bypassed_by_a_query_or_fragment() {
+    // The `@[contained]` net allowlist matches the host as a SUFFIX glob, and
+    // the host was extracted by splitting the URL on `/` alone — so the query
+    // string and the fragment stayed inside it. Appending the allowed domain to
+    // either one satisfied the allowlist while a real client dials the host
+    // before the `?`. This is the capability sandbox's whole job.
+    let dir = std::env::temp_dir().join(format!("axon_nethost_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let refused = |url: &str| -> bool {
+        std::fs::write(
+            &f,
+            format!(
+                "@[contained(net: [\"*.trusted.io\"], fs: [], exec: none)]\n\
+                 fn reach() -> str {{ let _r = http_get(\"{url}\", \"\") \"done\" }}\n\
+                 fn main() {{ println(reach()) }}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(
+            !all.contains("E0305") && !all.contains("E0306"),
+            "probe must be well-formed, or it proves nothing: {all}"
+        );
+        all.contains("E1001")
+    };
+
+    assert!(
+        refused("http://evil.com"),
+        "precondition: a disallowed host must be refused at all"
+    );
+    assert!(
+        refused("http://evil.com?x=.trusted.io"),
+        "a query string must not smuggle the allowed domain into the host"
+    );
+    assert!(
+        refused("http://evil.com#.trusted.io"),
+        "a fragment must not smuggle the allowed domain into the host"
+    );
+    assert!(
+        refused("http://a.trusted.io@evil.com"),
+        "userinfo is not the host — this request goes to evil.com"
+    );
+    // ...and the allowlist must still ALLOW what it grants.
+    assert!(
+        !refused("https://a.trusted.io/p"),
+        "a genuinely allowed host must still pass"
+    );
+    assert!(
+        !refused("https://a.trusted.io:8443/p"),
+        "a port must not break an allowed host"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

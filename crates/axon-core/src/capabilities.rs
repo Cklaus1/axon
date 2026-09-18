@@ -1246,12 +1246,31 @@ fn native_net_host(name: &str, args: &[Expr]) -> Option<String> {
 /// (`http://host:port/path` → `host`).
 pub(crate) fn host_of(s: &str) -> String {
     let after_scheme = s.split_once("://").map(|(_, rest)| rest).unwrap_or(s);
-    let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
-    host_port
-        .rsplit_once(':')
-        .map(|(h, _)| h)
-        .unwrap_or(host_port)
-        .to_string()
+    // RFC 3986: the authority ends at the FIRST of `/`, `?` or `#`. Splitting
+    // on `/` alone left the query and fragment inside the "host", and the
+    // allowlist check is a suffix match — so `http://evil.com?x=.trusted.io`
+    // and `http://evil.com#.trusted.io` both satisfied `net: ["*.trusted.io"]`
+    // while a real client sends the request to evil.com. Measured: both passed
+    // `axon check` where the bare `http://evil.com` is E1001-refused.
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    // Userinfo (`user:pass@host`) is not the host. Take everything after the
+    // LAST `@` — `http://a.trusted.io@evil.com` is a request to evil.com.
+    let host_port = match authority.rsplit_once('@') {
+        Some((_, h)) => h,
+        None => authority,
+    };
+    // Strip a port, but only a real one: an IPv6 literal (`[::1]`) is full of
+    // colons, and chopping at the last one would mangle the host rather than
+    // de-port it.
+    match host_port.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => {
+            h.to_string()
+        }
+        _ => host_port.to_string(),
+    }
 }
 
 /// Validate a single I/O call against the spec.
@@ -2364,5 +2383,62 @@ mod tests {
                 "`{n}` is in BOTH tables — it cannot be dispatching and not"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod host_of_tests {
+    use super::{host_matches_glob, host_of};
+
+    /// RFC 3986: the authority ends at the first `/`, `?` or `#`. `host_of`
+    /// split on `/` only, so the query and fragment stayed inside the "host" —
+    /// and since the allowlist check is a SUFFIX match, an attacker appended
+    /// the allowed domain to either one and reached anywhere. Both of these
+    /// passed `axon check` under `net: ["*.trusted.io"]` while the bare
+    /// `http://evil.com` was E1001-refused.
+    #[test]
+    fn query_and_fragment_are_not_part_of_the_host() {
+        assert_eq!(host_of("http://evil.com?x=.trusted.io"), "evil.com");
+        assert_eq!(host_of("http://evil.com#.trusted.io"), "evil.com");
+        assert!(!host_matches_glob(
+            &host_of("http://evil.com?x=.trusted.io"),
+            "*.trusted.io"
+        ));
+        assert!(!host_matches_glob(
+            &host_of("http://evil.com#.trusted.io"),
+            "*.trusted.io"
+        ));
+    }
+
+    /// Userinfo is not the host: `a.trusted.io@evil.com` is a request to
+    /// evil.com, and the allowlist must be checked against what the client
+    /// will actually dial.
+    #[test]
+    fn userinfo_is_not_the_host() {
+        assert_eq!(host_of("http://a.trusted.io@evil.com"), "evil.com");
+        assert_eq!(host_of("http://user:pw@x.trusted.io"), "x.trusted.io");
+        assert!(!host_matches_glob(
+            &host_of("http://a.trusted.io@evil.com"),
+            "*.trusted.io"
+        ));
+    }
+
+    /// The ordinary shapes must keep working — a fix that refused every real
+    /// URL would "pass" this file's other tests while breaking the feature.
+    #[test]
+    fn ordinary_urls_still_resolve_to_their_host() {
+        assert_eq!(host_of("https://a.trusted.io/p"), "a.trusted.io");
+        assert_eq!(host_of("https://a.trusted.io:8443/p"), "a.trusted.io");
+        assert_eq!(host_of("a.trusted.io"), "a.trusted.io");
+        assert_eq!(host_of("api.example.com"), "api.example.com");
+    }
+
+    /// An IPv6 literal is full of colons; chopping at the last one mangles the
+    /// host instead of removing a port. Either way it must not become a host
+    /// that matches something it is not.
+    #[test]
+    fn ipv6_literal_is_not_mangled_into_a_different_host() {
+        assert_eq!(host_of("http://[::1]:80/"), "[::1]");
+        assert_eq!(host_of("http://[::1]/"), "[::1]");
     }
 }

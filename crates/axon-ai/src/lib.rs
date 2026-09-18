@@ -132,13 +132,20 @@ fn host_allowed(host: &str, allow: &[String]) -> bool {
 /// The host part of a base URL, lowercased and without port or credentials.
 fn host_of(base: &str) -> String {
     let after_scheme = base.split("://").nth(1).unwrap_or(base);
-    let authority = after_scheme.split('/').next().unwrap_or("");
+    // The authority ends at the first `/`, `?` OR `#` (RFC 3986). Splitting on
+    // `/` alone leaves the query and fragment inside the host, and `host_allowed`
+    // is a suffix match — so `AXON_AI_BASE_URL=http://evil.com?x=.trusted.io`
+    // satisfied a `net: ["*.trusted.io"]` pin, which is precisely the widening
+    // this check exists to refuse. Same defect as `capabilities::host_of`.
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
     let authority = authority.rsplit('@').next().unwrap_or(authority);
-    authority
-        .rsplit_once(':')
-        .map(|(h, _)| h)
-        .unwrap_or(authority)
-        .to_ascii_lowercase()
+    // Strip a port, but only a real one — an IPv6 literal (`[::1]`) is all
+    // colons and chopping at the last would yield a different host entirely.
+    match authority.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => authority,
+    }
+    .to_ascii_lowercase()
 }
 
 /// `endpoint_url`, refusing a host the program was never granted.
@@ -1845,5 +1852,63 @@ NOEQUALS\n\
         );
         std::env::remove_var("AXON_TEST_DOTENV_VAR");
         std::env::remove_var("AXON_TEST_DOTENV_NEW");
+    }
+}
+
+#[cfg(test)]
+mod host_of_url_tests {
+    use super::{host_allowed, host_of};
+
+    fn allow() -> Vec<String> {
+        vec!["*.trusted.io".to_string()]
+    }
+
+    /// `checked_endpoint_url` exists so an `AXON_AI_BASE_URL` / `.env` override
+    /// cannot widen a `@[contained(net: [...])]` grant. It compared the
+    /// allowlist against a "host" that still contained the query and fragment,
+    /// so appending the granted domain to either reached anywhere — the exact
+    /// widening being refused.
+    #[test]
+    fn query_and_fragment_cannot_widen_the_net_pin() {
+        assert_eq!(host_of("http://evil.com?x=.trusted.io"), "evil.com");
+        assert_eq!(host_of("http://evil.com#.trusted.io"), "evil.com");
+        assert!(!host_allowed(
+            &host_of("http://evil.com?x=.trusted.io"),
+            &allow()
+        ));
+        assert!(!host_allowed(
+            &host_of("http://evil.com#.trusted.io"),
+            &allow()
+        ));
+    }
+
+    #[test]
+    fn granted_hosts_still_resolve_and_are_allowed() {
+        assert_eq!(host_of("https://api.trusted.io/v1"), "api.trusted.io");
+        assert_eq!(host_of("https://API.Trusted.IO:8443/v1"), "api.trusted.io");
+        assert_eq!(host_of("https://user:pw@api.trusted.io"), "api.trusted.io");
+        assert!(host_allowed(
+            &host_of("https://api.trusted.io/v1"),
+            &allow()
+        ));
+        assert!(host_allowed(
+            &host_of("https://api.trusted.io:8443/v1"),
+            &allow()
+        ));
+    }
+
+    #[test]
+    fn userinfo_names_the_credentials_not_the_host() {
+        assert_eq!(host_of("http://api.trusted.io@evil.com"), "evil.com");
+        assert!(!host_allowed(
+            &host_of("http://api.trusted.io@evil.com"),
+            &allow()
+        ));
+    }
+
+    #[test]
+    fn ipv6_literal_is_not_chopped_at_an_inner_colon() {
+        assert_eq!(host_of("http://[::1]:8080/v1"), "[::1]");
+        assert_eq!(host_of("http://[::1]/v1"), "[::1]");
     }
 }
