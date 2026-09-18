@@ -27481,3 +27481,72 @@ fn a_field_on_a_non_struct_says_what_to_write_instead() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn comptime_is_a_no_op_in_the_interpreter_and_that_is_recorded() {
+    // CLAUDE.md's design principles list "Comptime — zero-cost compile-time
+    // execution", and execution is interpreter-first by default. On that path
+    // `comptime` does NOTHING: `eval` has `Expr::Comptime(inner) =>
+    // self.eval(inner, env)`, so the body is ordinary runtime code, re-run on
+    // every evaluation.
+    //
+    // Measured, not inferred: a `comptime` block inside a 3-iteration loop
+    // evaluates 3 times. So the feature's whole promise — pay the cost once, at
+    // compile time — is absent from the default engine, silently.
+    //
+    // Pinned rather than changed. Implementing comptime in the interpreter is a
+    // feature, and emitting a note at all 67 `comptime` sites in the repo is a
+    // noise decision for the maintainer. What this test buys is that the
+    // divergence is now RECORDED: whichever way it moves next, it moves
+    // deliberately.
+    let dir = std::env::temp_dir().join(format!("axon_comptime_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("c.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let mut i = 0\n  while i < 3 {\n    let v = comptime { println(\"EVAL\") \n7 }\n    println(\"{to_str(i)}:{to_str(v)}\")\n    i = i + 1\n  }\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(
+        out.matches("EVAL").count(),
+        3,
+        "the interpreter re-evaluates a comptime body every time: {out}"
+    );
+    assert!(out.contains("2:7"), "and the value is still correct: {out}");
+
+    // Native is the engine that actually has the feature: it folds a pure body
+    // at compile time, and REFUSES an impure one (E0701) rather than deferring
+    // it to run time the way the interpreter does.
+    let imp = dir.join("i.ax");
+    std::fs::write(
+        &imp,
+        "fn main() {\n  let v = comptime { println(\"SIDE\") \n1 }\n  println(to_str(v))\n}\n",
+    )
+    .unwrap();
+    let b = axon()
+        .args(["build", imp.to_str().unwrap(), "-o"])
+        .arg(dir.join("i"))
+        .output()
+        .unwrap();
+    let ball = format!(
+        "{}{}",
+        String::from_utf8_lossy(&b.stdout),
+        String::from_utf8_lossy(&b.stderr)
+    );
+    if !codegen_absent(&ball) {
+        assert!(
+            ball.contains("E0701") && ball.contains("comptime"),
+            "native must refuse a non-pure comptime body: {ball}"
+        );
+        // ...while the interpreter runs the very same program.
+        let r = axon().args(["run", imp.to_str().unwrap()]).output().unwrap();
+        assert!(
+            String::from_utf8_lossy(&r.stdout).contains("SIDE"),
+            "the interpreter accepts what native refuses — that is the divergence"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

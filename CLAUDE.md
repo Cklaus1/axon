@@ -7,7 +7,14 @@ AI-optimized, statically-typed systems language. Compiles to native via LLVM 17.
 - No null, no exceptions — `Option<T>` and `Result<T,E>` everywhere
 - Ownership without GC — simplified two-mode ownership (`own`/`ref`)
 - Structural typing — no `implements` keyword
-- Comptime — zero-cost compile-time execution
+- Comptime — zero-cost compile-time execution **under `axon build` only**. The
+  tree-walking interpreter treats `comptime { … }` as a transparent no-op
+  (`eval`: `Expr::Comptime(inner) => self.eval(inner, env)`), so on the DEFAULT
+  execution path the body is ordinary runtime code, re-evaluated every time —
+  measured: a `comptime` block in a 3-iteration loop evaluates 3 times. Native
+  codegen has the real evaluator and also enforces purity, refusing a non-pure
+  body with E0701 that `axon run` accepts. Pinned by
+  `comptime_is_a_no_op_in_the_interpreter_and_that_is_recorded`.
 - Multi-target — native, wasm, js (Phase 4+)
 - AI-first — `@[agent]`, `@[goal]`, `@[verify]`, `@[adaptive]` annotations built-in
 
