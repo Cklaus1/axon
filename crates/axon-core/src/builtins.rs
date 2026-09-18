@@ -189,7 +189,9 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "Chan::new",
         params: &[("capacity", "i64")],
         ret: "Chan<i64>",
-        doc: "Create a new bounded channel with the given capacity.",
+        doc: "Create a new channel. `capacity` is accepted but not enforced — the \
+              buffer grows (spec phase-3 §4), the same as the `chan<T>()` spelling. \
+              Interpreter-only.",
     },
     // ── Math (Phase 3) ───────────────────────────────────────────────────────
     BuiltinFn {

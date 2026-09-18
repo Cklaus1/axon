@@ -350,7 +350,22 @@ impl<'p> Interp<'p> {
             Expr::Call { callee, args, tier } => {
                 // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
                 if let Expr::StructLit { name, .. } = callee.as_ref() {
-                    if name.starts_with("chan::<") {
+                    // `chan<T>()` lowers to `chan::<T>`; `Chan::new(n)` is the
+                    // other spelling of the same thing and is an entry in
+                    // BUILTINS, so `axon reference` advertises it.
+                    //
+                    // Only the first was handled here, so `Chan::new(4)` passed
+                    // the checker (it is a known builtin with a signature) and
+                    // then panicked "value of type Chan is not callable" — the
+                    // callee evaluated to a Chan and the evaluator tried to call
+                    // it. A documented builtin that type-checks and dies at
+                    // runtime is worse than one that does not exist.
+                    //
+                    // The capacity argument is accepted and not used, because
+                    // this channel grows (spec §4: "growable ring buffer"), the
+                    // same as `chan<T>()`. Its BUILTINS doc said "bounded
+                    // channel with the given capacity" and now says what it does.
+                    if name.starts_with("chan::<") || name == "Chan::new" {
                         return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
                     }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the

@@ -273,7 +273,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 
 | Signature | Purpose |
 |---|---|
-| `Chan::new(capacity: i64) -> Chan<i64>` | Create a new bounded channel with the given capacity. |
+| `Chan::new(capacity: i64) -> Chan<i64>` | Create a new channel. `capacity` is accepted but not enforced — the buffer grows (spec phase-3 §4), the same as the `chan<T>()` spelling. Interpreter-only. |
 | `E(dist: Any) -> f64` | Phase 13 Slice 2: E[dist] — expected value (mean) of a distribution in a refinement predicate. |
 | `P(event: bool) -> f64` | Phase 13 Slice 2: P(dist op k) — tail probability of a distribution in a refinement predicate. |
 | `Var(dist: Any) -> f64` | Phase 13 Slice 2: Var[dist] — variance of a distribution in a refinement predicate. |
