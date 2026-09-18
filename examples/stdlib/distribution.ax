@@ -143,6 +143,32 @@ fn dist_sample_categorical(c: Categorical) -> i64 {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+// The constructors validate by `assert(false)`, and none of those guards had a
+// test: a mutation sweep flipped every `if sigma <= 0.0` / `alpha <= 0.0` /
+// `len(probs) == 0` / `!ok` to `false` and all five mutants survived. A
+// constructor that accepts a negative sigma produces a distribution whose CDF
+// and sampler are meaningless, silently.
+
+@[test(should_fail)]
+fn test_gaussian_rejects_zero_sigma() { let _g = gaussian_new(0.0, 0.0) }
+
+@[test(should_fail)]
+fn test_gaussian_rejects_negative_sigma() { let _g = gaussian_new(1.0, -2.0) }
+
+@[test(should_fail)]
+fn test_beta_rejects_nonpositive_alpha() { let _b = beta_new(0.0, 1.0) }
+
+@[test(should_fail)]
+fn test_beta_rejects_nonpositive_beta() { let _b = beta_new(1.0, -1.0) }
+
+@[test(should_fail)]
+fn test_categorical_rejects_empty_probs() { let _c = categorical_new([]) }
+
+@[test(should_fail)]
+fn test_categorical_rejects_probs_that_do_not_sum_to_one() {
+    let _c = categorical_new([0.2, 0.2])
+}
+
 @[test]
 fn test_gaussian_mean_and_std() {
     let g = gaussian_new(3.5, 1.2)

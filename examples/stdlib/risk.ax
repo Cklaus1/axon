@@ -328,6 +328,108 @@ fn test_pipeline_halts_at_first_failure() {
     assert_eq(r.stage_reached, 2)
 }
 
+// The LAST TWO gates before a deploy were the only ones with no failure test.
+// A mutation sweep over this file flipped `if !verify_result.passed` and
+// `if !deploy_result.passed` to `false` — "never fail on verify", "never fail
+// on deploy" — on BOTH the high-risk chain and the low/medium short path, and
+// all four mutants survived the suite. So a change that stopped honouring
+// either gate would have shipped green, on the one function whose whole job is
+// to stop a deploy.
+
+@[test]
+fn test_summary_does_not_report_a_halt_as_a_deploy() {
+    // `pipeline_summary` is the only thing a human reads. Both of its branches
+    // survived mutation — it could have reported "deployed" for a halted
+    // pipeline and nothing would have failed, which is the reporting-layer
+    // version of the bug this whole function exists to prevent.
+    let halted = pipeline_run(
+        risk_high(),
+        gate_fail("sim diverges"),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(!str_contains(pipeline_summary(halted), "deployed"))
+    assert(str_contains(pipeline_summary(halted), "HALTED"))
+    assert(str_contains(pipeline_summary(halted), "simulate"))
+
+    let ok = pipeline_run(
+        risk_low(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(str_contains(pipeline_summary(ok), "deployed"))
+    assert(!str_contains(pipeline_summary(ok), "HALTED"))
+}
+
+@[test]
+fn test_pipeline_halts_at_verify() {
+    // High risk: everything upstream passes, verify fails.
+    let r = pipeline_run(
+        risk_high(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_fail("postcondition unproven"),
+        gate_pass()
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "verify")
+    assert_eq(r.stage_reached, 4)
+}
+
+@[test]
+fn test_pipeline_halts_at_deploy() {
+    // High risk: every gate passes and the deploy step itself fails. Reaching
+    // the last gate must still be able to stop the deploy.
+    let r = pipeline_run(
+        risk_critical(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_fail("target cluster unreachable")
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "deploy")
+    assert_eq(r.stage_reached, 5)
+}
+
+@[test]
+fn test_low_risk_path_still_gates_on_verify() {
+    // The short path skips simulate/stress/redteam — it must NOT also skip
+    // verify. `test_pipeline_low_risk_skips_sim_stages` passes verify, so it
+    // could not tell a working gate from an absent one.
+    let r = pipeline_run(
+        risk_low(),
+        gate_fail("skipped anyway"),
+        gate_fail("skipped anyway"),
+        gate_fail("skipped anyway"),
+        gate_fail("refinement obligation failed"),
+        gate_pass()
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "verify")
+}
+
+@[test]
+fn test_low_risk_path_still_gates_on_deploy() {
+    let r = pipeline_run(
+        risk_medium(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_fail("deploy rejected by operator")
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "deploy")
+}
+
 @[test]
 fn test_pipeline_full_pass_deploys() {
     let r = pipeline_run(

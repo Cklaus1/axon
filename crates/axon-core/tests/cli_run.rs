@@ -8307,7 +8307,12 @@ fn supervisor_stdlib_module_tests_pass() {
     // watches one agent's action stream, debits budget on approved actions,
     // strikes on unsafe/unaffordable ones, and LATCHES a kill-switch at
     // max_strikes (a halted supervisor refuses everything, even safe actions).
-    // 5 @[test]s. (Backfilled gate — the module shipped ungated.)
+    // 6 @[test]s. (Backfilled gate — the module shipped ungated.)
+    //
+    // The parenthesised claim above was, until 2026-09-18, exactly the property
+    // NOT tested: a mutation sweep deleted `observe`'s `if s.halted` branch and
+    // every test still passed. The gate described the contract while leaving it
+    // unpinned. `test_halted_supervisor_refuses_everything` now covers it.
     let out = axon()
         .args(["test", &ex("stdlib/supervisor.ax")])
         .output()
@@ -8318,7 +8323,7 @@ fn supervisor_stdlib_module_tests_pass() {
         out
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
 }
 
 #[test]

@@ -45,6 +45,28 @@ fn observe(s: Supervisor, a: Action) -> Supervisor {
 }
 
 @[test]
+fn test_halted_supervisor_refuses_everything() {
+    // `observe`'s own doc says "A halted supervisor refuses everything (state
+    // unchanged)" — the kill-switch property — and nothing tested it. A
+    // mutation sweep removed the `if s.halted` branch and the suite stayed
+    // green, so a supervisor that kept acting after latching would have shipped.
+    let bad = Action { name: "unsafe", cost: 1, safe: false }
+    let latched = observe(observe(new_supervisor(500, 2), bad), bad)
+    assert(latched.halted)
+
+    // A perfectly safe, affordable action must change NOTHING once halted.
+    let after = observe(latched, Action { name: "read", cost: 100, safe: true })
+    assert(after.halted)
+    assert_eq(after.budget, latched.budget)
+    assert_eq(after.strikes, latched.strikes)
+
+    // ...and the latch is one-way: further actions cannot clear it.
+    let after2 = observe(after, Action { name: "read", cost: 1, safe: true })
+    assert(after2.halted)
+    assert_eq(after2.budget, latched.budget)
+}
+
+@[test]
 fn test_safe_stream_debits_budget() {
     let s = observe(
         observe(new_supervisor(500, 2), Action { name: "read", cost: 100, safe: true }),

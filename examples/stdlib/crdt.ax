@@ -190,6 +190,38 @@ fn vc_eq(a: VectorClock, b: VectorClock) -> bool {
 
 // ── GCounter tests ────────────────────────────────────────────────────────────
 
+// `lww_merge`'s "a is newer" branch survived mutation: every existing test
+// happened to reach the answer through the `b` branch or the tie-break, so
+// dropping the first comparison changed nothing. Last-writer-wins that ignores
+// which writer is last is the whole type being wrong.
+
+@[test]
+fn test_lww_merge_keeps_the_newer_write_in_both_argument_orders() {
+    // The newer write carries the SMALLER value on purpose. With a larger
+    // value, dropping the `a.ts > b.ts` comparison still lands on the right
+    // answer via the value tie-break — an equivalent mutant, and a test that
+    // cannot tell a working comparison from a missing one.
+    let older = LWWRegister { val: 99, ts: 1 }
+    let newer = LWWRegister { val: 20, ts: 5 }
+    assert_eq(lww_read(lww_merge(newer, older)), 20)
+    assert_eq(lww_read(lww_merge(older, newer)), 20)
+    // Commutative, which is the CRDT obligation.
+    assert_eq(
+        lww_read(lww_merge(newer, older)),
+        lww_read(lww_merge(older, newer))
+    )
+}
+
+@[test]
+fn test_lww_merge_tie_breaks_deterministically_on_value() {
+    // Equal timestamps must resolve the same way on every replica, or two
+    // replicas converge to different states and the register is not a CRDT.
+    let a = LWWRegister { val: 7, ts: 3 }
+    let b = LWWRegister { val: 9, ts: 3 }
+    assert_eq(lww_read(lww_merge(a, b)), 9)
+    assert_eq(lww_read(lww_merge(b, a)), 9)
+}
+
 @[test]
 fn test_gcounter_increment_and_value() {
     let g = gcounter_new(3)
