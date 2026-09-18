@@ -25615,3 +25615,101 @@ fn a_constant_index_proved_out_of_range_is_a_compile_error() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `sum(xs)` and `max(xs)` are ordinary in Python and JS, absent from Axon's
+/// global namespace, and present in the build under an `arr_` prefix. The
+/// undefined-name default answered them with "introduce `sum` with
+/// `let sum = …`" — true, and useless: it tells the author to write a function
+/// the build already ships, three characters away.
+#[test]
+fn a_foreign_collection_name_is_pointed_at_the_builtin_that_exists() {
+    let dir = std::env::temp_dir().join(format!("axon_foreignname_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let hint = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .find(|l| l.contains("\"code\":\"E0001\""))
+            .unwrap_or("")
+            .to_string()
+    };
+
+    let h = hint(
+        "sum",
+        "fn main() {\n  let xs = [1,2]\n  println(to_str(sum(xs)))\n}\n",
+    );
+    assert!(h.contains("arr_sum_by"), "{h}");
+    let h = hint(
+        "filter",
+        "fn main() {\n  let xs = [1,2]\n  let ys = filter(xs, |x| x > 1)\n}\n",
+    );
+    assert!(h.contains("arr_filter"), "{h}");
+
+    // `max` exists in BOTH families, and the resolver has the name without the
+    // arity, so it cannot tell `max(3, 7)` from `max(xs)`. It names both rather
+    // than guessing — an earlier version named only `arr_max_by` and sent
+    // someone adding two numbers to a collection helper.
+    for (name, src) in [
+        ("scalar", "fn main() {\n  println(to_str(max(3, 7)))\n}\n"),
+        (
+            "collection",
+            "fn main() {\n  let xs = [1,2]\n  println(to_str(max(xs)))\n}\n",
+        ),
+    ] {
+        let h = hint(name, src);
+        assert!(
+            h.contains("max_i64") && h.contains("arr_max_by"),
+            "`{name}` must name both spellings, not guess one: {h}"
+        );
+    }
+
+    // Ambiguity WITHIN a family says nothing: `reverse` is both `arr_reverse`
+    // and `str_reverse`, and guessing the collection type is a wrong hint.
+    let h = hint(
+        "rev",
+        "fn main() {\n  let xs = [1,2]\n  let ys = reverse(xs)\n}\n",
+    );
+    assert!(
+        !h.contains("arr_reverse") && !h.contains("str_reverse"),
+        "an ambiguous name must not be guessed: {h}"
+    );
+
+    // A name with no builtin behind it keeps the generic advice, and a real
+    // typo still gets the spelling suggestion — the new rule must not displace
+    // the one that was already right.
+    let h = hint("unknown", "fn main() {\n  println(to_str(zzz(1)))\n}\n");
+    assert!(h.contains("introduce `zzz`"), "{h}");
+    let h = hint(
+        "typo",
+        "fn calculate(x: i64) -> i64 { x }\nfn main() { println(to_str(calculat)) }\n",
+    );
+    assert!(h.contains("did you mean `calculate`"), "{h}");
+
+    // Every builtin the hints name must exist and be usable as described.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let xs = [3,9,2]\n  println(to_str(arr_sum_by(&xs, |x| x)))\n  \
+         println(to_str(arr_max_by(&xs, |x| x)))\n  println(to_str(max_i64(3, 7)))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let got = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(
+        got.contains("14") && got.contains('9') && got.contains('7'),
+        "the named builtins must work as described: {got}{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

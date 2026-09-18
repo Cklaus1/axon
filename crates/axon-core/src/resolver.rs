@@ -64,6 +64,69 @@ pub struct Diagnostic {
     pub span: crate::span::Span,
 }
 
+/// The builtin a foreign collection/string name is reaching for.
+///
+/// `sum`, `max`, `filter`, `join` and friends are ordinary in Python and JS and
+/// absent from Axon's global namespace, where the same operations live under an
+/// `arr_` / `str_` prefix. The undefined-name default — "introduce `sum` with
+/// `let sum = …`" — is true and useless in exactly that case: it tells the
+/// author to write the function when the build already ships it.
+///
+/// EXACT constructions only, never a fuzzy match, and every candidate is checked
+/// against `BUILTINS`, so the suggestion cannot name something that does not
+/// exist. Ambiguity (`reverse` is both `arr_reverse` and `str_reverse`) yields
+/// `None` rather than a guess about which collection the author meant.
+fn builtin_for_foreign_name(name: &str) -> Option<ForeignName> {
+    if name.contains('_') {
+        // Already prefixed, or a compound the author chose; not this rule's job.
+        return None;
+    }
+    let exists = |n: &str| {
+        crate::builtins::BUILTINS
+            .iter()
+            .find(|b| b.name == n)
+            .map(|b| b.name)
+    };
+    let mut coll: Vec<&'static str> = Vec::new();
+    for cand in [
+        format!("arr_{name}"),
+        format!("str_{name}"),
+        format!("arr_{name}_by"),
+    ] {
+        if let Some(n) = exists(&cand) {
+            coll.push(n);
+        }
+    }
+    // The SCALAR family, which is why this cannot just name the collection one.
+    // `max` is `max_i64(a, b)` for two numbers and `arr_max_by(xs, …)` for a
+    // list, and the resolver cannot tell which the author meant — it has the
+    // name and not the arity. Naming only `arr_max_by` sent someone writing
+    // `max(3, 7)` to a collection helper, which is the "wrong advice is worse
+    // than none" failure this file already has scars from.
+    let scalar = exists(&format!("{name}_i64"));
+    match (coll.as_slice(), scalar) {
+        ([one], None) => Some(ForeignName::One(one)),
+        ([one], Some(sc)) => Some(ForeignName::Both {
+            scalar: sc,
+            collection: one,
+        }),
+        ([], Some(sc)) => Some(ForeignName::One(sc)),
+        // Ambiguous within a family (`reverse` is both `arr_reverse` and
+        // `str_reverse`): say nothing rather than guess the collection type.
+        _ => None,
+    }
+}
+
+/// What `builtin_for_foreign_name` found: one spelling, or a scalar/collection
+/// pair the caller must choose between.
+enum ForeignName {
+    One(&'static str),
+    Both {
+        scalar: &'static str,
+        collection: &'static str,
+    },
+}
+
 impl Diagnostic {
     fn new(code: &'static str, message: impl Into<String>, severity: Severity) -> Self {
         Self {
@@ -1257,6 +1320,23 @@ impl<'a> Resolver<'a> {
                                  name is part of the one you wrote — did you mean to call \
                                  `{s}`?"
                             )
+                        });
+                    } else if let Some(found) = builtin_for_foreign_name(name) {
+                        // The name exists in this language under a prefix. A
+                        // model writing `sum(xs)` or `max(xs)` — both ordinary
+                        // in Python and JS — was told to "introduce `sum` with
+                        // `let sum = …`", which is true and useless: the
+                        // function it wants is `arr_sum_by`, three characters
+                        // away and already in the build.
+                        d = d.with_fix(match found {
+                            ForeignName::One(b) => format!(
+                                "Axon spells this `{b}` — collection and string helpers are \
+                                 prefixed `arr_` / `str_`. See `axon reference` for its signature"
+                            ),
+                            ForeignName::Both { scalar, collection } => format!(
+                                "Axon splits this by what you are working on: `{scalar}(a, b)` \
+                                 for two numbers, `{collection}(xs, …)` for a collection"
+                            ),
                         });
                     } else {
                         d = d.with_fix(format!(
