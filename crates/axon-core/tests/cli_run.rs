@@ -24304,3 +24304,86 @@ fn a_spelling_suggestion_is_offered_for_typos_and_withheld_for_inventions() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `return` worked everywhere except the position every other language uses it.
+///
+///     fn g() -> i64 { return 7 }
+///     E0102 type mismatch in function body (expected i64), found ()
+///
+/// `Expr::Return` infers as `Type::Unit`, with the note "Return is diverging;
+/// block type isn't used after it" — but `infer_fn` used it, constraining the
+/// block's `()` against the declared type. A `return` MID-function was fine,
+/// because there the block's value comes from a later expression; only the tail
+/// collided. The message never said the word `return`, so a reader was told
+/// their body produced `()` by a statement that plainly produces 7.
+///
+/// `return` is the most universal habit a model brings from any other language.
+#[test]
+fn a_function_whose_body_ends_in_return_type_checks() {
+    let dir = std::env::temp_dir().join(format!("axon_tailret_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, src: &str| -> (i32, String) {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let mut all = String::from_utf8_lossy(&o.stdout).to_string();
+        all.push_str(&String::from_utf8_lossy(&o.stderr));
+        (o.status.code().unwrap_or(-1), all)
+    };
+
+    for (name, src, want) in [
+        (
+            "tail",
+            "fn g() -> i64 {\n  return 7\n}\nfn main() { println(to_str(g())) }\n",
+            "7",
+        ),
+        (
+            "blocktail",
+            "fn g() -> i64 {\n  let x = 3\n  return x * 2\n}\nfn main() { println(to_str(g())) }\n",
+            "6",
+        ),
+        (
+            "unitfn",
+            "fn h() {\n  println(\"a\")\n  return\n}\nfn main() { h() }\n",
+            "a",
+        ),
+    ] {
+        let (code, out) = run(name, src);
+        assert_eq!(code, 0, "`{name}` must type-check and run: {out}");
+        assert!(out.contains(want), "`{name}` must print {want}: {out}");
+    }
+
+    // Mid-function `return` already worked and must keep working, including the
+    // fall-through path — skipping the body constraint must not skip execution.
+    let (code, out) = run(
+        "early",
+        "fn f(x: i64) -> i64 {\n  if x > 0 { return 1 }\n  2\n}\n\
+         fn main() {\n  println(to_str(f(5)))\n  println(to_str(f(-5)))\n}\n",
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains('1') && out.contains('2'), "both paths: {out}");
+
+    // The checks that must SURVIVE. Skipping the implicit-return constraint is
+    // not skipping type checking — the `Expr::Return` arm constrains the
+    // returned value itself — and without these a blanket skip would pass.
+    for (name, src) in [
+        (
+            "wrongty",
+            "fn f() -> i64 {\n  return \"s\"\n}\nfn main() { println(to_str(f())) }\n",
+        ),
+        (
+            "novalue",
+            "fn f(c: bool) -> i64 {\n  if c { return 1 }\n}\nfn main() { println(to_str(f(true))) }\n",
+        ),
+        (
+            "emptybody",
+            "fn f() -> i64 {\n}\nfn main() { println(to_str(f())) }\n",
+        ),
+    ] {
+        let (code, out) = run(name, src);
+        assert_eq!(code, 2, "`{name}` must still be rejected: {out}");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

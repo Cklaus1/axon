@@ -88,6 +88,22 @@ pub struct InferError {
     pub span: crate::span::Span,
 }
 
+/// Whether a function body never falls through to a value, because its tail
+/// diverts control flow.
+///
+/// Conservative and syntactic, matching `checker::is_terminator`: a bare
+/// `return` in tail position, or a block whose last statement is one. An `if`
+/// whose every branch returns is NOT counted — that needs branch analysis, and
+/// counting it wrongly would SUPPRESS a real "missing return value" error.
+fn body_diverges(e: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    match e {
+        Expr::Return(_) => true,
+        Expr::Block(stmts) => stmts.last().is_some_and(|s| body_diverges(&s.expr)),
+        _ => false,
+    }
+}
+
 impl InferError {
     fn new(code: &'static str, msg: impl Into<String>) -> Self {
         InferError {
@@ -1794,7 +1810,27 @@ impl InferCtx {
         let body_ty = self.infer_expr(&f.body, &mut scope, &ret_ty);
         // Constrain body type to declared return type (explicit return statements
         // also constrain individually; this handles implicit returns).
-        self.constrain(body_ty, ret_ty, "function body");
+        //
+        // UNLESS the body diverges. `Expr::Return` yields `Type::Unit` with the
+        // note "Return is diverging; block type isn't used after it" — but it IS
+        // used, right here, so a body whose tail is a `return` typed as `()` and
+        // collided with the declared type:
+        //
+        //     fn g() -> i64 { return 7 }
+        //     E0102 type mismatch in function body (expected i64), found ()
+        //
+        // `return` mid-function already worked; only the tail position failed,
+        // which is the position every other language uses it in. The diagnostic
+        // never said the word `return`, so a reader was told their body produced
+        // `()` by a statement that plainly produces 7.
+        //
+        // Skipping the constraint is not skipping the check: the `Expr::Return`
+        // arm constrains the returned value against `ret_ty` itself, so
+        // `fn f() -> i64 { return "s" }` is still an error — by the arm that can
+        // name the actual mismatch.
+        if !body_diverges(&f.body) {
+            self.constrain(body_ty, ret_ty, "function body");
+        }
     }
 
     // ── Constraint solving ────────────────────────────────────────────────────
