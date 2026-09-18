@@ -1242,3 +1242,77 @@ pub fn collapse_refined_type_errors(diags: &mut Vec<PipelineDiagnostic>) {
     }
     diags.retain(|d| d.code != "E0102" || !refined.contains(&(d.file.clone(), d.line, d.col)));
 }
+
+#[cfg(test)]
+mod collapse_tests {
+    use super::{collapse_refined_type_errors, PipelineDiagnostic};
+
+    fn diag(code: &str, line: u32, col: u32, help: Option<&str>) -> PipelineDiagnostic {
+        PipelineDiagnostic {
+            code: code.to_string(),
+            message: format!("{code} message"),
+            file: "t.ax".to_string(),
+            line,
+            col,
+            severity: "error".to_string(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: help.map(|h| h.to_string()),
+        }
+    }
+
+    /// The guard that makes the collapse safe, tested where it lives.
+    ///
+    /// `line == 0` is the serializer's "no location" sentinel, not line zero.
+    /// Two UNLOCATED diagnostics describing separate failures therefore share a
+    /// key, and suppressing on it would drop a real error nothing else accounts
+    /// for — the one failure mode a diagnostic filter must not have.
+    ///
+    /// This lived only in a CLI fixture that happened to produce two unlocated
+    /// errors. When those two sites gained spans the fixture stopped exercising
+    /// the guard, and would have gone on passing while testing nothing.
+    #[test]
+    fn an_unlocated_partner_never_suppresses() {
+        let mut ds = vec![
+            diag("E0306", 0, 0, Some("a hint")),
+            diag("E0102", 0, 0, None),
+        ];
+        collapse_refined_type_errors(&mut ds);
+        assert_eq!(
+            ds.len(),
+            2,
+            "no location cannot prove it accounts for anything"
+        );
+    }
+
+    #[test]
+    fn a_located_hint_bearing_partner_suppresses_at_the_same_span() {
+        let mut ds = vec![
+            diag("E0306", 7, 3, Some("a hint")),
+            diag("E0102", 7, 3, None),
+        ];
+        collapse_refined_type_errors(&mut ds);
+        assert_eq!(ds.len(), 1, "one failure, one diagnostic");
+        assert_eq!(ds[0].code, "E0306", "the survivor must carry the hint");
+    }
+
+    #[test]
+    fn a_different_span_does_not_suppress() {
+        let mut ds = vec![
+            diag("E0306", 4, 3, Some("a hint")),
+            diag("E0102", 5, 3, None),
+        ];
+        collapse_refined_type_errors(&mut ds);
+        assert_eq!(ds.len(), 2, "different lines are different failures");
+    }
+
+    /// Only a HINT-BEARING partner suppresses, so an E0102 that is the sole
+    /// account of a failure always survives.
+    #[test]
+    fn a_hintless_partner_never_suppresses() {
+        let mut ds = vec![diag("E0306", 7, 3, None), diag("E0102", 7, 3, None)];
+        collapse_refined_type_errors(&mut ds);
+        assert_eq!(ds.len(), 2, "a partner with no hint accounts for nothing");
+    }
+}

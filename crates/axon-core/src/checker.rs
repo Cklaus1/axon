@@ -2189,6 +2189,7 @@ impl CheckCtx {
                         ),
                     )
                     .at(&file, 0, 0)
+                    .with_span(self.current_span)
                     .fix(format!(
                         "remove `{callee}` from the predicate; a refinement must depend only on \
                          the value `_` and pure computation"
@@ -3246,7 +3247,7 @@ impl CheckCtx {
                                             ),
                                         )
                                         .node(&apath)
-                                        .at(&file, 0, 0)
+                                        .at(&file, 0, 0).with_span(self.current_span)
                                         .fix(format!(
                                             "strip the sensitive fields before the call (e.g. build a redacted \
                                              projection of `{sname}`), or move the call behind a local-only boundary"
@@ -3274,6 +3275,7 @@ impl CheckCtx {
                                 )
                                 .node(node_path)
                                 .at(&file, 0, 0)
+                                .with_span(self.current_span)
                                 .fix(format!(
                                     "'{name}' is a local variable of type {}, not a function",
                                     ty.display()
@@ -3443,7 +3445,7 @@ impl CheckCtx {
                                                 ),
                                             )
                                             .node(&apath)
-                                            .at(&file, 0, 0)
+                                            .at(&file, 0, 0).with_span(self.current_span)
                                             .fix(format!(
                                                 "strip the sensitive fields before the call (e.g. build a redacted \
                                                  projection of `{sname}`), or move the call behind a local-only boundary"
@@ -3588,6 +3590,7 @@ impl CheckCtx {
                         )
                         .node(node_path)
                         .at(&file, 0, 0)
+                        .with_span(self.current_span)
                         .fix(
                             "guard the divisor (`if d != 0 { … }`) or use a non-zero constant"
                                 .to_string(),
@@ -3767,6 +3770,7 @@ impl CheckCtx {
                         )
                         .node(node_path)
                         .at(&file, 0, 0)
+                        .with_span(self.current_span)
                         .fix("indexing `a[i]` is only valid on an array/slice `[T]`"),
                     );
                 }
@@ -3946,7 +3950,7 @@ impl CheckCtx {
                                     format!("field `{fname}` is set more than once in this `{name}` literal"),
                                 )
                                 .node(node_path)
-                                .at(&file, 0, 0)
+                                .at(&file, 0, 0).with_span(self.current_span)
                                 .fix(format!("remove the duplicate `{fname}:` entry")),
                             );
                         }
@@ -4003,6 +4007,7 @@ impl CheckCtx {
                                 )
                                 .node(node_path)
                                 .at(&file, 0, 0)
+                                .with_span(self.current_span)
                                 .fix(format!("`{enum_name}` variants: {}", variants.join(", "))),
                             );
                         }
@@ -4223,6 +4228,7 @@ impl CheckCtx {
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
+                .with_span(self.current_span)
                 .fix(
                     "pass the handle to the native function that consumes or borrows it; \
                      do not do arithmetic on it"
@@ -4256,7 +4262,8 @@ impl CheckCtx {
                     ),
                 )
                 .node(node_path)
-                .at(&file, 0, 0),
+                .at(&file, 0, 0)
+                .with_span(self.current_span),
             );
             return;
         }
@@ -4282,6 +4289,7 @@ impl CheckCtx {
                     )
                     .node(&apath)
                     .at(&file, 0, 0)
+                    .with_span(self.current_span)
                     .found(arg_ty.display())
                     .fix(
                         "pass only scalars, str, a [scalar] slice, or a native Handle \
@@ -4317,6 +4325,7 @@ impl CheckCtx {
                             )
                             .node(&apath)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             .expected(exp_lbl)
                             .found(got_lbl),
                         );
@@ -4340,6 +4349,7 @@ impl CheckCtx {
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
+                .with_span(self.current_span)
                 .expected("numeric type (i64, f64, i32, …)")
                 .found(ty.display()),
             );
@@ -4841,6 +4851,7 @@ impl CheckCtx {
                             )
                             .node(&arg_path)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             .fix(format!("add `impl {trait_name} for {type_name} {{ ... }}`")),
                         );
                     }
@@ -4933,7 +4944,7 @@ impl CheckCtx {
                                 ),
                             )
                             .node(node_path)
-                            .at(&file, 0, 0)
+                            .at(&file, 0, 0).with_span(self.current_span)
                             .expected(subj.to_string())
                             .found(lit_kind.to_string())
                             .fix(format!("use a `{subj}` literal pattern, or match on a `{lit_kind}` value")),
@@ -4962,6 +4973,7 @@ impl CheckCtx {
                         CheckError::new(E0304, "non-exhaustive match — missing Some(_) arm")
                             .node(node_path)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             .fix("add arm: Some(v) => { /* handle value */ }"),
                     );
                 }
@@ -4970,6 +4982,7 @@ impl CheckCtx {
                         CheckError::new(E0304, "non-exhaustive match — missing None arm")
                             .node(node_path)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             .fix("add arm: None => { /* handle missing */ }"),
                     );
                 }
@@ -4982,6 +4995,7 @@ impl CheckCtx {
                         CheckError::new(E0304, "non-exhaustive match — missing Ok(_) arm")
                             .node(node_path)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             .fix("add arm: Ok(v) => { /* handle success */ }"),
                     );
                 }
@@ -4990,6 +5004,7 @@ impl CheckCtx {
                         CheckError::new(E0304, "non-exhaustive match — missing Err(_) arm")
                             .node(node_path)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             .fix("add arm: Err(e) => { /* handle error */ }"),
                     );
                 }
@@ -5030,6 +5045,7 @@ impl CheckCtx {
                                 )
                                 .node(node_path)
                                 .at(&file, 0, 0)
+                                .with_span(self.current_span)
                                 .fix(format!(
                                     "add arm: {enum_name}::{variant} {{ .. }} => {{ /* handle */ }}"
                                 )),
@@ -5314,6 +5330,7 @@ impl CheckCtx {
                     let mut e = CheckError::new(E0308, format!("unknown type '{name}'"))
                         .node(node_path)
                         .at(&file, 0, 0)
+                        .with_span(self.current_span)
                         .fix(fix);
                     // Same arrangement as the E0403 site above: `.at(file, 0, 0)`
                     // is the serializer's "no location" sentinel, and
@@ -5388,6 +5405,7 @@ impl CheckCtx {
                         CheckError::new(E0401, format!("Uncertain<T> has no field '{field}'"))
                             .node(node_path)
                             .at(&file, 0, 0)
+                            .with_span(self.current_span)
                             // No `.found(field)`: the driver appends ", found {found}"
                             // and the field name isn't a type — it would render the
                             // nonsensical "has no field 'x', found x" (cf. 2bcee30).
@@ -5409,7 +5427,7 @@ impl CheckCtx {
                             format!("Temporal<T> has no field '{field}'"),
                         )
                         .node(node_path)
-                        .at(&file, 0, 0)
+                        .at(&file, 0, 0).with_span(self.current_span)
                         // No `.found(field)` — see the Uncertain<T> note above.
                         .fix("Temporal<T> fields: value, confidence, horizon_ms, decay, valid_until_ms"),
                     );
@@ -5431,7 +5449,8 @@ impl CheckCtx {
                             format!("tuple index {i} out of bounds (length {})", elems.len()),
                         )
                         .node(node_path)
-                        .at(&file, 0, 0),
+                        .at(&file, 0, 0)
+                        .with_span(self.current_span),
                         // No `.found(field)`: the index is already in the message;
                         // the driver's ", found {found}" suffix would echo it as a
                         // bogus "type" (cf. 2bcee30).
@@ -5446,7 +5465,8 @@ impl CheckCtx {
                             format!("tuple field must be a numeric index, got '{field}'"),
                         )
                         .node(node_path)
-                        .at(&file, 0, 0),
+                        .at(&file, 0, 0)
+                        .with_span(self.current_span),
                         // No `.found(field)` — see the tuple-OOB note above.
                     );
                     return;
@@ -5469,6 +5489,7 @@ impl CheckCtx {
                                 )
                                 .node(node_path)
                                 .at(&file, 0, 0)
+                                .with_span(self.current_span)
                                 // No `.found(field)`: the driver appends ", found
                                 // {found}" to the message, which for a field-
                                 // existence error reads as the nonsensical
@@ -5492,7 +5513,8 @@ impl CheckCtx {
                                 ),
                             )
                             .node(node_path)
-                            .at(&file, 0, 0),
+                            .at(&file, 0, 0)
+                            .with_span(self.current_span),
                         );
                     }
                 }
@@ -5505,7 +5527,8 @@ impl CheckCtx {
                 self.errors.push(
                     CheckError::new(E0401, format!("{} has no field '{field}'", other.display()))
                         .node(node_path)
-                        .at(&file, 0, 0),
+                        .at(&file, 0, 0)
+                        .with_span(self.current_span),
                     // No `.found(field)`: the field name is already named in the
                     // message, and it's not a type — the driver's ", found
                     // {found}" suffix would render "i64 has no field 'foo', found

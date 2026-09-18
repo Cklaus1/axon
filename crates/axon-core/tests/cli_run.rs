@@ -6440,15 +6440,22 @@ fn an_unpaired_e0102_is_never_collapsed_away() {
 }
 
 #[test]
-fn an_unlocated_error_never_suppresses_an_unlocated_e0102() {
-    // Several checker sites emit `.at(&file, 0, 0)` with no span attached, and
-    // the serializer OMITS `line`/`col` when they are 0 — that zero is a "no
-    // location" sentinel, not line zero. So an unlocated E0306 and an unlocated
-    // E0102 describing two SEPARATE failures share one key.
+fn two_separate_failures_are_reported_separately_each_at_its_own_line() {
+    // This test was `an_unlocated_error_never_suppresses_an_unlocated_e0102`,
+    // and it guarded a real hazard: `.at(&file, 0, 0)` is the serializer's "no
+    // location" sentinel, so an unlocated E0306 and an unlocated E0102 for two
+    // SEPARATE failures shared one collapse key, and suppressing on that key
+    // would drop a real error nothing else accounted for.
     //
-    // Collapsing on that key would drop a real error that nothing else accounts
-    // for. This fixture holds both at once: a function passed by name (E0306,
-    // unlocated) and a non-numeric arithmetic operand (E0102, unlocated).
+    // The hazard is now structurally gone for these two sites: both attach
+    // `current_span`, so the failures land on their own lines (4 and 5) and
+    // cannot collide. The `line > 0` guard that made the old behaviour safe is
+    // still in `collapse_refined_type_errors` and is now tested directly, as a
+    // unit test on the function, rather than through a fixture that stops
+    // exercising it the moment a site gains a span — which is what happened here.
+    //
+    // What this fixture asserts now is the stronger property: two failures, two
+    // diagnostics, each pointing at the line it is actually on.
     let f = std::env::temp_dir().join(format!("axon_nolocpair_{}.ax", std::process::id()));
     std::fs::write(
         &f,
@@ -6470,17 +6477,25 @@ fn an_unlocated_error_never_suppresses_an_unlocated_e0102() {
         .filter(|l| l.contains("\"severity\":\"error\""))
         .collect();
     assert!(
-        errors.iter().any(|l| l.contains("\"code\":\"E0306\"")),
-        "the by-name function argument must still be reported: {msg}"
+        errors
+            .iter()
+            .any(|l| l.contains("\"code\":\"E0306\"") && l.contains("\"line\":4")),
+        "the by-name function argument must be reported, on ITS line: {msg}"
     );
-    // The point of the test. Both are unlocated; neither accounts for the other.
     assert!(
         errors
             .iter()
-            .any(|l| l.contains("\"code\":\"E0102\"") && !l.contains("\"line\":")),
-        "the unlocated E0102 is a separate failure and must survive the \
-         same-span collapse: {msg}"
+            .any(|l| l.contains("\"code\":\"E0102\"") && l.contains("\"line\":5")),
+        "the arithmetic mismatch is a separate failure, on ITS line: {msg}"
     );
+    // Neither may be unlocated any more — an error with no location is the
+    // condition that made these two collide in the first place.
+    for e in &errors {
+        assert!(
+            e.contains("\"line\":"),
+            "every error must carry a location: {e}"
+        );
+    }
 }
 
 #[test]
@@ -25042,6 +25057,90 @@ fn comparing_char_at_with_a_string_explains_the_byte_value() {
     assert!(
         !ok.contains("\"severity\":\"error\""),
         "the correct form must stay clean: {ok}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 30% of the errors a reader saw carried NO source location at all.
+///
+/// Measured across two corpora of model-plausible wrong programs: 8 of 27
+/// errors had no line. `.at(&file, 0, 0)` is the serializer's "no location"
+/// sentinel, and 28 `CheckError` sites used it without attaching the
+/// `current_span` that `check_stmt` maintains for exactly this purpose.
+///
+/// An unlocated error is close to useless on its own — but it also disabled
+/// `collapse_refined_type_errors`, which deliberately refuses to suppress using
+/// an unlocated partner ("an unknown location cannot prove it accounts for
+/// anything"). So the hint-bearing diagnostic could not displace the hint-free
+/// E0102 beside it, and the reader got both with the useless one first.
+#[test]
+fn checker_diagnostics_carry_a_source_location() {
+    let dir = std::env::temp_dir().join(format!("axon_diagloc_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // In EVERY fixture the mistake is on line 4 — so this asserts the location
+    // is RIGHT, not merely present. A blanket span would fail these.
+    let cases = [
+        ("field", "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  println(to_str(p.zzz))\n}\n"),
+        ("field_in_loop", "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  for i in 0..2 { println(to_str(p.zzz)) }\n}\n"),
+        ("index", "fn main() {\n  let t = (1, \"a\")\n  let a = 1\n  println(to_str(t[a]))\n}\n"),
+        ("variant", "type S = A { r: i64 } | B { s: i64 }\nfn main() {\n  let z = 1\n  let a = S::Zzz\n}\n"),
+        ("dupfield", "type P = { x: i64 }\nfn main() {\n  let z = 1\n  let p = P { x: 1, x: 2 }\n}\n"),
+        ("nonexhaustive", "type S = A { r: i64 } | B { s: i64 }\nfn main() {\n  let v = S::A { r: 1 }\n  match v { S::A { r } => println(\"a\") }\n}\n"),
+    ];
+    for (name, src) in cases {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let errors: Vec<&str> = msg
+            .lines()
+            .filter(|l| l.contains("\"severity\":\"error\""))
+            .collect();
+        assert!(!errors.is_empty(), "`{name}` must report something: {msg}");
+        for e in &errors {
+            assert!(
+                e.contains("\"line\":4"),
+                "`{name}` must locate the error on line 4, the line it is on: {e}"
+            );
+        }
+    }
+
+    // The pairing this unblocks: an Option used as a value produced the
+    // hint-bearing E0301 AND a bare E0102, because the E0301 was unlocated and
+    // so could not suppress. One mistake must now be one diagnostic, and the
+    // survivor must be the half that carries the repair.
+    let f = dir.join("opt.ax");
+    std::fs::write(
+        &f,
+        "fn f() -> Option<i64> { Some(5) }\nfn main() {\n  let o = f()\n  println(to_str(o + 1))\n}\n",
+    )
+    .unwrap();
+    let o = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let errors: Vec<&str> = msg
+        .lines()
+        .filter(|l| l.contains("\"severity\":\"error\""))
+        .collect();
+    assert_eq!(errors.len(), 1, "one mistake, one diagnostic: {msg}");
+    assert!(
+        errors[0].contains("E0301") && errors[0].contains("\"help\""),
+        "the survivor must be the one carrying the repair: {msg}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
