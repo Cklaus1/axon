@@ -27053,3 +27053,54 @@ fn w0007_has_no_false_positives_on_the_shipped_corpus() {
          {offenders:?}"
     );
 }
+
+#[test]
+fn a_misspelled_effect_ceiling_is_named_not_silently_ignored() {
+    // `AXON_ALLOWED_EFFECTS` splits on commas and keeps whatever it finds, so a
+    // misspelled entry is silently a grant of NOTHING. That fails closed, which
+    // is the right direction — but an operator who writes `IO,Exce` believes
+    // they granted `Exec`, and learns otherwise only if the program happens to
+    // spawn. If it never spawns, the mistake is invisible forever.
+    //
+    // Same absent-vs-passed collapse as elsewhere in this tree, in the config
+    // layer: a grant that was never valid, recorded as granted.
+    let dir = std::env::temp_dir().join(format!("axon_effceil_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    std::fs::write(&f, "fn main() { println(\"did IO\") }\n").unwrap();
+    let run = |ceiling: &str| -> (String, Option<i32>) {
+        let o = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_ALLOWED_EFFECTS", ceiling)
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&o.stderr).to_string(),
+            o.status.code(),
+        )
+    };
+
+    let (err, code) = run("IO,Exce");
+    assert!(
+        err.contains("`Exce`") && err.contains("is not an effect"),
+        "a misspelled ceiling entry must be named: {err}"
+    );
+    assert!(
+        err.contains("Exec"),
+        "the warning must list the valid names so the fix is visible: {err}"
+    );
+    assert_eq!(code, Some(0), "the warning must not change what runs");
+
+    // Every documented spelling stays quiet, including the `Pure` sentinel —
+    // which names no effect row and would read as a typo without its own entry
+    // in the vocabulary.
+    for ceiling in ["Pure", "IO", "IO,Exec", "AI,Net", "Time,Random", ""] {
+        let (err, _) = run(ceiling);
+        assert!(
+            !err.contains("is not an effect"),
+            "`{ceiling}` is documented and must not warn: {err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

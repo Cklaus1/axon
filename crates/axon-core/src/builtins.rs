@@ -2531,6 +2531,28 @@ pub fn is_impure_builtin(name: &str) -> bool {
 /// projections). Only the small impure surface carries effects; this is the
 /// per-builtin refinement of [`is_impure_builtin`] used by the effect checker to
 /// seed each call site's row. Binding follows the spec §3 catalog table.
+/// Every effect name that may appear in an effect ceiling — the grantable
+/// vocabulary of `AXON_ALLOWED_EFFECTS` and `sandbox_create`.
+///
+/// Two sources, which is why this is written down rather than derived from one:
+/// the coarse rows come from [`builtin_effect_row`], and `Exec` does NOT —
+/// nothing's row contains it. It is synthesised at the sandbox check from
+/// `capability_of_builtin(name) == Some("exec")`, so that `IO` never implies
+/// spawn. `Pure` is a documented sentinel naming the empty set (CLAUDE.md:
+/// "`AXON_ALLOWED_EFFECTS=Pure` refuses even `println`"); it grants nothing and
+/// is listed so that the documented spelling is not reported as a typo.
+///
+/// `effect_names_cover_every_row` keeps the first source honest.
+pub const GRANTABLE_EFFECTS: &[&str] = &[
+    "AI", "Bpf", "Chan", "Exec", "Hal", "IO", "Net", "Pure", "Random", "Tee", "Time",
+];
+
+/// Whether `name` is a grantable effect. Used to reject a MISSPELLED ceiling
+/// entry loudly instead of silently treating it as a grant of nothing.
+pub fn is_grantable_effect(name: &str) -> bool {
+    GRANTABLE_EFFECTS.contains(&name)
+}
+
 pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
     match name {
         // AI / model inference — reaches the network for a model call.
@@ -3081,5 +3103,66 @@ mod tests {
             is_known_builtin("exec"),
             "exec must be a known builtin (sanity on the table)"
         );
+    }
+}
+
+#[cfg(test)]
+mod grantable_effects_tests {
+    use super::{builtin_effect_row, is_grantable_effect, BUILTINS, GRANTABLE_EFFECTS};
+
+    /// Every effect a builtin can declare must be nameable in a ceiling. A row
+    /// the vocabulary does not know is an effect no operator can grant — the
+    /// builtin would be permanently unreachable under any `AXON_ALLOWED_EFFECTS`
+    /// value, which is a denial nobody chose.
+    #[test]
+    fn effect_names_cover_every_row() {
+        let mut missing: Vec<&str> = Vec::new();
+        for b in BUILTINS {
+            for eff in builtin_effect_row(b.name) {
+                if !is_grantable_effect(eff) {
+                    missing.push(eff);
+                }
+            }
+        }
+        missing.sort_unstable();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "these effect rows cannot be named in a ceiling: {missing:?}"
+        );
+    }
+
+    /// `Exec` and `Pure` are in the vocabulary but in no row — deliberately, and
+    /// this pins the reason so neither is "cleaned up" as dead.
+    #[test]
+    fn exec_and_pure_are_grantable_without_being_rows() {
+        assert!(
+            is_grantable_effect("Exec"),
+            "synthesised at the sandbox check"
+        );
+        assert!(is_grantable_effect("Pure"), "documented empty-set sentinel");
+        let in_a_row = |want: &str| {
+            BUILTINS
+                .iter()
+                .any(|b| builtin_effect_row(b.name).contains(&want))
+        };
+        assert!(!in_a_row("Exec"), "no builtin declares an `Exec` row");
+        assert!(!in_a_row("Pure"), "`Pure` is the absence of effects");
+    }
+
+    #[test]
+    fn a_misspelling_is_not_grantable() {
+        assert!(!is_grantable_effect("Exce"));
+        assert!(!is_grantable_effect("io"));
+        assert!(!is_grantable_effect("Everything"));
+    }
+
+    /// Sorted and unique: the list is read by humans deciding what to grant.
+    #[test]
+    fn the_vocabulary_is_sorted_and_unique() {
+        let mut sorted = GRANTABLE_EFFECTS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, GRANTABLE_EFFECTS.to_vec());
     }
 }

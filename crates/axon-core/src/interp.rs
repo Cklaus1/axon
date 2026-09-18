@@ -3671,6 +3671,26 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+    // A misspelled entry is silently a grant of NOTHING. That fails closed,
+    // which is the right direction — but it also means an operator who writes
+    // `AXON_ALLOWED_EFFECTS=IO,Exce` believes they granted `Exec` and is told
+    // otherwise only if the program happens to spawn. A grant that was never
+    // valid, recorded as granted: say so at parse time, the way
+    // `AXON_BUDGET_TOKENS` already does for a malformed value.
+    let mut unknown: Vec<&String> = allowed
+        .iter()
+        .filter(|e| !crate::builtins::is_grantable_effect(e))
+        .collect();
+    if !unknown.is_empty() {
+        unknown.sort();
+        for e in unknown {
+            eprintln!(
+                "warning: AXON_ALLOWED_EFFECTS names `{e}`, which is not an effect — \
+                 it grants nothing. Valid names: {}",
+                crate::builtins::GRANTABLE_EFFECTS.join(", ")
+            );
+        }
+    }
     vec![SandboxEntry {
         principal: 0,
         allowed,
