@@ -210,6 +210,32 @@ pub(crate) fn path_is_under(path: &str, prefix: &str) -> bool {
     path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
+/// The `help` line for an fs denial: the least-privilege grant that would
+/// permit it, or — for a `..` path — an explanation instead of a grant.
+///
+/// The generic help said `Add write("/tmp/../etc/") to the existing fs: [...]
+/// clause`. That advice cannot work, twice over: the check rejects the PATH for
+/// containing `..`, so no prefix derived from it will ever match, and a
+/// `never:` clause covering the real target is a hard deny no allowlist
+/// overrides. Naming a fix that fails again is the same defect as any other
+/// misleading hint.
+fn fs_denial_help(path: &str, kind: &str, pfx: &str, existing_clause: bool) -> String {
+    if path_has_dotdot(path) {
+        return "this path contains a `..` component, so it cannot be proven to \
+                stay inside any grant — no `fs: [...]` entry will permit it. \
+                Write the path it actually resolves to (and note that a `never:` \
+                clause on that target is a hard deny no allowlist can override)"
+            .to_string();
+    }
+    if existing_clause {
+        format!("Add `{kind}(\"{pfx}\")` to the existing `fs: [...]` clause")
+    } else {
+        format!(
+            "Add `fs: [{kind}(\"{pfx}\")]` to the @[contained(...)] attribute to allow this {kind}"
+        )
+    }
+}
+
 /// True if `path` contains a `..` path component (`..`, `../`, `/..`, `/../`).
 /// A bare `..` inside a filename (e.g. `a..b`) is not a traversal component.
 fn path_has_dotdot(path: &str) -> bool {
@@ -1395,7 +1421,8 @@ fn check_call(
                             E1001,
                             format!(
                                 "`read_file(\"{path}\")` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
-                                 help: Add `fs: [read(\"{pfx}\")]` to the @[contained(...)] attribute to allow this read"
+                                 help: {}",
+                                fs_denial_help(path, "read", pfx, false)
                             ),
                             site,
                         ));
@@ -1405,12 +1432,13 @@ fn check_call(
                             format!(
                                 "`read_file(\"{path}\")` is not permitted by @[contained] \
                                  (allowed prefixes: {})\n  \
-                                 help: Add `read(\"{pfx}\")` to the existing `fs: [...]` clause",
+                                 help: {}",
                                 spec.fs_read
                                     .iter()
                                     .map(|p| format!("\"{p}\""))
                                     .collect::<Vec<_>>()
-                                    .join(", ")
+                                    .join(", "),
+                                fs_denial_help(path, "read", pfx, true)
                             ),
                             site,
                         ));
@@ -1464,7 +1492,8 @@ fn check_call(
                             E1001,
                             format!(
                                 "`write_file(\"{path}\", ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
-                                 help: Add `fs: [write(\"{pfx}\")]` to the @[contained(...)] attribute to allow this write"
+                                 help: {}",
+                                fs_denial_help(path, "write", pfx, false)
                             ),
                             site,
                         ));
@@ -1474,12 +1503,13 @@ fn check_call(
                             format!(
                                 "`write_file(\"{path}\", ...)` is not permitted by @[contained] \
                                  (allowed prefixes: {})\n  \
-                                 help: Add `write(\"{pfx}\")` to the existing `fs: [...]` clause",
+                                 help: {}",
                                 spec.fs_write
                                     .iter()
                                     .map(|p| format!("\"{p}\""))
                                     .collect::<Vec<_>>()
-                                    .join(", ")
+                                    .join(", "),
+                                fs_denial_help(path, "write", pfx, true)
                             ),
                             site,
                         ));

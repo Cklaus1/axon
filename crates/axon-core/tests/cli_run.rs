@@ -27109,3 +27109,87 @@ fn a_misspelled_effect_ceiling_is_named_not_silently_ignored() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_traversal_denial_does_not_advise_a_grant_that_cannot_work() {
+    // A `..` path is refused, correctly. But the help offered the generic
+    // least-privilege grant built from that path:
+    //
+    //   help: Add `write("/tmp/../etc/")` to the existing `fs: [...]` clause
+    //
+    // which cannot work twice over. The check rejects the PATH for containing
+    // `..`, so no prefix derived from it will ever match; and when a `never:`
+    // clause covers the real target, that is a hard deny no allowlist can
+    // override. Following the advice fails again — the same defect as any
+    // other hint naming a fix that does not exist.
+    let dir = std::env::temp_dir().join(format!("axon_travhelp_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let diag = |attr: &str, call: &str| -> String {
+        std::fs::write(
+            &f,
+            format!(
+                "@[contained({attr})]\nfn go() -> i64 {{ let _r = {call} 0 }}\n\
+                 fn main() {{ println(to_str(go())) }}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .filter(|l| l.contains("\"code\":\"E1001\""))
+            .map(|l| l.to_string())
+            .next()
+            .unwrap_or_else(|| format!("<no E1001> in {all}"))
+    };
+
+    for (attr, call) in [
+        (
+            "fs: [write(\"/\")], net: [], exec: none, never: [write(\"/etc/\")]",
+            "write_file(\"/tmp/../etc/passwd\", \"x\")",
+        ),
+        (
+            "fs: [write(\"/\")], net: [], exec: none",
+            "write_file(\"/tmp/../etc/passwd\", \"x\")",
+        ),
+        (
+            "fs: [read(\"./data/\")], net: [], exec: none",
+            "read_file(\"../secrets\")",
+        ),
+    ] {
+        let d = diag(attr, call);
+        assert!(
+            d.contains("`..` component"),
+            "a traversal denial must name the traversal: {d}"
+        );
+        assert!(
+            !d.contains("Add `write(\\\"/tmp/../") && !d.contains("Add `read(\\\"../"),
+            "it must not offer a grant built from the `..` path: {d}"
+        );
+    }
+
+    // ...and an ordinary denial must still offer the least-privilege grant,
+    // which is the whole value of this help line.
+    let ordinary = diag(
+        "fs: [write(\"./out/\")], net: [], exec: none",
+        "write_file(\"/etc/passwd\", \"x\")",
+    );
+    assert!(
+        ordinary.contains("Add `write(") && ordinary.contains("/etc/"),
+        "an ordinary denial must still suggest the grant: {ordinary}"
+    );
+    let no_clause = diag("fs: [], net: [], exec: none", "read_file(\"/etc/passwd\")");
+    assert!(
+        no_clause.contains("Add `fs: [read("),
+        "with no clause at all, the help must show the whole clause: {no_clause}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
