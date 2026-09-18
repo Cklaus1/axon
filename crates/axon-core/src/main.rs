@@ -3937,6 +3937,32 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
     }
 }
 
+/// Whether the file at a `run_start` record's path still holds the bytes that
+/// produced the run. `NoDigest` is a distinct outcome from `Verified` on
+/// purpose: records written before digests were stamped can only be reported as
+/// unverifiable, never as checked-and-clean.
+enum ReplaySource {
+    Verified,
+    Changed { recorded: String, actual: String },
+    Unreadable,
+    NoDigest,
+}
+
+fn replay_source_status(rec: &axon_core::interp::RunStartRecord) -> ReplaySource {
+    let Some(recorded) = rec.src_hash.clone() else {
+        return ReplaySource::NoDigest;
+    };
+    let Ok(bytes) = std::fs::read(&rec.src) else {
+        return ReplaySource::Unreadable;
+    };
+    let actual = axon_core::lockfile::module_hash(&bytes);
+    if actual == recorded {
+        ReplaySource::Verified
+    } else {
+        ReplaySource::Changed { recorded, actual }
+    }
+}
+
 /// `axon trace --replay <run-id>` — Phase 9 / F2 CLI wrapper.
 ///
 /// Looks up the `run_start` record for `run_id` in the provenance log, sets
@@ -3955,6 +3981,41 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
             process::exit(1);
         }
     };
+    // The seed and the clock are pinned below, but neither says anything about
+    // the SOURCE — `rec.src` is a path, and a path re-read at replay time is
+    // whatever is there now. Verify the bytes against the digest stamped when
+    // the run happened, so a "replay" cannot silently execute different code
+    // under the original run's identity. Three outcomes, and the third must not
+    // be collapsed into the first: verified, changed (refuse), or unverifiable
+    // (say so).
+    match replay_source_status(&rec) {
+        ReplaySource::Verified => {}
+        ReplaySource::Changed { recorded, actual } => {
+            eprintln!("error: replay REFUSED for run-id {rid}", rid = rec.run_id);
+            eprintln!("  source changed since the run: {src}", src = rec.src);
+            eprintln!("  recorded digest: {recorded}");
+            eprintln!("  current  digest: {actual}");
+            eprintln!(
+                "hint: replaying it would execute different code under this run's \
+                 id, seed and clock. Restore the original source, or `axon run` \
+                 the current file to get a new run-id."
+            );
+            process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+        }
+        ReplaySource::Unreadable => {
+            eprintln!("error: replay REFUSED for run-id {rid}", rid = rec.run_id);
+            eprintln!("  source is gone or unreadable: {src}", src = rec.src);
+            process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+        }
+        ReplaySource::NoDigest => {
+            eprintln!(
+                "axon: warning: run-id {rid} carries no source digest, so the \
+                 source CANNOT be verified — this replay may not be running the \
+                 code that produced the original run.",
+                rid = rec.run_id
+            );
+        }
+    }
     eprintln!(
         "axon: replaying run-id {rid} (seed={seed}, clock={ts}, src={src})",
         rid = rec.run_id,

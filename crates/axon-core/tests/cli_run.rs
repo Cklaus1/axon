@@ -26356,3 +26356,120 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn trace_replay_refuses_a_source_that_changed_since_the_run() {
+    // `trace --replay` re-executes the file at the recorded PATH. A path is not
+    // the code: edit the file between the run and the replay and the "replay"
+    // executes entirely different code under the original run's id, seed and
+    // clock, announcing a replay the whole time. Same shape as the AUDIT T10
+    // approval attack, on the reproducibility surface — and CLAUDE.md sells
+    // this verb as "a deterministic (Trace, Seed) pair for every run".
+    let tag = format!("axon_replay_pin_{}", std::process::id());
+    let dir = std::env::temp_dir().join(&tag);
+    let cache = dir.join("cache");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&cache).unwrap();
+    let src = dir.join("r.ax");
+    std::fs::write(&src, "fn main() { println(\"ORIGINAL\") }\n").unwrap();
+
+    let out = axon()
+        .args(["run", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env("AXON_SEED", "7")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let rid = err
+        .split_whitespace()
+        .skip_while(|w| *w != "run-id")
+        .nth(1)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    assert!(
+        !rid.is_empty(),
+        "precondition: `axon run` must print a run-id: {err}"
+    );
+
+    // Unchanged source: the replay must still work.
+    let ok = axon()
+        .args(["trace", "--replay", &rid])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&ok.stdout).contains("ORIGINAL"),
+        "an unmodified source must replay: {:?} {:?}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+
+    // Now rewrite the file and replay the SAME run-id.
+    std::fs::write(&src, "fn main() { println(\"REWRITTEN\") }\n").unwrap();
+    let bad = axon()
+        .args(["trace", "--replay", &rid])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let bad_out = String::from_utf8_lossy(&bad.stdout).to_string();
+    let bad_err = String::from_utf8_lossy(&bad.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        !bad_out.contains("REWRITTEN"),
+        "a replay must NOT execute code that was not in the run it claims to \
+         reproduce: stdout={bad_out:?} stderr={bad_err:?}"
+    );
+    assert_eq!(
+        bad.status.code(),
+        Some(11),
+        "a changed source is a replay divergence (exit 11): {bad_err}"
+    );
+    assert!(
+        bad_err.contains("source changed since the run"),
+        "the refusal must name WHY, not just fail: {bad_err}"
+    );
+}
+
+#[test]
+fn trace_replay_says_unverifiable_for_a_record_with_no_digest() {
+    // Records written before digests were stamped cannot be verified. The
+    // failure mode to avoid is the absent-vs-passed collapse: silently
+    // replaying them exactly as if the source had been checked. They must run
+    // (breaking every pre-existing run-id would be worse) but say so.
+    let tag = format!("axon_replay_legacy_{}", std::process::id());
+    let dir = std::env::temp_dir().join(&tag);
+    let logdir = dir.join("cache").join("axon");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&logdir).unwrap();
+    let src = dir.join("r.ax");
+    std::fs::write(&src, "fn main() { println(\"LEGACY\") }\n").unwrap();
+    std::fs::write(
+        logdir.join("provenance.jsonl"),
+        format!(
+            "{{\"ts_ms\":1789739560022,\"fn\":\"__run__\",\"event\":\"run_start\",\
+             \"run_id\":\"legacy-1\",\"seed\":7,\"src\":\"{}\"}}\n",
+            src.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+
+    let out = axon()
+        .args(["trace", "--replay", "legacy-1"])
+        .env("XDG_CACHE_HOME", dir.join("cache"))
+        .output()
+        .unwrap();
+    let so = String::from_utf8_lossy(&out.stdout).to_string();
+    let se = String::from_utf8_lossy(&out.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        so.contains("LEGACY"),
+        "a legacy record must still replay: {se}"
+    );
+    assert!(
+        se.contains("no source digest") && se.contains("CANNOT be verified"),
+        "an unverifiable replay must say it is unverifiable: {se}"
+    );
+}

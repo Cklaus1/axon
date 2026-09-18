@@ -555,10 +555,13 @@ pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens:
 // ── Phase 9: run-start stamping + deterministic replay (F2 CLI wrapper) ──────
 //
 // Each `axon run` / `axon goal` stamps a `run_start` event to the provenance
-// log carrying the run-id (short hex token), the effective RNG seed, and the
-// source file path.  `axon trace --replay <run-id>` reads this record back and
-// re-executes the same source with the same seed — giving a deterministic
-// (Trace, Seed) pair for every run.
+// log carrying the run-id (short hex token), the effective RNG seed, the
+// source file path, and the `axh1:` digest of that source's bytes.  `axon trace
+// --replay <run-id>` reads this record back and re-executes the same source
+// with the same seed — giving a deterministic (Trace, Seed) pair for every run.
+// The digest is what makes "the same source" true rather than assumed: replay
+// verifies the file still hashes to what it hashed to at run time and refuses
+// (exit 11) when it does not.
 
 /// Stamp a `run_start` event to the provenance log. Called once per CLI
 /// invocation from the `axon run` / `axon goal` boundary (in main.rs) with the
@@ -574,9 +577,24 @@ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
         }
     }
     let ts = now_ms().max(0) as u64;
+    // Pin the SOURCE, not just its path. Without this a replay re-executes
+    // whatever is at that path *now* — so editing the file between the run and
+    // the replay makes `trace --replay` run entirely different code under the
+    // original run's id, seed and clock, while announcing a replay. Same shape
+    // as the AUDIT T10 approval attack, on the reproducibility surface.
+    // Best-effort: an unreadable source (e.g. the `<session>` pseudo-path)
+    // records no digest, and the replay side says so rather than implying it
+    // verified something.
+    let digest = std::fs::read(src)
+        .ok()
+        .map(|b| crate::lockfile::module_hash(&b));
+    let hash_field = match &digest {
+        Some(h) => format!(",\"src_hash\":{}", json_quote(h)),
+        None => String::new(),
+    };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":\"__run__\",\"event\":\"run_start\",\
-         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}{cf}}}\n",
+         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}{hash_field}{cf}}}\n",
         rid = json_quote(run_id),
         src = json_quote(src),
         cf = cell_field(),
@@ -597,6 +615,11 @@ pub struct RunStartRecord {
     pub seed: u64,
     pub src: String,
     pub ts_ms: u64,
+    /// `axh1:` content digest of the source bytes as they were AT RUN TIME.
+    /// `None` for a record written before digests were stamped, or for a run
+    /// whose source was not a readable file. `None` means "cannot verify" —
+    /// it must never be reported as "verified".
+    pub src_hash: Option<String>,
 }
 
 /// Find the `run_start` record for `run_id` in the provenance log.  Returns
@@ -624,11 +647,13 @@ pub fn find_run_start(run_id: &str, path: Option<&std::path::Path>) -> Option<Ru
         let seed = extract_json_num(line, "\"seed\":").unwrap_or(0.0) as u64;
         let src = extract_json_str(line, "\"src\":").unwrap_or_default();
         let ts_ms = extract_json_num(line, "\"ts_ms\":").unwrap_or(0.0) as u64;
+        let src_hash = extract_json_str(line, "\"src_hash\":").filter(|h| !h.is_empty());
         return Some(RunStartRecord {
             run_id: rid,
             seed,
             src,
             ts_ms,
+            src_hash,
         });
     }
     None
