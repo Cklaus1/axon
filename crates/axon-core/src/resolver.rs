@@ -111,8 +111,24 @@ fn builtin_for_foreign_name(name: &str) -> Option<ForeignName> {
             collection: one,
         }),
         ([], Some(sc)) => Some(ForeignName::One(sc)),
-        // Ambiguous within a family (`reverse` is both `arr_reverse` and
-        // `str_reverse`): say nothing rather than guess the collection type.
+        // The same verb in both families (`reverse` is `arr_reverse` AND
+        // `str_reverse`). This used to return None "rather than guess the
+        // collection type" — sound about not guessing, but the fall-through is
+        // the undefined-name default, "introduce `reverse` with `let reverse =
+        // …`", which is not silence: it is advice to bind a variable, for a
+        // function that exists twice over.
+        //
+        // Naming both is not a guess. It is what `Both` already does for the
+        // scalar/collection split, applied to the split that actually occurs
+        // here.
+        ([a, b], None) => {
+            let (string, collection) = if a.starts_with("str_") {
+                (*a, *b)
+            } else {
+                (*b, *a)
+            };
+            Some(ForeignName::Family { string, collection })
+        }
         _ => None,
     }
 }
@@ -123,6 +139,14 @@ enum ForeignName {
     One(&'static str),
     Both {
         scalar: &'static str,
+        collection: &'static str,
+    },
+    /// The same verb in BOTH collection families — `reverse` is `str_reverse`
+    /// and `arr_reverse`. Naming both is not a guess; it is the complete
+    /// answer, and the alternative was falling through to "introduce `reverse`
+    /// with `let reverse = …`", which is wrong advice for a function name.
+    Family {
+        string: &'static str,
         collection: &'static str,
     },
 }
@@ -565,6 +589,15 @@ fn foreign_builtin_help(name: &str) -> Option<String> {
         // replacement all along. Every substitution below was run before being
         // suggested; a hint naming something that does not work is worse than
         // the generic line it replaces.
+        // `builtin_for_foreign_name` declines any name containing `_`, so the
+        // both-families answer it now gives `contains`/`reverse`/`repeat` never
+        // reaches `index_of` — which is not prefixed, just spelled with an
+        // underscore. Answered here instead of loosening that guard, which
+        // exists to stop `arr_foo` being retried as `arr_arr_foo`.
+        "index_of" | "indexof" | "find_index" | "position" => {
+            "`str_index_of(s, sub)` for a string, `arr_index_of(xs, x)` for an array — \
+             both return `Option`"
+        }
         "str_lines" | "lines" | "splitlines" | "str_split_lines" => {
             "`str_split(s, \"\\n\")` — there is no line-specific split"
         }
@@ -627,6 +660,10 @@ fn foreign_builtin_help(name: &str) -> Option<String> {
 #[cfg(test)]
 const FOREIGN_BUILTIN_KEYS: &[&str] = &[
     // Names whose Axon spelling exists but differs (see the rows above).
+    "index_of",
+    "indexof",
+    "find_index",
+    "position",
     "str_lines",
     "lines",
     "splitlines",
@@ -1427,6 +1464,10 @@ impl<'a> Resolver<'a> {
                             ForeignName::Both { scalar, collection } => format!(
                                 "Axon splits this by what you are working on: `{scalar}(a, b)` \
                                  for two numbers, `{collection}(xs, …)` for a collection"
+                            ),
+                            ForeignName::Family { string, collection } => format!(
+                                "Axon splits this by what you are working on: `{string}(s, …)` \
+                                 for a string, `{collection}(xs, …)` for an array"
                             ),
                         });
                     } else {

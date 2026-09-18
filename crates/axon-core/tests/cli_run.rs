@@ -25704,15 +25704,28 @@ fn a_foreign_collection_name_is_pointed_at_the_builtin_that_exists() {
         );
     }
 
-    // Ambiguity WITHIN a family says nothing: `reverse` is both `arr_reverse`
-    // and `str_reverse`, and guessing the collection type is a wrong hint.
+    // Ambiguity WITHIN a family used to say nothing: `reverse` is both
+    // `arr_reverse` and `str_reverse`, and guessing the collection type is a
+    // wrong hint. The no-guessing half of that is right and still holds; the
+    // "say nothing" half was overturned on 2026-09-18, because saying nothing
+    // here does not produce silence — it falls through to the undefined-name
+    // default, "introduce `reverse` with `let reverse = …`", advice to bind a
+    // variable for a function that exists twice over. This file calls that
+    // shape "true and useless" two tests above.
+    //
+    // Naming BOTH is not a guess, and it is exactly what the scalar/collection
+    // case (`max_i64` vs `arr_max_by`) directly above already does.
     let h = hint(
         "rev",
         "fn main() {\n  let xs = [1,2]\n  let ys = reverse(xs)\n}\n",
     );
     assert!(
-        !h.contains("arr_reverse") && !h.contains("str_reverse"),
-        "an ambiguous name must not be guessed: {h}"
+        h.contains("arr_reverse") && h.contains("str_reverse"),
+        "an ambiguous name must name BOTH spellings, not one: {h}"
+    );
+    assert!(
+        !h.contains("introduce `reverse`"),
+        "a function that exists must never be answered with `let`: {h}"
     );
 
     // A name with no builtin behind it keeps the generic advice, and a real
@@ -27263,5 +27276,66 @@ fn a_name_whose_axon_spelling_exists_is_told_the_spelling() {
         shuffle.contains("fixed set"),
         "a name Axon cannot answer must not be guessed at: {shuffle}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_verb_that_exists_in_both_families_names_both() {
+    // `builtin_for_foreign_name` returned None when a name matched BOTH
+    // `str_X` and `arr_X`, documented as "say nothing rather than guess the
+    // collection type". Not guessing is right; but the fall-through is not
+    // silence — it is the undefined-name default, "introduce `reverse` with
+    // `let reverse = …`", which advises binding a variable for a function that
+    // exists twice over.
+    //
+    // Naming both is not a guess, and it is what the scalar/collection split
+    // (`max_i64` vs `arr_max_by`) already does.
+    let dir = std::env::temp_dir().join(format!("axon_bothfam_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let help = |call: &str| -> String {
+        std::fs::write(
+            &f,
+            format!(
+                "fn main() {{ let s = \"ab\"\nlet xs = [1]\nlet r = {call}\nprintln(\"x\") }}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .find(|l| l.contains("\"code\":\"E0001\""))
+            .unwrap_or("<no E0001>")
+            .to_string()
+    };
+
+    for (call, want_str, want_arr) in [
+        ("contains(s, \"a\")", "str_contains", "arr_contains"),
+        ("reverse(s)", "str_reverse", "arr_reverse"),
+        ("repeat(s, 2)", "str_repeat", "arr_repeat"),
+        ("index_of(s, \"a\")", "str_index_of", "arr_index_of"),
+    ] {
+        let h = help(call);
+        assert!(h.contains(want_str) && h.contains(want_arr), "both: {h}");
+        assert!(
+            !h.contains("introduce `"),
+            "a function that exists must not be answered with `let`: {h}"
+        );
+    }
+
+    // The scalar/collection split must be untouched — `max(3, 7)` is not a
+    // collection call and must not be told it is.
+    let m = help("max(3, 7)");
+    assert!(m.contains("max_i64") && m.contains("two numbers"), "{m}");
+    // A name in neither family still falls through honestly.
+    assert!(help("wibble(s)").contains("introduce `wibble`"));
     let _ = std::fs::remove_dir_all(&dir);
 }
