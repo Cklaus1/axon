@@ -27339,3 +27339,81 @@ fn a_verb_that_exists_in_both_families_names_both() {
     assert!(help("wibble(s)").contains("introduce `wibble`"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_wrong_arity_closure_is_caught_at_check_not_at_runtime() {
+    // The expected parameter count is already declarative in the BUILTINS table
+    // — `arr_map`'s param type is `fn(T) -> U`, `arr_fold`'s is `fn(U, T) -> U`
+    // — and nothing compared it to the closure written at the call site. So
+    // `arr_map(&xs, |a, b| a + b)` checked CLEAN and panicked at run time with
+    // `lambda: expected 2 args, got 1` (exit 101).
+    //
+    // Measured across the higher-order builtins: 7 of 8 accepted a wrong-arity
+    // closure. Check-clean-then-panic is the worst feedback available — the
+    // reader is told nothing at the one moment they could act on it, which for
+    // this repo's primary reader is the whole game.
+    let dir = std::env::temp_dir().join(format!("axon_lamarity_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let run = |call: &str| -> (String, Option<i32>, String) {
+        std::fs::write(
+            &f,
+            format!("fn main() {{\n  let xs = [1, 2]\n  let r = {call}\n  println(\"ok\")\n}}\n"),
+        )
+        .unwrap();
+        let c = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let check = format!(
+            "{}{}",
+            String::from_utf8_lossy(&c.stdout),
+            String::from_utf8_lossy(&c.stderr)
+        );
+        let r = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let ran = format!(
+            "{}{}",
+            String::from_utf8_lossy(&r.stdout),
+            String::from_utf8_lossy(&r.stderr)
+        );
+        (check, r.status.code(), ran)
+    };
+
+    for (call, want_shape) in [
+        ("arr_map(&xs, |a, b| a + b)", "|x|"),
+        ("arr_filter(&xs, |a, b| a > b)", "|x|"),
+        ("arr_any(&xs, |a, b| a > 0)", "|x|"),
+        ("arr_sum_by(&xs, |a, b| a)", "|x|"),
+        ("arr_sort_by(&xs, |a| a)", "|a, b|"),
+        ("arr_fold(&xs, 0, |a| a)", "|a, b|"),
+        ("arr_zip_with(&xs, &xs, |a| a)", "|a, b|"),
+    ] {
+        let (check, _, _) = run(call);
+        assert!(
+            check.contains("E0306") && check.contains("the closure passed as"),
+            "`{call}` must be refused at CHECK time: {check}"
+        );
+        assert!(
+            check.contains(want_shape),
+            "the hint should name the closure to write ({want_shape}): {check}"
+        );
+    }
+
+    // Correct arities must stay clean and run — a check that refused every
+    // closure would pass the assertions above while breaking the feature.
+    for call in [
+        "arr_map(&xs, |a| a + 1)",
+        "arr_fold(&xs, 0, |a, x| a + x)",
+        "arr_sort_by(&xs, |a, b| a - b)",
+        "arr_filter(&xs, |a| a > 0)",
+    ] {
+        let (check, code, ran) = run(call);
+        assert!(
+            !check.contains("the closure passed as"),
+            "`{call}` is correct and must not be refused: {check}"
+        );
+        assert_eq!(code, Some(0), "`{call}` must still run: {ran}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
