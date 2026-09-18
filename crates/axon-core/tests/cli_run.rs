@@ -27709,3 +27709,82 @@ fn the_hash_comment_hint_fires_wherever_the_hash_is() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_result_used_as_its_inner_type_is_explained_in_every_position() {
+    // A `Result` used where its inner type belongs is the mistake `parse_int`
+    // produces, and it lands in five places. Three carried good advice — a
+    // binop (E0301), an argument (E0306), a return (E0307). The two raised by
+    // INFERENCE carried none, because `InferError` had no help channel at all:
+    // the CLI conversion site said so in a comment and passed `None`. So the
+    // same mistake was explained or not depending on where it landed.
+    let dir = std::env::temp_dir().join(format!("axon_resultpos_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let first = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .find(|l| l.contains("\"severity\":\"error\""))
+            .unwrap_or("<no error>")
+            .to_string()
+    };
+
+    // The two that were silent.
+    for (label, src) in [
+        (
+            "struct field",
+            "type U = { age: i64 }\nfn main() { let u = U { age: parse_int(\"3\") }\nprintln(to_str(u.age)) }\n",
+        ),
+        (
+            "annotated let",
+            "fn main() { let n: i64 = parse_int(\"3\")\nprintln(to_str(n)) }\n",
+        ),
+    ] {
+        let d = first(src);
+        assert!(
+            d.contains("match x { Ok(v)"),
+            "a Result in a {label} must say how to unwrap it: {d}"
+        );
+    }
+
+    // The three that already worked must be unchanged.
+    for (label, src) in [
+        (
+            "binop",
+            "fn main() { let n = parse_int(\"3\")\nprintln(to_str(n + 1)) }\n",
+        ),
+        (
+            "argument",
+            "fn f(n: i64) -> i64 { n }\nfn main() { println(to_str(f(parse_int(\"3\")))) }\n",
+        ),
+        (
+            "return",
+            "fn f() -> i64 { parse_int(\"3\") }\nfn main() { println(to_str(f())) }\n",
+        ),
+    ] {
+        let d = first(src);
+        assert!(
+            d.contains("\"help\""),
+            "the {label} position must keep its help: {d}"
+        );
+    }
+
+    // Narrow by construction: the advice fires only when the found type is the
+    // WRAPPER of the expected one, so an unrelated mismatch is not mislabelled.
+    let unrelated = first("fn main() { let n: i64 = \"text\"\nprintln(to_str(n)) }\n");
+    assert!(
+        !unrelated.contains("match x { Ok(v)"),
+        "an unrelated mismatch must not be told to match on Ok/Err: {unrelated}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

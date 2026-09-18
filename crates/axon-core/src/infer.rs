@@ -86,6 +86,40 @@ pub struct InferError {
     pub expected: Option<String>,
     pub found: Option<String>,
     pub span: crate::span::Span,
+    /// Repair advice, when this mismatch has a known shape.
+    ///
+    /// `InferError` had no help channel at all, so every E0102 it raised was
+    /// STRUCTURALLY unable to carry advice — the CLI even said so at the
+    /// conversion site ("InferError has no fix") and passed `None`. Measured
+    /// across the five places a `Result` gets misused, three carry good help
+    /// (binop E0301, argument E0306, return E0307) and the two that come from
+    /// here — a struct field and an annotated `let` — carried none.
+    pub help: Option<String>,
+}
+
+/// Advice for the specific mismatch where a `Result`/`Option` was used where
+/// its INNER type was wanted — the shape `parse_int(s)` produces, and the most
+/// common mismatch there is.
+///
+/// Deliberately narrow: it fires only when `found` is the wrapper of exactly
+/// the `expected` type, so it cannot mislabel an unrelated mismatch. The text
+/// matches what E0301/E0302 already say for the same mistake elsewhere, because
+/// one mistake should not get two different explanations depending on where it
+/// lands.
+fn wrapper_misuse_help(expected: &Type, found: &Type) -> Option<String> {
+    let inner = expected.display();
+    match found {
+        Type::Result(ok, _) if ok.display() == inner => Some(format!(
+            "match it: `match x {{ Ok(v) => …  Err(e) => … }}` — each arm \
+             produces a `{inner}`. Inside a fn that itself returns a `Result`, \
+             `parse_int(s)?` propagates the error instead"
+        )),
+        Type::Option(v) if v.display() == inner => Some(format!(
+            "match it: `match x {{ Some(v) => …  None => … }}` — each arm \
+             produces a `{inner}`"
+        )),
+        _ => None,
+    }
 }
 
 /// Whether a function body never falls through to a value, because its tail
@@ -112,6 +146,7 @@ impl InferError {
             expected: None,
             found: None,
             span: crate::span::Span::dummy(),
+            help: None,
         }
     }
 
@@ -122,6 +157,7 @@ impl InferError {
             expected: Some(expected.display()),
             found: Some(found.display()),
             span: crate::span::Span::dummy(),
+            help: wrapper_misuse_help(expected, found),
         }
     }
 

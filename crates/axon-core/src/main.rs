@@ -6281,7 +6281,10 @@ fn run_check_pipeline_located(
             msg.push_str(&format!(", found {fnd}"));
         }
         let (line, col) = loc(&err.span);
-        // R8: also expose expected/found as discrete fields (InferError has no fix).
+        // R8: also expose expected/found as discrete fields. `InferError` now
+        // also carries a `help` for the shapes it can name — it previously had
+        // none, so every E0102 raised by inference reached the reader without
+        // advice, and this call site hard-coded that by passing `None`.
         push_typed(
             &mut diags,
             err.code.to_string(),
@@ -6290,7 +6293,7 @@ fn run_check_pipeline_located(
             col,
             err.expected.clone(),
             err.found.clone(),
-            None,
+            err.help.clone(),
         );
     }
 
