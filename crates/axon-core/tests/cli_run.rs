@@ -25810,3 +25810,64 @@ fn iterating_a_string_is_explained_as_a_loop_not_as_an_index() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The registry says what a code MEANS, and `axon reference` publishes it.
+///
+/// Three descriptions had drifted from what their codes emit. E0401 said
+/// "struct has no field" while also covering tuple indices and `Uncertain<T>`;
+/// E0402 said "indexing a non-indexable type" while also covering a constant
+/// index proved out of range — where the receiver is perfectly indexable; E0404
+/// said "enum-variant literal names a nonexistent variant" while also covering
+/// an unknown qualifier and a variant called like a function.
+///
+/// A reader who meets one of those and looks it up is told about a different
+/// mistake. This asserts each case the descriptions now enumerate really does
+/// emit that code, so a case added later without updating the row is caught.
+#[test]
+fn each_code_emits_every_case_its_registry_row_claims() {
+    let dir = std::env::temp_dir().join(format!("axon_codedesc_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let code_of = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .filter(|l| l.contains("\"severity\":\"error\""))
+            .filter_map(|l| l.split("\"code\":\"").nth(1)?.split('"').next())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+
+    for (want, name, src) in [
+        // E0401 — "a field name that does not exist on the thing it is used with"
+        ("E0401", "e401_struct", "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  println(to_str(p.zz))\n}\n"),
+        ("E0401", "e401_variant", "type S = A { v: i64 } | B { w: i64 }\nfn main() {\n  let s = S::A { v: 1 }\n  match s { S::A { zz } => println(\"a\")  S::B { w } => println(\"b\") }\n}\n"),
+        ("E0401", "e401_tuple", "fn main() {\n  let t = (1, 2)\n  println(to_str(t.9))\n}\n"),
+        // E0402 — "an index that cannot be valid"
+        ("E0402", "e402_nonarray", "fn main() {\n  let n = 5\n  println(to_str(n[0]))\n}\n"),
+        ("E0402", "e402_forin", "fn main() {\n  let s = \"ab\"\n  for c in s { println(c) }\n}\n"),
+        ("E0402", "e402_oob", "fn main() {\n  println(to_str([1,2,3][7]))\n}\n"),
+        // E0404 — "a path names something absent, or the wrong kind of thing"
+        ("E0404", "e404_variant", "type S = A { v: i64 } | B { w: i64 }\nfn main() {\n  let s = S::Zzz\n  println(\"x\")\n}\n"),
+        ("E0404", "e404_qualifier", "fn main() {\n  let v = Vec::new()\n  println(\"x\")\n}\n"),
+        ("E0404", "e404_called", "type S = A { v: i64 } | B { w: i64 }\nfn main() {\n  let s = S::A(1)\n  println(\"x\")\n}\n"),
+    ] {
+        let got = code_of(name, src);
+        assert!(
+            got.split(',').any(|c| c == want),
+            "`{name}` is a case the {want} row claims, but it emitted [{got}]"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

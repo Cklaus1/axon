@@ -150,10 +150,10 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0313` | RESERVED — the condition is reported as E0306 (cannot call a non-function value); never emitted under this code |
 | `E0314` | RESERVED — the condition is reported as E0102 (arithmetic on non-numeric type); never emitted under this code |
 | `E0315` | RESERVED — the condition is reported as E0102 (assignment type mismatch); never emitted under this code |
-| `E0401` | struct has no field |
-| `E0402` | indexing a non-indexable (non-array) type |
+| `E0401` | a field name that does not exist on the thing it is used with — a struct field, an enum-variant pattern field, a tuple index out of range, or a non-numeric tuple index |
+| `E0402` | an index that cannot be valid — a non-array receiver, `for x in` over one, or a constant index proved out of range |
 | `E0403` | calling a data field as a method (`p.x()`) |
-| `E0404` | enum-variant literal names a nonexistent variant |
+| `E0404` | a path names something that does not exist, or is used as the wrong kind of thing — an unknown variant, an unknown type/module qualifier, or a variant called like a function |
 | `E0405` | literal pattern's type can't match the match subject |
 | `E0406` | a field is set more than once in a struct literal |
 | `E0407` | integer division/remainder by a literal zero |
