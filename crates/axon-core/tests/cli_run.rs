@@ -28066,3 +28066,116 @@ fn a_goal_fn_with_params_explains_the_conflict_not_a_limitation() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn every_search_strategy_returns_the_best_it_found_not_the_target() {
+    // Asked "did we fully test the goal primitive?" and measured instead of
+    // answering. A targeted mutation sweep over the optimizer's decision points
+    // — the accept-a-better-candidate condition in each strategy — killed
+    // hill-climb and random, and left CATEGORICAL, MULTISTART and TOURNAMENT
+    // standing. For categorical and multistart, BOTH directions survived: the
+    // selection could be made to always accept or never accept and 53 goal
+    // tests noticed nothing.
+    //
+    // What makes it worse than an untested branch is the fallback. Each
+    // strategy ends with:
+    //
+    //     if best_score.is_nan() { best_score = target }
+    //
+    // so a strategy that accepts NOTHING does not return a poor score — it
+    // returns the TARGET, i.e. it reports hitting the goal exactly. Measured:
+    // with categorical's accept disabled, a metric whose best reachable score
+    // is 100 returned 1000 against a target of 1000.
+    //
+    // The test data is what makes this detectable. My first probe used
+    // target == the true best (100), so the fallback returned the right answer
+    // by coincidence and the mutant looked equivalent — the same test-data
+    // blindness that made an earlier `lww_merge` test unable to see its own
+    // mutant. The target here is deliberately UNREACHABLE, so "best found" and
+    // "target" are different numbers.
+    let dir = std::env::temp_dir().join(format!("axon_strategies_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("s.ax");
+    // Returns (stdout, stderr) so a failure says WHY rather than just showing an
+    // empty string — the shape of unhelpful test output this file complains
+    // about elsewhere.
+    let run = |src: &str| -> (String, String) {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", "7")
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            String::from_utf8_lossy(&o.stderr).trim().to_string(),
+        )
+    };
+
+    // Categorical: choice 3 scores 100, everything else 10; target 1000 is out
+    // of reach, so a working search returns 100 and a broken one returns 1000.
+    // The best choice is NOT the last one evaluated. With choice 3 winning, an
+    // "always accept" mutant still lands on it, because the exhaustive loop
+    // visits 3 last — the answer would be right for the wrong reason. Choice 1
+    // makes accept-always and accept-correctly disagree.
+    let cat = run(
+        "@[adaptive]\nfn pick(choice: i64) -> i64 { if choice == 1 { 100 } else { 10 } }\n\
+         fn main() { println(to_str(goal_run_categorical(\"pick\", 4, 1000.0, 20))) }\n",
+    );
+    assert_eq!(
+        cat.0, "100",
+        "categorical must return the best CHOICE it found: {} / {}",
+        cat.0, cat.1
+    );
+
+    // Multistart: smooth objective so the assertion is about selection, not
+    // whether a random start happened to land in a narrow basin.
+    let ms = run(
+        "@[adaptive]\nfn smooth(x: i64) -> i64 { 100 - abs_i64(x - 42) }\n\
+         fn main() { println(to_str(goal_run_multistart(\"smooth\", 1000.0, 5, 30, 0, 90))) }\n",
+    );
+    assert_eq!(
+        ms.0, "100",
+        "multistart must return the best START it found: {} / {}",
+        ms.0, ms.1
+    );
+
+    // Random sampling, over a domain small enough that the peak is reachable.
+    let rnd = run(
+        "@[adaptive]\nfn smooth(x: i64) -> i64 { 100 - abs_i64(x - 5) }\n\
+         fn main() { println(to_str(goal_run_random(\"smooth\", 1000.0, 40, 0, 11))) }\n",
+    );
+    assert_eq!(
+        rnd.0, "100",
+        "random must return the best SAMPLE it found: {} / {}",
+        rnd.0, rnd.1
+    );
+
+    // And the plain hill-climb, as the control that was already covered.
+    let hc = run(
+        "@[adaptive]\nfn smooth(x: i64) -> i64 { 100 - abs_i64(x - 42) }\n\
+         fn main() { println(to_str(goal_run(\"smooth\", 1000.0, 60))) }\n",
+    );
+    assert_eq!(
+        hc.0, "100",
+        "hill-climb must return the best it found: {} / {}",
+        hc.0, hc.1
+    );
+
+    // Tournament is reached through `@[goal(strategy: tournament)]` rather than
+    // a `goal_run_*` builtin, so it needs its own shape or it is never exercised
+    // at all — which is how its accept condition came to be untested.
+    let tour = run(
+        "@[adaptive]\nfn smooth(x: i64) -> i64 { 100 - abs_i64(x - 42) }\n\
+         @[goal(metric: smooth, target: 1000, strategy: tournament, lo: 0, hi: 90, max_evals: 60)]\n\
+         fn tune() { }\n\
+         fn main() { tune()\nprintln(to_str(goal_best_score(\"smooth\", 1000.0))) }\n",
+    );
+    assert_eq!(
+        tour.0, "100",
+        "tournament must return the best RIVAL it found: {} / {}",
+        tour.0, tour.1
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
