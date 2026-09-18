@@ -683,6 +683,30 @@ fn cmd_audit(rest: &[&str]) -> ExitCode {
         }
     };
 
+    // An ABSENT ledger is not a verified ledger.
+    //
+    // `Ledger::open` is open-OR-CREATE: a missing path yields an empty chain so
+    // a writer can start appending, which is right for the writer and wrong
+    // here. `verify()` then accepts the empty chain and this printed
+    //
+    //     ✓ ledger intact (0 entries, chain verified)     exit 0
+    //
+    // for a file that had never existed. An audit verifier certifying a chain
+    // that is not there is the one answer it must never give.
+    //
+    // Fail closed, with exit 11, for the reason axon-audit already gives about a
+    // missing chain tip: "deleting it is exactly what an attacker who truncated
+    // the ledger would do next". An absent ledger and a deleted one are the same
+    // bytes on disk.
+    if !path.exists() {
+        eprintln!(
+            "axon-os audit: no ledger at {} — nothing to verify. An absent ledger \
+             is indistinguishable from a deleted one, so this is a failure, not a pass.",
+            path.display()
+        );
+        return ExitCode::from(11);
+    }
+
     let ledger = match axon_audit::Ledger::open(&path) {
         Ok(l) => l,
         Err(e) => {
@@ -694,6 +718,12 @@ fn cmd_audit(rest: &[&str]) -> ExitCode {
 
     match subcommand {
         "verify" => match ledger.verify() {
+            Ok(()) if ledger.is_empty() => {
+                // A present-but-empty ledger is not tampered, but "chain
+                // verified" claims something was checked. Nothing was.
+                println!("\u{2713} ledger present but EMPTY (0 entries) — nothing to verify");
+                ExitCode::from(0)
+            }
             Ok(()) => {
                 println!(
                     "\u{2713} ledger intact ({} entries, chain verified)",

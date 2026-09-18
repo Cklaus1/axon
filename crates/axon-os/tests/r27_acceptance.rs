@@ -695,3 +695,88 @@ fn instance_cannot_vote_as_another_pid() {
     // Bob (slot=1) votes correctly.
     c.propose_vote(1, "bob", 1).unwrap();
 }
+
+/// `axon-os audit verify` certified a ledger that did not exist.
+///
+/// `Ledger::open` is open-OR-CREATE — a missing path yields an empty chain so a
+/// writer can start appending. `verify()` accepts that empty chain, so the CLI
+/// printed, for a file that had never been written:
+///
+///     ✓ ledger intact (0 entries, chain verified)      exit 0
+///
+/// An audit verifier certifying a chain that is not there is the one answer it
+/// must never give. `audit verify` and `status` were the two axon-os
+/// subcommands with no test reference at all.
+#[test]
+fn audit_verify_refuses_an_absent_ledger_and_still_catches_tampering() {
+    use axon_audit::{EffectKind, Ledger};
+
+    let dir = std::env::temp_dir().join(format!("axon_auditcli_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let os = env!("CARGO_BIN_EXE_axon-os");
+    let verify = |p: &std::path::Path| -> (i32, String) {
+        let o = std::process::Command::new(os)
+            .args(["audit", "verify", "--ledger"])
+            .arg(p)
+            .output()
+            .unwrap();
+        (
+            o.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+        )
+    };
+
+    // 1. Absent — fail closed. An absent ledger and a deleted one are the same
+    //    bytes on disk, and axon-audit already treats a missing chain tip as a
+    //    failure for that reason.
+    let absent = dir.join("never.jsonl");
+    let (code, out) = verify(&absent);
+    assert_eq!(code, 11, "an absent ledger must not verify: {out}");
+    assert!(out.contains("no ledger at"), "{out}");
+    assert!(
+        !out.contains("chain verified"),
+        "nothing was verified, so it must not say so: {out}"
+    );
+
+    // 2. A real, populated ledger verifies — the fix must not refuse valid ones.
+    let real = dir.join("real.jsonl");
+    {
+        let mut l = Ledger::open(&real).unwrap();
+        l.append("root", EffectKind::FS, "read_file(/etc/hosts)")
+            .unwrap();
+        l.append("root", EffectKind::Net, "http_get(example.com)")
+            .unwrap();
+    }
+    let (code, out) = verify(&real);
+    assert_eq!(code, 0, "a valid ledger must verify: {out}");
+    assert!(
+        out.contains("2 entries") && out.contains("chain verified"),
+        "{out}"
+    );
+
+    // 3. Tampering is still caught — the whole point of the chain.
+    let tampered = dir.join("tampered.jsonl");
+    let text = std::fs::read_to_string(&real).unwrap();
+    std::fs::write(&tampered, text.replacen("/etc/hosts", "/etc/shadow", 1)).unwrap();
+    let (code, out) = verify(&tampered);
+    assert_eq!(code, 11, "a tampered ledger must fail: {out}");
+
+    // 4. Present but EMPTY is neither: it exists, nothing is wrong with it, and
+    //    nothing was verified. Saying "chain verified" there is the same
+    //    overclaim in a quieter form.
+    let empty = dir.join("empty.jsonl");
+    std::fs::write(&empty, "").unwrap();
+    let (code, out) = verify(&empty);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("EMPTY") && !out.contains("chain verified"),
+        "an empty ledger must say so rather than claim verification: {out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
