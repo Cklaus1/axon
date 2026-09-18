@@ -26822,3 +26822,131 @@ fn refinement_pseudo_builtins_do_not_hijack_every_short_name_suggestion() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn foreign_habit_diagnostics_carry_an_actionable_hint() {
+    // Swept the habits a model actually brings to Axon and kept the rows that
+    // produced no `help` at all. Four gaps, all on the path this repo cares
+    // most about: a parse/type error with no hint is the measured dominant
+    // failure, and the reader is usually a model.
+    let dir = std::env::temp_dir().join(format!("axon_habits_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let help = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .filter(|l| l.contains("\"severity\":\"error\""))
+            .map(|l| l.to_string())
+            .next()
+            .unwrap_or_else(|| format!("<no error> in {all}"))
+    };
+
+    // `not` parses as an identifier, so the unexpected token is whatever
+    // FOLLOWS it. The rule was guarded on `unexpected token: Ident`, so the
+    // hint appeared for `not found` and vanished for every literal operand —
+    // while the rule's own text already advertised `!` as the answer.
+    for cond in ["not found", "not false", "not true", "not 0"] {
+        let h = help(&format!(
+            "fn main() {{ let found = true\nif {cond} {{ println(\"a\") }} }}\n"
+        ));
+        assert!(
+            h.contains("`not` is not an Axon operator") && h.contains("write `!`"),
+            "`{cond}` must name the habit and the fix: {h}"
+        );
+    }
+    // `not (x)` parses as a CALL and reaches the resolver instead, where the
+    // generic hint advised binding a variable named `not`.
+    let paren = help("fn main() { let found = true\nif not (found) { println(\"a\") } }\n");
+    assert!(
+        paren.contains("`!`") && !paren.contains("introduce `not`"),
+        "`not (x)` must not be answered with 'introduce `not` with `let not = …`': {paren}"
+    );
+    // The siblings must be unaffected.
+    for (cond, op) in [("found and true", "&&"), ("found or true", "||")] {
+        let h = help(&format!(
+            "fn main() {{ let found = true\nif {cond} {{ println(\"a\") }} }}\n"
+        ));
+        assert!(h.contains(op), "`{cond}` must still suggest `{op}`: {h}");
+    }
+
+    // The Python/shell comment habit named only the token (`Hash`).
+    let hash = help("fn main() { # a comment\nprintln(\"x\") }\n");
+    assert!(
+        hash.contains("does not start a comment") && hash.contains("`//`"),
+        "`#` must name the habit and Axon's comment syntax: {hash}"
+    );
+
+    // A foreign TYPE name is not within spelling distance of its Axon
+    // equivalent, so `int` got "check the type name" — a restatement, not a fix.
+    for (ty, want) in [
+        ("int", "`i64`"),
+        ("float", "`f64`"),
+        ("string", "`str`"),
+        ("boolean", "`bool`"),
+        ("usize", "`i64`"),
+        ("Vec", "`[T]`"),
+    ] {
+        let h = help(&format!(
+            "fn g(x: {ty}) -> i64 {{ 1 }}\nfn main() {{ println(to_str(1)) }}\n"
+        ));
+        assert!(
+            h.contains(want),
+            "type `{ty}` should point at {want}, got: {h}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn foreign_type_help_has_no_unreachable_rows() {
+    // A row for a name that is ALREADY a valid type never fires, and an
+    // unreachable row reads as coverage it is not — the sibling table in the
+    // resolver carries the same warning in prose. `Dict` and `None` were in
+    // the first draft and are valid here, so both were dropped; this is what
+    // keeps the next addition honest.
+    let dir = std::env::temp_dir().join(format!("axon_typerows_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let mut dead = Vec::new();
+    for ty in [
+        "int", "integer", "long", "Int", "Integer", "float", "double", "Float", "Double", "string",
+        "Str", "boolean", "Bool", "Boolean", "char", "Char", "byte", "void", "NoneType", "null",
+        "list", "List", "Vec", "Array", "array", "dict", "map", "Map", "HashMap", "usize", "isize",
+        "size_t",
+    ] {
+        std::fs::write(
+            &f,
+            format!("fn g(x: {ty}) -> i64 {{ 1 }}\nfn main() {{ println(to_str(1)) }}\n"),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if !all.contains("E0308") {
+            dead.push(ty);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        dead.is_empty(),
+        "these foreign-type rows can never fire, because the name is already a \
+         valid Axon type: {dead:?}"
+    );
+}

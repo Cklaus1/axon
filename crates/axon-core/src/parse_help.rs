@@ -216,6 +216,27 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
     // `not` is checked before `and`/`or` only for tidiness; the three are
     // mutually exclusive in practice. A leading `not` at the start of the line is
     // matched too (`not found` as a bare condition), which ` not ` alone misses.
+    //
+    // The message guard below was `unexpected token: Ident`, which is right for
+    // `and`/`or` — those ARE the unexpected token — but wrong for `not`, which
+    // parses as an identifier so the unexpected token is whatever FOLLOWS it.
+    // With a literal operand the hint vanished:
+    //     not found  -> "unexpected token: Ident(...)"   help: write `!`
+    //     not false  -> "unexpected token: False"        NO HELP
+    //     not true   -> "unexpected token: True"         NO HELP
+    //     not 0      -> "unexpected token: Int(0)"       NO HELP
+    // `if not false` is not a contrived shape, and the row already advertised
+    // `!` as the answer — so, again, the hint named a fix for a mistake it
+    // could not detect.
+    if msg.contains("unexpected token")
+        && (line.contains(" not ") || line.trim_start().starts_with("not "))
+    {
+        return Some(
+            "`not` is not an Axon operator — write `!`. Axon spells the \
+             logical operators `&&`, `||` and `!`"
+                .to_string(),
+        );
+    }
     if msg.contains("unexpected token: Ident") {
         let seen = if line.contains(" not ") || line.trim_start().starts_with("not ") {
             Some(("not", "!"))
@@ -232,6 +253,20 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
                  logical operators `&&`, `||` and `!`"
             ));
         }
+    }
+
+    // `# a comment` — the Python/shell/Ruby comment habit.
+    //
+    // Axon line comments are `//`. A `#` lexes to its own token and dies as
+    // "unexpected token: Hash, expected expression", which names the token and
+    // not the habit — and a reader who does not already know Axon's comment
+    // syntax cannot get there from the token name.
+    if msg.contains("unexpected token: Hash") {
+        return Some(
+            "`#` does not start a comment in Axon (that is Python/shell/Ruby) — \
+             line comments are `//`, and `///` documents the item below it"
+                .to_string(),
+        );
     }
 
     // `s += "b"` / `i -= 1` — compound assignment.

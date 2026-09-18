@@ -474,6 +474,15 @@ fn foreign_keyword_help(name: &str) -> Option<String> {
         "function" => ("JS", "`fn NAME(arg: i64) -> i64 { … }`"),
         "elif" => ("Python", "`else if`"),
         "null" | "nil" | "None" => ("Python/JS/Go", "`Option`: `None` is written as the `Option` variant, and a missing value is `Option<T>` rather than a null"),
+        // The logical operators. `and`/`or` normally surface one tier up (they
+        // ARE the unexpected token, so `parse_help` sees them), but `not` leads
+        // its expression: `if not (found)` parses as a CALL to `not`, reaches
+        // the resolver, and used to be answered with the generic "introduce
+        // `not` with `let not = …`" — advice to bind a variable named `not`,
+        // which cannot be what the author meant.
+        "not" => ("Python/Ruby", "`!`"),
+        "and" => ("Python/Ruby", "`&&`"),
+        "or" => ("Python/Ruby", "`||`"),
         "true_" | "True" => ("Python", "`true`"),
         "False" => ("Python", "`false`"),
         // Deliberately NOT listed: `print`, `len` and friends are real Axon

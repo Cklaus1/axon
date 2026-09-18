@@ -248,6 +248,45 @@ fn is_int_width(t: &Type) -> bool {
     )
 }
 
+/// Fix text for a type name borrowed from another language, or `None`.
+///
+/// Closed table, for the same reason `parse_help` and `foreign_keyword_help`
+/// are closed: a compiler hint must be deterministic and offline. Every target
+/// named here is in `PRIMITIVE_NAMES` or is real Axon syntax — a hint that
+/// names a type this build does not have would send the reader somewhere
+/// worse than where they started.
+fn foreign_type_help(name: &str) -> Option<String> {
+    // `Dict` and `None` are deliberately absent: both are already VALID here
+    // (`Dict` via DEFERRED_PREFIXES, `None` as the `Option` variant), so a row
+    // for either would be unreachable — and an unreachable row reads as
+    // coverage it is not.
+    let (lang, fix) = match name {
+        "int" | "integer" | "long" | "Int" | "Integer" => ("Python/Java/Go", "`i64`"),
+        "float" | "double" | "Float" | "Double" => ("Python/Java", "`f64`"),
+        "string" | "Str" | "&str" => ("Python/Rust", "`str`"),
+        "boolean" | "Bool" | "Boolean" => ("Java/Python", "`bool`"),
+        // Axon has no character type; a one-character string is the idiom, and
+        // `str_slice(s, i, i + 1)` is how you get one.
+        "char" | "Char" | "byte" => (
+            "Rust/Java",
+            "`str` — Axon has no character type; use a one-character string",
+        ),
+        "void" | "NoneType" | "null" => (
+            "C/Python",
+            "`()` for no value, or `Option<T>` for a value that may be absent",
+        ),
+        "list" | "List" | "Vec" | "Array" | "array" => {
+            ("Python/Rust", "`[T]` — an Axon slice, e.g. `[i64]`")
+        }
+        "dict" | "map" | "Map" | "HashMap" => ("Python/Rust", "`Dict`"),
+        "usize" | "isize" | "size_t" => ("Rust/C", "`i64` — Axon indexes and lengths are `i64`"),
+        _ => return None,
+    };
+    Some(format!(
+        "`{name}` is a {lang} type name — Axon writes {fix}"
+    ))
+}
+
 // ── Known primitives (for R08) ────────────────────────────────────────────────
 
 const PRIMITIVE_NAMES: &[&str] = &[
@@ -5498,9 +5537,19 @@ impl CheckCtx {
                     for k in &known_enums {
                         candidates.push(k.clone());
                     }
-                    let fix = match closest_name(name, &candidates) {
-                        Option::Some(s) => format!("did you mean '{s}'?"),
-                        Option::None => "check the type name".to_string(),
+                    // A type name borrowed from another language is a stronger
+                    // signal than edit distance, and it is checked FIRST for
+                    // that reason: `int` is not within the spelling cutoff of
+                    // `i64`, so the reader used to get "check the type name" —
+                    // which restates that the name is wrong and says nothing
+                    // about what to write. Same class as `foreign_keyword_help`
+                    // in the resolver, one tier up.
+                    let fix = match foreign_type_help(name) {
+                        Option::Some(h) => h,
+                        Option::None => match closest_name(name, &candidates) {
+                            Option::Some(s) => format!("did you mean '{s}'?"),
+                            Option::None => "check the type name".to_string(),
+                        },
                     };
                     let file = self.file.clone();
                     let mut e = CheckError::new(E0308, format!("unknown type '{name}'"))
