@@ -345,9 +345,14 @@ pub fn safety_ledger() -> String {
 
     let path = std::path::Path::new(&ledger_path);
     if !path.exists() {
+        // "no ledger at this path", NOT "the feature is unavailable". This said
+        // "R28 not available", which blames the audit subsystem for what is
+        // usually just a run that has not written a ledger yet — and sends a
+        // reader looking for a missing feature instead of a missing file.
         return serde_json::json!({
             "ok": false,
-            "reason": "R28 not available",
+            "reason": "no ledger file at this path",
+            "ledger_path": ledger_path,
             "entries": [],
         })
         .to_string();
@@ -358,12 +363,26 @@ pub fn safety_ledger() -> String {
         Err(e) => return serde_json::json!({"ok": false, "error": e.to_string()}).to_string(),
     };
 
-    // Parse JSONL, take last 10 entries.
-    let entries: Vec<serde_json::Value> = content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
+    // Parse JSONL, take last 10 entries — and COUNT what will not parse.
+    //
+    // This was `filter_map(|l| from_str(l).ok())`, which silently dropped any
+    // line it could not read. On an AUDIT ledger that is the wrong failure: a
+    // truncated write or a tampered line rendered as a clean, shorter list, and
+    // the only trace was a gap in the `seq` numbers that a reader had to notice
+    // unaided. Measured on a 4-line ledger with one corrupt line, the endpoint
+    // returned `ok: true` and entries 1, 2, 4.
+    //
+    // Unreadable lines are still excluded from `entries` — half a record is not
+    // evidence — but the COUNT is reported, so "this ledger has a hole in it" is
+    // something the caller is told rather than something it must infer.
+    let non_empty: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    let total_lines = non_empty.len();
+    let parsed: Vec<serde_json::Value> = non_empty
+        .iter()
         .filter_map(|l| serde_json::from_str(l).ok())
-        .collect::<Vec<_>>()
+        .collect();
+    let unreadable = total_lines - parsed.len();
+    let entries: Vec<serde_json::Value> = parsed
         .into_iter()
         .rev()
         .take(10)
@@ -373,9 +392,14 @@ pub fn safety_ledger() -> String {
         .collect();
 
     serde_json::json!({
+        // `ok` stays true — the ledger was read — but it is no longer the whole
+        // story, so the counts travel with it. A caller that wants to refuse a
+        // holed ledger can; one that does not is at least not misled.
         "ok": true,
         "entries": entries,
         "ledger_path": ledger_path,
+        "total_lines": total_lines,
+        "unreadable_lines": unreadable,
     })
     .to_string()
 }

@@ -707,3 +707,61 @@ fn safety_kill_distinguishes_a_tripped_latch_from_a_pre_arm() {
     let _ = std::fs::remove_file(&latch);
     let _ = std::fs::remove_file(&mon);
 }
+
+/// The audit ledger silently dropped lines it could not parse.
+///
+/// `safety_ledger` used `filter_map(|l| from_str(l).ok())`, so a truncated
+/// write or a tampered line vanished and the endpoint returned `ok: true` with
+/// a clean, shorter list. Measured on a 4-line ledger with one corrupt line, it
+/// returned entries `seq` 1, 2, 4 — the only trace of the missing record being
+/// a gap a reader had to notice unaided.
+///
+/// For an audit trail that is the wrong failure: the whole point is that a
+/// reader can tell whether the record is complete.
+#[test]
+fn the_audit_ledger_reports_lines_it_cannot_read() {
+    let dir = std::env::temp_dir().join(format!("axon_ledger_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // A ledger with a hole in it.
+    let holed = dir.join("holed.jsonl");
+    std::fs::write(
+        &holed,
+        "{\"seq\":1,\"event\":\"start\"}\n{\"seq\":2,\"event\":\"read\"}\n\
+         NOT JSON AT ALL\n{\"seq\":4,\"event\":\"write\"}\n",
+    )
+    .unwrap();
+    std::env::set_var("AXON_AUDIT_LEDGER", &holed);
+    let out = crate::api::safety_ledger();
+    assert!(
+        out.contains("\"unreadable_lines\":1"),
+        "the hole must be counted: {out}"
+    );
+    assert!(out.contains("\"total_lines\":4"), "{out}");
+    // The unreadable line is still excluded — half a record is not evidence.
+    assert!(!out.contains("NOT JSON"), "{out}");
+
+    // A clean ledger reports zero, so the field is a signal rather than noise.
+    let clean = dir.join("clean.jsonl");
+    std::fs::write(&clean, "{\"seq\":1}\n{\"seq\":2}\n").unwrap();
+    std::env::set_var("AXON_AUDIT_LEDGER", &clean);
+    let out = crate::api::safety_ledger();
+    assert!(out.contains("\"unreadable_lines\":0"), "{out}");
+    assert!(out.contains("\"total_lines\":2"), "{out}");
+
+    // An ABSENT ledger is a missing file, not a missing feature. This said
+    // "R28 not available", which sends a reader hunting for a subsystem when a
+    // run simply has not written one yet.
+    let missing = dir.join("nope.jsonl");
+    std::env::set_var("AXON_AUDIT_LEDGER", &missing);
+    let out = crate::api::safety_ledger();
+    assert!(out.contains("\"ok\":false"), "{out}");
+    assert!(
+        out.contains("no ledger file at this path") && !out.contains("R28 not available"),
+        "an absent file must not be reported as an absent feature: {out}"
+    );
+
+    std::env::remove_var("AXON_AUDIT_LEDGER");
+    let _ = std::fs::remove_dir_all(&dir);
+}
