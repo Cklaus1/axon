@@ -4342,6 +4342,15 @@ struct CellResult {
     ok: bool,
     stdout: String,
     diagnostics: Vec<String>,
+    /// Why the cell aborted at RUNTIME, kept apart from `diagnostics` because
+    /// the two surfaces need opposite things from it.
+    ///
+    /// The interpreter prints `axon: panic: …` to stderr itself, so the human
+    /// view must NOT repeat it — but a `--protocol jsonl` host cannot see
+    /// stderr, and without this its frame said `{"ok":false,"diagnostics":[]}`:
+    /// failed, no reason. Folding it into `diagnostics` fixes the host and
+    /// double-prints for the human; a separate field serves both.
+    abort: Option<String>,
     /// Bindings that could not cross the boundary, NAMED rather than dropped.
     skipped: Vec<String>,
     /// The value of the cell's trailing expression, rendered (R44 §4 S6).
@@ -4719,6 +4728,7 @@ fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<
                     sess.cell_no += 1;
                     let r = CellResult {
                         ok: false,
+                        abort: None,
                         stdout: String::new(),
                         diagnostics: vec![format!("[{}] {why}", axon_core::error::E2403)],
                         skipped: Vec::new(),
@@ -4920,6 +4930,7 @@ fn run_cell(
         );
         return CellResult {
             ok: false,
+            abort: None,
             stdout: String::new(),
             diagnostics: vec![format!(
                 "[{}] `{bad}` is in the `__axon_` namespace the session reserves for itself \
@@ -4941,6 +4952,7 @@ fn run_cell(
         );
         return CellResult {
             ok: false,
+            abort: None,
             stdout: String::new(),
             diagnostics: vec![format!(
                 "[{}] a session cell must not declare `fn main` — the session composes one \
@@ -4981,6 +4993,7 @@ fn run_cell(
     if std::fs::write(&path, &src).is_err() {
         return CellResult {
             ok: false,
+            abort: None,
             stdout: String::new(),
             diagnostics: vec!["could not write the composed cell to a temp file".into()],
             skipped: Vec::new(),
@@ -5009,6 +5022,7 @@ fn run_cell(
                     Some(h) => format!("[{}] {} — help: {}", diag.code, diag.message, h),
                     None => format!("[{}] {}", diag.code, diag.message),
                 }],
+                abort: None,
                 skipped: Vec::new(),
                 value: None,
             };
@@ -5027,6 +5041,7 @@ fn run_cell(
         );
         return CellResult {
             ok: false,
+            abort: None,
             stdout: String::new(),
             diagnostics: attribute_errors(sess, &composed, &cell_items, &errors),
             skipped: Vec::new(),
@@ -5043,6 +5058,10 @@ fn run_cell(
 
     let captured = axon_core::interp::take_session_result();
     let ok = code == 0 && captured.is_some();
+    // Why the cell aborted, for a caller that cannot see stderr. Taken
+    // unconditionally so a reason left by an earlier cell can never be
+    // attributed to this one.
+    let abort_reason = axon_core::interp::take_last_abort();
     let mut skipped = Vec::new();
     let mut value: Option<String> = None;
     if let Some((bindings, _shapes)) = captured {
@@ -5107,7 +5126,13 @@ fn run_cell(
     CellResult {
         ok,
         stdout: out,
+        // A cell that aborted says WHY. This was `Vec::new()` unconditionally,
+        // so a runtime panic reached a jsonl host as
+        // `{"ok":false,"diagnostics":[]}` — failed, no reason — while the human
+        // view printed the panic straight from the interpreter. The host driver
+        // is the consumer that cannot see stderr, and it is the RLM surface.
         diagnostics: Vec::new(),
+        abort: if ok { None } else { abort_reason },
         skipped,
         value,
     }
@@ -5224,6 +5249,9 @@ fn render_cell_human(r: &CellResult) {
     for s in &r.skipped {
         eprintln!("  note: did not persist — {s}");
     }
+    // The abort REASON is not printed here: the interpreter already wrote
+    // `axon: panic: …` to stderr, and repeating it puts the same sentence on
+    // screen twice. What the reader still needs is what the rollback covers.
     if !r.ok && r.diagnostics.is_empty() {
         // R44 §4.4 — say what rollback actually covers. This used to read
         // "session is unchanged", which is true for a cell refused at CHECK time
@@ -5269,9 +5297,16 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
         }
         out
     };
+    // The abort reason joins `diagnostics` HERE and only here. A jsonl host
+    // cannot see the `axon: panic: …` the interpreter writes to stderr, so
+    // without this the frame is `{"ok":false,"diagnostics":[]}` — the cell
+    // failed and the reason is unreachable. The human renderer deliberately
+    // does the opposite and leaves it out, because there it would be the second
+    // copy on screen.
     let diags: Vec<String> = r
         .diagnostics
         .iter()
+        .chain(r.abort.iter())
         .map(|d| format!("\"{}\"", esc(d)))
         .collect();
     let skips: Vec<String> = r

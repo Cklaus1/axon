@@ -25332,3 +25332,100 @@ fn the_repair_hint_reaches_the_terminal_and_the_session() {
     assert_eq!(depth, 0, "session frame must stay balanced JSON: {cell}");
     assert!(!in_str, "unterminated string in session frame: {cell}");
 }
+
+/// A cell that panicked told a jsonl host nothing at all.
+///
+///     {"schema":"axon-session/1","cell":3,"ok":false,"diagnostics":[]}
+///
+/// The interpreter writes `axon: panic: …` to stderr, and the frame was built
+/// from the exit code alone — so a host driver, which is the one consumer that
+/// cannot see stderr, learned the cell failed and never learned why. On the
+/// surface a model iterates on, "it failed" with no cause is the least
+/// actionable thing a compiler can say.
+#[test]
+fn a_cell_that_panics_tells_the_host_why() {
+    let out = session_jsonl(&[
+        &frame("let xs = [1,2,3]"),
+        &frame("println(to_str(xs[9]))"),
+        &frame("println(to_str(len(xs)))"),
+    ]);
+    let frames: Vec<&String> = out
+        .iter()
+        .filter(|l| l.contains("axon-session/1"))
+        .collect();
+    assert_eq!(frames.len(), 3, "one frame per cell: {out:?}");
+    assert!(frames[1].contains("\"ok\":false"), "{}", frames[1]);
+    assert!(
+        frames[1].contains("index 9 out of bounds") && frames[1].contains("len 3"),
+        "the host must be told WHY the cell failed: {}",
+        frames[1]
+    );
+    // And the session survives it — the reason is reported, not fatal.
+    assert!(
+        frames[2].contains("\"ok\":true") && frames[2].contains('3'),
+        "state must be intact after a panicking cell: {}",
+        frames[2]
+    );
+
+    // A reason left by one cell must never be attributed to a later one.
+    let out = session_jsonl(&[&frame("let ys = [1]"), &frame("println(to_str(ys[0]))")]);
+    for f in out.iter().filter(|l| l.contains("axon-session/1")) {
+        assert!(
+            f.contains("\"diagnostics\":[]"),
+            "a clean cell carries no inherited reason: {f}"
+        );
+    }
+}
+
+/// `Chan::new(n)` type-checked and panicked at runtime.
+///
+/// It is an entry in the BUILTINS table with a signature and a doc, so
+/// `axon reference` advertised it — but the evaluator only recognised the
+/// `chan::<T>` lowering that `chan<T>()` produces. The callee evaluated to a
+/// Chan and the evaluator tried to call it: "value of type Chan is not
+/// callable". A documented builtin that type-checks and dies at runtime is
+/// worse than one that does not exist.
+///
+/// Found by driving a session through values that cannot cross a cell boundary
+/// — the surrounding test of that behaviour is what surfaced this.
+#[test]
+fn chan_new_is_a_working_builtin_not_just_a_documented_one() {
+    let f = std::env::temp_dir().join(format!("axon_channew_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() {\n  let ch = Chan::new(4)\n  spawn { ch.send(42) }\n  \
+         println(to_str(ch.recv()))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(
+        !all.contains("panic"),
+        "an advertised builtin must not panic: {all}"
+    );
+    assert!(
+        all.contains("42"),
+        "it must actually carry the value: {all}"
+    );
+
+    // It is the same channel as the spec spelling, not a second kind.
+    std::fs::write(
+        &f,
+        "fn main() {\n  let a = chan<i64>()\n  let b = Chan::new(1)\n  \
+         spawn { a.send(1) }\n  spawn { b.send(2) }\n  \
+         println(to_str(a.recv() + b.recv()))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains('3'),
+        "both spellings must produce a usable channel: {}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+}

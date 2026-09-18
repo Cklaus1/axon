@@ -2202,6 +2202,32 @@ static SESSION_CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// runtime", which is a misleading enough symptom to be worth the comment.
 static SESSION_RESULT: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
 
+/// The reason the last run aborted, for a caller that cannot see stderr.
+///
+/// The abort arms below print `axon: panic: …` and return an exit code, and that
+/// was the whole of the reporting. `axon session --protocol jsonl` builds its
+/// frame from the exit code, so a cell that panicked came back as
+/// `{"ok":false,"diagnostics":[]}` — a host driver was told the cell failed and
+/// given no reason at all. A session is the surface a model iterates on; "it
+/// failed" with no cause is the least actionable thing a compiler can say.
+///
+/// A `Mutex` for the same reason `SESSION_RESULT` is one: `on_deep_stack` runs
+/// the program on another thread.
+static LAST_ABORT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Record why a run aborted. Called beside each `eprintln!` so the two cannot
+/// drift — a reader of either surface sees the same sentence.
+fn set_last_abort(msg: String) {
+    if let Ok(mut g) = LAST_ABORT.lock() {
+        *g = Some(msg);
+    }
+}
+
+/// Take the last abort reason, clearing it.
+pub fn take_last_abort() -> Option<String> {
+    LAST_ABORT.lock().ok().and_then(|mut g| g.take())
+}
+
 /// Enable in-process session capture (R44). Returns the previous setting.
 pub fn set_session_capture(on: bool) -> bool {
     SESSION_CAPTURE.swap(on, std::sync::atomic::Ordering::Relaxed)
@@ -2410,11 +2436,13 @@ fn run_program_inner(
             // distinct exit code (5) so a supervisor branches on "AI policy needs
             // attention" instead of treating it like an overflow/div0 bug.
             let _ = std::io::stdout().flush();
+            set_last_abort(format!("ai policy: {msg}"));
             eprintln!("axon: ai policy: {msg}");
             AI_POLICY_EXIT_CODE
         }
         Err(Flow::Panic(msg)) => {
             let _ = std::io::stdout().flush();
+            set_last_abort(format!("panic: {msg}"));
             eprintln!("axon: panic: {msg}");
             101
         }
@@ -2423,6 +2451,7 @@ fn run_program_inner(
             // arm (the resolver normally rejects this at check time; this is the
             // runtime backstop). A crash, not a silent exit.
             let _ = std::io::stdout().flush();
+            set_last_abort("panic: `resume` called outside an effect-handler arm".to_string());
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
@@ -2431,6 +2460,7 @@ fn run_program_inner(
             // interpreter bug (it is always caught by `eval_with_handler`). Treat
             // as a panic rather than a silent exit.
             let _ = std::io::stdout().flush();
+            set_last_abort("panic: handler continuation escaped its `with` block".to_string());
             eprintln!("axon: panic: handler continuation escaped its `with` block");
             101
         }
