@@ -1183,14 +1183,46 @@ impl CheckCtx {
         if let Some(goal_attr) = f.attrs.iter().find(|a| a.name == "goal") {
             // E1504: a `#[goal]` fn must have zero params (entry point, not consumer).
             if !f.params.is_empty() {
+                // The reader who hits this has almost always written BOTH
+                // `@[adaptive]` and `@[goal]` on one fn — the natural reading of
+                // "an adaptive metric with a goal". They are opposite roles:
+                // `@[adaptive]` marks the parameterised METRIC the optimizer
+                // tunes, `@[goal]` marks a zero-arg ENTRY POINT. The old text
+                // said only "params are reserved for future use", which reads
+                // as a limitation to wait out rather than a contradiction to
+                // resolve, and carried no help at all.
+                //
+                // `@[...]` is the documented spelling and what every example
+                // uses; `#[...]` also parses (verified — both forms run), so
+                // this is house style, not a correctness fix.
+                let also_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+                let fix = if also_adaptive {
+                    format!(
+                        "`{}` is also `@[adaptive]`, and the two are opposite roles: \
+                         `@[adaptive]` marks the parameterised metric the optimizer \
+                         tunes, `@[goal]` marks a zero-argument entry point. Drop \
+                         `@[goal]` here and name the metric from the call instead: \
+                         `goal_run(\"{}\", target, max_evals)`",
+                        f.name, f.name
+                    )
+                } else {
+                    format!(
+                        "remove the parameter(s) from `{}`: a `@[goal]` fn is an \
+                         entry point the optimizer calls with no arguments. If this \
+                         is meant to be the tuned METRIC, annotate it `@[adaptive]` \
+                         instead and keep the parameter",
+                        f.name
+                    )
+                };
                 self.errors.push(
                     CheckError::new(
                         E1504,
                         format!(
-                            "`{}` is a `#[goal]` function — must have zero params (params are reserved for future use)",
+                            "`{}` is a `@[goal]` function — it must take no parameters",
                             f.name
                         ),
                     )
+                    .fix(fix)
                     .with_span(f.span),
                 );
             }

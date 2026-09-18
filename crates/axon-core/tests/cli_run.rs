@@ -27989,3 +27989,80 @@ fn one_mistake_does_not_report_twice_at_the_same_span() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_goal_fn_with_params_explains_the_conflict_not_a_limitation() {
+    // The ASI surface is what Axon is FOR, and this is the mistake a reader
+    // makes on their first optimizer program: annotating one fn both
+    // `@[adaptive]` and `@[goal(...)]`, which is the natural reading of "an
+    // adaptive metric with a goal". They are opposite roles — `@[adaptive]`
+    // marks the parameterised metric the optimizer tunes, `@[goal]` marks a
+    // zero-argument entry point.
+    //
+    // The message said only "must have zero params (params are reserved for
+    // future use)", with NO help. That reads as a limitation to wait out rather
+    // than a contradiction to resolve, and it never mentions the other
+    // annotation — which is the thing to remove.
+    let dir = std::env::temp_dir().join(format!("axon_goalparam_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let diag = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .find(|l| l.contains("\"code\":\"E1504\""))
+            .unwrap_or("<no E1504>")
+            .to_string()
+    };
+
+    // Both annotations: name the conflict and which one to drop.
+    let both = diag(
+        "@[adaptive]\n@[goal(\"maximize\")]\nfn score(t: i64) -> i64 { t }\nfn main() { println(\"x\") }\n",
+    );
+    assert!(
+        both.contains("also `@[adaptive]`") && both.contains("opposite roles"),
+        "the conflict must be named: {both}"
+    );
+    assert!(
+        both.contains("goal_run("),
+        "and the working shape shown: {both}"
+    );
+
+    // `@[goal]` alone: the parameter is simply wrong, and `@[adaptive]` is the
+    // annotation they may have wanted.
+    let alone = diag(
+        "@[goal(\"maximize\")]\nfn score(t: i64) -> i64 { t }\nfn main() { println(\"x\") }\n",
+    );
+    assert!(
+        alone.contains("entry point") && alone.contains("@[adaptive]"),
+        "the solo case must still say what to do: {alone}"
+    );
+
+    // The message must not describe this as a future feature.
+    for d in [&both, &alone] {
+        assert!(
+            !d.contains("reserved for future use"),
+            "this is a contradiction now, not a limitation later: {d}"
+        );
+    }
+
+    // ...and the CORRECT program — `@[adaptive]` with its parameter, the metric
+    // named from the call — must stay clean.
+    let ok = diag(
+        "@[adaptive]\nfn score(t: i64) -> i64 { 100 - abs_i64(t - 42) }\nfn main() { println(to_str(goal_run(\"score\", 100.0, 10))) }\n",
+    );
+    assert!(
+        ok.contains("<no E1504>"),
+        "the working idiom must pass: {ok}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
