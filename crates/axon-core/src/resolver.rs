@@ -558,6 +558,39 @@ fn foreign_builtin_help(name: &str) -> Option<String> {
         "dict_count" | "dict_tally" | "counter" | "Counter" => {
             "`dict_inc(d, k)` — increments, creating the key at 0 first"
         }
+        // Names whose Axon equivalent EXISTS but is spelled differently. Each
+        // of these previously fell through to the generic "the `arr_`/`str_`
+        // family is a fixed set" answer, which tells a reader the name is wrong
+        // and not what to write — while `arr_sort` two rows down has named its
+        // replacement all along. Every substitution below was run before being
+        // suggested; a hint naming something that does not work is worse than
+        // the generic line it replaces.
+        "str_lines" | "lines" | "splitlines" | "str_split_lines" => {
+            "`str_split(s, \"\\n\")` — there is no line-specific split"
+        }
+        "str_is_empty" | "is_empty" | "empty" | "str_empty" => {
+            "`str_len(s) == 0` — emptiness is a length test, not its own builtin"
+        }
+        "arr_first" | "first" | "head" | "arr_head" => {
+            "`xs[0]` — index it; there is no first/last accessor"
+        }
+        "arr_last" | "last" | "arr_tail" => "`xs[len(&xs) - 1]` — index from the length",
+        // `sum` previously reached `arr_sum_by` through the mechanical prefix
+        // lookup, which is reachable but indirect: `arr_sum_by` takes a
+        // PROJECTION, and a reader who wrote `sum(xs)` has none, so they arrive
+        // needing to discover `|v| v`. Name the direct form first and keep the
+        // projection form, since both are real answers to different questions.
+        "arr_sum" | "sum" | "total" => {
+            "`arr_sum_i64(&xs)` or `arr_sum_f64(&xs)` — summing names its element \
+             type; use `arr_sum_by(xs, |v| …)` to sum a projection instead"
+        }
+        "arr_flat_map" | "flat_map" | "flatMap" | "concat_map" => {
+            "`arr_flatten(&arr_map(&xs, f))` — map then flatten"
+        }
+        "str_strip_prefix" | "strip_prefix" | "removeprefix" | "str_trim_prefix" => {
+            "`if str_starts_with(s, p) { str_slice(s, str_len(p), str_len(s)) }` — \
+             there is no strip; test then slice"
+        }
         "arr_sort" | "sort" | "sorted" => {
             "`arr_sort_by(xs, |a, b| a - b)` — sorting always takes a comparator"
         }
@@ -593,6 +626,33 @@ fn foreign_builtin_help(name: &str) -> Option<String> {
 /// honest: each key must actually be answered, and none may be a real builtin.
 #[cfg(test)]
 const FOREIGN_BUILTIN_KEYS: &[&str] = &[
+    // Names whose Axon spelling exists but differs (see the rows above).
+    "str_lines",
+    "lines",
+    "splitlines",
+    "str_split_lines",
+    "str_is_empty",
+    "is_empty",
+    "empty",
+    "str_empty",
+    "arr_first",
+    "first",
+    "head",
+    "arr_head",
+    "arr_last",
+    "last",
+    "arr_tail",
+    "arr_sum",
+    "sum",
+    "total",
+    "arr_flat_map",
+    "flat_map",
+    "flatMap",
+    "concat_map",
+    "str_strip_prefix",
+    "strip_prefix",
+    "removeprefix",
+    "str_trim_prefix",
     // Runtime type introspection — answered with an explanation rather than a
     // substitution, since Axon cannot have it. Listed here so `every_key_is_answered`
     // and the no-clash check walk them like every other key.
@@ -3098,9 +3158,16 @@ mod foreign_builtin_help_tests {
 
     /// An invented name from a real family prefix gets the family answer rather
     /// than a guess at which member was meant.
+    ///
+    /// The example used to be `arr_first`, which now has a specific answer
+    /// (`xs[0]`) — not a guess, but the single unambiguous idiom, verified to
+    /// run before it was suggested. Repointed rather than relaxed: the property
+    /// under test is that a name with NO clear equivalent is not invented one,
+    /// so it needs an example that still has none. `arr_shuffle` is a name a
+    /// model plausibly writes and Axon genuinely cannot answer.
     #[test]
     fn an_invented_family_name_is_not_guessed_at() {
-        let help = foreign_builtin_help("arr_first").expect("prefix fallback");
+        let help = foreign_builtin_help("arr_shuffle").expect("prefix fallback");
         assert!(help.contains("fixed set"), "got: {help}");
         // A name with no known family still falls through to spelling.
         assert!(foreign_builtin_help("wibble").is_none());

@@ -27193,3 +27193,75 @@ fn a_traversal_denial_does_not_advise_a_grant_that_cannot_work() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_name_whose_axon_spelling_exists_is_told_the_spelling() {
+    // `arr_sort` has named its replacement all along; the rest of the family
+    // fell through to "the `arr_`/`str_` family is a fixed set, not a naming
+    // pattern" — which tells a reader the name is wrong and not what to write.
+    // These are the names with an exact Axon idiom, so the generic answer was
+    // leaving a real fix on the table.
+    //
+    // Every substitution below was RUN before being suggested. A hint naming
+    // something that does not work is worse than the generic line it replaces.
+    let dir = std::env::temp_dir().join(format!("axon_spelling_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let help = |name: &str| -> String {
+        std::fs::write(
+            &f,
+            format!("fn main() {{ let xs = [1]\nlet r = {name}(&xs)\nprintln(\"x\") }}\n"),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .find(|l| l.contains("\"code\":\"E0001\""))
+            .unwrap_or("<no E0001>")
+            .to_string()
+    };
+
+    for (wrote, want) in [
+        ("str_lines", "str_split(s,"),
+        ("lines", "str_split(s,"),
+        ("splitlines", "str_split(s,"),
+        ("str_is_empty", "str_len(s) == 0"),
+        ("is_empty", "str_len(s) == 0"),
+        ("arr_first", "xs[0]"),
+        ("head", "xs[0]"),
+        ("arr_last", "len(&xs) - 1"),
+        ("arr_sum", "arr_sum_i64"),
+        ("arr_flat_map", "arr_flatten"),
+        ("flat_map", "arr_flatten"),
+        ("str_strip_prefix", "str_starts_with"),
+        ("removeprefix", "str_starts_with"),
+    ] {
+        let h = help(wrote);
+        assert!(
+            h.contains(want),
+            "`{wrote}` should be told to write `{want}`, got: {h}"
+        );
+        assert!(
+            !h.contains("fixed set"),
+            "`{wrote}` has an exact idiom and should not get the generic answer: {h}"
+        );
+    }
+
+    // ...and a name with NO clear equivalent must still get the honest generic
+    // answer rather than an invented one. Losing this would trade a useless
+    // hint for a misleading one, which is the worse trade.
+    let shuffle = help("arr_shuffle");
+    assert!(
+        shuffle.contains("fixed set"),
+        "a name Axon cannot answer must not be guessed at: {shuffle}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
