@@ -278,19 +278,61 @@ pub fn safety_kill(body: &str) -> String {
     if let Err(e) = fs::create_dir_all(&runs_dir) {
         return serde_json::json!({"ok": false, "error": e.to_string()}).to_string();
     }
-    let kill_file = runs_dir.join(format!("{run_id}.kill"));
+    // Trip EVERY latch that exists for this run, and SAY whether one did.
+    //
+    // This wrote `<run_id>.kill` and returned `latch: "tripped"` unconditionally
+    // — the same defect AUDIT T26 fixed in `axon-os kill`, which used to write
+    // one path by naming convention and "printed the tripped banner and exited
+    // 0, leaving the operator believing a run had been killed when it had not".
+    //
+    // Two ways that happens here. A run started with `--killable --monitor` has
+    // `<run_id>.monitor.kill` and NO `<run_id>.kill` (axon-os cli.rs requires
+    // `monitor_effects.is_none()` for the latter), so writing only the first
+    // misses the live one. And `axon-os run` defaults `--out` to `.`, while R32
+    // names `~/.axon/runs/<run_id>.kill` as the canonical latch — so a
+    // supervisor started without `--out ~/.axon/runs` is not polling this
+    // directory at all.
+    //
+    // The endpoint cannot know the supervisor's `--out`, so it does not pretend
+    // to: `armed` reports whether a latch for this run already existed HERE.
+    // `armed: false` means the write is a pre-arm that a not-yet-started run
+    // will pick up — not a confirmed kill.
+    let candidates = [
+        runs_dir.join(format!("{run_id}.kill")),
+        runs_dir.join(format!("{run_id}.monitor.kill")),
+    ];
+    let existing: Vec<&std::path::PathBuf> = candidates.iter().filter(|p| p.exists()).collect();
+    let armed = !existing.is_empty();
+    let targets: Vec<&std::path::PathBuf> = if armed {
+        existing
+    } else {
+        vec![&candidates[0]]
+    };
+
     let kill_content = r#"{"latch":"tripped","reason":"operator shutdown"}"#;
-    match fs::write(&kill_file, kill_content) {
-        Ok(_) => serde_json::json!({
-            "ok": true,
-            "run_id": run_id,
-            "kill_file": kill_file.to_string_lossy(),
-            "latch": "tripped",
-            "reason": "operator shutdown",
-        })
-        .to_string(),
-        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}).to_string(),
+    let mut written: Vec<String> = Vec::new();
+    for t in &targets {
+        if let Err(e) = fs::write(t, kill_content) {
+            return serde_json::json!({"ok": false, "error": e.to_string()}).to_string();
+        }
+        written.push(t.to_string_lossy().to_string());
     }
+
+    serde_json::json!({
+        "ok": true,
+        "run_id": run_id,
+        "kill_file": written[0],
+        "kill_files": written,
+        "latch": "tripped",
+        "armed": armed,
+        "note": if armed {
+            "tripped an existing latch for this run"
+        } else {
+            "no latch existed here — wrote the canonical R32 path, which a run              armed at it will pick up. A supervisor started without              `--out ~/.axon/runs` polls a different directory."
+        },
+        "reason": "operator shutdown",
+    })
+    .to_string()
 }
 
 /// GET /api/safety/ledger — read the R28 audit ledger (last 10 entries).

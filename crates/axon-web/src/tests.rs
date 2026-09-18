@@ -638,3 +638,72 @@ fn e2e_full_flow_with_real_axon_binary() {
     // axon binary is the actual binary
     let _ = axon_bin; // used via env var in start_server_thread
 }
+
+/// `POST /api/safety/kill` claimed a kill it could not confirm.
+///
+/// It wrote `~/.axon/runs/<run_id>.kill` and returned `latch: "tripped"`
+/// unconditionally — the same defect AUDIT T26 fixed in `axon-os kill`, which
+/// used to write one path by naming convention and "printed the tripped banner
+/// and exited 0, leaving the operator believing a run had been killed when it
+/// had not".
+///
+/// Two ways it goes wrong. A run started `--killable --monitor` has
+/// `<run_id>.monitor.kill` and NO `<run_id>.kill`, so writing only the first
+/// misses the live latch. And `axon-os run` defaults `--out` to `.` while R32
+/// names `~/.axon/runs/` as canonical, so the supervisor may not be polling
+/// this directory at all.
+///
+/// The endpoint cannot know the supervisor's `--out`. What it can do is not
+/// claim more than it knows, which is what `armed` reports.
+#[test]
+fn safety_kill_distinguishes_a_tripped_latch_from_a_pre_arm() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let runs = std::path::Path::new(&home).join(".axon").join("runs");
+    std::fs::create_dir_all(&runs).unwrap();
+
+    // 1. No latch exists for this run — the write is a PRE-ARM, not a kill.
+    let fresh = format!("webkilltest_{}", std::process::id());
+    let out = crate::api::safety_kill(&format!("{{\"run_id\":\"{fresh}\"}}"));
+    assert!(out.contains("\"ok\":true"), "{out}");
+    assert!(
+        out.contains("\"armed\":false"),
+        "a run with no latch here must not be reported as armed: {out}"
+    );
+    assert!(
+        out.contains("--out ~/.axon/runs"),
+        "and must say why the supervisor might not see it: {out}"
+    );
+
+    // 2. A latch EXISTS (as a supervisor would have armed it) — now it is a
+    //    genuine trip, and the file's content must actually change.
+    let armed_id = format!("webkillarmed_{}", std::process::id());
+    let latch = runs.join(format!("{armed_id}.kill"));
+    std::fs::write(&latch, r#"{"latch":"clear"}"#).unwrap();
+    let out = crate::api::safety_kill(&format!("{{\"run_id\":\"{armed_id}\"}}"));
+    assert!(
+        out.contains("\"armed\":true"),
+        "an existing latch must be reported as armed: {out}"
+    );
+    let content = std::fs::read_to_string(&latch).unwrap();
+    assert!(
+        content.contains("\"latch\":\"tripped\""),
+        "the latch file must actually be tripped: {content}"
+    );
+
+    // 3. The `--monitor` shape: only `<run>.monitor.kill` exists. Writing just
+    //    `<run>.kill` would miss it entirely, which is the T26 failure.
+    let mon_id = format!("webkillmon_{}", std::process::id());
+    let mon = runs.join(format!("{mon_id}.monitor.kill"));
+    std::fs::write(&mon, r#"{"latch":"clear"}"#).unwrap();
+    let out = crate::api::safety_kill(&format!("{{\"run_id\":\"{mon_id}\"}}"));
+    assert!(out.contains("\"armed\":true"), "{out}");
+    let content = std::fs::read_to_string(&mon).unwrap();
+    assert!(
+        content.contains("\"latch\":\"tripped\""),
+        "a monitor latch must be tripped too, not just `<run>.kill`: {content}"
+    );
+
+    let _ = std::fs::remove_file(runs.join(format!("{fresh}.kill")));
+    let _ = std::fs::remove_file(&latch);
+    let _ = std::fs::remove_file(&mon);
+}
