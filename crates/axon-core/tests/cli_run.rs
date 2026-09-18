@@ -24578,3 +24578,112 @@ fn an_enum_variant_called_like_a_function_is_caught_before_it_runs() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `Vec::new()` type-checked clean and panicked at runtime.
+///
+/// Unqualified, an undefined name is E0001. Adding `::` skipped name resolution
+/// entirely, so any qualified path — `Vec::new()`, `HashMap::new()`, a typo'd
+/// module call `zzz::foo()` — reached the interpreter unchecked and died with
+/// "value of type Vec is not callable".
+///
+/// The reason it went unchecked is that `::` is overloaded: `Shape::Circle` is
+/// an enum variant and `gfx::clear` is a module call, wearing the same shape.
+/// The variant check only fired when the enum was already KNOWN, and nothing
+/// covered the case where the qualifier names nothing at all.
+#[test]
+fn an_unknown_qualified_path_is_a_compile_error_not_a_runtime_panic() {
+    let dir = std::env::temp_dir().join(format!("axon_unkpath_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let check = |name: &str, src: &str| -> (i32, String) {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        (o.status.code().unwrap_or(-1), msg)
+    };
+
+    for (name, src, qualifier) in [
+        (
+            "vec",
+            "fn main() { let v = Vec::new()\n  println(\"x\") }\n",
+            "Vec",
+        ),
+        (
+            "map",
+            "fn main() { let m = HashMap::new()\n  println(\"x\") }\n",
+            "HashMap",
+        ),
+        (
+            "unit",
+            "fn main() { let a = Zzz::qqq\n  println(\"x\") }\n",
+            "Zzz",
+        ),
+        // Lowercase too: a typo'd module call was equally unchecked.
+        (
+            "mod",
+            "fn main() { let a = zzz::foo()\n  println(\"x\") }\n",
+            "zzz",
+        ),
+    ] {
+        let (code, out) = check(name, src);
+        assert_eq!(
+            code, 2,
+            "`{qualifier}::…` must not reach the runtime: {out}"
+        );
+        assert!(
+            out.contains("E0404") && out.contains(&format!("no type or module `{qualifier}`")),
+            "{out}"
+        );
+    }
+
+    // Controls — each is a real construct wearing the same `A::b` shape, and
+    // any of them breaking would be worse than the bug being fixed.
+    const ENUM: &str = "type Shape = Circle { r: f64 } | Square { s: f64 }\n";
+    let (code, out) = check(
+        "variant",
+        &format!("{ENUM}fn main() {{ let a = Shape::Circle {{ r: 1.0 }}\n  println(\"x\") }}\n"),
+    );
+    assert_eq!(code, 0, "a declared enum variant must stay clean: {out}");
+
+    let (code, out) = check(
+        "modcall",
+        "use native::gfx\n@[contained(gfx: any)]\nfn main() -> i64 {\n  \
+         let w = gfx::window_open(8, 6, \"t\")\n  0\n}\n",
+    );
+    assert_eq!(code, 0, "a declared module call must stay clean: {out}");
+
+    // `Chan::new(16)` is a BUILTIN whose own name contains `::` — not a path at
+    // all. The first version of this check rejected it and broke three
+    // concurrency fixtures; no file under examples/ uses it, so the corpus sweep
+    // reported "identical to HEAD" while it was broken.
+    let (code, out) = check(
+        "chan",
+        "fn main() {\n  let c = Chan::new(16)\n  println(\"x\")\n}\n",
+    );
+    assert_eq!(
+        code, 0,
+        "a builtin with `::` in its name is not a path: {out}"
+    );
+
+    // The `ai_extract::<T>(…)` turbofish builds a synthetic callee name that
+    // also contains `::` but is not a path. NO example in the repo uses it, so
+    // the corpus sweep could not have caught this — it needs its own case.
+    let (_, out) = check(
+        "turbofish",
+        "fn main() {\n  let n = ai_extract::<i64>(\"how many?\")\n  println(to_str(n))\n}\n",
+    );
+    assert!(
+        !out.contains("E0404"),
+        "the turbofish is not an unknown module: {out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

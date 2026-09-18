@@ -333,6 +333,14 @@ pub struct CheckCtx {
     known_enums: Vec<String>,
     /// Variant lists for user-defined enums — used by Fix #10 for exhaustiveness.
     pub enum_variants: HashMap<String, Vec<String>>,
+    /// Module names a `M::f(…)` path may legitimately be qualified by.
+    ///
+    /// `::` is overloaded: `Shape::Circle` is an enum variant and `gfx::clear` is
+    /// a module call, and they are the same shape. Without this set the checker
+    /// cannot tell an undeclared TYPE from a declared MODULE, which is why an
+    /// unknown qualified path went unchecked entirely.
+    pub known_modules: std::collections::HashSet<String>,
+
     /// Field NAMES of each enum variant, keyed `"Enum::Variant"`.
     ///
     /// `enum_variants` holds only variant names, which is all E0404 needed. The
@@ -453,6 +461,7 @@ impl CheckCtx {
             known_enums: Vec::new(),
             enum_variants: HashMap::new(),
             enum_variant_fields: HashMap::new(),
+            known_modules: std::collections::HashSet::new(),
             current_generic_params: HashSet::new(),
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
@@ -492,6 +501,23 @@ impl CheckCtx {
         expr_types: HashMap<String, Type>,
     ) -> Vec<CheckError> {
         self.expr_types = expr_types;
+
+        // Every module name a qualified path may legitimately use: `mod helper`
+        // declares one, and `use native::gfx` declares `gfx` (every segment is
+        // taken, so both `native::` and `gfx::` qualify).
+        for item in &program.items {
+            match item {
+                Item::ModDecl(m) => {
+                    self.known_modules.insert(m.name.clone());
+                }
+                Item::UseDecl(u) => {
+                    for seg in &u.path {
+                        self.known_modules.insert(seg.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
 
         // Collect enum names, trait defs, impl table, and fn bounds.
         for item in &program.items {
@@ -3878,6 +3904,42 @@ impl CheckCtx {
                 // silently accepted (built a bogus Value::Enum), then matching it
                 // panicked at runtime ("no match arm matched"). Flag E0404.
                 if let Some((enum_name, variant)) = name.split_once("::") {
+                    // An UNDECLARED qualified path. `Vec::new()` / `HashMap::new()`
+                    // — the Rust and Java reflexes — type-checked clean and then
+                    // panicked with "value of type Vec is not callable", because
+                    // the variant check below only fires when the enum is KNOWN.
+                    // Unqualified, the same typo is E0001; adding `::` skipped
+                    // name resolution altogether.
+                    //
+                    // Exemptions, each for a real construct: a BUILTIN whose
+                    // own name contains `::` (`Chan::new` is an entry in the
+                    // BUILTINS table, not a path — checked by name so any future
+                    // one is covered without touching this), a declared module
+                    // (`gfx::clear`), a native FFI module resolved by table, and
+                    // the `ai_extract::<T>(…)` turbofish, whose synthetic callee
+                    // name also contains `::` but is not a path at all.
+                    let is_turbofish = name.contains("::<");
+                    if !is_turbofish
+                        && !crate::builtins::is_known_builtin(name)
+                        && !self.enum_variants.contains_key(enum_name)
+                        && !self.known_modules.contains(enum_name)
+                        && crate::native::resolve_call(name).is_none()
+                    {
+                        let file = self.file.clone();
+                        let span = self.current_span;
+                        self.errors.push(
+                            CheckError::new(
+                                E0404,
+                                format!("no type or module `{enum_name}` in this scope"),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .fix(format!(
+                                "`{enum_name}::{variant}` names nothing this program declares. Axon has no `Vec`/`HashMap` — an array literal is `[1, 2]` and a dict is `dict_new()`; for a module, add `use {enum_name}` (or `mod {enum_name}`)"
+                            )),
+                        );
+                    }
                     if let Some(variants) = self.enum_variants.get(enum_name) {
                         if !variants.iter().any(|v| v == variant) {
                             let file = self.file.clone();
