@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 141 diagnostic codes (128 live, 13 reserved), 47 environment variables.
+The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 141 diagnostic codes (128 live, 13 reserved), 48 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (47)
+## Environment variables (48)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -95,6 +95,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_INTENT_GEN` | let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`) |
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only |
 | `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
+| `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no MMDS capability policy could be loaded (no effect ceiling, no token cap, no seccomp). Development only — without it an unreadable policy REFUSES to start the guest, because an absent policy is not a permissive one |
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_AUDIT_LEDGER` | path to the R28 capability audit ledger |
 | `AXON_AUDIT_DETERMINISTIC` | use a counter instead of a clock for ledger timestamps, so audit output is reproducible in tests |

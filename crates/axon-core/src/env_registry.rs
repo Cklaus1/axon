@@ -45,6 +45,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Capabilities, principals, audit ──────────────────────────────────
     ("AXON_ALLOWED_EFFECTS", "ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only"),
     ("AXON_PRINCIPAL", "the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing"),
+    ("AXON_GUEST_ALLOW_NO_POLICY", "axon-guest-init: start the guest even though no MMDS capability policy could be loaded (no effect ceiling, no token cap, no seccomp). Development only — without it an unreadable policy REFUSES to start the guest, because an absent policy is not a permissive one"),
     ("AXON_REQUIRE_CERTS", "fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass"),
     ("AXON_AUDIT_LEDGER", "path to the R28 capability audit ledger"),
     ("AXON_AUDIT_DETERMINISTIC", "use a counter instead of a clock for ledger timestamps, so audit output is reproducible in tests"),

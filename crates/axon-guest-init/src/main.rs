@@ -2,7 +2,11 @@
 //!
 //! Boot sequence:
 //!   1. Re-seed entropy from virtio-rng (/dev/urandom)
-//!   2. Read capability policy from MMDS at 169.254.169.254 (schema axon-vm-mmds/1)
+//!   2. Read capability policy from MMDS at 169.254.169.254 (schema axon-vm-mmds/1).
+//!      If no policy can be read, REFUSE to start the guest — an absent policy is
+//!      not a permissive one, and this binary exists to install the sandbox.
+//!      `AXON_GUEST_ALLOW_NO_POLICY=1` opts into the old unpoliced behaviour
+//!      (development only) and says so loudly on every boot.
 //!   3. Fork: parent becomes PID-1 supervisor; child applies seccomp then execs Axon
 //!   4. Supervisor loop: reap zombies, forward SIGTERM/SIGINT, exit with child's code
 //!
@@ -69,15 +73,51 @@ fn main() {
     // 1. Re-seed entropy before any crypto-adjacent work.
     reseed_entropy();
 
-    // 2. Read policy from MMDS. Soft-fail: if the metadata service is not
-    //    present (running outside axon-vm), we continue without a policy.
+    // 2. Read policy from MMDS, and REFUSE to exec if there isn't one.
+    //
+    //    This used to soft-fail: an unreachable metadata service logged one
+    //    line that read like a note and handed `None` down, and `child_main`
+    //    then skipped the whole policy block — no effect ceiling, no token cap,
+    //    no seccomp — and exec'd the guest anyway. The sandbox this binary
+    //    exists to install was simply absent, and the only evidence was a line
+    //    saying "running without policy" among the boot messages.
+    //
+    //    The soft-fail was justified as "running outside axon-vm". Nothing in
+    //    the workspace runs it that way: it is `/sbin/init` in
+    //    `axon-rootfs.ext4`, PID 1 of a microVM, and no script or test invokes
+    //    it directly. So the case being preserved had no caller, while the case
+    //    being broken — a VM that boots but cannot reach MMDS — is exactly when
+    //    a capability policy matters.
+    //
+    //    The developer case is still reachable, but must now be ASKED for.
+    let allow_unpoliced = env::var("AXON_GUEST_ALLOW_NO_POLICY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let policy = match read_mmds() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[axon-guest-init] MMDS unavailable ({e}), running without policy");
+            eprintln!("[axon-guest-init] MMDS unavailable ({e})");
             None
         }
     };
+    match policy_decision(policy.is_some(), allow_unpoliced) {
+        PolicyDecision::Apply | PolicyDecision::ProceedUnpoliced => {}
+        PolicyDecision::Refuse => {
+            eprintln!(
+                "[axon-guest-init] REFUSING to start the guest: no capability policy was \
+                 loaded, so there would be no effect ceiling, no token cap and no seccomp \
+                 filter. Set AXON_GUEST_ALLOW_NO_POLICY=1 to run unpoliced on purpose \
+                 (development only)."
+            );
+            process::exit(1);
+        }
+    }
+    if policy.is_none() {
+        eprintln!(
+            "[axon-guest-init] WARNING: AXON_GUEST_ALLOW_NO_POLICY is set — the guest is \
+             running with NO effect ceiling, NO token cap and NO seccomp filter."
+        );
+    }
 
     // 3. Fork.
     let child_pid = unsafe { libc::fork() };
@@ -91,6 +131,31 @@ fn main() {
         }
         0 => child_main(policy, &binary, &exec_args),
         pid => supervisor_main(pid),
+    }
+}
+
+/// What to do about the policy we did (or did not) load.
+///
+/// A value rather than inline control flow so it can be tested: this crate is a
+/// PID-1 binary whose main path ends in `exec`, and it had no tests at all — so
+/// the rule that decides whether an unpoliced guest may start was expressed
+/// only in code that cannot be run from a test.
+#[derive(Debug, PartialEq, Eq)]
+enum PolicyDecision {
+    /// A policy was loaded; apply it.
+    Apply,
+    /// No policy, and the operator explicitly allowed running without one.
+    ProceedUnpoliced,
+    /// No policy and no explicit override — do not start the guest.
+    Refuse,
+}
+
+fn policy_decision(have_policy: bool, allow_unpoliced: bool) -> PolicyDecision {
+    match (have_policy, allow_unpoliced) {
+        (true, _) => PolicyDecision::Apply,
+        (false, true) => PolicyDecision::ProceedUnpoliced,
+        // Fail closed: an absent policy is not a permissive one.
+        (false, false) => PolicyDecision::Refuse,
     }
 }
 
@@ -398,4 +463,35 @@ fn supervisor_main(first_child: libc::pid_t) -> ! {
     }
 
     process::exit(exit_code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{policy_decision, PolicyDecision};
+
+    /// The defect: an unreachable MMDS produced a guest with no effect ceiling,
+    /// no token cap and no seccomp, started anyway, announced by a single line
+    /// that read like a note.
+    #[test]
+    fn no_policy_refuses_to_start_the_guest() {
+        assert_eq!(policy_decision(false, false), PolicyDecision::Refuse);
+    }
+
+    /// The developer case the old soft-fail was justified by. It survives, but
+    /// has to be asked for — which is the whole difference.
+    #[test]
+    fn no_policy_with_an_explicit_override_proceeds() {
+        assert_eq!(
+            policy_decision(false, true),
+            PolicyDecision::ProceedUnpoliced
+        );
+    }
+
+    /// A loaded policy is applied regardless of the override, so setting the
+    /// escape hatch cannot accidentally DISABLE a policy that was read.
+    #[test]
+    fn a_loaded_policy_is_applied_and_the_override_cannot_discard_it() {
+        assert_eq!(policy_decision(true, false), PolicyDecision::Apply);
+        assert_eq!(policy_decision(true, true), PolicyDecision::Apply);
+    }
 }
