@@ -2008,14 +2008,28 @@ impl InferCtx {
             }
             // `never` unifies with anything (bottom type — can appear anywhere a type is expected).
             (Type::Never, _) | (_, Type::Never) => {}
-            // Uncertain<T> is soft-compatible with T (AI soft typing: confidence implicit).
-            (Type::Uncertain(inner), other) | (other, Type::Uncertain(inner)) => {
-                self.unify(*inner, other, origin, subst);
-            }
-            // Temporal<T> is compatible with T for most operations.
-            (Type::Temporal(inner), other) | (other, Type::Temporal(inner)) => {
-                self.unify(*inner, other, origin, subst);
-            }
+            // Uncertain<T> is soft-compatible with T (AI soft typing: confidence
+            // implicit). Temporal<T> likewise.
+            //
+            // The two directions are written out SEPARATELY on purpose. Both were
+            // one or-pattern — `(Wrapper(inner), other) | (other, Wrapper(inner))`
+            // — which binds the same names whichever side matched and so LOSES
+            // the lhs/rhs orientation. Every caller passes `constrain(found,
+            // expected)`, and the recursive call then handed them over swapped,
+            // so a mismatch against a wrapper-typed parameter reported the
+            // argument's type as "expected":
+            //
+            //     temporal_confidence(f)   f: Fake
+            //     E0102 ... (expected Fake), found i64
+            //
+            // Both halves backwards: `Fake` is what was PASSED, and `i64` is the
+            // parameter's inner type. Keeping the orientation makes it
+            // "expected Temporal<i64>'s inner i64, found Fake" — which is the
+            // way round the reader needs.
+            (Type::Uncertain(inner), other) => self.unify(*inner, other, origin, subst),
+            (other, Type::Uncertain(inner)) => self.unify(other, *inner, origin, subst),
+            (Type::Temporal(inner), other) => self.unify(*inner, other, origin, subst),
+            (other, Type::Temporal(inner)) => self.unify(other, *inner, origin, subst),
             (Type::Tuple(ts1), Type::Tuple(ts2)) if ts1.len() == ts2.len() => {
                 for (a, b) in ts1.into_iter().zip(ts2) {
                     self.unify(a, b, origin, subst);

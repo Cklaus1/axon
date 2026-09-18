@@ -28179,3 +28179,87 @@ fn every_search_strategy_returns_the_best_it_found_not_the_target() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_mismatch_against_an_ai_typed_param_names_expected_and_found_correctly() {
+    // `Uncertain<T>` and `Temporal<T>` unified through ONE or-pattern:
+    //
+    //     (Wrapper(inner), other) | (other, Wrapper(inner)) => unify(inner, other)
+    //
+    // An or-pattern binds the same names whichever side matched, so it loses the
+    // lhs/rhs orientation. Every caller passes `constrain(found, expected)`, and
+    // the recursive call handed them over swapped — so a mismatch against a
+    // wrapper-typed parameter reported the ARGUMENT's type as "expected":
+    //
+    //     temporal_confidence(f)   where f: Fake
+    //     E0102 ... (expected Fake), found i64
+    //
+    // Both halves backwards. `Fake` is what was passed; `i64` is the parameter's
+    // inner type. A reader following that message goes looking for why a `Fake`
+    // was wanted.
+    //
+    // These are the AI-typed wrappers — the types Axon is differentiated by — so
+    // this is the diagnostic on the surface a reader is least able to guess at.
+    let dir = std::env::temp_dir().join(format!("axon_wraporient_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let fields = |src: &str| -> (String, String) {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let line = all
+            .lines()
+            .find(|l| l.contains("\"severity\":\"error\""))
+            .unwrap_or("")
+            .to_string();
+        let grab = |key: &str| -> String {
+            line.split(&format!("\"{key}\":\""))
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .unwrap_or("<none>")
+                .to_string()
+        };
+        (grab("expected"), grab("found"))
+    };
+
+    // The parameter is `Temporal<i64>`, so the inner type is what can be
+    // expected; `Fake` is what was passed.
+    let (exp, fnd) = fields(
+        "type Fake = { value: i64 }\nfn main() { let f = Fake { value: 7 }\n\
+         println(to_str_f64(temporal_confidence(f))) }\n",
+    );
+    assert_eq!(exp, "i64", "expected must be the PARAMETER's type");
+    assert_eq!(fnd, "Fake", "found must be what the caller PASSED");
+
+    let (exp2, fnd2) = fields("fn main() { println(to_str_f64(temporal_confidence(\"a\"))) }\n");
+    assert_eq!(exp2, "i64");
+    assert_eq!(fnd2, "str");
+
+    // A non-wrapper builtin was always correct and must stay so — the control
+    // that says this is about orientation, not about the message text.
+    let (exp3, fnd3) = fields("fn main() { println(to_str(abs_i64(\"a\"))) }\n");
+    assert_eq!((exp3.as_str(), fnd3.as_str()), ("i64", "str"));
+
+    // ...and real `Temporal` use must still type-check and run.
+    std::fs::write(
+        &f,
+        "fn main() {\n  let t = temporal_new(42, 86400000, 0.1)\n  \
+         println(to_str_f64(temporal_confidence(t)))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains('1'),
+        "the wrapper types must still work: {:?}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
