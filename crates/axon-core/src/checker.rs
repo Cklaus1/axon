@@ -5049,6 +5049,53 @@ impl CheckCtx {
                     // Collect which variant names appear in StructLit patterns.
                     // Enum variant patterns appear as Pattern::Struct { name: "EnumName::VariantName", .. }
                     // or as a plain Pattern::Ident if the user writes the variant name as-is.
+                    // Each arm's destructured FIELD names must exist on the
+                    // variant it matches. The exhaustiveness check below reads
+                    // variant NAMES and ignores their fields, and nothing else
+                    // looked at them, so
+                    //
+                    //     type S = A { v: i64 } | B { w: i64 }
+                    //     match s { S::A { zz } => …  S::B { w } => … }
+                    //
+                    // passed `check` and then panicked "no match arm matched" —
+                    // which reads as a missing arm when the arm is right there
+                    // and only the field name is wrong. A struct LITERAL with a
+                    // bad field is E0101 and a struct PATTERN is a parse error;
+                    // enum-variant patterns were the one shape with no check.
+                    for arm in arms {
+                        let Pattern::Struct { name, fields } = &arm.pattern else {
+                            continue;
+                        };
+                        let key = if name.contains("::") {
+                            name.clone()
+                        } else {
+                            format!("{enum_name}::{name}")
+                        };
+                        let Some(known) = self.enum_variant_fields.get(&key) else {
+                            continue;
+                        };
+                        for (fname, _) in fields {
+                            if !known.iter().any(|k| k == fname) {
+                                let file = self.file.clone();
+                                let span = self.current_span;
+                                let listed = if known.is_empty() {
+                                    "it has none".to_string()
+                                } else {
+                                    format!("`{}`", known.join("`, `"))
+                                };
+                                self.errors.push(
+                                    CheckError::new(
+                                        E0401,
+                                        format!("variant `{key}` has no field `{fname}`"),
+                                    )
+                                    .node(node_path)
+                                    .at(&file, 0, 0)
+                                    .with_span(span)
+                                    .fix(format!("`{key}` fields: {listed}")),
+                                );
+                            }
+                        }
+                    }
                     let covered: std::collections::HashSet<String> = arms
                         .iter()
                         .filter_map(|arm| match &arm.pattern {

@@ -25429,3 +25429,92 @@ fn chan_new_is_a_working_builtin_not_just_a_documented_one() {
         String::from_utf8_lossy(&o.stderr)
     );
 }
+
+/// A match arm destructuring a field the variant does not have.
+///
+///     type S = A { v: i64 } | B { w: i64 }
+///     match s { S::A { zz } => …  S::B { w } => … }
+///
+/// passed `axon check` and panicked at runtime with
+///
+///     axon: panic: no match arm matched
+///
+/// which reads as a missing arm when the arm is right there and only the field
+/// name is wrong. The exhaustiveness check reads variant NAMES and ignores
+/// their fields; nothing else looked at them. A struct LITERAL with a bad field
+/// is E0101 and a struct PATTERN is a parse error — enum-variant patterns were
+/// the one shape of the three with no check at all.
+#[test]
+fn a_match_arm_naming_a_field_the_variant_lacks_is_a_compile_error() {
+    let dir = std::env::temp_dir().join(format!("axon_patfield_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    const E: &str = "type S = A { v: i64 } | B { w: i64 }\n";
+    let check = |name: &str, src: &str| -> (i32, String) {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        (o.status.code().unwrap_or(-1), msg)
+    };
+
+    let (code, out) = check(
+        "unknown",
+        &format!(
+            "{E}fn main() {{\n  let s = S::A {{ v: 1 }}\n  \
+             match s {{ S::A {{ zz }} => println(\"a\")  S::B {{ w }} => println(\"b\") }}\n}}\n"
+        ),
+    );
+    assert_eq!(code, 2, "must not reach the runtime: {out}");
+    assert!(
+        out.contains("E0401") && out.contains("has no field `zz`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("`S::A` fields: `v`"),
+        "the hint must list the fields that DO exist: {out}"
+    );
+
+    // A field belonging to a DIFFERENT variant of the same enum is the likelier
+    // mistake and must be caught too — `w` is real, just not on `S::A`.
+    let (code, out) = check(
+        "othervariant",
+        &format!(
+            "{E}fn main() {{\n  let s = S::A {{ v: 1 }}\n  \
+             match s {{ S::A {{ w }} => println(\"a\")  S::B {{ w }} => println(\"b\") }}\n}}\n"
+        ),
+    );
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("has no field `w`"), "{out}");
+
+    // Controls — the forms that must stay clean, and that a careless version of
+    // this check would break.
+    for (name, src) in [
+        (
+            "shorthand",
+            format!(
+                "{E}fn main() {{\n  let s = S::B {{ w: 9 }}\n  \
+                 match s {{\n    S::A {{ v }} => println(to_str(v))\n    \
+                 S::B {{ w }} => println(to_str(w))\n  }}\n}}\n"
+            ),
+        ),
+        (
+            "renamed",
+            "type S = A { v: i64 }\nfn main() {\n  let s = S::A { v: 3 }\n  \
+             match s { S::A { v: n } => println(to_str(n)) }\n}\n"
+                .to_string(),
+        ),
+    ] {
+        let (code, out) = check(name, &src);
+        assert_eq!(code, 0, "`{name}` is correct and must stay clean: {out}");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
