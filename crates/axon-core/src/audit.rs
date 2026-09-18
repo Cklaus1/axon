@@ -72,10 +72,22 @@ impl Verdict {
 
 /// Does any fn in `program` declare a `@[contained]`?
 fn any_contained(program: &Program) -> bool {
-    program
-        .items
-        .iter()
-        .any(|it| matches!(it, Item::FnDef(f) if f.contained.is_some()))
+    // Impl methods too. `program_capabilities` (the line above the call site)
+    // already descends into `ImplBlock`, so a module whose I/O lives in a method
+    // DOES get its capabilities counted — but the containment that acknowledges
+    // that surface was only looked for on free fns. The two halves of the same
+    // decision disagreed about what a program contains.
+    //
+    // The direction is the safe one: missing a declaration made the verdict
+    // stricter (Denied/Flagged instead of Clear), so this is a false positive
+    // that blocks a module which did declare its surface — not a hole.
+    // `@[contained]` on an impl method parses and is enforced (E1001 fires on
+    // one), so there is nothing hypothetical about the shape.
+    program.items.iter().any(|it| match it {
+        Item::FnDef(f) => f.contained.is_some(),
+        Item::ImplBlock(b) => b.methods.iter().any(|m| m.contained.is_some()),
+        _ => false,
+    })
 }
 
 /// Audit a parsed imported module and return its [`Verdict`] (R6 §4.3).
@@ -186,5 +198,49 @@ mod tests {
     fn audit_is_deterministic() {
         let src = "fn run() -> i64 { exec(\"ls\") }\n";
         assert_eq!(audit_src(src), audit_src(src));
+    }
+}
+
+#[cfg(test)]
+mod impl_method_containment_tests {
+    use super::*;
+    use crate::parse_source;
+
+    /// `program_capabilities` descends into `ImplBlock`; `any_contained` did
+    /// not. So a module whose network call AND whose `@[contained]` both live
+    /// in an impl method had its capability counted and its declaration
+    /// ignored — Denied for a surface it had acknowledged.
+    #[test]
+    fn containment_declared_on_an_impl_method_counts() {
+        let src = "trait T { fn go(self) -> i64 }\n\
+                   type B = { v: i64 }\n\
+                   impl T for B {\n\
+                     @[contained(fs: [], net: [\"api.example.com\"], exec: none)]\n\
+                     fn go(self: B) -> i64 { let _r = http_get(\"api.example.com\", \"\") self.v }\n\
+                   }\n";
+        let p = parse_source(src).expect("parse");
+        assert!(
+            any_contained(&p),
+            "a `@[contained]` on an impl method must be seen"
+        );
+        assert_eq!(
+            audit_module(&p),
+            Verdict::Clear,
+            "a module that declared its surface must not be Denied for it"
+        );
+    }
+
+    /// The control: the same module WITHOUT the declaration is still Denied, so
+    /// the fix relaxes exactly the acknowledged case and nothing else.
+    #[test]
+    fn an_undeclared_impl_method_net_call_is_still_denied() {
+        let src = "trait T { fn go(self) -> i64 }\n\
+                   type B = { v: i64 }\n\
+                   impl T for B {\n\
+                     fn go(self: B) -> i64 { let _r = http_get(\"api.example.com\", \"\") self.v }\n\
+                   }\n";
+        let p = parse_source(src).expect("parse");
+        assert!(!any_contained(&p));
+        assert_eq!(audit_module(&p), Verdict::Denied);
     }
 }
