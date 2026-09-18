@@ -26050,3 +26050,79 @@ fn struct_size_is_right_for_both_result_sides_and_nested_fields() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Place assignment was a silent NO-OP in native codegen.
+///
+/// `emit_expr`'s `AssignTo` arm returned `None` under a comment saying the
+/// construct "isn't lowered to native code yet; the interpreter is the
+/// supported execution path". Returning `None` emits nothing and carries on, so
+/// every write vanished and the program computed a wrong answer with no error:
+///
+///     let xs = [1,2,3]   xs[1] = 99   println(to_str(xs[1]))
+///     axon run -> 99                  ./prog -> 2
+///
+/// Two shipped examples were wrong because of it. `examples/asi/rank.ax` sorts
+/// by swapping in place, so the native binary printed an UNSORTED ranking;
+/// `examples/asi/local_search.ax` hill-climbs in place and reported
+/// "score 2 -> 2" against an optimum of 6 — a search that silently finds
+/// nothing.
+///
+/// Sound-by-refusal (I-2) is the rule: codegen refuses what it cannot lower
+/// faithfully, never mis-lowers it. This asserts the refusal, not the lowering
+/// — implementing place assignment natively would be a feature, and the test
+/// should then assert parity instead.
+#[test]
+fn native_codegen_refuses_place_assignment_instead_of_dropping_it() {
+    let dir = std::env::temp_dir().join(format!("axon_placeasg_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    for (name, src, want_interp, expect_in_msg) in [
+        (
+            "indexed",
+            "fn main() {\n  let xs = [1,2,3]\n  xs[1] = 99\n  println(to_str(xs[1]))\n}\n",
+            "99\n",
+            "xs[i] = v",
+        ),
+        (
+            "field",
+            "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  p.x = 5\n  \
+             println(to_str(p.x))\n}\n",
+            "5\n",
+            "s.field = v",
+        ),
+    ] {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+
+        // The interpreter is the reference and must still do the write.
+        let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            want_interp,
+            "`{name}`: the reference engine must perform the assignment"
+        );
+
+        // The build must REFUSE — not succeed and drop the write.
+        let bin = dir.join(format!("{name}.bin"));
+        let build = axon()
+            .args(["build", f.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        assert!(
+            !build.status.success(),
+            "`{name}`: the build must not succeed while discarding the write: {log}"
+        );
+        assert!(
+            log.contains("E0910") && log.contains(expect_in_msg),
+            "`{name}`: the refusal must name the construct: {log}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

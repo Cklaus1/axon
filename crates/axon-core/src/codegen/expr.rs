@@ -599,9 +599,43 @@ impl<'ctx> super::Codegen<'ctx> {
                 None
             }
 
-            // Place assignment (`xs[i] = v`, `s.field = v`) isn't lowered to
-            // native code yet; the interpreter is the supported execution path.
-            ast::Expr::AssignTo { .. } => None,
+            // Place assignment (`xs[i] = v`, `s.field = v`) is not lowered
+            // natively — and returning `None` here DROPPED IT SILENTLY.
+            //
+            // The comment already said the interpreter was the supported path.
+            // What it did was emit nothing and carry on, so every write vanished
+            // and the program computed a wrong answer with no error:
+            //
+            //     let xs = [1,2,3]   xs[1] = 99   println(to_str(xs[1]))
+            //     axon run  -> 99          ./prog -> 2
+            //
+            // Two shipped examples were wrong because of it. `examples/asi/rank.ax`
+            // sorts by swapping in place, so native printed an UNSORTED ranking;
+            // `examples/asi/local_search.ax` hill-climbs in place, so native
+            // reported "score 2 -> 2" against an optimum of 6 — a search that
+            // silently finds nothing.
+            //
+            // Sound-by-refusal (I-2) is the rule this violated: codegen must
+            // refuse what it cannot faithfully lower, never mis-lower it. E0910
+            // says so at build time, which is where an unsupported construct is
+            // supposed to stop.
+            ast::Expr::AssignTo { place, .. } => {
+                let what = match place.as_ref() {
+                    ast::Expr::Index { .. } => "an indexed element (`xs[i] = v`)",
+                    ast::Expr::FieldAccess { .. } => "a struct field (`s.field = v`)",
+                    _ => "a place expression",
+                };
+                let msg = format!(
+                    "codegen error [E0910]: native codegen does not lower assignment to {what}. \
+                     The interpreter supports it; run under `axon run`. Emitting nothing would \
+                     silently discard the write."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                None
+            }
 
             // ── FmtStr: lower to a chain of axon_concat calls ────────────────
             ast::Expr::FmtStr { parts } => self.emit_fmt_str(parts, fn_val),
