@@ -6485,7 +6485,7 @@ fn two_separate_failures_are_reported_separately_each_at_its_own_line() {
     assert!(
         errors
             .iter()
-            .any(|l| l.contains("\"code\":\"E0102\"") && l.contains("\"line\":5")),
+            .any(|l| l.contains("non-numeric type bool") && l.contains("\"line\":5")),
         "the arithmetic mismatch is a separate failure, on ITS line: {msg}"
     );
     // Neither may be unlocated any more — an error with no location is the
@@ -21845,7 +21845,13 @@ fn session_failed_cell_does_not_accumulate() {
         "let bad = \"x\" + 1",
         "println(to_str(good))",
     ]);
-    assert!(err.contains("E0102"), "the bad cell must be refused: {err}");
+    // Asserted on the MESSAGE, not the code: which diagnostic explains a
+    // non-numeric operand is not this test's subject (it moved E0102 -> E0301
+    // when the checker's half gained a hint), and accumulation behaviour is.
+    assert!(
+        err.contains("non-numeric type str"),
+        "the bad cell must be refused: {err}"
+    );
     assert!(
         out.contains('7'),
         "the session must survive a failed cell: stdout={out:?} stderr={err:?}"
@@ -21978,8 +21984,12 @@ fn session_does_not_swallow_an_unrelated_error_in_a_redefining_cell() {
     // before any blame exists, so they cannot be suppressed and cannot detect
     // over-suppression either — two earlier versions of this test used one and
     // a blanket-suppression mutant survived both.
+    // Marker chosen to be distinct from the E2400 line, which QUOTES the
+    // knock-on it explains and so also contains "non-numeric type" — for the
+    // `str` return, not the `bool` operand. Matching the type makes this assert
+    // the separate mistake rather than an echo of the suppressed one.
     assert!(
-        err.contains("expected bool"),
+        err.contains("non-numeric type bool"),
         "a separate mistake in the same cell must survive the E2400 promotion: {err}"
     );
 }
@@ -22000,9 +22010,21 @@ fn session_e2400_reports_the_cause_once_not_three_times() {
         1,
         "the cause must be stated once: {err}"
     );
+    // The knock-on must not be repeated RAW — as its own diagnostic line. The
+    // E2400 line itself QUOTES it ("… — arithmetic operand has non-numeric type
+    // str"), which is the explanation working, so a bare substring count is the
+    // wrong test: it counts the quote. Count only lines that mention the
+    // knock-on WITHOUT being the E2400 that explains it.
+    //
+    // (Written as a substring count until the checker's non-numeric-operand
+    // diagnostic moved E0102 -> E0301 and started appearing inside the E2400
+    // text, at which point the count found its own explanation and failed.)
+    let raw_knock_ons = err
+        .lines()
+        .filter(|l| l.contains("non-numeric type") && !l.contains("E2400"))
+        .count();
     assert_eq!(
-        err.matches("E0102").count(),
-        0,
+        raw_knock_ons, 0,
         "knock-on diagnostics of an explained break must not be repeated raw: {err}"
     );
 }
@@ -22503,7 +22525,7 @@ fn session_jsonl_surfaces_a_refused_cell_without_ending_the_session() {
     );
     assert!(out[1].contains("\"ok\":false"), "{}", out[1]);
     assert!(
-        out[1].contains("E0102"),
+        out[1].contains("non-numeric type"),
         "the reason must be carried: {}",
         out[1]
     );
@@ -25141,6 +25163,105 @@ fn checker_diagnostics_carry_a_source_location() {
     assert!(
         errors[0].contains("E0301") && errors[0].contains("\"help\""),
         "the survivor must be the one carrying the repair: {msg}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One arithmetic mistake, two diagnostics, neither carrying a repair.
+///
+///   E0102 type mismatch in arithmetic operands (expected bool), found i64
+///   E0102 arithmetic operand has non-numeric type bool (expected numeric …)
+///
+/// Infer and the checker each reported `1 + true` in their own words at the
+/// same span. `collapse_refined_type_errors` pairs a bare E0102 with a
+/// hint-bearing E03xx — but the checker's half was itself an E0102 with no
+/// hint, so nothing could be dropped and nothing said what to do.
+///
+/// Stating the checker's half properly (E0301, with a hint chosen by the
+/// offending type) makes the duplicate disappear through the EXISTING rule
+/// rather than needing a new one.
+#[test]
+fn a_non_numeric_operand_is_reported_once_and_says_what_to_do() {
+    let dir = std::env::temp_dir().join(format!("axon_numop_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let errors_of = |name: &str, src: &str| -> Vec<String> {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .filter(|l| l.contains("\"severity\":\"error\""))
+            .map(|l| l.to_string())
+            .collect()
+    };
+
+    // The hint is chosen by the offending type — a `bool` operand and a `str`
+    // operand are different mistakes with different repairs.
+    let e = errors_of(
+        "boolop",
+        "fn main() {\n  let x = 1 + true\n  println(\"z\")\n}\n",
+    );
+    assert_eq!(e.len(), 1, "one mistake, one diagnostic: {e:?}");
+    assert!(
+        e[0].contains("`bool` is not a number") && e[0].contains("&&"),
+        "{e:?}"
+    );
+
+    let e = errors_of(
+        "strop",
+        "fn main() {\n  let n = 1\n  let x = \"a\" + n\n  println(\"z\")\n}\n",
+    );
+    assert_eq!(e.len(), 1, "one mistake, one diagnostic: {e:?}");
+    assert!(
+        e[0].contains("to_str(n)"),
+        "the str hint must convert: {e:?}"
+    );
+
+    // An Option/Result operand is not numeric either, but "not a number" is the
+    // WRONG account — the mistake is the unhandled wrapper. The numeric check
+    // must defer to the diagnostic that says so, or one mistake produces two
+    // hint-bearing diagnostics and the collapse cannot choose between them.
+    for (name, src) in [
+        (
+            "optop",
+            "fn f() -> Option<i64> { Some(5) }\nfn main() {\n  let o = f()\n  println(to_str(o + 1))\n}\n",
+        ),
+        (
+            "resop",
+            "fn main() {\n  let r = parse_int(\"12\")\n  println(to_str(r + 1))\n}\n",
+        ),
+    ] {
+        let e = errors_of(name, src);
+        assert_eq!(e.len(), 1, "`{name}`: one mistake, one diagnostic: {e:?}");
+        assert!(
+            e[0].contains("cannot be used directly"),
+            "`{name}` must blame the unhandled wrapper, not the arithmetic: {e:?}"
+        );
+    }
+
+    // Every repair the hints name must compile.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let n = 1\n  let s = \"a\" + to_str(n)\n  println(s)\n  \
+         let b = true && false\n  println(to_str(b))\n  if n == 1 { println(\"eq\") }\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert!(
+        o.status.success(),
+        "the recommended repairs must compile: {}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
     );
 
     let _ = std::fs::remove_dir_all(&dir);

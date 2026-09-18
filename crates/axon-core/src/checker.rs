@@ -4340,18 +4340,50 @@ impl CheckCtx {
         if ty.is_deferred() || matches!(ty, Type::Unknown | Type::Var(_)) {
             return;
         }
+        // An `Option` or `Result` operand is not numeric, but saying so is the
+        // WRONG account of it: the mistake is the unhandled wrapper, not the
+        // arithmetic, and `check_not_option_used_as_value` /
+        // `check_not_result_used_as_value` already reported it at this span with
+        // the repair. Both now carry hints, so without this guard the reader
+        // gets two hint-bearing diagnostics for one mistake and the collapse
+        // cannot choose between them.
+        if ty.is_option() || matches!(ty, Type::Result(_, _)) {
+            return;
+        }
         if !ty.is_numeric() {
             let file = self.file.clone();
+            // E0301, not E0102, and WITH a hint — both deliberate.
+            //
+            // Infer reports the same failure as a bare E0102 ("type mismatch in
+            // arithmetic operands"), so one mistake produced two diagnostics at
+            // one span and neither carried a repair.
+            // `collapse_refined_type_errors` drops an E0102 when a hint-bearing
+            // E03xx covers its span, so stating this one properly makes the
+            // duplicate disappear through the existing rule instead of a new one.
+            let hint = match ty {
+                Type::Bool => "`bool` is not a number — combine conditions with \
+                               `&&` / `||` / `!`, and compare with `==`"
+                    .to_string(),
+                Type::Str => "`+` joins two `str`s, but not a `str` and a number — \
+                              convert first: `s + to_str(n)`"
+                    .to_string(),
+                other => format!(
+                    "arithmetic is for numbers (`i64`/`f64`); `+` also joins two \
+                     `str`s or two arrays, but `{}` is neither",
+                    other.display()
+                ),
+            };
             self.errors.push(
                 CheckError::new(
-                    E0102,
+                    E0301,
                     format!("arithmetic operand has non-numeric type {}", ty.display()),
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
                 .with_span(self.current_span)
                 .expected("numeric type (i64, f64, i32, …)")
-                .found(ty.display()),
+                .found(ty.display())
+                .fix(hint),
             );
         }
     }
