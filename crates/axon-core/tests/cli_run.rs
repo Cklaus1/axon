@@ -24780,3 +24780,94 @@ fn the_option_hints_recommend_only_constructs_that_exist() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `Option` had a tailored diagnostic; `Result` had none.
+///
+///     let r = parse_int("12")
+///     println(to_str(r + 1))
+///
+/// gave only infer's bare "type mismatch in arithmetic operands (expected
+/// i64)" — which says the operands disagree, not which side is wrapped, and
+/// carries no hint. The Option form of the same mistake has said "value of
+/// type `Option<T>` cannot be used directly" with a repair for as long as it
+/// has existed.
+///
+/// Forgetting that parsing can fail is the most common way to meet a `Result`.
+#[test]
+fn a_result_used_as_a_value_names_itself_the_way_an_option_does() {
+    let dir = std::env::temp_dir().join(format!("axon_reshint_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let diag = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    let out = diag(
+        "arith",
+        "fn main() {\n  let r = parse_int(\"12\")\n  println(to_str(r + 1))\n}\n",
+    );
+    assert!(out.contains("E0301"), "{out}");
+    assert!(
+        out.contains("Result<i64, str>") && out.contains("cannot be used directly"),
+        "the diagnostic must name the wrapped type: {out}"
+    );
+    assert!(
+        out.contains("Ok(v)") && out.contains("Err(e)"),
+        "and the repair: {out}"
+    );
+
+    // Controls: every legitimate way to consume a Result must stay clean, and
+    // these are what a too-eager guard would break.
+    for (name, src) in [
+        (
+            "matched",
+            "fn main() {\n  let n = match parse_int(\"12\") { Ok(v) => v  Err(e) => 0 }\n  \
+             println(to_str(n + 1))\n}\n",
+        ),
+        (
+            "propagated",
+            "fn f(s: str) -> Result<i64, str> {\n  let n = parse_int(s)?\n  Ok(n + 1)\n}\n\
+             fn main() { match f(\"12\") { Ok(v) => println(to_str(v))  Err(e) => println(e) } }\n",
+        ),
+        (
+            "never-arithmetic",
+            "fn main() {\n  let r = parse_int(\"12\")\n  \
+             match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }\n}\n",
+        ),
+    ] {
+        let out = diag(name, src);
+        assert!(
+            !out.contains("\"severity\":\"error\""),
+            "`{name}` is a correct program and must stay clean: {out}"
+        );
+    }
+
+    // The hint recommends `?` inside a Result-returning fn — that has to work.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn f(s: str) -> Result<i64, str> {\n  let n = parse_int(s)?\n  Ok(n + 1)\n}\n\
+         fn main() {\n  let v = match parse_int(\"12\") { Ok(v) => v  Err(e) => 0 }\n  \
+         println(to_str(v))\n  match f(\"41\") { Ok(v) => println(to_str(v))  Err(e) => println(e) }\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert!(
+        o.status.success(),
+        "both recommended repairs must compile and run: {}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

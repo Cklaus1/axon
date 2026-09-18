@@ -3468,6 +3468,8 @@ impl CheckCtx {
                 let rty = self.resolve_expr_type(right, &rpath, scope);
                 self.check_not_option_used_as_value(&lty, &lpath);
                 self.check_not_option_used_as_value(&rty, &rpath);
+                self.check_not_result_used_as_value(&lty, &lpath);
+                self.check_not_result_used_as_value(&rty, &rpath);
                 // Fix #4: arithmetic operands must be numeric types.
                 use crate::ast::BinOp;
                 if matches!(
@@ -4069,6 +4071,45 @@ impl CheckCtx {
     // ─────────────────────────────────────────────────────────────────────────
     // R01 — Option<T> used directly as a value
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// The `Result` counterpart of `check_not_option_used_as_value`.
+    ///
+    /// `Option` had a tailored E0301 naming the problem and the repair; `Result`
+    /// had nothing, so `parse_int("12") + 1` — the reader forgetting that
+    /// parsing can fail, which is the single most common way to meet a `Result`
+    /// — produced only infer's bare "type mismatch in arithmetic operands
+    /// (expected i64)". That says the operands disagree and not WHICH side is
+    /// wrapped, and carries no hint at all.
+    fn check_not_result_used_as_value(&mut self, ty: &Type, node_path: &str) {
+        if ty.is_deferred() {
+            return; // R12: deferred types are transparent
+        }
+        if let Type::Result(ok, _err) = ty {
+            let file = self.file.clone();
+            let span = self.current_span;
+            let inner = ok.display();
+            self.errors.push(
+                CheckError::new(
+                    E0301,
+                    format!(
+                        "value of type `{}` cannot be used directly — \
+                         the `Ok`/`Err` cases must be handled first",
+                        ty.display()
+                    ),
+                )
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(span)
+                .expected(inner.clone())
+                .found(ty.display())
+                .fix(format!(
+                    "match it: `match x {{ Ok(v) => …  Err(e) => … }}` — each arm \
+                     produces a `{inner}`. Inside a fn that itself returns a \
+                     `Result`, `parse_int(s)?` propagates the error instead"
+                )),
+            );
+        }
+    }
 
     fn check_not_option_used_as_value(&mut self, ty: &Type, node_path: &str) {
         if ty.is_deferred() {
