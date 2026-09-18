@@ -26699,3 +26699,59 @@ fn never_clause_stays_broad_where_a_grant_is_narrow() {
          through a narrowed test: {all}"
     );
 }
+
+#[test]
+fn goal_run_over_an_ai_calling_metric_is_still_refused() {
+    // `goal_run` carries a Net effect row but is deliberately absent from the
+    // capability gate's `classify_call` table, because its metric is named by a
+    // STRING and there is no call site on `goal_run` itself to host-check. This
+    // test is what makes that exemption a finding rather than an assumption:
+    // the checker must resolve the name, walk the metric, and refuse the
+    // `ai_complete` inside it — and must NOT refuse a metric that does no I/O,
+    // or the exemption would be hiding a blanket ban instead of a precise walk.
+    let dir = std::env::temp_dir().join(format!("axon_goalcap_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let check = |body: &str| -> String {
+        let f = dir.join("t.ax");
+        std::fs::write(
+            &f,
+            format!(
+                "@[adaptive]\nfn scorer(n: i64) -> i64 {{ {body} }}\n\
+                 @[contained(fs: [], net: [], exec: none)]\n\
+                 fn run_it() -> f64 {{ goal_run(\"scorer\", 100.0, 3) }}\n\
+                 fn main() {{ println(to_str(run_it())) }}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(
+            !all.contains("E0305") && !all.contains("E0306") && !all.contains("E0307"),
+            "probe must type-check, or it proves nothing: {all}"
+        );
+        all
+    };
+
+    let ai = check("match ai_complete(\"rate {to_str(n)}\") { Ok(r) => str_len(r)  Err(_) => 0 }");
+    assert!(
+        ai.contains("E1001") && ai.contains("ai_complete"),
+        "a net call reached through goal_run's string-named metric must still be \
+         refused under `net: []`: {ai}"
+    );
+
+    let pure = check("n * 2");
+    assert!(
+        !pure.contains("E1001"),
+        "the walk must be precise, not a blanket ban on goal_run: {pure}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

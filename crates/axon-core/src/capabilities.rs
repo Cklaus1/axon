@@ -2468,3 +2468,102 @@ mod host_of_tests {
         assert_eq!(host_of("http://[::1]/"), "[::1]");
     }
 }
+
+#[cfg(test)]
+mod capability_catalog_lockstep {
+    use super::capability_of_builtin;
+    use crate::builtins::{builtin_effect_row, BUILTINS};
+
+    /// `builtin_effect_row` (Phase 6) and `classify_call` (the `@[contained]`
+    /// gate) are two independent hand-maintained tables over the same builtins.
+    /// The effect catalog already has a lockstep test against impurity
+    /// (`builtin_effect_row_agrees_with_impurity`); it had none against the
+    /// capability gate. A builtin that reaches the network or spawns a process
+    /// but is missing from `classify_call` is not path/host-checked at all —
+    /// it passes `@[contained(net: [], exec: none)]` silently, which is the
+    /// failure mode the whole annotation exists to prevent.
+    ///
+    /// `IO` is deliberately not covered here: it is the coarse row, and
+    /// `println` / `read_line` / `host_await` / `exit` are ungrantable-by-design
+    /// (R6 §4.4 — an input or console channel is not a secret store).
+    /// Builtins with a Net row that `classify_call` deliberately does not
+    /// classify, each because a DIFFERENT mechanism covers it. An entry here
+    /// must be backed by a behavioural test, not by a claim — see
+    /// `goal_run_over_an_ai_calling_metric_is_still_refused` below.
+    ///
+    /// The `goal_*` family re-invokes an `@[adaptive]` metric named by a STRING
+    /// argument. There is no call site to path/host-check on `goal_run` itself;
+    /// the checker instead resolves the name and walks the metric's body, so the
+    /// `ai_complete` inside it is what gets refused — and refused precisely: a
+    /// pure metric under the same `net: []` grant still passes.
+    ///
+    /// `ai_cost_spent` reads a process-local cost counter and opens no socket.
+    /// Its `Net` row is an over-declaration (safe direction: it forces callers
+    /// to annotate), not an ungated channel.
+    const EXEMPT: &[&str] = &[
+        "goal_run",
+        "goal_run_constrained",
+        "goal_run_categorical",
+        "goal_run_random",
+        "goal_run_multistart",
+        "goal_continue",
+        "goal_eval",
+        "ai_cost_spent",
+    ];
+
+    #[test]
+    fn every_net_or_exec_builtin_is_classified_by_the_capability_gate() {
+        let mut ungated = Vec::new();
+        for b in BUILTINS {
+            let row = builtin_effect_row(b.name);
+            let consequential = row.contains(&"Net") || row.contains(&"Exec");
+            if consequential && capability_of_builtin(b.name).is_none() && !EXEMPT.contains(&b.name)
+            {
+                ungated.push(b.name);
+            }
+        }
+        assert!(
+            ungated.is_empty(),
+            "these builtins declare a Net/Exec effect but `classify_call` does \
+             not classify them, so `@[contained]` never path/host-checks a call \
+             to them: {ungated:?}\n\
+             If a different mechanism covers one, add it to EXEMPT *with* a test \
+             that demonstrates the refusal."
+        );
+        // An exemption that no longer names a real builtin is a stale excuse;
+        // it would silently cover a future builtin that reused the name.
+        for name in EXEMPT {
+            assert!(
+                BUILTINS.iter().any(|b| &b.name == name),
+                "EXEMPT names `{name}`, which is not a builtin"
+            );
+        }
+    }
+
+    /// The reverse direction: a builtin the capability gate treats as
+    /// net/exec/fs-bearing must declare a matching effect row, or the two
+    /// checkers disagree about what a call costs and `--effects-strict` lets
+    /// through what `@[contained]` refuses.
+    #[test]
+    fn every_classified_builtin_declares_a_matching_effect_row() {
+        let mut mismatched = Vec::new();
+        for b in BUILTINS {
+            let Some(cap) = capability_of_builtin(b.name) else {
+                continue;
+            };
+            let row = builtin_effect_row(b.name);
+            let ok = match cap {
+                "net" => row.contains(&"Net"),
+                // fs/exec/env all live under the coarse `IO` row.
+                _ => row.contains(&"IO") || row.contains(&"Net"),
+            };
+            if !ok {
+                mismatched.push((b.name, cap, row));
+            }
+        }
+        assert!(
+            mismatched.is_empty(),
+            "the capability gate and the effect catalog disagree: {mismatched:?}"
+        );
+    }
+}
