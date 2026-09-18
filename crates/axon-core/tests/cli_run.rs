@@ -28360,3 +28360,85 @@ fn the_phase62_trait_bounds_fixture_is_gated() {
         r.status.code()
     );
 }
+
+#[test]
+fn the_ungated_phase_fixtures_are_gated() {
+    // `phase62_trait_bounds.ax` was referenced by no test, and a method check
+    // added on 2026-09-17 broke the feature it documents without a single
+    // failure anywhere. It was not alone: 14 of the 152 fixtures were reachable
+    // from no test and no script.
+    //
+    // These eleven check clean today. Gating them is the cheap part of the
+    // lesson — a fixture nothing runs is documentation, not coverage.
+    for name in [
+        "phase63_or_patterns.ax",
+        "phase65_arrays_and_slices.ax",
+        "phase65_test_minimal.ax",
+        "phase66_string_interpolation.ax",
+        "phase69_recursive_types.ax",
+        "phase70_advanced_enums.ax",
+        "phase71_string_escapes.ax",
+        "phase72_concurrency_patterns.ax",
+        "phase73_error_handling_advanced.ax",
+        "phase74_type_inference_advanced.ax",
+        "test_enum_arg.ax",
+    ] {
+        let o = axon().args(["check", &fixture(name)]).output().unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(
+            !all.contains("\"severity\":\"error\""),
+            "{name} must keep checking clean: {all}"
+        );
+    }
+}
+
+#[test]
+fn three_phase_fixtures_describe_features_this_build_does_not_have() {
+    // The other three of the fourteen do NOT check, and pinning why is the
+    // point: each names a feature the build does not implement, so a future
+    // reader does not mistake an aspirational fixture for a regression.
+    //
+    // Asserted as still-unsupported rather than deleted. If one starts working,
+    // this test fails and someone decides deliberately whether to gate it as a
+    // feature — which is exactly the notification phase62 never got.
+    let err_of = |name: &str| -> String {
+        let o = axon().args(["check", &fixture(name)]).output().unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    // Octal literals. Hex (`0xFF`) and binary (`0b1010`) both work, and
+    // `parse_int_radix` already accepts and strips an `0o` prefix — so the
+    // runtime knows about octal while the lexer does not. An odd gap, recorded
+    // here rather than quietly implemented.
+    let oct = err_of("phase61_numeric_literals.ax");
+    assert!(
+        oct.contains("cannot find name `o17`"),
+        "octal literals are still unlexed: {oct}"
+    );
+
+    // `let Ok(v) = … else { … }` — let-else over a PATTERN. Undocumented in the
+    // grammar or the reference; the fixture is ahead of the parser.
+    let le = err_of("phase64_let_else.ax");
+    assert!(
+        le.contains("unexpected token: Ok"),
+        "pattern let-else is still unparsed: {le}"
+    );
+
+    // Passing a named fn as a value. This one is a DELIBERATE refusal, not a
+    // gap: the checker's comment explains that resolving fn-names-as-values
+    // would oblige native codegen to match or create an interp/native
+    // divergence (invariant I-2).
+    let ho = err_of("phase67_higher_order.ax");
+    assert!(
+        ho.contains("passed by name"),
+        "named-fn-as-value is still refused by design: {ho}"
+    );
+}
