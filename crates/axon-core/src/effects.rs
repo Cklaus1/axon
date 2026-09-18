@@ -75,20 +75,40 @@ impl Allowed {
 
 /// Check effect-row subsumption across `program`. Returns one E1310 per call
 /// site that performs an effect outside the enclosing function's declared row.
+/// Every function body in the program: free `fn`s AND impl-block methods.
+///
+/// The three passes below each walked `Item::FnDef` only, so an impl method was
+/// invisible to all of them: its own declared row was never checked, and its
+/// effects never reached a caller. Measured — a method doing `println` under a
+/// declared `| {}` row checked clean, and so did a `| {}` free fn calling it.
+///
+/// This is the same item-walk gap closed for the capability checker in dfab1d6
+/// ("checkers walked only Item::FnDef, missing impl-method bodies"); the fix
+/// landed there and not in its sibling here.
+fn all_fn_defs(program: &Program) -> Vec<&crate::ast::FnDef> {
+    let mut out: Vec<&crate::ast::FnDef> = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => out.push(f),
+            Item::ImplBlock(im) => out.extend(im.methods.iter()),
+            _ => {}
+        }
+    }
+    out
+}
+
 pub fn check_effects(program: &Program) -> Vec<EffectError> {
     // fn name → its declared concrete effect set (independent of openness).
     let mut declared: HashMap<String, HashSet<String>> = HashMap::new();
     // fn name → whether its row is open (a row variable present).
     let mut open: HashMap<String, bool> = HashMap::new();
-    for item in &program.items {
-        if let Item::FnDef(f) = item {
-            let (set, is_open) = match &f.effect_row {
-                Some(row) => (row.effects.iter().cloned().collect(), row.row_var.is_some()),
-                None => (HashSet::new(), false),
-            };
-            declared.insert(f.name.clone(), set);
-            open.insert(f.name.clone(), is_open);
-        }
+    for f in all_fn_defs(program) {
+        let (set, is_open) = match &f.effect_row {
+            Some(row) => (row.effects.iter().cloned().collect(), row.row_var.is_some()),
+            None => (HashSet::new(), false),
+        };
+        declared.insert(f.name.clone(), set);
+        open.insert(f.name.clone(), is_open);
     }
 
     // INFERRED effects per fn: the transitive closure of effects a call to it
@@ -107,8 +127,7 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     let invoked = invoked_param_indices(program);
 
     let mut errors = Vec::new();
-    for item in &program.items {
-        let Item::FnDef(f) = item else { continue };
+    for f in all_fn_defs(program) {
         // The caller's allowed effects. Three ways to be Open (unconstrained):
         //   1. no row clause at all (migration window — opt-in; see module docs),
         //   2. `main` (the top-level escape hatch — admits everything),
@@ -205,14 +224,7 @@ pub fn check_contained_strict(program: &Program) -> Vec<EffectError> {
 /// so an effect cannot be laundered through an un-annotated intermediary.
 fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
     // Pre-collect each fn's body so we can re-walk cheaply each iteration.
-    let fns: Vec<&crate::ast::FnDef> = program
-        .items
-        .iter()
-        .filter_map(|it| match it {
-            Item::FnDef(f) => Some(f),
-            _ => None,
-        })
-        .collect();
+    let fns: Vec<&crate::ast::FnDef> = all_fn_defs(program);
     // Seed each fn with its DECLARED concrete effects: a declared row is a
     // promise the fn may perform those effects (e.g. a `| {Net}` stub whose body
     // is still `{ 0 }`), so callers must honour them even before the body does.
@@ -665,6 +677,16 @@ fn collect_called_names_ctx(
             _ => {}
         }
     }
+    // A METHOD call is a call too. `for_each_child` walks a `MethodCall`'s
+    // receiver and arguments but never treated the method NAME as an edge, so a
+    // `| {}` fn calling `b.go()` inherited nothing from `go` — the effect
+    // checker's version of the item-walk gap already closed for the capability
+    // checker (dfab1d6). Methods live in a name-keyed map alongside free fns, so
+    // a method sharing a free fn's name merges their effects; merging
+    // OVER-approximates, which errs toward flagging rather than toward silence.
+    if let Expr::MethodCall { method, .. } = e {
+        out.push((method.clone(), handled.clone()));
+    }
     if let Expr::WithHandler { handler, body } = e {
         // Body sees the handler's discharged effects added to the context.
         let mut inner = handled.clone();
@@ -827,6 +849,25 @@ fn check_expr(
     invoked: &HashMap<String, Vec<usize>>,
     errors: &mut Vec<EffectError>,
 ) {
+    // A method call reaches its body exactly the way a plain call does. This arm
+    // was absent, so `b.go()` from a `| {}` fn reported nothing even once `go`'s
+    // effects were inferred — the inference saw it and the REPORTER did not,
+    // which is the same split this repo has hit before (a fix landing in one
+    // consumer while the acting one keeps the old shape).
+    if let Expr::MethodCall { method, .. } = e {
+        for eff in callee_effects(method, inferred) {
+            if !allowed.admits(&eff) && !handled.contains(&eff) {
+                errors.push(EffectError {
+                    code: crate::error::E1310,
+                    message: format!(
+                        "`{caller}` calls `{method}`, which performs effect `{eff}`, \
+                         but `{caller}`'s effect row does not include it"
+                    ),
+                    span: Span::dummy(),
+                });
+            }
+        }
+    }
     if let Expr::Call { callee, args, .. } = e {
         if let Expr::Ident(name) = callee.as_ref() {
             // The callee's INFERRED (transitive) effects — so an effect a helper

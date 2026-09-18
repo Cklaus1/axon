@@ -27542,10 +27542,100 @@ fn comptime_is_a_no_op_in_the_interpreter_and_that_is_recorded() {
             "native must refuse a non-pure comptime body: {ball}"
         );
         // ...while the interpreter runs the very same program.
-        let r = axon().args(["run", imp.to_str().unwrap()]).output().unwrap();
+        let r = axon()
+            .args(["run", imp.to_str().unwrap()])
+            .output()
+            .unwrap();
         assert!(
             String::from_utf8_lossy(&r.stdout).contains("SIDE"),
             "the interpreter accepts what native refuses — that is the divergence"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_effect_cannot_be_laundered_through_an_impl_method() {
+    // The Phase-6 effect checker walked `Item::FnDef` only, in all three of its
+    // passes: collecting declared rows, inferring transitive effects, and
+    // reporting violations. So an impl method was invisible to every one of
+    // them — its own declared row was never checked, and its effects never
+    // reached a caller.
+    //
+    // Measured before the fix: BOTH of the cases below checked clean. A method
+    // doing `println` under a declared `| {}` row, and a `| {}` free fn calling
+    // an impure method — a laundering route through the one item kind the
+    // walker skipped.
+    //
+    // Exactly the item-walk gap already closed for the CAPABILITY checker
+    // ("checkers walked only Item::FnDef, missing impl-method bodies"). The fix
+    // landed there and not in its sibling here — the same one-consumer-fixed
+    // shape this tree keeps producing.
+    let dir = std::env::temp_dir().join(format!("axon_implfx_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let check = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", "--effects-strict", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+    const HEAD: &str = "trait T { fn go(self) -> i64 }\ntype B = { v: i64 }\n";
+
+    // 1. The method violates its OWN declared row.
+    let own = check(&format!(
+        "{HEAD}impl T for B {{ fn go(self: B) -> i64 | {{}} {{ println(\"io\") self.v }} }}\n\
+         fn main() {{ let b = B {{ v: 1 }}\nprintln(to_str(b.go())) }}\n"
+    ));
+    assert!(
+        own.contains("E1310") && own.contains("`go`"),
+        "a method must be held to its own row: {own}"
+    );
+
+    // 2. A pure caller launders IO through a method call.
+    let via = check(&format!(
+        "{HEAD}impl T for B {{ fn go(self: B) -> i64 {{ println(\"io\") self.v }} }}\n\
+         fn f() -> i64 | {{}} {{ let b = B {{ v: 1 }}\nb.go() }}\n\
+         fn main() {{ println(to_str(f())) }}\n"
+    ));
+    assert!(
+        via.contains("E1310") && via.contains("`f` calls `go`"),
+        "a method call must carry its effects to the caller: {via}"
+    );
+
+    // 3. A method reaching IO one hop further, through a free helper.
+    let deep = check(&format!(
+        "{HEAD}fn helper() -> i64 {{ println(\"io\") 1 }}\n\
+         impl T for B {{ fn go(self: B) -> i64 | {{}} {{ helper() }} }}\n\
+         fn main() {{ let b = B {{ v: 1 }}\nprintln(to_str(b.go())) }}\n"
+    ));
+    assert!(deep.contains("E1310"), "transitively, too: {deep}");
+
+    // ...and the honest cases must stay clean, or this would just be a ban on
+    // methods rather than a check.
+    for src in [
+        format!(
+            "{HEAD}impl T for B {{ fn go(self: B) -> i64 | {{}} {{ self.v }} }}\n\
+             fn f() -> i64 | {{}} {{ let b = B {{ v: 1 }}\nb.go() }}\n\
+             fn main() {{ println(to_str(f())) }}\n"
+        ),
+        format!(
+            "{HEAD}impl T for B {{ fn go(self: B) -> i64 | {{IO}} {{ println(\"io\") self.v }} }}\n\
+             fn f() -> i64 | {{IO}} {{ let b = B {{ v: 1 }}\nb.go() }}\n\
+             fn main() {{ println(to_str(f())) }}\n"
+        ),
+    ] {
+        let clean = check(&src);
+        assert!(
+            !clean.contains("E1310"),
+            "a correctly-declared method must not be flagged: {clean}"
         );
     }
     let _ = std::fs::remove_dir_all(&dir);
