@@ -830,6 +830,54 @@ mod truncation_tests {
         path
     }
 
+    /// The other direction, which had no test at all: records the auditor never
+    /// wrote, APPENDED to its file.
+    ///
+    /// Three tests covered truncation and none covered injection, though the
+    /// code handles both — a mutation deleting the `on_disk > expected` branch
+    /// survived the suite. Injection is arguably the worse attack: deletion
+    /// removes evidence, injection MANUFACTURES it, so a forged line can show
+    /// compliance that never happened or attribute an effect to a principal
+    /// that never exercised it.
+    ///
+    /// `verify()` cannot see this — it chains `self.entries`, which is memory
+    /// the adversary never touched — so the file-length comparison is the only
+    /// thing standing between a fabricated record and a clean audit.
+    #[test]
+    fn a_live_ledger_detects_records_it_never_wrote() {
+        let path = temp_path();
+        let mut led = Ledger::open(&path).unwrap();
+        led.append("root", EffectKind::FS, "write_file:/tmp/a")
+            .unwrap();
+        led.append("root", EffectKind::Exec, "exec:rm").unwrap();
+        led.verify_against_file()
+            .expect("an untouched ledger must verify");
+
+        // Someone appends a record the auditor never made.
+        let mut forged = std::fs::read_to_string(&path).unwrap();
+        forged.push_str(
+            "{\"seq\":2,\"principal\":\"root\",\"effect\":\"FS\",\"op\":\"write_file:/tmp/innocent\",\"prev_hash\":\"0\",\"hash\":\"0\"}\n",
+        );
+        std::fs::write(&path, forged).unwrap();
+
+        // The in-memory chain is untouched and still verifies — which is
+        // exactly why the file comparison has to be the thing that catches it.
+        led.verify()
+            .expect("the in-memory chain is not what the adversary edited");
+
+        let err = led
+            .verify_against_file()
+            .expect_err("an injected record must be detected");
+        assert!(
+            err.contains("extra"),
+            "the error must name the injection, not just fail: {err}"
+        );
+        assert!(
+            err.contains('2') && err.contains('3'),
+            "it must report appended vs present: {err}"
+        );
+    }
+
     /// O-RLM-05 / triage P6-COV-02. The named threat is an audited program
     /// erasing its own trailing FS/Exec records — while it is running, under the
     /// auditor that appended them.
