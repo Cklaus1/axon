@@ -40,13 +40,10 @@ fn collatz(n: i64) -> i64 {
 fn main() {
     let v = Vec2 { x: 1.0, y: 0.0 }
     println(to_str_f64(magnitude_sq(v)))
-
     println(to_str(sum_to(10)))
     println(to_str(sum_to(100)))
-
     println(to_str(collatz(27)))
     println(to_str(collatz(6)))
-
     let name = "Axon"
     let version = 2
     println("language: {name} v{to_str(version)}")

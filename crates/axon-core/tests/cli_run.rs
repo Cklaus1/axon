@@ -26156,3 +26156,94 @@ fn native_codegen_refuses_place_assignment_instead_of_dropping_it() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `axon fmt` silently rewrote scientific-notation float literals.
+///
+/// `Literal::Float` holds a parsed `f64`, so the formatter — a pure AST
+/// pretty-printer — emits `150.0` for `1.5e2` and `0.001` for `1.0e-3`. The
+/// value is identical and the program behaves the same, but the author's
+/// notation is gone, and `examples/floats.ax` exists specifically to show
+/// scientific notation: formatting it deletes what it is there to demonstrate.
+///
+/// Same structural limit as comments (an AST printer cannot reproduce what the
+/// AST does not carry) with a deliberately weaker response. A deleted comment
+/// loses information a reader needs, so that is REFUSED; a renormalised literal
+/// loses only the spelling, so it is formatted and NAMED.
+#[test]
+fn fmt_names_the_float_literals_it_renormalises() {
+    let dir = std::env::temp_dir().join(format!("axon_fmtsci_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let sci = dir.join("sci.ax");
+    std::fs::write(
+        &sci,
+        "fn main() {\n    let a = 1.5e2\n    let small = 1.0e-3\n    println(to_str(a))\n    \
+         println(to_str(small))\n}\n",
+    )
+    .unwrap();
+    // The value must survive even though the spelling does not.
+    let before = axon()
+        .args(["run", sci.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    let out = axon()
+        .args(["fmt", sci.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(
+        log.contains("scientific-notation") && log.contains("1.5e2"),
+        "the rewrite must be named, not arrive silently in a diff: {log}"
+    );
+
+    let after = axon()
+        .args(["run", sci.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&before.stdout),
+        String::from_utf8_lossy(&after.stdout),
+        "renormalising the notation must not change the value"
+    );
+    let text = std::fs::read_to_string(&sci).unwrap();
+    assert!(text.contains("150.0") && text.contains("0.001"), "{text}");
+
+    // A file with no scientific notation must draw NO warning — a warning that
+    // fires on ordinary files is one people learn to skip.
+    let plain = dir.join("plain.ax");
+    std::fs::write(
+        &plain,
+        "fn main() {\n  let a = 1.5\n  println(to_str(a))\n}\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["fmt", plain.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("scientific-notation"),
+        "must not warn about a file that has none: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // And an identifier containing `e` is not a float literal.
+    let ident = dir.join("ident.ax");
+    std::fs::write(
+        &ident,
+        "fn main() {\n  let e2e = 5\n  println(to_str(e2e))\n}\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["fmt", ident.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("scientific-notation"),
+        "`e2e` is an identifier, not a literal: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

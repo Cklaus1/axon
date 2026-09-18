@@ -5553,6 +5553,29 @@ fn compute_discharged(_program: &axon_core::ast::Program) -> axon_core::verify::
 /// detect that up front and refuse, rather than destroy documentation. A simple
 /// scanner that tracks whether we're inside a `"…"` string (honoring `\` escapes)
 /// — good enough to avoid false positives on `"http://…"` and the like.
+/// Does the source contain a float literal written in scientific notation?
+///
+/// Used only to WARN that `axon fmt` will renormalise it — the notation is not
+/// in the AST, so the formatter cannot round-trip it. Deliberately syntactic and
+/// deliberately narrow: a digit, then `e`/`E`, then an optional sign and digits.
+/// Matching more would warn about identifiers and hex, and a warning that cries
+/// wolf is one people learn to skip.
+fn source_has_scientific_float(src: &str) -> bool {
+    let b = src.as_bytes();
+    for i in 1..b.len() {
+        if (b[i] == b'e' || b[i] == b'E') && b[i - 1].is_ascii_digit() {
+            let mut j = i + 1;
+            if j < b.len() && (b[j] == b'+' || b[j] == b'-') {
+                j += 1;
+            }
+            if j < b.len() && b[j].is_ascii_digit() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn source_has_comments(src: &str) -> bool {
     let b = src.as_bytes();
     let mut i = 0;
@@ -5620,6 +5643,29 @@ fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
         }
 
         let formatted = axon_core::format_program(&program);
+
+        // A float literal's NOTATION is not in the AST either.
+        //
+        // `Literal::Float` holds a parsed `f64`, so `1.5e2` comes back out as
+        // `150.0` and `1.0e-3` as `0.001`. The value is identical and the
+        // program behaves the same, but the author's chosen notation is gone —
+        // and `examples/floats.ax` exists specifically to demonstrate scientific
+        // notation, so formatting it deletes the thing it is there to show.
+        //
+        // This is the same structural limit as comments (an AST pretty-printer
+        // cannot reproduce what the AST does not carry) and it gets a weaker
+        // response, because the two damages are not comparable: a deleted
+        // comment loses information a reader needs, while a renormalised literal
+        // loses only the spelling. So the file is still formatted — and the
+        // change is NAMED, rather than arriving silently in a diff.
+        if source_has_scientific_float(&src) && !source_has_scientific_float(&formatted) {
+            eprintln!(
+                "warning: {}: scientific-notation float literals were rewritten in decimal \
+                 form (`1.5e2` becomes `150.0`). The value is unchanged; the notation is not \
+                 recoverable from the AST.",
+                file.display()
+            );
+        }
 
         if check {
             if formatted != src {

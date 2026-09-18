@@ -1,4 +1,8 @@
-enum Shape { Circle { radius: f64 }, Rect { w: f64, h: f64 }, Point }
+enum Shape {
+    Circle { radius: f64 },
+    Rect { w: f64, h: f64 },
+    Point,
+}
 
 fn area(s: Shape) -> f64 {
     match s {
