@@ -255,7 +255,59 @@ impl<'ctx> super::Codegen<'ctx> {
                     .map(|f| self.llvm_sizeof(f).unwrap_or(0))
                     .sum(),
             ),
-            Type::Struct(_) | Type::Enum(_) => Some(8), // conservative
+            // A struct's REAL size, laid out with C/LLVM padding rules.
+            //
+            // This was `Some(8)`, commented "conservative". For a union payload
+            // it is the opposite of conservative: `Result<T, E>` sizes its
+            // buffer as `max(sizeof T, sizeof E)`, so under-reporting T does not
+            // waste space, it TRUNCATES. `Result<Quorum, str>` — an 8-field
+            // struct — was sized by `str` at 16 bytes, and everything past byte
+            // 16 was lost:
+            //
+            //     interp: 11 22 33 44
+            //     native: 11 22 0 4419688      <- field 3 zero, field 4 garbage
+            //
+            // Silent wrong answers, not a crash, in a completely ordinary
+            // pattern; `examples/stdlib/replicated.ax` hit it and its quorum
+            // stopped committing and started accepting stale writes.
+            //
+            // Recursion terminates because Axon structs hold no by-value cycles
+            // (a recursive type needs indirection, which is a pointer here).
+            Type::Struct(name) => {
+                let fields = self.struct_field_sem_types.get(name)?;
+                let mut off: u64 = 0;
+                let mut max_align: u64 = 1;
+                for f in fields {
+                    let a = self.llvm_align_of(f);
+                    // An unknown field errs LARGE (8), never small: over-sizing a
+                    // payload wastes stack, under-sizing corrupts memory.
+                    let sz = self.llvm_sizeof(f).unwrap_or(8);
+                    max_align = max_align.max(a);
+                    off = off.div_ceil(a) * a;
+                    off += sz;
+                }
+                Some(off.div_ceil(max_align) * max_align)
+            }
+            // An enum is a tag plus the largest variant, padded to the widest
+            // field's alignment — the same reasoning, and the same direction on
+            // anything unknown.
+            Type::Enum(name) => {
+                let variants = self.enum_variants.get(name)?;
+                let mut widest: u64 = 0;
+                let mut max_align: u64 = 8;
+                for (_, _, field_tys) in variants {
+                    let mut off: u64 = 0;
+                    for f in field_tys {
+                        let a = self.llvm_align_of(f);
+                        let sz = self.llvm_sizeof(f).unwrap_or(8);
+                        max_align = max_align.max(a);
+                        off = off.div_ceil(a) * a;
+                        off += sz;
+                    }
+                    widest = widest.max(off);
+                }
+                Some((max_align + widest).div_ceil(max_align) * max_align)
+            }
             Type::Unit => Some(0),
             // Uncertain<T> = T value + f64 confidence + i64 source_tag → 24 bytes for T = i64
             Type::Uncertain(inner) => {

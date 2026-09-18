@@ -25871,3 +25871,78 @@ fn each_code_emits_every_case_its_registry_row_claims() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `Result<BigStruct, E>` truncated its payload and read adjacent memory.
+///
+/// `llvm_sizeof` reported EVERY struct as 8 bytes, commented "conservative".
+/// For a union payload that is the opposite of conservative: `Result<T, E>` is
+/// `{ i1 tag, [max(sizeof T, sizeof E) x i8] }`, so under-reporting T does not
+/// waste space, it truncates. A 4-field struct through a `Result<_, str>` was
+/// sized by `str` at 16 bytes:
+///
+///     interp: 11 22 33 44
+///     native: 11 22 0 4419688      <- field 3 zeroed, field 4 garbage
+///
+/// Silent wrong answers in an ordinary pattern. `examples/stdlib/replicated.ax`
+/// hit it: its `Quorum` stopped committing at a 2/3 majority and started
+/// ACCEPTING stale writes — the program printed its own "ERROR: stale proposal
+/// accepted", which is the safety property that type exists to provide.
+///
+/// This test is codegen-only; under an interpreter-only build it self-skips,
+/// and says so rather than passing quietly.
+#[test]
+fn a_struct_larger_than_its_err_type_survives_a_result() {
+    let dir = std::env::temp_dir().join(format!("axon_resultsize_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("trunc.ax");
+    std::fs::write(
+        &src,
+        "type Q = { a: i64, b: i64, c: i64, d: i64 }\n\
+         fn mk() -> Result<Q, str> { Ok(Q { a: 11, b: 22, c: 33, d: 44 }) }\n\
+         fn take() -> Q {\n  match mk() { Ok(q) => q  Err(e) => Q { a: 0, b: 0, c: 0, d: 0 } }\n}\n\
+         fn main() {\n  let q = take()\n  println(to_str(q.a))\n  println(to_str(q.b))\n  \
+         println(to_str(q.c))\n  println(to_str(q.d))\n}\n",
+    )
+    .unwrap();
+
+    let want = "11\n22\n33\n44\n";
+    let interp = axon()
+        .args(["run", src.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the reference engine must read every field back"
+    );
+
+    let bin = dir.join("trunc.bin");
+    let build = axon()
+        .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+        .output()
+        .unwrap();
+    if !build.status.success() {
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        assert!(
+            log.contains("codegen") || log.contains("E0910"),
+            "the build failed for a reason that is not a missing backend: {log}"
+        );
+        eprintln!("SKIP a_struct_larger_than_its_err_type_survives_a_result: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let native = std::process::Command::new(&bin).output().unwrap();
+    let got = String::from_utf8_lossy(&native.stdout).to_string();
+    assert_eq!(
+        got, want,
+        "native truncated the Result payload — fields past the Err type's size \
+         read as zero or garbage"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
