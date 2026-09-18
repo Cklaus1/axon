@@ -290,6 +290,28 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
             // Default: <out>/<run-id>.audit.jsonl
             out.join(format!("{run_id}.audit.jsonl"))
         });
+
+        // Point the CHILD at the same ledger the monitor watches.
+        //
+        // `--ledger` configured the watcher and nothing else, so the program
+        // under supervision never learned where to append — it writes through
+        // `AXON_AUDIT_LEDGER`, which only AUDIT T23 forwards, and only when the
+        // operator happens to have exported it. Measured:
+        //
+        //   run --monitor IO,Net --ledger P                  -> P never created
+        //   AXON_AUDIT_LEDGER=P run --monitor IO,Net --ledger P -> 5 entries
+        //
+        // So by default the R29 compliance monitor polled a file nobody wrote,
+        // saw no effects, denied nothing, and the run reported success. A
+        // monitor that cannot observe is not a weaker monitor, it is none — and
+        // it looked identical to a clean run.
+        //
+        // Set rather than defaulted, and set unconditionally: if `--ledger` and
+        // an exported `AXON_AUDIT_LEDGER` disagreed, the writer and the watcher
+        // would use different files, which is the same inert monitor with an
+        // extra way to reach it. The flag is the authority. This mirrors
+        // `AXON_KILL_FILE` above, set the same way for the same reason.
+        std::env::set_var("AXON_AUDIT_LEDGER", &ledger);
         let allowed: Vec<String> = effects_str
             .split(',')
             .map(|s| s.trim().to_string())

@@ -491,3 +491,101 @@ fn r29_tcb_addendum_is_defined() {
         "R29 TCB addendum must identify the monitor module"
     );
 }
+
+/// The compliance monitor watched a ledger nobody wrote.
+///
+/// `--ledger PATH` configured the WATCHER and nothing else. The program under
+/// supervision appends through `AXON_AUDIT_LEDGER`, which only AUDIT T23
+/// forwards — and only if the operator happened to have exported it. So by
+/// default the monitor polled a file that was never created, observed no
+/// effects, denied nothing, and the run reported success. Measured:
+///
+///     run --monitor IO,Net --ledger P                      -> P never created
+///     AXON_AUDIT_LEDGER=P run --monitor IO,Net --ledger P  -> 5 entries
+///
+/// A monitor that cannot observe is not a weaker monitor, it is none — and it
+/// looked exactly like a clean run. Before the fix this test's narrow-allowlist
+/// case reported `✓ completed (value=0)`.
+#[test]
+fn a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger() {
+    let dir = std::env::temp_dir().join(format!("axon_r29ledger_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let os = env!("CARGO_BIN_EXE_axon-os");
+    let job = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/jobs/summarize.axjob"
+    );
+    if !std::path::Path::new(job).exists() {
+        eprintln!("SKIP a_narrow_allowlist_denies…: fixture {job} absent");
+        return;
+    }
+    // The supervisor resolves the interpreter from `AXON_BIN`, which is how the
+    // sibling suites pass it. `cargo test -p axon-os` does not build
+    // axon-core's binary, so it may simply be absent — a genuine skip that SAYS
+    // it skipped rather than reporting a pass it did not earn.
+    let axon = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .join("target/debug/axon");
+    if !axon.exists() {
+        eprintln!(
+            "SKIP a_narrow_allowlist_denies…: no axon interpreter at {} — \
+             build it (`cargo build -p axon-core`) for this test to assert anything.",
+            axon.display()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    let run = |run_id: &str, monitor: &str, ledger: Option<&std::path::Path>| -> String {
+        let mut c = std::process::Command::new(os);
+        c.args(["run", job, "--run-id", run_id, "--out"])
+            .arg(&dir)
+            .args(["--monitor", monitor])
+            .env("AXON_BIN", &axon)
+            // Deliberately NOT set: the point is that `--ledger` alone suffices.
+            .env_remove("AXON_AUDIT_LEDGER");
+        if let Some(l) = ledger {
+            c.args(["--ledger"]).arg(l);
+        }
+        let o = c.output().unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    // An explicit --ledger must be written by the child, not merely watched.
+    let explicit = dir.join("explicit.jsonl");
+    let out = run("r29a", "IO,Net", Some(&explicit));
+    assert!(
+        explicit.exists(),
+        "`--ledger` must point the CHILD at the path too, or the monitor has \
+         nothing to read: {out}"
+    );
+    let lines = std::fs::read_to_string(&explicit).unwrap();
+    assert!(
+        lines.lines().filter(|l| !l.trim().is_empty()).count() >= 2,
+        "the ledger must hold the run's effects: {lines}"
+    );
+
+    // The default path (<out>/<run-id>.audit.jsonl) must work the same way.
+    let out = run("r29b", "IO,Net", None);
+    assert!(
+        dir.join("r29b.audit.jsonl").exists(),
+        "the DEFAULT ledger path must be written too: {out}"
+    );
+
+    // And the property all of it exists for: a narrow allowlist must DENY.
+    // This is what reported a clean `✓ completed` while the monitor was blind.
+    let out = run("r29c", "Net", None);
+    assert!(
+        out.contains("CONTAINMENT VIOLATION"),
+        "a job doing IO under a Net-only allowlist must be denied: {out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
