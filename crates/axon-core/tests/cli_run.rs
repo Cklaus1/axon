@@ -25946,3 +25946,94 @@ fn a_struct_larger_than_its_err_type_survives_a_result() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two more shapes the 8-byte struct size corrupted, each independently.
+///
+/// The sibling test covers `Result<BigStruct, str>` — the Err side smaller than
+/// the Ok side. These two were broken for different reasons and neither is
+/// reachable from that one:
+///
+///   Result<Q, Q>   both sides structs. Pre-fix native printed
+///                  `4315478 140726680811216` for `44 88` — pointer-sized
+///                  garbage on BOTH arms, not a truncation to zero.
+///   nested struct  a struct whose FIELD is a struct. Pre-fix `7 4419608` for
+///                  `7 33`, so the size recursion has to work, not just the
+///                  outer level.
+///
+/// `Option<BigStruct>` is deliberately absent: it was always correct, because
+/// `Option<T>` lowers to a real `{ i1, T }` struct rather than a byte array, so
+/// nothing sizes its payload by hand. Adding it would suggest the fix changed
+/// something there.
+#[test]
+fn struct_size_is_right_for_both_result_sides_and_nested_fields() {
+    let dir = std::env::temp_dir().join(format!("axon_structsz_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let cases = [
+        (
+            "both_big",
+            "type Q = { a: i64, b: i64, c: i64, d: i64 }\n\
+             fn mk(f: bool) -> Result<Q, Q> {\n  \
+             if f { Ok(Q { a: 1, b: 2, c: 33, d: 44 }) } else { Err(Q { a: 9, b: 9, c: 99, d: 88 }) }\n}\n\
+             fn take(f: bool) -> Q {\n  match mk(f) { Ok(q) => q  Err(q) => q }\n}\n\
+             fn main() {\n  println(to_str(take(true).d))\n  println(to_str(take(false).d))\n}\n",
+            "44\n88\n",
+        ),
+        (
+            "nested",
+            "type In = { x: i64, y: i64, z: i64 }\ntype Out = { tag: i64, inner: In }\n\
+             fn mk() -> Result<Out, str> { Ok(Out { tag: 7, inner: In { x: 1, y: 2, z: 33 } }) }\n\
+             fn take() -> Out {\n  \
+             match mk() { Ok(o) => o  Err(e) => Out { tag: 0, inner: In { x: 0, y: 0, z: 0 } } }\n}\n\
+             fn main() {\n  let o = take()\n  println(to_str(o.tag))\n  println(to_str(o.inner.z))\n}\n",
+            "7\n33\n",
+        ),
+    ];
+
+    for (name, src_text, want) in cases {
+        let src = dir.join(format!("{name}.ax"));
+        std::fs::write(&src, src_text).unwrap();
+
+        let interp = axon()
+            .args(["run", src.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&interp.stdout),
+            want,
+            "`{name}`: the reference engine must read every field back"
+        );
+
+        let bin = dir.join(format!("{name}.bin"));
+        let build = axon()
+            .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+            .output()
+            .unwrap();
+        if !build.status.success() {
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(&build.stdout),
+                String::from_utf8_lossy(&build.stderr)
+            );
+            assert!(
+                log.contains("codegen") || log.contains("E0910"),
+                "`{name}` failed to build for a reason that is not a missing backend: {log}"
+            );
+            eprintln!(
+                "SKIP struct_size_is_right_for_both_result_sides_and_nested_fields: no codegen"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let native = std::process::Command::new(&bin).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&native.stdout),
+            want,
+            "`{name}`: native read past the sized region — adjacent memory, not \
+             a truncation to zero"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
