@@ -3470,6 +3470,57 @@ impl CheckCtx {
                 self.check_not_option_used_as_value(&rty, &rpath);
                 self.check_not_result_used_as_value(&lty, &lpath);
                 self.check_not_result_used_as_value(&rty, &rpath);
+                // `char_at(s, i) == "a"` — comparing a BYTE VALUE with a string.
+                //
+                // `char_at` returns the byte as an `i64`, and the reader who
+                // wrote this is thinking of a character type Axon does not have.
+                // Measured 2026-08-06, this one construct caused ALL THREE
+                // remaining failures in the RLM fluency gate, in every one of six
+                // runs and in both repair arms — the three tasks that iterate a
+                // string are exactly the ones that invite a char comparison.
+                //
+                // The PARSE tier already names it, for `'a'` with single quotes.
+                // Written with double quotes the program parses fine and dies
+                // here instead, where the message was infer's bare "type mismatch
+                // in equality operands (expected str), found i64" — which never
+                // mentions `char_at`, the only thing in the line that could
+                // explain why an `i64` appeared.
+                //
+                // Emitted as E03xx WITH help so `collapse_refined_type_errors`
+                // drops that bare E0102 at the same span, rather than the reader
+                // getting both.
+                if matches!(
+                    op,
+                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+                ) {
+                    let char_side = [(&lty, left), (&rty, right)]
+                        .iter()
+                        .any(|(t, e)| **t == Type::I64 && is_char_at_call(e));
+                    let str_side = lty == Type::Str || rty == Type::Str;
+                    if char_side && str_side {
+                        let file = self.file.clone();
+                        let span = self.current_span;
+                        self.errors.push(
+                            CheckError::new(
+                                E0301,
+                                "`char_at` returns the BYTE VALUE as an `i64`, so it cannot be \
+                                 compared with a `str` — Axon has no character type"
+                                    .to_string(),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .expected("i64".to_string())
+                            .found("str".to_string())
+                            .fix(
+                                "compare numerically (`char_at(s, i) == 32` for a space), or take \
+                                 a one-character slice and compare as text: \
+                                 `str_eq(str_slice(s, i, i + 1), \" \")`"
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                }
                 // Fix #4: arithmetic operands must be numeric types.
                 use crate::ast::BinOp;
                 if matches!(
@@ -6211,6 +6262,15 @@ fn free_fn_for_method(key: &str, method: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// Whether an expression is a direct `char_at(…)` call.
+///
+/// Syntactic on purpose: the point is to recognise the shape the reader wrote,
+/// not to track every value that could have come from a `char_at` somewhere.
+fn is_char_at_call(e: &Expr) -> bool {
+    matches!(e, Expr::Call { callee, .. }
+        if matches!(callee.as_ref(), Expr::Ident(n) if n == "char_at"))
 }
 
 fn method_lookup_key(ty: &Type) -> Option<&'static str> {

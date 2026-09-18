@@ -24871,3 +24871,178 @@ fn a_result_used_as_a_value_names_itself_the_way_an_option_does() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A type error inside a loop body named the loop's line, not the failing line.
+///
+/// `Expr::Block` sets infer's `current_stmt_span` per statement; the `for`,
+/// `while` and `while let` arms walked their bodies without doing so, so every
+/// unification failure inside a loop carried the LOOP's span.
+///
+/// Two consequences, both measured. The reader is sent to a line that is
+/// already correct — and `collapse_refined_type_errors` keys on the span, so it
+/// could not pair the bare E0102 with the hint-bearing checker diagnostic for
+/// the same failure. Inside a loop the reader got both, useless one first;
+/// outside a loop, where the spans happened to agree, they got one good one.
+#[test]
+fn a_type_error_inside_a_loop_reports_the_failing_line() {
+    let dir = std::env::temp_dir().join(format!("axon_loopspan_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let lines_of = |name: &str, src: &str| -> Vec<(String, u32)> {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        msg.lines()
+            .filter(|l| l.contains("\"severity\":\"error\"") && l.contains("\"line\":"))
+            .filter_map(|l| {
+                let code = l
+                    .split("\"code\":\"")
+                    .nth(1)?
+                    .split('"')
+                    .next()?
+                    .to_string();
+                let line: u32 = l
+                    .split("\"line\":")
+                    .nth(1)?
+                    .split(',')
+                    .next()?
+                    .parse()
+                    .ok()?;
+                Some((code, line))
+            })
+            .collect()
+    };
+
+    // The bad expression is on line 4 in each; the loop header is on line 3.
+    for (name, src) in [
+        (
+            "forloop",
+            "fn main() {\n  let t = 0\n  for i in 0..2 {\n    let x = \"a\" + 1\n  }\n}\n",
+        ),
+        (
+            "whileloop",
+            "fn main() {\n  let i = 0\n  while i < 2 {\n    let x = \"a\" + 1\n    i = i + 1\n  }\n}\n",
+        ),
+    ] {
+        let located = lines_of(name, src);
+        assert!(!located.is_empty(), "`{name}` must report something");
+        assert!(
+            located.iter().all(|(_, l)| *l == 4),
+            "`{name}` must name line 4 (the failing expression), not the loop header: {located:?}"
+        );
+    }
+
+    // And the pairing this unblocks: `char_at(s, i) == "a"` inside a loop now
+    // collapses to ONE diagnostic, the one carrying the repair.
+    let f = dir.join("charat.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let s = \"ab\"\n  for i in 0..2 {\n    \
+         if char_at(s, i) == \"a\" { println(\"y\") }\n  }\n}\n",
+    )
+    .unwrap();
+    let o = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let errors: Vec<&str> = msg
+        .lines()
+        .filter(|l| l.contains("\"severity\":\"error\""))
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "one mistake, one diagnostic — the bare E0102 must collapse: {msg}"
+    );
+    assert!(errors[0].contains("\"line\":4"), "{msg}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `char_at(s, i) == "a"` — comparing a byte value with a string.
+///
+/// Measured 2026-08-06, this one construct caused ALL THREE remaining failures
+/// in the RLM fluency gate, in every one of six runs and in both repair arms:
+/// the three tasks that iterate a string are the ones that invite a character
+/// comparison, and Axon has no character type.
+///
+/// The PARSE tier already names it for `'a'` with single quotes. Written with
+/// double quotes the program parses fine and dies at the type tier, where the
+/// message was infer's bare "type mismatch in equality operands (expected str),
+/// found i64" — which never mentions `char_at`, the only thing in the line that
+/// could explain where an `i64` came from.
+#[test]
+fn comparing_char_at_with_a_string_explains_the_byte_value() {
+    let dir = std::env::temp_dir().join(format!("axon_charcmp_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let diag = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    let out = diag(
+        "cmp",
+        "fn main() {\n  let s = \"ab\"\n  if char_at(s, 0) == \"a\" { println(\"y\") }\n}\n",
+    );
+    assert!(
+        out.contains("BYTE VALUE") && out.contains("char_at"),
+        "the diagnostic must name `char_at` and what it returns: {out}"
+    );
+    assert!(
+        out.contains("str_slice") && out.contains("== 32"),
+        "and give both repairs: {out}"
+    );
+
+    // Both recommended repairs must compile AND agree — this is the hint whose
+    // FIRST version shipped wrong (it claimed `char_at` returns a `str`), which
+    // is why this codebase runs its advice instead of grepping it for words.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let s = \"a b\"\n  if char_at(s, 1) == 32 { println(\"space\") }\n  \
+         if str_eq(str_slice(s, 1, 2), \" \") { println(\"also space\") }\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let ran = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(o.status.success(), "the advice must compile: {ran}");
+    assert!(
+        ran.contains("space") && ran.contains("also space"),
+        "both forms must agree on the same byte: {ran}"
+    );
+
+    // Control: a numeric comparison is correct and must draw nothing.
+    let ok = diag(
+        "numeric",
+        "fn main() {\n  let s = \"ab\"\n  if char_at(s, 0) == 97 { println(\"y\") }\n}\n",
+    );
+    assert!(
+        !ok.contains("\"severity\":\"error\""),
+        "the correct form must stay clean: {ok}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
