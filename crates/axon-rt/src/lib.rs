@@ -78,25 +78,47 @@ impl AxonStr {
 struct Chan {
     queue: Mutex<VecDeque<i64>>,
     not_empty: Condvar,
-    not_full: Condvar,
-    capacity: usize,
 }
 
 impl Chan {
+    /// `capacity` is the initial RESERVATION, not a ceiling.
+    ///
+    /// It was also stored and enforced by a blocking `send`, which made this
+    /// channel bounded while the interpreter's is unbounded. The field and the
+    /// `not_full` condvar went with that: nothing waits for room any more, so a
+    /// condvar for "no longer full" would be a signal with no listener — which
+    /// reads, to the next person, as a synchronisation step that does something.
     fn new(capacity: usize) -> Self {
         Chan {
             queue: Mutex::new(VecDeque::with_capacity(capacity)),
             not_empty: Condvar::new(),
-            not_full: Condvar::new(),
-            capacity,
         }
     }
 
+    /// Send never blocks: the buffer GROWS.
+    ///
+    /// This used to `wait` on `not_full` while `q.len() >= capacity`, which made
+    /// the native channel bounded while the interpreter's is unbounded — an I-2
+    /// divergence in a core primitive, and one that appeared as a HANG rather
+    /// than a wrong answer. `chan<T>()` desugars to `Chan::new(16)`, so a program
+    /// with 17 sends outstanding completed under `axon run` and hung forever as a
+    /// native binary. Both engines agreed up to 16, which is why 53 parity
+    /// harnesses never saw it: none of them queued more than a handful.
+    ///
+    /// Two of this project's own rules pick the winner. I-2 makes the
+    /// interpreter the reference semantics, and it cannot block at all — it
+    /// panics on `recv` from an empty channel and says so, because `spawn` bodies
+    /// run eagerly. And spec phase-3 §4 specifies a "growable ring buffer".
+    /// Blocking was the side that disagreed with both.
+    ///
+    /// The change is strictly more permissive: no program that completed before
+    /// can fail now, and programs that hung now finish. What is given up is
+    /// backpressure — a producer outrunning a consumer grows memory instead of
+    /// waiting. That is the interpreter's behaviour today, so this makes the two
+    /// engines answer the same way rather than choosing a new answer.
+    ///
     fn send(&self, val: i64) {
         let mut q = self.queue.lock().unwrap();
-        while q.len() >= self.capacity {
-            q = self.not_full.wait(q).unwrap();
-        }
         q.push_back(val);
         self.not_empty.notify_one();
     }
@@ -106,9 +128,7 @@ impl Chan {
         while q.is_empty() {
             q = self.not_empty.wait(q).unwrap();
         }
-        let val = q.pop_front().unwrap();
-        self.not_full.notify_one();
-        val
+        q.pop_front().unwrap()
     }
 
     // Non-blocking sibling of `recv`. Retained for completeness alongside the
@@ -121,9 +141,7 @@ impl Chan {
         if q.is_empty() {
             None
         } else {
-            let val = q.pop_front().unwrap();
-            self.not_full.notify_one();
-            Some(val)
+            Some(q.pop_front().unwrap())
         }
     }
 
