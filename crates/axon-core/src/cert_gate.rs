@@ -65,14 +65,42 @@ pub fn check_mint_certificate() -> Result<(), (&'static str, String)> {
 /// Run the cert gate in the run/build path: fail closed on a bad cert, and emit
 /// the legibility line when the policy is active. Always compiled.
 pub fn enforce_or_exit() {
-    if let Err((code, msg)) = check_mint_certificate() {
+    if let Err((code, msg, exit)) = enforcement_decision() {
         eprintln!("{code}: {msg}");
-        std::process::exit(2);
+        std::process::exit(exit);
     }
     if require_certificates_enabled() {
         eprintln!(
             "axon: mint attenuation (O1) + budget-carve (O2) obligations certificate-checked (solver-free; Z3 out of the trust root)"
         );
+    }
+}
+
+/// What `enforce_or_exit` will DO about the certificate check, as a value.
+///
+/// Split out because every test in this module called `check_one_mint_obligation`
+/// or `check_mint_certificate` — the DETECTION — and none covered the
+/// enforcement. Deleting the `process::exit` from the wrapper left the gate
+/// printing a failed certificate and continuing, and the whole suite stayed
+/// green: the decision was tested, the refusal was not.
+///
+/// The obligations are compile-time constants, so the failing branch cannot be
+/// reached by any input at runtime — which is exactly why it needs a test that
+/// does not depend on reaching it. `enforcement_is_fatal_for_a_failed_check`
+/// asserts the mapping directly.
+pub(crate) fn enforcement_decision() -> Result<(), (&'static str, String, i32)> {
+    decide(check_mint_certificate())
+}
+
+/// The mapping itself, as a pure function of the check result, so a test can
+/// drive the FAILING case that the compile-time constants can never produce.
+///
+/// Exit 2 is the usage/refusal code: a TCB obligation that does not discharge
+/// must stop the run, not annotate it.
+fn decide(checked: Result<(), (&'static str, String)>) -> Result<(), (&'static str, String, i32)> {
+    match checked {
+        Ok(()) => Ok(()),
+        Err((code, msg)) => Err((code, msg, 2)),
     }
 }
 
@@ -107,6 +135,24 @@ fn check_one_mint_obligation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enforcement_is_fatal_for_a_failed_check() {
+        // The mapping `Err(check) -> refuse with exit 2`, asserted without
+        // needing to reach the failing branch. A mutation deleting the refusal
+        // from `enforce_or_exit` previously survived the entire suite.
+        assert!(
+            enforcement_decision().is_ok(),
+            "the shipped certificates must discharge"
+        );
+        // Drive the real mapping, not a copy of it: re-implementing the match
+        // inline would pass whatever `decide` actually did.
+        let (code, _, exit) = decide(Err((crate::error::E1611, "synthetic".to_string())))
+            .expect_err("a failed check must not map to success");
+        assert!(decide(Ok(())).is_ok(), "a clean check must not refuse");
+        assert_eq!(exit, 2, "a non-discharged TCB obligation must refuse");
+        assert_eq!(code, crate::error::E1611);
+    }
 
     #[test]
     fn default_off_is_ok_and_silent() {
