@@ -1208,6 +1208,16 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
 /// Only a HINT-BEARING partner suppresses, so an E0102 that is the sole account
 /// of a failure always survives rather than vanishing.
 ///
+/// E0001 (`cannot find name X`) suppresses too, and unlike the E03xx partners it
+/// does so with or without `help`. An unresolved name is a COMPLETE account of
+/// the failure — the expression has no type because the name has no binding — so
+/// the E0102 beside it is not a second finding but the first one restated in
+/// terms of an inference variable the reader cannot act on. Measured, the
+/// cascade is narrow: of four shapes that fail name resolution (call site, let
+/// binding, two independent unresolved names, tail expression) only the tail
+/// expression emits the pair, and there the two spans are identical. `mut x` in
+/// an RLM cell hits exactly that shape.
+///
 /// This lives here, not in the CLI, because `check_pipeline` and the CLI must
 /// agree diagnostic-for-diagnostic — `parse_help_probe` asserts it in both
 /// directions, and it is what caught this when the collapse was CLI-only.
@@ -1221,7 +1231,9 @@ pub fn collapse_refined_type_errors(diags: &mut Vec<PipelineDiagnostic>) {
         // mode this filter must not have. An unknown location cannot prove it
         // accounts for anything, so it never suppresses.
         .filter(|d| {
-            d.severity == "error" && d.code.starts_with("E03") && d.help.is_some() && d.line > 0
+            d.severity == "error"
+                && d.line > 0
+                && (d.code == "E0001" || (d.code.starts_with("E03") && d.help.is_some()))
         })
         .map(|d| (d.file.clone(), d.line, d.col))
         .collect();

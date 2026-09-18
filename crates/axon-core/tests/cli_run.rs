@@ -24144,3 +24144,89 @@ fn the_mint_certificate_policy_is_enforced_on_every_verb_that_executes() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The same collapse, for the partner the E03xx rule did not cover: E0001.
+///
+/// An unresolved name in tail position produced E0001 AND a cascading E0102 at
+/// the identical span. The E0102 is not a second finding — the expression has no
+/// type precisely because the name has no binding — so a consumer that reads one
+/// error per failure could be handed "type mismatch in function body (expected
+/// (), found i64)" for a program whose actual defect is a misspelled name. There
+/// is nothing to repair toward in that sentence.
+///
+/// This is the shape an RLM cell hits: `axon session` re-checks the accumulated
+/// program every cell, so a model that writes one unknown name gets the pair.
+#[test]
+fn an_unresolved_name_reports_once_without_a_cascading_type_error() {
+    let dir = std::env::temp_dir().join(format!("axon_cascade_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let check = |name: &str, src: &str| -> Vec<String> {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        msg.lines()
+            .filter(|l| l.contains("\"severity\":\"error\""))
+            .map(|l| l.to_string())
+            .collect()
+    };
+
+    // Tail position — the one shape of four that cascaded.
+    let e = check("tail", "fn main() {\n  let x = 1\n  x + nope\n}\n");
+    assert_eq!(
+        e.len(),
+        1,
+        "an unresolved name must report once, not as an E0001/E0102 pair: {e:?}"
+    );
+    assert!(
+        e[0].contains("\"code\":\"E0001\""),
+        "the survivor must be the one that names the actual defect: {e:?}"
+    );
+
+    // Suppression must NOT require `help`: E0001 without a spelling suggestion
+    // still fully accounts for the failure, and that case cascaded too.
+    let e = check("nohelp", "fn main() {\n  let x = 1\n  x + zzzzzzqqq\n}\n");
+    assert_eq!(e.len(), 1, "no-suggestion case must also collapse: {e:?}");
+    assert!(e[0].contains("\"code\":\"E0001\""), "{e:?}");
+
+    // Two INDEPENDENT unresolved names are two findings and must both survive —
+    // the filter keys on span, and collapsing these would hide a real error.
+    let e = check(
+        "two",
+        "fn main() {\n  let a = nope1\n  let b = nope2\n  println(to_str(a + b))\n}\n",
+    );
+    assert_eq!(
+        e.len(),
+        2,
+        "two distinct unresolved names are two errors: {e:?}"
+    );
+
+    // Controls: a genuine type error with no unresolved name must still report.
+    // Without these, deleting the E0102 emitter entirely would pass this test.
+    let e = check(
+        "ret",
+        "fn f() -> i64 {\n  \"nope\"\n}\nfn main() { println(to_str(f())) }\n",
+    );
+    assert!(
+        e.len() == 1 && e[0].contains("\"code\":\"E0307\""),
+        "a real return mismatch must survive: {e:?}"
+    );
+    let e = check(
+        "letty",
+        "fn main() {\n  let s = \"x\"\n  let n: i64 = s\n  println(to_str(n))\n}\n",
+    );
+    assert!(
+        e.len() == 1 && e[0].contains("\"code\":\"E0102\""),
+        "a standalone E0102 is the sole account of its failure and must survive: {e:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
