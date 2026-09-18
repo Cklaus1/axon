@@ -1204,13 +1204,39 @@ fn cmd_run(
     // defense-in-depth and for exercising the in-kernel syscall gate. Otherwise prefer
     // the manifest's effect union, fall back to the principal, then open.
     let allowed_effects = if let Ok(forced) = env::var("AXON_VM_ALLOWED_EFFECTS") {
-        Some(
-            forced
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>(),
-        )
+        let forced: Vec<String> = forced
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // The override may only TIGHTEN. It replaced the manifest outright, so
+        // `AXON_VM_ALLOWED_EFFECTS=FS,Net,Exec` on a program whose `.axmeta`
+        // grants only `FS` delivered all three to the guest — an environment
+        // variable widening a grant past the program's own signed manifest.
+        //
+        // R36 §S0 names this as one of four fail-open policy-provenance
+        // defaults and says the fix outright: it "must be checked as a subset
+        // rather than a replacement". The comment above already claimed the
+        // override "tightens the policy beyond the manifest"; only the claim was
+        // true.
+        //
+        // Checked ONLY against a manifest. With no manifest the override is the
+        // sole grant and there is nothing to be a subset of — and the
+        // no-grant-at-all path below already refuses that case.
+        if let Some(union) = manifest.effect_union.as_ref() {
+            let extra = effects_not_granted_by(&forced, union);
+            if !extra.is_empty() {
+                eprintln!(
+                    "axon-vm: AXON_VM_ALLOWED_EFFECTS may only narrow the manifest's \
+                     effect grant, not widen it. Not in the manifest: {}. Manifest grants: {}.",
+                    extra.join(", "),
+                    union.join(", ")
+                );
+                process::exit(2);
+            }
+        }
+        Some(forced)
     } else {
         manifest
             .effect_union
@@ -3040,6 +3066,23 @@ static SYSCALL_TABLE: &[(&str, u32)] = &[
 /// A sidecar that exists but cannot be read is now an error the caller must
 /// handle. Absent stays `Ok(None)` — that is a real, distinct state ("no policy
 /// declared"), and the caller refuses on it separately.
+/// Effects in `forced` that the manifest's `union` does not grant.
+///
+/// Empty means the override is a subset — a narrowing, which is what
+/// `AXON_VM_ALLOWED_EFFECTS` is for. Anything returned is an attempted WIDENING
+/// of a program's own signed grant by an environment variable, which R36 §S0
+/// names as a fail-open policy-provenance default.
+///
+/// Extracted so the rule is testable without booting a VM: the call site is
+/// inside the launch path and exits the process.
+fn effects_not_granted_by(forced: &[String], union: &[String]) -> Vec<String> {
+    forced
+        .iter()
+        .filter(|e| !union.contains(e))
+        .cloned()
+        .collect()
+}
+
 fn load_manifest(program: &Path) -> Result<Option<AxonManifest>, String> {
     let meta_path = program.with_extension("axmeta");
     if !meta_path.exists() {
@@ -3374,6 +3417,48 @@ mod tests {
         let back: PrincipalRegistry = toml::from_str(&s).unwrap();
         assert_eq!(back.principals[0].name, "test-agent");
         assert_eq!(back.principals[0].budget_tokens, 5000);
+    }
+
+    /// `AXON_VM_ALLOWED_EFFECTS` could WIDEN a program's signed grant.
+    ///
+    /// The override replaced the manifest's effect union outright, so
+    /// `AXON_VM_ALLOWED_EFFECTS=FS,Net,Exec` on a program whose `.axmeta` grants
+    /// only `FS` delivered all three to the guest — an environment variable
+    /// escalating past the program's own manifest. R36 §S0 lists this among four
+    /// fail-open policy-provenance defaults and states the rule: the override
+    /// "must be checked as a subset rather than a replacement".
+    ///
+    /// The comment at the call site already claimed the override "tightens the
+    /// policy beyond the manifest". Only the claim was true.
+    #[test]
+    fn the_effects_override_may_narrow_a_manifest_but_never_widen_it() {
+        let manifest = vec!["FS".to_string(), "Net".to_string()];
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // Narrowing is the point of the flag, and must stay allowed.
+        assert!(effects_not_granted_by(&v(&["FS"]), &manifest).is_empty());
+        assert!(effects_not_granted_by(&v(&["FS", "Net"]), &manifest).is_empty());
+        // An empty override grants nothing — the tightest narrowing there is.
+        assert!(effects_not_granted_by(&[], &manifest).is_empty());
+
+        // Widening is refused, and the offending effect is NAMED so the operator
+        // can see which one exceeded the manifest.
+        assert_eq!(
+            effects_not_granted_by(&v(&["FS", "Exec"]), &manifest),
+            vec!["Exec".to_string()]
+        );
+        assert_eq!(
+            effects_not_granted_by(&v(&["Exec", "AI"]), &manifest),
+            vec!["Exec".to_string(), "AI".to_string()]
+        );
+
+        // An EMPTY manifest union grants nothing, so any override widens it.
+        // Checked because "no effects" and "no manifest" are different states,
+        // and only the second leaves nothing to be a subset of.
+        assert_eq!(
+            effects_not_granted_by(&v(&["FS"]), &[]),
+            vec!["FS".to_string()]
+        );
     }
 
     #[test]
