@@ -6529,6 +6529,35 @@ fn run_build_pipeline(
         if let Ok(bytes) = std::fs::read(source_path) {
             hasher_input.extend_from_slice(&bytes);
         }
+
+        // …and the IMPORTED MODULES, which this comment already claimed to do.
+        //
+        // Only the entry file was hashed, so editing a module and rebuilding
+        // served a binary built from the OLD module — silently, with no
+        // recompile. Measured:
+        //
+        //   dep.ax = "DEP_V1"  build  -> DEP_V1
+        //   dep.ax = "DEP_V2"  build  -> DEP_V1      <- stale, and wrong
+        //                      --no-cache -> DEP_V2
+        //                      axon run   -> DEP_V2
+        //
+        // So the native binary disagreed with the interpreter (I-2) and with the
+        // source on disk, and the only signal was the answer being wrong. The
+        // failure gets worse with time: the staler the cache entry, the further
+        // the binary is from the code the author is reading.
+        //
+        // Sorted by module name so the key does not depend on resolution order,
+        // which would make it unstable across runs for no reason.
+        {
+            let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+            let (mut resolved, _unresolved) =
+                axon_core::resolve_use_files_transitive(program, &search_dirs);
+            resolved.sort_by(|a, b| a.name.cmp(&b.name));
+            for m in &resolved {
+                hasher_input.extend_from_slice(m.name.as_bytes());
+                hasher_input.extend_from_slice(&m.bytes);
+            }
+        }
         // Also include target triple in the key so cross-compiled artifacts
         // are cached separately from native ones.
         if let Some(triple) = target_triple {

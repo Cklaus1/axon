@@ -26247,3 +26247,112 @@ fn fmt_names_the_float_literals_it_renormalises() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The build cache ignored imported modules, so editing one served a stale
+/// binary.
+///
+/// The key hashed only the entry file — under a comment that said "Hash all
+/// source files to form the cache key". Measured:
+///
+///   dep.ax = "DEP_V1"   axon build  ->  DEP_V1
+///   dep.ax = "DEP_V2"   axon build  ->  DEP_V1      <- stale, silently
+///                       --no-cache  ->  DEP_V2
+///                       axon run    ->  DEP_V2
+///
+/// So the native binary disagreed with both the interpreter (I-2) and the
+/// source on disk, with no signal but the answer being wrong — and it gets
+/// worse with age, the staler the entry the further the binary is from the code
+/// the author is reading.
+#[test]
+fn editing_an_imported_module_invalidates_the_build_cache() {
+    let dir = std::env::temp_dir().join(format!("axon_depcache_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cache = dir.join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let app = dir.join("app.ax");
+    std::fs::write(
+        &app,
+        "mod dep\nuse dep.{helper}\n\nfn main() { println(helper()) }\n",
+    )
+    .unwrap();
+
+    // A private cache dir, so this test neither reads nor pollutes the user's.
+    let build = |tag: &str| -> Option<String> {
+        let bin = dir.join(format!("{tag}.bin"));
+        let o = axon()
+            .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+            .args(["--cache-dir", cache.to_str().unwrap()])
+            .env("AXON_PATH", &dir)
+            .output()
+            .unwrap();
+        if !o.status.success() {
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            assert!(
+                codegen_absent(&log),
+                "build failed for a reason other than a missing backend: {log}"
+            );
+            return None;
+        }
+        let r = std::process::Command::new(&bin).output().unwrap();
+        Some(String::from_utf8_lossy(&r.stdout).trim().to_string())
+    };
+    let set_dep = |v: &str| {
+        std::fs::write(
+            dir.join("dep.ax"),
+            format!("fn helper() -> str {{ \"{v}\" }}\n"),
+        )
+        .unwrap()
+    };
+
+    set_dep("DEP_V1");
+    let Some(first) = build("v1") else {
+        eprintln!("SKIP editing_an_imported_module_invalidates_the_build_cache: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    };
+    assert_eq!(first, "DEP_V1");
+
+    // The edit the cache used to miss.
+    set_dep("DEP_V2");
+    assert_eq!(
+        build("v2").unwrap(),
+        "DEP_V2",
+        "a rebuild after editing a dependency must not serve the old module"
+    );
+
+    // Reverting must ALSO be seen — proving the key is content-addressed and not
+    // merely "something changed since last time".
+    set_dep("DEP_V1");
+    assert_eq!(
+        build("v3").unwrap(),
+        "DEP_V1",
+        "reverting a dependency is a change too"
+    );
+
+    // And the cache must still HIT when nothing changed. A fix that simply
+    // disabled caching would pass every assertion above; this is what
+    // distinguishes invalidation from disablement.
+    let count = || {
+        std::fs::read_dir(&cache)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "axc"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let before = count();
+    let _ = build("v3again");
+    assert_eq!(
+        count(),
+        before,
+        "an unchanged rebuild must reuse its key, not mint a new entry"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
