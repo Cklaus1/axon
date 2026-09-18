@@ -181,6 +181,18 @@ mod harness_skip_rules {
 ///
 /// The lesson generalises: a capability probe must exercise the capability, not
 /// something adjacent to it that happens to be cheaper to check.
+/// True when this binary was built WITHOUT the `codegen` feature.
+///
+/// `gate.sh` runs the suite with `--no-default-features`, so `axon build` in
+/// that stage replies "requires building axon with the `codegen` feature"
+/// instead of compiling. A test that asserts anything about a native build must
+/// check this first, or it passes locally (codegen is on by default) and fails
+/// the project's own gate — which is exactly how four tests in this file came to
+/// break it.
+fn codegen_absent(output: &str) -> bool {
+    output.contains("requires building axon with the `codegen` feature")
+}
+
 fn build_output_or_skip(fixture_name: &str) -> Option<String> {
     let out = axon()
         .arg("build")
@@ -24019,6 +24031,10 @@ fn every_consuming_verb_reports_a_tampered_module_and_deploy_refuses() {
     // Authoring verbs WARN — permissive, matching dev-mode `check`.
     for verb in ["run", "test", "build"] {
         let (_, out) = run(&[verb, &path]);
+        if verb == "build" && codegen_absent(&out) {
+            note_harness_skip("axon build (no codegen feature)");
+            continue;
+        }
         assert!(
             out.contains("W1210") && out.contains("content hash mismatch"),
             "`axon {verb}` must report a tampered module: {out}"
@@ -24112,6 +24128,10 @@ fn a_denied_capability_audit_is_refused_by_every_verb_not_just_check() {
 
     for verb in ["check", "run", "test", "build", "deploy"] {
         let (code, out) = run(&[verb, &path]);
+        if verb == "build" && codegen_absent(&out) {
+            note_harness_skip("axon build (no codegen feature)");
+            continue;
+        }
         assert!(
             out.contains("E1204"),
             "`axon {verb}` must refuse a denied module: {out}"
@@ -24163,6 +24183,12 @@ fn the_mint_certificate_policy_is_enforced_on_every_verb_that_executes() {
     const LINE: &str = "certificate-checked";
     for verb in ["run", "test", "build", "deploy"] {
         let out = run(true, &[verb, &path]);
+        // `build` needs the codegen feature; under `--no-default-features` it
+        // declines before reaching the gate, which is not a finding.
+        if verb == "build" && codegen_absent(&out) {
+            note_harness_skip("axon build (no codegen feature)");
+            continue;
+        }
         assert!(
             out.contains(LINE),
             "`axon {verb}` must run the mint cert gate under AXON_REQUIRE_CERTS: {out}"
@@ -26114,6 +26140,10 @@ fn native_codegen_refuses_place_assignment_instead_of_dropping_it() {
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
+        if codegen_absent(&log) {
+            note_harness_skip("axon build (no codegen feature)");
+            continue;
+        }
         assert!(
             !build.status.success(),
             "`{name}`: the build must not succeed while discarding the write: {log}"
