@@ -26755,3 +26755,70 @@ fn goal_run_over_an_ai_calling_metric_is_still_refused() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn refinement_pseudo_builtins_do_not_hijack_every_short_name_suggestion() {
+    // `E` / `Var` / `P` sit in BUILTINS only to silence E0001 for the Phase-13
+    // predicate forms `E[dist]` / `Var[dist]` / `P(dist op k)`, which are legal
+    // only inside a refinement `where`. They are not referenceable in
+    // expression position — but they were in the resolver's suggestion pool,
+    // and a one-character name is Levenshtein-1 from `E`. So EVERY unknown
+    // single-char name — `y`, `n`, `i`, `x`, the most common bindings there are
+    // — was answered with "did you mean `E`?".
+    //
+    // A wrong repair hint is worse than no hint: it points at something that
+    // cannot exist, and a reader who follows it writes code that cannot work.
+    let dir = std::env::temp_dir().join(format!("axon_sugpool_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let help_for = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .filter(|l| l.contains("\"code\":\"E0001\""))
+            .map(|l| l.to_string())
+            .next()
+            .unwrap_or_else(|| format!("<no E0001> in {all}"))
+    };
+
+    for n in ["y", "z", "q", "v"] {
+        let h = help_for(&format!("fn main() {{ println(to_str({n})) }}\n"));
+        assert!(
+            !h.contains("did you mean `E`"),
+            "an unknown `{n}` must not be answered with the refinement \
+             pseudo-builtin `E`: {h}"
+        );
+        assert!(
+            h.contains(&format!("introduce `{n}`")),
+            "with no real candidate, the hint should be how to bind it: {h}"
+        );
+    }
+    let va = help_for("fn main() { println(to_str(Va)) }\n");
+    assert!(
+        !va.contains("did you mean `Var`"),
+        "`Var` is equally unreferenceable: {va}"
+    );
+
+    // ...and a genuine candidate must still be suggested, including at one
+    // character — otherwise this "fix" would just be deleting the feature.
+    let real = help_for("fn main() { let n = 1 println(to_str(m)) }\n");
+    assert!(
+        real.contains("did you mean `n`"),
+        "a real single-char binding must still be suggested: {real}"
+    );
+    let longer = help_for("fn main() { let count = 1 println(to_str(cout)) }\n");
+    assert!(
+        longer.contains("did you mean `count`"),
+        "ordinary suggestions must be unaffected: {longer}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

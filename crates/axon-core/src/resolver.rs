@@ -339,6 +339,16 @@ impl SymbolTable {
         let mut best: Option<(usize, &str)> = None;
         for scope in &self.scopes {
             for key in scope.keys() {
+                // `E` / `Var` / `P` are in BUILTINS only to silence E0001 for
+                // `E[dist]` / `P(dist op k)` inside a refinement predicate —
+                // they are not names anything can reference in expression
+                // position. Left in the pool they hijacked the suggestion for
+                // EVERY single-character unknown name (`y`, `n`, `i`, `x` …),
+                // since a 1-char name is Levenshtein-1 from `E`. A wrong repair
+                // hint is worse than none: it names something that cannot exist.
+                if crate::builtins::is_prob_pred_ident(key) {
+                    continue;
+                }
                 let dist = levenshtein(name, key);
                 // Scaled to the name the author actually wrote, not to the
                 // candidate: the question is how much of THEIR word survives.
