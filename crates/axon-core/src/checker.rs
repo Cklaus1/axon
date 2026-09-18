@@ -4094,9 +4094,16 @@ impl CheckCtx {
                 .with_span(span)
                 .expected(inner.clone())
                 .found(format!("Option<{inner}>"))
+                // NOT `x.unwrap_or(default)`, which this hint recommended for as
+                // long as it has existed. Axon has no method syntax and no
+                // unwrap, so a reader who followed it got E0403 — "`Option` has
+                // no method `unwrap_or` — Axon has no null/unwrap" — from the
+                // same compiler that had just told them to write it. There is no
+                // free-function form either (`is_some` does not exist); matching
+                // is the whole of the answer, so the hint says only that.
                 .fix(format!(
-                    "use `x.unwrap_or(default)` or `match x {{ Some(v) => v, None => default }}` \
-                         to obtain a `{inner}`"
+                    "match it: `match x {{ Some(v) => …  None => … }}` — each arm \
+                         produces a `{inner}`"
                 )),
             );
         }
@@ -4549,9 +4556,11 @@ impl CheckCtx {
                         .with_span(span)
                         .expected(param_ty.display())
                         .found(arg_ty.display())
+                        // Same correction as E0301's: `arg.unwrap_or(default)`
+                        // is not Axon, and E0403 refuses it by name.
                         .fix(format!(
-                            "use `arg.unwrap_or(default)` or `match arg {{ Some(v) => v, None => default }}` \
-                             to obtain a `{}`",
+                            "match it first and pass the result: \
+                             `let v = match arg {{ Some(v) => v  None => … }}` — `v` is a `{}`",
                             param_ty.display()
                         )),
                     );

@@ -24687,3 +24687,96 @@ fn an_unknown_qualified_path_is_a_compile_error_not_a_runtime_panic() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The compiler recommended a construct the compiler refuses by name.
+///
+/// E0301 ("value of type `Option<T>` cannot be used directly") and its
+/// argument-position sibling both said:
+///
+///   use `x.unwrap_or(default)` or `match x { … }` to obtain a `T`
+///
+/// Axon has no method syntax and no unwrap. A reader who followed the FIRST
+/// half got, from the same compiler:
+///
+///   E0403 `Option` has no method `unwrap_or` — Axon has no null/unwrap;
+///         Option is destructured by matching
+///
+/// One diagnostic prescribing what another refuses, by name, in the same run.
+/// There is no free-function form either — `is_some` does not exist — so
+/// matching is the whole of the answer and the hints now say only that.
+#[test]
+fn the_option_hints_recommend_only_constructs_that_exist() {
+    let dir = std::env::temp_dir().join(format!("axon_opthint_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let diag = |name: &str, src: &str| -> String {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    // Value position (E0301) and argument position both carried the bad advice.
+    let value_pos = diag(
+        "value",
+        "fn f() -> Option<i64> { Some(5) }\nfn main() {\n  let o = f()\n  println(to_str(o + 1))\n}\n",
+    );
+    let arg_pos = diag(
+        "arg",
+        "fn g(n: i64) -> i64 { n }\nfn f() -> Option<i64> { Some(5) }\n\
+         fn main() {\n  println(to_str(g(f())))\n}\n",
+    );
+    for (label, out) in [
+        ("value position", &value_pos),
+        ("argument position", &arg_pos),
+    ] {
+        assert!(
+            !out.contains("unwrap_or"),
+            "the {label} hint must not prescribe `unwrap_or`, which E0403 refuses: {out}"
+        );
+        assert!(
+            out.contains("match"),
+            "{label} must point at matching: {out}"
+        );
+    }
+
+    // And the construct they DO recommend has to compile — the standard this
+    // codebase adopted after a hint shipped naming a return type that was wrong.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn f() -> Option<i64> { Some(5) }\nfn g(n: i64) -> i64 { n + 1 }\n\
+         fn main() {\n  let x = f()\n  println(to_str(match x { Some(v) => v  None => 0 }))\n  \
+         let v = match f() { Some(v) => v  None => 0 }\n  println(to_str(g(v)))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert!(
+        o.status.success(),
+        "the recommended repair must compile and run: {}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    // The negative control that makes this a real test: the OLD advice must
+    // still be refused, so "it compiles now" cannot be achieved by adding
+    // method syntax instead of fixing the hint.
+    let old_advice = diag(
+        "old",
+        "fn f() -> Option<i64> { Some(5) }\nfn main() {\n  let x = f()\n  \
+         println(to_str(x.unwrap_or(0)))\n}\n",
+    );
+    assert!(
+        old_advice.contains("E0403"),
+        "`unwrap_or` is still not Axon — the hint changed, not the language: {old_advice}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
