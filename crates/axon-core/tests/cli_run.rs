@@ -25980,6 +25980,19 @@ fn struct_size_is_right_for_both_result_sides_and_nested_fields() {
              fn main() {\n  println(to_str(take(true).d))\n  println(to_str(take(false).d))\n}\n",
             "44\n88\n",
         ),
+        // was: 759369596825239552 for 333 — the ENUM arm of the size fix, which
+        // nothing else exercises. An enum payload is sized by its widest
+        // variant, so a three-field variant through a Result has the same
+        // failure mode as a struct does.
+        (
+            "enum_through_result",
+            "type E = A { p: i64, q: i64, r: i64 } | B { z: i64 }\n\
+             fn mk() -> Result<E, str> { Ok(E::A { p: 1, q: 2, r: 333 }) }\n\
+             fn take() -> E {\n  match mk() { Ok(e) => e  Err(x) => E::B { z: 0 } }\n}\n\
+             fn main() {\n  match take() {\n    E::A { p, q, r } => println(to_str(r))\n    \
+             E::B { z } => println(to_str(z))\n  }\n}\n",
+            "333\n",
+        ),
         (
             "nested",
             "type In = { x: i64, y: i64, z: i64 }\ntype Out = { tag: i64, inner: In }\n\
