@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 141 diagnostic codes (128 live, 13 reserved), 48 environment variables.
+The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 48 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -123,7 +123,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEST_DOTENV_VAR` | (test fixture) name of a variable the .env loader test expects to find |
 | `AXON_TEST_DOTENV_NEW` | (test fixture) asserts the .env loader does not clobber an already-set variable |
 
-## Diagnostic codes (141, of which 128 live)
+## Diagnostic codes (142, of which 129 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -261,6 +261,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `W0005` | unreachable code after a return/break/continue |
 | `W0006` | unused local binding (`let x = …` never read) |
 | `W0007` | `expr // N` — Python floor division silently read as a comment |
+| `W0008` | `let d = {}` — an empty BLOCK bound as if it were a dict literal |
 | `W0701` | uncertainty discarded (Uncertain<T>.value used without checking .confidence) |
 | `W1103` | @[verify] outside the SMT-provable fragment (R9); runtime gate applies |
 | `W1311` | @[ai(policy(budget: N))] value is not a non-negative integer; ignored |

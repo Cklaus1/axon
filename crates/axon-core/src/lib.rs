@@ -953,6 +953,29 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     // That is the worst outcome an error message can have, which is to say no
     // error message: every other foreign habit in this file at least FAILS, so
     // the reader knows to look. This one produces a wrong answer quietly.
+    for offset in empty_block_binding_offsets(source) {
+        let (line, col) = source_map.line_col(offset);
+        out.push(PipelineDiagnostic {
+            code: error::W0008.to_string(),
+            message: "`{}` here is an empty BLOCK, whose value is `()` — Axon has \
+                      no dict literal"
+                .to_string(),
+            file: file.to_string(),
+            line: line as u32,
+            col: col as u32,
+            severity: "warning".into(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: Some(
+                "start the map empty and fill it: `let d = dict_new()` then \
+                 `dict_set(d, \"a\", 1)`; or build it from pairs with \
+                 `dict_from_pairs([(\"a\", 1)])`"
+                    .to_string(),
+            ),
+        });
+    }
+
     for offset in floor_division_comment_offsets(source) {
         let (line, col) = source_map.line_col(offset);
         out.push(PipelineDiagnostic {
@@ -1416,6 +1439,54 @@ mod display_tests {
         assert!(!s.contains("help:"), "{s}");
         assert_eq!(s.lines().count(), 1, "{s}");
     }
+}
+
+/// Byte offsets of a `{}` bound as a value — `let d = {}`.
+///
+/// Axon has no dict literal, and `{}` is a perfectly legal EMPTY BLOCK, so this
+/// parses, type-checks and yields `()`. Nothing complains at the binding; the
+/// reader finds out downstream, from messages about a type they never wrote:
+/// "cannot index a value of type ()", "argument 0 of `println` ... found ()".
+///
+/// The sibling rule for `{"a": 1}` catches the form WITH pairs, because that one
+/// is a parse error (an unexpected `:`). The empty form has no colon and no
+/// error, so it needed its own check — the silent half of the same habit.
+///
+/// Zero occurrences of this shape across the repo's 327 `.ax` files, so the
+/// only programs it can fire on are the ones making the mistake.
+pub fn empty_block_binding_offsets(source: &str) -> Vec<usize> {
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let mut in_str = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_str => i += 2,
+            b'"' => {
+                in_str = !in_str;
+                i += 1;
+            }
+            b'/' if !in_str && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                i = source[i..].find('\n').map_or(source.len(), |n| i + n);
+            }
+            b'{' if !in_str => {
+                // `= {}` (any spacing), and nothing but whitespace inside.
+                let before = source[..i].trim_end();
+                let close = source[i + 1..]
+                    .find('}')
+                    .map(|n| i + 1 + n)
+                    .unwrap_or(source.len());
+                let inner_blank =
+                    close <= source.len() && source[i + 1..close].chars().all(char::is_whitespace);
+                if before.ends_with('=') && !before.ends_with("==") && inner_blank {
+                    out.push(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
 }
 
 /// Byte offsets of a `//` that is almost certainly Python floor division

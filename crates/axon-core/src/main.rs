@@ -1152,6 +1152,7 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
         .into_iter()
         .chain(mut_notes(&src, &file))
         .chain(floor_division_warnings(&src, &file))
+        .chain(empty_block_warnings(&src, &file))
         .collect();
     // Import-cap (E1203) and lock (E1201/E1202/W1210) errors are file-level
     // strings with no span — they keep the string emit path.
@@ -5447,6 +5448,9 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     for note in floor_division_warnings(&src, &file) {
         emit_pipeline_diag(&note);
     }
+    for note in empty_block_warnings(&src, &file) {
+        emit_pipeline_diag(&note);
+    }
     for note in mut_notes(&src, &file) {
         emit_pipeline_diag(&note);
     }
@@ -6923,6 +6927,40 @@ fn flat_diag(d: &axon_core::PipelineDiagnostic) -> String {
 /// This one matters more than most — every other foreign habit at least FAILS,
 /// while `let x = 7 // 2` compiles clean and evaluates to 7 where Python gives
 /// 3, so there is no error for a reader to act on.
+/// `let d = {}` — an empty BLOCK bound as if it were a dict literal.
+///
+/// Sibling of `floor_division_warnings`, and here for the same reason: the CLI
+/// pipeline is a parallel implementation, so a diagnostic added to
+/// `lib::check_pipeline` alone never reaches `axon check` or `axon run`.
+fn empty_block_warnings(src: &str, file: &Path) -> Vec<axon_core::PipelineDiagnostic> {
+    let map = axon_core::span::SourceMap::new(src.to_string());
+    axon_core::empty_block_binding_offsets(src)
+        .into_iter()
+        .map(|offset| {
+            let (line, col) = map.line_col(offset);
+            axon_core::PipelineDiagnostic {
+                code: "W0008".to_string(),
+                message: "`{}` here is an empty BLOCK, whose value is `()` — Axon \
+                          has no dict literal"
+                    .to_string(),
+                file: file.display().to_string(),
+                line: line as u32,
+                col: col as u32,
+                severity: "warning".to_string(),
+                caret: String::new(),
+                expected: None,
+                found: None,
+                help: Some(
+                    "start the map empty and fill it: `let d = dict_new()` then \
+                     `dict_set(d, \"a\", 1)`; or build it from pairs with \
+                     `dict_from_pairs([(\"a\", 1)])`"
+                        .to_string(),
+                ),
+            }
+        })
+        .collect()
+}
+
 fn floor_division_warnings(src: &str, file: &Path) -> Vec<axon_core::PipelineDiagnostic> {
     let map = axon_core::span::SourceMap::new(src.to_string());
     axon_core::floor_division_comment_offsets(src)

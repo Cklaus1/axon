@@ -27862,3 +27862,72 @@ fn dict_method_syntax_is_caught_at_check_not_at_runtime() {
     assert!(ran.contains('1'), "dicts must still work: {ran}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_dict_habit_is_named_at_its_source_not_only_downstream() {
+    // Axon has no dict literal. The `{"a": 1}` form is a parse error and has
+    // had good advice for a while. The EMPTY form has no colon and no error:
+    // `{}` is a legal empty BLOCK, so `let d = {}` parses, type-checks, and
+    // yields `()`. The reader learns about it only downstream, from messages
+    // about a type they never wrote — "cannot index a value of type ()",
+    // "argument 0 of `println` ... found ()".
+    //
+    // Indexing had the same silence from the other side: `d["a"]` — how every
+    // other language spells a map lookup — produced a bare "type mismatch in
+    // slice index (expected i64), found str" with no advice at all, and so did
+    // `xs["a"]` on a real array.
+    let dir = std::env::temp_dir().join(format!("axon_dicthabit_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let out = |src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    for src in [
+        "fn main() { let d = {}\nprintln(\"x\") }\n",
+        "fn main() { let d = { }\nprintln(\"x\") }\n",
+    ] {
+        let o = out(src);
+        assert!(
+            o.contains("W0008") && o.contains("dict_new()"),
+            "an empty-block binding must be named where it is written: {o}"
+        );
+    }
+
+    // A block WITH content is a legitimate value and must stay quiet, as must a
+    // `{}` inside a string and an empty function body.
+    for src in [
+        "fn main() { let d = { let y = 1\ny }\nprintln(to_str(d)) }\n",
+        "fn main() { println(\"a {} b\") }\n",
+        "fn f() {}\nfn main() { f() }\n",
+    ] {
+        let o = out(src);
+        assert!(!o.contains("W0008"), "must not warn on: {src} -> {o}");
+    }
+
+    // The indexing half, on both a dict and an array.
+    for src in [
+        "fn main() { let d = dict_new()\nlet v = d[\"a\"]\nprintln(\"x\") }\n",
+        "fn main() { let xs = [1]\nlet v = xs[\"a\"]\nprintln(\"x\") }\n",
+    ] {
+        let o = out(src);
+        assert!(
+            o.contains("an index is an `i64`") && o.contains("dict_get"),
+            "a string index must say what to write instead: {o}"
+        );
+    }
+    // A numeric index is correct and must not be lectured.
+    let ok = out("fn main() { let xs = [1]\nlet v = xs[0]\nprintln(to_str(v)) }\n");
+    assert!(!ok.contains("an index is an `i64`"), "{ok}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

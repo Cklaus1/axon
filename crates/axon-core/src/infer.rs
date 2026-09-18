@@ -106,6 +106,23 @@ pub struct InferError {
 /// matches what E0301/E0302 already say for the same mistake elsewhere, because
 /// one mistake should not get two different explanations depending on where it
 /// lands.
+fn mismatch_help(origin: &str, expected: &Type, found: &Type) -> Option<String> {
+    // A STRING used as an index. `d["a"]` is how every other language spells a
+    // map lookup, and `xs["a"]` is the same slip on an array — both produced a
+    // bare "type mismatch in slice index (expected i64), found str" with no
+    // advice at all. Axon indexes arrays by `i64` and reaches into a dict with
+    // free functions, and neither of those is guessable from the message.
+    if origin == "slice index" && matches!(expected, Type::I64) && matches!(found, Type::Str) {
+        return Some(
+            "an index is an `i64` — Axon has no `d[\"key\"]` syntax. For a \
+             string-keyed map use `dict_get(d, k)` and `dict_set(d, k, v)`; for \
+             an array, index with a number"
+                .to_string(),
+        );
+    }
+    wrapper_misuse_help(expected, found)
+}
+
 fn wrapper_misuse_help(expected: &Type, found: &Type) -> Option<String> {
     let inner = expected.display();
     match found {
@@ -157,7 +174,7 @@ impl InferError {
             expected: Some(expected.display()),
             found: Some(found.display()),
             span: crate::span::Span::dummy(),
-            help: wrapper_misuse_help(expected, found),
+            help: mismatch_help(origin, expected, found),
         }
     }
 

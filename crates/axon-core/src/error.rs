@@ -215,6 +215,7 @@ pub const W0004: &str = "W0004"; // unreachable match arm (a duplicate pattern a
 pub const W0005: &str = "W0005"; // unreachable code after a return/break/continue
 pub const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
 pub const W0007: &str = "W0007"; // `expr // N` — Python floor division silently read as a comment
+pub const W0008: &str = "W0008"; // `let d = {}` — an empty BLOCK bound as if it were a dict literal
                                  // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
 pub const W1103: &str = "W1103"; // @[verify] outside the SMT-provable fragment (R9); runtime gate applies
@@ -561,6 +562,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("W0005", "unreachable code after a return/break/continue"),
     ("W0006", "unused local binding (`let x = …` never read)"),
     ("W0007", "`expr // N` — Python floor division silently read as a comment"),
+    ("W0008", "`let d = {}` — an empty BLOCK bound as if it were a dict literal"),
     ("W0701", "uncertainty discarded (Uncertain<T>.value used without checking .confidence)"),
     ("W1103", "@[verify] outside the SMT-provable fragment (R9); runtime gate applies"),
     ("W1311", "@[ai(policy(budget: N))] value is not a non-negative integer; ignored"),
@@ -740,8 +742,8 @@ mod tests {
             E1409, E1411, E1412, E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703,
             E1704, E1706, E1707, E1710, E1711, E1712, E1800, E1801, E1802, E1803, E1810, E1900,
             E2300, E2301, E2302, E2400, E2402, E2403, E2200, E2201, E2202, E2203, E2204, E2205,
-            W0001, W0002, W0003, W0004, W0005, W0006, W0007, W0701, W0913, W1103, W1210, W1310,
-            W1311, W1410, W2001, I0001,
+            W0001, W0002, W0003, W0004, W0005, W0006, W0007, W0008, W0701, W0913, W1103, W1210,
+            W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {
