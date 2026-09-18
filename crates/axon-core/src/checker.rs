@@ -6188,6 +6188,18 @@ impl CheckCtx {
                                 Type::Result(_, _) => {
                                     Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown))
                                 }
+                                // `Dict` is "unresolved" only in the sense that
+                                // the string-keyed map has no generic surface
+                                // yet — the TYPE is perfectly well known, and
+                                // collapsing it to `Unknown` is what let
+                                // `dict_new().get("a", 0)` check clean and
+                                // panic at run time ("no method `get` on type
+                                // `()`"). Kept as itself so the method check
+                                // can answer it; every other deferred return
+                                // still collapses, so nothing else changes.
+                                Type::Deferred(n) if n == "Dict" || n.starts_with("Dict<") => {
+                                    sig.ret.clone()
+                                }
                                 _ => Type::Unknown,
                             };
                         }
@@ -6612,6 +6624,7 @@ fn free_fn_for_method(key: &str, method: &str) -> Option<&'static str> {
     let prefix = match key {
         "str" => Some("str_"),
         "[]" => Some("arr_"),
+        "dict" => Some("dict_"),
         _ => None,
     };
     if let Some(p) = prefix {
@@ -6656,8 +6669,22 @@ fn method_lookup_key(ty: &Type) -> Option<&'static str> {
         Type::Tuple(_) => Some("tuple"),
         Type::Option(_) => Some("Option"),
         Type::Result(_, _) => Some("Result"),
-        // Unknown / Var / Deferred / Fn / Chan / DynTrait / Uncertain / Temporal
-        // / Unit / Dict: don't risk a false positive.
+        // `Dict` arrives as `Type::Deferred("Dict…")` because the string-keyed
+        // map has no first-class generic surface yet. It was therefore lumped
+        // in with the genuinely-unknown types and skipped — but it is not
+        // unknown: it has a known free-function family (`dict_get`, `dict_set`,
+        // `dict_keys`, …), so method-call syntax on it can be answered exactly
+        // as it is for `str` and `[]`.
+        //
+        // Measured: `d.get("a", 0)` checked CLEAN and panicked at run time with
+        // "no method `get` on type `()`" — the deferred-swallows-the-check
+        // class this file already carries scars from, one more type down.
+        //
+        // Matched by NAME so the rest of `Deferred` keeps its false-positive
+        // protection: an `Uncertain<T>` or a row-typed value is still skipped.
+        Type::Deferred(n) if n == "Dict" || n.starts_with("Dict<") => Some("dict"),
+        // Unknown / Var / other Deferred / Fn / Chan / DynTrait / Uncertain /
+        // Temporal / Unit: don't risk a false positive.
         _ => None,
     }
 }

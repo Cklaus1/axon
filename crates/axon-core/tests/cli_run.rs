@@ -27788,3 +27788,77 @@ fn a_result_used_as_its_inner_type_is_explained_in_every_position() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn dict_method_syntax_is_caught_at_check_not_at_runtime() {
+    // `d.get("a", 0)` — the dict habit from every other language — checked
+    // CLEAN and panicked at run time with "no method `get` on type `()`".
+    //
+    // Two collapses stacked. `method_lookup_key` skipped `Type::Deferred`
+    // wholesale ("don't risk a false positive"), and `Dict` arrives as one
+    // because the string-keyed map has no generic surface yet — so a type that
+    // is perfectly well known was treated as unknown. And `resolve_expr_type`
+    // collapsed `dict_new()`'s return to `Unknown` for the same reason, so the
+    // receiver had no type by the time the method check ran.
+    //
+    // Both are narrowed by NAME, not opened up: every other deferred type still
+    // skips the check and still collapses, so `Uncertain<T>` and row-typed
+    // values keep their false-positive protection.
+    let dir = std::env::temp_dir().join(format!("axon_dictmeth_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let check = |body: &str| -> String {
+        std::fs::write(
+            &f,
+            format!("fn main() {{\n  let d = dict_new()\n  let r = {body}\n  println(\"x\")\n}}\n"),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    for (call, want) in [
+        ("d.get(\"a\", 0)", "dict_get(d"),
+        ("d.keys()", "dict_keys(d"),
+        ("d.set(\"a\", 1)", "dict_set(d"),
+    ] {
+        let c = check(call);
+        assert!(
+            c.contains("E0403") && c.contains(want),
+            "`{call}` must be refused at check time and name `{want}`: {c}"
+        );
+    }
+
+    // The free-function forms must stay clean and still run — a check that
+    // refused dict use generally would satisfy the assertions above while
+    // breaking the type.
+    for body in ["dict_get(d, \"a\")", "dict_set(d, \"a\", 1)", "dict_len(d)"] {
+        let c = check(body);
+        assert!(
+            !c.contains("E0403"),
+            "the free-function form must not be flagged: {c}"
+        );
+    }
+    let ran = {
+        std::fs::write(
+            &f,
+            // `dict_set` mutates in place and returns `()`, so the handle has
+            // to be bound first — the compiler says exactly that, and my first
+            // version of this test got it wrong.
+            "fn main() {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  println(to_str(dict_len(d)))\n}\n",
+        )
+        .unwrap();
+        let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).to_string()
+    };
+    assert!(ran.contains('1'), "dicts must still work: {ran}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
