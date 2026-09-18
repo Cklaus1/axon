@@ -188,7 +188,7 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
             Some(Value::Str(s)) => s.clone(),
             _ => String::from("<dynamic>"),
         };
-        if !allow.iter().any(|p| caps::path_has_prefix(&path, p)) {
+        if !allow.iter().any(|p| caps::path_is_under(&path, p)) {
             return deny(what, &path, allow);
         }
     }

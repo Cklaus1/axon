@@ -184,6 +184,32 @@ pub(crate) fn path_has_prefix(path: &str, prefix: &str) -> bool {
     path.starts_with(prefix)
 }
 
+/// Returns true if `path` lies under `prefix` as a PATH prefix — component-wise,
+/// not as a raw string.
+/// e.g. `path_is_under("./out/a.txt", "./out")` → true
+///      `path_is_under("./outsider/secret", "./out")` → **false**
+///
+/// SECURITY: this is the test for GRANTS. `path_has_prefix` is a string test,
+/// and a grant written without a trailing slash — `fs: [write("./out")]`, which
+/// reads as "the ./out directory" to any author — granted `./outsider/secret`
+/// too, because that string starts with `./out`. Every grant in the corpus
+/// happens to end in `/`, which is why nothing caught it; the author who omits
+/// the slash gets silent sibling access.
+///
+/// A grant is narrow and a deny is broad, so the two lists deliberately use
+/// different tests: `never:` clauses stay on `path_has_prefix`, where the
+/// string test over-denies and over-denying a hard deny is the safe direction.
+pub(crate) fn path_is_under(path: &str, prefix: &str) -> bool {
+    if path_has_dotdot(path) {
+        return false;
+    }
+    if prefix.ends_with('/') {
+        // Already component-aligned: "./out/" cannot match "./outsider".
+        return path.starts_with(prefix);
+    }
+    path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
 /// True if `path` contains a `..` path component (`..`, `../`, `/..`, `/../`).
 /// A bare `..` inside a filename (e.g. `a..b`) is not a traversal component.
 fn path_has_dotdot(path: &str) -> bool {
@@ -1373,7 +1399,7 @@ fn check_call(
                             ),
                             site,
                         ));
-                    } else if !spec.fs_read.iter().any(|p| path_has_prefix(path, p)) {
+                    } else if !spec.fs_read.iter().any(|p| path_is_under(path, p)) {
                         errors.push(CapabilityError::new(
                             E1001,
                             format!(
@@ -1442,7 +1468,7 @@ fn check_call(
                             ),
                             site,
                         ));
-                    } else if !spec.fs_write.iter().any(|p| path_has_prefix(path, p)) {
+                    } else if !spec.fs_write.iter().any(|p| path_is_under(path, p)) {
                         errors.push(CapabilityError::new(
                             E1001,
                             format!(

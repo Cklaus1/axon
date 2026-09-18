@@ -26606,3 +26606,96 @@ fn contained_net_allowlist_is_not_bypassed_by_a_query_or_fragment() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn fs_grant_without_a_trailing_slash_does_not_grant_siblings() {
+    // `fs: [write("./out")]` reads as "the ./out directory" to any author. The
+    // grant check was a raw string `starts_with`, so it also granted
+    // `./outsider/secret` — a sibling directory the author never named. The
+    // helper's own doc comment said "path prefix", which is component-wise;
+    // the code did a string prefix. Every grant in the corpus happens to end in
+    // `/`, which is why nothing caught it.
+    let dir = std::env::temp_dir().join(format!("axon_fsgrant_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let refused = |grant: &str, path: &str| -> bool {
+        std::fs::write(
+            &f,
+            format!(
+                "@[contained(fs: [write(\"{grant}\")], net: [], exec: none)]\n\
+                 fn go() -> str {{ let _r = write_file(\"{path}\", \"x\") \"d\" }}\n\
+                 fn main() {{ println(go()) }}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(
+            !all.contains("E0305") && !all.contains("E0306"),
+            "probe must be well-formed, or it proves nothing: {all}"
+        );
+        all.contains("E1001")
+    };
+
+    assert!(
+        refused("./out", "./outsider/secret"),
+        "a grant on ./out must not reach a sibling directory that merely shares \
+         the name as a string prefix"
+    );
+    // ...while the grant still grants what it names, with or without the slash.
+    assert!(
+        !refused("./out", "./out/a.txt"),
+        "./out must grant ./out/a.txt"
+    );
+    assert!(!refused("./out", "./out"), "./out must grant ./out itself");
+    assert!(
+        !refused("./out/", "./out/a.txt"),
+        "the slash-terminated form must be unchanged"
+    );
+    assert!(
+        refused("./out/", "./out/../etc/x"),
+        "traversal must still be refused"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn never_clause_stays_broad_where_a_grant_is_narrow() {
+    // A grant is narrow and a deny is broad, so the two lists use different
+    // path tests on purpose. Narrowing `never:` alongside the grants would have
+    // turned a hard deny into an escape hatch — the opposite of the fix.
+    let dir = std::env::temp_dir().join(format!("axon_neverbroad_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("n.ax");
+    std::fs::write(
+        &f,
+        "@[contained(fs: [write(\"/\")], net: [], exec: none, never: [write(\"/etc\")])]\n\
+         fn go() -> str { let _r = write_file(\"/etcetera/x\", \"x\") \"d\" }\n\
+         fn main() { println(go()) }\n",
+    )
+    .unwrap();
+    let o = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        all.contains("E1004"),
+        "a `never:` deny must keep over-denying rather than let a path slip \
+         through a narrowed test: {all}"
+    );
+}
