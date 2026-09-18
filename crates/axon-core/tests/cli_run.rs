@@ -25518,3 +25518,100 @@ fn a_match_arm_naming_a_field_the_variant_lacks_is_a_compile_error() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A constant index that can be proved out of range.
+///
+/// The same class as the constant divide-by-zero already caught as E0407: the
+/// operand folds, the failure is certain, and leaving it to the runtime turns a
+/// compile error into a panic. `xs[-1]` is the pointed one — it is Python's
+/// last-element idiom, Axon has no such thing, and it is out of range for every
+/// array regardless of length.
+#[test]
+fn a_constant_index_proved_out_of_range_is_a_compile_error() {
+    let dir = std::env::temp_dir().join(format!("axon_ixbound_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let check = |name: &str, src: &str| -> (i32, String) {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        (
+            o.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+        )
+    };
+
+    let (code, out) = check(
+        "neg",
+        "fn main() {\n  let xs = [1,2,3]\n  println(to_str(xs[-1]))\n}\n",
+    );
+    assert_eq!(
+        code, 2,
+        "a negative index must not reach the runtime: {out}"
+    );
+    assert!(out.contains("negative") && out.contains("Python"), "{out}");
+    assert!(
+        out.contains("xs[len(xs) - 1]"),
+        "the hint must give the Axon way to reach the last element: {out}"
+    );
+
+    let (code, out) = check("past", "fn main() {\n  println(to_str([1,2,3][7]))\n}\n");
+    assert_eq!(code, 2, "{out}");
+    assert!(
+        out.contains("past the end of a 3-element array") && out.contains("0..2"),
+        "{out}"
+    );
+
+    // Controls. Each is a program that must stay clean, and the third is the
+    // reason this check is narrow: a computed index is not decidable here, and
+    // refusing it would refuse correct programs.
+    for (name, src) in [
+        (
+            "inbounds",
+            "fn main() {\n  println(to_str([1,2,3][2]))\n}\n",
+        ),
+        (
+            "bound",
+            "fn main() {\n  let xs = [1,2,3]\n  println(to_str(xs[0]))\n}\n",
+        ),
+        (
+            "computed",
+            "fn main() {\n  let xs = [1,2,3]\n  let i = str_len(\"ab\")\n  \
+             println(to_str(xs[i]))\n}\n",
+        ),
+        // Deliberately NOT caught: proving this needs the binding's length
+        // carried to the use site AND proof it was never reassigned. It stays a
+        // runtime panic, and the test says so rather than leaving it ambiguous.
+        (
+            "bound_oob_not_caught",
+            "fn main() {\n  let xs = [1,2,3]\n  println(to_str(xs[5]))\n}\n",
+        ),
+    ] {
+        let (code, out) = check(name, src);
+        assert_eq!(code, 0, "`{name}` must not be refused: {out}");
+    }
+
+    // The recommended repair has to work.
+    let f = dir.join("advice.ax");
+    std::fs::write(
+        &f,
+        "fn main() {\n  let xs = [1,2,3]\n  println(to_str(xs[len(xs) - 1]))\n}\n",
+    )
+    .unwrap();
+    let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains('3'),
+        "the hint's form must yield the last element: {}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

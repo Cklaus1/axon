@@ -3774,6 +3774,56 @@ impl CheckCtx {
                         .fix("indexing `a[i]` is only valid on an array/slice `[T]`"),
                     );
                 }
+                // A CONSTANT index that can be proved out of range.
+                //
+                // Same class as the constant divide-by-zero already caught as
+                // E0407: the operand folds, the failure is certain, and leaving
+                // it to the runtime turns a compile error into a panic. Two
+                // cases are decidable without tracking any lengths:
+                //
+                //   xs[-1]        negative, so out of range for EVERY array —
+                //                 and it is Python's last-element idiom, which
+                //                 Axon does not have
+                //   [1,2,3][7]    both the literal and the index are right here
+                //
+                // NOT decided: `let xs = [1,2,3]` then `xs[5]`. That needs the
+                // binding's length carried to the use site AND proof it was
+                // never reassigned (`xs = arr_push(xs, 4)` changes it), and a
+                // false positive here refuses a correct program. It stays a
+                // runtime panic, deliberately.
+                if let Some(i) = const_eval_int(index) {
+                    let len = match receiver.as_ref() {
+                        Expr::Array(elems) => Some(elems.len() as i64),
+                        _ => None,
+                    };
+                    let bad = if i < 0 {
+                        Some(
+                            "negative — Axon has no Python-style indexing from the end".to_string(),
+                        )
+                    } else {
+                        len.filter(|n| i >= *n)
+                            .map(|n| format!("past the end of a {n}-element array"))
+                    };
+                    if let Some(why) = bad {
+                        let file = self.file.clone();
+                        let hint = if i < 0 {
+                            "index from the front: the last element of `xs` is `xs[len(xs) - 1]`"
+                                .to_string()
+                        } else {
+                            format!(
+                                "valid indices are 0..{}",
+                                len.unwrap_or(0).saturating_sub(1)
+                            )
+                        };
+                        self.errors.push(
+                            CheckError::new(E0402, format!("index {i} is {why}"))
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .with_span(self.current_span)
+                                .fix(hint),
+                        );
+                    }
+                }
             }
 
             // ── Spawn / Comptime ─────────────────────────────────────────────
