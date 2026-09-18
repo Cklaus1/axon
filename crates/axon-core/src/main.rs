@@ -1148,7 +1148,11 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // M5: accepted-`mut` notes ride on the same channel and schema as every
     // other diagnostic, so a host parsing axon-diag/1 sees them without a
     // special case.
-    let located: Vec<_> = located.into_iter().chain(mut_notes(&src, &file)).collect();
+    let located: Vec<_> = located
+        .into_iter()
+        .chain(mut_notes(&src, &file))
+        .chain(floor_division_warnings(&src, &file))
+        .collect();
     // Import-cap (E1203) and lock (E1201/E1202/W1210) errors are file-level
     // strings with no span — they keep the string emit path.
     let mut string_errors = import_cap_errors;
@@ -5440,6 +5444,9 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     let (errors, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
     // M5: notes are emitted even when the program is otherwise clean — `run`
     // must not be the quiet path again (that was §2's whole defect).
+    for note in floor_division_warnings(&src, &file) {
+        emit_pipeline_diag(&note);
+    }
     for note in mut_notes(&src, &file) {
         emit_pipeline_diag(&note);
     }
@@ -6905,6 +6912,43 @@ fn flat_diag(d: &axon_core::PipelineDiagnostic) -> String {
 /// since Axon locals are already reassignable — but a reader should still learn
 /// the keyword did nothing, so this is emitted rather than the program silently
 /// compiling as though `mut` had never been written.
+/// `x = 7 // 2` — Python floor division, silently read as a comment.
+///
+/// Sibling of `mut_notes`, and emitted alongside it for the same reason: the
+/// CLI pipeline is a parallel implementation of `lib::check_pipeline`, so a
+/// diagnostic added to one is absent from the other until it is added here too.
+/// This one matters more than most — every other foreign habit at least FAILS,
+/// while `let x = 7 // 2` compiles clean and evaluates to 7 where Python gives
+/// 3, so there is no error for a reader to act on.
+fn floor_division_warnings(src: &str, file: &Path) -> Vec<axon_core::PipelineDiagnostic> {
+    let map = axon_core::span::SourceMap::new(src.to_string());
+    axon_core::floor_division_comment_offsets(src)
+        .into_iter()
+        .map(|offset| {
+            let (line, col) = map.line_col(offset);
+            axon_core::PipelineDiagnostic {
+                code: "W0007".to_string(),
+                message: "`//` starts a comment in Axon — the rest of this line \
+                          was discarded, not divided"
+                    .to_string(),
+                file: file.display().to_string(),
+                line: line as u32,
+                col: col as u32,
+                severity: "warning".to_string(),
+                caret: String::new(),
+                expected: None,
+                found: None,
+                help: Some(
+                    "if you meant Python's floor division, write `/` (integer `/` \
+                     already truncates in Axon); if you meant a comment, move it \
+                     to its own line"
+                        .to_string(),
+                ),
+            }
+        })
+        .collect()
+}
+
 fn mut_notes(src: &str, file: &Path) -> Vec<axon_core::PipelineDiagnostic> {
     let map = axon_core::span::SourceMap::new(src.to_string());
     axon_core::parser::take_accepted_mut()

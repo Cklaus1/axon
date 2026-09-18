@@ -87,7 +87,7 @@ fn axon_main() | {Hal} {
     let avg = sensor_avg(21, 23, 22, 26)
     put_uint(avg)          // expect 23
     // A second, independent computation to prove arithmetic ran on-target.
-    let answer = 2 + 2 * 20 // 42
+    let answer = 2 + 2 * 20    // 42
     put_uint(answer)       // expect 42
 }
 

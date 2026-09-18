@@ -945,6 +945,37 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
         });
     }
 
+    // `x = 7 // 2` — Python floor division. Axon reads `//` as a line comment,
+    // so the expression silently becomes `7` and the program compiles clean:
+    //
+    //     let x = 7 // 2      Python: 3.   Axon: 7, no diagnostic at any tier.
+    //
+    // That is the worst outcome an error message can have, which is to say no
+    // error message: every other foreign habit in this file at least FAILS, so
+    // the reader knows to look. This one produces a wrong answer quietly.
+    for offset in floor_division_comment_offsets(source) {
+        let (line, col) = source_map.line_col(offset);
+        out.push(PipelineDiagnostic {
+            code: error::W0007.to_string(),
+            message: "`//` starts a comment in Axon — the rest of this line was \
+                      discarded, not divided"
+                .to_string(),
+            file: file.to_string(),
+            line: line as u32,
+            col: col as u32,
+            severity: "warning".into(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: Some(
+                "if you meant Python's floor division, write `/` (integer `/` \
+                 already truncates in Axon); if you meant a comment, move it to \
+                 its own line"
+                    .to_string(),
+            ),
+        });
+    }
+
     let resolve_result = resolver::resolve_program(&program, file);
     for d in &resolve_result.errors {
         let (line, col) = if !d.span.is_dummy() {
@@ -1376,5 +1407,118 @@ mod display_tests {
         let s = diag(None).display();
         assert!(!s.contains("help:"), "{s}");
         assert_eq!(s.lines().count(), 1, "{s}");
+    }
+}
+
+/// Byte offsets of a `//` that is almost certainly Python floor division
+/// rather than a comment: it trails an expression on the line, and everything
+/// after it is a bare numeric literal.
+///
+/// The "bare numeric literal" test is what keeps this quiet. A real trailing
+/// comment is prose; `// 2` is not prose, and a comment whose entire body is a
+/// number is vanishingly rare next to the habit it catches. Anything richer —
+/// `// 2 items`, `// see 3` — is left alone, so the check under-reports rather
+/// than crying wolf on ordinary code.
+///
+/// String literals are skipped, so a `"//"` inside text never matches, and a
+/// line's FIRST `//` wins (the rest of the line is already comment text).
+pub fn floor_division_comment_offsets(source: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    let bytes = source.as_bytes();
+    let mut i = 0usize;
+    let mut line_start = 0usize;
+    let mut in_str = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' if !in_str => {
+                line_start = i + 1;
+                i += 1;
+            }
+            b'\\' if in_str => i += 2, // escape: never ends the string
+            b'"' => {
+                in_str = !in_str;
+                i += 1;
+            }
+            b'/' if !in_str && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                let before = source[line_start..i].trim_end();
+                // A standalone comment line has nothing before it; a trailing
+                // comment after an expression does. Only the latter can be a
+                // misread operator.
+                // Measured against the repo's own 327 `.ax` files, "trails an
+                // expression + numeric body" fired 13 times and was WRONG all
+                // 13: `println(to_str(gcd(48, 18)))    // 6` is the house style
+                // for annotating expected output. Two discriminators separate
+                // that from the habit, and both are needed:
+                //
+                //   1. a closing `)` or `]` before the `//`. Every corpus hit
+                //      ended with one; `a // b` does not. This costs the
+                //      `f() // 2` shape, which is the rarer half of the habit —
+                //      the right trade against crying wolf on real code.
+                //   2. exactly one space each side. An expected-output comment
+                //      is aligned away from the code; a misread operator sits
+                //      where an operator would sit.
+                let last = before.chars().last();
+                let trails_an_expression =
+                    last.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                let rest_end = source[i..].find('\n').map_or(source.len(), |n| i + n);
+                let body = source[i + 2..rest_end].trim();
+                let is_bare_number = !body.is_empty()
+                    && body
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '.' || c == '_')
+                    && body.chars().any(|c| c.is_ascii_digit());
+                let spaced_like_an_operator = source[line_start..i].ends_with(' ')
+                    && !source[line_start..i].ends_with("  ")
+                    && source[i + 2..rest_end].starts_with(' ')
+                    && !source[i + 2..rest_end].starts_with("  ");
+                if trails_an_expression && is_bare_number && spaced_like_an_operator {
+                    out.push(i);
+                }
+                // Skip to end of line: the remainder is comment text.
+                i = rest_end;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod floor_division_scan_tests {
+    use super::floor_division_comment_offsets as scan;
+
+    /// The habit: `//` is Python floor division and an Axon comment, so
+    /// `let x = 7 // 2` compiles clean and evaluates to 7 where Python gives 3.
+    #[test]
+    fn the_floor_division_shape_is_caught() {
+        assert_eq!(scan("let x = 7 // 2\n").len(), 1);
+        assert_eq!(scan("let x = a // 2\n").len(), 1);
+        assert_eq!(scan("let x = a // b\n").len(), 0, "body must be numeric");
+    }
+
+    /// The discriminators, each measured against the repo's own corpus rather
+    /// than guessed. "Trails an expression + numeric body" alone fired on 13 of
+    /// 327 real files and was wrong all 13 times — `// 6` after a `println` is
+    /// this project's house style for annotating expected output.
+    #[test]
+    fn real_expected_output_comments_stay_quiet() {
+        // Closing paren before the `//` — every corpus false positive.
+        assert_eq!(scan("println(to_str(gcd(48, 18)))    // 6\n").len(), 0);
+        assert_eq!(scan("println(to_str(p.0 + p.1))   // 7\n").len(), 0);
+        // Aligned away from the code, which is what an annotation looks like.
+        assert_eq!(scan("let answer = 2 + 2 * 20    // 42\n").len(), 0);
+        // Prose, a standalone line, and a body that is not purely numeric.
+        assert_eq!(scan("let x = 7 // count of items\n").len(), 0);
+        assert_eq!(scan("// 2\n").len(), 0);
+        assert_eq!(scan("let x = 7 // 2 items\n").len(), 0);
+    }
+
+    /// A `//` inside a string is text, not a comment, and must never be read
+    /// as either one.
+    #[test]
+    fn string_literals_are_not_scanned() {
+        assert_eq!(scan("println(\"a // 2\")\n").len(), 0);
+        assert_eq!(scan("let u = \"http://h/2\"\n").len(), 0);
+        assert_eq!(scan("let s = \"esc \\\" // 2\"\n").len(), 0);
     }
 }

@@ -26950,3 +26950,106 @@ fn foreign_type_help_has_no_unreachable_rows() {
          valid Axon type: {dead:?}"
     );
 }
+
+#[test]
+fn python_floor_division_is_warned_not_silently_miscomputed() {
+    // `//` is Python's floor division AND an Axon line comment, so the habit
+    // produces the one outcome worse than a bad error message: no error at all.
+    //
+    //     let x = 7 // 2      Python: 3.   Axon: 7, clean at every tier.
+    //
+    // Every other foreign habit at least FAILS, which tells the reader to look.
+    let dir = std::env::temp_dir().join(format!("axon_floordiv_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let out_of = |args: &[&str], src: &str| -> String {
+        std::fs::write(&f, src).unwrap();
+        let mut c = axon();
+        for a in args {
+            c.arg(a);
+        }
+        let o = c.arg(f.to_str().unwrap()).output().unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    let trap = "fn main() { let x = 7 // 2\nprintln(to_str(x)) }\n";
+    for verb in ["check", "run"] {
+        let all = out_of(&[verb], trap);
+        assert!(
+            all.contains("W0007"),
+            "`{verb}` must warn that the rest of the line was discarded: {all}"
+        );
+    }
+    // The value really is wrong, which is what makes the warning worth having.
+    let ran = out_of(&["run"], trap);
+    assert!(
+        ran.lines().any(|l| l.trim() == "7"),
+        "precondition: the expression evaluates to 7, not 3: {ran}"
+    );
+    // ...and the warning must not be an error: `//` comments are legal.
+    let o = {
+        std::fs::write(&f, trap).unwrap();
+        axon().args(["run", f.to_str().unwrap()]).output().unwrap()
+    };
+    assert_eq!(o.status.code(), Some(0), "W0007 is advisory, not fatal");
+
+    // House style must stay quiet — this is the shape that made the first,
+    // looser rule fire on 13 of the repo's 327 real programs.
+    for ok in [
+        "fn main() { println(to_str(6))    // 6\n}\n",
+        "fn main() { let x = 7 // count of items\nprintln(to_str(x)) }\n",
+        "fn main() { println(\"a // 2\") }\n",
+    ] {
+        let all = out_of(&["check"], ok);
+        assert!(!all.contains("W0007"), "must not warn on: {ok} -> {all}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn w0007_has_no_false_positives_on_the_shipped_corpus() {
+    // The first version of this check was validated on fixtures I wrote and
+    // fired on 13 real files. A synthetic corpus cannot answer "is this rule
+    // quiet on ordinary code" — only the real one can, so it is the gate.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let mut stack = vec![root.join("examples")];
+    let mut offenders = Vec::new();
+    let mut scanned = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "ax") {
+                scanned += 1;
+                let Ok(src) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
+                if !axon_core::floor_division_comment_offsets(&src).is_empty() {
+                    offenders.push(p.display().to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        scanned > 100,
+        "precondition: the corpus must be found ({scanned})"
+    );
+    assert!(
+        offenders.is_empty(),
+        "W0007 fired on shipped programs, which are not making this mistake: \
+         {offenders:?}"
+    );
+}
