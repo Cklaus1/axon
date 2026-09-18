@@ -316,6 +316,51 @@ fn lambda_shape_hint(want: usize) -> String {
     }
 }
 
+/// Repair advice for a field access on something that is not a struct.
+///
+/// Three cases, in order of how much can be said:
+///   - a length-ish name on a str or array — `len(x)`, the single most common
+///     one and the reason this exists;
+///   - any other name on a str or array — the `str_`/`arr_` family, since a
+///     free function is what a method or property becomes here;
+///   - a scalar — no fields exist at all, so say that rather than imply the
+///     name was merely misspelt.
+fn non_struct_field_help(recv: &Type, field: &str) -> String {
+    let is_str = matches!(recv, Type::Str);
+    let is_arr = matches!(recv, Type::Slice(_));
+    if is_str || is_arr {
+        if matches!(field, "len" | "length" | "size" | "count") {
+            let arg = if is_arr { "&xs" } else { "s" };
+            return format!(
+                "`len({arg})` — length is a free function, not a field, and it is \
+                 polymorphic over `str` and arrays"
+            );
+        }
+        // Only name `{fam}{field}` when that builtin REALLY EXISTS. The first
+        // draft of this printed it unconditionally, so `s.upper` was answered
+        // with `str_upper` — which is not a thing; the builtin is
+        // `str_to_upper`. That is the exact defect this help was added to fix,
+        // reproduced inside the fix. Verify, then suggest.
+        let fam = if is_str { "str_" } else { "arr_" };
+        let candidate = format!("{fam}{field}");
+        if crate::builtins::is_known_builtin(&candidate) {
+            return format!(
+                "`{candidate}(x, …)` — Axon has no methods or properties, so this \
+                 is a free function"
+            );
+        }
+        return format!(
+            "Axon has no methods or properties — there is no `{candidate}` \
+             either. `axon reference` lists the whole `{fam}` family"
+        );
+    }
+    format!(
+        "`{}` is a scalar and has no fields — only a struct or enum variant has \
+         them",
+        recv.display()
+    )
+}
+
 // ── Known primitives (for R08) ────────────────────────────────────────────────
 
 const PRIMITIVE_NAMES: &[&str] = &[
@@ -5821,7 +5866,17 @@ impl CheckCtx {
                     CheckError::new(E0401, format!("{} has no field '{field}'", other.display()))
                         .node(node_path)
                         .at(&file, 0, 0)
-                        .with_span(self.current_span),
+                        .with_span(self.current_span)
+                        // The struct arm lists the fields that DO exist; this
+                        // arm said only that the field is absent. That is the
+                        // right shape for a struct typo and the wrong one here,
+                        // because a field on a str or an array is not a typo —
+                        // it is the method/property habit from another
+                        // language, and `s.len` has an answer (`len(s)`) that
+                        // the message never mentioned. The E0403 arm already
+                        // answers the CALL form, `s.len()`; this is the same
+                        // advice for the form without parentheses.
+                        .fix(non_struct_field_help(other, field)),
                     // No `.found(field)`: the field name is already named in the
                     // message, and it's not a type — the driver's ", found
                     // {found}" suffix would render "i64 has no field 'foo', found

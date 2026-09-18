@@ -27417,3 +27417,67 @@ fn a_wrong_arity_closure_is_caught_at_check_not_at_runtime() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_field_on_a_non_struct_says_what_to_write_instead() {
+    // The struct arm of E0401 lists the fields that DO exist. The non-struct
+    // arm said only that the field is absent — right for a typo, wrong here,
+    // because `s.len` on a string is not a misspelling. It is the method or
+    // property habit from another language, and it has an answer (`len(s)`)
+    // that the message never mentioned. E0403 already answers the CALL form
+    // `s.len()`; this is the same advice for the form without parentheses.
+    let dir = std::env::temp_dir().join(format!("axon_fieldhelp_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    let help = |body: &str| -> String {
+        std::fs::write(&f, format!("fn main() {{\n{body}\n}}\n")).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        all.lines()
+            .find(|l| l.contains("\"code\":\"E0401\""))
+            .unwrap_or("<no E0401>")
+            .to_string()
+    };
+
+    // Length is the common one, and `len` is polymorphic over both.
+    assert!(help("let s = \"a\"\nprintln(to_str(s.len))").contains("len(s)"));
+    for body in [
+        "let xs = [1]\nprintln(to_str(xs.length))",
+        "let xs = [1]\nprintln(to_str(xs.size))",
+    ] {
+        assert!(help(body).contains("len(&xs)"), "{}", help(body));
+    }
+
+    // A scalar has no fields at all — say that, rather than implying the name
+    // was merely misspelt.
+    for body in [
+        "let p = 1\nprintln(to_str(p.x))",
+        "let b = true\nlet r = b.value",
+    ] {
+        let h = help(body);
+        assert!(h.contains("scalar") && h.contains("no fields"), "{h}");
+    }
+
+    // A str/array field whose free function EXISTS is named...
+    assert!(help("let s = \"a\"\nlet r = s.trim").contains("`str_trim("));
+    assert!(help("let xs = [1]\nlet r = xs.reverse").contains("`arr_reverse("));
+
+    // ...and one that does NOT exist must not be invented. `str_upper` is not
+    // a builtin (`str_to_upper` is), and the first draft of this help printed
+    // it anyway — reproducing, inside the fix, the exact defect the fix exists
+    // to remove.
+    let up = help("let s = \"a\"\nlet r = s.upper");
+    assert!(
+        up.contains("there is no `str_upper`"),
+        "a name that does not exist must not be suggested: {up}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
