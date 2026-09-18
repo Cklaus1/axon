@@ -72,6 +72,14 @@ fi
 
 pass=0; diff=0; failbuild=0; refused=0; total=0
 fails=""; refuses=""
+by_design=0
+# Multi-module examples resolve their imports through AXON_PATH, and several
+# document the exact invocation in their own header (`AXON_PATH=examples/stdlib
+# axon run examples/asi/bandit_ucb.ax`). Passing the union here is what lets
+# those examples be swept at all — without it they fail at CHECK with E0901
+# "module not found" and look like broken programs.
+AXPATH="examples/stdlib:examples/asi:examples/modular:examples/domain"
+
 # `examples/stdlib/*.ax` is included deliberately.
 #
 # This loop globbed `examples/*.ax` only, so a whole directory of 36 runnable
@@ -88,14 +96,28 @@ fails=""; refuses=""
 #
 # Basenames are unique across the two directories (checked), so the per-example
 # binary name below stays collision-free.
-for f in examples/*.ax examples/stdlib/*.ax; do
+for f in examples/*.ax examples/stdlib/*.ax examples/asi/*.ax \
+         examples/domain/*.ax examples/modular/*.ax; do
   grep -q "fn main" "$f" || continue
-  total=$((total + 1))
-  base="$(basename "$f" .ax)"
 
-  I_OUT="$(AXON_AI_MOCK=1 AXON_SEED=42 "$AXON" run "$f" 2>/dev/null)"; I_EXIT=$?
+  # A program the CHECKER rejects is not a parity question: it never runs on
+  # either engine, so there is nothing to compare. Eight examples are rejected
+  # by design (capability violations in `flagship/`, the `bpf/bad_*` set,
+  # `contained_violation.ax`), and counting those as divergences would make this
+  # harness cry wolf about programs that are doing their job.
+  if ! AXON_PATH="$AXPATH" "$AXON" check "$f" >/dev/null 2>&1; then
+    by_design=$((by_design + 1))
+    continue
+  fi
+
+  total=$((total + 1))
+  # Path-derived, because `agent` exists in TWO directories and a basename would
+  # make the two examples share one binary.
+  base="$(echo "${f#examples/}" | tr '/' '_' | sed 's/\.ax$//')"
+
+  I_OUT="$(AXON_AI_MOCK=1 AXON_SEED=42 AXON_PATH="$AXPATH" "$AXON" run "$f" 2>/dev/null)"; I_EXIT=$?
   BIN="$WORK/$base"
-  BUILD_ERR="$(AXON_AI_MOCK=1 "$AXON" build "$f" -o "$BIN" --no-cache 2>&1)"; B_EXIT=$?
+  BUILD_ERR="$(AXON_AI_MOCK=1 AXON_PATH="$AXPATH" "$AXON" build "$f" -o "$BIN" --no-cache 2>&1)"; B_EXIT=$?
   if [ "$B_EXIT" -ne 0 ]; then
     # A clean E0910 refusal is NOT a divergence: codegen SOUNDLY declines an
     # interpreter-only builtin (e.g. the network http_* / host_await family)
@@ -121,7 +143,7 @@ for f in examples/*.ax examples/stdlib/*.ax; do
   fi
 done
 
-echo "all_examples_parity: $pass/$total match, $diff differ, $failbuild build-fail, $refused interp-only-refused (E0910)"
+echo "all_examples_parity: $pass/$total match, $diff differ, $failbuild build-fail, $refused interp-only-refused (E0910), $by_design rejected-at-check (invalid by design)"
 if [ "$refused" -ne 0 ]; then
   printf "all_examples_parity: interp-only (codegen soundly refuses, runs under \`axon run\`):$refuses\n"
 fi
