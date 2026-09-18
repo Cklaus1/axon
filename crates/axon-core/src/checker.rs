@@ -333,6 +333,13 @@ pub struct CheckCtx {
     known_enums: Vec<String>,
     /// Variant lists for user-defined enums — used by Fix #10 for exhaustiveness.
     pub enum_variants: HashMap<String, Vec<String>>,
+    /// Field NAMES of each enum variant, keyed `"Enum::Variant"`.
+    ///
+    /// `enum_variants` holds only variant names, which is all E0404 needed. The
+    /// "you called a variant" hint wants to print the braced form the reader
+    /// should have written, and a hint that says `{ field: … }` when it could say
+    /// `{ r: … }` leaves the reader a second lookup.
+    pub enum_variant_fields: HashMap<String, Vec<String>>,
     /// Generic type parameter names in scope for the current function (R08 suppression).
     current_generic_params: HashSet<String>,
     /// Trait definitions collected from the program: trait_name → TraitDef.
@@ -445,6 +452,7 @@ impl CheckCtx {
             fn_body_path: String::new(),
             known_enums: Vec::new(),
             enum_variants: HashMap::new(),
+            enum_variant_fields: HashMap::new(),
             current_generic_params: HashSet::new(),
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
@@ -492,6 +500,12 @@ impl CheckCtx {
                     self.known_enums.push(e.name.clone());
                     let variants = e.variants.iter().map(|v| v.name.clone()).collect();
                     self.enum_variants.insert(e.name.clone(), variants);
+                    for v in &e.variants {
+                        self.enum_variant_fields.insert(
+                            format!("{}::{}", e.name, v.name),
+                            v.fields.iter().map(|f| f.name.clone()).collect(),
+                        );
+                    }
                 }
                 Item::TraitDef(t) => {
                     self.trait_defs.insert(t.name.clone(), t.clone());
@@ -3104,6 +3118,55 @@ impl CheckCtx {
                     if fields.is_empty() {
                         if let Some((_m, nf)) = crate::native::resolve_call(name) {
                             self.check_native_call_args(nf, args, node_path, scope);
+                        }
+                    }
+                }
+                // `Shape::Circle(1.0)` — a REAL variant of a REAL enum, called
+                // with Rust's tuple-variant syntax. Axon variants carry named
+                // fields and are built with braces, so this passed the checker
+                // and panicked at runtime with "value of type Shape is not
+                // callable" — a message about callability, for a mistake about
+                // syntax, at a point where the program had already started.
+                //
+                // Both halves must be known for this to fire. An unknown variant
+                // is E0404's job just below, and an unknown enum name is not
+                // necessarily an enum at all (`gfx::clear(…)` is a module call).
+                if let Expr::StructLit { name, fields } = callee.as_ref() {
+                    if fields.is_empty() {
+                        if let Some((enum_name, variant)) = name.split_once("::") {
+                            if self
+                                .enum_variants
+                                .get(enum_name)
+                                .is_some_and(|vs| vs.iter().any(|v| v == variant))
+                            {
+                                let file = self.file.clone();
+                                let span = self.current_span;
+                                let fields_hint = self
+                                    .enum_variant_fields
+                                    .get(name)
+                                    .filter(|fs| !fs.is_empty())
+                                    .map(|fs| {
+                                        fs.iter()
+                                            .map(|n| format!("{n}: …"))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    })
+                                    .unwrap_or_else(|| "field: …".to_string());
+                                self.errors.push(
+                                    CheckError::new(
+                                        E0404,
+                                        format!(
+                                            "`{name}` is an enum variant, not a function — it cannot be called"
+                                        ),
+                                    )
+                                    .node(node_path)
+                                    .at(&file, 0, 0)
+                                    .with_span(span)
+                                    .fix(format!(
+                                        "Axon variants carry NAMED fields and are built with braces: `{name} {{ {fields_hint} }}`"
+                                    )),
+                                );
+                            }
                         }
                     }
                 }

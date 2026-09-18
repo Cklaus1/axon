@@ -24503,3 +24503,78 @@ fn a_builtin_called_as_a_method_is_pointed_at_the_free_function() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `Shape::Circle(1.0)` — a REAL variant of a REAL enum, called with Rust's
+/// tuple-variant syntax. Axon variants carry named fields and are built with
+/// braces, so this passed `axon check` clean and panicked at runtime:
+///
+///     axon: panic: value of type Shape is not callable
+///
+/// A message about callability, for a mistake about syntax, delivered after the
+/// program had already started. For a language whose checker is the product,
+/// check-clean-then-panic is the worst failure mode there is.
+#[test]
+fn an_enum_variant_called_like_a_function_is_caught_before_it_runs() {
+    let dir = std::env::temp_dir().join(format!("axon_variantcall_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    const ENUM: &str = "type Shape = Circle { r: f64 } | Square { s: f64, t: i64 }\n";
+    let check = |name: &str, src: &str| -> (i32, String) {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let o = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        (o.status.code().unwrap_or(-1), msg)
+    };
+
+    let (code, out) = check(
+        "called",
+        &format!("{ENUM}fn main() {{ let a = Shape::Circle(1.0)\n  println(\"x\") }}\n"),
+    );
+    assert_eq!(
+        code, 2,
+        "must be a compile error, not a runtime panic: {out}"
+    );
+    assert!(
+        out.contains("E0404") && out.contains("not a function"),
+        "{out}"
+    );
+    // The hint prints the braced form with the variant's REAL field names, so
+    // the repair is a copy rather than a second lookup.
+    assert!(
+        out.contains("Shape::Circle { r: … }"),
+        "the hint must name the variant's actual fields: {out}"
+    );
+    let (_, out) = check(
+        "twofields",
+        &format!("{ENUM}fn main() {{ let a = Shape::Square(1.0, 2)\n  println(\"x\") }}\n"),
+    );
+    assert!(out.contains("Shape::Square { s: …, t: … }"), "{out}");
+
+    // Controls. The braced form is correct and must stay clean; a module call
+    // uses the same `A::b(…)` shape and must NOT be mistaken for a variant.
+    let (code, out) = check(
+        "braced",
+        &format!(
+            "{ENUM}fn main() {{\n  let a = Shape::Circle {{ r: 1.0 }}\n  \
+             match a {{ Shape::Circle {{ r }} => println(to_str(r))  \
+             Shape::Square {{ s, t }} => println(\"sq\") }}\n}}\n"
+        ),
+    );
+    assert_eq!(code, 0, "the correct braced form must stay clean: {out}");
+    let (code, out) = check(
+        "modcall",
+        "use native::gfx\n@[contained(gfx: any)]\nfn main() -> i64 {\n  \
+         let w = gfx::window_open(8, 6, \"t\")\n  0\n}\n",
+    );
+    assert_eq!(code, 0, "a module call is not a variant call: {out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
