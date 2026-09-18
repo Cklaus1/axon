@@ -5001,7 +5001,14 @@ fn run_cell(
             return CellResult {
                 ok: false,
                 stdout: String::new(),
-                diagnostics: vec![format!("[{}] {}", diag.code, diag.message)],
+                // Same as `attribute_errors`: carry the hint. This is the path
+                // that matters most — the parse tier is where 100% of measured
+                // model failures land, and every foreign-keyword hint
+                // (`mut`, `:=`, `f"…"`, three-clause `for`) lives there.
+                diagnostics: vec![match &diag.help {
+                    Some(h) => format!("[{}] {} — help: {}", diag.code, diag.message, h),
+                    None => format!("[{}] {}", diag.code, diag.message),
+                }],
                 skipped: Vec::new(),
                 value: None,
             };
@@ -5161,7 +5168,18 @@ fn attribute_errors(
             // a genuinely unrelated mistake in the same cell must not be hidden
             // just because a redefinition also went wrong.
             None if !blamed.is_empty() && line == 0 => {}
-            _ => out.push(format!("[{}] {}", e.code, e.message)),
+            // The repair hint travels with the message.
+            //
+            // A session cell is the surface a model iterates on, and this
+            // flattening dropped `help` — so the one consumer that most needs
+            // "write `let x = …`" got the code and the complaint and nothing to
+            // act on, on BOTH the human view and the `axon-session/1` frames a
+            // host driver reads. The hint is appended to the same string rather
+            // than added as a field, so the published schema is unchanged.
+            _ => out.push(match &e.help {
+                Some(h) => format!("[{}] {} — help: {}", e.code, e.message, h),
+                None => format!("[{}] {}", e.code, e.message),
+            }),
         }
     }
     if !blamed.is_empty() {

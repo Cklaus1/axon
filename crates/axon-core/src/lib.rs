@@ -206,6 +206,23 @@ impl PipelineDiagnostic {
             s.push('\n');
             s.push_str(&self.caret);
         }
+        // The repair hint, which this renderer dropped entirely.
+        //
+        // `help` was serialised into `axon-diag/1` and nowhere else, so every
+        // hint in the compiler — the spelling suggestion on E0001, the
+        // foreign-keyword hints at the parse tier, "match it: `match x { Ok(v)
+        // => … }`" — reached JSON consumers and was invisible to anyone reading
+        // the terminal. AXON_FOR_RLM §2 is "stop `axon run` stripping help";
+        // this is the same defect one layer down, where the stripping is
+        // unconditional.
+        //
+        // Named `help:` to match the field and the JSON key rather than
+        // `AxonError::display`'s `fix:`, so a reader grepping either surface for
+        // the same hint finds it under the same word.
+        if let Some(help) = &self.help {
+            s.push_str("\n       help: ");
+            s.push_str(help);
+        }
         s
     }
 
@@ -1314,5 +1331,50 @@ mod collapse_tests {
         let mut ds = vec![diag("E0306", 7, 3, None), diag("E0102", 7, 3, None)];
         collapse_refined_type_errors(&mut ds);
         assert_eq!(ds.len(), 2, "a partner with no hint accounts for nothing");
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::PipelineDiagnostic;
+
+    fn diag(help: Option<&str>) -> PipelineDiagnostic {
+        PipelineDiagnostic {
+            code: "E0001".to_string(),
+            message: "cannot find name `nope` in this scope".to_string(),
+            file: "t.ax".to_string(),
+            line: 3,
+            col: 3,
+            severity: "error".to_string(),
+            caret: String::new(),
+            expected: None,
+            found: None,
+            help: help.map(str::to_string),
+        }
+    }
+
+    /// The terminal renderer dropped `help` entirely.
+    ///
+    /// Every hint in the compiler reached `axon-diag/1` and no human. Tested
+    /// here rather than through the CLI because stderr is not a tty under
+    /// `cargo test`, so the CLI emits JSON — an end-to-end assertion on `axon
+    /// check` output passes against the unfixed renderer.
+    #[test]
+    fn display_renders_the_repair_hint() {
+        let s = diag(Some("introduce `nope` with `let nope = …`")).display();
+        assert!(s.contains("E0001"), "{s}");
+        assert!(
+            s.contains("help:") && s.contains("introduce `nope`"),
+            "the rendered diagnostic must carry its repair: {s}"
+        );
+        // On its own line, so the message stays greppable as one line.
+        assert_eq!(s.lines().count(), 2, "{s}");
+    }
+
+    #[test]
+    fn display_adds_nothing_when_there_is_no_hint() {
+        let s = diag(None).display();
+        assert!(!s.contains("help:"), "{s}");
+        assert_eq!(s.lines().count(), 1, "{s}");
     }
 }

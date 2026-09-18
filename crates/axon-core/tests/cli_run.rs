@@ -25266,3 +25266,69 @@ fn a_non_numeric_operand_is_reported_once_and_says_what_to_do() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The repair hint reached JSON consumers and nobody else.
+///
+/// `help` was serialised into `axon-diag/1` and dropped by every other
+/// renderer. So the spelling suggestion on E0001, the foreign-keyword hints at
+/// the parse tier, "match it: `match x { Ok(v) => … }`" — all of it was
+/// invisible to a person reading the terminal, and invisible to a host driving
+/// `axon session --protocol jsonl`, which is the RLM surface.
+///
+/// AXON_FOR_RLM §2 is "stop `axon run` stripping help". This is the same defect
+/// one layer down, where the stripping was unconditional.
+#[test]
+fn the_repair_hint_reaches_the_terminal_and_the_session() {
+    // The HUMAN renderer is covered by a unit test on
+    // `PipelineDiagnostic::display` (`display_tests` in lib.rs), not here.
+    // A first version of THIS test asserted on `axon check`'s output and
+    // passed against the unfixed binary: stderr is not a tty under `cargo
+    // test`, so `check` emits JSON — which always carried `help`. The
+    // assertion was reading the JSON path while claiming to test the terminal.
+
+    // 2. The session. Parse errors are where 100% of measured model failures
+    //    land, and in the session they take a DIFFERENT path from check errors
+    //    — so both are asserted rather than assuming one covers the other.
+    let out = session_jsonl(&[&frame("c := 0")]);
+    let cell = out.iter().find(|l| l.contains("axon-session/1")).unwrap();
+    assert!(
+        cell.contains("help:") && cell.contains("no `:=`"),
+        "a session host must receive the PARSE-tier hint: {cell}"
+    );
+
+    let out = session_jsonl(&[&frame("let x = 1 + true")]);
+    let cell = out.iter().find(|l| l.contains("axon-session/1")).unwrap();
+    assert!(
+        cell.contains("help:") && cell.contains("not a number"),
+        "a session host must receive the CHECK-tier hint too: {cell}"
+    );
+
+    // The hints contain quotes and backticks and travel inside the wire format
+    // a host parses, so the frame must still be well-formed. Checked by the
+    // same escaping rule the protocol promises: no raw control characters, and
+    // every `"` inside the payload escaped.
+    let body = cell
+        .split("\"diagnostics\":")
+        .nth(1)
+        .expect("frame must carry diagnostics");
+    assert!(
+        !body.chars().any(|c| (c as u32) < 0x20),
+        "no raw control characters may reach the frame: {cell}"
+    );
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    for c in cell.chars() {
+        match (in_str, esc, c) {
+            (_, true, _) => esc = false,
+            (true, false, '\\') => esc = true,
+            (true, false, '"') => in_str = false,
+            (false, false, '"') => in_str = true,
+            (false, false, '{') => depth += 1,
+            (false, false, '}') => depth -= 1,
+            _ => {}
+        }
+    }
+    assert_eq!(depth, 0, "session frame must stay balanced JSON: {cell}");
+    assert!(!in_str, "unterminated string in session frame: {cell}");
+}
