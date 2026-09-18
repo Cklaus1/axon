@@ -585,6 +585,7 @@ fn cmd_kill(rest: &[&str]) -> ExitCode {
 fn cmd_status(rest: &[&str]) -> ExitCode {
     let mut store = PathBuf::from(".");
     let mut run_id: Option<String> = None;
+    let mut latest_only = false;
     let mut json_out = false;
     let mut i = 0;
     while i < rest.len() {
@@ -594,7 +595,12 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
                 i += 2;
             }
             "--latest" => {
-                // Find the most recently modified .kill file in store.
+                // Restrict the report to the most recently modified latch.
+                // This arm used to be a no-op: the flag was accepted, documented
+                // in `--help`, and changed nothing, because the DEFAULT already
+                // reported only the newest latch. An accepted flag that does
+                // nothing is indistinguishable from one that works.
+                latest_only = true;
                 i += 1;
             }
             "--json" => {
@@ -610,6 +616,21 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+
+    // If no run_id given, report EVERY run in the store.
+    //
+    // This reported only the most recently modified latch, with nothing to say
+    // it was one of many. Measured on a store holding 8 latches of which 4 were
+    // TRIPPED by R29 containment violations, `status` printed a single
+    //
+    //     ✓ run `pre.monitor`: latch = clear
+    //
+    // and exited 0 — four killed runs invisible behind one green tick about an
+    // unrelated run. An operator's status view that hides tripped latches is
+    // the one thing it must not do.
+    if run_id.is_none() {
+        return status_all(&store, latest_only, json_out);
     }
 
     // If no run_id given, look for any .kill file in the store directory.
@@ -658,6 +679,82 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
             "{symbol} run `{run_id_str}`: latch = {}",
             if tripped { "TRIPPED" } else { "clear" }
         );
+    }
+    ExitCode::from(0)
+}
+
+/// Report every run in the store, or just the newest under `--latest`.
+///
+/// Sorted newest-first so the common "what just happened" reading is the top
+/// line, and every other run is still on the screen. A TRIPPED latch is counted
+/// in the summary, because a list is only an improvement over one line if the
+/// reader does not have to scan it to learn whether anything was killed.
+fn status_all(store: &Path, latest_only: bool, json_out: bool) -> ExitCode {
+    let mut runs: Vec<(PathBuf, std::time::SystemTime)> = match std::fs::read_dir(store) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "kill"))
+            .filter_map(|e| {
+                let t = e.metadata().and_then(|m| m.modified()).ok()?;
+                Some((e.path(), t))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    if runs.is_empty() {
+        eprintln!("axon-os status: no .kill file found in {}", store.display());
+        return ExitCode::from(2);
+    }
+    // Newest first: sort by time, then reverse, which clippy prefers to a
+    // hand-written comparator.
+    runs.sort_by_key(|r| r.1);
+    runs.reverse();
+    if latest_only {
+        runs.truncate(1);
+    }
+
+    let mut tripped_count = 0usize;
+    let mut rows: Vec<String> = Vec::new();
+    for (path, _) in &runs {
+        let state =
+            std::fs::read_to_string(path).unwrap_or_else(|_| "{\"latch\":\"clear\"}".into());
+        let tripped = state.contains("\"latch\":\"tripped\"");
+        if tripped {
+            tripped_count += 1;
+        }
+        let rid = path
+            .file_stem()
+            .and_then(|x| x.to_str())
+            .unwrap_or("unknown");
+        if json_out {
+            rows.push(format!(
+                "{{\"run_id\":\"{rid}\",\"latch\":\"{}\",\"kill_file\":\"{}\"}}",
+                if tripped { "tripped" } else { "clear" },
+                path.display()
+            ));
+        } else {
+            let symbol = if tripped { "\u{1f6d1}" } else { "\u{2713}" };
+            rows.push(format!(
+                "{symbol} run `{rid}`: latch = {}",
+                if tripped { "TRIPPED" } else { "clear" }
+            ));
+        }
+    }
+
+    if json_out {
+        println!(
+            "{{\"runs\":[{}],\"total\":{},\"tripped\":{}}}",
+            rows.join(","),
+            runs.len(),
+            tripped_count
+        );
+    } else {
+        for r in &rows {
+            println!("{r}");
+        }
+        if !latest_only {
+            println!("  {} run(s), {} TRIPPED", runs.len(), tripped_count);
+        }
     }
     ExitCode::from(0)
 }

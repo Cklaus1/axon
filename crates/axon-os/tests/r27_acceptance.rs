@@ -780,3 +780,81 @@ fn audit_verify_refuses_an_absent_ledger_and_still_catches_tampering() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `axon-os status` hid every run but the newest, and `--latest` did nothing.
+///
+/// With no run-id it reported only the most recently modified latch, with
+/// nothing to say it was one of many. Measured on a store holding 8 latches of
+/// which 4 were TRIPPED by R29 containment violations, it printed
+///
+///     ✓ run `pre.monitor`: latch = clear
+///
+/// and exited 0 — four killed runs invisible behind one green tick about an
+/// unrelated run. And `--latest`, which is in `--help`, was parsed into an arm
+/// that only advanced the index: accepted, documented, inert, and
+/// indistinguishable from working because the default already did it.
+#[test]
+fn status_shows_every_run_and_latest_actually_restricts() {
+    let dir = std::env::temp_dir().join(format!("axon_status_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let os = env!("CARGO_BIN_EXE_axon-os");
+
+    // Three latches, two of them tripped. Written oldest-first so the newest is
+    // a CLEAR one — the arrangement in which showing only the newest hides
+    // every kill, which is the failure being fixed.
+    for (name, body) in [
+        ("old_tripped", r#"{"latch":"tripped","reason":"R29"}"#),
+        ("mid_tripped", r#"{"latch":"tripped","reason":"R29"}"#),
+        ("new_clear", r#"{"latch":"clear"}"#),
+    ] {
+        std::fs::write(dir.join(format!("{name}.kill")), body).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+
+    let run = |args: &[&str]| -> String {
+        let o = std::process::Command::new(os)
+            .args(["status", "--store"])
+            .arg(&dir)
+            .args(args)
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+
+    let all = run(&[]);
+    for name in ["old_tripped", "mid_tripped", "new_clear"] {
+        assert!(all.contains(name), "`{name}` must appear in status: {all}");
+    }
+    assert!(
+        all.contains("3 run(s), 2 TRIPPED"),
+        "the summary must count tripped latches so they need not be scanned for: {all}"
+    );
+
+    // `--latest` must now RESTRICT — the flag has to be distinguishable from
+    // its absence, which is what it was not.
+    let latest = run(&["--latest"]);
+    assert!(latest.contains("new_clear"), "{latest}");
+    assert!(
+        !latest.contains("old_tripped") && !latest.contains("mid_tripped"),
+        "`--latest` must show only the newest: {latest}"
+    );
+    assert_ne!(
+        all.trim(),
+        latest.trim(),
+        "a flag whose output equals its absence is inert"
+    );
+
+    // JSON carries the same counts, so a UI need not parse prose.
+    let js = run(&["--json"]);
+    assert!(
+        js.contains("\"total\":3") && js.contains("\"tripped\":2"),
+        "{js}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
