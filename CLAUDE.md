@@ -285,7 +285,11 @@ fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 
 - `Option<T>` layout: `{ i1 tag, T }` — tag 0=None, 1=Some
 - Arrays/slices: `{ i64 len, ptr data }` with heap-allocated backing
 - Lambdas lower to `__lambda_N` module-level functions (captures: Phase 3)
-- `@[agent]`, `@[goal]` etc. emit I0001 info diagnostic, not errors
+- `@[agent]`, `@[goal]` etc. are never errors. They were Phase-1 no-ops that emitted an
+  I0001 info; that info is still produced by the resolver but **deliberately not surfaced**,
+  because most of `DEFERRED_ATTRS` is now enforced (`@[contained]` → E1001/E1004, `@[verify]`
+  gates at runtime, `@[adaptive]` drives the optimizer) and calling those "deferred" would be
+  wrong. Verified: `axon check` on an `@[agent]` program prints nothing.
 
 ## Adding a New Builtin
 

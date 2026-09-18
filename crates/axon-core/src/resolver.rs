@@ -707,6 +707,18 @@ pub struct ResolveResult {
     /// Warning diagnostics (e.g. W0001 for unknown attributes).
     pub warnings: Vec<Diagnostic>,
     /// Informational diagnostics (e.g. I0001 for deferred attributes).
+    ///
+    /// **Deliberately not surfaced by either pipeline**, and that is not an
+    /// oversight to fix. I0001 dates from Phase 1, when `@[agent]`/`@[goal]`
+    /// and friends were parsed and ignored. Most of `DEFERRED_ATTRS` is now
+    /// enforced — `@[contained]` raises E1001/E1004, `@[verify]` gates at
+    /// runtime, `@[adaptive]` drives the optimizer — so emitting "deferred
+    /// attribute" would be stale on 33 of the 174 example programs and, for
+    /// `@[contained]`, actively wrong about a capability check that does run.
+    ///
+    /// Wiring this up therefore needs the CONTENT rethought first, not just a
+    /// consumer added. Kept as a field because the resolver still populates it
+    /// and a caller may want it for tooling.
     pub infos: Vec<Diagnostic>,
 }
 

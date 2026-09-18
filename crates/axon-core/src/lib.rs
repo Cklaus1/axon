@@ -977,7 +977,15 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     }
 
     let resolve_result = resolver::resolve_program(&program, file);
-    for d in &resolve_result.errors {
+    // `.errors` AND `.warnings`. Reading only `.errors` silently dropped every
+    // resolver warning from this pipeline — and this pipeline is what the
+    // browser playground (`axon-wasm`) shows, so the playground reported fewer
+    // problems than `axon check` on the same source. Measured over 19 probe
+    // programs: W0006 (unused binding), W0002 (shadowing), W0003 (user fn
+    // shadows a builtin) and W2001 (vague `@[goal]`) appeared in the CLI and
+    // nowhere here. The CLI reads both; the note at `run_check_pipeline_located`
+    // says the two must stay in sync, and on warnings they were not.
+    for d in resolve_result.errors.iter().chain(&resolve_result.warnings) {
         let (line, col) = if !d.span.is_dummy() {
             let (l, c) = source_map.line_col(d.span.start);
             (l as u32, c as u32)
