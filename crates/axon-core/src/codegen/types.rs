@@ -17,6 +17,20 @@ use inkwell::AddressSpace;
 
 use crate::types::Type;
 
+/// What to assume when a type's size cannot be computed, for a UNION payload.
+///
+/// The rule this encodes: over-sizing a payload wastes stack, under-sizing
+/// corrupts memory. Those are not comparable costs, so every unknown rounds UP.
+///
+/// The bug that motivated it sized every struct at 8 bytes, which silently
+/// truncated `Result<BigStruct, str>` and read adjacent memory. The first fix
+/// replaced that with `None` — and both payload call sites did `.unwrap_or(0)`,
+/// which would have sized the buffer at ZERO, trading a truncation for a worse
+/// one. 64 bytes is past any struct in the tree today, and a struct whose size
+/// genuinely cannot be computed is E0910-refused before reaching codegen
+/// (generic instantiations are, measured).
+pub(super) const UNKNOWN_TYPE_PAYLOAD_SIZE: u64 = 64;
+
 impl<'ctx> super::Codegen<'ctx> {
     /// Convert an Axon semantic `Type` into an LLVM `BasicTypeEnum`.
     /// Returns `None` for `Unit` (void) and unresolved/unknown types.
@@ -64,8 +78,13 @@ impl<'ctx> super::Codegen<'ctx> {
             // Result<T,E> → struct { i1, [max(sizeof T, sizeof E) x i8] }
             Type::Result(ok_ty, err_ty) => {
                 let tag = self.ir.context.bool_type();
-                let ok_size = self.llvm_sizeof(ok_ty).unwrap_or(0);
-                let err_size = self.llvm_sizeof(err_ty).unwrap_or(0);
+                // An unsizable side rounds UP — see UNKNOWN_TYPE_PAYLOAD_SIZE.
+                // This was `unwrap_or(0)`, which for `Result<Dict, Dict>` gives
+                // `max(0, 0).max(1)` = a ONE-BYTE payload.
+                let ok_size = self.llvm_sizeof(ok_ty).unwrap_or(UNKNOWN_TYPE_PAYLOAD_SIZE);
+                let err_size = self
+                    .llvm_sizeof(err_ty)
+                    .unwrap_or(UNKNOWN_TYPE_PAYLOAD_SIZE);
                 let payload_size = ok_size.max(err_size).max(1);
                 let i8_ty = self.ir.context.i8_type();
                 let payload = i8_ty.array_type(payload_size as u32);
@@ -274,7 +293,9 @@ impl<'ctx> super::Codegen<'ctx> {
             // Recursion terminates because Axon structs hold no by-value cycles
             // (a recursive type needs indirection, which is a pointer here).
             Type::Struct(name) => {
-                let fields = self.struct_field_sem_types.get(name)?;
+                let Some(fields) = self.struct_field_sem_types.get(name) else {
+                    return Some(UNKNOWN_TYPE_PAYLOAD_SIZE);
+                };
                 let mut off: u64 = 0;
                 let mut max_align: u64 = 1;
                 for f in fields {
@@ -292,7 +313,9 @@ impl<'ctx> super::Codegen<'ctx> {
             // field's alignment — the same reasoning, and the same direction on
             // anything unknown.
             Type::Enum(name) => {
-                let variants = self.enum_variants.get(name)?;
+                let Some(variants) = self.enum_variants.get(name) else {
+                    return Some(UNKNOWN_TYPE_PAYLOAD_SIZE);
+                };
                 let mut widest: u64 = 0;
                 let mut max_align: u64 = 8;
                 for (_, _, field_tys) in variants {

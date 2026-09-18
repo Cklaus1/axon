@@ -95,8 +95,15 @@ impl<'ctx> super::Codegen<'ctx> {
         if let Some((ok_ty, err_ty)) = self.current_result_types.clone() {
             // Canonical union layout: { i1, [max(sizeof T, sizeof E) x i8] }
             // Both Ok and Err arms produce the same LLVM struct type so phi nodes work.
-            let ok_size = self.llvm_sizeof(&ok_ty).unwrap_or(0);
-            let err_size = self.llvm_sizeof(&err_ty).unwrap_or(0);
+            // An unsizable side rounds UP, never to zero — the same rule and
+            // the same constant as the type-level layout in `types.rs`, so the
+            // two cannot disagree about how big a payload is.
+            let ok_size = self
+                .llvm_sizeof(&ok_ty)
+                .unwrap_or(super::types::UNKNOWN_TYPE_PAYLOAD_SIZE);
+            let err_size = self
+                .llvm_sizeof(&err_ty)
+                .unwrap_or(super::types::UNKNOWN_TYPE_PAYLOAD_SIZE);
             let payload_size = ok_size.max(err_size).max(1) as u32;
             let i8_ty = self.ir.context.i8_type();
             let payload_arr_ty = i8_ty.array_type(payload_size);
