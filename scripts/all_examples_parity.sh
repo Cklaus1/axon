@@ -2,7 +2,8 @@
 # all_examples_parity.sh — R1 acceptance: EVERY example runs identically under
 # the native codegen backend and the interpreter (I-2).
 #
-# Builds + runs every `examples/*.ax` that has a `fn main` BOTH ways under
+# Builds + runs every `examples/*.ax` AND `examples/stdlib/*.ax` that has a
+# `fn main` BOTH ways under
 # AXON_AI_MOCK=1 + AXON_SEED=42 (so the AI examples are deterministic — the
 # native AI path now honors AXON_AI_MOCK, matching the interpreter's stub) and
 # asserts byte-identical stdout + identical exit code. This turns the long-
@@ -71,7 +72,23 @@ fi
 
 pass=0; diff=0; failbuild=0; refused=0; total=0
 fails=""; refuses=""
-for f in examples/*.ax; do
+# `examples/stdlib/*.ax` is included deliberately.
+#
+# This loop globbed `examples/*.ax` only, so a whole directory of 36 runnable
+# programs — the Tier-2 stdlib types — was in NO parity sweep. That gap hid a
+# memory-corruption bug for the life of the feature: `llvm_sizeof` reported
+# every struct as 8 bytes, so `Result<BigStruct, str>` truncated its payload,
+# and `replicated.ax` natively stopped committing at a 2/3 quorum and began
+# ACCEPTING stale writes. The top-level examples never put a struct bigger than
+# 16 bytes through a Result, so 55 harnesses stayed green.
+#
+# Only `stdlib/` is added. The other subdirectories hold examples that are
+# deliberately refused (`flagship/`, `bpf/`) or need a platform (`browser/`,
+# `native/`), and folding those in would trade a real signal for noise.
+#
+# Basenames are unique across the two directories (checked), so the per-example
+# binary name below stays collision-free.
+for f in examples/*.ax examples/stdlib/*.ax; do
   grep -q "fn main" "$f" || continue
   total=$((total + 1))
   base="$(basename "$f" .ax)"
