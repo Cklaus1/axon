@@ -1,0 +1,5 @@
+# Legitimate checked-in binary or oversized files, one path per line with a
+# reason. Empty is the correct state: this repo has no binary fixture today.
+#
+# An entry naming a file that is no longer tracked FAILS the gate — a stale
+# exemption is how an allowlist becomes a blanket one.

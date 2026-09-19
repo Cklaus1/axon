@@ -69,3 +69,24 @@ out/
 
 # AUDIT O006: harness skip census, regenerated per test run
 target/harness-skips.log
+
+# stray probe binaries — `axon build` writes its output next to the source, so
+# a probe run from inside a crate leaves a ~44MB native binary in the tree. Two
+# of them (cg, vapp) reached origin/main via a `git add -A crates/`, which is
+# why the rule below is a PATTERN and not two names: the next probe picks a
+# different one. Extensionless executables under crates/ are never sources.
+crates/*/cg
+crates/*/vapp
+crates/**/*.bin
+/app
+/ci1
+/cmp
+/p
+/run.axjob
+/run.json
+docs/*.zip
+
+# python bytecode from the Cortex experiment runners — generated, not source
+__pycache__/
+*.pyc
+experiments/**/*.log

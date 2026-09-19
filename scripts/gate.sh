@@ -72,6 +72,16 @@ mkdir -p target && : > "$SKIPLOG"
 echo "── gate: VISION.md focus ──────────────────────────────────────────"
 ./scripts/vision_focus.sh || fail "VISION.md focus"
 
+# Artifact admission. Generated build output must never become repository
+# source by accident. It twice did, and nothing noticed either time: cac9cdf
+# committed two 44MB `axon build` probe binaries (crates/axon-core/{cg,vapp}),
+# and the Cortex experiment commits carried 8 __pycache__/*.pyc files. Both
+# arrived the same way — a broad `git add` folding unrelated untracked files
+# into an otherwise coherent commit — and both survived review, because the
+# untracked -> tracked transition is the one state change nothing asserted was
+# intended. Cheap (~1s over the index), so it runs on every gate, not --strict.
+./scripts/artifact_admission_gate.sh >/dev/null || fail "artifact admission (generated output is tracked as source)"
+
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
