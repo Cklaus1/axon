@@ -1328,6 +1328,174 @@ fn phase7_kernel_supervisor() {
 }
 
 #[test]
+fn phase7_kernel_accounting_readouts() {
+    // Phase 7 (R12): the three ACCOUNTING readouts — `principal_spend`,
+    // `scheduler_done_count`, `supervisor_restarts`. These are the class where a
+    // wrong answer is SILENT: nothing crashes, a number is just wrong. So each
+    // block asserts a conservation/identity law, not merely "returns an i64":
+    //
+    //   spend      — remaining == cap − Σ(charges), and the readout agrees with
+    //                the two ENFORCERS that consume the same ledger
+    //                (`principal_authorize`'s exhaustion test and the
+    //                `llm_complete` gateway's affordability test).
+    //   done_count — equals the number of fibers actually in the Done state, with
+    //                `done + failed` accounting for every spawned fiber.
+    //   restarts   — equals the number of supervised failures observed, cross-
+    //                witnessed by an INDEPENDENT counter (the failing fiber
+    //                spawns one worker per failure, so `done_count` must land on
+    //                `restarts + 1`).
+    //
+    // All three were in BUILTINS with no test, example or harness executing them.
+    let run = |tag: &str, src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!(
+            "axon_acct_{}_{}_{}.ax",
+            std::process::id(),
+            tag,
+            src.len()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", "1")
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // ── principal_spend ──────────────────────────────────────────────────────
+    let spend = "fn main() -> i64 { \
+        let r = principal_root(\"root\", true, true, true, 100)\n\
+        assert_eq(principal_budget_remaining(r), 100)\n\
+        // each call returns the NEW remaining, and the running total is exact\n\
+        assert_eq(principal_spend(r, 30), 70)\n\
+        assert_eq(principal_spend(r, 20), 50)\n\
+        assert_eq(principal_budget_remaining(r), 100 - (30 + 20))\n\
+        // the readout agrees with the authorize ENFORCER while budget remains\n\
+        assert(principal_authorize(r, true, true, true))\n\
+        // a negative amount is NOT a refund (spend is monotone)\n\
+        assert_eq(principal_spend(r, -1000), 50)\n\
+        assert_eq(principal_budget_remaining(r), 50)\n\
+        // spending the rest flips the enforcer too — readout and gate agree\n\
+        assert_eq(principal_spend(r, 50), 0)\n\
+        assert(!principal_authorize(r, true, true, true))\n\
+        // overspend past the cap stays clamped at 0, never negative\n\
+        assert_eq(principal_spend(r, 999), 0)\n\
+        assert_eq(principal_budget_remaining(r), 0)\n\
+        // a minted child spends its OWN carved budget; neither side leaks\n\
+        let p = principal_root(\"p2\", true, true, true, 100)\n\
+        let c = principal_mint(p, \"child\", true, false, false, 40)\n\
+        assert_eq(principal_budget_remaining(p), 60)\n\
+        assert_eq(principal_budget_remaining(c), 40)\n\
+        assert_eq(principal_spend(c, 15), 25)\n\
+        assert_eq(principal_budget_remaining(p), 60)\n\
+        assert_eq(principal_spend(p, 10), 50)\n\
+        assert_eq(principal_budget_remaining(c), 25)\n\
+        assert_eq(principal_spend(9999, 10), 0)\n\
+        0 }";
+    let (code, err) = run("spend", spend);
+    assert_eq!(code, 0, "principal_spend accounting: {err}");
+
+    // The same ledger the LLM gateway meters against: a manual `principal_spend`
+    // is visible to the enforcer, and a refused call charges NOTHING.
+    let meter = "fn main() -> i64 { \
+        let q = principal_root(\"q\", true, true, true, 100)\n\
+        let gw = llm_open(\"m\", 1000, q, \"fb\")\n\
+        assert_eq(llm_complete(gw, \"hi\", 30), 30)\n\
+        assert_eq(principal_budget_remaining(q), 70)\n\
+        assert_eq(llm_spent(gw), 30)\n\
+        assert_eq(principal_spend(q, 60), 10)\n\
+        // 20 µ$ needed, 10 left → refused (-1), and the ledger does not move\n\
+        assert_eq(llm_complete(gw, \"hi\", 20), 0 - 1)\n\
+        assert_eq(principal_budget_remaining(q), 10)\n\
+        assert_eq(llm_spent(gw), 30)\n\
+        0 }";
+    let (code, err) = run("meter", meter);
+    assert_eq!(
+        code, 0,
+        "principal_spend must debit the ledger llm_complete enforces against: {err}"
+    );
+
+    // ── scheduler_done_count ─────────────────────────────────────────────────
+    let done = "fn good(n: i64) -> i64 { n * 100 }\n\
+        fn bad(n: i64) -> i64 { assert(false)\n 0 }\n\
+        fn main() -> i64 { \
+        assert_eq(scheduler_done_count(), 0)\n\
+        let a = scheduler_spawn(\"good\", 1)\n\
+        let b = scheduler_spawn(\"bad\", 0)\n\
+        let c = scheduler_spawn(\"good\", 3)\n\
+        // spawning does not complete anything\n\
+        assert_eq(scheduler_done_count(), 0)\n\
+        assert_eq(scheduler_run(), 2)\n\
+        // done + failed accounts for every spawned fiber\n\
+        assert_eq(scheduler_done_count(), 2)\n\
+        assert_eq(scheduler_failed_count(), 1)\n\
+        assert_eq(scheduler_result(a), 100)\n\
+        assert_eq(scheduler_result(c), 300)\n\
+        // a later fan-out ACCUMULATES into the same readout\n\
+        let d = scheduler_spawn(\"good\", 4)\n\
+        assert_eq(scheduler_run(), 1)\n\
+        assert_eq(scheduler_done_count(), 3)\n\
+        assert_eq(scheduler_failed_count(), 1)\n\
+        assert_eq(scheduler_result(d), 400)\n\
+        // restarting the failed fiber makes it non-terminal: it leaves the\n\
+        // failed tally without joining the done tally\n\
+        let _x = scheduler_restart(b)\n\
+        assert_eq(scheduler_done_count(), 3)\n\
+        assert_eq(scheduler_failed_count(), 0)\n\
+        // it re-runs and fails again — done is untouched, failed returns\n\
+        assert_eq(scheduler_run(), 0)\n\
+        assert_eq(scheduler_done_count(), 3)\n\
+        assert_eq(scheduler_failed_count(), 1)\n\
+        0 }";
+    let (code, err) = run("done", done);
+    assert_eq!(
+        code, 0,
+        "scheduler_done_count must equal the fibers that actually completed: {err}"
+    );
+
+    // ── supervisor_restarts ──────────────────────────────────────────────────
+    // `flaky` fails while fewer than N workers have completed, spawning exactly
+    // one worker per failure. So after the supervisor drives it to success:
+    //   restarts == N   (failures observed)
+    //   done_count == N + 1   (N workers + flaky itself)
+    // — two independent counters that must land on the same story.
+    let restarts = "fn worker(n: i64) -> i64 { n + 1 }\n\
+        fn flaky(n: i64) -> i64 { \
+          let d = scheduler_done_count()\n\
+          if d < n { let _w = scheduler_spawn(\"worker\", d)\n assert(false) }\n\
+          42 }\n\
+        fn main() -> i64 { \
+        let s1 = supervisor_new(0, 10)\n\
+        let s2 = supervisor_new(0, 10)\n\
+        assert_eq(supervisor_restarts(s1), 0)\n\
+        assert_eq(supervisor_restarts(s2), 0)\n\
+        let f = scheduler_spawn(\"flaky\", 3)\n\
+        let _c = supervisor_supervise(s1, f)\n\
+        assert_eq(supervisor_run(s1), 3)\n\
+        assert_eq(supervisor_restarts(s1), 3)\n\
+        // a sibling supervisor's counter is NOT touched by s1's failures\n\
+        assert_eq(supervisor_restarts(s2), 0)\n\
+        assert(supervisor_alive(s1))\n\
+        // independent witness: one worker per observed failure, plus flaky\n\
+        assert_eq(scheduler_done_count(), 4)\n\
+        assert_eq(scheduler_failed_count(), 0)\n\
+        assert_eq(scheduler_result(f), 42)\n\
+        // unknown / negative handles read 0, they do not index something else\n\
+        assert_eq(supervisor_restarts(99), 0)\n\
+        assert_eq(supervisor_restarts(0 - 1), 0)\n\
+        0 }";
+    let (code, err) = run("restarts", restarts);
+    assert_eq!(
+        code, 0,
+        "supervisor_restarts must equal the supervised failures observed: {err}"
+    );
+}
+
+#[test]
 fn phase7_kernel_durable_store() {
     // Phase 7 (R12 Slice 4): the durable Store persists across a PROCESS via an
     // NDJSON append log replayed on open. The headline (R12 gate): a value
