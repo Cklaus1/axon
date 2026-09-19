@@ -17,6 +17,18 @@ pub struct JobManifest {
     pub intent: String,
     pub seed: u64,
     pub grant: Grant,
+    /// JOB POLICY: does this job require a valid approval token to run?
+    ///
+    /// Deliberately separate from whether a token is PRESENT, which is runtime
+    /// EVIDENCE. Neither is inferred from the other (triage OSK-P4-H8):
+    ///
+    ///   not required + no token            → run
+    ///   required     + no/invalid token    → refuse (exit 8)
+    ///   required     + valid token         → run
+    ///
+    /// Absent ⇒ `false`, so existing manifests keep working — the same
+    /// "easy by default, explicit lockdown when needed" posture as `profile`.
+    pub require_approval: bool,
 }
 
 /// Convenience for a `Malformed` verdict carrying a reason.
@@ -38,6 +50,7 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     let mut fs_write: Option<Vec<String>> = None;
     let mut net: Option<Vec<String>> = None;
     let mut profile: Option<crate::profile::Profile> = None;
+    let mut require_approval: Option<bool> = None;
     let mut exec: Option<ExecPolicy> = None;
     let mut max_label: Option<Label> = None;
     let mut calls: Option<i64> = None;
@@ -71,6 +84,21 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
                             bad(format!("{}: seed must be a non-negative u64", where_()))
                         })?,
                 )
+            }
+            // Accepted at top level or under [grant]: operators reasonably
+            // reach for either, and refusing one of them would be a papercut
+            // whose only function is to be surprising.
+            ("", "require_approval") | ("grant", "require_approval") => {
+                require_approval = Some(match val.trim() {
+                    "true" => true,
+                    "false" => false,
+                    other => {
+                        return Err(bad(format!(
+                            "{}: require_approval must be true or false, got `{other}`",
+                            where_()
+                        )))
+                    }
+                })
             }
             ("grant", "fs_read") => fs_read = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),
             ("grant", "fs_write") => fs_write = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),
@@ -153,6 +181,9 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     };
 
     Ok(JobManifest {
+        // Absent ⇒ not required. An approval policy nobody stated is not an
+        // approval policy, and defaulting it ON would break every existing job.
+        require_approval: require_approval.unwrap_or(false),
         program: base_dir.join(program),
         intent,
         seed,

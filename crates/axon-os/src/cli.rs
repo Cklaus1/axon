@@ -244,16 +244,39 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // R22 handoff: if an approval token sits next to the manifest, it MUST
     // verify (the program + grant unedited since approval) or the run is refused
     // BEFORE any execution — fail closed (exit 8).
+    // Two INDEPENDENT facts, never inferred from each other (triage OSK-P4-H8):
+    //   * `manifest.require_approval` — JOB POLICY: must this job be signed off?
+    //   * the token on disk           — RUNTIME EVIDENCE: was it?
+    //
+    //   not required + no token         → run   ("Approval: not required")
+    //   required     + no/invalid token → exit 8
+    //   required     + valid token      → run   ("Approval: required and verified")
+    //
+    // Absent policy means NOT required, so existing jobs keep working; an
+    // operator who wants the gate says so with `require_approval = true`.
     let approval_path = job_path.with_extension("approval");
     if approval_path.exists() {
         let token = std::fs::read_to_string(&approval_path).unwrap_or_default();
         let program_src = std::fs::read_to_string(&manifest.program).unwrap_or_default();
         if let Err(reason) = crate::approval::verify_approval(&token, &program_src, &manifest.grant)
         {
+            // An INVALID token is a failure whether or not policy required one:
+            // someone signed this and the signature does not hold.
             println!("\u{26a0} DENIED: {reason}");
             return ExitCode::from(8);
         }
-        println!("\u{2713} approval verified (program + grant unedited since sign-off)");
+        if manifest.require_approval {
+            println!("Approval: required and verified (program + grant unedited since sign-off)");
+        } else {
+            println!("Approval: verified (not required by this job)");
+        }
+    } else if manifest.require_approval {
+        println!(
+            "\u{26a0} DENIED: approval required but missing — this job sets \
+             `require_approval = true` and there is no token at {}",
+            approval_path.display()
+        );
+        return ExitCode::from(8);
     } else {
         // An ABSENT token is not a verified one. The gate is opt-in by the
         // presence of the very artifact it checks (triage OSK-P4-H8), and until
@@ -267,11 +290,12 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         // exit 8 is a policy change (the finding's own fix sketch proposes
         // driving it from risk level or a manifest field), and that is the
         // operator's decision, not this function's.
-        println!(
-            "\u{26a0} NOT APPROVED: no sign-off token at {} — this run was not \
-             checked against one. A missing approval is not a passed approval.",
-            approval_path.display()
-        );
+        // NOT a warning. The job did not ask for approval and is behaving
+        // exactly as configured; "⚠ NOT APPROVED" read as a degraded or unsafe
+        // state and would train operators to ignore the line. State the policy,
+        // so the output tracks configuration rather than treating absence as
+        // inherently abnormal.
+        println!("Approval: not required");
     }
 
     // ── Kill-file setup (R27 + R29) ───────────────────────────────────────────

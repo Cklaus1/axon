@@ -7,7 +7,25 @@
 //!   - `AtomicKillChannel` (real: supervisor AtomicBool; subprocess polls read-only)
 //!   - `TestKillChannel`   (for tests: same AtomicBool, but test-controlled sender)
 //!
-//! Fail-closed: poll() error or unknown state → Tripped.
+//! Kill channel semantics (decided 2026-09-19, triage OSK-P4-H7):
+//!
+//!   - missing channel file:                     Clear
+//!   - readable file with clear state:           Clear
+//!   - readable file with trip state:            Tripped
+//!   - any other read/parse/access failure:      Tripped
+//!
+//! The invariant: **absence of a kill signal may mean Clear; inability to
+//! DETERMINE the kill state must not mean Clear.** `NotFound` is the sole
+//! fail-open case, because "the kill file has never been created" is a valid
+//! steady state and part of the protocol (axon-os creates it holding
+//! `{"latch":"clear"}`), not an exceptional failure. Everything else —
+//! permission denied, an I/O fault, an unreadable or corrupt file — means the
+//! channel can no longer be trusted to say "continue", so it says Tripped.
+//!
+//! The decision is derivable from the CURRENT error kind alone. It deliberately
+//! does not depend on whether the file was once readable: safety behaviour that
+//! turns on retained process-local history is harder to reason about and
+//! differs between a fresh poll and a resumed one.
 
 use crate::latch::LatchState;
 use std::sync::{
@@ -16,7 +34,8 @@ use std::sync::{
 };
 
 /// The read-only poll interface given to the subprocess runtime.
-/// Fail-closed: a channel error MUST be treated as Tripped.
+///
+/// Fail-closed except for `NotFound` — see the module docs for the full table.
 pub trait KillChannel: Send + Sync {
     fn poll(&self) -> LatchState;
 }
@@ -124,7 +143,15 @@ impl KillChannel for FileKillChannel {
                 LatchState::Tripped
             }
             Ok(_) => LatchState::Clear,
-            Err(_) => LatchState::Clear, // file absent = not yet tripped (fail-open for absence)
+            // NotFound is the SOLE fail-open case: the file has never been
+            // created, which is a valid steady state, not a channel failure.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => LatchState::Clear,
+            // Anything else — permission denied, an I/O fault, an unreadable
+            // file — means we cannot DETERMINE the state. This used to be
+            // `Err(_) => Clear`, which made a kill switch that had become
+            // unreadable indistinguishable from one that was not tripped, in
+            // direct contradiction of this module's own documented contract.
+            Err(_) => LatchState::Tripped,
         }
     }
 }
@@ -225,6 +252,48 @@ mod tests {
         // Write tripped.
         write_kill_state(&path, true, "test reason").unwrap();
         assert_eq!(chan.poll(), LatchState::Tripped);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// The full kill-channel table (triage OSK-P4-H7, decided 2026-09-19).
+    ///
+    /// The invariant under test: **absence of a kill signal may mean Clear;
+    /// inability to DETERMINE the kill state must not mean Clear.** Before the
+    /// fix this was `Err(_) => Clear`, so a kill file that had become
+    /// unreadable was indistinguishable from one that was not tripped — a kill
+    /// switch that silently stops working, in direct contradiction of this
+    /// module's own documented contract.
+    #[test]
+    fn poll_fails_closed_on_everything_except_not_found() {
+        let dir = std::env::temp_dir().join(format!("axon-kc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // missing file → Clear. The SOLE fail-open case: never created is a
+        // valid steady state, and a fresh killable run starts here.
+        let missing = dir.join("nope.kill");
+        assert_eq!(FileKillChannel::new(&missing).poll(), LatchState::Clear);
+
+        // readable + clear → Clear
+        let clear = dir.join("clear.kill");
+        std::fs::write(&clear, "{\"latch\":\"clear\"}").unwrap();
+        assert_eq!(FileKillChannel::new(&clear).poll(), LatchState::Clear);
+
+        // readable + tripped → Tripped
+        let tripped = dir.join("tripped.kill");
+        std::fs::write(&tripped, "{\"latch\":\"tripped\"}").unwrap();
+        assert_eq!(FileKillChannel::new(&tripped).poll(), LatchState::Tripped);
+
+        // ANY OTHER read failure → Tripped. A directory in the file's place
+        // yields an IsADirectory error on every platform and for every user —
+        // unlike a permission test, which a root-owned CI would silently pass
+        // by succeeding at the read.
+        let as_dir = dir.join("adir.kill");
+        std::fs::create_dir_all(&as_dir).unwrap();
+        assert_eq!(
+            FileKillChannel::new(&as_dir).poll(),
+            LatchState::Tripped,
+            "an undeterminable kill state must fail CLOSED"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

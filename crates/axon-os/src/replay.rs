@@ -67,6 +67,7 @@ mod tests {
 
     fn manifest() -> JobManifest {
         JobManifest {
+            require_approval: false,
             program: PathBuf::from("/jobs/x.ax"),
             intent: "demo".into(),
             seed: 42,

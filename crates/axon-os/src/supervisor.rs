@@ -87,6 +87,7 @@ mod tests {
 
     fn manifest(net_grant: bool) -> JobManifest {
         JobManifest {
+            require_approval: false,
             program: PathBuf::from("/jobs/x.ax"),
             intent: "demo".into(),
             seed: 42,

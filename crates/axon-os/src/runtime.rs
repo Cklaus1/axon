@@ -212,10 +212,18 @@ fn run_bounded(
 }
 
 /// R27/R29: read the kill file and return true if the latch is tripped.
+///
+/// Same rule as `killchan::FileKillChannel::poll` — the finding (OSK-P4-H7)
+/// names both readers, and two readers of one channel disagreeing is how the
+/// contradiction got there in the first place:
+///
+///   - `NotFound`                 → not tripped (a valid steady state)
+///   - any other read failure     → TRIPPED (the state cannot be determined)
 fn is_kill_file_tripped(path: &std::path::Path) -> bool {
     match std::fs::read_to_string(path) {
         Ok(s) => s.contains("\"latch\":\"tripped\"") || s.contains("\"latch\": \"tripped\""),
-        Err(_) => false,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
     }
 }
 

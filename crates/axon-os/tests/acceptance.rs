@@ -54,6 +54,13 @@ fn examples() -> PathBuf {
 }
 
 /// A unique, fresh temp dir for one test (no clock/random — pid + name).
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn tmp(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("axon-os-acc-{}-{name}", std::process::id()));
     let _ = std::fs::create_dir_all(&d);
@@ -82,62 +89,156 @@ fn os(args: &[&str], axon: &Path, extra_env: &[(&str, &str)]) -> Out {
     }
 }
 
-/// An ABSENT approval token must be REPORTED, not silently treated as a passed
-/// one (triage OSK-P4-H8). The gate is opt-in by the presence of the very
-/// artifact it checks, and an unapproved run used to print nothing at all about
-/// sign-off — so its output and its archived record were indistinguishable from
-/// an approved run's.
+/// The approval STATE MACHINE (triage OSK-P4-H8, decided 2026-09-19).
 ///
-/// This pins the REPORTING, not a policy: a missing token still runs and still
-/// exits 0. Making it exit 8 is an operator decision (the finding proposes
-/// driving it from risk level or a manifest field) and is deliberately not
-/// taken here.
+/// Two independent facts, neither inferred from the other:
+///   * `require_approval` in the manifest — JOB POLICY
+///   * a token on disk                    — RUNTIME EVIDENCE
+///
+/// All four combinations are asserted together, because no single one of them
+/// distinguishes a working gate from a broken one: "refuses when required and
+/// missing" is equally true of a gate that refuses everything, and "runs when
+/// not required" is equally true of a gate that never checks anything.
 #[test]
-fn an_absent_approval_token_is_reported_not_silently_passed() {
+fn approval_policy_and_evidence_are_independent() {
     let Some(axon) = axon_bin() else { return };
-    let d = tmp("approval-absent");
+    let d = tmp("approval-matrix");
     let prog = d.join("p.ax");
+    // No effects: the grant below is empty, and a `println` would exit 8 on the
+    // SANDBOX check — which would make this test measure the wrong mechanism.
     std::fs::write(&prog, "fn main() -> i64 {\n  0\n}\n").unwrap();
-    let job = d.join("j.axjob");
+
+    let write_job = |require: bool| {
+        let job = d.join("j.axjob");
+        std::fs::write(
+            &job,
+            format!(
+                "program = \"{}\"\nintent = \"t\"\nseed = 1\n{}[grant]\nfs_read = []\n\
+                 fs_write = []\nnet = []\nexec = \"none\"\nmax_label = \"internal\"\n\
+                 [grant.budget]\ncalls = 5\n",
+                prog.display(),
+                if require {
+                    "require_approval = true\n"
+                } else {
+                    ""
+                }
+            ),
+        )
+        .unwrap();
+        job
+    };
+    let token = d.join("j.approval");
+    let go = |job: &Path| {
+        os(
+            &["run", job.to_str().unwrap(), "--out", d.to_str().unwrap()],
+            &axon,
+            &[],
+        )
+    };
+
+    // 1. not required + no token → RUNS, and states the policy rather than
+    //    warning about a state that is exactly as configured.
+    let job = write_job(false);
+    let _ = std::fs::remove_file(&token);
+    let out = go(&job);
+    assert_eq!(out.code, 0, "not-required must run: {}", out.stdout);
+    assert!(
+        out.stdout.contains("Approval: not required"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("verified"),
+        "must not claim a verification it did not do: {}",
+        out.stdout
+    );
+
+    // 2. REQUIRED + no token → REFUSES.
+    let job_req = write_job(true);
+    let out = go(&job_req);
+    assert_eq!(
+        out.code, 8,
+        "required-but-missing must refuse: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("approval required but missing"),
+        "and say which of the two facts is absent: {}",
+        out.stdout
+    );
+
+    // 3. REQUIRED + INVALID token → REFUSES (a different reason from 2).
     std::fs::write(
-        &job,
+        &token,
+        "{\"schema\":\"axon-approval/1\",\"program_digest\":\"axsha256:0\",\
+         \"grant_digest\":\"axsha256:0\",\"approved_by\":\"x\",\"decision\":\"approved\",\
+         \"risk\":\"low\",\"token_digest\":\"axtok1:0\"}",
+    )
+    .unwrap();
+    let out = go(&job_req);
+    assert_eq!(out.code, 8, "invalid token must refuse: {}", out.stdout);
+    assert!(
+        !out.stdout.contains("required but missing"),
+        "a PRESENT-but-invalid token is a different failure from an absent one: {}",
+        out.stdout
+    );
+
+    // 4. An invalid token refuses even when policy does NOT require approval —
+    //    someone signed this and the signature does not hold.
+    let out = go(&job);
+    assert_eq!(
+        out.code, 8,
+        "an invalid token is a failure regardless of policy: {}",
+        out.stdout
+    );
+
+    // 5. THE POSITIVE CONTROL, and the case without which the rest prove
+    //    nothing: REQUIRED + a VALID token must RUN. Every assertion above is
+    //    equally satisfied by a gate that refuses whenever require_approval is
+    //    set, which would be a broken gate that passes a security test.
+    let grant = axon_os::grant::Grant {
+        fs_read: vec![],
+        fs_write: vec![],
+        net: vec![],
+        exec: axon_os::grant::ExecPolicy::None,
+        max_label: axon_os::grant::Label::Internal,
+        budget: axon_os::grant::Budget {
+            calls: 5,
+            tokens: 0,
+            cost_micro: 0,
+        },
+    };
+    let unit = '\u{1f}';
+    let prog_src = std::fs::read_to_string(&prog).unwrap();
+    let pd = format!("axsha256:{}", sha256_hex(prog_src.as_bytes()));
+    let gd = format!(
+        "axsha256:{}",
+        sha256_hex(axon_os::approval::canonical_grant(&grant).as_bytes())
+    );
+    let canon = format!("{pd}{unit}{gd}{unit}auditor{unit}approved{unit}low");
+    let td = format!("axtok1:{}", sha256_hex(canon.as_bytes()));
+    std::fs::write(
+        &token,
         format!(
-            "program = \"{}\"\nintent = \"t\"\nseed = 1\n[grant]\nfs_read = []\n\
-             fs_write = []\nnet = []\nexec = \"none\"\nmax_label = \"internal\"\n\
-             [grant.budget]\ncalls = 5\n",
-            prog.display()
+            "{{\"schema\":\"axon-approval/1\",\"program_digest\":\"{pd}\",\
+             \"grant_digest\":\"{gd}\",\"approved_by\":\"auditor\",\
+             \"decision\":\"approved\",\"risk\":\"low\",\"token_digest\":\"{td}\"}}"
         ),
     )
     .unwrap();
-    assert!(
-        !job.with_extension("approval").exists(),
-        "precondition: no token"
-    );
-    // The grant is empty, so the program must need NO effects — a `println`
-    // here would exit 8 on the sandbox check and this test would be measuring
-    // the sandbox instead of the approval report.
-
-    let out = os(
-        &["run", job.to_str().unwrap(), "--out", d.to_str().unwrap()],
-        &axon,
-        &[],
-    );
+    let out = go(&job_req);
     assert_eq!(
         out.code, 0,
-        "an absent token must NOT change the outcome: {}",
+        "required + VALID token must RUN — otherwise the gate just refuses \
+         everything: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("NOT APPROVED"),
-        "an absent token must be reported: {}",
+        out.stdout.contains("required and verified"),
+        "and must say both facts held: {}",
         out.stdout
     );
-    // The inverse matters as much: it must not CLAIM verification it did not do.
-    assert!(
-        !out.stdout.contains("approval verified"),
-        "an unapproved run must never claim verification: {}",
-        out.stdout
-    );
+    let _ = std::fs::remove_file(&token);
 }
 
 // ── A1: the end-to-end operator journey through the real CLI ─────────────────
