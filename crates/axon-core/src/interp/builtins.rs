@@ -3922,10 +3922,26 @@ impl<'p> Interp<'p> {
             // AUDIT T3: `sandbox_create_scoped(principal, effects, fs_read,
             // fs_write, net) -> i64`. As `sandbox_create`, but the fs/net
             // effects are restricted to the given comma-separated path prefixes
-            // and host globs. An EMPTY string means "unscoped" (grant with no
-            // argument restriction) so this is a strict superset of
-            // `sandbox_create`; a non-empty list means every read_file /
-            // write_file path, and every net host, must match an entry.
+            // and host globs.
+            //
+            // `""` DENIES EVERYTHING in that dimension; `"*"` is unrestricted.
+            //
+            // The empty string used to mean "unscoped", which read as
+            // permissive to the code and as deny-all to everyone else — and it
+            // is the OPPOSITE of the sibling convention, where
+            // `AXON_ALLOWED_EFFECTS=` empty means "deny every effect, and is
+            // not the same as unset". Same spelling, two mechanisms, inverted
+            // meanings. Measured before the change: a scope of `""` let a call
+            // to an arbitrary host through EVEN when the principal did not
+            // grant net, because the host list was the only thing enforcing it.
+            //
+            // The permissive default that made that convention attractive has
+            // not been removed — it has been MOVED to where it can be read.
+            // `axon-os` now emits `"*"` explicitly for a capability it grants
+            // broadly (see `runtime.rs`), so "easy by default" is a profile
+            // decision stated in the policy, not a meaning smuggled into an
+            // empty string. Tightening a profile later cannot silently change
+            // what a primitive means.
             //
             // This is what makes `@[contained(fs: [write("./out/")])]` mean
             // "may write ./out/" at RUNTIME rather than "may write somewhere".
@@ -3942,6 +3958,9 @@ impl<'p> Interp<'p> {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
+                // `None` = unrestricted, `Some(list)` = must match an entry,
+                // `Some([])` = nothing matches, i.e. deny-all. Only the explicit
+                // `"*"` wildcard produces `None`.
                 let list = |v: &Value| -> Result<Option<Vec<String>>, Flow> {
                     let s = as_str(v)?;
                     let items: Vec<String> = s
@@ -3949,7 +3968,10 @@ impl<'p> Interp<'p> {
                         .map(|x| x.trim().to_string())
                         .filter(|x| !x.is_empty())
                         .collect();
-                    Ok(if items.is_empty() { None } else { Some(items) })
+                    if items.iter().any(|x| x == "*") {
+                        return Ok(None);
+                    }
+                    Ok(Some(items))
                 };
                 let scope = crate::interp::SandboxScope {
                     fs_read: list(&args[2])?,

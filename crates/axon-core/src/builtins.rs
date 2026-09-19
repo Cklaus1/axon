@@ -1599,7 +1599,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
             ("net", "str"),
         ],
         ret: "i64",
-        doc: "AUDIT T3: as `sandbox_create`, but SCOPES the fs/net effects to comma-separated path prefixes and host globs. An empty string means unscoped (no argument restriction), so this is a strict superset of `sandbox_create`. A non-empty list means every read_file/write_file path and every net host must match an entry, or the call is a SandboxViolation (exit 8). Matching reuses the static @[contained] helpers, including their refusal of any `..` component. Interp-only (codegen E0910-refused).",
+        doc: "F5 + AUDIT T3: like `sandbox_create`, but the fs/net effects are \
+              restricted to comma-separated path prefixes and host globs. `\"\"` \
+              DENIES everything on that axis; `\"*\"` is unrestricted; a list \
+              means every path/host must match an entry. Matches the \
+              `AXON_ALLOWED_EFFECTS` convention, where an empty value denies. \
+              Broad authority is stated explicitly (`\"*\"`) rather than implied \
+              by an empty list — see the capability-profile policy. Interp-only."
     },
     BuiltinFn {
         name: "sandbox_run",

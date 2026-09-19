@@ -2,6 +2,44 @@
 
 AI-optimized, statically-typed systems language. Compiles to native via LLVM 17.
 
+## Capability policy — easy by default, explicit lockdown when needed
+
+Axon defaults to a **permissive developer experience**: a normal project works
+out of the box — network on, workspace readable and writable, subprocesses
+allowed — so package managers, git and HTTP APIs need no setup.
+
+That permissiveness lives in a **named profile**, never in what a low-level
+primitive silently means:
+
+| Profile | fs_read / fs_write | net | exec |
+|---|---|---|---|
+| `developer` (default) | `["*"]` | `["*"]` | any |
+| `balanced` | `["./"]` | `["*"]` | any |
+| `restricted` | `[]` | `[]` | none |
+| `hermetic` | `[]` | `[]` | none |
+
+A job manifest picks one with `profile = "…"` (absent ⇒ `developer`; a
+misspelling is an ERROR, never a silent fall back to the permissive default).
+An **omitted** dimension takes the profile's default and is MATERIALISED into
+the grant, so `axon-os` writes back `net = ["*"]` rather than leaving it blank.
+An **explicitly empty** `net = []` means no network — "I did not say" and "I
+said none" are now different statements.
+
+Underneath, the authority primitives are unambiguous:
+`sandbox_create_scoped(p, effects, fs_read, fs_write, net)` reads **`""` as
+deny-all** and **`"*"` as unrestricted**, matching `AXON_ALLOWED_EFFECTS`, where
+an empty value already meant "deny every effect".
+
+This inverts the previous low-level reading, where an empty list meant
+"unscoped". That convention made the policy invisible and the two sibling
+mechanisms contradict each other: a grant naming no hosts read as deny-all to
+every human and as allow-all to the runtime. Measured before the change — a
+scope of `""` let a call to an arbitrary host through *even when the principal
+did not grant net*, because the host list was the only thing enforcing it. The
+default did not get stricter; it moved to where it can be read, so tighter
+profiles can be introduced later without changing what any existing policy
+primitive means.
+
 ## Design Principles
 
 - No null, no exceptions — `Option<T>` and `Result<T,E>` everywhere

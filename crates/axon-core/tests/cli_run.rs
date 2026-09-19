@@ -28442,3 +28442,58 @@ fn three_phase_fixtures_describe_features_this_build_does_not_have() {
         "named-fn-as-value is still refused by design: {ho}"
     );
 }
+
+#[test]
+fn a_scope_list_says_deny_or_unrestricted_and_never_both() {
+    // Product policy: easy by default, explicit lockdown when needed — with the
+    // permissiveness held at the PROFILE layer, not in what a primitive means.
+    //
+    // `sandbox_create_scoped`'s empty string used to mean "unscoped". That read
+    // as deny-all to every human and as allow-all to the runtime, and it was the
+    // inverse of the sibling convention where `AXON_ALLOWED_EFFECTS=` empty
+    // denies every effect. Measured before the change: an empty net scope let a
+    // call to an arbitrary host through EVEN with `principal.net = false`,
+    // because the host list was the only thing enforcing the axis.
+    //
+    // `axon-os` generates this call for every sandboxed job, so a grant that
+    // named no hosts produced unrestricted network. The default did not get
+    // stricter — `axon-os` now emits `"*"` explicitly — but the primitive now
+    // states one thing and means it.
+    let dir = std::env::temp_dir().join(format!("axon_scopesem_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("s.ax");
+    let reach = |net_scope: &str, principal_net: &str| -> bool {
+        std::fs::write(
+            &f,
+            format!(
+                "fn reach(x: i64) -> i64 {{\n  match http_get(\"https://evil.example.com\", \"\") \
+                 {{ Ok(_) => 1  Err(_) => 0 }}\n}}\n\
+                 fn main() {{\n  let p = principal_root(\"p\", {principal_net}, false, false, 100)\n  \
+                 let sb = sandbox_create_scoped(p, \"IO,Net\", \"*\", \"*\", \"{net_scope}\")\n  \
+                 println(to_str(sandbox_run(sb, \"reach\", 0)))\n}}\n"
+            ),
+        )
+        .unwrap();
+        let o = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        // exit 8 == SandboxViolation. Anything else means the sandbox permitted
+        // the call (whether or not the network itself answered).
+        o.status.code() != Some(8)
+    };
+
+    assert!(!reach("", "true"), "an empty scope must DENY, not allow");
+    assert!(
+        !reach("", "false"),
+        "and deny under a principal without net"
+    );
+    assert!(reach("*", "true"), "`*` is how unrestricted is spelled");
+    assert!(
+        !reach("api.trusted.io", "true"),
+        "a host not on the list must still be denied"
+    );
+    assert!(
+        reach("evil.example.com", "true"),
+        "a host ON the list must be allowed"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

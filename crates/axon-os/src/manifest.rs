@@ -37,6 +37,7 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     let mut fs_read: Option<Vec<String>> = None;
     let mut fs_write: Option<Vec<String>> = None;
     let mut net: Option<Vec<String>> = None;
+    let mut profile: Option<crate::profile::Profile> = None;
     let mut exec: Option<ExecPolicy> = None;
     let mut max_label: Option<Label> = None;
     let mut calls: Option<i64> = None;
@@ -74,6 +75,14 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
             ("grant", "fs_read") => fs_read = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),
             ("grant", "fs_write") => fs_write = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),
             ("grant", "net") => net = Some(parse_arr(val).ok_or_else(|| bad(where_()))?),
+            // The capability POSTURE. Absent = developer (easy by default);
+            // a misspelling is refused rather than falling back to it.
+            ("", "profile") | ("grant", "profile") => {
+                profile = Some(
+                    crate::profile::Profile::parse(val.trim().trim_matches('"'))
+                        .map_err(|e| bad(format!("{}: {e}", where_())))?,
+                )
+            }
             ("grant", "exec") => {
                 let s = parse_str(val).ok_or_else(|| bad(where_()))?;
                 exec = Some(ExecPolicy::parse(&s).ok_or_else(|| {
@@ -112,11 +121,30 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     }
     let intent = intent.unwrap_or_default();
     let seed = seed.unwrap_or(42);
-    let exec = exec.ok_or_else(|| bad("missing `grant.exec`"))?;
+    let profile = profile.unwrap_or_default();
+    let exec = exec.unwrap_or_else(|| profile.default_exec());
     let max_label = max_label.ok_or_else(|| bad("missing `grant.max_label`"))?;
-    let fs_read = validate_prefixes(fs_read.unwrap_or_default(), "fs_read")?;
-    let fs_write = validate_prefixes(fs_write.unwrap_or_default(), "fs_write")?;
-    let net = net.unwrap_or_default();
+    // An OMITTED dimension takes the profile's default; an explicitly written
+    // one is honoured as-is, including an explicitly empty `[]`.
+    //
+    // This is where "easy by default" lives. It used to live in the runtime,
+    // where an empty list was read as unrestricted — so a manifest that said
+    // nothing about the network got unrestricted network, and a manifest that
+    // said `net = []` got the same thing. Those are opposite intentions and
+    // they produced identical behaviour.
+    //
+    // Now the default is MATERIALISED: omit `net` under the developer profile
+    // and the grant records `["*"]`, which is what `to_axjob` will write back
+    // and what the runtime will enforce. Say `net = []` and you get no network.
+    let fs_read = validate_prefixes(
+        fs_read.unwrap_or_else(|| profile.default_fs_read()),
+        "fs_read",
+    )?;
+    let fs_write = validate_prefixes(
+        fs_write.unwrap_or_else(|| profile.default_fs_write()),
+        "fs_write",
+    )?;
+    let net = net.unwrap_or_else(|| profile.default_net());
 
     let budget = Budget {
         calls: nonneg(calls.unwrap_or(0), "budget.calls")?,
@@ -313,11 +341,56 @@ cost_micro  = 1000000
     }
 
     #[test]
-    fn empty_grant_and_defaults() {
+    fn omitted_dimensions_take_the_profile_default_explicitly() {
+        // Product policy: easy by default. A manifest that says nothing about
+        // the filesystem or the network gets the DEVELOPER profile's grant, and
+        // that grant is MATERIALISED as `*` rather than left empty.
+        //
+        // This test used to assert the lists came back empty, which was true and
+        // meaningless: an empty list was then read as "unrestricted" by the
+        // runtime, so `[]` and `["*"]` behaved identically while saying opposite
+        // things. The policy did not change — where it is written down did.
         let src = "program = \"pure.ax\"\n[grant]\nexec = \"none\"\nmax_label = \"public\"\n";
         let m = p(src).expect("empty grant ok");
         assert_eq!(m.seed, 42); // default
-        assert!(m.grant.fs_read.is_empty() && m.grant.net.is_empty());
+        assert_eq!(m.grant.fs_read, vec!["*".to_string()]);
+        assert_eq!(m.grant.net, vec!["*".to_string()]);
+        // ...but an EXPLICIT setting is still honoured, on its own axis only.
+        assert_eq!(m.grant.exec, ExecPolicy::None);
         assert_eq!(m.grant.budget.calls, 0);
+    }
+
+    #[test]
+    fn an_explicitly_empty_list_denies_rather_than_defaulting() {
+        // The distinction the old model could not express: "I did not say" vs
+        // "I said none". Omitted takes the profile default; `[]` means deny.
+        let src = "program = \"pure.ax\"\n[grant]\nnet = []\nexec = \"none\"\n\
+                   max_label = \"public\"\n";
+        let m = p(src).expect("explicit empty ok");
+        assert!(m.grant.net.is_empty(), "an explicit [] must stay empty");
+        assert_eq!(
+            m.grant.fs_read,
+            vec!["*".to_string()],
+            "and must not affect an axis the manifest did not mention"
+        );
+    }
+
+    #[test]
+    fn a_tighter_profile_grants_nothing_implicitly() {
+        let src = "program = \"pure.ax\"\nprofile = \"hermetic\"\n[grant]\n\
+                   max_label = \"public\"\n";
+        let m = p(src).expect("hermetic ok");
+        assert!(m.grant.net.is_empty());
+        assert!(m.grant.fs_read.is_empty());
+        assert!(m.grant.fs_write.is_empty());
+        assert_eq!(m.grant.exec, ExecPolicy::None);
+    }
+
+    #[test]
+    fn a_misspelled_profile_is_refused_not_silently_permissive() {
+        let src = "program = \"pure.ax\"\nprofile = \"restrcted\"\n[grant]\n\
+                   max_label = \"public\"\n";
+        let e = p(src).expect_err("a typo must not yield the developer grant");
+        assert!(format!("{e:?}").contains("unknown profile"), "{e:?}");
     }
 }
