@@ -27343,10 +27343,29 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     )
     .unwrap();
 
+    // PIN THE COMPILER. The cache key deliberately mixes the compiler
+    // executable's path, size and MTIME (main.rs, "AUDIT T38") so a rebuilt
+    // compiler can never serve the previous one's cached object. That is a
+    // soundness property and is correct.
+    //
+    // It also made this test flaky under `cargo test --workspace`: cargo can
+    // rebuild `target/debug/axon` between the two builds below, which changes
+    // the binary's identity, which legitimately mints a NEW key — and the
+    // assertion "an unchanged rebuild must reuse its key" then fails with
+    // left: 4, right: 3. Measured: two builds with one binary reuse the entry
+    // (1 -> 1); the same source built by a COPY with a different path+mtime
+    // creates a second (-> 2).
+    //
+    // So the test was asserting something untrue in an environment where the
+    // compiler can change underneath it. Copying the binary once gives this
+    // test a compiler identity nothing else can touch.
+    let pinned = dir.join("axon-pinned");
+    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &pinned).unwrap();
+
     // A private cache dir, so this test neither reads nor pollutes the user's.
     let build = |tag: &str| -> Option<String> {
         let bin = dir.join(format!("{tag}.bin"));
-        let o = axon()
+        let o = Command::new(&pinned)
             .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
             .args(["--cache-dir", cache.to_str().unwrap()])
             .env("AXON_PATH", &dir)
