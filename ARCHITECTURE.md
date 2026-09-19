@@ -107,6 +107,7 @@ codegen-disagrees-with-HM bug is a live category.
 | `axon-ai` | live model routing — provider codecs, gateway URL, keys, tiers |
 | `axon-audit` | the capability audit ledger (append-only, integrity-checked) |
 | `axon-web` | the approval-flow UI: a thin JSON proxy over the Phase-10 CLI verbs |
+| `axon-cortex` | the Cortex control-plane slice: typed contracts, an authority-checked repair episode, and its conformance run. A library plus its gates — **no CLI verb calls it yet**, so nothing here is on a user's path |
 | `axon-vm` | confidential microVM substrate, attestation, cross-VM quorum |
 | `axon-os` | supervisor: bounded jobs, operator kill, compliance monitor |
 | `axon-wasm` | the interpreter as a wasm cdylib (browser tier) |

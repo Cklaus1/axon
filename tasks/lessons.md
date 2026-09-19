@@ -546,3 +546,30 @@ is wrong" from "the verifier is broken." Those call for opposite responses.
 **Rule:** a fail-closed default settles the verdict, not the record. Where a
 result is written down for someone else to act on, keep three outcomes —
 passed / failed / did-not-run — even when two of them share a verdict.
+
+## A gate that only fails in-suite is measuring the harness, not the code
+
+`claims_gate` reported two failures under `cargo test --workspace` and passed
+every time I ran it by hand. Both were false positives with environmental
+causes:
+
+- It warned that `RUSTUP_TOOLCHAIN` was shadowing the pin. But **cargo exports
+  that variable into every process it spawns**, set to the pinned toolchain
+  with the host triple appended — so the check fired on presence when it meant
+  to fire on disagreement. It could never have been quiet in-suite.
+- Its bare-filename fallback ran `find .` with `-not -path ./target/*`, which
+  FILTERS but still DESCENDS into `target/` — a directory being rewritten
+  continuously by the very suite the gate runs inside. The race made an
+  existing file read as missing, in-suite only.
+
+**Rule:** when a check disagrees with itself between a manual run and a suite
+run, the difference is the finding. Don't re-run hoping for green, and don't
+label it flaky — reproduce the suite's environment (here: one env var, and a
+concurrently-written build dir) and the cause is usually immediate.
+
+**And the corollary that paid:** tightening the search to real source roots
+exposed a defect the loose one had been hiding. Both cited documents live in
+`.archive/` — the old `find .` was satisfying the claim from copies sitting in
+stale agent worktrees under `.claude/`. A check with too wide a search space
+passes for reasons unrelated to the claim. Same family as
+[[example-sweep-is-not-the-corpus]].

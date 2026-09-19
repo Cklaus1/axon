@@ -171,7 +171,15 @@ for p in $paths; do
   fi
   case "$p" in
     */*) gone="$gone $p" ;;   # a path claim unresolvable under any documented root
-    *)   find . -name "$p" -not -path "./target/*" -not -path "./.git/*" -print -quit 2>/dev/null \
+    # PRUNE target/ and .git/ rather than filtering them, and search only the
+    # source roots. The filtering form still DESCENDED into `target/`, which is
+    # being rewritten continuously when the gate runs inside `cargo test` — a
+    # race that made this check report an existing file as missing, but only
+    # in-suite, never when run by hand. A gate whose verdict depends on what
+    # another process is doing to a build directory is not a gate.
+    *)   find crates scripts spec examples governance \
+              \( -name target -o -name .git \) -prune -o \
+              -name "$p" -print -quit 2>/dev/null \
            | grep -q . || gone="$gone $p" ;;
   esac
 done
@@ -244,8 +252,17 @@ if [ -f rust-toolchain.toml ]; then
     ok "toolchain: pinned to $want (rustup absent — cannot check for a shadowing override)"
   else
     active="$(rustup show active-toolchain 2>/dev/null | head -1)"
-    if [ -n "${RUSTUP_TOOLCHAIN:-}" ]; then
-      warn toolchain_env "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN overrides rust-toolchain.toml ($want) — unset it, or the pin does nothing"
+    # `cargo` EXPORTS RUSTUP_TOOLCHAIN into every process it spawns, so this
+    # variable is always set when the gate runs under `cargo test` — where it
+    # names the pinned toolchain itself, with the host triple appended. Warning
+    # there is a false alarm, and it fired on every in-suite run. What matters is
+    # whether the env names a DIFFERENT toolchain than the pin, so compare after
+    # stripping the host suffix rather than merely testing for presence.
+    env_tc="${RUSTUP_TOOLCHAIN:-}"
+    env_channel="${env_tc%%-x86_64-*}"
+    env_channel="${env_channel%%-aarch64-*}"
+    if [ -n "$env_tc" ] && [ "$env_channel" != "$want" ]; then
+      warn toolchain_env "RUSTUP_TOOLCHAIN=$env_tc overrides rust-toolchain.toml ($want) — unset it, or the pin does nothing"
     elif echo "$active" | grep -q "directory override"; then
       warn toolchain_override "a rustup DIRECTORY OVERRIDE is shadowing rust-toolchain.toml: active is '$active' but the repo pins '$want'. Run \`rustup override unset\` in this directory. This is the state that produced 38 files of fmt drift: the override followed ROLLING nightly, so local rustfmt changed on every \`rustup update\` while CI ran a different toolchain entirely."
     elif echo "$active" | grep -q "$want"; then
