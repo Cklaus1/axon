@@ -149,3 +149,60 @@ the test.
 Both are candidates for Cortex skill crystallisation: they are strategies about
 where to look, not facts about Axon, so they should transfer to other compilers
 and runtimes.
+
+## The heuristic's first independent find — OPEN, not fixed
+
+Running the probe above (steps 1-3, mechanically) over `codegen/`, `interp/`
+and `axon-rt` produced 5 candidates. Four were placeholders on an
+already-failing build, which is sound. The fifth is a silent wrong answer in
+the MAIN native backend.
+
+**`codegen/mod.rs`, the `None if !matches!(ret_sem, Type::Unit)` arm:**
+"No value from body but function has non-void return type: emit a zero value
+of the appropriate type to keep IR valid."
+
+Reachability was MEASURED, not argued. Instrumented that branch and built all
+328 `.ax` programs under `examples/` and `tests/fixtures/`:
+
+| outcome | count |
+|---|---|
+| never reached | 295 |
+| reached on a build that then ABORTED (sound placeholder) | 31 |
+| **reached on a build that SUCCEEDED** | **2** |
+
+The two are `examples/asi/search_rank.ax` (`score_clean`, `redteam`) and
+`crates/axon-core/tests/fixtures/ai_extract_uncertain.ax` (`confident_count`,
+whose `Result<i64,str>` zero is tag 0 = `Err` with an empty message).
+
+Minimal repro, isolated to one construct:
+
+```
+fn pick(s: str) -> i64 {
+    match ai_extract_uncertain_i64(s) {
+        Ok(u) => { if u.value > 0 { 7 } else { 3 } }
+        Err(_) => 5
+    }
+}
+```
+`AXON_AI_MOCK=1` — interp `7`, native `0`, build clean, no diagnostic.
+
+Controls that make the mechanism exact:
+* the same match with NO field read (`Ok(_) => 7`) agrees: interp 7, native 7
+* `u.source_tag` instead of `u.value` also fabricates (interp 3, native 0)
+
+So it is reading ANY field off an `Uncertain<T>` bound in a `Result` match arm
+that makes the whole function return a fabricated value. **0 is outside
+`pick`'s range** — its arms are 7, 3 and 5 — which is as clean a proof that the
+value is invented as this class allows.
+
+This also corrects a claim from the sweep: the `uncertain` agent reported that
+reading `source_tag` out of a `Result<Uncertain<i64>,_>` is E0910-REFUSED
+natively. It is not. It builds clean and fabricates. The agent inferred the
+refusal rather than observing the built binary's output.
+
+Fix approach (deliberately NOT applied yet — the strict gate has not run on the
+current batch): the zero-emission is legitimate ONLY as a placeholder after a
+codegen error has been recorded. Record an E0910 naming the function when a
+non-Unit body lowers to nothing, so the general case becomes a refusal instead
+of an invented value. Regression check must confirm the 2 silent programs now
+refuse AND that none of the 295 previously-clean programs starts failing.
