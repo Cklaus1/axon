@@ -630,3 +630,58 @@ said fine.
 Someone had already been burned by exactly this and built the guard. That is
 what the fix looks like when it is done properly: not a repaired instance, but
 a wrapper that cannot be lied to.
+
+## Applying the skills, round 2 — what they found
+
+The three skills were crystallised and then immediately run against the repo.
+
+### `feed-the-gate-a-rejectable-case` / the invoked-by-nothing probe
+
+Five pieces of PASSING verification were running nowhere, found in two rounds:
+
+| script | what it verifies | status |
+|---|---|---|
+| `ebpf_verify.sh` | Axon→eBPF object ACCEPTED by the in-kernel verifier | wired |
+| `tee_sim_run.sh` | TEE baseline + type rule | wired |
+| `r33_acceptance_gate.sh` | R33 §0 checks | wired |
+| `r34_acceptance_gate.sh` | stamp → verify → tamper → BROKEN chain, via the real CLI | wired |
+| `r39_slice1_gate.sh` | R39 Slice 1 §0 checks | wired |
+
+Plus `scripts/r34_orig_tmp.sh`: the PRE-FIX copy of the R34 gate, committed as
+a backup by the very change that strengthened it. A weaker version of a gate
+outlived the fix that removed its weakness. Deleted, and the admission gate now
+rejects editing-artifact names generally.
+
+### `documented-limitation-fabricates-value` extended to the other 19 crates
+
+The original sweep only covered `axon-core` and `axon-rt`. Across the remaining
+19 crates: **one** candidate, and it is security-relevant.
+
+`crates/axon-guest-kernel/src/enforce.rs` — the guest kernel's effect bitmask:
+
+    /// Default 0xFF matches the open-policy mmds.rs stub so the kernel boots
+    /// even if K2 hasn't filled in a real policy yet.
+    static mut ALLOWED_EFFECTS: u64 = 0xFF;
+
+A security default chosen for convenience during bring-up and then left. Its
+sibling module had ALREADY learned this exact lesson and written it down (T48,
+`mmds.rs`): a policy that fails to decode "used to fall through and leave
+ALLOWED_EFFECTS at the static default, which was 0xFF. Refuse explicitly and
+say so, rather than relying on the static happening to be right." That fix set
+a closed policy on the mmds side and left this static open — so two halves of
+one concept disagreed about which way to fail.
+
+**Not reachable today, and that is stated rather than glossed:** `enforce::init`
+is the only caller that sets the SCE bit enabling SYSCALL, so if it never runs
+the handler never runs and the value is never read. The coupling between
+"enable the gate" and "install the policy" is the entire safety argument, and
+it is one refactor away from not holding.
+
+Changed to deny-all on the same reasoning as the `while let` fallback: zero
+behavioural change while the coupling holds (init overwrites it before enabling
+the gate), and the difference between a closed door and an open one if it stops
+holding.
+
+**STATUS: uncommitted pending the QEMU boot test.** Building in the main repo
+while the strict gate runs in another worktree previously broke that gate's
+`dict_parity` harness, so the verification is deferred rather than skipped.
