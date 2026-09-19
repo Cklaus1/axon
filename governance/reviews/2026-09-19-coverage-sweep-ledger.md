@@ -328,3 +328,59 @@ Method note: the probe that produced "native printed nothing" for one of these
 was BROKEN — the build had aborted and the binary did not exist, so the run
 was exit 127. Checking the exit code rather than trusting empty stdout caught
 it. An empty result and a missing artifact look identical until you ask.
+
+### Scope correction: this is NOT an Uncertain/AI defect
+
+It is a core-language defect that happens to have been found through an AI
+type. A plain user struct in a `Result`, field read in a match arm:
+
+    type P = { x: i64, y: i64 }
+    fn mk(b: bool) -> Result<P, str> { if b { Ok(P { x: 4, y: 9 }) } else { Err("no") } }
+    fn f() -> i64 { match mk(true) { Ok(p) => p.y  Err(_) => 0 - 1 } }
+
+`axon run` 9, native **0**, build clean, no diagnostic, no AI anywhere. Any
+ordinary program matching a `Result<Struct, E>` and reading a field is exposed.
+
+Boundary, measured — the mechanism is narrower and more specific than
+"match-arm bindings are broken":
+
+| shape | native | verdict |
+|---|---|---|
+| scalar payload, `Ok(n) => n * 2` | agrees | fine — scalars carry their type |
+| struct payload passed WHOLE to a fn, `Ok(p) => take(p)` | agrees | fine — the binding IS a usable value |
+| **struct payload, FIELD read, `Ok(p) => p.y`** | **0** | **fabricates** |
+| **struct in an OPTION payload, `Some(p) => p.y`** | **0** | **fabricates** |
+| **two field reads, let-bound Result then matched** | **0** | **fabricates** |
+| `Uncertain<i64>` payload, `Ok(u) => u.value` | **0** | **fabricates** |
+| `Uncertain<f64>` payload, `Ok(u) => u.confidence` | **0** | **fabricates** |
+| `let p = P {…}` then `p.y` (control) | agrees | fine — let-bindings carry their type |
+
+So it is FIELD ACCESS on a match-arm-bound struct-shaped payload, in both
+`Result` and `Option`. The binding lowers fine as a whole value; only the
+field access needs the semantic type it does not have.
+
+That the corpus sweep found only 2 programs is therefore not reassurance — the
+corpus simply contains few programs of this shape, not few programs at risk.
+
+### Sourcing the "unsupported neighbour" row
+
+The three-row proof needs a shape that is silent now, refuses after B, and
+STILL refuses after C — otherwise C could widen the feature surface while
+quietly reopening the floor.
+
+That shape should NOT be guessed now. The honest source is B's own corpus
+diff: whichever programs B flips to refusal and C does not subsequently fix
+are by construction the neighbours. Picking one in advance risks choosing a
+shape C happens to cover, which would prove nothing.
+
+`f64_to_i64(u.confidence * 100.0)` is a weaker but already-available candidate:
+it refuses TODAY, so it demonstrates "C did not weaken an existing refusal",
+though not "B converted a silent case".
+
+### Method note — a comparison harness that agreed on two failures
+
+While mapping the above, one probe reported "agree" for a program whose
+interpreter run had exited 2 on a type error. Comparing stdout alone made two
+FAILING runs agree trivially. The harness now rejects a run whose output
+carries a diagnostic before comparing. Same family as the exit-127 slip
+earlier: absence of output is not a result.
