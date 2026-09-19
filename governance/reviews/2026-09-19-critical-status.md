@@ -147,6 +147,32 @@ recorded in its own section with the decision it needs.
 Sampled so far: 27 of 78 confirmed HIGH, of which two (GATE-05, OSK-P4-H8) were
 still open — both now addressed.
 
+## HIGH tier — complete (D7)
+
+All 78 confirmed-HIGH findings are now accounted for:
+
+| status | n | how |
+|---|---|---|
+| verified closed by reproduction or direct read | 37 | run the finding's own repro against a HEAD build |
+| cited by an `AUDIT T##` fix marker naming the finding ID | 19 | the fix records which finding it closes |
+| content-duplicates of findings verified above | ~20 | e.g. `P4-CG-02`=F061, `P4-CG-03`=F062, `P5-POS-01`=P5-25, `P6-GATE-01`=GATE-01, `P4-OS-08/09/10`=OSK-P4-H6/H7/H8 |
+| **found still open and FIXED in this pass** | 2 | `GATE-05` (a skipped stage ended in "safe to deploy"), `OSK-P4-H8` (approval gate opt-in by file presence) |
+
+Final-batch spot checks, all passing:
+
+- `P4-PROD-05` — a misspelled `--risk criticl` now errors explicitly instead of
+  silently deploying at `risk:"low"`.
+- `P4-FE-01` — an impure LAMBDA body inside `@[pure]` now raises E1207; the
+  purity walker used to treat `Expr::Lambda` as a terminal leaf.
+- `P5-HOUR-01` / `DOC-03` — `axon deploy` on the repo's own hello-goal no longer
+  panics in `assert_deployable`; it reports a clean E1300 AI-policy error.
+- `P4-PROD-08` — `intent compile --json` both reports the path AND writes the
+  file (91 lines), rather than returning before the write.
+
+`P7-PERF-01` (an array clone in the Index arm) and `P5-ECO-03` (only 5 JSON
+builtins) are recorded by the triage itself as a performance note and a stdlib
+gap rather than defects, and are not counted as open.
+
 ## Open, and left for an operator decision
 
 These are all `behavior_change: true` in the triage and change WHEN A JOB DIES
