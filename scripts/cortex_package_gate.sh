@@ -110,13 +110,15 @@ for root, _dirs, files in os.walk(pkg):
 # so any FURTHER change to it still fails. The deviation lives in this script
 # rather than a data file so that adding one requires a reviewable code edit.
 # Removing it means re-vendoring the file with its upstream bytes.
-DEVIATIONS = {
-    "package_validation.json": (
-        "cb2deaf7a7fb64da94d3fca150690715aa6e3b5325b649857ffb03297c01e421",
-        "upstream digest is adb80ef7...; the intake run of tools/validate_package.py "
-        "overwrote this file with a fresh validated_at timestamp before it was committed",
-    ),
-}
+# Deliberately EMPTY. A deviation was briefly needed here: the intake run of
+# `tools/validate_package.py` defaults `--report` to <root>/package_validation.json,
+# which is itself hash-listed, so verifying the package MUTATED it and the
+# mutated copy was committed. The cause is fixed in two places instead — the
+# pristine bytes are restored, and this gate passes `--report` to target/ so the
+# footgun cannot re-fire — which leaves this map with nothing legitimate to
+# hold. It stays as a named, reviewable mechanism rather than an implicit one:
+# a future deviation must be added here with a reason, not tolerated silently.
+DEVIATIONS: dict[str, tuple[str, str]] = {}
 
 bad = []
 verified = 0

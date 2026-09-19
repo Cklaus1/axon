@@ -82,6 +82,15 @@ echo "── gate: VISION.md focus ───────────────
 # intended. Cheap (~1s over the index), so it runs on every gate, not --strict.
 ./scripts/artifact_admission_gate.sh >/dev/null || fail "artifact admission (generated output is tracked as source)"
 
+# The vendored Cortex v0.15 package: integrity in BOTH directions plus the
+# honesty invariant. That package proposes 247 product gates, every one marked
+# NOT_RUN, and it is scrupulous about saying so — but the NOT_RUN field does not
+# travel when an ID is copied into a status table, and this repo already had 7
+# of 37 cited gates invoked by nothing. This fails if a gate's result moves off
+# NOT_RUN without a registry row naming a script that gate.sh actually invokes.
+# 0.15s, no cargo, so it runs on every gate rather than only --strict.
+./scripts/cortex_package_gate.sh >/dev/null || fail "cortex v0.15 package (integrity / honesty invariant)"
+
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of

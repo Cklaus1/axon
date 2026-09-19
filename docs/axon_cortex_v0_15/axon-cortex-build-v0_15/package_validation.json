@@ -1,6 +1,6 @@
 {
   "schema": "cortex-package-validation/1",
-  "validated_at": "2026-09-19T23:06:01.947114+00:00",
+  "validated_at": "2026-09-19T22:20:55.166345+00:00",
   "scope": "Documentation consistency only. No Axon build, runtime, safety gate or model benchmark executed.",
   "result": "PASS",
   "counts": {
