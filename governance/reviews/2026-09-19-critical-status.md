@@ -86,12 +86,47 @@ current state is safe-ish only because `hw_root` is pinned to the software
 stand-in and the measurement digest is compared against a pinned expectation;
 the signature field itself contributes no security today.
 
+## Third pass — the remainder
+
+| finding | what was checked | observed now |
+|---|---|---|
+| P6-COV-02 | ledger truncation undetectable; absent ledger reports "chain verified" | keyed chain with an authenticated tip file; a missing tip is refused ("refusing to treat an unanchored chain as complete"); 15/15 audit tests pass, incl. one that pins the residual post-hoc limit AS documented |
+| DOC-01 / P5-15 / P5-DOC-01 | `axon build` outside the repo fails with ~100 undefined references (`CARGO_MANIFEST_DIR` read at RUNTIME) | builds and runs from an unrelated directory; resolves via `current_exe()`; 0 undefined references |
+| OSK-P4-C1 / P4-INT-01 | duplicates of INTERP-C01 (sandbox exemption) | refused, verified by reproduction above |
+| P5-ECO-01 | duplicate of P5-31 (`fmt` drops `mod`) | preserved, verified by reproduction above |
+| OSK-P4-C2 / P4-OS-02 | grant path prefixes never reach enforcement | **verified END-TO-END**, see below |
+
+### The headline claim, tested as a pair
+
+`§401`/`OSK-P4-C2`/`P4-OS-02` all say the same thing: `fs_write = ["./out/"]`
+parses, type-checks, appears in `axon-os explain`, and then constrains nothing.
+The triage SUMMARY calls this "the project's headline value proposition".
+
+I had originally recorded `§401` as closed because `sandbox_create_scoped`
+CARRIES the allowlists. That was the wrong evidence — a mechanism existing is
+not a mechanism being called, which is exactly the caller-check gap. Re-tested
+with a job whose grant is `fs_write = ["./out/"]`:
+
+- writes `../ESCAPED.txt` → **exit 8**, `builtin write_file is not permitted to
+  write path '../ESCAPED.txt': the active sandbox restricts it to ["./out/"]`,
+  and no file is created;
+- writes `./out/allowed.txt` → **exit 0**, `✓ completed`, and the file IS
+  created.
+
+The positive control is the half that matters: without it, the refusal above
+would read identically if the grant simply blocked every write.
+
 ## Not verified here
 
-These need binaries or environments outside this pass and are NOT claimed
-either way: `OSK-P4-C1`, `OSK-P4-C2`, `OSK-P7-C1`, `OSK-P7-C3` (attest / vm /
-guest-kernel), `P6-COV-02` (ledger truncation), `P6-EXIT-03` (record hash
-chain), `P4-INT-01`, `P4-OS-02`, `P5-15`, `P5-DOC-01`, `P5-ECO-01`, `DOC-01`.
+All of the confirmed-CRITICAL tier has now been checked. The list that stood
+here — `OSK-P4-C1`, `OSK-P4-C2`, `OSK-P7-C3`, `P6-COV-02`, `P6-EXIT-03`,
+`P4-INT-01`, `P4-OS-02`, `P5-15`, `P5-DOC-01`, `P5-ECO-01`, `DOC-01` — is
+resolved in the passes above. `OSK-P7-C1` remains PARTIALLY open and is
+recorded in its own section with the decision it needs.
+
+What is still NOT covered: the MEDIUM (113) and LOW (84) tiers, and the
+majority of the HIGH tier — 78 confirmed HIGH findings of which this pass
+sampled 11.
 
 An unverified finding is not a closed finding — that is the whole reason this
 file distinguishes the three sections above.
