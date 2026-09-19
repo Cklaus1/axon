@@ -29191,7 +29191,6 @@ fn the_ungated_phase_fixtures_are_gated() {
     }
 }
 
-#[test]
 /// Octal literals lex, like hex and binary.
 ///
 /// `0xFF` and `0b1010` both lexed and `parse_int_radix` already stripped an
@@ -29250,8 +29249,9 @@ fn octal_literals_lex_like_hex_and_binary() {
     }
 }
 
+#[test]
 fn two_phase_fixtures_describe_features_this_build_does_not_have() {
-    // The other three of the fourteen do NOT check, and pinning why is the
+    // The other two of the fourteen do NOT check, and pinning why is the
     // point: each names a feature the build does not implement, so a future
     // reader does not mistake an aspirational fixture for a regression.
     //
