@@ -200,6 +200,38 @@ reading `source_tag` out of a `Result<Uncertain<i64>,_>` is E0910-REFUSED
 natively. It is not. It builds clean and fabricates. The agent inferred the
 refusal rather than observing the built binary's output.
 
+### Mechanism, isolated
+
+`emit_field_access` takes the `Uncertain`/`Temporal` GEP path only when
+`sem_type_of_expr(receiver)` says the receiver IS one. A binding introduced by
+a match arm (`Ok(u) =>`) does not carry its payload type into codegen, so `u`
+is not recognised, the specialised path is skipped, the generic struct path
+fails, and the enclosing body lowers to nothing.
+
+The binding's ORIGIN is the whole difference, measured:
+
+| shape | interp | native |
+|---|---|---|
+| `let u = uncertain_new(5, 0.9)` then `u.value` | 7 | **7** |
+| `match ai_extract_uncertain_i64(s) { Ok(u) => … u.value … }` | 7 | **0** |
+| same match, no field read (`Ok(_) => 7`) | 7 | **7** |
+
+So there are two separable fixes, and they are not alternatives:
+
+* **the safety net** — a non-Unit body that lowers to nothing must RECORD an
+  E0910 rather than fabricate. This closes the class for every future construct,
+  not just this one, and is the small change.
+* **the feature** — propagate a match-arm binding's payload type into codegen
+  so the field read lowers correctly. This is the real repair and is larger.
+
+Doing only the feature would leave the next unlowerable construct fabricating
+a value silently, so the safety net is the one that must not be skipped.
+
+Regression baseline for BOTH is captured (328 programs: 166 exit-0, 161 exit-1,
+1 exit-2). After the safety net, exactly the 2 named programs may flip 0 -> 1,
+and nothing else may move — diffed in both directions, since a program that
+starts PASSING unexpectedly is as much a signal as one that starts failing.
+
 Fix approach (deliberately NOT applied yet — the strict gate has not run on the
 current batch): the zero-emission is legitimate ONLY as a placeholder after a
 codegen error has been recorded. Record an E0910 naming the function when a
