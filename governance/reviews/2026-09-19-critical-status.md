@@ -132,8 +132,38 @@ recorded in its own section with the decision it needs.
 | F141 | `@[ai(policy(budget: 1))]` enforced in interp (E1301, exit 5), ignored by native | native REFUSES with E0910 "cannot enforce the AI call budget" |
 | P4-INT-03 | `native::` calls bypass the sandbox check, agent log and ledger | `gfx::window_open` under a `Pure` ceiling → exit 8, `requires effect IO`; control runs clean |
 
-Sampled so far: 19 of 78 confirmed HIGH, of which exactly one (GATE-05) was
-still open.
+### HIGH tier, third sample
+
+| finding | what was checked | observed now |
+|---|---|---|
+| P4-INT-02 | `@[pure] fn g() { host_await(..) }` checks clean | **E1207**, same as the known-impure control |
+| P5-34 | `--features serde-json` fails to compile (non-exhaustive match in lsp.rs) | Decimal/RawPtr/Never handled; the feature build is now IN the gate (AUDIT T15 cites the finding) |
+| OSK-P7-H1 | `"ok"` described the LAUNCHER, not the guest | fixed, with a test whose doc says "before the fix `ok` was `result.is_ok()`" |
+| OSK-P7-H2 | kernel attestation is trust-on-first-use | "no trust-on-first-use" (T32); exits 10 on no pin at all |
+| OSK-P7-H3 | `verify_entries` ignores `seq`, truncation undetectable | takes `expect_count` / `expect_head` and checks both |
+| P4-INT-04 / P4-INT-05 | duplicates of INTERP-H03 / §317 | closed above |
+| **OSK-P4-H8** | approval gate opt-in by file presence; absent token silent | **WAS STILL OPEN.** Reporting half fixed in `416a0b9`; enforcement left as an operator decision |
+
+Sampled so far: 27 of 78 confirmed HIGH, of which two (GATE-05, OSK-P4-H8) were
+still open — both now addressed.
+
+## Open, and left for an operator decision
+
+These are all `behavior_change: true` in the triage and change WHEN A JOB DIES
+or whether it runs at all. Reported with evidence rather than decided here.
+
+- **OSK-P4-H8, enforcement half.** Should a MISSING approval token refuse?
+  The finding proposes defaulting it on at derived risk >= High, or driving it
+  from a manifest field. Today a missing token runs and now says so.
+- **OSK-P4-H7.** `killchan.rs` returns `LatchState::Clear` on ANY read error,
+  while its own module doc states "Fail-closed: poll() error or unknown state →
+  Tripped" and "a channel error MUST be treated as Tripped". Doc and impl
+  contradict. Fail-closed risks killing a job on a transient I/O error;
+  fail-open means a kill switch that silently stops working. Needs a call on
+  which error classes are which — `NotFound` legitimately means "not tripped
+  yet" per CLAUDE.md, but the current `Err(_)` catches everything.
+- **OSK-P4-H6.** `--killable` together with `--monitor` leaves the R27 kill file
+  uncreated, so `axon-os kill` becomes a no-op that still reports TRIPPED.
 
 What is still NOT covered: the MEDIUM (113) and LOW (84) tiers, and the
 majority of the HIGH tier — 78 confirmed HIGH findings of which this pass
