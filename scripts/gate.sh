@@ -208,6 +208,20 @@ if [ "$STRICT" = 1 ]; then
   echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
   ./scripts/parity_all.sh --quiet || fail "parity suite"
 
+  # The per-requirement ACCEPTANCE gates. `r22_acceptance_gate.sh` and
+  # `r44_acceptance_gate.sh` assert the §0 checks their specs declare — the
+  # intent/approve gateway and the accumulating session respectively. Both are
+  # maintained (one was repaired earlier today when a diagnostic string moved)
+  # and both pass, and until now NOTHING ran them: they were referenced only by
+  # their own specs and governance docs, by no script, test or CI job.
+  #
+  # That is the same shape as the CI job named "native/interp parity" that had
+  # never run the parity suite, and as the 14 fixtures reachable from no test.
+  # A gate nobody invokes reports nothing, including when it would have failed.
+  echo "── gate: per-requirement acceptance gates (R22, R44) ────────────"
+  ./scripts/r22_acceptance_gate.sh >/dev/null 2>&1 || fail "R22 acceptance gate"
+  ./scripts/r44_acceptance_gate.sh >/dev/null 2>&1 || fail "R44 acceptance gate"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
