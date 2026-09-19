@@ -1,0 +1,94 @@
+{
+  "band": [
+    0.25,
+    0.85
+  ],
+  "samples_per_task": 8,
+  "tasks": [
+    {
+      "name": "helper_bug_distant",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    },
+    {
+      "name": "nested_inner_bound",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    },
+    {
+      "name": "product_seeded_zero",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 2,
+      "reason": "too_easy"
+    },
+    {
+      "name": "two_defects",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    },
+    {
+      "name": "fib_wrong_combine",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    },
+    {
+      "name": "array_skips_last",
+      "admitted": false,
+      "control_pass_rate": 0.875,
+      "distinct_replies": 2,
+      "reason": "too_easy"
+    },
+    {
+      "name": "struct_fields_swapped",
+      "admitted": false,
+      "control_pass_rate": 0.875,
+      "distinct_replies": 2,
+      "reason": "too_easy"
+    },
+    {
+      "name": "search_returns_early",
+      "admitted": false,
+      "reason": "invalid",
+      "failed": [
+        "broken_fails_visible"
+      ]
+    },
+    {
+      "name": "avg_truncates_early",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    },
+    {
+      "name": "select_max_inverted",
+      "admitted": false,
+      "control_pass_rate": 0.875,
+      "distinct_replies": 3,
+      "reason": "too_easy"
+    },
+    {
+      "name": "range_check_or",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    },
+    {
+      "name": "accumulates_wrong_var",
+      "admitted": false,
+      "control_pass_rate": 1.0,
+      "distinct_replies": 1,
+      "reason": "too_easy"
+    }
+  ]
+}

@@ -67,6 +67,39 @@ class Model:
         )
 
 
+def _sampled(self, prompt, max_new_tokens, seed, temperature=0.7, top_p=0.95):
+    """Temperature sampling with a RECORDED seed.
+
+    Phase 1 used greedy decoding, where the seed is inert — repeated episodes of
+    one (task, arm) reproduced the same bytes, so n=50 was an effective n=10.
+    Sampling makes a repeat a genuine sample; recording the seed keeps it
+    reproducible.
+    """
+    msgs = [{"role": "user", "content": prompt}]
+    text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    ins = self.tok(text, return_tensors="pt").to(self.model.device)
+    self.torch.manual_seed(seed)
+    t0 = time.time()
+    with self.torch.no_grad():
+        out = self.model.generate(
+            **ins, max_new_tokens=max_new_tokens, do_sample=True,
+            temperature=temperature, top_p=top_p,
+            pad_token_id=self.tok.eos_token_id,
+        )
+    wall = time.time() - t0
+    gen = out[0][ins["input_ids"].shape[1]:]
+    return (
+        self.tok.decode(gen, skip_special_tokens=True),
+        {"prompt_tokens": int(ins["input_ids"].shape[1]),
+         "completion_tokens": int(gen.shape[0]),
+         "gen_wall_s": round(wall, 3),
+         "decoding": "sampled", "temperature": temperature, "top_p": top_p},
+    )
+
+
+Model.generate_sampled = _sampled
+
+
 def extract_code(raw):
     """Take the first fenced block, else the whole reply. Recorded either way."""
     if "```" in raw:
