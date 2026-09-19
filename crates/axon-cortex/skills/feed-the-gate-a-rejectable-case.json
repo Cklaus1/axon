@@ -1,0 +1,28 @@
+{
+  "id": "feed-the-gate-a-rejectable-case",
+  "trigger": "A guard, gate, validator or admission check has just been added or changed, and it passes.",
+  "probe": [
+    "construct an input the gate is SUPPOSED to reject",
+    "run it and confirm the gate rejects it, naming the reason",
+    "construct an input the gate must NOT reject — the over-firing control — and confirm it passes",
+    "if the gate spans more than one code path, repeat per path; do not infer coverage of path B from path A",
+    "grep the invariant's SHAPE across the codebase and count the sites; a gate implemented at one of two sites is not a gate"
+  ],
+  "priority": "Immediately after any gate change, before believing a green result. A gate that has never rejected anything is indistinguishable from a gate that cannot.",
+  "evidence": [
+    {
+      "file": "crates/axon-core/src/codegen/expr.rs",
+      "finding": "After a safety net landed forbidding fabricated return values, a closure still built clean and returned a fabricated 0. The invariant was implemented in emit_fn but emit_lambda holds a SECOND site, in a file the implementing agent was forbidden to touch to avoid colliding with parallel work. The diff was correct and complete for every site that agent could see."
+    },
+    {
+      "file": "crates/axon-core/tests/cli_run.rs",
+      "finding": "The same guard, ported without its non-Unit condition, then OVER-FIRED on statement-bodied closures and broke a codegen parity test. Both directions now pinned: a value-returning closure must refuse, a statement closure must build and agree."
+    },
+    {
+      "file": "scripts/wasm_aot_stdout_parity.sh",
+      "finding": "Exited 0 having compared nothing — demonstrated with AXON=/bin/false, which produced '0 match, 0 differ, 42 skipped' and success."
+    }
+  ],
+  "transfers": "This is mutation testing's rule applied one level up: mutation asks whether a TEST would notice a broken implementation; this asks whether a GATE would notice a bad input. Neither can be answered by reading the diff, because in both cases the diff is not wrong.",
+  "limits": "Proves the gate fires on the case you thought of. It says nothing about cases you did not think of, and a gate can still be incomplete in a direction no constructed input reaches."
+}

@@ -1,0 +1,28 @@
+{
+  "id": "instrument-and-sweep-for-reachability",
+  "trigger": "You are about to argue from the code whether a branch can execute — to justify keeping it, deleting it, or calling a defect theoretical.",
+  "probe": [
+    "put a print on the suspect branch naming what it is",
+    "run the whole corpus through it and COUNT, do not sample",
+    "classify the hits: never reached / reached on an already-failing run (often sound) / reached on a SUCCEEDING run (the defect)",
+    "report the counts, including zero — a zero is a measurement, and is reported as 'no witness found', never as 'unreachable'",
+    "remove the instrumentation and verify the tree is byte-identical"
+  ],
+  "priority": "Before deleting code as dead, before keeping code as defensive, and before describing a defect's blast radius in words.",
+  "evidence": [
+    {
+      "file": "crates/axon-core/src/codegen/mod.rs",
+      "finding": "Turned 'can this fabricate?' into 295 never / 31 on aborting builds / 2 on succeeding builds, across 328 programs. The 2 were the real defect; the 31 were a sound placeholder; arguing from the code would have conflated them."
+    },
+    {
+      "file": "crates/axon-core/src/codegen/bpf.rs",
+      "finding": "A guard on whether a branch was 'still open' SURVIVED mutation. Instrumenting showed it could never be consulted — Expr::Return yields None and Expr::Block breaks on a terminator — so it was dead, and a dead guard advertises a handled case that the control flow makes impossible."
+    },
+    {
+      "file": "crates/axon-core/src/codegen/expr.rs",
+      "finding": "A `while let` fallback that compiled to an infinite loop measured 0 of 328. Reported as 'no witness constructed' and NOT claimed as a fixed live defect — the change was justified on the separate ground that it added no dead code."
+    }
+  ],
+  "transfers": "Any codebase with a runnable corpus. It converts the most common reviewer disagreement — 'can that even happen?' — from rhetoric into a number, and distinguishes a sound placeholder from a live defect, which reading cannot.",
+  "limits": "A corpus measures the corpus. Zero hits means no witness in THAT corpus, not unreachable — here 12 programs carried an at-risk shape while only 2 exhibited it, the rest masked by unrelated refusals."
+}

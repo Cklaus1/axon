@@ -1,0 +1,28 @@
+{
+  "id": "documented-limitation-fabricates-value",
+  "trigger": "A comment marks something as a known limitation ('Slice-1', 'for now', 'not yet', 'yields no value') and the surrounding code STILL produces an artifact instead of returning an error.",
+  "probe": [
+    "grep the backend/runtime for limitation-flavoured comments NEAR code that does not return an error",
+    "look BOTH up and down from the comment for a refusal — a refusal frequently precedes the placeholder it makes harmless, and a downward-only search reports false positives",
+    "keep only cases that still produce an artifact: an object file, a value, an exit 0",
+    "keep only cases substituting a literal: const_zero(), unwrap_or_default(), Ok(None) flowing into a default, null",
+    "write the smallest program that reaches it and compare the two engines"
+  ],
+  "priority": "Above any explicitly refused feature. A refusal is visible — the build fails and the author learns. An accepted program returning a fabricated value is invisible by construction, and the documentation around it makes the choice look considered.",
+  "evidence": [
+    {
+      "file": "crates/axon-core/src/codegen/bpf.rs",
+      "finding": "A @[bpf] `if` used as an expression discarded both arms' values and the tail substituted zero: `if ctx > 0 { 7 } else { 3 }` built clean and emitted `r0 = 0; exit` — neither branch, no diagnostic, with a spec citation explaining the choice."
+    },
+    {
+      "file": "crates/axon-core/src/codegen/mod.rs",
+      "finding": "A non-Unit function body that lowered to nothing returned const_zero(). Measured on 328 programs: 295 never reach it, 31 reach it on an already-aborting build (sound), 2 reach it on a SUCCEEDING build."
+    },
+    {
+      "file": "crates/axon-core/src/codegen/expr.rs",
+      "finding": "The same fabrication at two more sites the first fix could not see: a closure body, and a `while let` whose subject failed to lower — the latter compiling into an infinite loop rather than a wrong value."
+    }
+  ],
+  "transfers": "Every compiler with a partially-implemented backend has this shape. The hole is masked in proportion to how INCOMPLETE the backend is and is unmasked by progress: each refusal that feature work removes can convert a refusing program into a silently-wrong one. Measured here — 9 of 12 at-risk programs were saved only by tripping an unrelated refusal first.",
+  "limits": "Finds only fabrications adjacent to a comment admitting the limitation. A site that silently defaults with no comment at all is invisible to this probe; reachability still has to be measured separately."
+}
