@@ -267,6 +267,22 @@ fn test_categorical_cdf_out_of_range() {
 }
 
 @[test]
+fn test_gaussian_sample_is_a_finite_real() {
+    // `gaussian_sample` executed NOWHERE: its only wrapper, dist_sample_gaussian,
+    // had zero callers repo-wide, while both sibling wrappers were tested. A
+    // mutation making the builtin panic on call survived the whole suite.
+    //
+    // A Gaussian is unbounded, so there is no value range to assert. The total
+    // property is FINITENESS: `s - s == 0.0` is true for every real and false
+    // for both non-finite results — inf - inf is NaN, and NaN != 0.0. Asserted
+    // rather than a range so this can never be flaky; a range test on an
+    // unbounded distribution is a coin toss with long odds, not a test.
+    let g = gaussian_new(10.0, 2.0)
+    let s = dist_sample_gaussian(g)
+    assert(s - s == 0.0)
+}
+
+@[test]
 fn test_beta_sample_is_in_unit_interval() {
     // beta_sample returns values in [0.0, 1.0].
     let b = beta_new(1.0, 1.0)

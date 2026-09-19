@@ -30973,3 +30973,46 @@ fn an_ai_extracted_uncertain_bound_by_a_match_arm_agrees_in_both_engines() {
     );
     assert_eq!(native, interp, "native must agree with the interpreter");
 }
+
+#[test]
+fn eprint_writes_to_stderr_without_a_newline() {
+    // `eprint` is a core I/O builtin that NOTHING executed. The coverage query
+    // scored it covered because the string "eprint" appears throughout the Rust
+    // sources — as `eprintln!`. A mutation making it panic on call survived the
+    // entire workspace suite.
+    //
+    // Two properties, both of which distinguish it from the covered sibling
+    // `eprintln` and from `print`: it goes to STDERR, and it appends NO newline.
+    // Asserting only "it goes to stderr" would pass on an `eprintln` alias.
+    let src = "fn main() -> i64 {\n  \
+               print(\"out-a\")\n  \
+               eprint(\"err-a\")\n  \
+               eprintln(\"err-b\")\n  0\n}\n";
+    let f = tmp_ax("eprint_streams", src);
+    let out = axon().arg("run").arg(&f).output().expect("spawn");
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "program must run");
+
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    // `axon run` writes its run-id banner to stderr; drop it before comparing.
+    let stderr: String = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| !l.starts_with("axon: run-id"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_eq!(stdout, "out-a", "print goes to stdout and adds no newline");
+    // err-a and err-b land on the SAME line: `eprint` emitted no separator, so
+    // `eprintln`'s text is concatenated directly onto it. If eprint ever grew a
+    // newline this becomes two lines and the assertion fails.
+    assert_eq!(
+        stderr, "err-aerr-b",
+        "eprint must write to STDERR with no trailing newline — if these appear \
+         on separate lines, eprint added one; if they are missing from stderr, \
+         it wrote to stdout"
+    );
+    assert!(
+        !stdout.contains("err-"),
+        "eprint/eprintln must not leak onto stdout"
+    );
+}
