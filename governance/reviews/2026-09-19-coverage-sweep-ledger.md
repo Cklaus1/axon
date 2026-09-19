@@ -384,3 +384,41 @@ interpreter run had exited 2 on a type error. Comparing stdout alone made two
 FAILING runs agree trivially. The harness now rejects a run whose output
 carries a diagnostic before comparing. Same family as the exit-127 slip
 earlier: absence of output is not a result.
+
+### Why B must land first — the fabrication is currently MASKED, not rare
+
+Static count: **12** programs in the corpus contain the at-risk shape (a match
+arm binding a payload, whose body reads a field off that binding), 17 sites.
+Only 2 were measured as silently fabricating. The other 10 are not safe — they
+are MASKED:
+
+| program | build | masked by |
+|---|---|---|
+| `examples/asi/search_rank.ax` | **exit 0** | nothing — fabricates |
+| `tests/fixtures/ai_extract_uncertain.ax` | **exit 0** | nothing — fabricates |
+| `examples/asi/classify.ax` | exit 1 | unrelated E0910 (+E0701) |
+| `examples/asi/taint_flow.ax` | exit 1 | unrelated E0910 |
+| `examples/asi/code_review.ax` | exit 1 | unrelated E0910 (+E0701) |
+| `examples/asi/pricing.ax` | exit 1 | unrelated E0910 |
+| `examples/asi/summarize.ax` | exit 1 | unrelated E0910 |
+| `tests/fixtures/ai_extract_generic.ax` | exit 1 | unrelated E0910 |
+| `tests/fixtures/verify_ai_source.ax` | exit 1 | unrelated E0910 |
+| `tests/fixtures/phase55_mixed_comprehensive.ax` | exit 1 | unrelated E0910 (+E0701) |
+
+Nine programs traverse the broken path and are saved only by tripping a
+DIFFERENT unsupported construct first. That has a consequence for sequencing
+that is easy to get backwards:
+
+> **Teaching the backend more constructs makes this defect WORSE before it
+> makes it better.** Every E0910 that future feature work removes unmasks a
+> program that then builds clean and fabricates.
+
+So the safety net is not merely "nice to have first". Landing feature work
+without it actively converts refusals into silent wrong answers. This is the
+measured form of the argument for B -> C, and it generalises past this defect:
+in a backend that refuses what it cannot lower, a fabrication hole is masked
+in proportion to how INCOMPLETE the backend is, and is unmasked by progress.
+
+It also revises the severity reading. "2 of 328 programs" invited the
+conclusion that exposure is negligible. The correct statement is that 12 of 328
+are exposed and 9 are one feature-commit away from being silently wrong.
