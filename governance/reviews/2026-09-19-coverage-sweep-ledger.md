@@ -750,3 +750,46 @@ reading, then found to be absent from the probe's list).
 STATUS: the nine gate-shaped orphans are NOT yet verified to pass, and are
 NOT yet wired. Several need GPU, QEMU or Zephyr toolchains. Wiring an unproven
 gate would be the same error in a new direction.
+
+## The generalisation: which requirement claims rest on gates nobody runs?
+
+Cross-referencing every `scripts/*.sh` cited as EVIDENCE in
+`governance/REQUIREMENTS.md` against whether anything executable invokes it.
+37 scripts are cited. Accounting for `parity_all.sh`'s glob invocation:
+
+| status | count |
+|---|---|
+| wired (invoked by a gate, test or aggregator) | 18 |
+| glob-invoked by `parity_all.sh` | 12 |
+| **invoked by nothing** | **7** |
+
+The seven: `r23_acceptance_gate.sh`, `r30_acceptance_gate.sh`,
+`r39_slice3_gate.sh`, `r39_slice4_gate.sh`, `r39_slice5_gate.sh`,
+`zephyr_qemu_gate.sh`, `perf_bench.sh`.
+
+Three MORE were in that state until today — `r33`, `r34`, `r39_slice1` — so the
+figure before this session's wiring was **ten of thirty-seven**.
+
+That is the finding in its most useful form. The requirements register is the
+document that answers "is this done?", its evidence column names a gate, and
+for roughly a quarter of the gates it names, nothing runs them. The claim and
+the check are both real; the link between them is not.
+
+Two of the seven have a defensible reason and should be labelled rather than
+wired: `perf_bench.sh` is a benchmark whose evidence is a recorded measurement,
+and `zephyr_qemu_gate.sh` needs a hardware-ish toolchain. The remaining five
+are ordinary acceptance gates with every required tool present on this host.
+
+### Why this is worth more than the individual fixes
+
+Every defect this sweep found was a local instance of "a success signal with no
+check behind it". This is the same shape at the level of the PROJECT'S OWN
+RECORD OF ITSELF. A reader — human or model — consulting REQUIREMENTS.md to
+learn what is verified gets an answer that is true about the gate's existence
+and silent about whether it has ever run.
+
+The cheap structural fix is not to wire seven scripts. It is to make the
+evidence column checkable: a test that reads REQUIREMENTS.md, extracts every
+cited `scripts/*.sh`, and fails when one is invoked by nothing — the same
+two-directional drift gate the env registry and `AXON_REFERENCE.md` already
+have, applied to the register that cites them. That is proposed, not built.
