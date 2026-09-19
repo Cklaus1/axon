@@ -29,7 +29,11 @@ REQUIRED=(
 
 echo "acceptance_gate: (1) presence check…"
 for name in "${REQUIRED[@]}"; do
-  if ! grep -rqs "fn $name" $SRC; then
+  # Require a real DEFINITION, not the name appearing anywhere. The loose form
+  # was satisfied by the name in a comment, so deleting a required check while
+  # leaving a `// see foo_test` behind kept the gate green — the exact failure
+  # r28_acceptance_gate.sh records having hit and fixed for itself.
+  if ! grep -rqsE "^[[:space:]]*(pub )?(async )?fn $name\\(" $SRC; then
     echo "  MISSING required check: $name"
     fail=1
   fi
@@ -68,16 +72,30 @@ if ! cargo test -q -p axon-os; then
 fi
 
 echo "acceptance_gate: (5) reproducibility — same job+seed ⇒ byte-identical record…"
-if [ -x "$ROOT/target/debug/axon" ]; then
+# Guard on the binary this check actually INVOKES, and resolve it through
+# CARGO_TARGET_DIR. The guard used to test `target/debug/axon` while running
+# `target/debug/axon-os`, which failed both ways: with a custom
+# CARGO_TARGET_DIR the hardcoded path does not exist, both runs fail, and the
+# `diff` then reports "records are NOT byte-identical (A5 violation)" — a
+# reproducibility failure that never happened, blamed on the wrong thing. In
+# the other direction a runnable check was skipped as "interpreter absent".
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+OSBIN="$TARGET_DIR/debug/axon-os"
+if [ -x "$OSBIN" ]; then
   W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
-  "$ROOT/target/debug/axon-os" run examples/jobs/summarize.axjob --run-id d --out "$W/a" >/dev/null
-  "$ROOT/target/debug/axon-os" run examples/jobs/summarize.axjob --run-id d --out "$W/b" >/dev/null
+  # A run that fails is reported as a run that failed, not as a diff result.
+  if ! "$OSBIN" run examples/jobs/summarize.axjob --run-id d --out "$W/a" >/dev/null \
+     || ! "$OSBIN" run examples/jobs/summarize.axjob --run-id d --out "$W/b" >/dev/null; then
+    echo "  axon-os could not complete the job — this is NOT an A5 result"; exit 1
+  fi
   if ! diff -q "$W/a/d.json" "$W/b/d.json" >/dev/null; then
     echo "  records are NOT byte-identical across runs (A5 violation)"; exit 1
   fi
   echo "  ✓ byte-identical"
 else
-  echo "  interpreter absent — reproducibility check skipped"
+  # A skip must name the thing that is actually missing, at the path actually
+  # searched, or it hides the defect it was meant to report.
+  echo "  SKIPPED: no axon-os binary at $OSBIN"; exit 1
 fi
 
 echo "acceptance_gate: OK — every R21 §0 check present, unstubbed, and green"

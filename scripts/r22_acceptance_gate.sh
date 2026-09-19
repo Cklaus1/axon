@@ -30,7 +30,11 @@ REQUIRED=(
 
 echo "r22_acceptance_gate: (1) presence check…"
 for name in "${REQUIRED[@]}"; do
-  if ! grep -rqs "fn $name" $SRC; then
+  # Require a real DEFINITION, not the name appearing anywhere. The loose form
+  # was satisfied by the name in a comment, so deleting a required check while
+  # leaving a `// see foo_test` behind kept the gate green — the exact failure
+  # r28_acceptance_gate.sh records having hit and fixed for itself.
+  if ! grep -rqsE "^[[:space:]]*(pub )?(async )?fn $name\\(" $SRC; then
     echo "  MISSING required check: $name"
     fail=1
   fi

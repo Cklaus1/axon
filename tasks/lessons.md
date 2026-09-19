@@ -573,3 +573,31 @@ exposed a defect the loose one had been hiding. Both cited documents live in
 stale agent worktrees under `.claude/`. A check with too wide a search space
 passes for reasons unrelated to the claim. Same family as
 [[example-sweep-is-not-the-corpus]].
+
+## A lesson fixed in one gate does not propagate to its siblings
+
+`r28_acceptance_gate.sh` carries a comment recording that `grep -r "$check"`
+"passed on the name appearing anywhere, including in a comment or an
+`#[ignore]`d body" — and it fixed itself by running the suite and requiring
+each named check to REPORT ok. Three sibling gates written from the same
+template still used the loose `grep -rqs "fn $name"`.
+
+**Rule:** when a gate's own comment records a defect it hit, grep for the
+broken pattern across every sibling before considering it closed. The comment
+is evidence the pattern was once wrong everywhere it appears, not just where
+someone noticed.
+
+## A guard that names a different binary than the command it protects
+
+`acceptance_gate.sh` step 5 tested `[ -x target/debug/axon ]` and then ran
+`target/debug/axon-os`. Both directions were wrong: with `axon` absent a
+runnable check was skipped as "interpreter absent", and with a custom
+`CARGO_TARGET_DIR` the hardcoded path did not exist, both runs failed, and the
+`diff` that followed reported "records are NOT byte-identical (A5 violation)"
+— a reproducibility failure that never happened, attributed to the wrong
+cause. Related: [[no-default-features-fakes-codegen-failures]],
+[[skip-must-prove-its-own-reason]].
+
+**Rule:** a guard must test the exact path the protected command invokes, and
+a command whose failure would be misread downstream must be checked for its
+own failure first.
