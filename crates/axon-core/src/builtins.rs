@@ -1112,7 +1112,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "json_path_json",
         params: &[("json", "str"), ("path", "str")],
         ret: "Result<str, str>",
-        doc: "As `json_path_json`'s dot-separated path, returning the sub-document at the leaf AS A JSON STRING. Numeric path components index arrays (`\"a.1\"`).",
+        doc: "As `json_path_str`, but returning the sub-document at the dot-separated path's leaf AS A JSON STRING rather than only a string leaf. Numeric path components index arrays (`\"a.1\"`). The leaf is RE-SERIALISED, so an object comes back canonicalised (keys sorted, whitespace dropped), not as the original bytes.",
     },
     BuiltinFn {
         name: "json_path_i64",

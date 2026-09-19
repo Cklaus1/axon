@@ -1,0 +1,96 @@
+// Coverage for the four JSON builtins nothing executed: `json_arr_from_f64`,
+// `json_arr_f64`, `json_get_i64` and `json_path_json`.
+//
+// Parsing/serialisation is a WRONG-ANSWER surface, not a crash surface, so each
+// case below pins the answer rather than just "it ran". The contracts:
+//
+//   * what `json_arr_from_f64` writes, `json_arr_f64` reads back BIT-IDENTICALLY
+//     (Rust's shortest-round-trip float formatting), including -0.0, integral
+//     floats, and the extremes of the exponent range;
+//   * a non-finite float has NO JSON form, so it is emitted as `null` — valid
+//     JSON — and the reader then REFUSES it rather than inventing a 0.0;
+//   * `json_get_i64` distinguishes "absent" from "wrong type" from "a number
+//     that does not fit an i64" — a value past i64::MAX must not be truncated;
+//   * `json_path_json` reports a missing key, an index into a scalar, and an
+//     out-of-range array index distinctly.
+//
+// Doubled braces are the parser's escape for a literal `{` in a string.
+
+fn get_i64(doc: str, k: str) {
+    match json_get_i64(doc, k) {
+        Ok(n) => println("{k}={to_str(n)}")
+        Err(e) => println("{k}: {e}")
+    }
+}
+
+fn path(doc: str, p: str) {
+    match json_path_json(doc, p) {
+        Ok(s) => println("[{p}] {s}")
+        Err(e) => println("[{p}] {e}")
+    }
+}
+
+fn main() -> i64 {
+    // ── json_arr_from_f64: the formatting choices, made visible ─────────────
+    // 3.0 emits `3` and -0.0 emits `-0`; both are legal JSON numbers.
+    println(json_arr_from_f64([0.0, -0.0, 3.0, 0.1, -2.5]))
+    println(json_arr_from_f64([]))
+
+    // ── round trip, compared as VALUES not as text ──────────────────────────
+    let xs = [0.0, -0.0, 3.0, 0.1, 1.0000000000000002, 3.141592653589793, 1e300, 1e-300]
+    match json_arr_f64(json_arr_from_f64(&xs)) {
+        Ok(back) => {
+            let i = 0
+            let bad = 0
+            while i < 8 {
+                if back[i] != xs[i] { bad = bad + 1 }
+                i = i + 1
+            }
+            println("roundtrip-mismatches={to_str(bad)}")
+        }
+        Err(e) => println("roundtrip {e}")
+    }
+
+    // ── non-finite: `null` out, and REFUSED on the way back in ──────────────
+    let nf = [sqrt_f64(-1.0), 1e308 * 10.0, 0.0 - (1e308 * 10.0)]
+    let nfj = json_arr_from_f64(&nf)
+    println(nfj)
+    match json_arr_f64(nfj) { Ok(b) => println("WRONG {to_str(b[0])}")  Err(e) => println(e) }
+
+    // ── json_arr_f64 readers ────────────────────────────────────────────────
+    // An integer element WIDENS, because JSON does not distinguish 4 from 4.0.
+    match json_arr_f64("[1, 2.5]") { Ok(b) => println(to_str(b[0] + b[1]))  Err(e) => println(e) }
+    match json_arr_f64("[1, \"x\"]") { Ok(b) => println("WRONG")  Err(e) => println(e) }
+    match json_arr_f64("{{\"a\":1}}") { Ok(b) => println("WRONG")  Err(e) => println("ERR-notarray") }
+    match json_arr_f64("nope") { Ok(b) => println("WRONG")  Err(e) => println("ERR-parse") }
+
+    // ── json_get_i64: absent vs wrong-type vs out-of-range ──────────────────
+    let d = "{{\"i\": 42, \"max\": 9223372036854775807, \"over\": 9223372036854775808, \"under\": -9223372036854775809, \"f\": 1.5, \"fi\": 4.0, \"s\": \"7\", \"n\": null, \"o\": {{\"x\": 1}}}}"
+    get_i64(d, "i")
+    get_i64(d, "max")
+    get_i64(d, "over")
+    get_i64(d, "under")
+    get_i64(d, "f")
+    get_i64(d, "fi")
+    get_i64(d, "s")
+    get_i64(d, "n")
+    get_i64(d, "o")
+    get_i64(d, "absent")
+    match json_get_i64("[1]", "i") { Ok(n) => println("WRONG")  Err(e) => println(e) }
+
+    // ── json_path_json ──────────────────────────────────────────────────────
+    let p = "{{\"a\": {{\"b\": [10, 20, {{\"c\": \"deep\"}}]}}, \"s\": \"str\", \"n\": null}}"
+    path(p, "a.b")
+    path(p, "a.b.1")
+    path(p, "a.b.2.c")
+    path(p, "n")
+    path(p, "a.b.9")
+    path(p, "a.b.x")
+    path(p, "s.x")
+    path(p, "nope")
+    path(p, "")
+    // A sub-document is RE-SERIALISED, so it comes back canonicalised (keys
+    // sorted, whitespace dropped) rather than as the original bytes.
+    path("{{\"z\": {{\"b\": 1, \"a\": 2}} }}", "z")
+    0
+}

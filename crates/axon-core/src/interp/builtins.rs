@@ -3118,9 +3118,26 @@ impl<'p> Interp<'p> {
                     Ok(serde_json::Value::Object(map)) => match map.get(key) {
                         Some(serde_json::Value::Number(n)) => match n.as_i64() {
                             Some(v) => ok!(Value::Ok(Box::new(Value::Int(v)))),
-                            None => ok!(Value::Err(Box::new(Value::Str(format!(
-                                "key {key:?} is a number but not an integer"
-                            ))))),
+                            // "does not fit an i64" and "is not a whole number"
+                            // are different problems with different recourse
+                            // (there is none for the first; `json_path_f64` is
+                            // the answer to the second), so they do not share a
+                            // message. The test is on MAGNITUDE, not on
+                            // `f < i64::MIN as f64 || f > i64::MAX as f64`:
+                            // BOTH bounds are exactly 2^63 in f64, so
+                            // 9223372036854775808 and -9223372036854775809 each
+                            // compare as in-range and get mislabelled "not an
+                            // integer".
+                            None => {
+                                let out_of_range = n.as_f64().is_some_and(|f| {
+                                    f.fract() == 0.0 && f.abs() >= 9_223_372_036_854_775_808.0
+                                });
+                                ok!(Value::Err(Box::new(Value::Str(if out_of_range {
+                                    format!("key {key:?} is an integer outside the i64 range")
+                                } else {
+                                    format!("key {key:?} is a number but not an integer")
+                                }))))
+                            }
                         },
                         Some(_) => ok!(Value::Err(Box::new(Value::Str(format!(
                             "key {key:?} is not a number"

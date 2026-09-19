@@ -22021,6 +22021,105 @@ fn json_construction_round_trips_through_the_readers() {
     );
 }
 
+/// The four JSON builtins nothing executed: `json_arr_from_f64`, `json_arr_f64`,
+/// `json_get_i64` and `json_path_json`. Their siblings were covered
+/// (`json_arr_from_i64`/`json_arr_i64`/`json_get_str`/`json_path_i64`), which is
+/// exactly where a divergence would have hidden — the f64 variant of a covered
+/// i64 variant, and the JSON-leaf variant of a covered string-leaf walker.
+///
+/// Serialisation is a WRONG-ANSWER surface, so these pin ANSWERS, not liveness:
+/// the float round trip is compared as values (it is bit-exact), a non-finite
+/// float is written as `null` and then REFUSED on the way back rather than read
+/// as 0.0, and `json_get_i64` keeps "absent", "wrong type" and "outside the i64
+/// range" as three distinct answers — an integer past i64::MAX must never come
+/// back truncated.
+#[test]
+fn json_f64_round_trips_and_paths_report_each_failure_distinctly() {
+    let out = axon()
+        .arg("run")
+        .arg(fixture("json_f64_and_paths.ax"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            // 3.0 emits `3` and -0.0 emits `-0`; both are legal JSON numbers.
+            "[0,-0,3,0.1,-2.5]",
+            "[]",
+            // Bit-exact both ways, including 1e300/1e-300 and the ulp above 1.0.
+            "roundtrip-mismatches=0",
+            // NaN and ±infinity have no JSON form: `null` out ...
+            "[null,null,null]",
+            // ... and refused on the way back in, not silently 0.0.
+            "json_arr_f64: E2202 element 0 has the wrong type",
+            "3.5", // an integer element widens
+            "json_arr_f64: E2202 element 1 has the wrong type",
+            "ERR-notarray",
+            "ERR-parse",
+            "i=42",
+            "max=9223372036854775807", // i64::MAX survives exactly
+            // Past i64::MAX in EITHER direction is a range failure, not a
+            // "not an integer" failure: serde_json parks the positive case in a
+            // u64 and the negative case in an f64 that rounds to exactly
+            // i64::MIN, so a naive bounds test mislabels the negative one.
+            "over: key \"over\" is an integer outside the i64 range",
+            "under: key \"under\" is an integer outside the i64 range",
+            // 1.5 and 4.0 are both non-integer JSON numbers — `json_path_f64`
+            // is the accessor for them; this one does not round or truncate.
+            "f: key \"f\" is a number but not an integer",
+            "fi: key \"fi\" is a number but not an integer",
+            "s: key \"s\" is not a number",
+            "n: key \"n\" is not a number",
+            "o: key \"o\" is not a number",
+            "absent: key \"absent\" not found", // absent != wrong type
+            "json_get_i64: input is not a JSON object",
+            // json_path_json reaches sub-documents a scalar accessor cannot.
+            "[a.b] [10,20,{\"c\":\"deep\"}]",
+            "[a.b.1] 20",
+            "[a.b.2.c] \"deep\"",
+            "[n] null",
+            // Four distinct path failures, none of them silent.
+            "[a.b.9] json_path_json: array index 9 out of bounds (len 3)",
+            "[a.b.x] json_path_json: array requires numeric index, got \"x\"",
+            "[s.x] json_path_json: cannot index into scalar at key \"x\"",
+            "[nope] json_path_json: key \"nope\" not found",
+            // An empty path is the empty KEY, not the identity.
+            "[] json_path_json: key \"\" not found",
+            // The leaf is re-serialised, so keys come back sorted.
+            "[z] {\"a\":2,\"b\":1}",
+        ],
+        "unexpected output:\n{stdout}"
+    );
+}
+
+/// The four JSON builtins above are INTERPRETER-ONLY. Native codegen has no
+/// lowering for any `json_*` builtin, so it must refuse (E0910) rather than emit
+/// a call that computes something else — the interpreter is reference semantics
+/// (I-2, sound-by-refusal).
+#[test]
+fn native_refuses_the_json_builtins_rather_than_diverging() {
+    let Some(all) = build_output_or_skip("json_f64_and_paths.ax") else {
+        return;
+    };
+    for want in [
+        "json_arr_from_f64",
+        "json_arr_f64",
+        "json_get_i64",
+        "json_path_json",
+    ] {
+        assert!(
+            all.contains("E0910") && all.contains(want),
+            "expected an E0910 refusal naming `{want}`, got:\n{all}"
+        );
+    }
+}
+
 /// R42 T7 — filesystem beyond a single known path.
 #[test]
 fn filesystem_ops_create_probe_copy_rename_and_list() {
