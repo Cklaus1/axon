@@ -30757,6 +30757,24 @@ fn a_successful_native_build_never_invents_a_return_value() {
         "__lambda_0",
         false,
     );
+
+    // FOURTH CASE — the OVER-FIRING control, and it is not hypothetical: the
+    // closure guard shipped without a non-Unit condition and immediately broke
+    // `codegen_dict_core_matches_interp`. A statement-bodied closure yields no
+    // value LEGITIMATELY, so refusing it turns an admission gate into a
+    // false-positive generator — the failure mode that gets a gate disabled.
+    // This case must BUILD and agree, taking the helper's other branch.
+    assert_native_never_fabricates(
+        "fabret_stmt_closure",
+        "fn main() -> i64 {\n\
+           let d = dict_new()\n\
+           dict_set(d, \"a\", 1)\n\
+           dict_each(d, |k: str, v: i64| { println(\"{k}={to_str(v)}\") })\n\
+           0\n\
+         }\n",
+        "__lambda_0",
+        false,
+    );
 }
 
 /// Build `src`, run the binary, and return its stdout lines. `None` when this

@@ -3074,6 +3074,20 @@ impl<'ctx> super::Codegen<'ctx> {
                     build_wrappers::w_ret(&self.ir.builder, coerced);
                 }
                 None => {
+                    // Only a body that was SUPPOSED to produce a value. A
+                    // statement-bodied closure legitimately yields nothing —
+                    // `dict_each(d, |k: str, v: i64| { println(...) })` is the
+                    // common case — and refusing those broke 1 codegen parity
+                    // test the moment this guard shipped without the condition.
+                    // `lambda_body_sem_type` binds the params' DECLARED types
+                    // before inferring, which is exactly why it can tell the two
+                    // apart: `|p: P| -> i64 { p.y }` infers Some(I64) while the
+                    // println closure infers nothing. Same non-Unit test the
+                    // named-function site uses; omitting it was the bug.
+                    let body_should_have_a_value = matches!(
+                        self.lambda_body_sem_type(params, body),
+                        Some(t) if !matches!(t, crate::types::Type::Unit)
+                    );
                     // The SECOND fabrication site, and the one the named-function
                     // guard in codegen/mod.rs cannot reach. A lambda whose body
                     // fails to lower returned a silent zero exactly as `emit_fn`
@@ -3091,9 +3105,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     // solely because codegen failed to produce one. The zero
                     // stays as the placeholder that keeps the IR well-formed,
                     // but only behind a recorded error that aborts the build.
-                    self.codegen_errors.push(format!(
-                        "codegen error [E0910]: native codegen could not lower the body of `{lambda_name}` (a closure) to a value. Refusing to return a fabricated zero. Run it under the interpreter (`axon run`)."
-                    ));
+                    if body_should_have_a_value {
+                        self.codegen_errors.push(format!(
+                            "codegen error [E0910]: native codegen could not lower the body of `{lambda_name}` (a closure) to a value. Refusing to return a fabricated zero. Run it under the interpreter (`axon run`)."
+                        ));
+                    }
                     build_wrappers::w_ret(&self.ir.builder, i64_ty.const_zero().into());
                 }
             }
