@@ -1379,6 +1379,20 @@ impl<'ctx> super::Codegen<'ctx> {
             .builder
             .build_and(l_is_min, r_is_neg1, "minneg1")
             .unwrap();
+        // DIVISION overflows here: `i64::MIN / -1` is 2^63, which i64 cannot
+        // hold, so this is a genuine arithmetic overflow and gets the same
+        // treatment as `+`/`-`/`*` (kind 0 → "integer overflow: a / b exceeds
+        // i64"). It previously returned `i64::MIN` silently, matching the
+        // interpreter's `wrapping_div` — both engines agreed on a WRONG answer,
+        // which is why no parity harness could find it.
+        //
+        // REMAINDER does not overflow: `i64::MIN % -1` is 0, which i64 holds
+        // fine. Rust's `checked_rem` rejects the pair only because x86 `idiv`
+        // traps on it — a fact about the instruction, not the answer — so the
+        // select below still yields 0 and no guard is emitted.
+        if !is_rem {
+            self.emit_arith_guard(is_trap, 0, "/", l, r);
+        }
         // Safe divisor: 1 when the trap case, else r.
         let one = i64_ty.const_int(1, false);
         let safe_r = self
@@ -1442,6 +1456,85 @@ impl<'ctx> super::Codegen<'ctx> {
                     || rv.as_ref().map(|(_, v)| fieldless(v)).unwrap_or(false)
             }
         }
+    }
+
+    /// `==`/`!=` for an array of fixed-size scalars: lengths equal AND the
+    /// element bytes equal.
+    ///
+    /// Branchless on purpose. The byte count is `select(lens_eq, len * stride,
+    /// 0)` so that when the lengths DIFFER memcmp is handed 0 and never reads
+    /// past the shorter array — a plain `memcmp(a, b, a_len * stride)` would be
+    /// an out-of-bounds read on the shorter side.
+    fn emit_scalar_array_eq(
+        &mut self,
+        op: &ast::BinOp,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        elem: &Type,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let (BasicValueEnum::StructValue(a), BasicValueEnum::StructValue(b)) = (lhs, rhs) else {
+            return None;
+        };
+        // The stride is whatever ELEMENT TYPE indexing uses, not an assumption:
+        // `emit_index` GEPs with `llvm_type(elem)`, so taking the size from the
+        // same place keeps the two consistent by construction.
+        let elem_ty = self.llvm_type(elem)?;
+        let stride = elem_ty.size_of()?;
+        let i64_ty = self.ir.context.i64_type();
+        let i32_ty = self.ir.context.i32_type();
+        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+
+        let a_len =
+            build_wrappers::w_extract_value(&self.ir.builder, a, 0, "ae_alen").into_int_value();
+        let b_len =
+            build_wrappers::w_extract_value(&self.ir.builder, b, 0, "ae_blen").into_int_value();
+        let a_ptr =
+            build_wrappers::w_extract_value(&self.ir.builder, a, 1, "ae_aptr").into_pointer_value();
+        let b_ptr =
+            build_wrappers::w_extract_value(&self.ir.builder, b, 1, "ae_bptr").into_pointer_value();
+
+        let lens_eq = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::EQ,
+            a_len,
+            b_len,
+            "ae_leneq",
+        );
+        let nbytes = self.ir.builder.build_int_mul(a_len, stride, "ae_nb").ok()?;
+        let safe_nbytes = self
+            .ir
+            .builder
+            .build_select(lens_eq, nbytes, i64_ty.const_zero(), "ae_nbsafe")
+            .ok()?
+            .into_int_value();
+
+        let memcmp_fn = self.ir.module.get_function("memcmp").unwrap_or_else(|| {
+            let t = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
+            self.ir.module.add_function("memcmp", t, None)
+        });
+        let c = build_wrappers::w_call(
+            &self.ir.builder,
+            memcmp_fn,
+            &[a_ptr.into(), b_ptr.into(), safe_nbytes.into()],
+            "ae_cmp",
+        )
+        .try_as_basic_value()
+        .left()?
+        .into_int_value();
+        let bytes_eq = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::EQ,
+            c,
+            i32_ty.const_zero(),
+            "ae_byteq",
+        );
+        let eq = build_wrappers::w_and(&self.ir.builder, lens_eq, bytes_eq, "ae_eq");
+        let out = if matches!(op, ast::BinOp::NotEq) {
+            build_wrappers::w_not(&self.ir.builder, eq, "ae_ne")
+        } else {
+            eq
+        };
+        Some(out.into())
     }
 
     pub(super) fn emit_binop(
@@ -1797,6 +1890,36 @@ impl<'ctx> super::Codegen<'ctx> {
             (BasicValueEnum::StructValue(_), BasicValueEnum::StructValue(_))
                 if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq) && !matches!(ty, Type::Str) =>
             {
+                // An array of FIXED-SIZE SCALARS can be compared exactly:
+                // same length, then memcmp over `len * stride` bytes. That is
+                // what `str_eq` already does with a stride of 1 — which is
+                // precisely why it gave the wrong answer here.
+                //
+                // Only for scalar elements. An element type containing a
+                // POINTER (str, nested slice, struct) would have memcmp compare
+                // the pointers, so two equal-by-value arrays at different
+                // addresses would read as different. Those keep refusing.
+                if let Type::Slice(elem) = ty {
+                    if matches!(
+                        **elem,
+                        Type::I8
+                            | Type::I16
+                            | Type::I32
+                            | Type::I64
+                            | Type::U8
+                            | Type::U16
+                            | Type::U32
+                            | Type::U64
+                            | Type::F32
+                            | Type::F64
+                            | Type::Bool
+                            | Type::Decimal
+                    ) {
+                        if let Some(v) = self.emit_scalar_array_eq(op, lhs, rhs, elem) {
+                            return v;
+                        }
+                    }
+                }
                 let what = match ty {
                     Type::Slice(_) => "array",
                     _ => "composite value",

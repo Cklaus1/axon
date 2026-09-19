@@ -46,8 +46,12 @@ CASES[overflow_sub]='let m = 0 - 9223372036854775807
     println(to_str(m - 2))'
 CASES[overflow_mul]='let big = 9223372036854775807
     println(to_str(big * 2))'
-# Boundary: INT_MIN / -1 traps in hardware but is DEFINED (wrapping) in the
-# interpreter — must return INT_MIN, not SIGFPE, on both engines.
+# Boundary: INT_MIN / -1 traps in hardware AND overflows arithmetically (the
+# true answer 2^63 does not fit), so both engines must report the same graceful
+# overflow panic — never a SIGFPE, and never the silent INT_MIN this used to
+# return (governance/reviews/2026-07-31-deep-review.md §349).
+# INT_MIN % -1 is different: 0 IS representable, so it stays defined and both
+# engines must return 0.
 CASES[int_min_div_neg1]='let m = 0 - 9223372036854775807
     let mm = m - 1
     println(to_str(mm / (0 - 1)))'

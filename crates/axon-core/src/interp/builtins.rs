@@ -284,7 +284,8 @@ impl<'p> Interp<'p> {
     /// (recorded as failed, not fatal). Returns the count that completed
     /// successfully. Shared by the `scheduler_run` builtin and the live
     /// `supervisor_run` loop. A whole-program `exit`/`Halt` from a fiber still
-    /// propagates (only per-fiber Panic/RefineViolation/VerifyFailed are caught).
+    /// propagates, and so does a POLICY stop (`VerifyFailed` exit 3 /
+    /// `RefineViolation` exit 6) — only a per-fiber `Panic` is caught.
     pub(super) fn builtin_scheduler_run_once(&self) -> Result<i64, Flow> {
         let order = self.scheduler.borrow().ready_order();
         let mut completed: i64 = 0;
@@ -309,9 +310,23 @@ impl<'p> Interp<'p> {
                     self.scheduler.borrow_mut().complete(id, r);
                     completed += 1;
                 }
-                Err(Flow::Panic(m))
-                | Err(Flow::RefineViolation(m))
-                | Err(Flow::VerifyFailed(m)) => {
+                // ONLY a panic is a per-fiber failure. A supervisor exists to
+                // restart crashes, which is why this catch is here at all.
+                //
+                // A POLICY STOP is not a crash. `@[verify]` promises exit 3 and
+                // a refinement violation promises exit 6; catching them here
+                // recorded `failed=true` and let the process exit 0. Because
+                // `scheduler_spawn` takes a function NAME AS A STRING, any
+                // function in the program could be laundered through a fiber to
+                // erase its contract, with no type-level trace of the bypass —
+                // the same shape as the transitive laundering holes closed
+                // elsewhere. Reproduced before this change: `@[verify(value <=
+                // 10)] fn risky(x) { 999 }` exits 3 called directly and exited
+                // 0 via `scheduler_spawn("risky", 1)`.
+                //
+                // Logged as MEDIUM in governance/reviews/2026-07-31-deep-review.md
+                // §333; propagating is that review's recommendation.
+                Err(Flow::Panic(m)) => {
                     self.scheduler.borrow_mut().fail(id, m);
                 }
                 Err(other) => return Err(other),

@@ -652,3 +652,39 @@ Op::Zero`, both correct under tag-compare and both real code in
 belongs on the CASE, not the type. Measure the real usage first — grepping the
 repo took one command and found exactly two call sites, both of which the
 blunt fix would have broken.
+
+## Read the repo's own review archive before probing for defects
+
+I found `i64::MIN / -1` silently wrapping by differential probing, wrote the
+fix, and only then discovered
+`governance/reviews/2026-07-31-deep-review.md` §349 had logged it — same
+defect, same severity assessment, and a recommendation naming the exact
+mechanism I had just used (`is_trap` → `emit_arith_guard`). An hour of probing
+reproduced a document already in the repo.
+
+The archive also holds `2026-08-01-triage/full-185.json`: 338 findings, 261
+confirmed, with NO open/closed status field. So the backlog cannot be read as
+a work queue without re-verifying each item — which is itself the highest-yield
+task available, because most have been silently closed by the AUDIT T-series
+and the few that remain are invisible among them.
+
+**Rule:** before hunting, check `governance/reviews/` and grep the finding's
+cited file:line. Probing is for what nobody has written down yet.
+
+## A grep of a condition is not an observation of a behaviour
+
+I reported §317 (zero-budget optimizer runs unbounded) as OPEN because
+`goal.rs:137` reads `let unlimited = max_evals <= 0;`. The line says exactly
+that. Running it says the opposite: a zero-budget principal gets exit 7 after
+ZERO evaluations, because a guard upstream never lets 0 reach that line. I
+checked two optimizer strategies in case the guard was strategy-specific.
+
+Same mistake shape as [[ambient-controls-were-inert]] — which was the reverse
+error, a documented control that nothing enforced — and the fix is the same
+one: **diff outcomes, don't read conditions.** A reachable-looking line is not
+a reached line.
+
+Related: my first probe for this used `to_f64`, which does not exist
+(`as_f64` does), and reported "0 evaluations" — the right answer for the wrong
+reason. A broken probe that agrees with your hypothesis is the most dangerous
+kind. [[prove-the-probe-reached-its-target]]

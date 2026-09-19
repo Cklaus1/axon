@@ -616,8 +616,14 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         // panic* (catchable, exits non-zero at the CLI), never a silent
         // wrap: a wrapped value masquerading as success is the worst class
         // of bug for an autonomous consumer (BUG_HUNT #6, ARCHITECTURE
-        // INVARIANTS I-9). Use the `wrapping_*` builtins for intentional
-        // modular arithmetic.
+        // INVARIANTS I-9).
+        //
+        // This used to say "use the `wrapping_*` builtins for intentional
+        // modular arithmetic". There are NO such builtins — `axon reference`
+        // lists none and `builtins.rs` defines none — so the comment named an
+        // escape hatch that was never built. Intentional modular arithmetic has
+        // no expression in the language today; logged in tasks/opportunities.md
+        // rather than left as a promise in a comment.
         (Add, Int(a), Int(b)) => a
             .checked_add(b)
             .map(Int)
@@ -634,12 +640,27 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
             if b == 0 {
                 return Err(Flow::Panic("integer division by zero".into()));
             }
-            Ok(Int(a.wrapping_div(b)))
+            // `i64::MIN / -1` is the one division that OVERFLOWS: the true
+            // answer is 2^63, which i64 cannot hold. `wrapping_div` returned
+            // `i64::MIN` — a silent wrong answer, in the same function whose
+            // comment says arithmetic must never silently wrap and directly
+            // below three arms that use `checked_*`. Native agreed with it, so
+            // no parity harness could ever have found this: the reference
+            // oracle shared the bug.
+            a.checked_div(b)
+                .map(Int)
+                .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} / {b} exceeds i64")))
         }
         (Rem, Int(a), Int(b)) => {
             if b == 0 {
                 return Err(Flow::Panic("integer remainder by zero".into()));
             }
+            // NOT `checked_rem`: `i64::MIN % -1` is mathematically 0, which
+            // i64 holds perfectly well. Rust's `checked_rem` returns `None`
+            // there only because the x86 `idiv` instruction traps on the pair,
+            // which is a fact about the hardware and not about the answer.
+            // Panicking would replace a correct result with a crash, so the
+            // wrapping form stays — and native agrees, measured.
             Ok(Int(a.wrapping_rem(b)))
         }
         // Float arithmetic

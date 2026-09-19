@@ -9927,11 +9927,25 @@ fn checked_integer_arithmetic_panics_gracefully_not_silently() {
             true,
             "integer overflow",
         ),
-        // INT_MIN / -1 is DEFINED (wrapping → INT_MIN), not a panic.
+        // INT_MIN / -1 OVERFLOWS — the true answer is 2^63, which i64 cannot
+        // hold — so it panics like `+`/`-`/`*` do. This case previously
+        // asserted the opposite ("DEFINED (wrapping → INT_MIN)"), pinning the
+        // behaviour `governance/reviews/2026-07-31-deep-review.md` §349 records
+        // as a MEDIUM defect: "silently wraps, contradicting the file's own
+        // 'never a silent wrap' (I-9) invariant". The recommendation there is
+        // exactly this change, in both engines.
         (
             "let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(mm / (0 - 1)))",
+            true,
+            "integer overflow",
+        ),
+        // INT_MIN % -1 stays DEFINED and is 0 — that value IS representable.
+        // Rust's `checked_rem` rejects the pair only because x86 `idiv` traps
+        // on it, which is a fact about the instruction and not the answer.
+        (
+            "let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(mm % (0 - 1)))",
             false,
-            "-9223372036854775808",
+            "0",
         ),
         // 20! fits; must NOT panic.
         (
@@ -20733,6 +20747,212 @@ fn ordering_still_works_for_every_numeric_type() {
 }
 
 #[test]
+fn a_policy_stop_survives_being_wrapped_in_a_fiber() {
+    // `scheduler_spawn` takes a function NAME AS A STRING, so any function in
+    // the program can be routed through a fiber. The scheduler caught
+    // `VerifyFailed` and `RefineViolation` alongside `Panic` and recorded them
+    // as "fiber failed" — so a `@[verify]` violation that exits 3 when called
+    // directly exited 0 when laundered this way, with no type-level trace that
+    // the contract had been erased.
+    //
+    // A supervisor restarts CRASHES; that is why the per-fiber catch exists. A
+    // contract violation is not a crash. Logged as MEDIUM in
+    // governance/reviews/2026-07-31-deep-review.md §333.
+    let verify_src = "@[verify(value <= 10)]\nfn risky(x: i64) -> i64 { 999 }\n";
+
+    // Baseline: called directly, the contract holds.
+    let direct = tmp_ax(
+        "policy_direct",
+        &format!("{verify_src}fn main() {{\n  println(to_str(risky(1)))\n}}\n"),
+    );
+    let out = axon().arg("run").arg(&direct).output().expect("spawn");
+    let _ = std::fs::remove_file(&direct);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "precondition: a direct @[verify] violation exits 3"
+    );
+
+    // The laundering path must reach the same exit code.
+    let fiber = tmp_ax(
+        "policy_fiber",
+        &format!(
+            "{verify_src}fn main() {{\n               let _f = scheduler_spawn(\"risky\", 1)\n               let _r = scheduler_run()\n               println(\"scheduler done\")\n}}\n"
+        ),
+    );
+    let out2 = axon().arg("run").arg(&fiber).output().expect("spawn");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    let _ = std::fs::remove_file(&fiber);
+    assert_eq!(
+        out2.status.code(),
+        Some(3),
+        "a fiber must not erase the @[verify] contract: {msg}"
+    );
+}
+
+#[test]
+fn a_fiber_panic_is_still_caught_and_does_not_kill_the_program() {
+    // The companion. The per-fiber catch exists so a supervisor can restart a
+    // crashed fiber — narrowing it to `Panic` only is worthless if it also
+    // stops catching panics. This is the behaviour that must SURVIVE the fix.
+    let src = "fn boom(x: i64) -> i64 {\n  let z = 0\n  x / z\n}\n               fn main() {\n                 let _f = scheduler_spawn(\"boom\", 1)\n                 let _r = scheduler_run()\n                 println(\"survived\")\n}\n";
+    let f = tmp_ax("fiber_panic_caught", src);
+    let out = axon().arg("run").arg(&f).output().expect("spawn");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a fiber panic stays caught: {msg}"
+    );
+    assert!(
+        msg.contains("survived"),
+        "and the program continues past it: {msg}"
+    );
+}
+
+#[test]
+fn min_divided_by_negative_one_overflows_in_both_engines() {
+    // `i64::MIN / -1` is 2^63 — not representable. The interpreter used
+    // `wrapping_div` and returned `i64::MIN`; native was written to MATCH it
+    // ("reproduces the interpreter's wrapping_div"), so both engines agreed on
+    // a wrong answer. That agreement is why no parity harness could find it:
+    // I-2 compares the engines against each other, and here the reference
+    // oracle carried the bug.
+    //
+    // `+`, `-`, `*` and `/0` all panicked correctly, in the same function whose
+    // comment says arithmetic must never silently wrap.
+    let src = "fn main() -> i64 {\n  \
+               let mn = 0 - 9223372036854775807 - 1\n  \
+               let n1 = 0 - 1\n  \
+               println(to_str(mn / n1))\n  0\n}\n";
+    let f = tmp_ax("div_overflow", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let imsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(run.status.code(), Some(101), "interp must panic: {imsg}");
+    assert!(
+        imsg.contains("integer overflow") && imsg.contains('/'),
+        "and say what overflowed: {imsg}"
+    );
+
+    let out_bin = std::env::temp_dir().join(format!("axon_divovf_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let bmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if bmsg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {bmsg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let nmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&nat.stdout),
+        String::from_utf8_lossy(&nat.stderr)
+    );
+    let _ = std::fs::remove_file(&out_bin);
+    // I-2: not merely "also panics" — the same exit code AND the same text.
+    // Compare the PANIC LINE, not the whole stream: `axon run` also writes an
+    // `axon: run-id …` provenance line that a native binary has no reason to
+    // emit, so a whole-output comparison fails on a difference that is correct.
+    let panic_line = |s: &str| {
+        s.lines()
+            .find(|l| l.contains("axon: panic:"))
+            .unwrap_or("<no panic line>")
+            .to_string()
+    };
+    assert_eq!(
+        nat.status.code(),
+        Some(101),
+        "native must panic too: {nmsg}"
+    );
+    assert_eq!(
+        panic_line(&nmsg),
+        panic_line(&imsg),
+        "native and interp must report it identically"
+    );
+}
+
+#[test]
+fn min_modulo_negative_one_is_zero_not_a_panic() {
+    // The companion, and the reason the fix is `checked_div` but NOT
+    // `checked_rem`. `i64::MIN % -1` is 0, which i64 holds perfectly well.
+    // Rust's `checked_rem` rejects the pair only because the x86 `idiv`
+    // instruction traps on it — a fact about the hardware, not the answer.
+    // Turning that into a panic would replace a correct result with a crash.
+    let src = "fn main() -> i64 {\n  \
+               let mn = 0 - 9223372036854775807 - 1\n  \
+               let n1 = 0 - 1\n  \
+               println(to_str(mn % n1))\n  0\n}\n";
+    let f = tmp_ax("rem_min_neg1", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    assert_eq!(run.status.code(), Some(0), "must NOT panic");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .next_back()
+            .unwrap_or(""),
+        "0"
+    );
+
+    let out_bin = std::env::temp_dir().join(format!("axon_remmin_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let bmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if bmsg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {bmsg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(nat.status.code(), Some(0), "native must not panic either");
+    assert_eq!(
+        String::from_utf8_lossy(&nat.stdout)
+            .lines()
+            .next_back()
+            .unwrap_or(""),
+        "0"
+    );
+}
+
+#[test]
 fn array_equality_is_not_compared_as_a_string_natively() {
     // Invariant I-2, and the worst shape available: a WRONG ANSWER from a
     // successful build.
@@ -20750,9 +20970,19 @@ fn array_equality_is_not_compared_as_a_string_natively() {
                println(to_str_bool([1, 2] == [1, 2]))\n  \
                println(to_str_bool([1, 2] == [1, 3]))\n  \
                println(to_str_bool([1, 2] != [1, 3]))\n  \
+               println(to_str_bool([1, 2] == [1, 2, 3]))\n  \
+               println(to_str_bool([1, 2, 3] == [1, 2]))\n  \
+               println(to_str_bool([1.5, 2.5] == [1.5, 9.9]))\n  \
+               println(to_str_bool([true, false] == [true, true]))\n  \
                0\n}\n";
     let f = tmp_ax("arr_eq_native", src);
 
+    // `[1,2,3] == [1,2]` is the LONGER-LEFT case. It cannot fail on output —
+    // unequal lengths are false either way — but without the `select(lens_eq,
+    // n, 0)` guard the memcmp would read `3 * stride` bytes from a 2-element
+    // array. Mutation testing confirmed that guard is equivalent-by-output;
+    // the case is here so the read is at least EXERCISED under a sanitizer.
+    //
     // The interpreter is the oracle. `[1,2] == [1,3]` is FALSE — note the
     // shared first element, which is what made the byte comparison agree by
     // coincidence. A pair differing in the FIRST element would pass even
@@ -20763,7 +20993,11 @@ fn array_equality_is_not_compared_as_a_string_natively() {
         .filter(|l| *l == "true" || *l == "false")
         .map(|l| l.to_string())
         .collect();
-    assert_eq!(got, ["true", "false", "true"], "interpreter oracle");
+    assert_eq!(
+        got,
+        ["true", "false", "true", "false", "false", "false", "false"],
+        "interpreter oracle"
+    );
 
     // Native must not answer differently. Refusing is acceptable; answering
     // `true` for `[1,2] == [1,3]` is not.
@@ -20800,15 +21034,60 @@ fn array_equality_is_not_compared_as_a_string_natively() {
             "native must agree with the interpreter, or refuse"
         );
     } else {
-        assert!(
-            msg.contains("E0910"),
-            "if native cannot lower this it must refuse in the refusal class, \
-             not fail some other way: {msg}"
+        // Refusing is NOT acceptable here. An array of fixed-size scalars is
+        // exactly comparable (same length, then memcmp over len*stride), and
+        // `examples/feature_tour.ax` already relies on `[1,2,3] == [1,2,3]`
+        // building natively — so a guard that bought soundness by refusing
+        // would have regressed a working example.
+        panic!("native must LOWER scalar array equality, not refuse it: {msg}");
+    }
+}
+
+#[test]
+fn array_equality_refuses_element_types_memcmp_cannot_decide() {
+    // The companion to the rule above, and the reason it is a `matches!` on
+    // scalar element types rather than "all arrays". An element that CONTAINS A
+    // POINTER (str, a nested slice, a struct) would have memcmp compare the
+    // pointers, so two equal-by-value arrays at different addresses would read
+    // as different — a new wrong answer in place of the old one.
+    for (label, src) in [
+        (
+            "str_elems",
+            "fn main() -> i64 {\n  let a = [\"x\", \"y\"]\n  let b = [\"x\", \"y\"]\n  \
+             println(to_str_bool(a == b))\n  0\n}\n",
+        ),
+        (
+            "nested_slice_elems",
+            "fn main() -> i64 {\n  let a = [[1], [2]]\n  let b = [[1], [2]]\n  \
+             println(to_str_bool(a == b))\n  0\n}\n",
+        ),
+    ] {
+        let f = tmp_ax(&format!("arr_eq_ptr_{label}"), src);
+        let out_bin =
+            std::env::temp_dir().join(format!("axon_arreqp_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&out_bin);
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .output()
+            .expect("spawn build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
         );
-        assert!(
-            !out_bin.exists(),
-            "a refused build must leave no binary behind"
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            return;
+        }
+        assert_ne!(
+            build.status.code(),
+            Some(0),
+            "{label}: memcmp would compare POINTERS here — must refuse: {msg}"
         );
+        assert!(msg.contains("E0910"), "{label}: refusal class: {msg}");
     }
 }
 
@@ -21587,6 +21866,72 @@ fn regex_is_leftmost_first_and_refuses_backtracking_constructs() {
         ],
         "unexpected output:\n{stdout}"
     );
+}
+
+#[test]
+fn granting_io_does_not_grant_process_spawn() {
+    // SECURITY, and a claim made in three places with a test in none of them:
+    // CLAUDE.md ("`Exec` must be granted separately, `IO` never implies
+    // spawn"), the runtime gate's own comment, and
+    // governance/reviews/2026-08-01-triage (P6-COV-01), whose note reads
+    // "Zero tests exist and exit 8 is never asserted end-to-end."
+    //
+    // It is a claim worth pinning because `builtin_effect_row("exec")` STILL
+    // returns `["IO"]` — the separation comes from a second classifier
+    // (`capability_of_builtin`) consulted at two independent sites, static and
+    // runtime. They agree by convention, not by construction, so a future
+    // simplification that drops the `requires_exec` augmentation would make
+    // `IO` grant arbitrary process spawn again with nothing failing.
+    let dir = std::env::temp_dir();
+    let f = dir.join(format!("axon_ioexec_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  let args = [\"spawned\"]\n  \
+         let r = exec(\"echo\", &args)\n  \
+         match r { Ok(_s) => println(\"EXEC RAN\")  Err(_e) => println(\"exec errored\") }\n  0\n}\n",
+    )
+    .unwrap();
+    let run = |ceiling: Option<&str>| -> (i32, String, String) {
+        let mut c = axon();
+        c.args(["run", f.to_str().unwrap()]);
+        match ceiling {
+            Some(v) => c.env("AXON_ALLOWED_EFFECTS", v),
+            None => c.env_remove("AXON_ALLOWED_EFFECTS"),
+        };
+        let out = c.output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // The claim itself: IO is not enough to spawn.
+    let (code, out, err) = run(Some("IO"));
+    assert_eq!(
+        code, 8,
+        "granting IO must NOT grant process spawn (expected SandboxViolation, exit 8): {err}{out}"
+    );
+    assert!(
+        err.contains("Exec"),
+        "the violation must name the effect actually required, so the operator \
+         knows what to grant: {err}"
+    );
+    assert!(
+        !out.contains("EXEC RAN"),
+        "the process must not have been spawned: {out}"
+    );
+
+    // NEGATIVE CONTROL — granting Exec alongside IO runs to completion.
+    // Without this the assertion above would pass just as well if the ceiling
+    // broke every exec, or every run.
+    let (code_ok, out_ok, err_ok) = run(Some("IO,Exec"));
+    assert_eq!(code_ok, 0, "IO,Exec must permit the spawn: {err_ok}");
+    assert!(
+        out_ok.contains("EXEC RAN"),
+        "and it must actually run: {out_ok}{err_ok}"
+    );
+    let _ = std::fs::remove_file(&f);
 }
 
 #[test]

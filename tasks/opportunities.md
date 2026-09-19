@@ -2102,3 +2102,27 @@ where the compiler can be rebuilt underneath it, and the fix belongs in the
 test (pin the binary it measures) rather than in the cache. Confirm before
 acting: copy the binary to a fixed path, run the test against that copy, and
 see whether the failure survives.
+
+## No `wrapping_*` builtins exist, and two places promised them
+
+`interp/value.rs` carried the comment "Use the `wrapping_*` builtins for
+intentional modular arithmetic", and
+`governance/reviews/2026-07-31-deep-review.md` §349 recommends making
+`INT_MIN / -1` panic while "keep[ing] the wrapping behaviour available only
+through an explicit `wrapping_div` builtin".
+
+Measured: `axon reference` lists no `wrapping_*` builtin, `builtins.rs` defines
+none, and `wrapping_div(a, b)` fails with E0001 "cannot find name". Both
+statements describe an escape hatch that was never built.
+
+The panic half of that recommendation is now implemented, which means
+intentional modular arithmetic currently has NO expression in the language.
+That is the right default — a wrapped value masquerading as success is the
+worst outcome for an autonomous consumer — but it is a real gap for anyone who
+wants modular arithmetic deliberately (hashing, checksums, PRNGs).
+
+Adding them is the documented "fast path" in CLAUDE.md: a `BUILTINS` row, a
+`__axon_*` impl in `axon-rt`, an `ExternSig` row, and a parity case. Candidates:
+`wrapping_add`, `wrapping_sub`, `wrapping_mul`, `wrapping_div`, `wrapping_rem`.
+The comment in `interp/value.rs` has been corrected to say they do not exist
+rather than to keep pointing at them.
