@@ -89,7 +89,23 @@ for f in examples/*.ax; do
 done
 
 echo "wasm_aot_stdout_parity: $pass match, $fail differ, $skip skipped"
-if [ "$pass" -eq 0 ]; then echo "wasm_aot_stdout_parity: nothing ran — skipping"; exit 0; fi
+# A vacuous green, found by the coverage-metric audit: this used to read
+#   if [ "$pass" -eq 0 ]; then ... exit 0; fi
+# so `AXON=/bin/false bash scripts/wasm_aot_stdout_parity.sh` printed
+# "0 match, 0 differ, 42 skipped" and exited 0. Nothing ran and the harness
+# said so, but it said so with a SUCCESS code.
+#
+# "Nothing ran" cannot mean "toolchain absent" HERE: every toolchain
+# precondition above already exits 0 with a stated reason before the loop
+# starts. Reaching this line with pass=0 means the compiler under test is
+# broken or the corpus vanished — both failures. The two sibling wasm
+# harnesses already guard this with a FLOOR; this one was the omission.
+FLOOR=${FLOOR:-25}   # actual is 29/42 today; headroom for corpus churn, still
+                     # far above the mass-skip regression this exists to catch
+if [ "$pass" -lt "$FLOOR" ]; then
+  printf "wasm_aot_stdout_parity: FAIL — only %d examples ran (floor %d). Every toolchain precondition passed, so this is a broken compiler or a vanished corpus, not an absent toolchain.\n" "$pass" "$FLOOR"
+  exit 1
+fi
 [ "$fail" -eq 0 ] || exit 1
 echo "wasm_aot_stdout_parity: PASS — AOT-wasm stdout is byte-identical to the interpreter across the corpus ✓"
 exit 0
