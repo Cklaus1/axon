@@ -2052,3 +2052,13 @@ concrete reason to expect it will not.
   give build-invoking tests their own `CARGO_TARGET_DIR`, or serialise them
   behind a shared lock. Discovered as the Step 0 baseline failure; logged, not
   fixed, because it is outside every Cortex task's scope.
+
+- **[low] A secret-SHAPED string lives in a tracked file: `tasks/todo.md:194`.**
+  It is synthetic — an exfiltration-demo transcript using an obviously fake
+  placeholder — so there is no credential exposure. But it matches the standard
+  `sk-…` secret-scanner pattern, so it will trip this repo's own artifact scan,
+  GitHub secret scanning, and any downstream SAST, and each hit costs someone a
+  manual "is this real?" check. Candidate fix: rewrite the demo value to
+  something no scanner matches (e.g. `x-api-key: <REDACTED-BY-DEMO>`), keeping
+  the transcript's teaching value. Found by the build-loop artifact scan; the
+  value is referenced by file:line and deliberately not reproduced here.
