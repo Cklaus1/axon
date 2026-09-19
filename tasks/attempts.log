@@ -30,3 +30,4 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-08T02:54:05-04:00  T11 attempt 1  examples/stdlib/r42_smoke.ax exercising JSON array + char iteration + file round-trip; signal 6/4/onetwo
 2026-08-08T02:55:29-04:00  T12 attempt 1  Pike VM in interp/regex.rs: parse->compile->simulate, leftmost-first, {n,m} cap, pattern cache, refuse backref/lookaround E2203
 2026-09-19T01:01:49-04:00  C1  attempt 1  verify EXISTING_AXON_MAP claims against the live repo by direct execution
+2026-09-19T01:03:12-04:00  C2  attempt 1  typed event/manifest contracts in a new axon-cortex crate, round-trip + rejection proofs

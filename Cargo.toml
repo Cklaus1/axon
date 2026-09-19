@@ -2,6 +2,7 @@
 members = [
   "crates/axon-core",
   "crates/axon-audit",
+  "crates/axon-cortex",
   "crates/axon-rt",
   "crates/axon-ai",
   "crates/axon-surface",
