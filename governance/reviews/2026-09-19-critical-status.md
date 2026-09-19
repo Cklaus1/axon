@@ -124,6 +124,17 @@ here — `OSK-P4-C1`, `OSK-P4-C2`, `OSK-P7-C3`, `P6-COV-02`, `P6-EXIT-03`,
 resolved in the passes above. `OSK-P7-C1` remains PARTIALLY open and is
 recorded in its own section with the decision it needs.
 
+### HIGH tier, second sample
+
+| finding | what was checked | observed now |
+|---|---|---|
+| F094 / P5-16 | mutable closure captures diverge — interp DROPS the write (`call1=1 call2=1`), native persists it | both engines `call1=1 call2=2`; matches the README's "heap-captured mutable closures" |
+| F141 | `@[ai(policy(budget: 1))]` enforced in interp (E1301, exit 5), ignored by native | native REFUSES with E0910 "cannot enforce the AI call budget" |
+| P4-INT-03 | `native::` calls bypass the sandbox check, agent log and ledger | `gfx::window_open` under a `Pure` ceiling → exit 8, `requires effect IO`; control runs clean |
+
+Sampled so far: 19 of 78 confirmed HIGH, of which exactly one (GATE-05) was
+still open.
+
 What is still NOT covered: the MEDIUM (113) and LOW (84) tiers, and the
 majority of the HIGH tier — 78 confirmed HIGH findings of which this pass
 sampled 11.
