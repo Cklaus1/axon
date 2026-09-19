@@ -1,0 +1,25 @@
+{
+  "phase": "3a-ablation",
+  "episodes": 280,
+  "stop_reason": "episode_budget",
+  "wall_min": 8.64,
+  "arms": [
+    "blind",
+    "prev",
+    "diag",
+    "both"
+  ],
+  "attempts": 3,
+  "decoding": "sampled",
+  "temperature": 0.7,
+  "tasks": [
+    "dict_method_syntax",
+    "str_field_len",
+    "python_colon_block",
+    "enum_variant_called",
+    "result_propagate",
+    "option_match",
+    "string_interp"
+  ],
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct"
+}

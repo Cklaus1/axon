@@ -1,0 +1,19 @@
+{
+  "phase": "3b-transfer",
+  "language": "python",
+  "episodes": 140,
+  "wall_min": 1.2,
+  "attempts": 3,
+  "decoding": "sampled",
+  "temperature": 0.7,
+  "tasks": [
+    "py_mutable_default",
+    "py_int_div",
+    "py_off_by_one",
+    "py_dict_keyerror",
+    "py_string_reverse",
+    "py_sum_wrong_init",
+    "py_sort_key"
+  ],
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct"
+}
