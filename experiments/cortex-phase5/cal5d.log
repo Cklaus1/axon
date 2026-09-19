@@ -1,0 +1,8 @@
+  drop email_utils_parseaddr                    control=1.00
+  drop statistics_covariance                    control=1.00
+  drop statistics_median                        control=1.00
+  drop statistics_median_high                   control=1.00
+  drop statistics_median_low                    control=1.00
+  drop statistics_multimode                     control=1.00
+
+admitted 0/6

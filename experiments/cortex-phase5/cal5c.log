@@ -1,0 +1,18 @@
+  KEEP difflib_restore                          control=0.00
+  KEEP base64_b64encode                         control=0.00
+  KEEP email_utils_collapse_rfc2231_value       control=0.00
+  KEEP email_utils_formatdate                   control=0.00
+  KEEP email_utils_make_msgid                   control=0.00
+  KEEP email_utils_parseaddr                    control=0.00
+  KEEP json_encoder_py_encode_basestring_ascii  control=0.00
+  KEEP statistics_covariance                    control=0.00
+  KEEP statistics_mean                          control=0.00
+  drop statistics_median                        control=1.00
+  drop statistics_median_high                   control=1.00
+  drop statistics_median_low                    control=1.00
+  KEEP statistics_multimode                     control=0.00
+  KEEP statistics_pstdev                        control=0.00
+  KEEP statistics_stdev                         control=0.00
+  KEEP shlex_split                              control=0.00
+
+admitted 13/16

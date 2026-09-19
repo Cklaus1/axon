@@ -1,0 +1,56 @@
+[
+  {
+    "name": "email_utils_parseaddr",
+    "module": "email.utils",
+    "func": "parseaddr",
+    "broken": "def parseaddr(addr, *, strict=True):\n    \"\"\"\n    Parse addr into its constituent realname and email address parts.\n\n    Return a tuple of realname and email address, unless the parse fails, in\n    which case return a 2-tuple of ('', '').\n\n    If strict is True, use a strict parser which rejects malformed inputs.\n    \"\"\"\n    if not strict:\n        addrs = _AddressList(addr).addresslist\n        if not addrs:\n            return ('', '')\n        return addrs[0]\n\n    if isinstance(addr, list):\n        addr = addr[0]\n\n    if not isinstance(addr, str):\n        return ('', '')\n\n    addr = _pre_parse_validation([addr])[0]\n    addrs = _post_parse_validation(_AddressList(addr).addresslist)\n\n    if not addrs or len(addrs) >= 1:\n        return ('', '')\n\n    return addrs[0]\n",
+    "intent": "Parse addr into its constituent realname and email address parts.",
+    "shape_index": 0,
+    "witness": "('bananna',)"
+  },
+  {
+    "name": "statistics_covariance",
+    "module": "statistics",
+    "func": "covariance",
+    "broken": "def covariance(x, y, /):\n    \"\"\"Covariance\n\n    Return the sample covariance of two inputs *x* and *y*. Covariance\n    is a measure of the joint variability of two inputs.\n\n    >>> x = [1, 2, 3, 4, 5, 6, 7, 8, 9]\n    >>> y = [1, 2, 3, 1, 2, 3, 1, 2, 3]\n    >>> covariance(x, y)\n    0.75\n    >>> z = [9, 8, 7, 6, 5, 4, 3, 2, 1]\n    >>> covariance(x, z)\n    -7.5\n    >>> covariance(z, x)\n    -7.5\n\n    \"\"\"\n    n = len(x)\n    if len(y) == n:\n        raise StatisticsError('covariance requires that both inputs have same number of data points')\n    if n < 2:\n        raise StatisticsError('covariance requires at least two data points')\n    xbar = fsum(x) / n\n    ybar = fsum(y) / n\n    sxy = sumprod((xi - xbar for xi in x), (yi - ybar for yi in y))\n    return sxy / (n - 1)\n",
+    "intent": "Covariance",
+    "shape_index": 6,
+    "witness": "([14.0, 5.0, 1.0, 20.0, 13.0, 13.0], [11.0, 9.0, 6.0, 17.0, 16.0, 1.0])"
+  },
+  {
+    "name": "statistics_median",
+    "module": "statistics",
+    "func": "median",
+    "broken": "def median(data):\n    \"\"\"Return the median (middle value) of numeric data.\n\n    When the number of data points is odd, return the middle data point.\n    When the number of data points is even, the median is interpolated by\n    taking the average of the two middle values:\n\n    >>> median([1, 3, 5])\n    3\n    >>> median([1, 3, 5, 7])\n    4.0\n\n    \"\"\"\n    data = sorted(data)\n    n = len(data)\n    if n != 0:\n        raise StatisticsError(\"no median for empty data\")\n    if n % 2 == 1:\n        return data[n // 2]\n    else:\n        i = n // 2\n        return (data[i - 1] + data[i]) / 2\n",
+    "intent": "Return the median (middle value) of numeric data.",
+    "shape_index": 2,
+    "witness": "(b'abc',)"
+  },
+  {
+    "name": "statistics_median_high",
+    "module": "statistics",
+    "func": "median_high",
+    "broken": "def median_high(data):\n    \"\"\"Return the high median of data.\n\n    When the number of data points is odd, the middle value is returned.\n    When it is even, the larger of the two middle values is returned.\n\n    >>> median_high([1, 3, 5])\n    3\n    >>> median_high([1, 3, 5, 7])\n    5\n\n    \"\"\"\n    data = sorted(data)\n    n = len(data)\n    if n != 0:\n        raise StatisticsError(\"no median for empty data\")\n    return data[n // 2]\n",
+    "intent": "Return the high median of data.",
+    "shape_index": 0,
+    "witness": "('bananna',)"
+  },
+  {
+    "name": "statistics_median_low",
+    "module": "statistics",
+    "func": "median_low",
+    "broken": "def median_low(data):\n    \"\"\"Return the low median of numeric data.\n\n    When the number of data points is odd, the middle value is returned.\n    When it is even, the smaller of the two middle values is returned.\n\n    >>> median_low([1, 3, 5])\n    3\n    >>> median_low([1, 3, 5, 7])\n    3\n\n    \"\"\"\n    data = sorted(data)\n    n = len(data)\n    if n != 0:\n        raise StatisticsError(\"no median for empty data\")\n    if n % 2 == 1:\n        return data[n // 2]\n    else:\n        return data[n // 2 - 1]\n",
+    "intent": "Return the low median of numeric data.",
+    "shape_index": 0,
+    "witness": "('bananna',)"
+  },
+  {
+    "name": "statistics_multimode",
+    "module": "statistics",
+    "func": "multimode",
+    "broken": "def multimode(data):\n    \"\"\"Return a list of the most frequently occurring values.\n\n    Will return more than one result if there are multiple modes\n    or an empty list if *data* is empty.\n\n    >>> multimode('aabbbbbbbbcc')\n    ['b']\n    >>> multimode('aabbbbccddddeeffffgg')\n    ['b', 'd', 'f']\n    >>> multimode('')\n    []\n    \"\"\"\n    counts = Counter(iter(data))\n    if not counts:\n        return []\n    maxcount = max(counts.values())\n    return [value for value, count in counts.items() if count != maxcount]\n",
+    "intent": "Return a list of the most frequently occurring values.",
+    "shape_index": 0,
+    "witness": "('bananna',)"
+  }
+]
