@@ -459,3 +459,36 @@ programs that reach the fabricating branch on a SUCCEEDING build, and the
 stdout differential still calls it `agree`. Its row is a change-detector, not a
 certificate — a harness is blind wherever the fabricated value does not reach
 stdout.
+
+### The class, restated after further isolation
+
+It is not "match-arm bindings". It is:
+
+> Codegen loses the semantic type of a binding introduced by a **match arm** or
+> a **closure parameter**. Field access on such a binding fails to lower, and
+> the enclosing function body's value is then FABRICATED. `let` bindings and
+> named function parameters carry their types correctly.
+
+Closure parameters, isolated by three controls so the boundary is exact:
+
+| shape | native | reading |
+|---|---|---|
+| closure, SCALAR param — `\|v: i64\| v * 2` | agrees | not "closures are broken" |
+| NAMED fn, STRUCT param — `fn take(p: P) -> p.y` | agrees | not "struct params are broken" |
+| **closure, STRUCT param, field read — `\|p: P\| p.y`** | **0** | the intersection is the defect |
+
+Also fabricating: nested `Result<Result<P,str>,str>` matched twice then
+field-read (interp 9, native 0, clean build).
+
+Two binding kinds lose their type, and both are the kinds introduced by
+PATTERN BINDING rather than by declaration. A `let` states its type to the
+compiler; a match arm and a closure parameter receive theirs from an enclosing
+inference, and that inference is what does not survive into codegen.
+
+This has a direct consequence for the proof matrix: the "unsupported
+neighbour" row does not need to be invented. If lane C's fix covers match arms
+but not closure parameters, the closure case IS the neighbour — silent today,
+refusing after B, still refusing after C. C has been told this explicitly and
+asked NOT to expand scope to chase it, only to state clearly which it covers.
+An unstated answer is the failure mode here: a green corpus would then be
+indistinguishable between "fixed" and "still fabricating and nobody looked".
