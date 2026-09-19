@@ -2063,6 +2063,32 @@ concrete reason to expect it will not.
   the transcript's teaching value. Found by the build-loop artifact scan; the
   value is referenced by file:line and deliberately not reproduced here.
 
+## Enum payload equality: assessed, and the refusal is the right state
+
+UPDATE (2026-09-19). Struct and tuple equality are now LOWERED field-wise and
+recursively. Same-variant enum equality with payloads is still refused, and
+after looking at what it would take, that is where it should stay for now:
+
+* The enum layout is `{ i32 tag, [max_payload_size x i8] }` — a MAX-SIZED byte
+  blob, not typed fields. Two options, both unattractive:
+  - memcmp the whole blob: only correct if the trailing padding is
+    deterministically initialised for every construction path. I could not
+    confirm that it is, and if it is not, two equal values compare UNEQUAL —
+    replacing a refusal with a wrong answer, which is the one outcome worth
+    avoiding.
+  - switch on the tag and compare only that variant's field bytes: correct, but
+    a branchy lowering per variant, and still wrong for any variant holding a
+    `str` or a nested slice (memcmp would compare pointers, the same trap the
+    `[str]`-field bug in struct equality already demonstrated).
+* Measured demand: the repo contains exactly TWO enum comparisons
+  (`examples/feature_tour.ax`), and BOTH are tag-decidable, so the refused case
+  has no caller.
+
+So the cost is a branchy lowering with a padding-correctness question attached,
+and the benefit is zero current usage. Refusing is sound, the diagnostic names
+the alternative (match on the variants and compare fields), and the interpreter
+handles it. Revisit if a real program needs it.
+
 ## Native composite equality is now REFUSED, not implemented (follow-up)
 
 The fixes in this batch stop native from answering `==`/`!=` wrongly for
