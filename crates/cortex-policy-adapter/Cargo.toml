@@ -1,0 +1,11 @@
+[package]
+name = "cortex-policy-adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The Axon side of the MiCode↔Cortex boundary. Links axon-cortex directly and speaks a typed
+# protocol on stdin/stdout, so MiCode needs no dependency on this repository at all.
+[dependencies]
+axon-cortex = { path = "../axon-cortex" }
+serde_json = "1"

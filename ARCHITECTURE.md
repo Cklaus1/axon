@@ -108,6 +108,7 @@ codegen-disagrees-with-HM bug is a live category.
 | `axon-audit` | the capability audit ledger (append-only, integrity-checked) |
 | `axon-web` | the approval-flow UI: a thin JSON proxy over the Phase-10 CLI verbs |
 | `axon-cortex` | the Cortex control-plane slice: typed contracts, an authority-checked repair episode, and its conformance run. A library plus its gates — **no CLI verb calls it yet**, so nothing here is on a user's path |
+| `cortex-policy-adapter` | the Axon side of the MiCode↔Cortex policy boundary. Reads one authorization request as JSON on stdin, asks `axon-cortex`, writes one decision on stdout. A separate executable rather than a library so neither repository depends on the other; the workspace deliberately does NOT cross, because the decisions Cortex is good at need identity and scope, not file bytes |
 | `axon-vm` | confidential microVM substrate, attestation, cross-VM quorum |
 | `axon-os` | supervisor: bounded jobs, operator kill, compliance monitor |
 | `axon-wasm` | the interpreter as a wasm cdylib (browser tier) |
