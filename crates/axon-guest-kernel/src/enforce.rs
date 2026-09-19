@@ -26,9 +26,25 @@ const ENOSYS: u64 = 0xFFFF_FFFF_FFFF_FFFE;
 // ── Policy state (written once at init, read in the naked handler path) ───────
 
 /// Bitmask of allowed effects copied from the MMDS `Policy` at init time.
-/// Default 0xFF matches the open-policy mmds.rs stub so the kernel boots even
-/// if K2 hasn't filled in a real policy yet.
-static mut ALLOWED_EFFECTS: u64 = 0xFF;
+///
+/// Defaults to DENY-ALL. It used to default to 0xFF — every effect allowed —
+/// "so the kernel boots even if K2 hasn't filled in a real policy yet", which
+/// is a security default chosen for convenience during bring-up and then left.
+///
+/// mmds.rs already learned this lesson and wrote it down (T48): a policy that
+/// fails to decode "used to fall through and leave ALLOWED_EFFECTS at the
+/// static default, which was 0xFF. Refuse explicitly and say so, rather than
+/// relying on the static happening to be right." That fix set a closed policy
+/// on the mmds side while this static stayed open, so the two halves of one
+/// concept disagreed about which way to fail.
+///
+/// Not reachable today: `init` is the ONLY caller that sets the SCE bit
+/// enabling SYSCALL, so if it never runs the handler never runs either and
+/// this value is never read. That coupling is the whole safety argument, and
+/// it is one refactor away from not holding. Deny-all costs nothing while it
+/// holds — `init` overwrites this before enabling the gate — and is the
+/// difference between a closed door and an open one if it stops holding.
+static mut ALLOWED_EFFECTS: u64 = 0;
 
 // ── Audit ring buffer ─────────────────────────────────────────────────────────
 
