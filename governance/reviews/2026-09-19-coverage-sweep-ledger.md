@@ -76,3 +76,76 @@ deliberately rather than folded into an unrelated commit:
   differentially — reading the tag out of `Result<Uncertain<i64>,_>` is
   E0910-refused natively — so it is asserted here as a code reading, not a
   measurement.
+
+## Backend invariant established by this episode
+
+> **No object file may be emitted from LLVM IR that has not passed LLVM module
+> verification.**
+
+Stated independently of the `if`-expression bug that exposed it. It is a
+backend admission gate, not a regression workaround — the same shape as the
+artifact admission gate: a transition (IR becomes a shipped artifact) that
+nothing asserted was valid.
+
+Measured state after the fix — every object-emitting entry point in
+`codegen/output.rs` verifies first:
+
+| entry point | verifies |
+|---|---|
+| `compile_to_binary` | yes, via `compile_to_binary_target` |
+| `compile_to_binary_target` | yes |
+| `compile_to_shared_lib` | yes |
+| `compile_to_object_for_triple` | yes |
+| `compile_to_freestanding_obj` | yes |
+| `compile_to_freestanding_binary` | yes |
+| `compile_to_wasm_object` | yes |
+| `emit_bpf_object` | **yes — added here; it was the only hole** |
+
+Still unverified, recorded not fixed: `write_ir`, `emit_bitcode`,
+`emit_llvm_ir`. These emit IR/bitcode rather than objects. Bitcode is consumed
+by other tools, so `emit_bitcode` is the one of the three that most deserves
+the same gate.
+
+## Reusable audit heuristic (the highest-yield thing this episode produced)
+
+> **Search for documented "limitations" that COMPILE SUCCESSFULLY and
+> substitute a default, zero, or null value. Prioritise those above explicit
+> refusals.**
+
+A refusal is visible: the build fails, the author learns, nothing ships. An
+accepted program that returns a fabricated value is invisible by construction,
+and the documentation makes it look considered. The BPF `if` had a spec
+citation, a comment explaining the choice, and a clean build — and returned
+neither branch.
+
+The probe shape, in order of signal:
+
+1. grep the backends for comments containing "Slice-1", "for now", "not yet",
+   "yields no value", "unsupported" — near code that does NOT return an error
+2. of those, keep the ones where the surrounding code still produces an
+   artifact (an object, a value, an exit 0)
+3. of those, keep the ones that substitute a literal — `const_zero()`,
+   `unwrap_or_default()`, `Ok(None)` flowing into a default, `null`
+4. write the smallest program that reaches it and check whether the answer is
+   fabricated
+
+Steps 1-3 are mechanical and could be a gate. Contrast with the inverse
+question ("which features are unsupported?"), which surfaces the refusals —
+the cases that are already safe.
+
+### Second heuristic, from the mutation pass
+
+> **A defensive branch that no input can reach is worse than no branch.** It
+> tells every later reader — and every model trained on the file — that an edge
+> case is handled, when the control flow makes it unreachable.
+
+Found here as `then_open && else_open`: it looked like careful handling of a
+terminating branch, and no program could produce that state, because
+`Expr::Return` yields `None` and `Expr::Block` breaks on a terminator. A
+mutation that deletes such a branch SURVIVES, which is the detection signal —
+a survived mutation is a question about the code before it is a question about
+the test.
+
+Both are candidates for Cortex skill crystallisation: they are strategies about
+where to look, not facts about Axon, so they should transfer to other compilers
+and runtimes.
