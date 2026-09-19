@@ -246,6 +246,17 @@ if [ "$STRICT" = 1 ]; then
   ./scripts/ebpf_verify.sh >/dev/null 2>&1 || fail "eBPF verifier harness"
   ./scripts/tee_sim_run.sh >/dev/null 2>&1 || fail "TEE simulation harness"
 
+  # Three MORE acceptance gates nothing invoked, found by re-running the same
+  # "which scripts does nothing call?" probe after wiring the first two. Each
+  # asserts the §0 checks its spec declares, each passes today, and each was
+  # running nowhere. R34's in particular verifies a stamp -> verify -> tamper ->
+  # BROKEN chain through the real CLI; that evidence was being produced and
+  # discarded on every run that never happened.
+  echo "── gate: acceptance gates R33, R34, R39 (previously unwired) ────"
+  ./scripts/r33_acceptance_gate.sh >/dev/null 2>&1 || fail "R33 acceptance gate"
+  ./scripts/r34_acceptance_gate.sh >/dev/null 2>&1 || fail "R34 acceptance gate"
+  ./scripts/r39_slice1_gate.sh    >/dev/null 2>&1 || fail "R39 Slice 1 gate"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was

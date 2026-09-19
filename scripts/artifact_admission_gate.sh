@@ -78,6 +78,14 @@ for f in "${tracked[@]}"; do
     *__pycache__/*|*.pyc|*.pyo|*.o|*.a|*.so|*.dylib|*.dll|*.rlib|*.rmeta|\
     target/*|*/target/*|*.bin|crates/*/cg|crates/*/vapp)
       note "BUILD OUTPUT: $f"; fail=1 ;;
+    # Editing artifacts that became source. `scripts/r34_orig_tmp.sh` was a
+    # pre-fix COPY of an acceptance gate, committed by the very change that
+    # strengthened it — so a weaker version of a gate outlived the fix that
+    # removed its weakness, sitting in the tree for anyone to run or revive.
+    # Same class as a committed build artifact: a thing that exists because of
+    # how the work was done, not because the repo needs it.
+    *_orig|*_orig.*|*_orig_*|*_tmp|*_tmp.*|*.bak|*.orig|*~|*.old|*[-_]copy|*[-_]copy.*|*[-_]backup|*[-_]backup.*)
+      note "EDITING ARTIFACT: $f"; fail=1 ;;
   esac
 done
 
