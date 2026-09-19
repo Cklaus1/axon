@@ -3073,6 +3073,26 @@ impl<'ctx> super::Codegen<'ctx> {
                     build_wrappers::w_ret(&self.ir.builder, coerced);
                 }
                 None => {
+                    // The SECOND fabrication site, and the one the named-function
+                    // guard in codegen/mod.rs cannot reach. A lambda whose body
+                    // fails to lower returned a silent zero exactly as `emit_fn`
+                    // used to, so the invariant held for `fn` and leaked here:
+                    //
+                    //   fn f() -> i64 { let g = |p: P| -> i64 { p.y }  g(P{x:1,y:8}) }
+                    //
+                    // built clean and printed 0 where the interpreter printed 8.
+                    // Found by checking that the closure case STILL fabricated
+                    // after the named-function safety net landed — the gate
+                    // reported success on a program it was supposed to refuse.
+                    //
+                    // Same rule, stated once more because it is the whole point:
+                    // a successful native build may never invent a return value
+                    // solely because codegen failed to produce one. The zero
+                    // stays as the placeholder that keeps the IR well-formed,
+                    // but only behind a recorded error that aborts the build.
+                    self.codegen_errors.push(format!(
+                        "codegen error [E0910]: native codegen could not lower the body of `{lambda_name}` (a closure) to a value. Refusing to return a fabricated zero. Run it under the interpreter (`axon run`)."
+                    ));
                     build_wrappers::w_ret(&self.ir.builder, i64_ty.const_zero().into());
                 }
             }

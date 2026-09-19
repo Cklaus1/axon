@@ -30742,4 +30742,19 @@ fn a_successful_native_build_never_invents_a_return_value() {
                   }\n\
                   fn main() -> i64 { println(to_str(pick(\"the answer is 42\")))  0 }\n";
     assert_native_never_fabricates("fabret_ai", ai_src, "pick", true);
+    // THIRD CASE — a CLOSURE parameter, which reaches a SECOND fabrication site
+    // that the named-function guard cannot see: `emit_lambda` has its own
+    // `None => w_ret(const_zero())`. The invariant held for `fn` and leaked
+    // here, so the gate reported success on a program it existed to refuse.
+    // Found by checking that this shape STILL fabricated after the named-fn
+    // safety net landed — a gate is not verified until something it should
+    // reject has been put in front of it.
+    assert_native_never_fabricates(
+        "fabret_closure",
+        "type P = { x: i64, y: i64 }\n\
+         fn f() -> i64 { let g = |p: P| -> i64 { p.y }  g(P { x: 1, y: 8 }) }\n\
+         fn main() -> i64 { println(to_str(f()))  0 }\n",
+        "__lambda_0",
+        false,
+    );
 }
