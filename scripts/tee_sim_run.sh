@@ -34,9 +34,19 @@ WORKLOAD="examples/tee/confidential_score.ax"
 MEASUREMENT="SIM-gramine-direct-$(sha256sum "$WORKLOAD" 2>/dev/null | cut -c1-16)"
 
 echo "tee_sim_run: building the interpreter axon binary…"
-if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
-  echo "tee_sim_run: interpreter build failed — cannot run; skipping" >&2
-  exit 0
+# A build failure is a FAILURE, not a skip. This used to `exit 0` with
+# "cannot run; skipping" while discarding the compiler error to /dev/null, so
+# a broken interpreter made this harness report success in silence — the same
+# cannot-measure-as-success shape that let wasm_aot_stdout_parity pass having
+# compared nothing.
+#
+# The distinction that matters: gramine is an OPTIONAL dependency and its
+# absence is a legitimate skip (below). The interpreter is the thing under
+# test. "I could not build the subject" is never a pass.
+if ! _build_err="$(cargo build -q -p axon-core --no-default-features --bin axon 2>&1)"; then
+  echo "tee_sim_run: FAIL — the interpreter binary does not build, so nothing here was measured:" >&2
+  echo "$_build_err" | sed 's/^/    | /' >&2
+  exit 1
 fi
 AXON="$ROOT/target/debug/axon"
 

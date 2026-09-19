@@ -232,6 +232,20 @@ if [ "$STRICT" = 1 ]; then
   ./scripts/r22_acceptance_gate.sh >/dev/null 2>&1 || fail "R22 acceptance gate"
   ./scripts/r44_acceptance_gate.sh >/dev/null 2>&1 || fail "R44 acceptance gate"
 
+  # Two more harnesses that NOTHING invoked — found by the coverage-metric
+  # audit, which measured execution instead of counting mentions. Between them
+  # they are the entire execution story for 8 bpf/TEE builtins; those builtins'
+  # only other coverage was `check_fixture`, which type-checks and never runs.
+  #
+  # Both pass on this host today: ebpf_verify.sh gets its object ACCEPTED by
+  # the in-kernel verifier, and tee_sim_run.sh verifies the baseline and the
+  # type rule. Both skip honestly when their capability is genuinely absent
+  # (no llvm-objdump, not root, no gramine) rather than reporting success.
+  # A harness nobody invokes reports nothing, including when it would fail.
+  echo "── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──"
+  ./scripts/ebpf_verify.sh >/dev/null 2>&1 || fail "eBPF verifier harness"
+  ./scripts/tee_sim_run.sh >/dev/null 2>&1 || fail "TEE simulation harness"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
