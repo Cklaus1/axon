@@ -1,0 +1,42 @@
+{
+  "scope": "Document validator tests only",
+  "result": "PASS",
+  "cases": [
+    {
+      "case": "unknown_dependency",
+      "expected_rejection_observed": true,
+      "detected_errors": [
+        "spec CX-00: unknown dependency CX-99",
+        "spec CX-00: metadata dependencies differ from manifest"
+      ]
+    },
+    {
+      "case": "task_cycle",
+      "expected_rejection_observed": true,
+      "detected_errors": [
+        "task dependency cycle: B00 -> B01 -> B00"
+      ]
+    },
+    {
+      "case": "broken_link",
+      "expected_rejection_observed": true,
+      "detected_errors": [
+        "README.md: broken local link: does-not-exist.md"
+      ]
+    },
+    {
+      "case": "false_implementation_claim",
+      "expected_rejection_observed": true,
+      "detected_errors": [
+        "spec CX-00: status must remain Draft in this proposal package"
+      ]
+    },
+    {
+      "case": "false_product_gate_claim",
+      "expected_rejection_observed": true,
+      "detected_errors": [
+        "gate G00-contract: package must not claim a product run"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "schema": "cortex-source-attachments/1",
+  "sources": [
+    {
+      "id": "S1",
+      "filename": "axon-docs.pdf",
+      "pages": 94,
+      "bytes": 245781,
+      "sha256": "350d83d442aacb0042255c4fe3dab069f3cd251d048c168fdbe08f5bb09e0970",
+      "included_in_package": false
+    },
+    {
+      "id": "S2",
+      "filename": "Jev Arch(1).pdf",
+      "pages": 48,
+      "bytes": 459684,
+      "sha256": "75e86e2ac65c2db46603ea5e6fc44069e3eb2ff12221becfa28d3e8aacb387be",
+      "included_in_package": false
+    },
+    {
+      "id": "S3",
+      "filename": "MICODE_PLATFORM_MANUAL.pdf",
+      "pages": 39,
+      "bytes": 1769391,
+      "sha256": "0c72dc8191dd56b9d39a589b46f9ae343a8064f42dadb0f313f621b679633f75",
+      "included_in_package": false
+    },
+    {
+      "id": "S4",
+      "filename": "MiCode_Axon_Support_Build_Plan_v0_1.zip",
+      "pages": null,
+      "bytes": 54177,
+      "sha256": "5faf0f4ef4ea70d864acb94b0468c05f54a5ab4fe43250f5327e1043c9f017c9",
+      "included_in_package": false
+    }
+  ]
+}
