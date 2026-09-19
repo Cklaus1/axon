@@ -102,6 +102,46 @@ pub(super) struct ExternSig {
 pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
     // ── math scalars (migrated to axon-rt in R1 Batch 1/3) ──────────────────
     ExternSig {
+        axon_name: "wrapping_add",
+        symbol: "__axon_wrapping_add",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("wrapping_add"),
+        ret_type: Some(("wrapping_add", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "wrapping_sub",
+        symbol: "__axon_wrapping_sub",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("wrapping_sub"),
+        ret_type: Some(("wrapping_sub", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "wrapping_mul",
+        symbol: "__axon_wrapping_mul",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("wrapping_mul"),
+        ret_type: Some(("wrapping_mul", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "wrapping_div",
+        symbol: "__axon_wrapping_div",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("wrapping_div"),
+        ret_type: Some(("wrapping_div", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "wrapping_rem",
+        symbol: "__axon_wrapping_rem",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("wrapping_rem"),
+        ret_type: Some(("wrapping_rem", SemRet::I64)),
+    },
+    ExternSig {
         axon_name: "abs_i64",
         symbol: "__axon_abs_i64",
         params: &[L::I64],

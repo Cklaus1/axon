@@ -1438,6 +1438,42 @@ impl<'p> Interp<'p> {
             }
 
             // ── Math ────────────────────────────────────────────────────────────
+            // Wrapping (modular) arithmetic — the deliberate opt-out from the
+            // checked operators. Semantics are stated on the BUILTINS rows;
+            // the two non-obvious ones are pinned here too because this is the
+            // REFERENCE implementation native must match:
+            //   wrapping_div(MIN, -1) = MIN   (the wrap of an unrepresentable 2^63)
+            //   wrapping_rem(MIN, -1) = 0     (representable; idiv traps, the answer does not)
+            // A ZERO divisor still panics in both: zero has no wrapped quotient,
+            // so returning anything would be inventing a result.
+            "wrapping_add" => {
+                want(2)?;
+                ok!(Value::Int(as_int(&args[0])?.wrapping_add(as_int(&args[1])?)))
+            }
+            "wrapping_sub" => {
+                want(2)?;
+                ok!(Value::Int(as_int(&args[0])?.wrapping_sub(as_int(&args[1])?)))
+            }
+            "wrapping_mul" => {
+                want(2)?;
+                ok!(Value::Int(as_int(&args[0])?.wrapping_mul(as_int(&args[1])?)))
+            }
+            "wrapping_div" => {
+                want(2)?;
+                let (a, b) = (as_int(&args[0])?, as_int(&args[1])?);
+                if b == 0 {
+                    return panic("integer division by zero (wrapping_div)");
+                }
+                ok!(Value::Int(a.wrapping_div(b)))
+            }
+            "wrapping_rem" => {
+                want(2)?;
+                let (a, b) = (as_int(&args[0])?, as_int(&args[1])?);
+                if b == 0 {
+                    return panic("integer remainder by zero (wrapping_rem)");
+                }
+                ok!(Value::Int(a.wrapping_rem(b)))
+            }
             "abs_i64" => {
                 want(1)?;
                 // checked — abs(i64::MIN) overflows. Match the native runtime's

@@ -514,6 +514,57 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Convert a bool to its string representation: \"true\" or \"false\".",
     },
     // ── Phase 5: Math builtins ────────────────────────────────────────────────
+    // ── Wrapping (modular) integer arithmetic ───────────────────────────────
+    //
+    // `+ - * / %` are CHECKED: overflow is a graceful panic, never a silent
+    // wrap, because a wrapped value masquerading as success is the worst class
+    // of bug for an autonomous consumer. These are the deliberate opt-out, for
+    // the cases where modular arithmetic IS the intent — hashes, checksums,
+    // PRNGs, ring buffers.
+    //
+    // Axon's semantics, stated here rather than inherited from a host language:
+    //
+    //   wrapping_add/sub/mul   two's-complement wrap on overflow.
+    //   wrapping_div(MIN, -1)  = MIN. The true answer 2^63 is unrepresentable,
+    //                          and MIN is what the two's-complement wrap of it
+    //                          is. Checked `/` panics here; this is the opt-out.
+    //   wrapping_rem(MIN, -1)  = 0. That value IS representable — the pair is
+    //                          special only because the x86 `idiv` instruction
+    //                          traps on it, which is a fact about the hardware
+    //                          and not about the answer.
+    //   ANY divisor of 0       PANICS, in both. Zero has no wrapped quotient to
+    //                          give, so "wrapping" cannot mean anything here;
+    //                          returning 0 or MIN would be inventing a result.
+    BuiltinFn {
+        name: "wrapping_add",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Add two i64 with two's-complement wraparound instead of the checked `+`'s overflow panic.",
+    },
+    BuiltinFn {
+        name: "wrapping_sub",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Subtract two i64 with two's-complement wraparound instead of the checked `-`'s overflow panic.",
+    },
+    BuiltinFn {
+        name: "wrapping_mul",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Multiply two i64 with two's-complement wraparound instead of the checked `*`'s overflow panic.",
+    },
+    BuiltinFn {
+        name: "wrapping_div",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Divide two i64, wrapping on the one overflowing case: `wrapping_div(i64::MIN, -1)` is `i64::MIN`. Division by ZERO still panics — zero has no wrapped quotient.",
+    },
+    BuiltinFn {
+        name: "wrapping_rem",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Remainder of two i64. `wrapping_rem(i64::MIN, -1)` is 0 (a representable answer; the pair is special only because x86 `idiv` traps on it). Remainder by ZERO still panics.",
+    },
     BuiltinFn {
         name: "abs_i64",
         params: &[("n", "i64")],

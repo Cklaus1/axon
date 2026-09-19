@@ -1251,6 +1251,47 @@ pub extern "C" fn __axon_print(ptr: *const u8, len: i64) {
 /// deterministically with the same intent rather than invoke UB or silently
 /// wrap (wrapping would reintroduce the interp↔codegen drift class of
 /// BUG_HUNT #33/#36/#37). The common case is a branchless `i64::abs`.
+/// Wrapping (modular) integer arithmetic — the deliberate opt-out from the
+/// checked operators, which panic on overflow.
+///
+/// Semantics match the interpreter exactly (it is the reference):
+///   `wrapping_div(i64::MIN, -1)` = `i64::MIN`  — the wrap of an unrepresentable 2^63
+///   `wrapping_rem(i64::MIN, -1)` = `0`         — representable; `idiv` traps, the answer does not
+/// A ZERO divisor panics in both: zero has no wrapped quotient, so returning
+/// anything would be inventing a result.
+#[no_mangle]
+pub extern "C" fn __axon_wrapping_add(a: i64, b: i64) -> i64 {
+    a.wrapping_add(b)
+}
+
+#[no_mangle]
+pub extern "C" fn __axon_wrapping_sub(a: i64, b: i64) -> i64 {
+    a.wrapping_sub(b)
+}
+
+#[no_mangle]
+pub extern "C" fn __axon_wrapping_mul(a: i64, b: i64) -> i64 {
+    a.wrapping_mul(b)
+}
+
+#[no_mangle]
+pub extern "C" fn __axon_wrapping_div(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        eprintln!("axon: panic: integer division by zero (wrapping_div)");
+        std::process::exit(101);
+    }
+    a.wrapping_div(b)
+}
+
+#[no_mangle]
+pub extern "C" fn __axon_wrapping_rem(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        eprintln!("axon: panic: integer remainder by zero (wrapping_rem)");
+        std::process::exit(101);
+    }
+    a.wrapping_rem(b)
+}
+
 #[no_mangle]
 pub extern "C" fn __axon_abs_i64(n: i64) -> i64 {
     match n.checked_abs() {

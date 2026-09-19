@@ -20820,6 +20820,104 @@ fn a_fiber_panic_is_still_caught_and_does_not_kill_the_program() {
 }
 
 #[test]
+fn wrapping_builtins_are_the_documented_opt_out_from_checked_arithmetic() {
+    // Making `i64::MIN / -1` panic was right, but it left the language with NO
+    // way to express modular arithmetic — and a comment in interp/value.rs had
+    // been promising `wrapping_*` builtins that never existed.
+    //
+    // Axon's semantics, stated on the BUILTINS rows rather than inherited from
+    // a host language, and pinned here:
+    //   wrapping_div(MIN, -1) = MIN   the wrap of an unrepresentable 2^63
+    //   wrapping_rem(MIN, -1) = 0     representable; x86 idiv traps, the answer does not
+    //   ANY divisor of 0      panics  zero has no wrapped quotient to give
+    let src = "fn main() -> i64 {\n  \
+               let mx = 9223372036854775807\n  \
+               let mn = 0 - 9223372036854775807 - 1\n  \
+               let n1 = 0 - 1\n  \
+               println(to_str(wrapping_add(mx, 1)))\n  \
+               println(to_str(wrapping_sub(mn, 1)))\n  \
+               println(to_str(wrapping_mul(mn, 2)))\n  \
+               println(to_str(wrapping_div(mn, n1)))\n  \
+               println(to_str(wrapping_rem(mn, n1)))\n  \
+               println(to_str(wrapping_add(2, 3)))\n  0\n}\n";
+    let want = [
+        "-9223372036854775808", // MAX + 1 wraps to MIN
+        "9223372036854775807",  // MIN - 1 wraps to MAX
+        "0",                    // MIN * 2 wraps to 0
+        "-9223372036854775808", // the case checked `/` panics on
+        "0",                    // representable, so not a panic
+        "5",                    // and ordinary arithmetic is unaffected
+    ];
+    let f = tmp_ax("wrapping", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(got, want, "interpreter is the reference semantics");
+
+    let out_bin = std::env::temp_dir().join(format!("axon_wrap_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(ngot, got, "native must agree with the interpreter");
+
+    // A ZERO divisor panics in BOTH — the one case "wrapping" cannot define.
+    for (name, call) in [
+        ("wrapping_div", "wrapping_div(1, z)"),
+        ("wrapping_rem", "wrapping_rem(1, z)"),
+    ] {
+        let zsrc =
+            format!("fn main() -> i64 {{\n  let z = 0\n  println(to_str({call}))\n  0\n}}\n");
+        let zf = tmp_ax(&format!("wrapzero_{name}"), &zsrc);
+        let zr = axon().arg("run").arg(&zf).output().expect("spawn");
+        let _ = std::fs::remove_file(&zf);
+        let zmsg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&zr.stdout),
+            String::from_utf8_lossy(&zr.stderr)
+        );
+        assert_eq!(
+            zr.status.code(),
+            Some(101),
+            "{name} by zero must panic, not invent a result: {zmsg}"
+        );
+        // The exit code alone cannot tell OUR guard from a raw Rust
+        // divide-by-zero — both exit 101. Mutation testing proved that: removing
+        // the guard entirely left this test green. Assert the MESSAGE names the
+        // builtin, which only our guard produces.
+        assert!(
+            zmsg.contains(name),
+            "the panic must come from {name}'s own guard, not a raw host \
+             divide-by-zero that happens to share its exit code: {zmsg}"
+        );
+    }
+}
+
+#[test]
 fn min_divided_by_negative_one_overflows_in_both_engines() {
     // `i64::MIN / -1` is 2^63 — not representable. The interpreter used
     // `wrapping_div` and returned `i64::MIN`; native was written to MATCH it

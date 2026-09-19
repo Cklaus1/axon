@@ -317,6 +317,16 @@ expect_runtime_panic() {
 
 echo "fuzz_parity: seed=$SEED, up to $((N)) random + edge inputs per builtin"
 # ── i64 scalars (extern + inline) ─────────────────────────────────────────────
+# Wrapping (modular) arithmetic — the deliberate opt-out from the checked
+# operators. The fuzzer's edge inputs include i64::MIN/MAX, which is exactly
+# where these differ from `+ - * / %`: the checked ops panic there and these
+# wrap. wrapping_div/rem take B from the same pool, so a ZERO divisor is
+# exercised too — both engines must panic identically on it.
+fuzz wrapping_add i64 2 'wrapping_add(A, B)'
+fuzz wrapping_sub i64 2 'wrapping_sub(A, B)'
+fuzz wrapping_mul i64 2 'wrapping_mul(A, B)'
+fuzz wrapping_div i64 2 'wrapping_div(A, B)'
+fuzz wrapping_rem i64 2 'wrapping_rem(A, B)'
 fuzz abs_i64   i64 1 'abs_i64(A)'
 fuzz abs_i32   i64 1 'abs_i32(A)'
 fuzz sign_i64  i64 1 'sign_i64(A)'

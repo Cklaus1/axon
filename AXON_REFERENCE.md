@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 338 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 48 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 48 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -272,7 +272,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `I0001` | deferred attribute (AI annotations) |
 | `I0002` | a foreign keyword was accepted as a no-op (`let mut x`) |
 
-## Builtins (338)
+## Builtins (343)
 
 | Signature | Purpose |
 |---|---|
@@ -612,5 +612,10 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `volatile_store_u32(ptr: i64, val: i64) -> ()` | R17 HAL: volatile store of a u32 (truncated from i64) to an MMIO address. Substrate-only. |
 | `volatile_store_u64(ptr: i64, val: i64) -> ()` | R17 HAL: volatile store of a u64 to an MMIO address. Substrate-only. |
 | `volatile_store_u8(ptr: i64, val: i64) -> ()` | R17 HAL: volatile store of a u8 (truncated from i64) to an MMIO address. Substrate-only. |
+| `wrapping_add(a: i64, b: i64) -> i64` | Add two i64 with two's-complement wraparound instead of the checked `+`'s overflow panic. |
+| `wrapping_div(a: i64, b: i64) -> i64` | Divide two i64, wrapping on the one overflowing case: `wrapping_div(i64::MIN, -1)` is `i64::MIN`. Division by ZERO still panics — zero has no wrapped quotient. |
+| `wrapping_mul(a: i64, b: i64) -> i64` | Multiply two i64 with two's-complement wraparound instead of the checked `*`'s overflow panic. |
+| `wrapping_rem(a: i64, b: i64) -> i64` | Remainder of two i64. `wrapping_rem(i64::MIN, -1)` is 0 (a representable answer; the pair is special only because x86 `idiv` traps on it). Remainder by ZERO still panics. |
+| `wrapping_sub(a: i64, b: i64) -> i64` | Subtract two i64 with two's-complement wraparound instead of the checked `-`'s overflow panic. |
 | `write_file(path: str, content: str) -> Result<(), str>` | Write `content` to `path`, creating or truncating the file. Returns Ok(()) or Err(message). |
 | `zephyr_console_putc(byte: i64) -> ()` | R25 HAL: write one byte to the Zephyr console by calling the host-provided extern C hook `axon_console_putc(int)` (e.g. a `printk` wrapper). Architecture-neutral — used when an Axon object links into a Zephyr app on ARM Cortex-M / RISC-V / x86. Substrate-only; codegen-only (E0910 in interp). |
