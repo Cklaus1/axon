@@ -1,0 +1,24 @@
+{
+  "phase": "4-transfer",
+  "language": "python",
+  "episodes": 200,
+  "wall_min": 9.11,
+  "attempts": 3,
+  "decoding": "sampled",
+  "temperature": 0.7,
+  "tasks": [
+    "round_half_even",
+    "interval_merge",
+    "title_case_small",
+    "lru_evict_order",
+    "wildcard_match"
+  ],
+  "task_control_rates": {
+    "round_half_even": 0.0,
+    "interval_merge": 0.0,
+    "title_case_small": 0.625,
+    "lru_evict_order": 0.625,
+    "wildcard_match": 0.75
+  },
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct"
+}

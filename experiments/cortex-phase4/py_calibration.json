@@ -1,0 +1,120 @@
+[
+  {
+    "name": "stable_sort_ties",
+    "admitted": false,
+    "reason": "not_broken"
+  },
+  {
+    "name": "round_half_even",
+    "admitted": true,
+    "control_pass_rate": 0.0,
+    "reason": null
+  },
+  {
+    "name": "dedup_preserve_order",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "chunk_remainder",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "merge_dicts_deep",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "binary_search_bounds",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "flatten_depth",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "word_count_case",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "running_max",
+    "admitted": false,
+    "reason": "not_broken"
+  },
+  {
+    "name": "interval_merge",
+    "admitted": true,
+    "control_pass_rate": 0.0,
+    "reason": null
+  },
+  {
+    "name": "truncate_words",
+    "admitted": false,
+    "control_pass_rate": 0.875,
+    "reason": "too_easy"
+  },
+  {
+    "name": "percent_change",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "group_by_key",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "clamp_none",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "title_case_small",
+    "admitted": true,
+    "control_pass_rate": 0.625,
+    "reason": null
+  },
+  {
+    "name": "safe_zip_strict",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "roman_numeral",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  },
+  {
+    "name": "lru_evict_order",
+    "admitted": true,
+    "control_pass_rate": 0.625,
+    "reason": null
+  },
+  {
+    "name": "wildcard_match",
+    "admitted": true,
+    "control_pass_rate": 0.75,
+    "reason": null
+  },
+  {
+    "name": "date_diff_days",
+    "admitted": false,
+    "control_pass_rate": 1.0,
+    "reason": "too_easy"
+  }
+]
