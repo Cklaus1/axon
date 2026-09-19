@@ -2583,7 +2583,28 @@ impl<'ctx> super::Codegen<'ctx> {
         let subject = match self.emit_expr(expr, fn_val) {
             Some(v) => v,
             None => {
-                // Expression produced no value; treat as infinite loop.
+                // A `while let` whose SUBJECT fails to lower used to branch
+                // unconditionally into the body — compiling a lowering failure
+                // into an INFINITE LOOP, with no diagnostic. That is the same
+                // invent-something-rather-than-refuse shape as the fabricated
+                // return value, in its worst form: a wrong answer can at least
+                // be observed, a hang cannot be distinguished from slow work.
+                //
+                // MEASURED: unreached by all 328 corpus programs, and I could
+                // not construct a witness — every subject I could write either
+                // lowers or is already E0910-refused upstream with the build
+                // aborting. So this is NOT claimed as a fixed live defect.
+                //
+                // It is changed anyway because it adds no dead code: the branch
+                // already existed, and this only changes what it DOES. If it is
+                // unreachable, both versions are equally unreachable; if it ever
+                // becomes reachable, a refusal is correct where a silent hang is
+                // catastrophic. The infinite branch is still emitted so the IR
+                // stays well-formed, exactly as the zero placeholder is.
+                self.codegen_errors.push(format!(
+                    "codegen error [E0910]: native codegen could not lower the subject of a `while let` in `{}` to a value. Refusing to emit a loop that would never terminate. Run it under the interpreter (`axon run`).",
+                    fn_val.get_name().to_str().unwrap_or("<fn>")
+                ));
                 build_wrappers::w_br(&self.ir.builder, body_bb);
                 self.loop_stack.pop();
                 self.ir.builder.position_at_end(exit_bb);
