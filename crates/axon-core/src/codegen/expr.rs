@@ -378,6 +378,40 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
                 let lhs = self.emit_expr(left, fn_val)?;
                 let rhs = self.emit_expr(right, fn_val)?;
+                // A NARROW int beside a 64-bit literal must be brought to one
+                // width before the op. Inference already permits this pairing
+                // (it skips the constrain for sized-int-op-literal), so the
+                // program type-checks — and then codegen emitted mismatched
+                // operands and LLVM refused the module:
+                //
+                //   let a: u32 = as_u32(5);  a > 100
+                //   -> icmp ugt i32 %a1, i64 100   (IR verification failed)
+                //
+                // Measured across u8/u32/i32, for comparisons AND arithmetic,
+                // so the most natural use of a sized int — comparing it to a
+                // number — did not build at all.
+                //
+                // Only a CONSTANT is adjusted, and only to the other operand's
+                // width. Two different-width VARIABLES are left alone: that is
+                // a genuine type error and silently coercing it would hide one.
+                let (lhs, rhs) = match (lhs, rhs) {
+                    (BasicValueEnum::IntValue(l), BasicValueEnum::IntValue(r))
+                        if l.get_type().get_bit_width() != r.get_type().get_bit_width() =>
+                    {
+                        let lw = l.get_type().get_bit_width();
+                        let rw = r.get_type().get_bit_width();
+                        if r.is_const() && rw > lw {
+                            let v = r.get_zero_extended_constant().unwrap_or(0);
+                            (l.into(), l.get_type().const_int(v, false).into())
+                        } else if l.is_const() && lw > rw {
+                            let v = l.get_zero_extended_constant().unwrap_or(0);
+                            (r.get_type().const_int(v, false).into(), r.into())
+                        } else {
+                            (l.into(), r.into())
+                        }
+                    }
+                    other => other,
+                };
                 // Prefer the semantic type from inference (distinguishes u32/u64
                 // from i32/i64) then fall back to the LLVM-level value hint.
                 let ty = lt_sem.unwrap_or_else(|| self.value_type_hint(&lhs));

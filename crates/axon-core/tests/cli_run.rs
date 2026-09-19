@@ -29548,6 +29548,82 @@ fn unsigned_casts_print_unsigned_in_both_engines() {
 }
 
 #[test]
+fn a_sized_int_beside_a_literal_compiles_and_agrees() {
+    // A NARROW int beside a 64-bit literal did not build AT ALL. Inference
+    // PERMITS the pairing — it explicitly skips the constrain for a sized int
+    // against an integer literal — so the program type-checks, and then codegen
+    // handed LLVM two different widths and the module was refused:
+    //
+    //   let a: u32 = as_u32(5);  a > 100
+    //     -> icmp ugt i32 %a1, i64 100      IR verification failed
+    //
+    // Measured across u8/u16/u32/i8/i32, for comparisons AND arithmetic, with
+    // the literal on either side. The fix coerces only a CONSTANT to the other
+    // operand's width; two different-width VARIABLES stay a genuine type error.
+    let src = "fn main() -> i64 {\n  \
+               let a: u32 = as_u32(5)\n  \
+               println(to_str_bool(a > 100))\n  \
+               println(to_str(a + 10))\n  \
+               let b: u8 = as_u8(200)\n  \
+               println(to_str_bool(b > 100))\n  \
+               let c: i8 = as_i8(200)\n  \
+               println(to_str_bool(c > 100))\n  \
+               let d: i32 = as_i32(7)\n  \
+               println(to_str(d * 3))\n  \
+               println(to_str_bool(100 > a))\n  \
+               println(to_str(20 - d))\n  \
+               let e: u16 = as_u16(1000)\n  \
+               println(to_str(e / 4))\n  \
+               println(to_str_bool(e == 1000))\n  0\n}\n";
+    let want = [
+        "false", "15", // u32 compare + arith against a literal
+        // The signedness control. as_u8(200) is 200 and as_i8(200) is -56, so a
+        // fix that widened the literal without honouring the operand's SIGN
+        // would make these two agree — and they must not.
+        "true", "false", //
+        "21",    // i32 arith
+        "true",  // literal on the LEFT
+        "13", "250", "true",
+    ];
+    let f = tmp_ax("sized_int_literal", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(got, want, "interpreter is the reference");
+
+    let out_bin = std::env::temp_dir().join(format!("axon_sizedlit_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(ngot, got, "native must agree with the interpreter");
+}
+
+#[test]
 fn octal_literals_lex_like_hex_and_binary() {
     let run = |src: &str| -> (i32, String) {
         let f = tmp_ax("octal", src);
