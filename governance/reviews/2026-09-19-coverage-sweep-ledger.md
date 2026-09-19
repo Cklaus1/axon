@@ -277,3 +277,54 @@ The two-stage evidence trail this produces is the point:
 Collapsing B and C into one commit would destroy that trail: the "explicit
 refusal" row would never exist in history, and the safety property could not
 be reviewed apart from the feature that happens to make it unnecessary here.
+
+### Two corrections to the finding as first reported
+
+**1. The shipped example does NOT visibly diverge under `AXON_AI_MOCK`.**
+I reported `examples/asi/search_rank.ax` as affected in a way that implied
+observable wrongness. Both engines print `Best observed score: 0 / 100`. The
+functions DO fabricate — that part stands — but the program's printed output
+coincides, by arithmetic accident:
+
+    expected_top()          = 0
+    mock ai_extract value   = 1
+    score_clean returns f64_to_i64(u.confidence*100) only when value == expected_top
+
+so the interpreter also returns 0, for a legitimate reason. The agreement is a
+coincidence of the mock's value, not evidence of soundness. A model whose
+extraction matched `expected_top()` would make the interpreter return 90 and
+the native binary still return 0.
+
+This matters beyond pedantry: it is why the defect survived a corpus with a
+parity suite. The one shipped program that exercises the broken path is also
+the one whose output the mock happens to make agree.
+
+The function-level divergence is proven separately and minimally:
+
+    fn extracted() -> i64 {
+        match ai_extract_uncertain_i64("rank the docs") {
+            Ok(u) => u.value
+            Err(_) => 0 - 1
+        }
+    }
+
+    AXON_AI_MOCK=1 -> interp 1, native 0, build clean, no diagnostic.
+
+**2. The backend is INCONSISTENT within this family, and that sharpens the
+case for the safety net.** Not every shape fabricates — some already refuse:
+
+| shape | native |
+|---|---|
+| `Ok(u) => u.value` | builds clean, returns a fabricated 0 |
+| `Ok(u) => f64_to_i64(u.confidence * 100.0)` | **E0910 refusal**, build aborts |
+
+So the refusal machinery exists, works, and is reached for one shape while the
+neighbouring shape silently invents a value. That is not a missing feature with
+a consistent boundary; it is a boundary with a hole in it. Agent B's invariant
+is what makes the boundary total, independently of which shapes agent C later
+teaches the backend to lower.
+
+Method note: the probe that produced "native printed nothing" for one of these
+was BROKEN — the build had aborted and the binary did not exist, so the run
+was exit 127. Checking the exit code rather than trusting empty stdout caught
+it. An empty result and a missing artifact look identical until you ask.
