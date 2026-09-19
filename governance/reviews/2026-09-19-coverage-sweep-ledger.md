@@ -492,3 +492,44 @@ refusing after B, still refusing after C. C has been told this explicitly and
 asked NOT to expand scope to chase it, only to state clearly which it covers.
 An unstated answer is the failure mode here: a green corpus would then be
 indistinguishable between "fixed" and "still fabricating and nobody looked".
+
+## Lane C verified (held for merge behind B)
+
+Mechanism confirmed by the agent's own instrumentation and matching the
+prediction: `emit_pattern_bindings` wrote `self.locals` but never
+`self.local_types`, which is what `sem_type_of_expr(Ident)` reads. The receiver
+typed as `None`, no field-access path applied, the body lowered to nothing, and
+the non-Unit return path fabricated a zero.
+
+Independently checked by the orchestrator before queueing:
+
+* **Scope** — `codegen/mod.rs` is touched, but NOT the `None if !matches!(ret_sem,
+  Type::Unit)` arm. Those 9 lines are an `Expr::Question` case in
+  `infer_expr_sem_type`: `let r = f()?` is the SAME binding-type loss in
+  implicit form, and is legitimately C's half.
+* **Generality** — the string `ai_extract_uncertain` appears **zero** times in
+  the source diff. The fix keys on pattern shape (Result/Option/tuple/enum
+  variant), not on a builtin name.
+* **Corpus, cross-validated by lane D's harness** rather than by C's own
+  measurement: 7 programs flipped 1 -> 0, **zero** flipped 0 -> 1, and the named
+  set matches C's report exactly. Two lanes that never communicated agree.
+* **The floor-prover survives.** A closure struct parameter still fabricates
+  after C (interp 8, native 0). C was told not to expand scope to chase it and
+  did not. That is the "unsupported neighbour" row, obtained empirically rather
+  than guessed.
+
+### A native refusal was masking an interpreter defect
+
+One of the seven, `tests/fixtures/ai_extract_generic.ax`, now builds natively
+and prints 5 lines — while the INTERPRETER panics on it, exit 101, *"value of
+type ai_extract is not callable"*. Reproduced on main's pre-C binary, so it is
+pre-existing: `ai_extract::<T>` turbofish is unimplemented in the interpreter.
+
+Worth stating as its own lesson. The reference engine was broken for this
+construct and nothing noticed, because the program ran NOWHERE: the native side
+refused it with E0910 and the fixture's own header says "Parse + type-check
+only — does NOT execute". A refusal on one engine can hide a defect on the
+other, and a fixture that only type-checks hides both. Removing a refusal is
+therefore not purely additive — it can surface latent breakage elsewhere, which
+is an argument for landing feature work with the measurement harness already in
+place, not after.
