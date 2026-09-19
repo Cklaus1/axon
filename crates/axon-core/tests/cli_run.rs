@@ -29766,3 +29766,233 @@ fn a_scope_list_says_deny_or_unrestricted_and_never_both() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `volatile_load_u16` / `_u32` / `_u64` had NO coverage anywhere — no test,
+/// example, harness or fixture named them (only `volatile_load_u8`, in
+/// `examples/kernel/hello_kernel.ax`). Two claims are asserted here, because the
+/// two engines deliberately disagree:
+///
+///   * the INTERPRETER refuses each of them with E0910 — a deliberate
+///     sound-by-refusal leaf (`interp/builtins.rs`, "Raw hardware access cannot
+///     be emulated in the tree-walking interpreter … An honest E0910 abort is
+///     safer than a silent wrong result"), so there is no interpreter reference
+///     semantics to diff against;
+///   * NATIVE codegen lowers them inline (`codegen/expr.rs`, `build_load` +
+///     `set_volatile(true)` + `build_int_z_extend`). The documented contract is
+///     "returns i64, ZERO-extended" and a load of exactly the named width.
+///
+/// So the native half checks the contract against itself, at a real readable
+/// address (`fn_addr` of a function in this program, i.e. its own `.text`):
+/// a u32 load must equal its two u16 halves little-endian, a u64 load must equal
+/// its two u32 halves, and every u16/u32 result must land in the UNSIGNED range.
+/// A sign-extending load, or a load of the wrong width, breaks those equalities.
+///
+/// The high-bit cases are what distinguish zero- from sign-extension, so the
+/// program COUNTS them and the test requires the count to be non-zero: if the
+/// sampled code bytes ever stopped containing a set top bit, this test would
+/// fail loudly rather than pass while proving nothing.
+#[test]
+fn volatile_loads_zero_extend_and_agree_across_widths_natively() {
+    // ── the refusal half: the interpreter must say E0910, per builtin ──────
+    for name in [
+        "volatile_load_u16",
+        "volatile_load_u32",
+        "volatile_load_u64",
+    ] {
+        let src = format!(
+            "substrate\n\n@[hal]\nfn probe() -> i64 | {{Hal}} {{\n    {name}(1016)\n}}\n\n\
+             fn main() -> i64 {{\n    probe()\n}}\n"
+        );
+        let f = tmp_ax(&format!("vload_refuse_{name}"), &src);
+        let out = axon().arg("run").arg(&f).output().expect("spawn run");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        assert!(
+            msg.contains("E0910") && msg.contains(name),
+            "`{name}` must be refused by the interpreter with E0910, got:\n{msg}"
+        );
+    }
+
+    // ── the native half: the lowering's own contract ───────────────────────
+    let src = "substrate\n\
+        \n\
+        @[hal]\n\
+        fn probe() -> i64 | {Hal, IO} {\n    \
+            let base = fn_addr(\"probe\")\n    \
+            let bad = 0\n    \
+            let hi16_seen = 0\n    \
+            let hi32_seen = 0\n    \
+            let i = 0\n    \
+            while i < 64 {\n        \
+                let a = base + i\n        \
+                let lo = volatile_load_u16(a)\n        \
+                let hi = volatile_load_u16(a + 2)\n        \
+                let d = volatile_load_u32(a)\n        \
+                let hi32 = volatile_load_u32(a + 4)\n        \
+                let q = volatile_load_u64(a)\n        \
+                if d != lo + hi * 65536 { bad = bad + 1 }\n        \
+                if lo < 0 || lo > 65535 { bad = bad + 1 }\n        \
+                if d < 0 || d > 4294967295 { bad = bad + 1 }\n        \
+                if q != wrapping_add(d, wrapping_mul(hi32, 4294967296)) { bad = bad + 1 }\n        \
+                if lo >= 32768 { hi16_seen = hi16_seen + 1 }\n        \
+                if d >= 2147483648 { hi32_seen = hi32_seen + 1 }\n        \
+                i = i + 1\n    \
+            }\n    \
+            println(\"bad {to_str(bad)}\")\n    \
+            println(\"hi16 {to_str(hi16_seen)}\")\n    \
+            println(\"hi32 {to_str(hi32_seen)}\")\n    \
+            0\n\
+        }\n\
+        \n\
+        fn main() -> i64 {\n    probe()\n}\n";
+    let f = tmp_ax("vload_widths", src);
+    let out_bin = std::env::temp_dir().join(format!("axon_vload_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin).output().expect("run");
+    let got = String::from_utf8_lossy(&nat.stdout).to_string();
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(nat.status.code(), Some(0), "native run: {got}");
+    let lines: Vec<&str> = got.lines().collect();
+    assert_eq!(lines.first(), Some(&"bad 0"), "width/zero-extension: {got}");
+    // Prove the probe reached the cases it claims to test: a u16 with bit 15 set
+    // and a u32 with bit 31 set are the ONLY samples that can tell a zero-extend
+    // from a sign-extend.
+    let count = |p: &str| -> i64 {
+        lines
+            .iter()
+            .find(|l| l.starts_with(p))
+            .and_then(|l| l.split(' ').nth(1))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(-1)
+    };
+    assert!(
+        count("hi16") > 0,
+        "no u16 sample had its top bit set — the zero-extension claim was never \
+         exercised: {got}"
+    );
+    assert!(
+        count("hi32") > 0,
+        "no u32 sample had its top bit set — the zero-extension claim was never \
+         exercised: {got}"
+    );
+}
+
+/// `bpf_ktime_get_ns` and `bpf_get_smp_processor_id` had NO coverage anywhere:
+/// the R23 fixtures exercise `bpf_map_lookup_elem`/`bpf_map_value_add` only, and
+/// `builtins::bpf_helper_id` is unit-tested against the TABLE, not against what
+/// the backend emits. Both claims are checked here:
+///
+///   * the interpreter refuses both with E0910 (deliberate — `interp/builtins.rs`:
+///     "there is no kernel under the tree-walking interpreter"), so there is no
+///     differential to run;
+///   * `axon build --target bpf` must emit the real kernel helper call — BPF
+///     `call imm` is opcode 0x85 with the helper id in the imm field, so the
+///     encoded instruction is the byte string `85 00 00 00 <id> 00 00 00`.
+///     ktime_get_ns is helper 5, get_smp_processor_id is helper 8.
+///
+/// The control is a @[bpf] program that calls NEITHER: it must contain neither
+/// byte string, so a match above is the helper call and not something ambient in
+/// every BPF object.
+#[test]
+fn bpf_zero_arg_helpers_lower_to_their_kernel_call_ids() {
+    for name in ["bpf_ktime_get_ns", "bpf_get_smp_processor_id"] {
+        let src = format!("fn main() -> i64 {{\n    {name}()\n}}\n");
+        let f = tmp_ax(&format!("bpf_refuse_{name}"), &src);
+        let out = axon().arg("run").arg(&f).output().expect("spawn run");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        assert!(
+            msg.contains("E0910") && msg.contains(name),
+            "`{name}` must be refused by the interpreter with E0910, got:\n{msg}"
+        );
+    }
+
+    // `call <id>` encodes as: 85 00 00 00 <imm32 le>.
+    let call_imm = |id: u8| -> Vec<u8> { vec![0x85, 0, 0, 0, id, 0, 0, 0] };
+    let build_bpf = |tag: &str, body: &str| -> Option<Vec<u8>> {
+        let src = format!(
+            "substrate\n\n@[bpf(kind: socket_filter)]\nfn count(ctx: i64) -> i64 {{\n    {body}\n}}\n"
+        );
+        let f = tmp_ax(tag, &src);
+        let obj = std::env::temp_dir().join(format!("axon_{}_{}.bpf.o", tag, std::process::id()));
+        let _ = std::fs::remove_file(&obj);
+        let build = axon()
+            .arg("build")
+            .arg("--target")
+            .arg("bpf")
+            .arg(&f)
+            .arg("--out")
+            .arg(&obj)
+            .output()
+            .expect("spawn bpf build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            return None;
+        }
+        assert_eq!(build.status.code(), Some(0), "bpf build ({tag}): {msg}");
+        let bytes = std::fs::read(&obj).expect("read bpf object");
+        let _ = std::fs::remove_file(&obj);
+        Some(bytes)
+    };
+    let has = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).any(|w| w == needle);
+
+    let Some(ktime) = build_bpf("bpf_ktime", "bpf_ktime_get_ns()") else {
+        return;
+    };
+    assert!(
+        has(&ktime, &call_imm(5)),
+        "bpf_ktime_get_ns must lower to BPF `call 5`"
+    );
+    assert!(
+        !has(&ktime, &call_imm(8)),
+        "a program calling only bpf_ktime_get_ns must not emit `call 8`"
+    );
+
+    let smp = build_bpf("bpf_smp", "bpf_get_smp_processor_id()").expect("codegen present");
+    assert!(
+        has(&smp, &call_imm(8)),
+        "bpf_get_smp_processor_id must lower to BPF `call 8`"
+    );
+    assert!(
+        !has(&smp, &call_imm(5)),
+        "a program calling only bpf_get_smp_processor_id must not emit `call 5`"
+    );
+
+    // The control: no helper call, so neither encoding may appear.
+    let none = build_bpf("bpf_nohelper", "ctx").expect("codegen present");
+    assert!(
+        !has(&none, &call_imm(5)) && !has(&none, &call_imm(8)),
+        "a @[bpf] program calling no helper must contain neither call encoding — \
+         otherwise the byte pattern is ambient and proves nothing"
+    );
+}
