@@ -257,6 +257,13 @@ if [ "$STRICT" = 1 ]; then
   ./scripts/r34_acceptance_gate.sh >/dev/null 2>&1 || fail "R34 acceptance gate"
   ./scripts/r39_slice1_gate.sh    >/dev/null 2>&1 || fail "R39 Slice 1 gate"
 
+  # R23 is the one REQUIREMENTS.md cites as the evidence for "Landed 100%",
+  # and nothing invoked it. It passes — verified by running it — and it is the
+  # only caller of `cargo test -p axon-certcheck --features smt`, so R23's own
+  # A5 check (certificate emission byte-identical) ran nowhere either: the
+  # gate's smt stage is -p axon-core only.
+  ./scripts/r23_acceptance_gate.sh >/dev/null 2>&1 || fail "R23 acceptance gate"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
