@@ -1023,9 +1023,12 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Fixture {
+        // Process-unique: two `cargo test` runs can share a target dir (parallel
+        // worktrees, CARGO_TARGET_DIR), and a fixture that another process is
+        // rebuilding underneath you is a flake that reads as a classifier bug.
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/reqev_fixtures")
-            .join(name);
+            .join(format!("{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::create_dir_all(root.join("governance")).unwrap();
