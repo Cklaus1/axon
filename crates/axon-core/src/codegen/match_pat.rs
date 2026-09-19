@@ -31,6 +31,7 @@ impl<'ctx> super::Codegen<'ctx> {
         subject: BasicValueEnum<'ctx>,
         arms: &[ast::MatchArm],
         fn_val: FunctionValue<'ctx>,
+        subject_sem_ty: Option<&Type>,
     ) -> Option<BasicValueEnum<'ctx>> {
         if arms.is_empty() {
             return None;
@@ -94,7 +95,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // Emit body.
             self.ir.builder.position_at_end(body_bb);
             // Bind pattern variables.
-            self.emit_pattern_bindings(&arm.pattern, subject);
+            self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             let body_val = self.emit_expr(&arm.body, fn_val);
 
             let current_bb = self.ir.builder.get_insert_block().unwrap();
@@ -411,10 +412,29 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// Bind pattern variables in the current locals map.
+    ///
+    /// `subject_sem_ty` is the SEMANTIC type of `subject` (the scrutinee at this
+    /// level of the pattern), when codegen knows it. It is narrowed as the walk
+    /// descends — `Ok(p)` over a `Result<T, E>` binds `p` at `T`, `Some(p)`
+    /// over an `Option<T>` binds at `T`, a tuple element at its element type,
+    /// a struct field at its declared field type — and recorded in
+    /// `local_types` for every `Ident` leaf.
+    ///
+    /// Without this, a match-arm binding reached codegen with NO semantic type:
+    /// `sem_type_of_expr(Ident)` reads `local_types`, so `u.value` on an
+    /// `Uncertain<i64>` bound by `Ok(u) =>` took neither the ASI GEP path nor
+    /// the named-struct path, `emit_field_access` returned `None`, and the whole
+    /// enclosing body lowered to nothing — which the non-Unit return path then
+    /// replaced with a fabricated zero. Measured before this change: a fn whose
+    /// arms are 7, 3 and 5 returned 0 natively while the interpreter returned 7.
+    /// The same loss hit `Temporal<T>`, a plain struct in a `Result`, and a
+    /// struct in an `Option`; it is a property of the BINDING, not of any one
+    /// builtin.
     pub(super) fn emit_pattern_bindings(
         &mut self,
         pattern: &ast::Pattern,
         subject: BasicValueEnum<'ctx>,
+        subject_sem_ty: Option<&Type>,
     ) {
         match pattern {
             ast::Pattern::Ident(name) => {
@@ -422,6 +442,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, subject_ty, name);
                 build_wrappers::w_store(&self.ir.builder, alloca, subject);
                 self.locals.insert(name.clone(), (alloca, subject_ty));
+                match subject_sem_ty {
+                    Some(t) if !matches!(t, Type::Unknown) => {
+                        self.local_types.insert(name.clone(), t.clone());
+                    }
+                    // Nothing known: do not leave a STALE type from an outer
+                    // binding of the same name in place — a wrong type here is
+                    // worse than none, since it selects a layout.
+                    _ => {
+                        self.local_types.remove(name.as_str());
+                    }
+                }
             }
             ast::Pattern::Some(inner) => {
                 if let BasicValueEnum::StructValue(sv) = subject {
@@ -431,7 +462,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     // (the wrapper returns the value directly, no Result).
                     let inner_val =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "patinner");
-                    self.emit_pattern_bindings(inner, inner_val);
+                    let inner_ty = match subject_sem_ty {
+                        Some(Type::Option(t)) => Some((**t).clone()),
+                        _ => None,
+                    };
+                    self.emit_pattern_bindings(inner, inner_val, inner_ty.as_ref());
                 }
             }
             ast::Pattern::Ok(inner) => {
@@ -440,13 +475,17 @@ impl<'ctx> super::Codegen<'ctx> {
                     // bind it unconditionally (matches the original `if let Ok`).
                     let payload =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "okpayload");
-                    let typed = if let Some((ok_ty, _)) = self.current_result_types.clone() {
-                        self.extract_result_payload(payload, &ok_ty)
+                    let ok_sem = match subject_sem_ty {
+                        Some(Type::Result(ok, _)) => Some((**ok).clone()),
+                        _ => self.current_result_types.clone().map(|(ok, _)| ok),
+                    };
+                    let typed = if let Some(ok_ty) = &ok_sem {
+                        self.extract_result_payload(payload, ok_ty)
                     } else {
                         Some(payload)
                     };
                     if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v);
+                        self.emit_pattern_bindings(inner, v, ok_sem.as_ref());
                     }
                 }
             }
@@ -454,13 +493,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let BasicValueEnum::StructValue(sv) = subject {
                     let payload =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "errpayload");
-                    let typed = if let Some((_, err_ty)) = self.current_result_types.clone() {
-                        self.extract_result_payload(payload, &err_ty)
+                    let err_sem = match subject_sem_ty {
+                        Some(Type::Result(_, e)) => Some((**e).clone()),
+                        _ => self.current_result_types.clone().map(|(_, e)| e),
+                    };
+                    let typed = if let Some(err_ty) = &err_sem {
+                        self.extract_result_payload(payload, err_ty)
                     } else {
                         Some(payload)
                     };
                     if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v);
+                        self.emit_pattern_bindings(inner, v, err_sem.as_ref());
                     }
                 }
             }
@@ -541,7 +584,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                 .builder
                                 .build_load(llvm_fty, typed_ptr, "fieldval")
                                 .unwrap();
-                            self.emit_pattern_bindings(pat, field_val);
+                            self.emit_pattern_bindings(pat, field_val, Some(&fty));
                         }
 
                         byte_offset += fsize;
@@ -549,6 +592,23 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             ast::Pattern::Struct { fields, .. } => {
+                // Declared field types of the scrutinee struct, when known, so a
+                // `Point { x, y }` pattern binds `x` at its own type rather than
+                // losing it.
+                //
+                // MEASURED DEAD as of this commit, and recorded rather than
+                // dressed up: the parser builds `Pattern::Struct` ONLY for an
+                // `Enum::Variant { … }` pattern (parser.rs, the `Ident` arm —
+                // a bare `Name { … }` in match position is a parse error), so
+                // every `Pattern::Struct` that reaches codegen has a `::` in
+                // its name and is handled by the arm above. A mutation that
+                // drops the line below therefore SURVIVES. Kept because it is
+                // the correct narrowing the moment plain struct patterns parse;
+                // noted so no later reader reads it as exercised.
+                let field_sem: Option<Vec<Type>> = match subject_sem_ty {
+                    Some(Type::Struct(sn)) => self.struct_field_sem_types.get(sn).cloned(),
+                    _ => None,
+                };
                 if let BasicValueEnum::StructValue(sv) = subject {
                     for (i, (_fname, pat)) in fields.iter().enumerate() {
                         // A struct field can be any value type (int/float/ptr/
@@ -560,11 +620,16 @@ impl<'ctx> super::Codegen<'ctx> {
                             i as u32,
                             "sfield",
                         );
-                        self.emit_pattern_bindings(pat, field_val);
+                        let fty = field_sem.as_ref().and_then(|v| v.get(i));
+                        self.emit_pattern_bindings(pat, field_val, fty);
                     }
                 }
             }
             ast::Pattern::Tuple(pats) => {
+                let elt_sem: Option<&Vec<Type>> = match subject_sem_ty {
+                    Some(Type::Tuple(elts)) => Some(elts),
+                    _ => None,
+                };
                 if let BasicValueEnum::StructValue(sv) = subject {
                     for (i, pat) in pats.iter().enumerate() {
                         let elem_val = build_wrappers::w_extract_value(
@@ -573,7 +638,8 @@ impl<'ctx> super::Codegen<'ctx> {
                             i as u32,
                             "telem",
                         );
-                        self.emit_pattern_bindings(pat, elem_val);
+                        let ety = elt_sem.and_then(|v| v.get(i));
+                        self.emit_pattern_bindings(pat, elem_val, ety);
                     }
                 }
             }

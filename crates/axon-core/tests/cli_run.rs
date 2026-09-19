@@ -30758,3 +30758,200 @@ fn a_successful_native_build_never_invents_a_return_value() {
         false,
     );
 }
+
+/// Build `src`, run the binary, and return its stdout lines. `None` when this
+/// build of `axon` has no codegen feature (the suite's standing skip).
+fn native_stdout_lines(
+    tag: &str,
+    src: &str,
+    env: &[(&str, &str)],
+) -> Option<(Vec<String>, Vec<String>)> {
+    let f = tmp_ax(tag, src);
+
+    let mut run_cmd = axon();
+    for (k, v) in env {
+        run_cmd.env(k, v);
+    }
+    let run = run_cmd.arg("run").arg(&f).output().expect("spawn run");
+    let interp: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+
+    let out_bin = std::env::temp_dir().join(format!("axon_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let mut build_cmd = axon();
+    for (k, v) in env {
+        build_cmd.env(k, v);
+    }
+    let build = build_cmd
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return None;
+    }
+    // Assert the BUILD before comparing output: a failed build leaves the old
+    // binary (or none) and an output comparison would then measure nothing.
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+
+    let mut nat_cmd = std::process::Command::new(&out_bin);
+    for (k, v) in env {
+        nat_cmd.env(k, v);
+    }
+    let nat = nat_cmd.output().expect("run native binary");
+    let native: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&out_bin);
+    Some((interp, native))
+}
+
+#[test]
+fn a_match_arm_binding_keeps_its_payload_type_in_both_engines() {
+    // A binding introduced by a MATCH ARM reached codegen with no semantic
+    // type. `sem_type_of_expr(Ident)` reads `local_types`, which
+    // `emit_pattern_bindings` never wrote, so a field read on such a binding
+    // matched neither the Uncertain/Temporal GEP path nor the named-struct
+    // path in `emit_field_access`; it returned `None`, the whole enclosing
+    // body lowered to nothing, and the non-Unit return path substituted a
+    // zero. Build clean, no diagnostic, wrong answer.
+    //
+    // The headline case was found on `Uncertain<T>` out of an AI builtin, but
+    // the defect is in the core language: a PLAIN USER STRUCT in a `Result`
+    // fabricates identically, with no AI and no feature flag. Measured on the
+    // pre-fix binary over the program below — every line marked (*) printed 0:
+    //
+    //   struct-in-Result 9 -> 0(*)   let-bound struct 9 -> 9
+    //   Option payload   3 -> 0(*)   nested Result    4 -> 0(*)
+    //   struct-in-struct 13 -> 0(*)  Uncertain.value 11 -> 0(*)
+    //   Uncertain.confidence, Temporal, tuple payload, Err-arm str  all 0(*)
+    //   scalar payload  42 -> 42     no-field-read arm 77 -> 77
+    //
+    // The last two lines are the CONTROLS and are asserted in this same
+    // program: a "fix" that lost the scalar payload or broke an arm that binds
+    // nothing cannot pass here.
+    let src = "type P = { x: i64, y: i64 }\n\
+               type Q = { p: P, n: i64 }\n\
+               type E = A { u: Uncertain<i64>, k: i64 } | B { z: i64 }\n\
+               fn mk(b: bool) -> Result<P, str> { if b { Ok(P { x: 4, y: 9 }) } else { Err(\"no\") } }\n\
+               fn mko() -> Option<P> { Some(P { x: 1, y: 2 }) }\n\
+               fn mkn(b: bool) -> Result<Result<P, str>, str> { if b { Ok(mk(true)) } else { Err(\"outer\") } }\n\
+               fn mkq(b: bool) -> Result<Q, str> { if b { Ok(Q { p: P { x: 5, y: 6 }, n: 7 }) } else { Err(\"no\") } }\n\
+               fn mku(b: bool) -> Result<Uncertain<i64>, str> { if b { Ok(uncertain_new(11, 0.75)) } else { Err(\"no\") } }\n\
+               fn mkt(b: bool) -> Result<Temporal<i64>, str> { if b { Ok(temporal_new(13, 1000, 0.1)) } else { Err(\"no\") } }\n\
+               fn mktup(b: bool) -> Result<(i64, i64), str> { if b { Ok((3, 8)) } else { Err(\"no\") } }\n\
+               fn mktup2(b: bool) -> Result<(i64, P), str> { if b { Ok((3, P { x: 2, y: 8 })) } else { Err(\"no\") } }\n\
+               fn mke(b: bool) -> E { if b { E::A { u: uncertain_new(11, 0.5), k: 4 } } else { E::B { z: 0 } } }\n\
+               fn c1() -> i64 { match mk(true) { Ok(p) => p.y  Err(_) => 0 - 1 } }\n\
+               fn c1c() -> i64 { let p = P { x: 4, y: 9 }  p.y }\n\
+               fn c2() -> i64 { match mko() { Some(p) => p.x + p.y  None => 0 - 1 } }\n\
+               fn c3() -> i64 { match mkn(true) { Ok(inner) => match inner { Ok(p) => p.x  Err(_) => 0 - 2 }  Err(_) => 0 - 1 } }\n\
+               fn c4() -> i64 { match mkq(true) { Ok(q) => q.p.y + q.n  Err(_) => 0 - 1 } }\n\
+               fn c5() -> i64 { match mku(true) { Ok(u) => u.value  Err(_) => 0 - 1 } }\n\
+               fn c5b() -> f64 { match mku(true) { Ok(u) => u.confidence  Err(_) => 0.0 - 1.0 } }\n\
+               fn c6() -> i64 { match mkt(true) { Ok(t) => t.value + t.horizon_ms  Err(_) => 0 - 1 } }\n\
+               fn c7() -> i64 { match mktup(true) { Ok(t) => t.0 * t.1  Err(_) => 0 - 1 } }\n\
+               fn c8() -> i64 { match parse_int(\"42\") { Ok(n) => n  Err(_) => 0 - 1 } }\n\
+               fn c9() -> i64 { match mk(false) { Ok(p) => p.y  Err(e) => str_len(e) } }\n\
+               fn c10() -> i64 { match mk(true) { Ok(_) => 77  Err(_) => 0 - 1 } }\n\
+               fn c11() -> i64 { match mktup2(true) { Ok((a, pp)) => a * pp.y  Err(_) => 0 - 1 } }\n\
+               fn c12() -> i64 { match mke(true) { E::A { u: uu, k: kk } => uu.value + kk  E::B { z: zz } => zz } }\n\
+               fn main() -> i64 {\n  \
+                 println(to_str(c1()))\n  \
+                 println(to_str(c1c()))\n  \
+                 println(to_str(c2()))\n  \
+                 println(to_str(c3()))\n  \
+                 println(to_str(c4()))\n  \
+                 println(to_str(c5()))\n  \
+                 println(to_str_f64(c5b()))\n  \
+                 println(to_str(c6()))\n  \
+                 println(to_str(c7()))\n  \
+                 println(to_str(c8()))\n  \
+                 println(to_str(c9()))\n  \
+                 println(to_str(c10()))\n  \
+                 println(to_str(c11()))\n  \
+                 println(to_str(c12()))\n  0\n}\n";
+    let want = [
+        "9",    // struct payload in a Result
+        "9",    // control: the same struct, let-bound — always worked
+        "3",    // struct payload in an Option
+        "4",    // nested Result: a payload bound by an inner match arm
+        "13",   // struct field that is itself a struct (q.p.y + q.n)
+        "11",   // Uncertain<i64>.value  — the shape this was found on
+        "0.75", // Uncertain<i64>.confidence (f64 field, different GEP index)
+        "1013", // Temporal<i64>.value + .horizon_ms
+        "24",   // tuple payload bound by a match arm
+        "42",   // CONTROL: scalar payload — never diverged, must not start
+        "2",    // Err-arm binding: str payload, str_len("no")
+        "77",   // CONTROL: an arm that binds NOTHING — must not regress
+        // The two DESTRUCTURING patterns. `Ok(p)` binds a whole payload;
+        // these bind THROUGH a tuple pattern and an enum-variant pattern,
+        // which are separate arms of `emit_pattern_bindings` and were
+        // separately blind. Both printed 0 before the fix.
+        "24", // tuple PATTERN `Ok((a, pp))` — pp is a struct element
+        "15", // enum PATTERN `E::A { u: uu, k: kk }` — uu is Uncertain
+    ];
+
+    let Some((interp, native)) = native_stdout_lines("matchbind", src, &[]) else {
+        return; // no codegen in this build
+    };
+    assert_eq!(interp, want, "interpreter is the reference semantics (I-2)");
+    assert_eq!(native, interp, "native must agree with the interpreter");
+}
+
+#[test]
+fn an_ai_extracted_uncertain_bound_by_a_match_arm_agrees_in_both_engines() {
+    // The shape the defect was originally found on, kept because it is the one
+    // that travels through a `?` as well as a match arm: `let r = f()?` also
+    // produced no semantic type, so `r.confidence` inside `confident_count`
+    // lowered to nothing and the fn returned a zeroed `Result` — tag 0, i.e.
+    // `Err("")`. Native printed an empty line where the interpreter printed 1.
+    //
+    // `pick`'s arms are 7, 3 and 5; the pre-fix native answer was 0, which is
+    // outside its range — as clean a proof that the value was invented as this
+    // class allows.
+    let src = "fn pick(s: str) -> i64 {\n  \
+                 match ai_extract_uncertain_i64(s) {\n    \
+                   Ok(u) => { if u.value > 0 { 7 } else { 3 } }\n    \
+                   Err(_) => 5\n  \
+                 }\n\
+               }\n\
+               fn nofield(s: str) -> i64 {\n  \
+                 match ai_extract_uncertain_i64(s) { Ok(_) => 7  Err(_) => 5 }\n\
+               }\n\
+               fn confident_count(item: str) -> Result<i64, str> {\n  \
+                 let r = ai_extract_uncertain_i64(item)?\n  \
+                 if r.confidence > 0.8 { Ok(r.value) } else { Err(\"low confidence\") }\n\
+               }\n\
+               fn main() -> i64 {\n  \
+                 println(to_str(pick(\"the answer is 42\")))\n  \
+                 println(to_str(nofield(\"the answer is 42\")))\n  \
+                 match confident_count(\"how many planets?\") {\n    \
+                   Ok(n) => println(\"ok {to_str(n)}\")\n    \
+                   Err(e) => println(\"err {e}\")\n  \
+                 }\n  0\n}\n";
+    let Some((interp, native)) = native_stdout_lines("aiuncertain", src, &[("AXON_AI_MOCK", "1")])
+    else {
+        return; // no codegen in this build
+    };
+    // The control (`nofield`, an arm binding nothing) agreed even before the
+    // fix; asserting it here means a fix that breaks it cannot pass.
+    assert_eq!(
+        interp,
+        vec!["7".to_string(), "7".to_string(), "ok 1".to_string()],
+        "interpreter is the reference semantics (I-2)"
+    );
+    assert_eq!(native, interp, "native must agree with the interpreter");
+}

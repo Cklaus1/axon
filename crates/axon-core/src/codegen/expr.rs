@@ -511,7 +511,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(Type::Result(ok_ty, err_ty)) = &subj_sem_ty {
                     self.current_result_types = Some((*ok_ty.clone(), *err_ty.clone()));
                 }
-                let result = self.emit_match(subj_val, arms, fn_val);
+                let result = self.emit_match(subj_val, arms, fn_val, subj_sem_ty.as_ref());
                 self.current_result_types = saved_result_types;
                 result
             }
@@ -2599,7 +2599,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Bind pattern variables and emit body.
         self.ir.builder.position_at_end(body_bb);
-        self.emit_pattern_bindings(pattern, subject);
+        let subject_sem_ty = self.infer_expr_sem_type(expr);
+        self.emit_pattern_bindings(pattern, subject, subject_sem_ty.as_ref());
         for stmt in body {
             self.emit_expr(&stmt.expr, fn_val);
             if self

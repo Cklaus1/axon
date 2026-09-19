@@ -2084,6 +2084,15 @@ impl<'ctx> Codegen<'ctx> {
                     .collect();
                 Some(Type::Tuple(tys))
             }
+            // `e?` unwraps the payload. This is the same binding-type loss the
+            // match arms had, in its implicit form: `let r = f()?` produced NO
+            // semantic type, so a later `r.value` on an `Uncertain<T>` payload
+            // found nothing in `local_types` and lowered to nothing.
+            ast::Expr::Question(inner) => match self.infer_expr_sem_type(inner) {
+                Some(Type::Result(ok, _)) => Some(*ok),
+                Some(Type::Option(t)) => Some(*t),
+                _ => None,
+            },
             ast::Expr::Block(stmts) => stmts.last().and_then(|s| self.infer_expr_sem_type(&s.expr)),
             ast::Expr::If { then, .. } => self.infer_expr_sem_type(then),
             ast::Expr::FmtStr { .. } => Some(Type::Str),
