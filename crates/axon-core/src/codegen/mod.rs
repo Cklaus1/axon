@@ -2002,6 +2002,24 @@ impl<'ctx> Codegen<'ctx> {
                     // the concrete type by binding T from the args; falls back to
                     // the declared (possibly-unresolved) type when not generic or
                     // not inferable.
+                    // Fixed-width casts carry their target type. emit_call knew
+                    // this and this function did not, so `to_str(as_u32(-1))`
+                    // could not tell the argument was UNSIGNED and sign-extended
+                    // it: native printed -1 where the interpreter prints
+                    // 4294967295. A `let a: u32 = …` worked only because that
+                    // went through `local_types` instead.
+                    if let Some(t) = match name.as_str() {
+                        "as_u8" => Some(crate::types::Type::U8),
+                        "as_u16" => Some(crate::types::Type::U16),
+                        "as_u32" => Some(crate::types::Type::U32),
+                        "as_u64" => Some(crate::types::Type::U64),
+                        "as_i8" => Some(crate::types::Type::I8),
+                        "as_i16" => Some(crate::types::Type::I16),
+                        "as_i32" => Some(crate::types::Type::I32),
+                        _ => None,
+                    } {
+                        return Some(t);
+                    }
                     self.resolve_call_return_type(name, args)
                         .or_else(|| self.fn_return_types.get(name).cloned())
                 } else {

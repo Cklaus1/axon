@@ -29470,6 +29470,84 @@ fn the_ungated_phase_fixtures_are_gated() {
 /// as `Int(0)` followed by an identifier `o17` and died as E0000. The asymmetry
 /// had no reason behind it and was previously recorded as a known gap.
 #[test]
+fn unsigned_casts_print_unsigned_in_both_engines() {
+    // Found by asking which builtins have NO coverage anywhere — `as_u32` was
+    // named by no test, harness, fixture or example. The whole `as_u*` family
+    // then diverged: native printed the SIGNED reinterpretation.
+    //
+    //   to_str(as_u32(-1))  interp 4294967295   native -1
+    //
+    // Two independent causes, both fixed:
+    //   * `infer_expr_sem_type` knew nothing about fixed-width cast CALLS, so
+    //     `to_str` could not tell the argument was unsigned and sign-extended
+    //     it. A `let a: u32 = …` worked, because that resolves via local_types
+    //     — which is why this hid behind any test that used a binding.
+    //   * a U64 is already 64 bits, so the zero-extend branch never ran and
+    //     `to_str`'s signed formatter printed it negative regardless.
+    let src = "fn main() -> i64 {\n  \
+               println(to_str(as_u8(0 - 1)))\n  \
+               println(to_str(as_u16(0 - 1)))\n  \
+               println(to_str(as_u32(0 - 1)))\n  \
+               println(to_str(as_u64(0 - 1)))\n  \
+               println(to_str(as_u8(0 - 128)))\n  \
+               println(to_str(as_u16(0 - 1000)))\n  \
+               println(to_str(as_u32(0 - 2147483648)))\n  \
+               println(to_str(as_i8(128)))\n  \
+               println(to_str(as_i16(32768)))\n  \
+               println(to_str(as_i32(2147483648)))\n  0\n}\n";
+    let want = [
+        "255",
+        "65535",
+        "4294967295",
+        "18446744073709551615",
+        "128",
+        "64536",
+        "2147483648",
+        // Signed casts: the control. A fix that made everything unsigned would
+        // break these, so they are asserted in the same program.
+        "-128",
+        "-32768",
+        "-2147483648",
+    ];
+    let f = tmp_ax("unsigned_casts", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(got, want, "interpreter is the reference");
+
+    let out_bin = std::env::temp_dir().join(format!("axon_ucast_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(ngot, got, "native must agree with the interpreter");
+}
+
+#[test]
 fn octal_literals_lex_like_hex_and_binary() {
     let run = |src: &str| -> (i32, String) {
         let f = tmp_ax("octal", src);

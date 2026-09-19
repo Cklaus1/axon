@@ -1458,6 +1458,55 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// `to_str` for a 64-bit UNSIGNED value, via `__axon_u64_to_str`.
+    fn emit_u64_to_str(
+        &mut self,
+        v: inkwell::values::IntValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ptr = i64_ty.ptr_type(AddressSpace::default());
+        let i8_ptr_ptr = i8_ptr.ptr_type(AddressSpace::default());
+        let f = self
+            .ir
+            .module
+            .get_function("__axon_u64_to_str")
+            .unwrap_or_else(|| {
+                let t = self
+                    .ir
+                    .context
+                    .void_type()
+                    .fn_type(&[i64_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()], false);
+                self.ir.module.add_function("__axon_u64_to_str", t, None)
+            });
+        let len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "u64s_len");
+        let ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "u64s_ptr");
+        build_wrappers::w_call(
+            &self.ir.builder,
+            f,
+            &[v.into(), len_slot.into(), ptr_slot.into()],
+            "u64s",
+        );
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), len_slot, "u64s_l");
+        let ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), ptr_slot, "u64s_p");
+        let str_ty = self
+            .ir
+            .context
+            .struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+        let sv = str_ty.get_undef();
+        let sv = self
+            .ir
+            .builder
+            .build_insert_value(sv, len, 0, "u64s_s0")
+            .ok()?;
+        let sv = self
+            .ir
+            .builder
+            .build_insert_value(sv.into_struct_value(), ptr, 1, "u64s_s1")
+            .ok()?;
+        Some(sv.as_basic_value_enum())
+    }
+
     /// Structural equality for one value of semantic type `ty`, as an i1.
     ///
     /// Recursive by design: a struct field that is itself a struct or a tuple
@@ -8263,6 +8312,20 @@ impl<'ctx> super::Codegen<'ctx> {
                         // `to_str(u32::MAX)` prints "4294967295", not "-1"
                         // (sign-extend would give -1 for the 0xFFFFFFFF bit pattern).
                         let i64_ty = self.ir.context.i64_type();
+                        // A U64 is already 64 bits, so the zero-extend branch
+                        // below never runs and `to_str`'s signed formatter
+                        // printed `as_u64(-1)` as `-1`. Route it to the
+                        // unsigned formatter, which is the only place that can
+                        // know at this width.
+                        if matches!(
+                            self.infer_expr_sem_type(&args[0]),
+                            Some(crate::types::Type::U64)
+                        ) && iv.get_type().get_bit_width() == 64
+                        {
+                            if let Some(v) = self.emit_u64_to_str(iv) {
+                                return Some(v);
+                            }
+                        }
                         let widened = if iv.get_type().get_bit_width() < 64 {
                             // Check if the arg is an unsigned type (from local_types).
                             let arg_sem = self.infer_expr_sem_type(&args[0]);

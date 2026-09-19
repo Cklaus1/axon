@@ -2065,6 +2065,26 @@ mod vclock {
 ///
 /// Out-params: `*out_len` receives the byte length; `*out_ptr` receives the
 /// pointer to the first byte of a NUL-terminated buffer.
+/// Format a 64-bit value as UNSIGNED decimal.
+///
+/// `to_str` routes through `__axon_i64_to_str_radix`, which formats SIGNED — so
+/// a `u64` whose top bit is set printed as a negative number: `as_u64(-1)` gave
+/// `-1` natively where the interpreter gives `18446744073709551615`. The
+/// narrow unsigned types avoid this because they are ZERO-extended to i64 on
+/// the way in; at 64 bits there is no widening left to do, so the formatter
+/// itself has to know.
+#[no_mangle]
+pub extern "C" fn __axon_u64_to_str(n: i64, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    let s = (n as u64).to_string();
+    let bytes = s.into_bytes().into_boxed_slice();
+    let len = bytes.len() as i64;
+    let ptr = Box::into_raw(bytes) as *mut u8;
+    unsafe {
+        *out_len = len;
+        *out_ptr = ptr;
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn __axon_i64_to_str_radix(
     n: i64,
