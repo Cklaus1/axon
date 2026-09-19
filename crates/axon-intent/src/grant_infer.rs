@@ -54,6 +54,7 @@ pub fn infer(
     let max_label = declared.max_label.min(ceiling.max_label);
 
     Ok(Grant {
+        reproducible: false,
         fs_read,
         fs_write,
         net,

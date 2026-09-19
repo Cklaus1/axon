@@ -359,6 +359,7 @@ fn build_token_raw(
 
 fn empty_grant() -> axon_os::grant::Grant {
     axon_os::grant::Grant {
+        reproducible: false,
         fs_read: vec![],
         fs_write: vec![],
         net: vec![],

@@ -750,8 +750,14 @@ fn r21_refuses_edited_program_after_approval() {
             "axon-os honors the unedited approval: {}",
             honored.stdout
         );
+        // The wording moved from "✓ approval verified" to "Approval: verified…"
+        // when approval became a job POLICY with four states (triage
+        // OSK-P4-H8): a run that never asked for approval is behaving as
+        // configured, and the output now states the policy rather than
+        // implying a degraded one. Assert the two load-bearing words, not the
+        // old sentence.
         assert!(
-            honored.stdout.contains("approval verified"),
+            honored.stdout.contains("Approval:") && honored.stdout.contains("verified"),
             "axon-os reports it: {}",
             honored.stdout
         );

@@ -804,3 +804,32 @@ being implemented, which is precisely what I had just implemented.
   CONTENT, or delete both and re-apply once.
 - A comment that survives its code is worse than no comment: it asserts an
   intent the code no longer has.
+
+## `cargo build -p X` is not what the gate runs
+
+Adding a field to a shared struct, I fixed every crate I could see and ran
+`cargo build -p axon-os`: clean. The strict gate then failed on `axon-intent`,
+which I had never built.
+
+Two distinct blind spots, both worth naming:
+
+1. **The workspace build masked it.** `cargo build --workspace` aborts on
+   `axon-guest-kernel` (freestanding no_std, cannot build for the host — it is
+   excused in gate.sh for exactly this reason). That failure came FIRST, so the
+   real `axon-intent` breakage never printed. A build that fails early on a
+   known-excused crate tells you nothing about the crates after it.
+
+2. **`build` does not compile test targets.** After fixing `axon-intent`'s lib,
+   `cargo build -p axon-intent` was clean while two more literals sat in its
+   test modules. The gate runs `clippy --all-targets`, which does compile them.
+
+**Rule:** to know whether a cross-crate change is complete, loop over the gated
+crate list with `clippy -p <crate> --all-targets` — the same targets the gate
+uses — rather than trusting a workspace build or a single-crate `build`.
+
+And once more on the regex: my "only a struct literal" pattern excluded
+`-> Grant {` but not `-> axon_os::grant::Grant {`, because the text before the
+brace is `::`, not `-> `. A QUALIFIED path defeats a lookbehind written for the
+bare name. Third failure of the same pattern in one session; the fix that
+finally worked was to take the file:line list from the COMPILER and patch those
+lines, instead of guessing where literals are.

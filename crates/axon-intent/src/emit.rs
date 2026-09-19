@@ -25,6 +25,9 @@ pub struct Triple {
 /// and R21 resolves the program relative to the manifest's directory.
 pub fn build_manifest(resolved: &Resolved, intent: &Intent, name: &str) -> JobManifest {
     JobManifest {
+        // Approval is a JOB POLICY an operator states; a manifest generated
+        // from an intent does not assert one.
+        require_approval: false,
         program: PathBuf::from(format!("{name}.ax")),
         intent: intent.goal.clone(),
         seed: intent.seed,
