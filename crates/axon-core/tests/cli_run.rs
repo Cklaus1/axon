@@ -20440,6 +20440,456 @@ fn arr_push_non_i64_elements_are_e0910_refused_natively() {
 }
 
 #[test]
+fn a_chain_of_concatenations_type_checks_like_a_single_one() {
+    // N2a/N2b made `"a" + "b"` legal, but only for ONE operator. `"a" + "b" +
+    // "c"` was refused with E0301 "arithmetic operand has non-numeric type str"
+    // — and its help said "`+` joins two `str`s, but not a `str` and a number",
+    // advising the author to convert a number they had not written. Building a
+    // string from three pieces is not an exotic program.
+    //
+    // Cause: the nested `+`'s type is not in `expr_types` under the path this
+    // walk builds, and `resolve_expr_type` deliberately has no `BinOp` arm, so
+    // the outer `+` saw one Unknown operand, concluded "not a concat", and ran
+    // the numeric check on the `str` it could see.
+    for (label, src, expect) in [
+        (
+            "str3",
+            "fn main() { println(\"a\" + \"b\" + \"c\") }\n",
+            "abc",
+        ),
+        (
+            "str4",
+            "fn main() { println(\"a\" + \"b\" + \"c\" + \"d\") }\n",
+            "abcd",
+        ),
+        (
+            "str_right_assoc",
+            "fn main() { println(\"a\" + (\"b\" + \"c\")) }\n",
+            "abc",
+        ),
+        (
+            "str_with_calls",
+            "fn main() { println(\"[\" + to_str(42) + \"]\" + str_to_upper(\"x\")) }\n",
+            "[42]X",
+        ),
+        (
+            "arr3",
+            "fn main() { let xs = [1] + [2] + [3]\n    println(to_str(len(xs))) }\n",
+            "3",
+        ),
+    ] {
+        let f = tmp_ax(&format!("concat_chain_{label}"), src);
+        let chk = axon().arg("check").arg(&f).output().expect("spawn check");
+        let cmsg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&chk.stdout),
+            String::from_utf8_lossy(&chk.stderr)
+        );
+        assert_eq!(
+            chk.status.code(),
+            Some(0),
+            "{label}: a concat chain must type-check: {cmsg}"
+        );
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(
+            stdout.lines().next_back().unwrap_or(""),
+            expect,
+            "{label}: wrong value"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+}
+
+#[test]
+fn a_concat_chain_does_not_make_mixed_operands_legal() {
+    // The permission is for chains of ONE kind. Widening it to "an Add is
+    // whatever its left side is" would quietly legalise these, and the mixed
+    // cases are exactly what the numeric check exists to catch. Each must still
+    // be rejected, so the fix above is a narrowing of a false negative rather
+    // than a hole.
+    for (label, src) in [
+        ("str_plus_int", "fn main() { println(\"a\" + \"b\" + 1) }\n"),
+        ("int_plus_str", "fn main() { println(1 + \"a\" + \"b\") }\n"),
+        (
+            "str_plus_arr",
+            "fn main() { let x = \"a\" + [1]\n    println(\"x\") }\n",
+        ),
+        ("str_minus_str", "fn main() { println(\"a\" - \"b\") }\n"),
+        (
+            "chain_then_minus",
+            "fn main() { println(\"a\" + \"b\" - \"c\") }\n",
+        ),
+    ] {
+        let f = tmp_ax(&format!("concat_bad_{label}"), src);
+        let chk = axon().arg("check").arg(&f).output().expect("spawn check");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&chk.stdout),
+            String::from_utf8_lossy(&chk.stderr)
+        );
+        assert_ne!(
+            chk.status.code(),
+            Some(0),
+            "{label}: must still be rejected, got clean: {msg}"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+}
+
+#[test]
+fn same_variant_enum_equality_is_not_answered_by_tag_alone() {
+    // `Op::Add{n:1} == Op::Add{n:2}` is FALSE (the interpreter compares fields)
+    // but native compared TAGS only and answered TRUE. The tag arm's comment
+    // called payload equality "a follow-up" — a known wrong answer that
+    // shipped, which is worse than an unknown one.
+    //
+    // The two shapes get SEPARATE programs on purpose. Held in variables the
+    // compiler cannot see the variant; written as literals it can, and those
+    // take different paths through the exactness check. Put in one file, the
+    // first refusal aborts the whole build and the second case is never
+    // decided — mutation testing showed exactly that, with a mutant surviving
+    // because its case was masked by its neighbour.
+    for (label, cmp) in [
+        (
+            "variables",
+            "let u = Op::Add { n: 1 }\n  let v = Op::Add { n: 2 }\n  println(to_str_bool(u == v))",
+        ),
+        (
+            "literals",
+            "println(to_str_bool(Op::Add { n: 1 } == Op::Add { n: 2 }))",
+        ),
+    ] {
+        let src =
+            format!("type Op = Zero | Add {{ n: i64 }}\nfn main() -> i64 {{\n  {cmp}\n  0\n}}\n");
+        let f = tmp_ax(&format!("enum_payload_eq_{label}"), &src);
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let interp = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .find(|l| *l == "true" || *l == "false")
+            .unwrap_or("")
+            .to_string();
+        assert_eq!(interp, "false", "{label}: interpreter oracle");
+
+        let out_bin =
+            std::env::temp_dir().join(format!("axon_enumeq_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&out_bin);
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .output()
+            .expect("spawn build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            return;
+        }
+        if build.status.code() == Some(0) {
+            let nat = std::process::Command::new(&out_bin)
+                .output()
+                .expect("run native");
+            let got = String::from_utf8_lossy(&nat.stdout)
+                .lines()
+                .find(|l| *l == "true" || *l == "false")
+                .unwrap_or("")
+                .to_string();
+            let _ = std::fs::remove_file(&out_bin);
+            assert_eq!(got, interp, "{label}: native must agree, or refuse");
+        } else {
+            assert!(
+                msg.contains("E0910"),
+                "{label}: must refuse in the refusal class: {msg}"
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_equality_the_tag_can_decide_still_compiles() {
+    // The companion. Refusing the whole enum TYPE would be the easy fix and
+    // would break both of these, which tag-compare decides correctly and which
+    // are real code in examples/feature_tour.ax. A guard that buys soundness by
+    // rejecting working programs has not fixed anything.
+    let src = "type Op = Zero | Add { n: i64 }\n               fn main() -> i64 {\n                 println(to_str_bool(Op::Zero == Op::Zero))\n                 println(to_str_bool(Op::Add { n: 1 } != Op::Zero))\n  0\n}\n";
+    let f = tmp_ax("enum_tag_ok", src);
+    let out_bin = std::env::temp_dir().join(format!("axon_enumok_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must still build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let got: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .filter(|l| *l == "true" || *l == "false")
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(got, ["true", "true"], "and must still be right");
+}
+
+#[test]
+fn ordering_a_non_numeric_type_is_a_compile_error_not_a_runtime_panic() {
+    // Five programs that passed `axon check` and then died at runtime with
+    // "cannot apply Lt to str / str". A program that checks clean and panics is
+    // the worst diagnostic shape available — the one tool whose job is to
+    // answer "is this program OK" said yes.
+    //
+    // Each case also asserts the help NAMES the repair, because the reason
+    // `"a" < "b"` gets written is that `str_cmp` is not discoverable.
+    for (label, src, want_help) in [
+        ("str", "fn main() { println(to_str_bool(\"a\" < \"b\")) }\n", "str_cmp"),
+        ("bool", "fn main() { println(to_str_bool(true < false)) }\n", "not ordered"),
+        ("array", "fn main() { println(to_str_bool([1] < [2])) }\n", "element"),
+        (
+            "tuple",
+            "fn main() { let a = (1, 2)\n    let b = (1, 3)\n    println(to_str_bool(a < b)) }\n",
+            "element",
+        ),
+        (
+            "struct",
+            "type P = { x: i64 }\nfn main() { let a = P { x: 1 }\n    let b = P { x: 2 }\n                 println(to_str_bool(a < b)) }\n",
+            "field",
+        ),
+    ] {
+        let f = tmp_ax(&format!("ord_{label}"), src);
+        let chk = axon().arg("check").arg(&f).output().expect("spawn check");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&chk.stdout),
+            String::from_utf8_lossy(&chk.stderr)
+        );
+        assert_ne!(
+            chk.status.code(),
+            Some(0),
+            "{label}: must be rejected statically, not left to panic: {msg}"
+        );
+        assert!(
+            msg.contains(want_help),
+            "{label}: the help must name the repair ({want_help}): {msg}"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+}
+
+#[test]
+fn ordering_still_works_for_every_numeric_type() {
+    // The companion to the rule above: it must reject exactly the types the
+    // interpreter cannot order, and nothing else. Without this, "reject
+    // ordering" could be satisfied by rejecting everything — and a generic `T`
+    // instantiated at a numeric type is a real, common program.
+    for (label, src) in [
+        ("i64", "fn main() { println(to_str_bool(1 < 2)) }\n"),
+        ("f64", "fn main() { println(to_str_bool(1.0 < 2.0)) }\n"),
+        (
+            "u8",
+            "fn main() { let a: u8 = 1\n    let b: u8 = 2\n    println(to_str_bool(a < b)) }\n",
+        ),
+        (
+            "decimal",
+            "fn main() { let a = 1.5d\n    let b = 2.5d\n    println(to_str_bool(a < b)) }\n",
+        ),
+        (
+            "generic_param",
+            "fn smaller<T>(a: T, b: T) -> bool { a < b }\n             fn main() { println(to_str_bool(smaller(1, 2))) }\n",
+        ),
+        ("all_ops", "fn main() { let a = 1\n    println(to_str_bool(a < 2 && a > 0 && a <= 1 && a >= 1)) }\n"),
+    ] {
+        let f = tmp_ax(&format!("ord_ok_{label}"), src);
+        let chk = axon().arg("check").arg(&f).output().expect("spawn check");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&chk.stdout),
+            String::from_utf8_lossy(&chk.stderr)
+        );
+        assert_eq!(
+            chk.status.code(),
+            Some(0),
+            "{label}: ordering must still be allowed here: {msg}"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+}
+
+#[test]
+fn array_equality_is_not_compared_as_a_string_natively() {
+    // Invariant I-2, and the worst shape available: a WRONG ANSWER from a
+    // successful build.
+    //
+    // An array is `{ i64 len, ptr data }` — byte-identical in LLVM to a `str` —
+    // so `emit_binop`'s str_eq arm accepted it and compared `len` BYTES of the
+    // ELEMENT data. `[1,2]` and `[1,3]` both begin with the low bytes of the
+    // integer 1, so native answered `true` where the interpreter answers
+    // `false`, and `!=` answered `false` where the interpreter answers `true`.
+    //
+    // The pre-existing `struct_and_array_equality` test could not see this: it
+    // runs only the interpreter, and its only array case is an EQUAL pair, so
+    // every wrong answer above is outside what it asserts.
+    let src = "fn main() -> i64 {\n  \
+               println(to_str_bool([1, 2] == [1, 2]))\n  \
+               println(to_str_bool([1, 2] == [1, 3]))\n  \
+               println(to_str_bool([1, 2] != [1, 3]))\n  \
+               0\n}\n";
+    let f = tmp_ax("arr_eq_native", src);
+
+    // The interpreter is the oracle. `[1,2] == [1,3]` is FALSE — note the
+    // shared first element, which is what made the byte comparison agree by
+    // coincidence. A pair differing in the FIRST element would pass even
+    // against the broken codegen.
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .filter(|l| *l == "true" || *l == "false")
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(got, ["true", "false", "true"], "interpreter oracle");
+
+    // Native must not answer differently. Refusing is acceptable; answering
+    // `true` for `[1,2] == [1,3]` is not.
+    let out_bin = std::env::temp_dir().join(format!("axon_arreq_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return; // codegen absent in this build — nothing to assert
+    }
+    if build.status.code() == Some(0) {
+        let nat = std::process::Command::new(&out_bin)
+            .output()
+            .expect("run native");
+        let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+            .lines()
+            .filter(|l| *l == "true" || *l == "false")
+            .map(|l| l.to_string())
+            .collect();
+        let _ = std::fs::remove_file(&out_bin);
+        assert_eq!(
+            ngot, got,
+            "native must agree with the interpreter, or refuse"
+        );
+    } else {
+        assert!(
+            msg.contains("E0910"),
+            "if native cannot lower this it must refuse in the refusal class, \
+             not fail some other way: {msg}"
+        );
+        assert!(
+            !out_bin.exists(),
+            "a refused build must leave no binary behind"
+        );
+    }
+}
+
+#[test]
+fn a_corrupt_cache_entry_does_not_fail_the_build() {
+    // A cache must never be able to fail a build that would otherwise succeed.
+    // An interrupted build is enough to leave a truncated `.axc`, and the
+    // cache-hit path used to return its load error directly — so every later
+    // build of that same source aborted with "[E0906] cached bitcode could not
+    // be loaded", a message that does not even name the cache as the thing to
+    // clear. Hit organically while probing, not hypothesised.
+    let cache = std::env::temp_dir().join(format!("axon_cachetest_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    std::fs::create_dir_all(&cache).unwrap();
+    let f = tmp_ax(
+        "cache_corrupt",
+        "fn main() -> i64 {\n  println(\"hi\")\n  0\n}\n",
+    );
+    let out_bin = std::env::temp_dir().join(format!("axon_cachebin_{}", std::process::id()));
+
+    let build = |extra_check: bool| -> (bool, String) {
+        let o = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .arg("--cache-dir")
+            .arg(&cache)
+            .output()
+            .expect("spawn build");
+        let m = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let _ = extra_check;
+        (o.status.code() == Some(0), m)
+    };
+
+    let (ok1, m1) = build(false);
+    if m1.contains("requires building axon with the `codegen` feature") {
+        let _ = std::fs::remove_file(&f);
+        return;
+    }
+    assert!(ok1, "the first build must succeed: {m1}");
+
+    // Corrupt every cache entry the way an interrupted write would: truncate.
+    let mut corrupted = 0;
+    if let Ok(rd) = std::fs::read_dir(&cache) {
+        for e in rd.flatten() {
+            if e.path().extension().map(|x| x == "axc").unwrap_or(false) {
+                let bytes = std::fs::read(e.path()).unwrap_or_default();
+                if bytes.len() > 40 {
+                    std::fs::write(e.path(), &bytes[..bytes.len() / 2]).unwrap();
+                    corrupted += 1;
+                }
+            }
+        }
+    }
+    // If nothing was cached, this test would pass while proving nothing.
+    assert!(
+        corrupted > 0,
+        "no cache entry was written — the test would be vacuous"
+    );
+
+    let _ = std::fs::remove_file(&out_bin);
+    let (ok2, m2) = build(false);
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(
+        ok2,
+        "a corrupt cache entry must degrade to a full recompile, not fail the build: {m2}"
+    );
+    assert!(
+        out_bin.exists(),
+        "the recompile must actually produce the binary"
+    );
+    let _ = std::fs::remove_file(&out_bin);
+}
+
+#[test]
 fn concat_plus_is_refused_natively_rather_than_miscompiled() {
     // N2a/N2b, invariant I-2. `emit_binop` matches on integer/float value kinds;
     // a str or slice operand fell through to a path that yields the LEFT

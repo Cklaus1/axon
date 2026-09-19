@@ -6665,12 +6665,28 @@ fn run_build_pipeline(
         if !opts.freestanding && !opts.shared {
             if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
                 // Cache hit — skip IR emission, link from stored bitcode.
-                return axon_core::compile_bitcode_to_binary(
+                match axon_core::compile_bitcode_to_binary(
                     &bitcode,
                     &output.to_string_lossy(),
                     opts.release,
                     target_triple,
-                );
+                ) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        // A CACHE must never be able to fail a build that would
+                        // otherwise succeed. A truncated or corrupt `.axc` (an
+                        // interrupted previous build is enough to produce one)
+                        // used to abort here permanently, with a message that
+                        // did not even mention the cache as the thing to clear.
+                        // Drop the bad entry and fall through to a full compile.
+                        eprintln!(
+                            "warning: ignoring an unusable cache entry and recompiling \
+                             ({}): {e}",
+                            cache_path.display()
+                        );
+                        let _ = std::fs::remove_file(&cache_path);
+                    }
+                }
             }
         }
 

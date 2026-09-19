@@ -3686,6 +3686,81 @@ impl CheckCtx {
                         );
                     }
                 }
+                // Ordering (`<` `>` `<=` `>=`) is defined for NUMBERS only. The
+                // interpreter panics at runtime on anything else — "cannot apply
+                // Lt to str / str" — and nothing rejected it first, so `"a" < "b"`,
+                // `true < false`, `[1] < [2]`, `(1,2) < (1,3)` and `P{..} < P{..}`
+                // all passed `axon check` and then died. A program that checks
+                // clean and panics is the worst diagnostic shape available: the
+                // one tool whose job is to answer "is this program OK" said yes.
+                //
+                // Deliberately keyed on CONCRETE unorderable types. `Unknown`,
+                // `Var`, `Deferred`, `TypeParam` and the wrappers are left alone —
+                // a generic `T` may well be instantiated at a numeric type, and
+                // rejecting on an unresolved type would be a false positive.
+                if matches!(
+                    op,
+                    crate::ast::BinOp::Lt
+                        | crate::ast::BinOp::Gt
+                        | crate::ast::BinOp::LtEq
+                        | crate::ast::BinOp::GtEq
+                ) {
+                    for (t, p) in [(&lty, &lpath), (&rty, &rpath)] {
+                        let fix = match t {
+                            Type::Str => Option::Some(
+                                "`str` has no `<` — use `str_cmp(a, b)`, which returns -1, 0 or 1"
+                                    .to_string(),
+                            ),
+                            Type::Bool => Option::Some(
+                                "booleans are not ordered — use `==`, or combine them with `&&` / `||`"
+                                    .to_string(),
+                            ),
+                            Type::Slice(_) | Type::Tuple(_) => Option::Some(
+                                "sequences are not ordered — compare a specific element                                  (`a[0] < b[0]`) or their lengths"
+                                    .to_string(),
+                            ),
+                            // Only for a name this checker KNOWS is a struct or
+                            // enum. An unresolved generic `T` arrives here as
+                            // `Struct("T")`, and rejecting it broke
+                            // `fn smaller<T>(a: T, b: T) -> bool { a < b }` —
+                            // caught by this rule's own companion test, which
+                            // exists because "reject ordering" is trivially
+                            // satisfiable by rejecting too much.
+                            Type::Struct(n) | Type::Enum(n)
+                                if !self.current_generic_params.contains(n)
+                                    && (self.struct_fields.contains_key(n)
+                                        || self.known_enums.contains(n)) =>
+                            {
+                                Option::Some(format!(
+                                    "`{n}` is not ordered — compare a specific field (`a.field < b.field`)"
+                                ))
+                            }
+                            _ => Option::None,
+                        };
+                        if let Option::Some(fix) = fix {
+                            let file = self.file.clone();
+                            let span = self.current_span;
+                            self.errors.push(
+                                CheckError::new(
+                                    E0301,
+                                    format!(
+                                        "`{}` cannot be ordered with `<`/`>`/`<=`/`>=` — \
+                                         this panics at runtime",
+                                        t.display()
+                                    ),
+                                )
+                                .node(p)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .expected("numeric type (i64, f64, …)".to_string())
+                                .found(t.display())
+                                .fix(fix),
+                            );
+                            break; // one diagnostic per comparison, not two
+                        }
+                    }
+                }
+
                 // Fix #4: arithmetic operands must be numeric types.
                 use crate::ast::BinOp;
                 if matches!(
@@ -3718,14 +3793,33 @@ impl CheckCtx {
                     // makes this check's intent independent of another pass —
                     // if unification ever loosened, `str + int` must not become
                     // silently legal here.
-                    let str_concat =
-                        matches!(op, BinOp::Add) && lty == Type::Str && rty == Type::Str;
+                    // A CHAIN of concatenations must work too. `"a" + "b"` was
+                    // accepted while `"a" + "b" + "c"` was refused, because the
+                    // nested `+`'s type is not in `expr_types` under the path
+                    // this walk builds, and `resolve_expr_type` deliberately has
+                    // no `BinOp` arm (see the note there — resolving binops
+                    // naively breaks `Uncertain`/`Temporal`). So the outer `+`
+                    // saw one `Unknown` operand, concluded "not a concat", and
+                    // ran the numeric check on the other one — producing
+                    // "arithmetic operand has non-numeric type str" whose help
+                    // then advised converting a number the author never wrote.
+                    //
+                    // `concat_chain_ty` closes only that hole: it resolves an
+                    // `Add` whose leaves are all `str` (or all `[T]`) and
+                    // nothing else, so the `Uncertain`/`Temporal` hazard the
+                    // note describes cannot arise — those never resolve to
+                    // `Str`/`Slice`.
+                    let lcat = self.concat_chain_ty(left, &lpath, scope);
+                    let rcat = self.concat_chain_ty(right, &rpath, scope);
+                    let str_concat = matches!(op, BinOp::Add)
+                        && lcat.as_ref() == Some(&Type::Str)
+                        && rcat.as_ref() == Some(&Type::Str);
                     // N2b: same permission for `[T] + [T]`. Element types must
                     // already agree — infer unifies them — so this only has to
                     // stop the numeric check from firing on two arrays.
                     let arr_concat = matches!(op, BinOp::Add)
-                        && matches!(lty, Type::Slice(_))
-                        && matches!(rty, Type::Slice(_));
+                        && matches!(lcat, Option::Some(Type::Slice(_)))
+                        && matches!(rcat, Option::Some(Type::Slice(_)));
                     if !str_concat && !arr_concat {
                         self.check_numeric_operand(&lty, &lpath);
                         self.check_numeric_operand(&rty, &rpath);
@@ -6161,6 +6255,44 @@ impl CheckCtx {
             _ => {}
         }
         None
+    }
+
+    /// The type of a concatenation CHAIN, or `None` if this is not one.
+    ///
+    /// Returns `Some(Str)` / `Some(Slice(_))` for an expression that is either
+    /// already a `str`/array, or an `Add` whose both sides are themselves such
+    /// chains of the SAME kind. Everything else is `None` — deliberately, so
+    /// this cannot be mistaken for a general binop type resolver. `Uncertain`
+    /// and `Temporal` operands resolve to neither `Str` nor `Slice`, so the
+    /// hazard documented on `resolve_expr_type`'s missing `BinOp` arm does not
+    /// apply here.
+    fn concat_chain_ty(
+        &self,
+        expr: &Expr,
+        node_path: &str,
+        scope: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        match self.resolve_expr_type(expr, node_path, scope) {
+            Type::Str => return Option::Some(Type::Str),
+            t @ Type::Slice(_) => return Option::Some(t),
+            _ => {}
+        }
+        if let Expr::BinOp {
+            op: crate::ast::BinOp::Add,
+            left,
+            right,
+        } = expr
+        {
+            let l = self.concat_chain_ty(left, &format!("{node_path}.left"), scope)?;
+            let r = self.concat_chain_ty(right, &format!("{node_path}.right"), scope)?;
+            // Both sides must be the same KIND. `str + [T]` stays an error.
+            return match (&l, &r) {
+                (Type::Str, Type::Str) => Option::Some(Type::Str),
+                (Type::Slice(_), Type::Slice(_)) => Option::Some(l),
+                _ => Option::None,
+            };
+        }
+        Option::None
     }
 
     fn resolve_expr_type(

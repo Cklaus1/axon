@@ -2062,3 +2062,43 @@ concrete reason to expect it will not.
   something no scanner matches (e.g. `x-api-key: <REDACTED-BY-DEMO>`), keeping
   the transcript's teaching value. Found by the build-loop artifact scan; the
   value is referenced by file:line and deliberately not reproduced here.
+
+## Native composite equality is now REFUSED, not implemented (follow-up)
+
+The fixes in this batch stop native from answering `==`/`!=` wrongly for
+arrays, structs, tuples, and same-variant payload-carrying enums — by refusing
+(E0910) rather than by lowering them. That is strictly better than the previous
+state (wrong answers and invalid IR) but it is a capability gap, not a
+completion.
+
+Implementing array equality properly is the tractable one: compare lengths,
+then `memcmp(a_ptr, b_ptr, len * elem_stride)`. The existing `str_eq` already
+does exactly this with a stride of 1, which is precisely why it gave the wrong
+answer for arrays. The blocker is knowing the element stride for each element
+type; the `ArrReduce` loop GEPs with `i64_ty`, which is evidence for 8 bytes
+for i64/f64 arrays but says nothing about `u8`/`bool` arrays. Element types
+that are not fixed-size scalars (str, struct, nested slice) cannot use memcmp
+at all — those compare pointers — and must keep refusing.
+
+Struct and tuple equality need field-wise comparison; enum payload equality
+needs a per-variant field comparison after the tag test.
+
+## `editing_an_imported_module_invalidates_the_build_cache` fails only under full-suite load
+
+It is the one recorded baseline failure. Measured: it PASSES in isolation
+(twice) and passes with `--test-threads=8`; it fails only under
+`cargo test --workspace`. The test is not at fault for the obvious reason — it
+already isolates its cache with `--cache-dir`.
+
+HYPOTHESIS, not yet confirmed: the cache key mixes the compiler EXECUTABLE's
+path + size + mtime (main.rs, "AUDIT T38"). A full-workspace run can rebuild
+the `axon` binary between the test's two builds, changing its mtime, so the
+second build legitimately mints a NEW key — which is exactly the observed
+failure, "an unchanged rebuild must reuse its key, not mint a new entry,
+left: 4, right: 3".
+
+If that is the cause, the test is asserting something untrue in an environment
+where the compiler can be rebuilt underneath it, and the fix belongs in the
+test (pin the binary it measures) rather than in the cache. Confirm before
+acting: copy the binary to a fixed path, run the test against that copy, and
+see whether the failure survives.

@@ -601,3 +601,54 @@ cause. Related: [[no-default-features-fakes-codegen-failures]],
 **Rule:** a guard must test the exact path the protected command invokes, and
 a command whose failure would be misread downstream must be checked for its
 own failure first.
+
+## Two types with the same machine layout will be confused, silently
+
+Three native-codegen defects found in one sweep, all the same shape: a value
+reached a `match` arm meant for a DIFFERENT type that happens to share its
+representation.
+
+- An array is `{ i64 len, ptr data }` — byte-identical in LLVM to a `str` — so
+  array `==` was handed to `str_eq`, which compared `len` BYTES of the element
+  data. `[1,2] == [1,3]` answered `true` (both start with the low bytes of the
+  integer 1) where the interpreter answers `false`.
+- A struct hit the same arm; `P{x,y}` would have `y` read as a POINTER.
+- An enum hit it too — and was caught, because its LLVM type differs enough to
+  FAIL IR VERIFICATION. Someone noticed and added an arm.
+
+That last point is the lesson. The enum case was found because the wrong type
+crashed the verifier; the array case shipped because the wrong type was
+*plausible*. **A layout collision that verifies is more dangerous than one that
+crashes**, and the crashing sibling is evidence the collision class exists.
+When you fix a "wrong arm" bug, enumerate every other type with that same
+machine layout before closing it.
+
+Related: [[golden-ir-shape-vs-content-gap]], [[probe-element-size-must-differ]].
+
+## The test that should have caught it was oracle-only and used an equal pair
+
+`struct_and_array_equality` existed and passed throughout. It could not have
+caught the array bug for two independent reasons: it runs only `axon run` (the
+interpreter IS the oracle, so it can never see a native divergence), and its
+only array case is `[1,2] == [1,2]` — an EQUAL pair, where the broken code is
+right by accident.
+
+**Rule:** a test named for a feature is not coverage of that feature. For an
+equality primitive the minimum is a pair that differs, differing in a position
+the suspected wrong implementation would not examine — here, anywhere but the
+first element. A pair differing in the first element would ALSO have passed
+against the broken codegen. Direct instance of
+[[probe-element-size-must-differ]].
+
+## Refusing the type is easier than refusing the case, and usually wrong
+
+Native enum `==` compares tags, which is exact unless both sides are the same
+payload-carrying variant. The easy fix — refuse `==` on any enum with a payload
+variant — would have rejected `Op::Zero == Op::Zero` and `Op::Add{..} !=
+Op::Zero`, both correct under tag-compare and both real code in
+`examples/feature_tour.ax`.
+
+**Rule:** when a lowering is exact for some inputs and not others, the guard
+belongs on the CASE, not the type. Measure the real usage first — grepping the
+repo took one command and found exactly two call sites, both of which the
+blunt fix would have broken.

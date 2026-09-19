@@ -345,6 +345,37 @@ impl<'ctx> super::Codegen<'ctx> {
                     };
                     return Some(self.emit_binop(op, lhs, rhs, &inner_ty));
                 }
+                // Enum `==`/`!=` lowers to a TAG comparison, which is exact only
+                // when the question cannot be "are these two values of the same
+                // PAYLOAD-carrying variant equal?". `Op::Add{n:1} == Op::Add{n:2}`
+                // answered `true` natively and `false` in the interpreter — a
+                // silent wrong answer from a clean build. The tag arm's own
+                // comment calls payload equality "a follow-up"; until it exists,
+                // refuse the cases tag-compare cannot decide instead of answering
+                // them wrongly.
+                //
+                // Refusing the whole enum TYPE would be simpler and wrong: it
+                // would reject `Op::Zero == Op::Zero` and `Op::Add{..} != Op::Zero`,
+                // both of which tag-compare decides correctly and both of which
+                // are real code in `examples/feature_tour.ax`.
+                if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq) {
+                    let enum_name = match (&lt_sem, &rt_sem) {
+                        (Some(Type::Enum(n)), _) | (_, Some(Type::Enum(n))) => Some(n.clone()),
+                        _ => None,
+                    };
+                    if let Some(n) = enum_name {
+                        if !self.enum_eq_is_exact(&n, left, right) {
+                            let msg = format!(
+                                "codegen error [E0910]: native codegen compares `{n}` values by TAG only, which cannot decide equality between two values of the same variant when that variant carries fields. The interpreter compares the fields too; run under `axon run`, or match on the variants and compare the fields explicitly."
+                            );
+                            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                                eprintln!("{msg}");
+                                self.codegen_errors.push(msg);
+                            }
+                            return Some(self.ir.context.bool_type().const_int(0, false).into());
+                        }
+                    }
+                }
                 let lhs = self.emit_expr(left, fn_val)?;
                 let rhs = self.emit_expr(right, fn_val)?;
                 // Prefer the semantic type from inference (distinguishes u32/u64
@@ -1369,6 +1400,50 @@ impl<'ctx> super::Codegen<'ctx> {
             .unwrap()
     }
 
+    /// The statically-known `(enum, variant)` of an enum literal, if this
+    /// expression is one. Both `Op::Zero` and `Op::Add { n: 1 }` parse as a
+    /// `StructLit` whose name carries `::`; anything else (a variable, a call)
+    /// is not statically known.
+    fn static_enum_variant(expr: &ast::Expr) -> Option<(String, String)> {
+        if let ast::Expr::StructLit { name, .. } = expr {
+            if let Some((e, v)) = name.split_once("::") {
+                return Some((e.to_string(), v.to_string()));
+            }
+        }
+        None
+    }
+
+    /// Whether a TAG comparison decides `left == right` exactly for this enum.
+    ///
+    /// Exact when: no variant carries fields at all; or the two sides are known
+    /// to be DIFFERENT variants; or either side is known to be a FIELDLESS
+    /// variant (then equality holds exactly when the tags match). Otherwise the
+    /// answer depends on payload contents the tag does not carry.
+    fn enum_eq_is_exact(&self, enum_name: &str, left: &ast::Expr, right: &ast::Expr) -> bool {
+        let Some(variants) = self.enum_variants.get(enum_name) else {
+            // Unknown enum — say NOT exact rather than assuming. An unknown
+            // shape is not a safe shape.
+            return false;
+        };
+        if variants.iter().all(|(_, _, fields)| fields.is_empty()) {
+            return true;
+        }
+        let lv = Self::static_enum_variant(left);
+        let rv = Self::static_enum_variant(right);
+        let fieldless = |v: &str| {
+            variants
+                .iter()
+                .any(|(name, _, fields)| name == v && fields.is_empty())
+        };
+        match (&lv, &rv) {
+            (Some((_, a)), Some((_, b))) if a != b => true,
+            _ => {
+                lv.as_ref().map(|(_, v)| fieldless(v)).unwrap_or(false)
+                    || rv.as_ref().map(|(_, v)| fieldless(v)).unwrap_or(false)
+            }
+        }
+    }
+
     pub(super) fn emit_binop(
         &mut self,
         op: &ast::BinOp,
@@ -1703,6 +1778,37 @@ impl<'ctx> super::Codegen<'ctx> {
                     inkwell::IntPredicate::EQ
                 };
                 build_wrappers::w_int_compare(&self.ir.builder, pred, lt, rt, "enumeq").into()
+            }
+
+            // Anything else aggregate reaching `==`/`!=` is NOT a str and must
+            // not be compared as one. An array is `{ i64 len, ptr data }` —
+            // byte-identical in LLVM to a str — so `[1,2] == [1,3]` was handed
+            // to `str_eq`, which compared `len` BYTES of the element data: both
+            // arrays begin with the low bytes of the integer 1, so it answered
+            // TRUE. Measured: interp `false`, native `true`, from a build that
+            // reported success. A struct is worse — `P{x,y}` would have `y`
+            // read as a POINTER and dereferenced.
+            //
+            // The enum arm above exists for exactly this fallthrough; enums were
+            // caught only because their LLVM type differs enough to fail IR
+            // verification (BUG_HUNT #41). Arrays share the str layout exactly,
+            // so nothing failed and the wrong answer shipped. Refuse instead —
+            // the same choice the `+` guard at the top of this function makes.
+            (BasicValueEnum::StructValue(_), BasicValueEnum::StructValue(_))
+                if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq) && !matches!(ty, Type::Str) =>
+            {
+                let what = match ty {
+                    Type::Slice(_) => "array",
+                    _ => "composite value",
+                };
+                let msg = format!(
+                    "codegen error [E0910]: native codegen does not lower {what} equality (`==`/`!=`). The interpreter compares them structurally; run under `axon run`."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+                self.ir.context.bool_type().const_int(0, false).into()
             }
 
             // String struct equality: `a == b` / `a != b` where both are { i64, i8* }.
