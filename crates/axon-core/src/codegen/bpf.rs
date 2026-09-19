@@ -334,20 +334,90 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
 
         // then
         self.builder.position_at_end(then_bb);
-        let _ = self.lower_expr(then_branch, func)?;
+        let then_v = self.lower_expr(then_branch, func)?;
+        // Capture the block AFTER lowering: a nested `if` moves the insert
+        // point, and the phi's incoming edge must name the block the value is
+        // actually live in, not the block we started the branch in.
+        let then_end = self.builder.get_insert_block();
+        let then_open = then_end.and_then(|b| b.get_terminator()).is_none();
         self.br_if_open(merge_bb);
 
         // else
         self.builder.position_at_end(else_bb);
-        if let Some(e) = else_branch {
-            let _ = self.lower_expr(e, func)?;
-        }
+        let else_v = match else_branch {
+            Some(e) => self.lower_expr(e, func)?,
+            None => None,
+        };
+        let else_end = self.builder.get_insert_block();
+        let else_open = else_end.and_then(|b| b.get_terminator()).is_none();
         self.br_if_open(merge_bb);
 
         self.builder.position_at_end(merge_bb);
-        // Slice-1 `if` is used for control flow (e.g. guard a map increment), so
-        // it yields no value; the program's value comes from the trailing expr.
-        Ok(None)
+
+        // An `if` whose arms both produce a value IS a value, and discarding it
+        // here was a silent wrong answer rather than a missing feature:
+        //
+        //   fn count(ctx: i64) -> i64 { if ctx > 0 { 7 } else { 3 } }
+        //
+        // built clean and emitted `r0 = 0; exit` — neither 7 nor 3, with no
+        // diagnostic, because the discarded value left the tail empty and the
+        // caller substituted zero for "no value".
+        //
+        // When an arm is statement-like (the Slice-1 control-flow use, e.g.
+        // guarding a map increment) there is no value to carry and this yields
+        // None exactly as before, so that use is unchanged. An arm that already
+        // terminated (an early return) is not a predecessor of the merge block
+        // and cannot feed a phi, so that case stays None too rather than
+        // naming a block the edge does not come from.
+        // The phi takes an incoming edge from each arm that both produced a
+        // value AND actually reaches this block. An arm ending in `return` is
+        // not a predecessor, so naming it would be invalid IR — but DROPPING
+        // the surviving arm's value instead is how the same silent-zero bug
+        // reappears one shape over:
+        //
+        //   if ctx > 0 { return 7  9 } else { 3 }   ->  else path emitted r0=0
+        //
+        // so the open arms are collected rather than requiring both.
+        // An arm that produced a value provably still reaches this block, so
+        // there is no separate "is it still open?" test here. `Expr::Return`
+        // lowers to Ok(None) and `Expr::Block` BREAKS on a terminator, so a
+        // diverting arm's value is None by construction — a guard on openness
+        // would be unreachable, and unreachable defensive code reads as a
+        // handled case that was never handled. The two asserts below state the
+        // invariant instead, so it fails loudly if Block's break is ever
+        // removed rather than silently emitting a phi from a non-predecessor.
+        debug_assert!(
+            then_v.is_none() || then_open,
+            "a then-arm yielded a value from a terminated block"
+        );
+        debug_assert!(
+            else_v.is_none() || else_open,
+            "an else-arm yielded a value from a terminated block"
+        );
+        let mut incoming: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> = Vec::new();
+        if let (Some(tv), Some(tb)) = (then_v, then_end) {
+            incoming.push((tv, tb));
+        }
+        if let (Some(ev), Some(eb)) = (else_v, else_end) {
+            incoming.push((ev, eb));
+        }
+        match incoming.len() {
+            // Both arms reach here with a value: a genuine merge.
+            2 => {
+                let phi = self.builder.build_phi(i64_ty, "ifval").unwrap();
+                phi.add_incoming(&[
+                    (&incoming[0].0, incoming[0].1),
+                    (&incoming[1].0, incoming[1].1),
+                ]);
+                Ok(Some(phi.as_basic_value().into_int_value()))
+            }
+            // One arm diverted; the other's value IS the value of the `if`, and
+            // a one-edge phi would be pointless ceremony around it.
+            1 => Ok(Some(incoming[0].0)),
+            // No arm reaches here with a value: the Slice-1 control-flow use
+            // (statement arms), or every arm returned. Unchanged behaviour.
+            _ => Ok(None),
+        }
     }
 
     /// Branch to `dest` if the current block is not already terminated.
@@ -504,6 +574,18 @@ fn expr_kind(e: &Expr) -> &'static str {
 
 /// Initialize the BPF target, set the triple, and write the object file.
 fn write_object(module: &Module<'_>, output_path: &str) -> Result<(), String> {
+    // Verify the module BEFORE emitting. Nothing on this path did, so malformed
+    // IR was written to an object file and only discovered — if ever — by the
+    // kernel verifier rejecting the load, or not at all. A phi naming a block
+    // that is not a predecessor is the concrete case that exposed this: it
+    // built clean and produced a valid-looking object.
+    //
+    // This is the codegen half of the same invariant the rest of the compiler
+    // holds: emit nothing you cannot justify. Refusing here costs one call and
+    // turns a class of silent malformed output into a build error.
+    module
+        .verify()
+        .map_err(|e| format!("[E0904] BPF module failed LLVM verification before emit: {e}"))?;
     Target::initialize_all(&InitializationConfig::default());
     // `bpfel` = little-endian BPF (the host byte order on x86_64).
     let triple = TargetTriple::create("bpfel");

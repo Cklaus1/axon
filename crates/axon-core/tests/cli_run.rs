@@ -30410,3 +30410,122 @@ fn json_path_i64_names_which_of_three_failures_occurred() {
     ];
     assert_eq!(got, want);
 }
+
+#[test]
+fn bpf_if_as_an_expression_yields_its_branch_value_not_zero() {
+    // A @[bpf] `if` used as an EXPRESSION silently returned 0:
+    //
+    //   fn count(ctx: i64) -> i64 { if ctx > 0 { 7 } else { 3 } }
+    //
+    // built clean and emitted `r0 = 0; exit` — neither branch, no diagnostic.
+    // `lower_if` discarded both arms' values (a documented Slice-1 limitation)
+    // and the tail then substituted zero for "no value". A documented
+    // limitation that yields a silent WRONG ANSWER is not sound-by-refusal.
+    //
+    // Found while probing the BPF helpers for coverage, reported as an
+    // out-of-domain finding, fixed here.
+    //
+    // Asserted on the encoded instructions rather than through llvm-objdump,
+    // which is not present everywhere. In BPF, `r0 = <imm>` encodes as
+    // b7 00 00 00 <imm32-le>, so each branch's constant is a byte pattern.
+    let src = "substrate\n\
+               @[bpf(kind: socket_filter)]\n\
+               fn count(ctx: i64) -> i64 { if ctx > 0 { 7 } else { 3 } }\n";
+    let f = tmp_ax("bpf_if_value", src);
+    let obj = std::env::temp_dir().join(format!("axon_bpfifval_{}.o", std::process::id()));
+    let _ = std::fs::remove_file(&obj);
+    let build = axon()
+        .arg("build")
+        .arg("--target")
+        .arg("bpf")
+        .arg(&f)
+        .arg("--out")
+        .arg(&obj)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let bytes = std::fs::read(&obj).expect("read bpf object");
+    let _ = std::fs::remove_file(&obj);
+    let mov_r0 = |imm: u8| -> bool {
+        bytes
+            .windows(8)
+            .any(|w| w == [0xb7, 0x00, 0x00, 0x00, imm, 0x00, 0x00, 0x00])
+    };
+    // Both branch constants must be present...
+    assert!(mov_r0(7), "the then-branch value 7 is not loaded into r0");
+    assert!(mov_r0(3), "the else-branch value 3 is not loaded into r0");
+    // ...and a conditional jump must select between them. Without this, two
+    // unconditional loads would satisfy the assertions above while the wrong
+    // one won. 0x65 is JSGT_IMM, the encoding for a signed `> 0` test.
+    assert!(
+        bytes.windows(2).any(|w| w[0] == 0x65),
+        "no conditional jump: the branches are not actually selected between"
+    );
+}
+
+#[test]
+fn bpf_if_with_a_diverting_arm_keeps_the_other_arms_value() {
+    // The SECOND shape of the same bug, and the reason the first fix was not
+    // enough. When one arm ends in `return` it is not a predecessor of the
+    // merge block, so it cannot feed a phi — but dropping the SURVIVING arm's
+    // value along with it puts the silent zero straight back:
+    //
+    //   if ctx > 0 { return 7  9 } else { 3 }   ->  else path emitted r0 = 0
+    //
+    // Found by mutation: the `then_open && else_open` guard survived being
+    // removed, because the first test's program has no diverting arm and never
+    // reached the guarded path at all. This input is one the first program
+    // provably cannot produce — both arms of an `if` must share a type, so a
+    // diverting arm only arises past a `return` (W0005 unreachable code).
+    let src = "substrate\n\
+               @[bpf(kind: socket_filter)]\n\
+               fn count(ctx: i64) -> i64 {\n\
+                 if ctx > 0 {\n\
+                   return 7\n\
+                   9\n\
+                 } else { 3 }\n\
+               }\n";
+    let f = tmp_ax("bpf_if_divert", src);
+    let obj = std::env::temp_dir().join(format!("axon_bpfifdiv_{}.o", std::process::id()));
+    let _ = std::fs::remove_file(&obj);
+    let build = axon()
+        .arg("build")
+        .arg("--target")
+        .arg("bpf")
+        .arg(&f)
+        .arg("--out")
+        .arg(&obj)
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let bytes = std::fs::read(&obj).expect("read bpf object");
+    let _ = std::fs::remove_file(&obj);
+    let mov_r0 = |imm: u8| -> bool {
+        bytes
+            .windows(8)
+            .any(|w| w == [0xb7, 0x00, 0x00, 0x00, imm, 0x00, 0x00, 0x00])
+    };
+    assert!(mov_r0(7), "the diverting arm's `return 7` is missing");
+    assert!(
+        mov_r0(3),
+        "the surviving arm's value 3 was dropped — the silent zero is back"
+    );
+}
