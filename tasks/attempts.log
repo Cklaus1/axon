@@ -31,3 +31,6 @@ ATTEMPTS LOG -- build-loop over AXON_FOR_RLM.md
 2026-08-08T02:55:29-04:00  T12 attempt 1  Pike VM in interp/regex.rs: parse->compile->simulate, leftmost-first, {n,m} cap, pattern cache, refuse backref/lookaround E2203
 2026-09-19T01:01:49-04:00  C1  attempt 1  verify EXISTING_AXON_MAP claims against the live repo by direct execution
 2026-09-19T01:03:12-04:00  C2  attempt 1  typed event/manifest contracts in a new axon-cortex crate, round-trip + rejection proofs
+2026-09-19T01:07:22-04:00  C3-C10  attempt 1  episode runner: fixture, observation, catalog, patch-in-copy, checks, verify, evidence
+2026-09-19T01:25:55-04:00  C11  attempt 1  drive Runner end-to-end over fixtures/broken.ax against the real binary
+2026-09-19T01:25:55-04:00  C12  attempt 1  negative gates: forgery, payload, done-claim, partial-observation, catalog

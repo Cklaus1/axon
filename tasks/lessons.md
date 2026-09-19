@@ -515,3 +515,34 @@ the opportunity entry only records the observation.
   interpolate the absolute path into the generated source rather than using a relative one. A stray
   file is minor on its own, but it is the same failure as a harness that leaves state behind — the
   next run is no longer starting from where you think.
+
+## A forged fixture can make a vacuous check look tested (C11/C12, cortex)
+
+`Runner::snapshot` returned the literal `snapshot_id: "s1"`. The
+`StaleSnapshot` refusal compared grant-id to current-id — and the two could
+never differ, because every snapshot had the same id. The check was
+decoration. My negative gate passed anyway, because it built the "stale"
+grant by hand-writing `"s0"`, a value the production path cannot produce.
+
+**Rule:** when a test needs a "wrong" version of some state, produce it
+the way production produces it (take a second real snapshot after a real
+edit), not by constructing the literal. A hand-forged input proves the
+comparison executes; it says nothing about whether the two sides can ever
+differ. The mutation `content_digest(...)` → `"s1"` now kills the gate,
+which is the property that was missing.
+
+Same family as [[fixture-stops-exercising-its-invariant]] and
+[[mutate-one-side-of-a-differential]]: the assertion ran, the invariant
+didn't.
+
+## Fail-closed is not the same as observed-and-failed
+
+`verify` used `out.map(|o| o.status.success()).unwrap_or(false)`. The
+VERDICT was right — a check that cannot run must not pass. But the recorded
+evidence said `FAILED` for both a real failing test run and a binary that
+never launched, so a reviewer reading the episode could not tell "the repair
+is wrong" from "the verifier is broken." Those call for opposite responses.
+
+**Rule:** a fail-closed default settles the verdict, not the record. Where a
+result is written down for someone else to act on, keep three outcomes —
+passed / failed / did-not-run — even when two of them share a verdict.

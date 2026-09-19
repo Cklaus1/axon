@@ -1,0 +1,22 @@
+// A localized semantic bug: `double` adds instead of multiplying.
+// The visible reproduction check and the hidden completion test are both
+// pinned OUTSIDE the patchable region (the body of `double`).
+
+fn double(n: i64) -> i64 {
+    n + 2
+}
+
+@[test]
+fn visible_repro() {
+    assert_eq(double(5), 10)
+}
+
+@[test]
+fn hidden_completion() {
+    assert_eq(double(7), 14)
+    assert_eq(double(0), 0)
+}
+
+fn main() {
+    println(to_str(double(21)))
+}
