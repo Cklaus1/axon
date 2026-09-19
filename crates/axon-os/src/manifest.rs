@@ -188,6 +188,7 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
         intent,
         seed,
         grant: Grant {
+            reproducible: profile.is_reproducible(),
             fs_read,
             fs_write,
             net,

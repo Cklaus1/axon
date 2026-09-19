@@ -72,6 +72,7 @@ mod tests {
 
     fn grant(net: bool) -> Grant {
         Grant {
+            reproducible: false,
             fs_read: vec!["./data/".into()],
             fs_write: vec!["./out/".into()],
             net: if net { vec!["x.com".into()] } else { vec![] },

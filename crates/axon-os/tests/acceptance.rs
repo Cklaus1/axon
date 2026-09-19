@@ -197,6 +197,7 @@ fn approval_policy_and_evidence_are_independent() {
     //    equally satisfied by a gate that refuses whenever require_approval is
     //    set, which would be a broken gate that passes a security test.
     let grant = axon_os::grant::Grant {
+        reproducible: false,
         fs_read: vec![],
         fs_write: vec![],
         net: vec![],
@@ -239,6 +240,78 @@ fn approval_policy_and_evidence_are_independent() {
         out.stdout
     );
     let _ = std::fs::remove_file(&token);
+}
+
+/// `hermetic` must be meaningfully stricter than `restricted`.
+///
+/// They were byte-identical — same empty fs/net, same `ExecPolicy::None` — so
+/// two names described one behaviour, which drifts into a bug the first time
+/// someone assumes they differ. There is no authority left to remove at
+/// `restricted`, so the distinction is REPRODUCIBILITY: a hermetic run must not
+/// be steerable by the ambient environment.
+///
+/// Tested on `AXON_MAX_DEPTH` because its effect is unambiguous and visible: it
+/// changes whether a 7000-deep recursion completes or hits the 6000 default.
+#[test]
+fn hermetic_ignores_the_ambient_environment_and_restricted_does_not() {
+    let Some(axon) = axon_bin() else { return };
+    let d = tmp("hermetic-vs-restricted");
+    let prog = d.join("p.ax");
+    std::fs::write(
+        &prog,
+        "fn deep(n: i64) -> i64 { if n <= 0 { 0 } else { deep(n - 1) + 1 } }\n         fn main() -> i64 {\n  let _ = deep(7000)\n  0\n}\n",
+    )
+    .unwrap();
+
+    let run = |profile: &str| -> Out {
+        let job = d.join(format!("{profile}.axjob"));
+        std::fs::write(
+            &job,
+            format!(
+                "program = \"{}\"\nintent = \"t\"\nseed = 1\nprofile = \"{profile}\"\n\
+                 [grant]\nfs_read = []\nfs_write = []\nnet = []\nexec = \"none\"\n\
+                 max_label = \"internal\"\n[grant.budget]\ncalls = 5\n",
+                prog.display()
+            ),
+        )
+        .unwrap();
+        os(
+            &[
+                "run",
+                job.to_str().unwrap(),
+                "--out",
+                d.to_str().unwrap(),
+                "--run-id",
+                profile,
+            ],
+            &axon,
+            &[("AXON_MAX_DEPTH", "20000")],
+        )
+    };
+
+    // restricted FORWARDS the operator's setting — the deep recursion completes.
+    let r = run("restricted");
+    assert_eq!(
+        r.code, 0,
+        "restricted should honour AXON_MAX_DEPTH: {}",
+        r.stdout
+    );
+
+    // hermetic does NOT — the default 6000 limit applies and the run is refused.
+    let h = run("hermetic");
+    assert_ne!(
+        h.code, 0,
+        "hermetic must ignore AXON_MAX_DEPTH, or it is not reproducible: {}",
+        h.stdout
+    );
+    assert!(
+        h.stdout.contains("recursion limit"),
+        "and must fail for THAT reason, not some other: {}",
+        h.stdout
+    );
+
+    // The pair is the point: either assertion alone is satisfiable by a profile
+    // that always works or always fails.
 }
 
 // ── A1: the end-to-end operator journey through the real CLI ─────────────────

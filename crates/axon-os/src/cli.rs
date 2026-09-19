@@ -45,6 +45,8 @@ R29 flags for `run`:
 /// `"".into()` is the universal path ancestor and `"*"` the universal host.
 fn broad_supervisor_grant() -> Grant {
     Grant {
+        reproducible: false,
+        // The supervisor's own authority is not a reproducibility posture.
         fs_read: vec!["".into()],
         fs_write: vec!["".into()],
         net: vec!["*".into()],
@@ -1003,6 +1005,7 @@ mod tests {
     #[test]
     fn legible_grant_lists_may_and_may_not() {
         let g = Grant {
+            reproducible: false,
             fs_read: vec!["./data/".into()],
             fs_write: vec![],
             net: vec![],
@@ -1023,6 +1026,7 @@ mod tests {
     #[test]
     fn broad_grant_is_a_superset_of_a_narrow_job() {
         let job = Grant {
+            reproducible: false,
             fs_read: vec!["./data/".into()],
             fs_write: vec!["./out/".into()],
             net: vec!["a.x.com".into()],

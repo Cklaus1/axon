@@ -90,6 +90,7 @@ mod tests {
 
     fn grant() -> Grant {
         Grant {
+            reproducible: false,
             fs_read: vec!["./data/".into()],
             fs_write: vec!["./out/".into()],
             net: vec![],

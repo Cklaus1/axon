@@ -289,6 +289,7 @@ mod tests {
             intent: "demo".into(),
             seed: 42,
             grant: Grant {
+                reproducible: false,
                 fs_read: vec!["./data/".into()],
                 fs_write: vec!["./out/".into()],
                 net: vec![],

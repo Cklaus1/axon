@@ -87,6 +87,17 @@ pub struct Grant {
     pub exec: ExecPolicy,
     pub max_label: Label,
     pub budget: Budget,
+    /// Must this run be REPRODUCIBLE (virtual clock, no ambient env)?
+    ///
+    /// Carried on the grant rather than passed alongside it because the grant
+    /// is what reaches the spawn point; a policy that does not travel with the
+    /// thing it governs is a policy with no enforcement site.
+    ///
+    /// Set from `profile = "hermetic"`. Every other profile leaves it false, and
+    /// the canonical form below excludes it — it constrains HOW a run executes,
+    /// not WHAT it may touch, so it must not change a grant digest that existing
+    /// approval tokens were signed over.
+    pub reproducible: bool,
 }
 
 impl Grant {
@@ -129,6 +140,12 @@ impl Grant {
     /// (sound: it is ⊆ both); exec = none unless both Any; label/budget = min.
     pub fn intersect(&self, other: &Grant) -> Grant {
         Grant {
+            // Intersection NARROWS, so reproducibility is the OR: if either
+            // side requires a reproducible run, the result must be one.
+            // Taking the AND would let a broad supervisor grant relax a
+            // hermetic job, which is the direction an intersection must never
+            // go.
+            reproducible: self.reproducible || other.reproducible,
             fs_read: intersect_prefixes(&self.fs_read, &other.fs_read),
             fs_write: intersect_prefixes(&self.fs_write, &other.fs_write),
             net: intersect_hosts(&self.net, &other.net),
@@ -239,6 +256,7 @@ mod tests {
     #[test]
     fn effect_set_is_present_iff_allowlist_nonempty() {
         let g = Grant {
+            reproducible: false,
             fs_read: vec!["./data/".into()],
             fs_write: vec![],
             net: vec![],
@@ -263,6 +281,7 @@ mod tests {
         budget: (i64, i64, i64),
     ) -> Grant {
         Grant {
+            reproducible: false,
             fs_read: fs_read.iter().map(|s| s.to_string()).collect(),
             fs_write: vec![],
             net: net.iter().map(|s| s.to_string()).collect(),
@@ -359,6 +378,7 @@ mod tests {
     #[test]
     fn exec_present_only_when_any() {
         let mut g = Grant {
+            reproducible: false,
             fs_read: vec![],
             fs_write: vec![],
             net: vec![],

@@ -33,11 +33,44 @@ pub enum Profile {
     Balanced,
     /// Explicit allowlists only — nothing broad is granted implicitly.
     Restricted,
-    /// No ambient authority at all: no network, no filesystem, no subprocess.
+    /// `Restricted`, PLUS reproducibility: the run must not depend on anything
+    /// ambient that can differ between two executions.
+    ///
+    /// Until now this was byte-identical to `Restricted` — same empty fs/net,
+    /// same `ExecPolicy::None` — so two names described one behaviour, which
+    /// drifts into a bug the first time someone assumes they differ.
+    ///
+    /// The distinction is the TIME AND ENTROPY axis, not more capability
+    /// removal (there is none left to remove):
+    ///   * the clock is VIRTUAL and seeded, so `now_ms()` is a function of the
+    ///     run, not of when it happened;
+    ///   * no operator `AXON_*` variable is forwarded, so a run cannot be
+    ///     steered by the ambient environment;
+    ///   * the RNG seed is fixed (it already was, for every profile).
     Hermetic,
 }
 
 impl Profile {
+    /// Must this run be REPRODUCIBLE — same inputs, same bytes out, regardless
+    /// of when it runs or what is set in the operator's shell?
+    ///
+    /// Only `Hermetic`. This is what makes it distinct from `Restricted`, which
+    /// removes authority but still lets a program read the wall clock and still
+    /// honours ambient `AXON_*` controls.
+    pub fn is_reproducible(self) -> bool {
+        matches!(self, Profile::Hermetic)
+    }
+
+    /// The deterministic virtual clock a reproducible run starts from, as the
+    /// `AXON_CLOCK` value the interpreter reads (`<start_ms>:<tick_ms>`).
+    ///
+    /// Fixed rather than derived from the seed: a reproducible run should give
+    /// the same timestamps to two operators comparing notes, not merely to two
+    /// runs of one job.
+    pub fn virtual_clock(self) -> Option<&'static str> {
+        self.is_reproducible().then_some("0:1")
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Profile::Developer => "developer",
@@ -102,6 +135,7 @@ impl Profile {
     /// The whole grant this profile hands a job that specifies nothing.
     pub fn default_grant(self, max_label: Label, budget: Budget) -> Grant {
         Grant {
+            reproducible: self.is_reproducible(),
             fs_read: self.default_fs_read(),
             fs_write: self.default_fs_write(),
             net: self.default_net(),

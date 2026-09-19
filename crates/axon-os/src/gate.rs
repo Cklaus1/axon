@@ -85,6 +85,7 @@ mod tests {
 
     fn grant(fs_read: bool, net: bool, label: Label) -> Grant {
         Grant {
+            reproducible: false,
             fs_read: if fs_read {
                 vec!["./data/".into()]
             } else {

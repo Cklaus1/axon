@@ -780,3 +780,27 @@ it, which means it is only caught if the lint gate runs.
 not on its `fn` line or its doc comment — and afterwards assert that the number
 of `#[test]` annotations equals the number of tests the runner lists. A count
 that matches is the only cheap proof nothing was orphaned.
+
+## Deduplicating a blind insert can keep the wrong copy
+
+Adding a field to a struct, I patched the literals with a regex, which also hit
+`pub struct Grant {` and `impl Grant {` — inserting a field INITIALIZER into a
+type declaration. Cleaning that up, a dedup pass kept the FIRST
+`reproducible:` line in each literal and dropped the rest.
+
+In `intersect` the first was the blindly-inserted `false` and the second was the
+real logic, `self.reproducible || other.reproducible`. The dedup deleted the
+logic and kept the placeholder — and left the explanatory comment sitting above
+the wrong line, which made the code read correctly while behaving as a constant.
+
+It compiled. The whole suite stayed green. The only symptom was that `hermetic`
+behaved exactly like `restricted` — i.e. the bug looked like the feature not
+being implemented, which is precisely what I had just implemented.
+
+**Rules:**
+- A regex that inserts a struct FIELD must exclude `struct X {` and `impl X {`,
+  not merely `-> X {`. Three files were damaged before I noticed.
+- Never resolve duplicates by position. Decide which copy is correct by its
+  CONTENT, or delete both and re-apply once.
+- A comment that survives its code is worse than no comment: it asserts an
+  intent the code no longer has.

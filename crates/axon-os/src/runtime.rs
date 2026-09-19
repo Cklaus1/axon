@@ -545,16 +545,37 @@ impl Runtime for AxonCoreRuntime {
         //
         // Silent in every case: the operator sets the variable, the run
         // succeeds, and the artifact simply never appears.
-        for key in [
-            "AXON_AUDIT_LEDGER",
-            "AXON_AI_MOCK",
-            "AXON_AI_REPLAY",
-            "AXON_PATH",
-            "AXON_MAX_DEPTH",
-        ] {
-            if let Some(v) = std::env::var_os(key) {
-                cmd.env(key, v);
+        // A REPRODUCIBLE run (profile = "hermetic") is the one case where this
+        // forwarding must NOT happen. Each of these can change what the run
+        // does — a replay cache, a ledger path, a module search path — so a job
+        // that must give the same bytes on two machines cannot inherit them
+        // from whichever shell launched it.
+        //
+        // This, plus the virtual clock below, is the entire difference between
+        // `hermetic` and `restricted`. They previously had byte-identical
+        // grants, which is two names for one behaviour.
+        if !grant.reproducible {
+            for key in [
+                "AXON_AUDIT_LEDGER",
+                "AXON_AI_MOCK",
+                "AXON_AI_REPLAY",
+                "AXON_PATH",
+                "AXON_MAX_DEPTH",
+            ] {
+                if let Some(v) = std::env::var_os(key) {
+                    cmd.env(key, v);
+                }
             }
+        } else {
+            // Deterministic virtual clock: `now_ms()` becomes a function of the
+            // run rather than of when it happened, and `sleep_ms(n)` advances it
+            // without really sleeping. Without this, a hermetic run reading the
+            // clock produces different bytes every time — which is precisely
+            // what the profile promises it will not do.
+            cmd.env(
+                "AXON_CLOCK",
+                crate::profile::Profile::Hermetic.virtual_clock().unwrap(),
+            );
         }
         // Relative paths in the program resolve against the job's directory, so
         // an example runs the same wherever it is invoked from (hermetic).
