@@ -1100,7 +1100,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "json_keys",
         params: &[("json", "str")],
         ret: "Result<[str], str>",
-        doc: "The keys of a JSON object, in document order. `Err` on an array or scalar.",
+        doc: "The keys of a JSON object, SORTED (not in document order — the parser backs objects with a BTreeMap, so the order is lexicographic and deterministic regardless of how the document was written). `Err` on an array or scalar.",
     },
     BuiltinFn {
         name: "json_get_json",

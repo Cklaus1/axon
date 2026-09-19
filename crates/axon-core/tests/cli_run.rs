@@ -30358,3 +30358,55 @@ fn uncertain_dyn_and_deterministic_agree_in_both_engines() {
     let _ = std::fs::remove_file(&out_bin);
     assert_eq!(ngot, got, "native must agree with the interpreter");
 }
+#[test]
+fn json_path_i64_names_which_of_three_failures_occurred() {
+    // `json_path_i64` collapsed THREE different failures into one message:
+    //
+    //   9223372036854775808  -> "is not an integer"   (false — it IS one)
+    //   4.5                  -> "is not an integer"   (true but unhelpful)
+    //   "hi"                 -> "is not an integer"   (true but unhelpful)
+    //
+    // They have different recourse — none / use json_path_f64 / fix the
+    // document — so a caller who cannot tell them apart cannot act. Found by
+    // the same sweep that fixed the sibling json_get_i64; this is the second
+    // site of one mechanism.
+    //
+    // The magnitude test matters and the two i64-boundary rows are the control
+    // for it: `f > i64::MAX as f64` catches NEITHER out-of-range input, because
+    // i64::MAX rounds UP to exactly 2^63 in f64 and both compare in-range.
+    //
+    // The last row pins json_keys ORDER, whose doc claimed "document order"
+    // while the parser's BTreeMap returns them sorted. The fixture writes the
+    // keys zulu/alpha/mike precisely so document order and sorted order differ
+    // — with alphabetical fixture keys the claim is untestable, which is why it
+    // survived.
+    let out = axon()
+        .arg("run")
+        .arg(fixture("json_i64_path_failures.ax"))
+        .output()
+        .expect("spawn");
+    // Assert the run SUCCEEDED before comparing output. Without this, a fixture
+    // the CLI cannot find yields empty stdout, and the failure reads as "every
+    // message is wrong" instead of "the file was not found" — which is how the
+    // first version of this test failed.
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "fixture did not run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let got: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let want = [
+        "json_path_i64: E2202 leaf at \"a.n\" is an integer outside the i64 range",
+        "json_path_i64: E2202 leaf at \"a.n\" is an integer outside the i64 range",
+        "json_path_i64: E2202 leaf at \"a.n\" is a number but not an integer",
+        "json_path_i64: E2202 leaf at \"a.n\" is not a number",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "alpha,mike,zulu",
+    ];
+    assert_eq!(got, want);
+}

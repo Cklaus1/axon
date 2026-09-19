@@ -3342,9 +3342,31 @@ impl<'p> Interp<'p> {
                 if name == "json_path_i64" {
                     match leaf.as_i64() {
                         Some(n) => ok!(Value::Ok(Box::new(Value::Int(n)))),
-                        None => ok!(Value::Err(Box::new(Value::Str(format!(
-                            "json_path_i64: E2202 leaf at {path:?} is not an integer"
-                        ))))),
+                        // THREE different failures used to share one message —
+                        // a string leaf, a fractional number, and an integer too
+                        // big for an i64 all read "is not an integer", which is
+                        // false for the third and unhelpful for the first. They
+                        // have different recourse (fix the document / use
+                        // `json_path_f64` / none), so they say different things.
+                        //
+                        // The out-of-range test is on MAGNITUDE. The obvious
+                        // `f > i64::MAX as f64` catches nothing: i64::MAX rounds
+                        // UP to exactly 2^63 in f64, so 9223372036854775808
+                        // compares as in-range and gets mislabelled.
+                        None => {
+                            let why = match leaf.as_f64() {
+                                Some(f) if f.fract() == 0.0
+                                    && f.abs() >= 9_223_372_036_854_775_808.0 =>
+                                {
+                                    "is an integer outside the i64 range"
+                                }
+                                Some(_) => "is a number but not an integer",
+                                None => "is not a number",
+                            };
+                            ok!(Value::Err(Box::new(Value::Str(format!(
+                                "json_path_i64: E2202 leaf at {path:?} {why}"
+                            )))))
+                        }
                     }
                 } else {
                     // JSON does not distinguish 4 from 4.0, so an integer leaf

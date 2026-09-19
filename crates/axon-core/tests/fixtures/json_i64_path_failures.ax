@@ -1,0 +1,37 @@
+// Every way `json_path_i64` can fail to produce an i64, plus the two controls
+// that keep the classification honest. Braces are DOUBLED because a bare `{`
+// opens a string-interpolation slot.
+fn main() -> i64 {
+    match json_path_i64("{{\"a\": {{\"n\": 9223372036854775808}}}}", "a.n") {
+        Ok(v) => println(to_str(v))
+        Err(e) => println(e)
+    }
+    match json_path_i64("{{\"a\": {{\"n\": -9223372036854775809}}}}", "a.n") {
+        Ok(v) => println(to_str(v))
+        Err(e) => println(e)
+    }
+    match json_path_i64("{{\"a\": {{\"n\": 4.5}}}}", "a.n") {
+        Ok(v) => println(to_str(v))
+        Err(e) => println(e)
+    }
+    match json_path_i64("{{\"a\": {{\"n\": \"hi\"}}}}", "a.n") {
+        Ok(v) => println(to_str(v))
+        Err(e) => println(e)
+    }
+    // Control: i64::MAX is IN range and must still come back as a value. A
+    // magnitude test written with `>=` one bit too low would swallow it.
+    match json_path_i64("{{\"a\": {{\"n\": 9223372036854775807}}}}", "a.n") {
+        Ok(v) => println(to_str(v))
+        Err(e) => println(e)
+    }
+    match json_path_i64("{{\"a\": {{\"n\": -9223372036854775808}}}}", "a.n") {
+        Ok(v) => println(to_str(v))
+        Err(e) => println(e)
+    }
+    // `json_keys` order: written zulu, alpha, mike — comes back sorted.
+    match json_keys("{{\"zulu\": 1, \"alpha\": 2, \"mike\": 3}}") {
+        Ok(k) => println(str_join(k, ","))
+        Err(e) => println(e)
+    }
+    0
+}

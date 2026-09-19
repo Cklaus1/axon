@@ -475,7 +475,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `json_get_i64(json: str, key: str) -> Result<i64, str>` | Extract an integer field from a JSON object string. Returns Ok(n) or Err(reason). |
 | `json_get_json(json: str, key: str) -> Result<str, str>` | The value at top-level `key`, returned AS A JSON STRING — the accessor that makes sub-objects and sub-arrays reachable. `json_get_i64`/`json_get_str` only reach scalar fields. |
 | `json_get_str(json: str, key: str) -> Result<str, str>` | Extract a string field from a JSON object string. Returns Ok(value) or Err(reason). |
-| `json_keys(json: str) -> Result<[str], str>` | The keys of a JSON object, in document order. `Err` on an array or scalar. |
+| `json_keys(json: str) -> Result<[str], str>` | The keys of a JSON object, SORTED (not in document order — the parser backs objects with a BTreeMap, so the order is lexicographic and deterministic regardless of how the document was written). `Err` on an array or scalar. |
 | `json_len(json: str) -> Result<i64, str>` | Number of elements in a JSON array, or number of keys in a JSON object. `Err` on a scalar or malformed input. Without this an array could be reached but not LOOPED, which is why summing `{"a": [1,2,3]}` was impossible before R42. |
 | `json_parse(s: str) -> Result<str, str>` | Validate `s` as JSON. Returns Ok(s) if valid, Err(reason) if not. Pure; no network call. |
 | `json_path_f64(json: str, path: str) -> Result<f64, str>` | The float at a dot-separated path. Accepts an integer leaf and widens it, since JSON does not distinguish 4 from 4.0. |
