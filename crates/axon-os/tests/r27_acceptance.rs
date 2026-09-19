@@ -81,6 +81,175 @@ fn os(args: &[&str], axon: &Path) -> Out {
 
 // ── A1: smoke kill journey ────────────────────────────────────────────────────
 
+/// One authoritative kill channel per run (triage OSK-P4-H6, decided
+/// 2026-09-19), across every flag combination.
+///
+/// The bug: `--killable` required `monitor_effects.is_none()`, so
+/// `--killable --monitor` created NO `<run>.kill` — monitoring silently
+/// disabled killability — while `kill` printed the tripped banner anyway.
+#[test]
+fn one_kill_channel_per_run_across_flag_combinations() {
+    let Some(axon) = axon_bin() else { return };
+    let d = tmp("killchan-combos");
+    let prog = d.join("p.ax");
+    // Empty grant ⇒ the program must need no effects, or it exits 8 on the
+    // SANDBOX check and this test measures the wrong mechanism.
+    std::fs::write(&prog, "fn main() -> i64 {\n  0\n}\n").unwrap();
+    let job = d.join("j.axjob");
+    std::fs::write(
+        &job,
+        format!(
+            "program = \"{}\"\nintent = \"t\"\nseed = 1\n[grant]\nfs_read = []\n\
+             fs_write = []\nnet = []\nexec = \"none\"\nmax_label = \"internal\"\n\
+             [grant.budget]\ncalls = 5\n",
+            prog.display()
+        ),
+    )
+    .unwrap();
+
+    for (label, flags, rid) in [
+        ("killable", vec!["--killable"], "k1"),
+        (
+            "killable+monitor",
+            vec!["--killable", "--monitor", "IO"],
+            "k2",
+        ),
+        ("monitor only", vec!["--monitor", "IO"], "k3"),
+    ] {
+        let mut args: Vec<&str> = vec!["run", job.to_str().unwrap()];
+        args.extend(flags.iter().copied());
+        args.extend(["--out", d.to_str().unwrap(), "--run-id", rid]);
+        let out = os(&args, &axon);
+        assert_eq!(out.code, 0, "{label}: run failed: {}", out.stdout);
+
+        // Exactly ONE channel, at the one conventional name, for every
+        // combination — and never the old `<run>.monitor.kill`.
+        assert!(
+            d.join(format!("{rid}.kill")).exists(),
+            "{label}: the shared kill channel must exist"
+        );
+        assert!(
+            !d.join(format!("{rid}.monitor.kill")).exists(),
+            "{label}: the second latch must be gone — two latches per run is \
+             what made every reader guess"
+        );
+        // …and its location must be RECORDED, not left to be reconstructed.
+        assert!(
+            d.join(format!("{rid}.chan")).exists(),
+            "{label}: the channel pointer must be written at run start"
+        );
+    }
+
+    // status → kill → status, through the recorded pointer.
+    let st = os(&["status", "k2", "--store", d.to_str().unwrap()], &axon);
+    assert!(st.stdout.contains("clear"), "before trip: {}", st.stdout);
+    let kl = os(
+        &[
+            "kill",
+            "k2",
+            "--store",
+            d.to_str().unwrap(),
+            "--reason",
+            "t",
+        ],
+        &axon,
+    );
+    assert!(kl.stdout.contains("tripped"), "kill: {}", kl.stdout);
+    let st2 = os(&["status", "k2", "--store", d.to_str().unwrap()], &axon);
+    assert!(st2.stdout.contains("TRIPPED"), "after trip: {}", st2.stdout);
+}
+
+/// The recorded pointer is AUTHORITATIVE — `kill` must follow it rather than
+/// re-deriving `<store>/<run-id>.kill`.
+///
+/// Mutation testing forced this test into existence: breaking the pointer parse
+/// changed nothing, because today the pointer and the naming convention resolve
+/// to the SAME path, so every other assertion passed either way. The pointer's
+/// whole purpose is that it can name a DIFFERENT location, and that is what
+/// this exercises — a channel deliberately placed off-convention.
+#[test]
+fn kill_follows_the_recorded_channel_not_the_naming_convention() {
+    let Some(axon) = axon_bin() else { return };
+    let d = tmp("kill-pointer");
+    std::fs::create_dir_all(&d).unwrap();
+
+    // A live latch at a NON-conventional path, plus a pointer naming it.
+    let real = d.join("somewhere-else.latch");
+    std::fs::write(&real, r#"{"latch":"clear"}"#).unwrap();
+    std::fs::write(
+        d.join("p9.chan"),
+        format!("{{\"kill_file\":\"{}\"}}", real.display()),
+    )
+    .unwrap();
+    // A decoy at the conventional path. If `kill` reconstructs instead of
+    // resolving, it trips THIS and leaves the real channel clear — which is
+    // precisely the class of bug the pointer exists to prevent.
+    let decoy = d.join("p9.kill");
+    std::fs::write(&decoy, r#"{"latch":"clear"}"#).unwrap();
+
+    let out = os(
+        &[
+            "kill",
+            "p9",
+            "--store",
+            d.to_str().unwrap(),
+            "--reason",
+            "r",
+        ],
+        &axon,
+    );
+    assert_eq!(out.code, 0, "{}", out.stdout);
+    assert!(
+        out.stdout.contains("tripped"),
+        "a live channel existed, so this is a real kill: {}",
+        out.stdout
+    );
+    assert!(
+        std::fs::read_to_string(&real).unwrap().contains("tripped"),
+        "the RECORDED channel must be the one tripped"
+    );
+    assert!(
+        !std::fs::read_to_string(&decoy).unwrap().contains("tripped"),
+        "the conventional path must NOT be tripped when a pointer names another"
+    );
+}
+
+/// `kill` must NEVER report TRIPPED unless this run's authoritative channel
+/// actually existed to be tripped.
+///
+/// Writing a latch for a run that has not started is a legitimate PRE-ARM, but
+/// announcing "killed" there tells an operator a job was stopped when none was
+/// running — the absent-vs-done collapse, in the one command whose entire
+/// purpose is to stop something.
+#[test]
+fn kill_never_claims_tripped_for_a_run_that_was_not_live() {
+    let Some(axon) = axon_bin() else { return };
+    let d = tmp("kill-prearm");
+    std::fs::create_dir_all(&d).unwrap();
+    let out = os(
+        &[
+            "kill",
+            "ghost",
+            "--store",
+            d.to_str().unwrap(),
+            "--reason",
+            "x",
+        ],
+        &axon,
+    );
+    assert_eq!(out.code, 0, "pre-arming is allowed: {}", out.stdout);
+    assert!(
+        !out.stdout.contains("tripped"),
+        "must not claim a run was killed when none was live: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("ARMED"),
+        "and must say what it actually did: {}",
+        out.stdout
+    );
+}
+
 #[test]
 fn acc_a1_smoke_kill_journey() {
     // R27 §5.5 / §7: run --killable, kill, job stops with exit 4, verify passes.

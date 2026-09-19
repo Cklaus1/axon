@@ -311,21 +311,40 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         }
     }
 
-    // R27: killable sets up the standard kill file (polled by run_bounded).
-    let kill_file_path = if killable && monitor_effects.is_none() {
+    // ONE authoritative kill channel per run (decided 2026-09-19, triage
+    // OSK-P4-H6). This used to require `monitor_effects.is_none()`, so
+    // `--killable --monitor` created NO `<run>.kill` at all — monitoring
+    // silently disabled killability, and `axon-os kill` wrote a file nothing
+    // polled while printing the tripped banner.
+    //
+    // R27 and R29 now SHARE `<out>/<run_id>.kill`: one path, two writers.
+    let kill_file_path = if killable || monitor_effects.is_some() {
         let kf = out.join(format!("{run_id}.kill"));
         let _ = std::fs::write(&kf, r#"{"latch":"clear"}"#);
         std::env::set_var("AXON_KILL_FILE", &kf);
+        // Record WHERE the channel is, at run START — not in the run record,
+        // which is written when the run ENDS and so cannot help a live
+        // `axon-os kill`. Reconstructing the path by convention breaks the
+        // moment `run --out A` is killed with `kill --store B`, and that is
+        // exactly the duplicated-truth pattern these findings keep coming from.
+        let ptr = out.join(format!("{run_id}.chan"));
+        let abs = std::fs::canonicalize(&kf).unwrap_or_else(|_| kf.clone());
+        let _ = std::fs::write(&ptr, format!("{{\"kill_file\":\"{}\"}}", abs.display()));
         Some(kf)
     } else {
         None
     };
 
-    // R29: --monitor sets up a monitor-specific kill file + compliance thread.
+    // R29: --monitor shares the ONE kill channel created above rather than
+    // minting `<run>.monitor.kill`. Two latches for one run meant every reader
+    // had to know which flag combination produced which name — and `kill` and
+    // `status` each reconstructed only one of them.
     let monitor_state = if let Some(effects_str) = &monitor_effects {
-        let kill_file = out.join(format!("{run_id}.monitor.kill"));
-        let _ = std::fs::write(&kill_file, r#"{"latch":"clear"}"#);
-        // Inject the kill file path into the environment so run_sandboxed picks it up.
+        let kill_file = kill_file_path
+            .clone()
+            .expect("the shared kill channel is created whenever --monitor is set");
+        // AXON_KILL_FILE is already pointed at it; set again is harmless and
+        // keeps this branch readable on its own.
         std::env::set_var("AXON_KILL_FILE", &kill_file);
 
         let ledger = monitor_ledger.clone().unwrap_or_else(|| {
@@ -544,6 +563,35 @@ fn cmd_replay(rest: &[&str]) -> ExitCode {
 /// Writes the tripped state to `$store/$run_id.kill` (the file the running
 /// supervisor polls). The running job's `run_bounded` loop detects the trip and
 /// kills the subprocess with exit code 4 (`HALTED_EXIT_CODE`).
+/// Resolve a run's AUTHORITATIVE kill channel.
+///
+/// Prefers the pointer written at run START (`<store>/<run-id>.chan`) over
+/// reconstructing `<store>/<run-id>.kill` by convention. The pointer is what
+/// makes `run --out A` killable via `kill --store A` when the conventional
+/// guess would be wrong, and it is a single truth rather than a naming rule
+/// every reader has to re-derive.
+///
+/// Returns `(path, from_pointer)`. Falling back is legitimate — a kill can be
+/// ARMED before the run starts — but the caller must be able to say which
+/// happened, because a guessed path that nothing polls is exactly the failure
+/// this replaces.
+fn resolve_kill_channel(store: &Path, run_id: &str) -> (PathBuf, bool) {
+    let ptr = store.join(format!("{run_id}.chan"));
+    if let Ok(txt) = std::fs::read_to_string(&ptr) {
+        // Deliberately a substring read, not a JSON parse: this file is written
+        // by the same binary one function away, and a parser dependency here
+        // would be a third thing to keep in step.
+        if let Some(rest) = txt.split("\"kill_file\":\"").nth(1) {
+            if let Some(p) = rest.split('"').next() {
+                if !p.is_empty() {
+                    return (PathBuf::from(p), true);
+                }
+            }
+        }
+    }
+    (store.join(format!("{run_id}.kill")), false)
+}
+
 fn cmd_kill(rest: &[&str]) -> ExitCode {
     let mut run_id: Option<&str> = None;
     let mut store = PathBuf::from(".");
@@ -582,14 +630,19 @@ fn cmd_kill(rest: &[&str]) -> ExitCode {
     //
     // Trip EVERY kill latch that exists for this run. Writing an already-clear
     // latch is harmless; missing the live one is not.
-    let candidates = [
-        store.join(format!("{run_id}.kill")),
-        store.join(format!("{run_id}.monitor.kill")),
-    ];
+    // The recorded channel first; the legacy names remain as a fallback so a
+    // store written by an older axon-os still works.
+    let (recorded, from_ptr) = resolve_kill_channel(&store, run_id);
+    let candidates = if from_ptr {
+        vec![recorded]
+    } else {
+        vec![recorded, store.join(format!("{run_id}.monitor.kill"))]
+    };
     let existing: Vec<&PathBuf> = candidates.iter().filter(|p| p.exists()).collect();
     // Nothing to trip: fall back to the conventional path so a kill armed
     // BEFORE the run starts still works (the pre-arm case), but say so.
-    let targets: Vec<&PathBuf> = if existing.is_empty() {
+    let pre_armed = existing.is_empty();
+    let targets: Vec<&PathBuf> = if pre_armed {
         eprintln!(
             "axon-os kill: no existing kill latch for run `{run_id}` — \
              writing {} (a run that has not started yet will pick it up)",
@@ -609,7 +662,21 @@ fn cmd_kill(rest: &[&str]) -> ExitCode {
     }
     match std::fs::write(&kill_path, &content) {
         Ok(()) => {
-            println!("\u{1f6d1} kill tripped for run `{run_id}` (reason: {reason})");
+            // The invariant: NEVER report TRIPPED unless the run's authoritative
+            // channel actually existed to be tripped. Writing a latch for a run
+            // that has not started is a legitimate PRE-ARM, but saying "killed"
+            // there tells an operator a job was stopped when no such job was
+            // ever running — the same absent-vs-done collapse these findings
+            // keep turning up, in the one command whose whole purpose is to
+            // stop something.
+            if pre_armed {
+                println!(
+                    "\u{1f512} kill ARMED for run `{run_id}` (reason: {reason}) — no run \
+                     was live to stop; a run starting with this id will pick it up"
+                );
+            } else {
+                println!("\u{1f6d1} kill tripped for run `{run_id}` (reason: {reason})");
+            }
             ExitCode::from(0)
         }
         Err(e) => {
@@ -677,7 +744,9 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
 
     // If no run_id given, look for any .kill file in the store directory.
     let kill_path = if let Some(rid) = &run_id {
-        store.join(format!("{rid}.kill"))
+        // Same resolver `kill` uses. `status` reconstructing its own path is
+        // how the two could report different things about one run.
+        resolve_kill_channel(&store, rid).0
     } else {
         // Find the most recent .kill file.
         let found = std::fs::read_dir(&store)
