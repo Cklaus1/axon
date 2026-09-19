@@ -3820,18 +3820,41 @@ struct GoalSpec {
     hi: i64,
 }
 
-/// Build an `Uncertain { value, confidence }` struct value.
+/// Build an `Uncertain { value, confidence }` struct value with
+/// `source_tag = 0` (user-constructed).
 fn make_uncertain(value: Value, confidence: f64) -> Value {
-    // `source_tag` (0=user-constructed, 1=AI-sourced, 2=runtime) is a field of the
-    // Uncertain struct — the checker lists it as a valid field and codegen builds
-    // the 3-field `{value, confidence, source_tag}` layout. Without it here,
-    // `u.source_tag` type-checked but panicked at runtime ("no field source_tag")
-    // and the interp's 2-field struct diverged from codegen's 3-field one.
-    // Default 0 (user-constructed), matching codegen's `source_tag = 0`.
+    make_uncertain_tagged(value, confidence, SRC_TAG_USER)
+}
+
+/// `source_tag` values, as stamped by codegen. These are OBSERVABLE — the
+/// checker lists `source_tag` as a field of `Uncertain<T>` and both engines
+/// let a program read `u.source_tag` — so the interpreter must stamp the same
+/// number codegen does, or a program that branches on provenance takes a
+/// different branch under `axon run` than under `axon build`.
+pub(crate) const SRC_TAG_USER: i64 = 0;
+#[allow(dead_code)] // codegen stamps 1; the interp AI path is E0910-refused natively
+pub(crate) const SRC_TAG_AI: i64 = 1;
+pub(crate) const SRC_TAG_RUNTIME: i64 = 2;
+
+/// Build an `Uncertain { value, confidence, source_tag }` struct value.
+///
+/// `source_tag` (0=user-constructed, 1=AI-sourced, 2=runtime) is a field of the
+/// Uncertain struct — the checker lists it as a valid field and codegen builds
+/// the 3-field `{value, confidence, source_tag}` layout. Without it here,
+/// `u.source_tag` type-checked but panicked at runtime ("no field source_tag")
+/// and the interp's 2-field struct diverged from codegen's 3-field one.
+///
+/// It was then HARDCODED to 0 for every construction path, which diverged
+/// again in the opposite direction: codegen stamps 2 for the `uncertain_dyn_*`
+/// constructors, so `uncertain_dyn_f64(1.0, 0.5).source_tag` printed 0 under
+/// the interpreter and 2 natively. The interpreter — the reference engine and
+/// the default execution path — was reporting a runtime-sourced value as
+/// user-constructed, which is the fail-open direction for a provenance field.
+fn make_uncertain_tagged(value: Value, confidence: f64, source_tag: i64) -> Value {
     let mut fields = HashMap::new();
     fields.insert("value".to_string(), value);
     fields.insert("confidence".to_string(), Value::Float(confidence));
-    fields.insert("source_tag".to_string(), Value::Int(0));
+    fields.insert("source_tag".to_string(), Value::Int(source_tag));
     Value::Struct {
         name: "Uncertain".to_string(),
         fields,

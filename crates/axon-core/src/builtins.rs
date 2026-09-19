@@ -1351,7 +1351,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "uncertain_confidence",
         params: &[("confidence", "f64")],
         ret: "()",
-        doc: "Record an implicit confidence level for the surrounding Uncertain<T> value (0.0–1.0). Used for AI-inferred values.",
+        doc: "A NO-OP confidence hint (0.0–1.0). It returns `()` and changes nothing: there is no \"surrounding Uncertain<T>\" for it to attach to, and no value already in scope has its confidence altered by calling it. Both engines discard the argument (interp returns `Value::Unit`; codegen emits an empty stub). To attach a confidence to a value, construct it with `uncertain_new` / `uncertain_new_f64` / `uncertain_dyn_i64` / `uncertain_dyn_f64`.",
     },
     BuiltinFn {
         name: "temporal_now",

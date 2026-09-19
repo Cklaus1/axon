@@ -3519,18 +3519,30 @@ impl<'p> Interp<'p> {
             // ── ASI: Uncertain<T> construction ──────────────────────────────
             // Represented as a struct `Uncertain { value, confidence }`, so
             // `.value` / `.confidence` field access works directly.
-            "uncertain_new" | "uncertain_dyn_i64" => {
+            "uncertain_new" => {
                 want(2)?;
                 ok!(make_uncertain(
                     Value::Int(as_int(&args[0])?),
                     as_float(&args[1])?
                 ));
             }
+            // The `dyn` constructors differ from `uncertain_new`/`uncertain_new_f64`
+            // ONLY in provenance: codegen stamps `source_tag = 2` (Runtime), and
+            // `source_tag` is a readable field, so the interpreter must stamp 2 too.
+            "uncertain_dyn_i64" => {
+                want(2)?;
+                ok!(make_uncertain_tagged(
+                    Value::Int(as_int(&args[0])?),
+                    as_float(&args[1])?,
+                    SRC_TAG_RUNTIME
+                ));
+            }
             "uncertain_dyn_f64" => {
                 want(2)?;
-                ok!(make_uncertain(
+                ok!(make_uncertain_tagged(
                     Value::Float(as_float(&args[0])?),
-                    as_float(&args[1])?
+                    as_float(&args[1])?,
+                    SRC_TAG_RUNTIME
                 ));
             }
             "uncertain_deterministic" => {

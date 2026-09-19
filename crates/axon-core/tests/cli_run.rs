@@ -29766,3 +29766,98 @@ fn a_scope_list_says_deny_or_unrestricted_and_never_both() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn uncertain_dyn_and_deterministic_agree_in_both_engines() {
+    // Found by asking which builtins have NO coverage anywhere:
+    // `uncertain_confidence`, `uncertain_deterministic` and `uncertain_dyn_f64`
+    // were named by no test, harness, fixture or example.
+    //
+    // `source_tag` then diverged. It is a READABLE field of `Uncertain<T>` —
+    // the checker lists it, both engines lower `u.source_tag` — and codegen
+    // stamps 2 (Runtime) for the `uncertain_dyn_*` constructors while the
+    // interpreter's `make_uncertain` hardcoded 0 (user-constructed) for every
+    // construction path:
+    //
+    //   uncertain_dyn_f64(1.0, 0.5).source_tag   interp 0   native 2
+    //
+    // So a program branching on provenance took a different branch under
+    // `axon run` than under `axon build`, and the reference engine was the one
+    // calling a runtime-sourced value user-constructed — the fail-open
+    // direction. `uncertain_new`/`uncertain_new_f64` (tag 0 in both) are
+    // asserted in the same program as the control: a fix that stamped 2
+    // everywhere would break them.
+    let src = "fn main() -> i64 {\n  \
+               let d = uncertain_deterministic(7)\n  \
+               println(to_str(d.value))\n  \
+               println(to_str_f64(d.confidence))\n  \
+               println(to_str(d.source_tag))\n  \
+               let f = uncertain_dyn_f64(2.5, 0.25)\n  \
+               println(to_str_f64(f.value))\n  \
+               println(to_str_f64(f.confidence))\n  \
+               println(to_str(f.source_tag))\n  \
+               println(to_str(uncertain_dyn_i64(1, 0.5).source_tag))\n  \
+               println(to_str(uncertain_new(1, 0.5).source_tag))\n  \
+               println(to_str(uncertain_new_f64(1.0, 0.5).source_tag))\n  \
+               let m = d + uncertain_dyn_i64(1, 0.2)\n  \
+               println(to_str(m.value))\n  \
+               println(to_str_f64(m.confidence))\n  \
+               let g = f * uncertain_new_f64(4.0, 0.9)\n  \
+               println(to_str_f64(g.value))\n  \
+               println(to_str_f64(g.confidence))\n  \
+               uncertain_confidence(0.42)\n  \
+               println(to_str_f64(d.confidence))\n  0\n}\n";
+    let want = [
+        // uncertain_deterministic: value through, confidence exactly 1.0,
+        // provenance user-constructed.
+        "7", "1", "0",
+        // uncertain_dyn_f64: f64 value and confidence through, provenance Runtime.
+        "2.5", "0.25",
+        "2", // uncertain_dyn_i64 is Runtime too; the non-dyn siblings are the control.
+        "2", "0", "0",
+        // Combination takes the LOWER confidence, so "deterministic" does NOT
+        // survive being mixed with a 0.2-confidence value.
+        "8", "0.2", // f64 arithmetic: min(0.25, 0.9).
+        "10", "0.25",
+        // `uncertain_confidence` is a no-op: it does not retroactively set the
+        // confidence of any value in scope.
+        "1",
+    ];
+    let f = tmp_ax("uncertain_dyn_tags", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(got, want, "interpreter is the reference");
+
+    let out_bin = std::env::temp_dir().join(format!("axon_udyn_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .output()
+        .expect("run native");
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&out_bin);
+    assert_eq!(ngot, got, "native must agree with the interpreter");
+}

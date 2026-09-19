@@ -599,7 +599,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `to_str(n: i64) -> str` | Convert an `i64` to its decimal string representation. |
 | `to_str_bool(b: bool) -> str` | Convert a bool to its string representation: "true" or "false". |
 | `to_str_f64(n: f64) -> str` | Convert an `f64` to its string representation ("%.6g" format). |
-| `uncertain_confidence(confidence: f64) -> ()` | Record an implicit confidence level for the surrounding Uncertain<T> value (0.0–1.0). Used for AI-inferred values. |
+| `uncertain_confidence(confidence: f64) -> ()` | A NO-OP confidence hint (0.0–1.0). It returns `()` and changes nothing: there is no "surrounding Uncertain<T>" for it to attach to, and no value already in scope has its confidence altered by calling it. Both engines discard the argument (interp returns `Value::Unit`; codegen emits an empty stub). To attach a confidence to a value, construct it with `uncertain_new` / `uncertain_new_f64` / `uncertain_dyn_i64` / `uncertain_dyn_f64`. |
 | `uncertain_deterministic(value: i64) -> Uncertain<i64>` | Construct an `Uncertain<i64>` with confidence = 1.0 (deterministic value). |
 | `uncertain_dyn_f64(value: f64, confidence: f64) -> Uncertain<f64>` | Same as uncertain_dyn_i64 but value is f64. |
 | `uncertain_dyn_i64(value: i64, confidence: f64) -> Uncertain<i64>` | Construct an `Uncertain<i64>` from a runtime confidence value. Unlike `uncertain_new`, the static @[verify] checker classifies this as a Runtime source rather than Known — predicate decisions defer to the runtime check (__axon_verify_panic). Use this when confidence comes from runtime data (sensors, configs, computations) rather than literals. |
