@@ -21044,6 +21044,161 @@ fn array_equality_is_not_compared_as_a_string_natively() {
 }
 
 #[test]
+fn struct_and_tuple_equality_lowers_field_wise_natively() {
+    // Native used to REFUSE composite `==` entirely (E0910). Sound, but a
+    // capability gap: `a == b` on a plain record is ordinary code and the
+    // interpreter has always done structural equality.
+    //
+    // Now field-wise and RECURSIVE, so `==` means the same thing at every
+    // depth. The cases below each cover a field kind with its own comparison
+    // path — int, f64, str, scalar array, and a nested struct — because the
+    // recursion dispatches per field type and a single shape would exercise
+    // exactly one arm.
+    for (label, src, expect) in [
+        (
+            "ints",
+            "type P = { x: i64, y: i64 }\nfn main() -> i64 {\n  let a = P { x: 1, y: 2 }\n  \
+             let b = P { x: 1, y: 2 }\n  let c = P { x: 1, y: 9 }\n  \
+             println(to_str_bool(a == b))\n  println(to_str_bool(a == c))\n  \
+             println(to_str_bool(a != c))\n  0\n}\n",
+            vec!["true", "false", "true"],
+        ),
+        (
+            "tuple",
+            "fn main() -> i64 {\n  let a = (1, 2)\n  let b = (1, 2)\n  let c = (1, 9)\n  \
+             println(to_str_bool(a == b))\n  println(to_str_bool(a == c))\n  0\n}\n",
+            vec!["true", "false"],
+        ),
+        (
+            "str_field",
+            "type S = { name: str, n: i64 }\nfn main() -> i64 {\n  \
+             let a = S { name: \"hi\", n: 1 }\n  let b = S { name: \"hi\", n: 1 }\n  \
+             let c = S { name: \"ho\", n: 1 }\n  println(to_str_bool(a == b))\n  \
+             println(to_str_bool(a == c))\n  0\n}\n",
+            vec!["true", "false"],
+        ),
+        (
+            "f64_field",
+            "type F = { v: f64 }\nfn main() -> i64 {\n  let a = F { v: 1.5 }\n  \
+             let b = F { v: 1.5 }\n  let c = F { v: 2.5 }\n  println(to_str_bool(a == b))\n  \
+             println(to_str_bool(a == c))\n  0\n}\n",
+            vec!["true", "false"],
+        ),
+        (
+            "scalar_array_field",
+            "type R = { xs: [i64] }\nfn main() -> i64 {\n  let a = R { xs: [1, 2] }\n  \
+             let b = R { xs: [1, 2] }\n  let c = R { xs: [1, 9] }\n  \
+             println(to_str_bool(a == b))\n  println(to_str_bool(a == c))\n  0\n}\n",
+            vec!["true", "false"],
+        ),
+        (
+            "nested_struct",
+            "type In = { k: i64 }\ntype Out = { i: In, m: i64 }\nfn main() -> i64 {\n  \
+             let a = Out { i: In { k: 1 }, m: 2 }\n  let b = Out { i: In { k: 1 }, m: 2 }\n  \
+             let c = Out { i: In { k: 9 }, m: 2 }\n  println(to_str_bool(a == b))\n  \
+             println(to_str_bool(a == c))\n  0\n}\n",
+            vec!["true", "false"],
+        ),
+    ] {
+        let f = tmp_ax(&format!("compeq_{label}"), src);
+        let run = axon().arg("run").arg(&f).output().expect("spawn run");
+        let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .filter(|l| *l == "true" || *l == "false")
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(got, expect, "{label}: interpreter oracle");
+
+        let out_bin =
+            std::env::temp_dir().join(format!("axon_compeq_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&out_bin);
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .output()
+            .expect("spawn build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            return;
+        }
+        assert_eq!(
+            build.status.code(),
+            Some(0),
+            "{label}: must LOWER, not refuse: {msg}"
+        );
+        let nat = std::process::Command::new(&out_bin)
+            .output()
+            .expect("run native");
+        let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+            .lines()
+            .filter(|l| *l == "true" || *l == "false")
+            .map(|l| l.to_string())
+            .collect();
+        let _ = std::fs::remove_file(&out_bin);
+        assert_eq!(ngot, got, "{label}: native must agree with the interpreter");
+    }
+}
+
+#[test]
+fn composite_equality_still_refuses_fields_it_cannot_compare_faithfully() {
+    // The boundary, and the reason the recursion returns Option rather than
+    // guessing. A `[str]` FIELD cannot go through memcmp — that compares
+    // POINTERS, so two equal-by-value arrays at different addresses read as
+    // different. My first version of the field-wise lowering passed the SLICE
+    // type where the ELEMENT type belongs and skipped the scalar check, and
+    // this exact program diverged: interpreter `true`, native `false`.
+    //
+    // One unfaithful field must make the WHOLE comparison refuse. A partial
+    // comparison is a wrong answer wearing the shape of a right one.
+    for (label, src) in [
+        (
+            "str_array_field",
+            "type Q = { xs: [str] }\nfn main() -> i64 {\n  let a = Q { xs: [\"a\"] }\n  \
+             let b = Q { xs: [\"a\"] }\n  println(to_str_bool(a == b))\n  0\n}\n",
+        ),
+        (
+            "array_of_structs",
+            "type P = { x: i64 }\nfn main() -> i64 {\n  let a = [P { x: 1 }]\n  \
+             let b = [P { x: 1 }]\n  println(to_str_bool(a == b))\n  0\n}\n",
+        ),
+    ] {
+        let f = tmp_ax(&format!("compeq_bad_{label}"), src);
+        let out_bin =
+            std::env::temp_dir().join(format!("axon_compeqb_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_file(&out_bin);
+        let build = axon()
+            .arg("build")
+            .arg(&f)
+            .arg("-o")
+            .arg(&out_bin)
+            .output()
+            .expect("spawn build");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_file(&f);
+        if msg.contains("requires building axon with the `codegen` feature") {
+            return;
+        }
+        assert_ne!(
+            build.status.code(),
+            Some(0),
+            "{label}: comparing this by memcmp would compare pointers: {msg}"
+        );
+        assert!(msg.contains("E0910"), "{label}: refusal class: {msg}");
+    }
+}
+
+#[test]
 fn array_equality_refuses_element_types_memcmp_cannot_decide() {
     // The companion to the rule above, and the reason it is a `matches!` on
     // scalar element types rather than "all arrays". An element that CONTAINS A

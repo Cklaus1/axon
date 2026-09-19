@@ -1458,6 +1458,122 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// Structural equality for one value of semantic type `ty`, as an i1.
+    ///
+    /// Recursive by design: a struct field that is itself a struct or a tuple
+    /// is compared the same way, so `==` means the same thing at every depth
+    /// rather than only at the top. Returns `None` for a type this cannot
+    /// compare FAITHFULLY — the caller refuses rather than guessing, because a
+    /// wrong `==` is the worst shape available (it answers, and it is wrong).
+    fn emit_value_eq(
+        &mut self,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Option<inkwell::values::IntValue<'ctx>> {
+        match ty {
+            // Integers and bool: a plain integer compare at their own width.
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::Bool => {
+                let (l, r) = (lhs.into_int_value(), rhs.into_int_value());
+                Some(build_wrappers::w_int_compare(
+                    &self.ir.builder,
+                    inkwell::IntPredicate::EQ,
+                    l,
+                    r,
+                    "feq_i",
+                ))
+            }
+            // Floats: ORDERED equality, so NaN != NaN — matching the
+            // interpreter, which compares with Rust's `==` on f64.
+            Type::F32 | Type::F64 => {
+                let (l, r) = (lhs.into_float_value(), rhs.into_float_value());
+                self.ir
+                    .builder
+                    .build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "feq_f")
+                    .ok()
+            }
+            // Strings: the existing str_eq, which compares length then bytes.
+            Type::Str => {
+                let f = self.ir.module.get_function("str_eq")?;
+                build_wrappers::w_call(&self.ir.builder, f, &[lhs.into(), rhs.into()], "feq_s")
+                    .try_as_basic_value()
+                    .left()
+                    .map(|v| v.into_int_value())
+            }
+            // Arrays of fixed-size SCALARS: length + memcmp over len*stride.
+            //
+            // Both halves of that sentence are load-bearing, and I got both
+            // wrong first: this passed `ty` (the SLICE) where the ELEMENT type
+            // belongs, so the stride came out as the slice struct's width, and
+            // it skipped the scalar check the other call site makes. A struct
+            // with a `[str]` field then compared equal values as UNEQUAL —
+            // interp `true`, native `false`. memcmp over a str element
+            // compares POINTERS.
+            Type::Slice(elem)
+                if matches!(
+                    **elem,
+                    Type::I8
+                        | Type::I16
+                        | Type::I32
+                        | Type::I64
+                        | Type::U8
+                        | Type::U16
+                        | Type::U32
+                        | Type::U64
+                        | Type::F32
+                        | Type::F64
+                        | Type::Bool
+                        | Type::Decimal
+                ) =>
+            {
+                self.emit_scalar_array_eq(&ast::BinOp::Eq, lhs, rhs, elem)
+                    .map(|v| v.into_int_value())
+            }
+            // Structs and tuples: field-wise, AND-ed. An empty aggregate is
+            // trivially equal, which is the right answer and also keeps the
+            // fold below total.
+            Type::Struct(name) => {
+                let tys = self.struct_field_sem_types.get(name.as_str())?.clone();
+                self.emit_fieldwise_eq(lhs, rhs, &tys)
+            }
+            Type::Tuple(tys) => {
+                let tys = tys.clone();
+                self.emit_fieldwise_eq(lhs, rhs, &tys)
+            }
+            _ => None,
+        }
+    }
+
+    /// AND together `emit_value_eq` over each field of two aggregates.
+    fn emit_fieldwise_eq(
+        &mut self,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        field_tys: &[Type],
+    ) -> Option<inkwell::values::IntValue<'ctx>> {
+        let (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r)) = (lhs, rhs) else {
+            return None;
+        };
+        let bool_ty = self.ir.context.bool_type();
+        let mut acc = bool_ty.const_int(1, false);
+        for (i, fty) in field_tys.iter().enumerate() {
+            let lf = build_wrappers::w_extract_value(&self.ir.builder, l, i as u32, "lf");
+            let rf = build_wrappers::w_extract_value(&self.ir.builder, r, i as u32, "rf");
+            // One unfaithful field makes the whole comparison unfaithful.
+            let eq = self.emit_value_eq(lf, rf, fty)?;
+            acc = build_wrappers::w_and(&self.ir.builder, acc, eq, "feq_and");
+        }
+        Some(acc)
+    }
+
     /// `==`/`!=` for an array of fixed-size scalars: lengths equal AND the
     /// element bytes equal.
     ///
@@ -1918,6 +2034,23 @@ impl<'ctx> super::Codegen<'ctx> {
                         if let Some(v) = self.emit_scalar_array_eq(op, lhs, rhs, elem) {
                             return v;
                         }
+                    }
+                }
+                // Structs and tuples compare FIELD-WISE, recursively. Refusing
+                // them was sound but a capability gap: `a == b` on a plain
+                // record is ordinary code, and the interpreter has always done
+                // structural equality. `emit_value_eq` returns None for any
+                // field it cannot compare faithfully, and then this still
+                // refuses — a PARTIAL comparison would be a wrong answer
+                // wearing the shape of a right one.
+                if matches!(ty, Type::Struct(_) | Type::Tuple(_)) {
+                    if let Some(eq) = self.emit_value_eq(lhs, rhs, ty) {
+                        let out = if matches!(op, ast::BinOp::NotEq) {
+                            build_wrappers::w_not(&self.ir.builder, eq, "cne")
+                        } else {
+                            eq
+                        };
+                        return out.into();
                     }
                 }
                 let what = match ty {
