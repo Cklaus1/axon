@@ -50,6 +50,42 @@ never asserted end-to-end". That test now exists
 (`granting_io_does_not_grant_process_spawn`, with a negative control), so a
 regression fails loudly rather than silently re-granting spawn under `IO`.
 
+## Second pass — HIGH tier and the remaining criticals
+
+| finding | what was checked | observed now |
+|---|---|---|
+| F061 | f64/i32 closure params miscompiled natively (`6` → `4.61844e+18`) | interp and native agree on all three shapes |
+| F062 | call-site `tier:` silently dropped in native | E0910 naming the tier; the untier'd control still builds |
+| P5-25 | `sql_query` backslash injection | backslash doubled — `'\\'` — the injection is neutralised |
+| INTERP-H03 | suspendable worker spawned with the default 2 MiB stack | `stack_size_for_depth(...)` (AUDIT T16) |
+| GATE-01 | `parity_all.sh` passes an all-SKIP run | pass floor added (AUDIT T36) |
+| GATE-02 | `wasm_parity` HOST_BUILTINS omits http/env_var | both present |
+| GATE-03 | gate.sh ran a parity target that could only skip | the cited invocation is gone |
+| GATE-04 | 44 skip-then-early-return sites | 5 remain, all inside the test that VERIFIES the skip rule (exit status first, skip line must be last) |
+| OSK-P7-C3 | guest policy parser fails OPEN with `EffectSet(0xFF)` | explicit refusal (AUDIT T48) |
+| P6-EXIT-03 | verdict/seed/run_id outside the hash chain | a verdict rewritten `Denied`→`Completed` is caught: `✗ TAMPERED … exit 11`; intact record exits 0 (AUDIT T47) |
+| GATE-05 | a skipped stage ends in "safe to deploy" | **WAS STILL OPEN (second half).** Fixed in `34de1d9` |
+
+## Open, and NOT fixed here — needs a key-management decision
+
+**OSK-P7-C1, cryptographic half.** AUDIT T13 closed the `hw_root` half: a
+hardware-attestation claim is now REFUSED rather than accepted on trust, which
+was the exploitable part.
+
+What remains is that `verify_report` still never recomputes the HMAC. It checks
+`report.signature.is_empty()` and nothing else, so ANY non-empty signature
+verifies. `sign_report` computes `HMAC-SHA256(key, digest ‖ axtcb1)`
+(`axon-attest/src/lib.rs:176`); no counterpart runs on the verify side, and the
+code says so in its own comment: "the cryptographic binding (recomputing the
+HMAC against a key the VERIFIER holds) still does [need a key decision]".
+
+Not fixed here deliberately. Closing it requires deciding where the verifier's
+key comes from — operator-provisioned, derived, or a real hardware backend —
+and that is a product and security decision, not an implementation detail. The
+current state is safe-ish only because `hw_root` is pinned to the software
+stand-in and the measurement digest is compared against a pinned expectation;
+the signature field itself contributes no security today.
+
 ## Not verified here
 
 These need binaries or environments outside this pass and are NOT claimed
