@@ -30529,3 +30529,91 @@ fn bpf_if_with_a_diverting_arm_keeps_the_other_arms_value() {
         "the surviving arm's value 3 was dropped — the silent zero is back"
     );
 }
+
+#[test]
+fn every_example_with_at_test_actually_runs_under_axon_test() {
+    // The coverage-metric audit found `examples/property_test.ax` referenced by
+    // NOTHING: it has no `fn main`, so the parity sweep skips it, and no test
+    // ran `axon test` on it. Four property tests executed nowhere.
+    //
+    // What that hid is the point. Once run, the file FAILED 7 of 12 unseeded
+    // runs: `add_commutes` asserted `a + b == b + a` over the full i64 domain
+    // while `+` is checked, so it panicked on overflow. Its own comment said
+    // "holds for all in-range i64 pairs" — the caveat was written down and the
+    // generator ignored it. A second property evaluated `abs_i64(a)` to the
+    // LEFT of the `|| a == i64::MIN` guard written to protect it, so the guard
+    // could never fire. Both are fixed; this sweep is what keeps them running.
+    //
+    // Floors, not exact counts: a renamed directory or a file whose @[test]s
+    // vanish must turn this red rather than green, which is the failure mode a
+    // glob sweep has by default.
+    let root = format!("{}/../../examples", env!("CARGO_MANIFEST_DIR"));
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(&root)];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|x| x.to_str()) == Some("ax")
+                && std::fs::read_to_string(&p).is_ok_and(|t| t.contains("@[test"))
+            {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    assert!(
+        files.len() >= 50,
+        "expected the example @[test] corpus, found only {} under {root}",
+        files.len()
+    );
+
+    let mut total_passed = 0usize;
+    let mut broken: Vec<String> = Vec::new();
+    for f in &files {
+        let out = axon().arg("test").arg(f).output().expect("spawn axon test");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if out.status.code() != Some(0) {
+            broken.push(format!(
+                "{}: exit {:?}\n{}",
+                f.display(),
+                out.status.code(),
+                text.lines()
+                    .filter(|l| l.contains("FAILED") || l.contains("property failed"))
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+            continue;
+        }
+        // Parse the count so a file that silently stops having tests is caught.
+        if let Some(n) = text
+            .split("ok. ")
+            .nth(1)
+            .and_then(|t| t.split(' ').next())
+            .and_then(|t| t.parse::<usize>().ok())
+        {
+            total_passed += n;
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "example @[test] files failed:\n{}",
+        broken.join("\n")
+    );
+    // Second non-vacuity floor, on ASSERTIONS rather than files: 57 files run
+    // 462 tests today. A file could still be swept while its @[test]s vanished.
+    assert!(
+        total_passed >= 400,
+        "only {total_passed} example tests ran across {} files — @[test] functions have gone missing",
+        files.len()
+    );
+}

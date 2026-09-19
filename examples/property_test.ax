@@ -7,18 +7,28 @@
 //
 // Run:  axon test examples/property_test.ax
 
-// Addition commutes — holds for all in-range i64 pairs.
+// Addition commutes. Stated over `wrapping_add`, NOT `+`, and that is the
+// whole point of the example: `@[forall]` generates across the FULL i64
+// domain, and `+` is checked, so `a + b` panics on overflow long before
+// commutativity is in question. The old version asserted `a + b == b + a`
+// while its own comment said "holds for all in-range i64 pairs" — the caveat
+// was written down and the generator ignored it, so the test failed 7 of 12
+// unseeded runs (reproduce the original with AXON_SEED=43).
+//
+// A property over a PARTIAL operation must either constrain its inputs or be
+// restated over a total one. `wrapping_add` is total, so this is the honest
+// statement of the same law.
 @[test]
 @[forall(n: 300)]
 fn add_commutes(a: i64, b: i64) {
-    assert(a + b == b + a)
+    assert(wrapping_add(a, b) == wrapping_add(b, a))
 }
 
 // Doubling then halving is identity for even-derived values.
 @[test]
 @[forall]
 fn abs_is_nonneg(a: i64) {
-    assert(abs_i64(a) >= 0 || a == 0 - 9223372036854775807 - 1)
+    assert(a == 0 - 9223372036854775807 - 1 || abs_i64(a) >= 0)
 }
 
 // String length is additive under concatenation.
