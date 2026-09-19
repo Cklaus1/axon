@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 48 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 49 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (48)
+## Environment variables (49)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -97,6 +97,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
 | `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no MMDS capability policy could be loaded (no effect ceiling, no token cap, no seccomp). Development only — without it an unreadable policy REFUSES to start the guest, because an absent policy is not a permissive one |
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
+| `AXON_ATTEST_KEY` | operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party |
 | `AXON_AUDIT_LEDGER` | path to the R28 capability audit ledger |
 | `AXON_AUDIT_DETERMINISTIC` | use a counter instead of a clock for ledger timestamps, so audit output is reproducible in tests |
 | `AXON_KILL_FILE` | kill file the axon-os supervisor polls; its EXISTENCE trips nothing — the job stops only once its CONTENT reads `{"latch":"tripped"}` |
