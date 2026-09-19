@@ -728,3 +728,39 @@ showed the true state.
 
 **Rule:** end every mutation sweep with an explicit `diff` against a
 known-good copy, and treat a syntax check as no evidence at all about content.
+
+## An indirection that resolves to the same value as what it replaces is untested by construction
+
+I added a recorded pointer (`<run>.chan`) so `kill`/`status` would stop
+re-deriving `<store>/<run-id>.kill` by naming convention. Three mutations died
+immediately. The fourth — breaking the pointer PARSE entirely, so the resolver
+always fell through to the convention — SURVIVED every test.
+
+It had to. In the default layout the pointer and the convention resolve to the
+same path, so no assertion could tell "followed the pointer" from "guessed and
+got lucky". The mechanism I had just added was scaffolding with no evidence it
+was ever consulted.
+
+The fix was a test that forces them APART: a live latch at a NON-conventional
+path, a decoy at the conventional one, and an assertion that the decoy stays
+clear. That mutation now dies.
+
+**Rule:** when you introduce an indirection to replace a derivation, the two
+agree in the common case — that is the point of it. So a test exercising only
+the common case proves nothing about the indirection. Construct the case where
+they DISAGREE, or you have shipped a mechanism whose only evidence is that it
+compiles. Same family as [[caller-check]] in the build loop: existence is not
+use.
+
+## The record is written at the end; a live command cannot read it
+
+The decision said to persist the kill-file path "in the run record". The run
+record is written when the run COMPLETES — so `axon-os kill`, which by
+definition acts on a job that is still running, could never have read it.
+
+The intent (one recorded location, not a convention re-derived by every reader)
+was right; the storage had to move to a sidecar written at run START.
+
+**Rule:** before storing state for a consumer, check WHEN each side runs. An
+artifact produced at the end of a lifecycle cannot serve a consumer that acts
+during it, however natural the place looks.
