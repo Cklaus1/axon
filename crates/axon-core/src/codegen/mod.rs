@@ -1579,8 +1579,39 @@ impl<'ctx> Codegen<'ctx> {
                         build_wrappers::w_ret(&self.ir.builder, v);
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
-                        // No value from body but function has non-void return type:
-                        // emit a zero value of the appropriate type to keep IR valid.
+                        // BACKEND ADMISSION GATE. The body of a fn declared `-> T`
+                        // lowered to NO value. The zero emitted below keeps the IR
+                        // well-formed so the rest of the module still builds and
+                        // the remaining diagnostics are collected — but it is a
+                        // FABRICATED return value, not something the program
+                        // computed, and on a build that then SUCCEEDS the native
+                        // binary silently returns it where the interpreter returns
+                        // the real answer. Measured: a `-> i64` whose arms are
+                        // 7/3/5 returned 0 on a clean build with no diagnostic,
+                        // and a `Result<i64,str>` zero is tag 0 = `Err("")`.
+                        //
+                        // So the placeholder is legitimate ONLY behind a recorded
+                        // error. Record it here, unconditionally, and the build
+                        // aborts: a successful native build may never invent a
+                        // return value solely because codegen failed to produce
+                        // one. Deliberately independent of WHY the body produced
+                        // nothing — any such cause is a refusal, never a guess.
+                        let msg = format!(
+                            "codegen error [E0910]: native codegen could not lower the body of \
+                             `{}` to a value, but it is declared to return `{}`. Refusing to \
+                             return a fabricated zero. Run it under the interpreter \
+                             (`axon run`).",
+                            f.name,
+                            ret_sem.display()
+                        );
+                        // No de-duplication here, unlike the neighbouring E0910
+                        // sites: `f.name` is the UNMANGLED name, so two impl
+                        // methods of the same name and return type on different
+                        // types produce the identical string. Collapsing them
+                        // would silently drop one function's refusal, and an
+                        // admission gate must never under-report. A repeated
+                        // line is noise; a missing one is the bug this closes.
+                        self.codegen_errors.push(msg);
                         if let Some(ret_llvm_ty) = self.llvm_type(&ret_sem) {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);

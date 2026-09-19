@@ -30617,3 +30617,129 @@ fn every_example_with_at_test_actually_runs_under_axon_test() {
         files.len()
     );
 }
+
+/// Assert the backend admission gate on one program: a successful native build
+/// may never invent a return value solely because codegen failed to produce one.
+///
+/// `want` is the interpreter's stdout — the reference. Whatever native does with
+/// the program, it may not both SUCCEED and DISAGREE, so exactly two outcomes
+/// are acceptable:
+///   * the build FAILS -> it must say so, in the E0910 family, naming the
+///     function whose body was not lowered, and pointing at `axon run`;
+///   * the build SUCCEEDS -> the binary must print what the interpreter printed.
+///
+/// Written as a disjunction on purpose: when the underlying lowering gap is
+/// fixed, these programs start passing through the *other* branch, and this test
+/// keeps guarding the property without needing an edit.
+fn assert_native_never_fabricates(tag: &str, src: &str, fn_name: &str, mock_ai: bool) {
+    let f = tmp_ax(tag, src);
+    let mut run_cmd = axon();
+    run_cmd.arg("run").arg(&f);
+    if mock_ai {
+        run_cmd.env("AXON_AI_MOCK", "1");
+    }
+    let run = run_cmd.output().expect("spawn run");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "[{tag}] `axon run` must work — the diagnostic sends the user there: {}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let want = String::from_utf8_lossy(&run.stdout).trim().to_string();
+    assert!(!want.is_empty(), "[{tag}] interpreter printed nothing");
+
+    let out_bin = std::env::temp_dir().join(format!("axon_fabret_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let mut build_cmd = axon();
+    build_cmd
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .arg("--no-cache");
+    if mock_ai {
+        build_cmd.env("AXON_AI_MOCK", "1");
+    }
+    let build = build_cmd.output().expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        let _ = std::fs::remove_file(&out_bin);
+        return;
+    }
+
+    if build.status.code() == Some(0) {
+        let mut nat = std::process::Command::new(&out_bin);
+        if mock_ai {
+            nat.env("AXON_AI_MOCK", "1");
+        }
+        let nat = nat.output().expect("run native");
+        let got = String::from_utf8_lossy(&nat.stdout).trim().to_string();
+        let _ = std::fs::remove_file(&out_bin);
+        assert_eq!(
+            got, want,
+            "[{tag}] a SUCCESSFUL native build disagreed with the interpreter — \
+             the fabricated return value is back"
+        );
+    } else {
+        let _ = std::fs::remove_file(&out_bin);
+        assert!(
+            msg.contains("[E0910]"),
+            "[{tag}] build failed without an E0910 refusal — a backend that \
+             cannot lower a body must say so:\n{msg}"
+        );
+        assert!(
+            msg.contains(&format!("could not lower the body of `{fn_name}`")),
+            "[{tag}] the refusal must name the function whose body was not \
+             lowered (`{fn_name}`):\n{msg}"
+        );
+        assert!(
+            msg.contains("axon run"),
+            "[{tag}] the refusal must be actionable — `axon run` handles this \
+             program:\n{msg}"
+        );
+    }
+}
+
+#[test]
+fn a_successful_native_build_never_invents_a_return_value() {
+    // BACKEND ADMISSION GATE (coverage-sweep ledger, 2026-09-19).
+    //
+    // When a fn body lowers to NO value, codegen emitted `const_zero()` of the
+    // declared return type and returned it. That is a legitimate PLACEHOLDER on
+    // a build that has already recorded an error and will abort — but on a build
+    // that SUCCEEDS it is a value the program never computed, delivered with no
+    // diagnostic whatsoever.
+    //
+    // PRIMARY CASE — ordinary user code, no AI anywhere: a struct carried in a
+    // `Result` payload, destructured by a match arm. Interpreter prints 9; the
+    // native binary printed 0 on a clean build. 0 is not in `f`'s range at all —
+    // its arms are `p.y` (9) and -1 — so no reading of the source produces it.
+    // Chosen deliberately over the AI-typed shape it was first found in: the
+    // invariant is a property of the BACKEND, not of `Uncertain<T>`.
+    let struct_src = "type P = { x: i64, y: i64 }\n\
+                      fn mk(b: bool) -> Result<P, str> { \
+                      if b { Ok(P { x: 4, y: 9 }) } else { Err(\"no\") } }\n\
+                      fn f() -> i64 { match mk(true) { Ok(p) => p.y  Err(_) => 0 - 1 } }\n\
+                      fn main() -> i64 { println(to_str(f()))  0 }\n";
+    assert_native_never_fabricates("fabret_struct", struct_src, "f", false);
+
+    // SECOND CASE — the shape the defect was first measured in, kept because it
+    // reaches the branch through a completely different payload type
+    // (`Uncertain<T>` out of an AI builtin) and so pins that the gate is
+    // type-agnostic. Interpreter prints 7; native printed 0, and `pick`'s arms
+    // are 7, 3 and 5.
+    let ai_src = "fn pick(s: str) -> i64 {\n    \
+                  match ai_extract_uncertain_i64(s) {\n        \
+                  Ok(u) => { if u.value > 0 { 7 } else { 3 } }\n        \
+                  Err(_) => 5\n    \
+                  }\n\
+                  }\n\
+                  fn main() -> i64 { println(to_str(pick(\"the answer is 42\")))  0 }\n";
+    assert_native_never_fabricates("fabret_ai", ai_src, "pick", true);
+}
