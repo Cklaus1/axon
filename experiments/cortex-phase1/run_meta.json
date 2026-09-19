@@ -1,0 +1,26 @@
+{
+  "phase": 1,
+  "episodes_run": 50,
+  "stop_reason": "episode_budget",
+  "wall_min": 0.77,
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "model_load_s": 3.2,
+  "episode_budget": 50,
+  "wall_budget_min": 120.0,
+  "decoding": "greedy",
+  "seed_base": 1000,
+  "max_new_tokens": 320,
+  "retries": 0,
+  "tasks": [
+    "abs_wrong_sign",
+    "clamp_ignores_hi",
+    "count_skips_last",
+    "double_adds",
+    "factorial_zero",
+    "is_even_inverted",
+    "max_returns_min",
+    "min_of_three",
+    "sign_missing_zero",
+    "sum_off_by_one"
+  ]
+}

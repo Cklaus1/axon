@@ -1,0 +1,8 @@
+{
+  "name": "factorial_zero",
+  "intent": "`fact(n)` must return n! with fact(0)=1.",
+  "broken": "fn fact(n: i64) -> i64 {\n    if n <= 1 { 0 } else { n * fact(n - 1) }\n}\n",
+  "reference_fix": "fn fact(n: i64) -> i64 {\n    if n <= 1 { 1 } else { n * fact(n - 1) }\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(fact(4), 24) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(fact(0), 1)\n    assert_eq(fact(1), 1)\n    assert_eq(fact(6), 720)\n}\n"
+}

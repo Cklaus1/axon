@@ -1,0 +1,8 @@
+{
+  "name": "clamp_ignores_hi",
+  "intent": "`clamp` must bound v to [lo, hi].",
+  "broken": "fn clamp(v: i64, lo: i64, hi: i64) -> i64 {\n    if v < lo { lo } else { v }\n}\n",
+  "reference_fix": "fn clamp(v: i64, lo: i64, hi: i64) -> i64 {\n    if v < lo { lo } else { if v > hi { hi } else { v } }\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(clamp(15, 0, 10), 10) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(clamp(100, 0, 10), 10)\n    assert_eq(clamp(0 - 5, 0, 10), 0)\n    assert_eq(clamp(5, 0, 10), 5)\n}\n"
+}

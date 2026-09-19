@@ -1,0 +1,8 @@
+{
+  "name": "is_even_inverted",
+  "intent": "`is_even` must be true exactly for even numbers.",
+  "broken": "fn is_even(n: i64) -> bool {\n    n % 2 == 1\n}\n",
+  "reference_fix": "fn is_even(n: i64) -> bool {\n    n % 2 == 0\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert(is_even(4)) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert(is_even(0))\n    assert(!is_even(3))\n    assert(is_even(10))\n}\n"
+}

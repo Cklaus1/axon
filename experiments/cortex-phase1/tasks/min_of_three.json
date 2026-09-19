@@ -1,0 +1,8 @@
+{
+  "name": "min_of_three",
+  "intent": "`min3` must return the smallest of three arguments.",
+  "broken": "fn min3(a: i64, b: i64, c: i64) -> i64 {\n    let m = min_i64(a, b)\n    m\n}\n",
+  "reference_fix": "fn min3(a: i64, b: i64, c: i64) -> i64 {\n    let m = min_i64(a, b)\n    min_i64(m, c)\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(min3(5, 3, 1), 1) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(min3(3, 2, 1), 1)\n    assert_eq(min3(5, 9, 2), 2)\n    assert_eq(min3(2, 2, 2), 2)\n}\n"
+}

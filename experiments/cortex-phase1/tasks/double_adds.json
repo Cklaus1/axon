@@ -1,0 +1,8 @@
+{
+  "name": "double_adds",
+  "intent": "`double` must return twice its argument.",
+  "broken": "fn double(n: i64) -> i64 {\n    n + 2\n}\n",
+  "reference_fix": "fn double(n: i64) -> i64 {\n    n * 2\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(double(5), 10) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(double(7), 14)\n    assert_eq(double(0), 0)\n    assert_eq(double(0 - 3), 0 - 6)\n}\n"
+}

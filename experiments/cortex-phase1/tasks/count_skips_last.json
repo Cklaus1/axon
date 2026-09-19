@@ -1,0 +1,8 @@
+{
+  "name": "count_skips_last",
+  "intent": "`count_up(n)` must return n.",
+  "broken": "fn count_up(n: i64) -> i64 {\n    let mut c = 0\n    let mut i = 0\n    while i < n {\n        c = c + 1\n        i = i + 2\n    }\n    c\n}\n",
+  "reference_fix": "fn count_up(n: i64) -> i64 {\n    let mut c = 0\n    let mut i = 0\n    while i < n {\n        c = c + 1\n        i = i + 1\n    }\n    c\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(count_up(5), 5) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(count_up(1), 1)\n    assert_eq(count_up(0), 0)\n    assert_eq(count_up(10), 10)\n}\n"
+}

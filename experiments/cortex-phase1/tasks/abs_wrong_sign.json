@@ -1,0 +1,8 @@
+{
+  "name": "abs_wrong_sign",
+  "intent": "`my_abs` must return the absolute value.",
+  "broken": "fn my_abs(n: i64) -> i64 {\n    if n < 0 { n } else { n }\n}\n",
+  "reference_fix": "fn my_abs(n: i64) -> i64 {\n    if n < 0 { 0 - n } else { n }\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(my_abs(0 - 4), 4) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(my_abs(7), 7)\n    assert_eq(my_abs(0), 0)\n    assert_eq(my_abs(0 - 1), 1)\n}\n"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "sum_off_by_one",
+  "intent": "`sum_to(n)` must return 1+2+...+n inclusive.",
+  "broken": "fn sum_to(n: i64) -> i64 {\n    let mut t = 0\n    let mut i = 1\n    while i < n {\n        t = t + i\n        i = i + 1\n    }\n    t\n}\n",
+  "reference_fix": "fn sum_to(n: i64) -> i64 {\n    let mut t = 0\n    let mut i = 1\n    while i <= n {\n        t = t + i\n        i = i + 1\n    }\n    t\n}\n",
+  "visible_test": "@[test]\nfn t_visible() { assert_eq(sum_to(5), 15) }\n",
+  "hidden_test": "@[test]\nfn t_hidden() {\n    assert_eq(sum_to(1), 1)\n    assert_eq(sum_to(10), 55)\n    assert_eq(sum_to(0), 0)\n}\n"
+}
