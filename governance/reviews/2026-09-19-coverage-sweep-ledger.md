@@ -238,3 +238,42 @@ codegen error has been recorded. Record an E0910 naming the function when a
 non-Unit body lowers to nothing, so the general case becomes a refusal instead
 of an invented value. Regression check must confirm the 2 silent programs now
 refuse AND that none of the 295 previously-clean programs starts failing.
+
+## Second wave — four lanes, pinned at 1b56faa
+
+| Lane | Branch | Owns | Must NOT touch |
+|---|---|---|---|
+| A | `sweep/audit` | the executed-coverage audit (running since wave 1) | the 15 assigned builtins |
+| B | `sweep/safety-net` | the backend refusal invariant | `emit_field_access`, `sem_type_of_expr`, match-arm binding code |
+| C | `sweep/typeprop` | match-arm payload-type propagation | the `None if !matches!(ret_sem, Type::Unit)` arm in `codegen/mod.rs` |
+| D | `sweep/regression` | the measurement harness | anything under `crates/axon-core/src/` |
+
+B and C are the two halves of one repair and are deliberately NOT one commit:
+the safety property must be reviewable on its own, and it holds even if the
+feature fix later misses another path.
+
+### The invariant B implements
+
+> **A successful native build may never invent a return value solely because
+> codegen failed to produce one.**
+
+Enforced independently of any specific type or construct, exactly as the BPF
+module-verification gate is enforced independently of the `if` bug that
+exposed it. Same shape both times: a transition nothing asserted was intended.
+
+### Merge order (dependencies, not completion order)
+
+    A (audit result) -> B (safety net) -> D (328-program diff)
+      -> C (feature fix) -> differential validation -> strict gate
+
+The two-stage evidence trail this produces is the point:
+
+| stage | `pick()` native behaviour |
+|---|---|
+| before | silent wrong answer — prints 0, a value outside its range |
+| after B | explicit refusal — build fails with a diagnostic naming the fn |
+| after C | correct execution — prints 7, agreeing with the interpreter |
+
+Collapsing B and C into one commit would destroy that trail: the "explicit
+refusal" row would never exist in history, and the safety property could not
+be reviewed apart from the feature that happens to make it unnecessary here.
