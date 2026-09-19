@@ -685,3 +685,68 @@ holding.
 **STATUS: uncommitted pending the QEMU boot test.** Building in the main repo
 while the strict gate runs in another worktree previously broke that gate's
 `dict_parity` harness, so the verification is deferred rather than skipped.
+
+## CORRECTION: the orphan probe was broken, and under-reported
+
+The "five pieces of passing verification running nowhere" figure above is
+WRONG — too low. The probe that produced it had a systematic blind spot.
+
+It excluded a script's self-reference with `grep -v "^./$s"`, but `grep -rl`
+emits paths WITHOUT the `./` prefix. So the exclusion never matched, and any
+script whose own header comment names its own filename counted as "referenced
+by something" and was silently classified as wired.
+
+`r33`/`r34`/`r39_slice1` surfaced only because their headers happen not to name
+themselves. That is the entire reason those three were found and others were
+not — a property of comment style, not of whether anything invokes them.
+
+Corrected probe, with `*_parity.sh` excluded because `parity_all.sh` invokes
+those by GLOB rather than by name (a second false-positive class, in the
+opposite direction):
+
+**16 scripts invoked by nothing executable.** Gate-shaped, i.e. things that
+assert a requirement:
+
+    axon_kernel_gate.sh      gfx_wgpu_render_gate.sh   kernel_enforce_test.sh
+    r23_acceptance_gate.sh   r30_acceptance_gate.sh    r39_slice3_gate.sh
+    r39_slice4_gate.sh       r39_slice5_gate.sh        zephyr_qemu_gate.sh
+
+The rest are demos, benchmarks, probes and one-off measurement tools
+(`axon_session_demo.sh`, `perf_bench.sh`, `r1_build_measure.sh`,
+`wasm_aot_link_probe.sh`, `browser_webgpu_clear.sh`, `fix_codec.sh`), plus
+`build_outcome_regression.sh`, which is deliberately manual and says so.
+
+### The one that matters most
+
+`governance/REQUIREMENTS.md` line 67 records:
+
+    R23 | Proof certificates | ✅ Landed 100% (re-verified 2026-07-18)
+       | `scripts/r23_acceptance_gate.sh` PASS
+
+The requirements register cites that gate as the EVIDENCE for a 100%-landed
+claim. Nothing executable invokes it. It is referenced only by documentation —
+README, three specs, two review documents, and the requirements register that
+leans on it.
+
+It is also the only thing in the repo that runs
+`cargo test -p axon-certcheck --features smt`, so R23's A5 check
+(`acc_a5_certificate_byte_identical`) runs nowhere either. The gate's own smt
+stage is `-p axon-core` only.
+
+That is the purest instance of this session's class: **documentation citing
+verification as evidence, where the verification never executes.** Not a
+failing check — a check whose result is quoted without the check having run.
+
+### Lesson, and it is about my own work
+
+A probe that under-reports produces a number that looks like a finding and is
+actually a floor. I published "five" and it was wrong. Both false-positive
+directions were present at once: self-reference wrongly counted as a caller,
+and glob invocation wrongly counted as no caller. Neither is visible from the
+probe's output — only from checking a case whose answer is known
+independently, which is how this surfaced (`r23` was known-orphaned from
+reading, then found to be absent from the probe's list).
+
+STATUS: the nine gate-shaped orphans are NOT yet verified to pass, and are
+NOT yet wired. Several need GPU, QEMU or Zephyr toolchains. Wiring an unproven
+gate would be the same error in a new direction.
