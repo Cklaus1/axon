@@ -688,3 +688,43 @@ Related: my first probe for this used `to_f64`, which does not exist
 (`as_f64` does), and reported "0 evaluations" — the right answer for the wrong
 reason. A broken probe that agrees with your hypothesis is the most dangerous
 kind. [[prove-the-probe-reached-its-target]]
+
+## The warning above the verdict does not undo the verdict
+
+`axon_safety_gate.sh` already printed "⚠ INCOMPLETE: N stage(s) SKIPPED" and
+already set `complete:false` in its JSON — and then ended with
+"✓ ALL STAGES PASSED — safe to deploy" regardless. Both statements were
+emitted by the same run, in that order.
+
+The last line is the one a human quotes, screenshots and remembers, and it
+directly contradicted the warning four lines above it. That is worse than
+having no warning at all: it teaches the reader that the warning is noise.
+
+**Rule:** when a run is partial, the CONCLUDING claim has to carry it, not just
+an advisory earlier in the stream. Fixing the machine-readable field
+(`complete:false`) and leaving the human-readable verdict alone fixes the half
+nobody reads. Same family as [[reporter-omits-the-enforced-field]] and
+[[fix-the-reporter-miss-the-readers]].
+
+## An array cannot cross an env-var prefix
+
+`SKIPPED_STAGES=(A B) bash -c '…'` does not pass a 2-element array — the child
+sees the single STRING "(A B)", so `${#SKIPPED_STAGES[@]}` is 1. My first
+version of the acc_a7 self-test did exactly this and printed "1 stage(s) did
+NOT run: (BUILD R26)": the assertion it made would have passed while the array
+under test was never constructed.
+
+**Rule:** in a shell test that depends on a COUNT, assert the count the code
+actually saw, not just the branch it took. The corrected test pins
+`*"2 stage(s)"*` for that reason.
+
+## Verify the restore, do not assume it
+
+My mutation sweep raised a `FileNotFoundError` on the restore path mid-loop,
+leaving the FIRST mutation applied in the working tree. The follow-up
+`bash -n` printed "syntax OK" — because a mutated script is still valid shell.
+Only `grep -c` for the mutation text, and then `diff -q` against the backup,
+showed the true state.
+
+**Rule:** end every mutation sweep with an explicit `diff` against a
+known-good copy, and treat a syntax check as no evidence at all about content.

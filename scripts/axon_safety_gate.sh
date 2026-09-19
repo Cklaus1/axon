@@ -118,6 +118,48 @@ print('  skipped stages:', [s['name'] for s in skipped], '| complete:', d.get('c
         SELF_FAIL=$((SELF_FAIL+1))
     fi
 
+    # acc_a7: the FINAL VERDICT LINE must not claim a validation that did not
+    # happen. acc_a5 above pins the JSON, and `emit_report` prints an
+    # "⚠ INCOMPLETE" warning — but the last line said "✓ ALL STAGES PASSED —
+    # safe to deploy" regardless of skips, and the last line is the one a human
+    # quotes and screenshots. A verdict contradicting the warning above it is
+    # worse than no warning: it tells the reader the warning was noise.
+    # (triage GATE-05, second half.)
+    echo ""
+    echo "acc_a7: the verdict line distinguishes SKIPPED from PASSED..."
+    a7_ok=1
+    v_skip="$(bash -c '
+        source <(sed -n "/^emit_verdict() {$/,/^}$/p" "$0")
+        OVERALL_OK=true; SKIPPED_STAGES=(BUILD R26); emit_verdict' "$0" 2>&1)"
+    v_clean="$(bash -c '
+        source <(sed -n "/^emit_verdict() {$/,/^}$/p" "$0")
+        OVERALL_OK=true; SKIPPED_STAGES=(); emit_verdict' "$0" 2>&1)"
+    # An ARRAY cannot cross an env-var prefix: `SKIPPED_STAGES=(A B) cmd` passes
+    # the single STRING "(A B)", so the count reads 1 and the test would pass
+    # while measuring the wrong thing. Assert the count the block actually saw.
+    case "$v_skip" in
+        *"2 stage(s)"*) : ;;
+        *) echo "  FAIL: the probe did not pass a 2-element array: $v_skip"; a7_ok=0 ;;
+    esac
+    case "$v_skip" in
+        *"ALL STAGES PASSED"*) echo "  FAIL: a skipped run still claims ALL STAGES PASSED"; a7_ok=0 ;;
+        *INCOMPLETE*) : ;;
+        *) echo "  FAIL: a skipped run said neither INCOMPLETE nor PASSED: $v_skip"; a7_ok=0 ;;
+    esac
+    # Negative control: a genuinely clean run must still say so, or the check
+    # above could be satisfied by never claiming success at all.
+    case "$v_clean" in
+        *"ALL STAGES PASSED"*) : ;;
+        *) echo "  FAIL: a clean run must still report ALL STAGES PASSED: $v_clean"; a7_ok=0 ;;
+    esac
+    if [[ $a7_ok -eq 1 ]]; then
+        echo "acc_a7 PASS"
+        SELF_PASS=$((SELF_PASS+1))
+    else
+        echo "acc_a7 FAIL"
+        SELF_FAIL=$((SELF_FAIL+1))
+    fi
+
     # acc_a6: exit 0 on all-pass
     echo ""
     echo "acc_a6: exit code 0 on all-pass..."
@@ -352,10 +394,28 @@ if [[ -n "$JSON_OUT" ]] && [[ "$JSON_OUT" != "/dev/null" ]]; then
 fi
 
 echo ""
-if $OVERALL_OK; then
-    echo "✓ ALL STAGES PASSED — safe to deploy"
-    exit 0
-else
+emit_verdict() {
+if ! $OVERALL_OK; then
     echo "✗ GATE FAILED — do not deploy"
-    exit 1
+    return 1
+elif [[ ${#SKIPPED_STAGES[@]} -gt 0 ]]; then
+    # AUDIT (finding GATE-05, second half). `emit_report` already prints an
+    # "⚠ INCOMPLETE" warning and the JSON carries `complete:false` — but the
+    # FINAL line said "✓ ALL STAGES PASSED — safe to deploy" regardless, and the
+    # final line is the one a human quotes, screenshots and remembers. A verdict
+    # that contradicts the warning above it is worse than no warning, because it
+    # tells the reader the warning was noise.
+    #
+    # Exit stays 0: skipping is not failing, and the script's own contract (see
+    # the header) is "0 = all stages passed (or skipped)". Only the CLAIM changes.
+    echo "⚠ INCOMPLETE — nothing that ran failed, but ${#SKIPPED_STAGES[@]} stage(s) did NOT run: ${SKIPPED_STAGES[*]}"
+    echo "  This build was NOT fully validated. A skipped stage is not a passed stage."
+    return 0
+else
+    echo "✓ ALL STAGES PASSED — safe to deploy"
+    return 0
 fi
+}
+
+emit_verdict
+exit $?
