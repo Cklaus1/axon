@@ -533,3 +533,46 @@ other, and a fixture that only type-checks hides both. Removing a refusal is
 therefore not purely additive — it can surface latent breakage elsewhere, which
 is an argument for landing feature work with the measurement harness already in
 place, not after.
+
+## The completed two-stage proof
+
+Measured end to end, one shape per row, the same program at each stage:
+
+| shape | before | after safety net | after type propagation |
+|---|---|---|---|
+| **known valid** — struct in a `Result`, field read in a match arm | interp 9, native **0**, build CLEAN | **E0910 refusal** naming `f` | interp 9, native **9** |
+| **unsupported neighbour** — closure with a struct param, field read | interp 8, native **0**, build CLEAN | **E0910 refusal** naming `__lambda_0` | **still refused** |
+
+The second row is the one that had to be earned rather than asserted: it shows
+the feature surface widened without the safety floor dropping. Without it,
+"the repro now passes" is indistinguishable from "the repro now passes and
+three neighbours silently fabricate".
+
+### The neighbour row exposed a hole in the safety net itself
+
+The first attempt at row 2 FAILED. After the named-function safety net landed,
+the closure shape still built clean and still printed 0 — because
+`emit_lambda` carries its OWN `None => w_ret(const_zero())` in
+`codegen/expr.rs`, a file the safety-net lane was explicitly forbidden to touch
+so it would not collide with the type-propagation work running in parallel.
+
+So the partitioning that kept two agents from corrupting each other also
+guaranteed the invariant would be implemented at one of its two sites. That is
+a real cost of parallel isolation and worth naming: a file-scoped exclusion is
+a bet that the invariant lives in one file, and nobody checked that bet.
+
+It was caught only by putting the neighbour shape in front of the gate. Reading
+the diff would not have shown it — the diff was correct, complete, and covered
+every site the lane was allowed to see.
+
+> **A gate is not verified until something it should reject has been shown to
+> be rejected.** The same rule as mutation testing, applied to an admission
+> gate rather than a test.
+
+### Final corpus state
+
+328 programs: **166/161/1 -> 173/154/1**. Seven moved 1 -> 0, zero moved 0 -> 1,
+each of the seven differentially checked against the interpreter rather than
+accepted because the build stopped failing. Two differential cases moved
+diverge -> agree, exactly the transitions recorded as predictions before either
+fix existed.
