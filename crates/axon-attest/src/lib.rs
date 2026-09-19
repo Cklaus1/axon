@@ -163,6 +163,22 @@ pub fn measure_kernel(
     Ok(measure_kernel_bytes(&bytes))
 }
 
+/// Compare two byte strings without an early exit.
+///
+/// A `==` on the signature would return as soon as the first byte differs,
+/// leaking how much of a forged signature was correct. The cost of doing this
+/// properly is one pass over 32 bytes.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Produce an attestation report by signing the measurement with a key.
 ///
 /// Uses HMAC-SHA256(key, digest ‖ axtcb1_bytes) as the software-TPM signature.
@@ -192,14 +208,26 @@ pub fn sign_report(m: GuestMeasurement, key: &[u8]) -> AttestationReport {
 /// 2. `report.measurement.digest == expected_digest` (tamper detection).
 /// 3. `report.measurement.axtcb1 == expected_axtcb1` (TCB chain check).
 ///
-/// For the software stand-in, the structural checks (2+3) are the load-bearing
-/// verification — the HMAC key is not re-checked here (the operator owns the
-/// stand-in's EK; §8 is honest about this). Only real hardware (hw-attest)
-/// provides cryptographic binding beyond operator control.
+/// 4. `hw_root` is the software stand-in (a hardware claim is refused).
+/// 5. When a verification key is supplied, the HMAC is RECOMPUTED and compared
+///    in constant time. Without a key the report is refused outright.
+///
+/// The signature used to be checked only for NON-EMPTINESS, so any non-empty
+/// byte string verified. `sign_report` computed HMAC-SHA256(key, digest ‖
+/// axtcb1) and nothing ever recomputed it — the field named `signature`
+/// carried no evidence at all.
+///
+/// The key is operator-provisioned: the verifier holds it, not the report. That
+/// is the honest boundary for a software stand-in — it binds the report to
+/// someone who holds the key, which is strictly more than "non-empty" and
+/// strictly less than hardware attestation. The interface is shaped so a
+/// SEV-SNP/TPM backend can replace `expected_key` with a hardware root later
+/// without changing callers.
 pub fn verify_report(
     report: &AttestationReport,
     expected_digest: &[u8; 32],
     expected_axtcb1: &str,
+    verification_key: Option<&[u8]>,
 ) -> Result<(), String> {
     // Step 1 (Core): no-attestation ⇒ refused (Core `vm_without_attestation_is_refused`)
     if report.signature.is_empty() {
@@ -250,6 +278,35 @@ pub fn verify_report(
         ));
     }
 
+    // Step 5 (the cryptographic binding). Recompute HMAC-SHA256(key, digest ‖
+    // axtcb1) and compare in CONSTANT TIME. Before this, the only signature
+    // check was `is_empty()` — so a report could carry any non-empty bytes and
+    // verify. Refusing without a key is deliberate: "no key supplied" must not
+    // silently degrade to the old behaviour, which is exactly how an
+    // unverified field comes to look verified.
+    let Some(key) = verification_key else {
+        return Err(
+            "no verification key supplied — refusing to verify a signature this \
+             build cannot recompute. Provide the operator-provisioned key (the \
+             same one `sign_report` used), or use a hardware-attestation backend."
+                .to_string(),
+        );
+    };
+    let mut data = Vec::with_capacity(32 + report.measurement.axtcb1.len());
+    data.extend_from_slice(&report.measurement.digest);
+    data.extend_from_slice(report.measurement.axtcb1.as_bytes());
+    let expected_sig = hmac_sha256(key, &data);
+    if !constant_time_eq(&report.signature, &expected_sig) {
+        return Err(format!(
+            "attestation signature does not verify under the supplied key \
+             (expected {} bytes of HMAC-SHA256 over digest ‖ axtcb1, got {} bytes \
+             that do not match) — the report was not signed by the holder of \
+             this key, or its measurement was altered after signing",
+            expected_sig.len(),
+            report.signature.len(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -264,11 +321,14 @@ pub fn try_admit_job(
     report: &AttestationReport,
     expected_digest: &[u8; 32],
     expected_axtcb1: &str,
+    verification_key: Option<&[u8]>,
     job: &[u8],
     seed: u64,
 ) -> Result<String, String> {
-    // MANDATORY: verify attestation before admitting any work
-    verify_report(report, expected_digest, expected_axtcb1)?;
+    // MANDATORY: verify attestation before admitting any work. The key is
+    // threaded through rather than defaulted, so a caller cannot admit a job
+    // under an unverifiable report by omitting an argument.
+    verify_report(report, expected_digest, expected_axtcb1, verification_key)?;
     // Only if attestation is verified do we run the job
     Ok(simulate_job_run(job, seed))
 }
@@ -801,7 +861,7 @@ mod tests {
         // (a) Wrong expected digest ⇒ must fail
         let mut wrong_digest = correct_digest;
         wrong_digest[0] ^= 0xff;
-        let r = verify_report(&report, &wrong_digest, &correct_axtcb1);
+        let r = verify_report(&report, &wrong_digest, &correct_axtcb1, Some(TEST_KEY));
         assert!(r.is_err(), "wrong expected digest must be refused");
         let msg = r.unwrap_err();
         assert!(
@@ -810,7 +870,12 @@ mod tests {
         );
 
         // (b) Wrong expected axtcb1 ⇒ must fail
-        let r2 = verify_report(&report, &correct_digest, "axtcb1:deadbeef00000000");
+        let r2 = verify_report(
+            &report,
+            &correct_digest,
+            "axtcb1:deadbeef00000000",
+            Some(TEST_KEY),
+        );
         assert!(r2.is_err(), "wrong expected axtcb1 must be refused");
         let msg2 = r2.unwrap_err();
         assert!(
@@ -819,12 +884,58 @@ mod tests {
         );
 
         // (c) Correct values ⇒ must succeed
-        let r3 = verify_report(&report, &correct_digest, &correct_axtcb1);
+        let r3 = verify_report(&report, &correct_digest, &correct_axtcb1, Some(TEST_KEY));
         assert!(
             r3.is_ok(),
             "correct report must pass verification: {:?}",
             r3.err()
         );
+    }
+
+    /// The signature must be RECOMPUTED, not merely non-empty.
+    ///
+    /// Before this, `verify_report` checked `signature.is_empty()` and nothing
+    /// else — `sign_report` computed HMAC-SHA256(key, digest ‖ axtcb1) and no
+    /// code ever recomputed it, so ANY non-empty byte string verified. A field
+    /// named `signature` that carries no evidence is worse than no field.
+    #[test]
+    fn a_signature_must_verify_under_the_key_not_merely_be_present() {
+        let m = measure_kernel_bytes(b"kernel-bytes");
+        let good = sign_report(m.clone(), TEST_KEY);
+        let (d, t) = (m.digest, m.axtcb1.clone());
+
+        // Honestly signed under the key the verifier holds.
+        assert!(verify_report(&good, &d, &t, Some(TEST_KEY)).is_ok());
+
+        // FORGED: non-empty, right length, wrong bytes. This is the case the
+        // old `is_empty()` check accepted.
+        let mut forged = good.clone();
+        forged.signature = vec![0xAB; 32];
+        let e = verify_report(&forged, &d, &t, Some(TEST_KEY)).unwrap_err();
+        assert!(e.contains("does not verify"), "{e}");
+
+        // Signed under a DIFFERENT key — the cross-process case an operator key
+        // exists to catch.
+        let other = sign_report(m.clone(), b"a-different-operator-key-entirely");
+        let e2 = verify_report(&other, &d, &t, Some(TEST_KEY)).unwrap_err();
+        assert!(e2.contains("does not verify"), "{e2}");
+        // ...and it verifies under ITS OWN key, so the check is not just
+        // "always fail".
+        assert!(verify_report(&other, &d, &t, Some(b"a-different-operator-key-entirely")).is_ok());
+
+        // NO key: refused outright rather than silently degrading to the old
+        // non-emptiness check. "Cannot verify" must not read as "verified".
+        let e3 = verify_report(&good, &d, &t, None).unwrap_err();
+        assert!(e3.contains("no verification key"), "{e3}");
+    }
+
+    /// The comparison must not exit early on the first differing byte.
+    #[test]
+    fn signature_comparison_is_constant_time() {
+        assert!(constant_time_eq(b"abcd", b"abcd"));
+        assert!(!constant_time_eq(b"abcd", b"abce")); // differs at the END
+        assert!(!constant_time_eq(b"abcd", b"zbcd")); // differs at the START
+        assert!(!constant_time_eq(b"abc", b"abcd")); // length mismatch
     }
 
     // ─ Core: vm_without_attestation_is_refused ─────────────────────────────────
@@ -841,7 +952,7 @@ mod tests {
         unsigned_report.signature = Vec::new(); // empty = unsigned / no attestation
 
         // verify_report must refuse
-        let result = verify_report(&unsigned_report, &digest, &axtcb1);
+        let result = verify_report(&unsigned_report, &digest, &axtcb1, Some(TEST_KEY));
         assert!(
             result.is_err(),
             "unsigned report (no attestation) must be refused"
@@ -853,7 +964,14 @@ mod tests {
         );
 
         // try_admit_job also refuses (no job enters an unattested guest)
-        let job_result = try_admit_job(&unsigned_report, &digest, &axtcb1, b"test-job", 0);
+        let job_result = try_admit_job(
+            &unsigned_report,
+            &digest,
+            &axtcb1,
+            Some(TEST_KEY),
+            b"test-job",
+            0,
+        );
         assert!(
             job_result.is_err(),
             "try_admit_job must refuse when attestation is absent — job must NOT enter an unattested guest"
@@ -895,7 +1013,7 @@ mod tests {
         // The axtcb1 is verified by verify_report — a mismatched axtcb1 fails the chain check
         let report = sign_report(m.clone(), TEST_KEY);
         let wrong_axtcb1 = m2.axtcb1.clone(); // axtcb1 from a different image
-        let r = verify_report(&report, &m.digest, &wrong_axtcb1);
+        let r = verify_report(&report, &m.digest, &wrong_axtcb1, Some(TEST_KEY));
         assert!(
             r.is_err(),
             "wrong axtcb1 (from different image) must fail — the chain must be enforced, \
@@ -904,7 +1022,7 @@ mod tests {
 
         // Correct axtcb1 passes
         assert!(
-            verify_report(&report, &m.digest, &m.axtcb1).is_ok(),
+            verify_report(&report, &m.digest, &m.axtcb1, Some(TEST_KEY)).is_ok(),
             "correct axtcb1 chained to correct measurement must pass"
         );
     }
@@ -935,7 +1053,12 @@ mod tests {
 
         // A report of the tampered image, checked against the genuine expected values, fails
         let tampered_report = sign_report(m_tampered, TEST_KEY);
-        let r = verify_report(&tampered_report, &expected_digest, &expected_axtcb1);
+        let r = verify_report(
+            &tampered_report,
+            &expected_digest,
+            &expected_axtcb1,
+            Some(TEST_KEY),
+        );
         assert!(
             r.is_err(),
             "tampered guest image must fail attestation — \
@@ -974,7 +1097,7 @@ mod tests {
         );
 
         // Step 3: verify (axon-vm verify — relying party)
-        let ok = verify_report(&report, &expected_digest, &expected_axtcb1);
+        let ok = verify_report(&report, &expected_digest, &expected_axtcb1, Some(TEST_KEY));
         assert!(
             ok.is_ok(),
             "genuine image must pass attestation: {:?}",
@@ -983,7 +1106,14 @@ mod tests {
 
         // Step 4: admit + run (axon-vm run — only after verified)
         let job = b"summarize --input ./data/ --out ./out/";
-        let record = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 42u64);
+        let record = try_admit_job(
+            &report,
+            &expected_digest,
+            &expected_axtcb1,
+            Some(TEST_KEY),
+            job,
+            42u64,
+        );
         assert!(
             record.is_ok(),
             "attested job must be admitted: {:?}",
@@ -1000,7 +1130,12 @@ mod tests {
         tampered[5] ^= 0xff;
         let m_tampered = measure_kernel_bytes(&tampered);
         let tampered_report = sign_report(m_tampered, TEST_KEY);
-        let refused = verify_report(&tampered_report, &expected_digest, &expected_axtcb1);
+        let refused = verify_report(
+            &tampered_report,
+            &expected_digest,
+            &expected_axtcb1,
+            Some(TEST_KEY),
+        );
         assert!(
             refused.is_err(),
             "tampered image must be refused — job must never enter an unverified guest"
@@ -1010,6 +1145,7 @@ mod tests {
             &tampered_report,
             &expected_digest,
             &expected_axtcb1,
+            Some(TEST_KEY),
             job,
             42u64,
         );
@@ -1034,30 +1170,51 @@ mod tests {
 
         // Verify attestation — this is MANDATORY before any job is admitted
         assert!(
-            verify_report(&report, &expected_digest, &expected_axtcb1).is_ok(),
+            verify_report(&report, &expected_digest, &expected_axtcb1, Some(TEST_KEY)).is_ok(),
             "attestation must verify before job admission"
         );
 
         // Admit and run the R21 job (same summarize.axjob as the R21 demo)
         let job = b"summarize: reads ./data/, writes ./out/, no net (R21 job)";
-        let record = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 1u64)
-            .expect("attested job must run");
+        let record = try_admit_job(
+            &report,
+            &expected_digest,
+            &expected_axtcb1,
+            Some(TEST_KEY),
+            job,
+            1u64,
+        )
+        .expect("attested job must run");
         assert!(
             record.starts_with("axrec1:"),
             "record must use axrec1: prefix"
         );
 
         // A5: same job + same seed ⇒ byte-identical record
-        let record2 = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 1u64)
-            .expect("second run must also succeed");
+        let record2 = try_admit_job(
+            &report,
+            &expected_digest,
+            &expected_axtcb1,
+            Some(TEST_KEY),
+            job,
+            1u64,
+        )
+        .expect("second run must also succeed");
         assert_eq!(
             record, record2,
             "same job+seed must produce byte-identical RunRecord (A5)"
         );
 
         // Different seed ⇒ different record
-        let record_diff = try_admit_job(&report, &expected_digest, &expected_axtcb1, job, 2u64)
-            .expect("different-seed run must also succeed");
+        let record_diff = try_admit_job(
+            &report,
+            &expected_digest,
+            &expected_axtcb1,
+            Some(TEST_KEY),
+            job,
+            2u64,
+        )
+        .expect("different-seed run must also succeed");
         assert_ne!(
             record, record_diff,
             "different seeds must produce different records"
@@ -1071,6 +1228,7 @@ mod tests {
             &report,
             &expected_digest,
             &expected_axtcb1,
+            Some(TEST_KEY),
             overreach_job,
             1u64,
         )
@@ -1108,7 +1266,7 @@ mod tests {
         );
 
         // Quickstart step 4: axon-vm verify → verify_report
-        let ok = verify_report(&report, &m.digest, &m.axtcb1);
+        let ok = verify_report(&report, &m.digest, &m.axtcb1, Some(TEST_KEY));
         assert!(ok.is_ok(), "verify must succeed for genuine image");
 
         // JSON output round-trips correctly (what axon-vm attest emits)
@@ -1134,7 +1292,7 @@ mod tests {
 
         // Quickstart step 5: axon-vm run → try_admit_job
         let job = b"summarize.axjob";
-        let rec = try_admit_job(&report, &m.digest, &m.axtcb1, job, 0u64)
+        let rec = try_admit_job(&report, &m.digest, &m.axtcb1, Some(TEST_KEY), job, 0u64)
             .expect("quickstart run must succeed");
         assert!(
             rec.starts_with("axrec1:"),
@@ -1146,7 +1304,7 @@ mod tests {
         tampered_kernel[0] ^= 0xff;
         let m_tampered = measure_kernel_bytes(&tampered_kernel);
         let tampered_report = sign_report(m_tampered, TEST_KEY);
-        let refused = verify_report(&tampered_report, &m.digest, &m.axtcb1);
+        let refused = verify_report(&tampered_report, &m.digest, &m.axtcb1, Some(TEST_KEY));
         assert!(
             refused.is_err(),
             "tampered image must be refused (quickstart step 6)"
@@ -1238,7 +1396,14 @@ mod tests {
         // Without attestation (empty signature), job admission is refused
         let mut unsigned = sign_report(m.clone(), TEST_KEY);
         unsigned.signature = Vec::new();
-        let r_unsigned = try_admit_job(&unsigned, &m.digest, &m.axtcb1, b"any-job", 0);
+        let r_unsigned = try_admit_job(
+            &unsigned,
+            &m.digest,
+            &m.axtcb1,
+            Some(TEST_KEY),
+            b"any-job",
+            0,
+        );
         assert!(
             r_unsigned.is_err(),
             "job must NOT be admitted without a valid attestation signature"
@@ -1246,7 +1411,7 @@ mod tests {
 
         // With correct attestation, job is admitted
         let signed = sign_report(m.clone(), TEST_KEY);
-        let r_signed = try_admit_job(&signed, &m.digest, &m.axtcb1, b"any-job", 0);
+        let r_signed = try_admit_job(&signed, &m.digest, &m.axtcb1, Some(TEST_KEY), b"any-job", 0);
         assert!(
             r_signed.is_ok(),
             "job must be admitted after valid attestation: {:?}",
@@ -1261,14 +1426,21 @@ mod tests {
 
         // If the axtcb1 pinned expectation is wrong, admission fails (chain enforced)
         let wrong_axtcb1 = format!("axtcb1:{}", "0".repeat(64));
-        let r_wrong = try_admit_job(&signed, &m.digest, &wrong_axtcb1, b"any-job", 0);
+        let r_wrong = try_admit_job(
+            &signed,
+            &m.digest,
+            &wrong_axtcb1,
+            Some(TEST_KEY),
+            b"any-job",
+            0,
+        );
         assert!(
             r_wrong.is_err(),
             "wrong axtcb1 expectation must fail — the chain is mandatory"
         );
 
         // Attestation without any job (just verify) also works
-        let r_verify = verify_report(&signed, &m.digest, &m.axtcb1);
+        let r_verify = verify_report(&signed, &m.digest, &m.axtcb1, Some(TEST_KEY));
         assert!(
             r_verify.is_ok(),
             "standalone verify_report must succeed for genuine report"
@@ -1660,7 +1832,7 @@ mod tests {
 
         let report = sign_report(m.clone(), TEST_KEY);
         assert!(
-            verify_report(&report, &m.digest, &m.axtcb1).is_ok(),
+            verify_report(&report, &m.digest, &m.axtcb1, Some(TEST_KEY)).is_ok(),
             "R26 verify must pass"
         );
 
@@ -1901,7 +2073,7 @@ mod hw_root_verification_tests {
 
         // The honest stand-in verifies.
         assert!(
-            verify_report(&report, &digest, &tcb).is_ok(),
+            verify_report(&report, &digest, &tcb, Some(b"test-ek")).is_ok(),
             "an unmodified software-stand-in report must verify"
         );
 
@@ -1909,7 +2081,7 @@ mod hw_root_verification_tests {
         for forged in ["sev-snp", "tdx", "totally-real-tpm"] {
             let mut liar = report.clone();
             liar.hw_root = forged.to_string();
-            let err = verify_report(&liar, &digest, &tcb)
+            let err = verify_report(&liar, &digest, &tcb, Some(b"test-ek"))
                 .expect_err(&format!("a forged hw_root `{forged}` must be refused"));
             assert!(
                 err.contains("unverifiable hw_root"),

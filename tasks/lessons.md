@@ -764,3 +764,19 @@ was right; the storage had to move to a sidecar written at run START.
 **Rule:** before storing state for a consumer, check WHEN each side runs. An
 artifact produced at the end of a lifecycle cannot serve a consumer that acts
 during it, however natural the place looks.
+
+## Splicing a test in front of another displaces its attribute
+
+Three times now: inserting a new `#[test] fn` immediately before an existing one
+landed BETWEEN that function's doc comment and its `#[test]`, leaving the
+original attached to no attribute — so it silently stopped running — while the
+new one carried two.
+
+The suite stays green throughout. `cargo test` reports a plausible count, and
+nothing says a test vanished. Clippy's `duplicated attribute` is what catches
+it, which means it is only caught if the lint gate runs.
+
+**Rule:** when inserting a test, anchor on the `#[test]` line of the neighbour,
+not on its `fn` line or its doc comment — and afterwards assert that the number
+of `#[test]` annotations equals the number of tests the runner lists. A count
+that matches is the only cheap proof nothing was orphaned.

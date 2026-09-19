@@ -926,15 +926,46 @@ fn cmd_attest(
         );
     }
 
-    // Generate a software-TPM ephemeral key (deterministic per-process in CI,
-    // fresh per-invocation in production via process id + start time).
-    let key = {
-        use sha2::{Digest, Sha256};
-        let mut h = Sha256::new();
-        h.update(b"axon-r26-software-tpm-ephemeral-key");
-        h.update(process::id().to_le_bytes());
-        h.finalize().to_vec()
+    // The software-TPM key. OPERATOR-PROVISIONED when `AXON_ATTEST_KEY` is set
+    // (hex); otherwise an ephemeral per-process key, as before.
+    //
+    // The distinction is the whole security story and is printed below rather
+    // than left implicit:
+    //   * operator key  — the verifier holds a key the signer had to know, so a
+    //                     report signed by anyone else fails. This is what makes
+    //                     `verify_report`'s HMAC check mean something across
+    //                     processes.
+    //   * ephemeral key — signer and verifier are the SAME process. The HMAC is
+    //                     still recomputed, so the check is real integrity over
+    //                     the measurement, but it attests nothing to a third
+    //                     party. Honest, and much weaker.
+    let (key, key_source) = match std::env::var("AXON_ATTEST_KEY") {
+        Ok(hex_key) if !hex_key.trim().is_empty() => match hex::decode(hex_key.trim()) {
+            Ok(k) if k.len() >= 16 => (k, "operator-provisioned (AXON_ATTEST_KEY)"),
+            Ok(_) => {
+                eprintln!(
+                    "axon-vm: AXON_ATTEST_KEY is shorter than 16 bytes — refusing \
+                     to attest under a key that weak"
+                );
+                process::exit(10); // attestation failure, as elsewhere in this file
+            }
+            Err(e) => {
+                eprintln!("axon-vm: AXON_ATTEST_KEY is not valid hex ({e})");
+                process::exit(10); // attestation failure, as elsewhere in this file
+            }
+        },
+        _ => {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"axon-r26-software-tpm-ephemeral-key");
+            h.update(process::id().to_le_bytes());
+            (
+                h.finalize().to_vec(),
+                "ephemeral per-process (signer == verifier)",
+            )
+        }
     };
+    eprintln!("attestation key: {key_source}");
 
     // Sign the measurement with the software-TPM key.
     let report = sign_report(measurement.clone(), &key);
@@ -986,7 +1017,7 @@ fn cmd_attest(
             Ok(bytes) if bytes.len() == 32 => {
                 let expected_arr: [u8; 32] = bytes.try_into().unwrap();
                 let expected_tcb = verify_axtcb1.as_deref().unwrap_or(&measurement.axtcb1);
-                match verify_report(&report, &expected_arr, expected_tcb) {
+                match verify_report(&report, &expected_arr, expected_tcb, Some(&key)) {
                     Ok(()) => (
                         true,
                         "✓ attested: measurement matches, axtcb1 chained".to_string(),
@@ -1013,7 +1044,14 @@ fn cmd_attest(
             let job_bytes = prog.to_string_lossy().as_bytes().to_vec();
             let expected_arr = report.measurement.digest;
             let expected_tcb = report.measurement.axtcb1.clone();
-            match try_admit_job(&report, &expected_arr, &expected_tcb, &job_bytes, 42u64) {
+            match try_admit_job(
+                &report,
+                &expected_arr,
+                &expected_tcb,
+                Some(&key),
+                &job_bytes,
+                42u64,
+            ) {
                 Ok(rec) => Some(rec),
                 Err(e) => {
                     eprintln!("axon-vm attest: job admission failed: {e}");
