@@ -203,14 +203,38 @@ const CMD_STARTERS: &[&str] = &[
     ";", "&&", "||", "|", "(", "&", "then", "do", "else", "bash", "sh", "source", "exec", ".", "!",
 ];
 
+/// Is this token position inside the TEXT of an `echo`/`printf`? Everything after
+/// such a command is a message, not a command — `gate.sh` ends by echoing
+/// `./scripts/parity_all.sh` as advice to the reader, and a usage string commonly
+/// contains `bash scripts/<itself>.sh`.
+fn echo_text_positions(toks: &[String]) -> Vec<bool> {
+    let mut out = vec![false; toks.len()];
+    let mut in_echo = false;
+    let mut cmd_start = true;
+    for (i, t) in toks.iter().enumerate() {
+        if matches!(t.as_str(), ";" | "&&" | "||" | "|" | "(" | ")" | "&") {
+            in_echo = false;
+            cmd_start = true;
+            continue;
+        }
+        if cmd_start && (t == "echo" || t == "printf") {
+            in_echo = true;
+        }
+        out[i] = in_echo;
+        cmd_start = matches!(t.as_str(), "then" | "do" | "else" | "!");
+    }
+    out
+}
+
 /// Does this shell line INVOKE `script` (as opposed to naming it in a test, an
 /// echo, or a message)? Command position is the whole point: `[[ -f
 /// "$REPO/scripts/x.sh" ]]` names it and does not run it.
 fn sh_invokes(line: &str, script: &str) -> bool {
     let suffix = format!("scripts/{script}");
     let toks = sh_tokens(line);
+    let echoed = echo_text_positions(&toks);
     for (i, t) in toks.iter().enumerate() {
-        if !t.ends_with(&suffix) {
+        if !t.ends_with(&suffix) || echoed[i] {
             continue;
         }
         // Reject `foo_scripts/x.sh`: the char before `scripts/` must be a path sep.
@@ -229,7 +253,11 @@ fn sh_invokes(line: &str, script: &str) -> bool {
 fn sh_glob_patterns(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let toks = sh_tokens(line);
+    let echoed = echo_text_positions(&toks);
     for (i, t) in toks.iter().enumerate() {
+        if echoed[i] {
+            continue;
+        }
         let Some(pos) = t.find("scripts/") else {
             continue;
         };
@@ -1076,10 +1104,15 @@ fn fixture_doc_only_reference_is_orphan() {
 #[test]
 fn fixture_self_reference_only_is_orphan() {
     let f = Fixture::new("self_reference");
-    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n").write(
-        "scripts/lonely_gate.sh",
-        "#!/usr/bin/env bash\n# lonely_gate.sh — usage: scripts/lonely_gate.sh --check\necho hi\n",
-    );
+    // Both self-reference forms at once: the header comment (what fooled the
+    // ledger's probe) and a usage line that survives comment-stripping and reads
+    // as a command — `bash scripts/lonely_gate.sh` in command position.
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
+        .write(
+            "scripts/lonely_gate.sh",
+            "#!/usr/bin/env bash\n# lonely_gate.sh — the R99 acceptance gate\n\
+         usage() { bash scripts/lonely_gate.sh --check; }\n",
+        );
     assert_eq!(f.facts().observe("lonely_gate.sh"), Class::Orphaned);
 }
 
@@ -1089,7 +1122,8 @@ fn fixture_comment_in_gate_is_not_a_caller() {
     let f = Fixture::new("comment_only");
     f.write(
         "scripts/gate.sh",
-        "#!/usr/bin/env bash\n# TODO: wire ./scripts/ghost.sh once it passes\necho hi\n",
+        // Command-shaped, so only the comment rule can reject it.
+        "#!/usr/bin/env bash\n# TODO, once it passes:\n#   bash scripts/ghost.sh --check\necho hi\n",
     )
     .write("scripts/ghost.sh", "#!/usr/bin/env bash\necho hi\n");
     assert_eq!(f.facts().observe("ghost.sh"), Class::Orphaned);
@@ -1471,4 +1505,27 @@ fn fixture_manifest_row_needs_a_reason() {
     ))
     .unwrap_err()
     .contains("unknown class"));
+}
+
+/// A script named inside an `echo` is advice to the reader, not a caller.
+/// `gate.sh` ends by echoing `./scripts/parity_all.sh` as a suggestion, and many
+/// scripts print a usage line naming themselves.
+#[test]
+fn fixture_echo_text_is_not_invocation() {
+    let f = Fixture::new("echo_text");
+    f.write(
+        "scripts/gate.sh",
+        "#!/usr/bin/env bash\necho \"to check that, run: bash scripts/advice.sh --all\"\n",
+    )
+    .write("scripts/advice.sh", "#!/usr/bin/env bash\necho hi\n");
+    assert_eq!(f.facts().observe("advice.sh"), Class::Orphaned);
+
+    // …and an echo followed by a REAL invocation on the same line still counts.
+    let g = Fixture::new("echo_then_run");
+    g.write(
+        "scripts/gate.sh",
+        "#!/usr/bin/env bash\necho running && bash scripts/advice.sh\n",
+    )
+    .write("scripts/advice.sh", "#!/usr/bin/env bash\necho hi\n");
+    assert_eq!(g.facts().observe("advice.sh"), Class::StrictGate);
 }
