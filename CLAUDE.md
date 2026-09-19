@@ -11,15 +11,47 @@ allowed — so package managers, git and HTTP APIs need no setup.
 That permissiveness lives in a **named profile**, never in what a low-level
 primitive silently means:
 
-| Profile | fs_read / fs_write | net | exec |
-|---|---|---|---|
-| `developer` (default) | `["*"]` | `["*"]` | any |
-| `balanced` | `["./"]` | `["*"]` | any |
-| `restricted` | `[]` | `[]` | none |
-| `hermetic` | `[]` | `[]` | none |
+| Profile | fs_read / fs_write | net | exec | reproducible |
+|---|---|---|---|---|
+| `developer` (default) | `["*"]` | `["*"]` | any | no |
+| `balanced` | `["./"]` | `["*"]` | any | no |
+| `restricted` | `[]` | `[]` | none | no |
+| `hermetic` | `[]` | `[]` | none | **yes** |
+
+`restricted` and `hermetic` used to be byte-identical, which is two names for
+one behaviour. There is no authority left to REMOVE at `restricted`, so the
+distinction is REPRODUCIBILITY — a hermetic run must not depend on anything
+ambient that can differ between two executions:
+
+* no operator `AXON_*` variable is forwarded to the job (`AXON_AI_MOCK`,
+  `AXON_AUDIT_LEDGER`, `AXON_PATH`, `AXON_MAX_DEPTH` … are dropped), so the run
+  cannot be steered by whichever shell launched it;
+* the clock is virtual and seeded (`AXON_CLOCK=0:1`), so `now_ms()` is a
+  function of the run rather than of when it happened — this only bites where a
+  `Time` effect is granted, since these profiles otherwise refuse the call;
+* the RNG seed is fixed, as it already was for every profile.
+
+`reproducible` rides on the grant, and `Grant::intersect` ORs it: intersection
+narrows, so if either side demands reproducibility the result has it. Taking the
+AND would let a broad supervisor grant relax a hermetic job.
 
 A job manifest picks one with `profile = "…"` (absent ⇒ `developer`; a
 misspelling is an ERROR, never a silent fall back to the permissive default).
+
+A manifest may also set `require_approval = true`. That is a JOB POLICY, kept
+deliberately separate from whether a sign-off token is PRESENT, which is runtime
+EVIDENCE — neither is inferred from the other:
+
+| policy | token | outcome |
+|---|---|---|
+| not required | absent | runs — `Approval: not required` |
+| not required | valid | runs — `Approval: verified (not required by this job)` |
+| required | absent | **exit 8** — `approval required but missing` |
+| required | valid | runs — `Approval: required and verified` |
+| either | INVALID | **exit 8** — a signature that does not hold is a failure regardless of policy |
+
+Absent policy means NOT required, so existing manifests keep working: the same
+"easy by default, explicit lockdown when needed" posture as the profile itself.
 An **omitted** dimension takes the profile's default and is MATERIALISED into
 the grant, so `axon-os` writes back `net = ["*"]` rather than leaving it blank.
 An **explicitly empty** `net = []` means no network — "I did not say" and "I
@@ -169,6 +201,7 @@ benchmark when the language card did it.
 | `AXON_GOAL_CONTINUE` | Resume a `goal` search from the best prior input in the provenance log (set automatically by `axon goal --iterate` for runs 2..N) |
 | `AXON_REQUIRE_CERTS` | Fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_ALLOWED_EFFECTS` | Comma-separated effect ceiling for the whole run — the ambient counterpart to `sandbox_create`, for a caller who cannot edit the program to wrap it. Enforced by the same F5 hook (`SandboxViolation`, exit **8**), and it is a true ceiling: an inner `sandbox_create`/`sandbox_run` may only narrow it, never widen. Effect names are the coarse rows (`IO` covers `println`/`read_file`/`write_file`/`env_var`; `Exec` must be granted separately, `IO` never implies spawn), so `AXON_ALLOWED_EFFECTS=Pure` refuses even `println`. An EMPTY value means "deny every effect" and is NOT the same as unset (no ceiling). **Interpreter-only**, like the rest of F5 — a natively-built binary ignores it, and being ambient there is no call site to E0910-refuse at |
+| `AXON_ATTEST_KEY` | Operator-provisioned attestation key (hex, ≥16 bytes). When set, `axon-vm` both SIGNS and VERIFIES the attestation report under it, so a report signed by anyone else fails — this is what makes the HMAC check mean something across processes. Unset falls back to an ephemeral per-process key, where signer and verifier are the SAME process: real integrity over the measurement, but attesting nothing to a third party. `axon-vm` prints which it used, because that distinction is the whole security story |
 | `AXON_PRINCIPAL` | The principal a run executes as. Identity for AUDIT ATTRIBUTION only (the `principal` field on every `ai_call`/`agent_action` record) — it grants and withholds nothing; capabilities come from the kernel `Principal` registry |
 | `AXON_BUDGET_TOKENS` | Ambient run-level AI **token** cap. The (first) `ai_complete` whose estimated tokens would take the run past it halts with **E1303** (exit 5, AI-policy) BEFORE any model dispatch, so nothing is charged and no response arrives. Complementary to R3c's `@[ai(policy(budget: N))]`, not redundant: that is a per-fn CALL count the program's author declares, this is a run-wide TOKEN cap imposed from outside that the program cannot raise. Uses the same deterministic pre-dispatch estimate R3c does, so mock/replay/live gate identically. `0` means no AI at all; a malformed value **fails closed to 0** with a warning rather than silently disarming the cap. Set by `axon-guest-init` from the VM's MMDS policy — and if that policy cannot be read, the guest now REFUSES to start rather than running with no cap at all (`AXON_GUEST_ALLOW_NO_POLICY=1` opts out, development only) |
 | `AXON_AI_PROVIDER` / `AXON_AI_BASE_URL` / `AXON_AI_API_KEY` | Live-AI routing: `anthropic` \| `openai` codec, gateway URL, key. `.env` is honoured (`AXON_DOTENV`) — see `crates/axon-ai/README.md` |
@@ -258,7 +291,9 @@ examples/
 
 ```axon
 // Variables
-let x = 42            // i64
+let x = 42            // i64 — also 0xFF (hex), 0b1010 (binary), 0o755 (octal),
+                      //   with `_` separators. A LEADING ZERO stays decimal:
+                      //   `017` is 17, not 15 — Axon has no C-style implicit octal.
 let y = 3.14          // f64
 let s = "hello"       // str
 let b = true          // bool
@@ -296,6 +331,15 @@ println("hello {name}, age {to_str(age)}")
 //           to_str (polymorphic over scalars: i64/f64/bool) parse_int len
 //           to_str_f64 to_str_bool (explicit forms; to_str now covers them)
 //           abs_i32 abs_f64 min_i32 max_i32
+//           wrapping_add wrapping_sub wrapping_mul wrapping_div wrapping_rem
+//             — modular arithmetic, the deliberate opt-out from the checked
+//               operators. Axon's semantics are STATED, not inherited:
+//               wrapping_div(i64::MIN, -1) = i64::MIN (the wrap of an
+//               unrepresentable 2^63), wrapping_rem(i64::MIN, -1) = 0 (that
+//               value IS representable; x86 `idiv` traps on the pair, which is
+//               a fact about the instruction and not the answer), and ANY
+//               divisor of 0 still PANICS in both engines — zero has no
+//               wrapped quotient, so returning one would be inventing a result.
 //           assert assert_eq assert_err
 
 // Testing
