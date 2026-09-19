@@ -576,3 +576,57 @@ each of the seven differentially checked against the interpreter rather than
 accepted because the build stopped failing. Two differential cases moved
 diverge -> agree, exactly the transitions recorded as predictions before either
 fix existed.
+
+## The pattern, with every instance found today
+
+One defect class accounts for nearly everything this sweep found:
+
+> **A success signal produced by machinery that never performed the
+> underlying check.**
+
+Not "a check that failed silently" — a check that never ran, reporting the
+same value it would report on success. The instances, with how each was
+detected:
+
+| instance | what reported success | detected by |
+|---|---|---|
+| native codegen fabricated a return value | clean build, exit 0, no diagnostic | heuristic: documented limitation + literal substitution |
+| ...same, in a closure body | clean build | feeding the gate a case it should reject |
+| ...same, as an infinite `while let` | clean build | re-running the heuristic after the first two |
+| `@[bpf]` `if` returned neither branch | clean build, valid object | zero-coverage sweep |
+| BPF objects emitted without IR verification | valid-looking `.o` | asking what the emit path asserts |
+| `wasm_aot_stdout_parity` compared nothing | exit 0, "0 match, 0 differ" | coverage audit, demonstrated with `AXON=/bin/false` |
+| `tee_sim_run` called a build failure a skip | exit 0 | reading the skip paths |
+| two harnesses invoked by nothing | never ran at all | grep for callers |
+| `eprint` / `gaussian_sample` "covered" | static query scored them covered | panic-on-call mutation |
+| 4 property tests ran nowhere — and FAILED | nothing reported anything | asking what executes them |
+| a background gate "exit code 0" | harness notification | reading the log, not the notification |
+
+Eleven instances, one class. The through-line for detection is also singular:
+**every one was found by asking what ACTUALLY executed, and none by reading
+code or diffs.** The diffs were correct. The code looked right. The reports
+said fine.
+
+### The three detectors that did all the work
+
+1. **Mutation** — break the thing, confirm something notices. Finds tests that
+   do not test and coverage that does not cover.
+2. **Feed the gate a case it must reject** — mutation's rule applied to an
+   admission gate rather than a test. Found the closure hole that a correct,
+   complete diff could not reveal.
+3. **Instrument and sweep the corpus** — put an eprintln on the suspect branch,
+   build everything, count. Turns "is this reachable?" from an argument into a
+   measurement. Used for the fabricated return (2 of 328 live), the `while let`
+   hang (0 of 328, reported as unverified rather than claimed), and the masked
+   programs (9 of 12 saved only by an unrelated refusal).
+
+### The counterexample worth keeping
+
+`dict_parity.sh` printed SKIP and its Rust wrapper refused it:
+
+    harness `dict_parity.sh` FAILED (exit Some(1)) — a failure is never a
+    skip, whatever it printed
+
+Someone had already been burned by exactly this and built the guard. That is
+what the fix looks like when it is done properly: not a repaired instance, but
+a wrapper that cannot be lied to.
