@@ -238,3 +238,41 @@ codegen error has been recorded. Record an E0910 naming the function when a
 non-Unit body lowers to nothing, so the general case becomes a refusal instead
 of an invented value. Regression check must confirm the 2 silent programs now
 refuse AND that none of the 295 previously-clean programs starts failing.
+
+## The instrument for the two pending fixes — `scripts/build_outcome_regression.sh`
+
+Both pending fixes make a claim of the shape "exactly these programs move, and
+nothing else does". That claim is only checkable against a baseline trusted in
+BOTH directions, so the harness is symmetric by construction: it diffs sorted
+observed-vs-baseline and classifies every differing row, rather than looping
+over one side and looking the other up (the way a one-way check gets written by
+accident — it cannot see a row the baseline lacks).
+
+```
+scripts/build_outcome_regression.sh              # sweep + differential (~1 min, JOBS=6)
+scripts/build_outcome_regression.sh --self-test  # prove the comparators FAIL when they should
+scripts/build_outcome_regression.sh --record     # re-baseline, as a deliberate act
+```
+
+Committed baselines: `scripts/build_outcome_baseline.tsv` (328 rows: exit
+status + path) and `scripts/build_differential_baseline.tsv` (6 declared
+interpreter↔native cases). The handed-over 328-program baseline REPRODUCED
+exactly — 166 exit-0, 161 exit-1, 1 exit-2, no membership drift.
+
+Pre-fix differential state, measured (stdout, never exit codes — Axon remaps
+2..=15 and 101 onto 1, so a status comparison passes on a wrong value):
+
+| case | state |
+|---|---|
+| `crates/axon-core/tests/fixtures/ai_extract_uncertain.ax` | **diverge** — interp prints `1`, native prints nothing (the fabricated `Result` zero is tag 0 = `Err("")`, so the `Err` arm runs); both exit 0 |
+| `examples/asi/search_rank.ax` | **agree** — both stop at the same `@[verify]` failure in `deploy_gate` and print identical stdout, exit 3 both |
+| synthetic match-arm field read (the isolated repro) | **diverge** — interp `7`, native `0` |
+| synthetic match-arm, NO field read (control) | agree `7` |
+| synthetic `let`-bound field read (control) | agree `7` |
+| synthetic `sandbox_run` (control) | `native-refused-e0910` — a reported outcome, NOT a pass and NOT a skip |
+
+The `search_rank` row is the one to read carefully: it is one of the two
+programs that reach the fabricating branch on a SUCCEEDING build, and the
+stdout differential still calls it `agree`. Its row is a change-detector, not a
+certificate — a harness is blind wherever the fabricated value does not reach
+stdout.
