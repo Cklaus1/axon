@@ -254,6 +254,24 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
             return ExitCode::from(8);
         }
         println!("\u{2713} approval verified (program + grant unedited since sign-off)");
+    } else {
+        // An ABSENT token is not a verified one. The gate is opt-in by the
+        // presence of the very artifact it checks (triage OSK-P4-H8), and until
+        // now an unapproved run printed nothing about sign-off and archived a
+        // record with no approval field at all — so a reviewer reading that
+        // record could not tell "signed off" from "nobody checked". That is the
+        // absent-vs-verified collapse, in the artifact whose whole job is to be
+        // the evidence.
+        //
+        // This says so; it deliberately does NOT refuse. Making a missing token
+        // exit 8 is a policy change (the finding's own fix sketch proposes
+        // driving it from risk level or a manifest field), and that is the
+        // operator's decision, not this function's.
+        println!(
+            "\u{26a0} NOT APPROVED: no sign-off token at {} — this run was not \
+             checked against one. A missing approval is not a passed approval.",
+            approval_path.display()
+        );
     }
 
     // ── Kill-file setup (R27 + R29) ───────────────────────────────────────────

@@ -134,7 +134,7 @@ echo "── gate: clippy runtime crates (-D warnings) ────────�
 cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
-  -p axon-guest-init -p axon-wasm --all-targets -- -D warnings \
+  -p axon-guest-init -p axon-wasm -p axon-cortex --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 # COVERAGE CHECK — the note above has been written three times and the list

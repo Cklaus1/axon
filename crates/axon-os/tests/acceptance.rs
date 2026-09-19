@@ -82,6 +82,64 @@ fn os(args: &[&str], axon: &Path, extra_env: &[(&str, &str)]) -> Out {
     }
 }
 
+/// An ABSENT approval token must be REPORTED, not silently treated as a passed
+/// one (triage OSK-P4-H8). The gate is opt-in by the presence of the very
+/// artifact it checks, and an unapproved run used to print nothing at all about
+/// sign-off — so its output and its archived record were indistinguishable from
+/// an approved run's.
+///
+/// This pins the REPORTING, not a policy: a missing token still runs and still
+/// exits 0. Making it exit 8 is an operator decision (the finding proposes
+/// driving it from risk level or a manifest field) and is deliberately not
+/// taken here.
+#[test]
+fn an_absent_approval_token_is_reported_not_silently_passed() {
+    let Some(axon) = axon_bin() else { return };
+    let d = tmp("approval-absent");
+    let prog = d.join("p.ax");
+    std::fs::write(&prog, "fn main() -> i64 {\n  0\n}\n").unwrap();
+    let job = d.join("j.axjob");
+    std::fs::write(
+        &job,
+        format!(
+            "program = \"{}\"\nintent = \"t\"\nseed = 1\n[grant]\nfs_read = []\n\
+             fs_write = []\nnet = []\nexec = \"none\"\nmax_label = \"internal\"\n\
+             [grant.budget]\ncalls = 5\n",
+            prog.display()
+        ),
+    )
+    .unwrap();
+    assert!(
+        !job.with_extension("approval").exists(),
+        "precondition: no token"
+    );
+    // The grant is empty, so the program must need NO effects — a `println`
+    // here would exit 8 on the sandbox check and this test would be measuring
+    // the sandbox instead of the approval report.
+
+    let out = os(
+        &["run", job.to_str().unwrap(), "--out", d.to_str().unwrap()],
+        &axon,
+        &[],
+    );
+    assert_eq!(
+        out.code, 0,
+        "an absent token must NOT change the outcome: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("NOT APPROVED"),
+        "an absent token must be reported: {}",
+        out.stdout
+    );
+    // The inverse matters as much: it must not CLAIM verification it did not do.
+    assert!(
+        !out.stdout.contains("approval verified"),
+        "an unapproved run must never claim verification: {}",
+        out.stdout
+    );
+}
+
 // ── A1: the end-to-end operator journey through the real CLI ─────────────────
 #[test]
 fn acc_a1_smoke_user_journey() {
