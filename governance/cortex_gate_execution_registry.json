@@ -1,0 +1,16 @@
+{
+  "schema": "cortex-gate-execution/1",
+  "purpose": "The ONLY place this repository may record that a Cortex v0.15 product gate or work package has moved off its shipped, honest default. scripts/cortex_package_gate.sh fails if docs/axon_cortex_v0_15/.../gate_manifest.json claims a product_result other than NOT_RUN, or task_manifest.json a status other than 'Not started', without a matching row here that names a file in THIS repo which actually runs and is actually invoked.",
+  "how_to_add_a_row": [
+    "1. Implement the gate for real as a repo-owned script or test (e.g. scripts/cx02_observation_gate.sh). It must exit non-zero when the property it checks is false.",
+    "2. Wire it into an invoker that actually runs -- normally scripts/gate.sh. scripts/cortex_package_gate.sh greps the invoker for the executed_by path, so a row naming a script nothing calls is REJECTED. That is what stops this file becoming a rubber stamp.",
+    "3. Add a row below with gate_id, executed_by (repo-relative), invoked_by (repo-relative), allowed_product_result and a note saying what is measured. Every row is re-validated on every gate run, including rows for gates the package still reports as NOT_RUN -- a row whose script is deleted or unwired breaks the day it rots, not the day someone flips a manifest.",
+    "4. Do NOT edit the vendored gate_manifest.json. Two independent things forbid it: the package's own tools/validate_package.py hard-fails on any product_result other than NOT_RUN ('package must not claim a product run'), and SHA256SUMS_v0_15.json pins the file. NOT_RUN is a true statement about the PACKAGE -- 'this package does not execute it' -- and stays true no matter what this repository implements. This registry, not the vendored manifest, is where this repository records that it runs a gate.",
+    "5. If a future upstream release re-vendors the package WITH results filled in, the honesty check will accept a non-NOT_RUN product_result only for gates that have a valid row here, and only when the result is in allowed_product_result.",
+    "Removing a gate's implementation means removing its row."
+  ],
+  "gates": [],
+  "tasks": [],
+  "tasks_note": "A work package status other than 'Not started' needs a row in `tasks` with task_id and allowed_status. A status in {Done, Complete, Completed, Landed} additionally requires every one of that task's gate_targets to have a valid row in `gates` -- so 'Done' cannot launder an unexecuted gate.",
+  "checked_by": "scripts/cortex_package_gate.sh"
+}
