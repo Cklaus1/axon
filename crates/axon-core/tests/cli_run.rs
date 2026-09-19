@@ -29192,7 +29192,65 @@ fn the_ungated_phase_fixtures_are_gated() {
 }
 
 #[test]
-fn three_phase_fixtures_describe_features_this_build_does_not_have() {
+/// Octal literals lex, like hex and binary.
+///
+/// `0xFF` and `0b1010` both lexed and `parse_int_radix` already stripped an
+/// `0o` prefix at RUNTIME — only the lexer did not know, so `0o17` was consumed
+/// as `Int(0)` followed by an identifier `o17` and died as E0000. The asymmetry
+/// had no reason behind it and was previously recorded as a known gap.
+#[test]
+fn octal_literals_lex_like_hex_and_binary() {
+    let run = |src: &str| -> (i32, String) {
+        let f = tmp_ax("octal", src);
+        let out = axon().arg("run").arg(&f).output().expect("spawn");
+        let _ = std::fs::remove_file(&f);
+        // STDOUT only. `axon run` writes `axon: run-id …` to STDERR, so a
+        // combined read takes THAT as the last line and every value comparison
+        // fails for a reason that has nothing to do with the literal.
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
+    };
+    for (src, want) in [
+        ("fn main() { println(to_str(0o17)) }\n", "15"),
+        ("fn main() { println(to_str(0o755)) }\n", "493"),
+        ("fn main() { println(to_str(0O17)) }\n", "15"), // uppercase
+        ("fn main() { println(to_str(0o7_7)) }\n", "63"), // underscores
+        // Controls: the other two families are untouched, and a LEADING ZERO
+        // is still decimal — Axon has no C-style implicit octal, and adding one
+        // by accident would silently change the value of `017`.
+        ("fn main() { println(to_str(0xFF)) }\n", "255"),
+        ("fn main() { println(to_str(0b1010)) }\n", "10"),
+        ("fn main() { println(to_str(017)) }\n", "17"),
+    ] {
+        let (code, out) = run(src);
+        assert_eq!(code, 0, "`{src}` must run: {out}");
+        assert_eq!(
+            out.lines().next_back().unwrap_or(""),
+            want,
+            "wrong value for `{src}`"
+        );
+    }
+    // A digit outside the base is a lex error, not a silently truncated value.
+    // Out-of-base digits are refused. Note the regex restricting digits to
+    // [0-7] is NOT load-bearing for accept/reject — `from_str_radix` catches an
+    // out-of-range digit anyway, and mutation testing confirmed widening it to
+    // [0-9] changes no outcome. It is kept because it states what an octal
+    // literal IS, and because a partial match (`0o18` → `0o1` then `8`) must
+    // not become a silent two-token sequence. That case is asserted here.
+    for bad in [
+        "fn main() { println(to_str(0o8)) }\n",
+        "fn main() { println(to_str(0o)) }\n",
+        "fn main() { println(to_str(0o18)) }\n",
+        "fn main() { let a = [0o18]\n println(to_str(len(a))) }\n",
+    ] {
+        let (code, _) = run(bad);
+        assert_ne!(code, 0, "`{bad}` must be refused");
+    }
+}
+
+fn two_phase_fixtures_describe_features_this_build_does_not_have() {
     // The other three of the fourteen do NOT check, and pinning why is the
     // point: each names a feature the build does not implement, so a future
     // reader does not mistake an aspirational fixture for a regression.
@@ -29208,16 +29266,6 @@ fn three_phase_fixtures_describe_features_this_build_does_not_have() {
             String::from_utf8_lossy(&o.stderr)
         )
     };
-
-    // Octal literals. Hex (`0xFF`) and binary (`0b1010`) both work, and
-    // `parse_int_radix` already accepts and strips an `0o` prefix — so the
-    // runtime knows about octal while the lexer does not. An odd gap, recorded
-    // here rather than quietly implemented.
-    let oct = err_of("phase61_numeric_literals.ax");
-    assert!(
-        oct.contains("cannot find name `o17`"),
-        "octal literals are still unlexed: {oct}"
-    );
 
     // `let Ok(v) = … else { … }` — let-else over a PATTERN. Undocumented in the
     // grammar or the reference; the fixture is ahead of the parser.

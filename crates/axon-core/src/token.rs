@@ -190,6 +190,16 @@ pub enum Token {
         let hex = &s[2..]; // strip "0x"/"0X"
         i64::from_str_radix(&hex.replace('_', ""), 16).map_err(|_| ())
     })]
+    // Octal integer: 0o17, 0o755 (file modes are the common case).
+    // Hex and binary both lexed; octal did not, so `0o17` was consumed as
+    // Int(0) followed by the identifier `o17` and died as E0000 — an asymmetry
+    // with no reason behind it, and `parse_int_radix` already strips a `0o`
+    // prefix at runtime.
+    #[regex(r"0[oO][0-7][0-7_]*", |lex| {
+        let s = lex.slice();
+        let oct = &s[2..]; // strip "0o"/"0O"
+        i64::from_str_radix(&oct.replace('_', ""), 8).map_err(|_| ())
+    })]
     // Binary integer: 0b1010, 0b1111_0000
     #[regex(r"0[bB][01][01_]*", |lex| {
         let s = lex.slice();
