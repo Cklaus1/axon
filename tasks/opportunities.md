@@ -2042,3 +2042,13 @@ concrete reason to expect it will not.
   (3) ONE `cargo fmt --all` sweep commit, no logic — must come AFTER (1)/(2) or the next differing
   rustfmt re-dirties it; (4) add `cargo fmt --all --check` to `gate.sh`. **Supersede PR #4:** its
   5-file format is a subset of the 38, and its CI-only pin cannot fix a local rolling channel.
+
+## From the Axon Cortex build loop (2026-09-19)
+
+- **[medium] `editing_an_imported_module_invalidates_the_build_cache` flakes under
+  parallel workspace execution.** Passes 3/3 isolated; fails inside
+  `cargo test --workspace`. It shells out to `axon build`, as do 30 other
+  cli_run tests, and they contend on the shared `target/` dir. Candidate fix:
+  give build-invoking tests their own `CARGO_TARGET_DIR`, or serialise them
+  behind a shared lock. Discovered as the Step 0 baseline failure; logged, not
+  fixed, because it is outside every Cortex task's scope.
