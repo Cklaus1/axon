@@ -1,0 +1,96 @@
+# Dependency-ordered build work packages
+
+All entries are **Not started**. Gate targets name the eventual acceptance checks touched by a slice, not scripts already implemented. Documentation/intake slices complete with reviewed artifacts; full runtime gate claims wait for executable prerequisites. Optional research/host/compiler branches are not mandatory dependencies of the M1–M7 core.
+
+Use [BUILD_PROTOCOL](BUILD_PROTOCOL.md) for every slice and [WORK_PACKAGE template](../templates/WORK_PACKAGE.md) to expand the selected row before editing code.
+
+| Slice | Stage / lane | Work | Depends on | Concrete output | Gate targets |
+|---|---|---|---|---|---|
+| B00 | M0 / contracts | Import and reconcile the package | — | Owner-reviewed naming, scope and CX-to-repository ID mapping; preserve existing governance. | G00-contract |
+| B01 | M0 / contracts | Audit Axon seams and engine guarantees | B00 | Commit-pinned evidence matrix; record native ceiling, missing-gate, FFI, R44 and OS discrepancies. | G00-missing-gate, G15-parity |
+| B02 | M0 / evaluation | Freeze task, safety and evaluation policy | B01 | Reviewed initial workload, required gates, host profile, budgets, split rules and evaluation margins. | G00-contract, G01-evidence |
+| B03 | M0 / evaluation | Build resettable task fixtures and simple controls | B02 | Tiny repair fixtures plus stale/malicious/crash cases; strong-model and rules control definitions. | G01-reset, G01-fairness |
+| B04 | M0 / contracts | Implement common manifests and event schemas | B01, B02 | Validated Run/Action/Evidence contracts, versions, canonical digests and negative schema tests. | G00-contract, G04-schema, G10-lineage |
+| B05 | M1 / observer | Implement partial software observations | B03, B04 | Content-based snapshots, incomplete AST/diagnostics and scope-expansion path. | G02-canonical, G02-partial, G02-recall |
+| B06 | M1 / executor | Implement grants and denial-first catalog | B04, B05 | Principal/session/snapshot-bound grant registry; forged and stale references denied. | G03-forgery, G03-budget |
+| B07 | M1 / executor | Implement the H0 isolated tool host | B01, B04, B06 | Tested local sandbox, environment projection, process-tree cancellation and quotas. | G13-escape, G13-kill, G13-quota |
+| B08 | M1 / executor | Implement local patch transactions | B05, B06, B07 | Immutable patch artifacts, constrained apply, locked/CAS commit and rollback. | G03-payload, G03-race |
+| B09 | M1 / executor | Execute registered checks with durable action states | B03, B07, B08 | Approved test/build adapter, write-ahead action state and crash reconciliation. | G03-crash, G13-recovery |
+| B10 | M1 / runtime | Implement AIR validation and serial scheduler | B04, B06 | Typed graph execution with explicit dependencies, bounded iteration and effect checks. | G04-schema, G04-effect, G04-scheduler |
+| B11 | M1 / models | Add mock decision and generation adapters | B10 | Deterministic fixture adapters with clear mock provenance, invalid-result tests and no authority. | G05-schema, G05-branch |
+| B12 | M1 / evaluation | Implement protected final verification | B03, B09 | Agent cannot alter hidden checks; final artifact digest and task contract determine completion. | G03-done, G01-leakage |
+| B13 | M1 / evidence | Integrate raw/redacted events and exact replay | B04, B09, B10, B11 | Record model/tool seam; replay without effects; secret-safe review view. | G10-replay, G10-secrets, G10-crash |
+| B14 | M1 / integrator | Run deterministic end-to-end conformance | B11, B12, B13 | Safe repair golden path plus adversarial, cancellation and recovery demonstrations. | G00-mutation, G03-done, G10-replay |
+| B15 | M1 / models | Add an authorized existing-model backend | B02, B07, B10, B13, B43 | Pinned model adapter for bounded decisions and untrusted patch generation; explicit fallback and accounting. | G04-fallback, G05-schema |
+| B16 | M1 / integrator | Compare the real-model vertical slice to controls | B14, B15 | Protected task-family results, full costs, quality intervals and independent milestone evidence. | G01-ablation, G01-evidence |
+| B17 | M2 / models | Freeze backend-neutral Reflex ABI and score provenance | B15, B16 | Choice/Binary/Ordinal contracts, dynamic candidate manifests, typed probability origins, and generative/direct-logit/sequence/learned adapter conformance scaffold. | G05-schema, G05-tokenization |
+| B21 | M2/M3/M5 / evidence | Implement eligible learning/decision-corpus export and label lineage | B13, B16 | Purpose-scoped dynamic-choice datasets, grouped protected splits, verified/human/teacher/weak/delayed/unknown labels, attribution records and revocation lineage. | G10-secrets, G10-lineage, G10-attribution |
+| B18 | M2 / models | Build Reflex decision corpus, destructive controls and shared-state/speculative path | B17, B21 | Grouped verified decision corpus; shuffled/empty/wrong/stale-state and option-order/ID controls; branch-specific targets; serial/parallel/shared-prefix timing. | G05-branch, G05-isolation, G05-performance |
+| B19 | M2 / models | Run calibration lab and implement selective routing | B02, B16, B17, B18 | Pinned calibration artifacts by probability origin; proper scoring, risk/coverage/VUC, deterministic fallback, explicit OOD/abstention and budget control. | G06-calibration, G06-risk, G06-coverage, G06-budget |
+| B20 | M2 / integrator | Run multi-backend Reflex bakeoff and decide adoption | B18, B19, B42, B43 | Compare generative, direct-logit, sequence and learned-head families on one protected corpus; retain only measured useful configurations; baseline remains active when evidence is inconclusive. | G05-performance, G06-shift, G01-evidence |
+| B22 | M3 / research | Match concrete action predictions to outcomes | B05, B13, B16, B21 | Patch/environment-bound prediction schema and simple dependency/base-rate baselines. | G07-target, G07-unknown |
+| B23 | M3 / research | Train short-horizon software predictors | B20, B22 | Diagnostic/test outcome models with held-out calibration and declared applicability. | G07-holdout, G07-unknown |
+| B24 | M3 / evaluation | Evaluate real planning value and model exploitation | B23 | No-model/simple-model/challenger ablations and adversarial candidate-search evidence. | G07-planning, G07-exploitation |
+| B25 | M4 / research | Implement hypotheses and permitted probe selection | B19, B24 | Bounded outer planner and concrete experiment artifacts over approved checks. | G08-hypothesis, G08-authority, G08-progress |
+| B26 | M4 / evaluation | Evaluate controlled interventions and diagnosis | B25 | Matched reset/control experiments; scoped causal claims and baseline comparison. | G08-controls, G08-value |
+| B27 | M5 / admission | Implement independent artifact admission | B12, B19, B21 | Protected candidate registry, digest-bound gate receipts and shadow/canary states. | G11-independent, G11-authority |
+| B28 | M5 / learning | Derive one guarded reusable tool/rule/policy | B20, B27 | Candidate with applicability predicate, empirical/proof scope and approved fallback. | G11-scope, G11-noninferiority |
+| B29 (optional) | Research / research | Run learned option-conditioned Reflex learning curves | B20, B21, B27 | Small-model/decision-head experiment over runtime candidate sets with grouped splits, destructive state controls and calibration; pursue or stop based on measured value. | G14-pilot, G14-quality |
+| B30 | M5 / integrator | Demonstrate promotion and rollback | B27, B28 | Independently admitted specialization, non-effecting shadow comparison and regression recovery. | G11-rollback, G11-independent |
+| B31 | M6 / research | Compare fixed alternative problem encodings | B24, B26 | Two traceable representations evaluated against compute-matched controls. | G09-lineage, G09-ablation |
+| B32 | M6 / research | Test learned concepts and held-out transfer | B31 | Typed concept/representation proposals with counterexamples, fit and novel-family evidence. | G09-counterexample, G09-transfer, G09-compression |
+| B33 | M7 / learning | Unify independently useful pillar lifecycles | B26, B30, B32 | At least two evaluated update pipelines share manifests, admission and rollback without shared authority. | G12-contract, G12-cause |
+| B34 | M7 / research | Add bounded curriculum and meta experiment allocation | B33 | Meta proposals with budgets; protected policy/audit boundary; task-generator lineage. | G12-meta, G12-curriculum |
+| B35 | M7 / evaluation | Run longitudinal stability and transfer checks | B34 | Pinned-version multi-episode improvement report, regression audit and no self-grading. | G12-stability, G12-meta |
+| B36 | OS-H1 / os | Harden hosted service operation | B16 | Job queues, durable restart, observability, revocation and configured host compatibility matrix. | G13-recovery, G13-quota, G13-tier |
+| B37 | Compiler / compiler | Audit stable runtime-to-language seams | B01, B16 | Actual R2a status, wrapper APIs, type ownership map, language-surface friction evidence. | G15-types, G15-docs |
+| B38 (optional) | Compiler / compiler | Integrate authoritative types for new semantics | B37 | Sequenced type-map change only when required; preserved import/AST identity and regression evidence. | G15-types, G15-parity |
+| B39 (optional) | Compiler / compiler | Add justified native/language/proof support | B20, B38 | Evidence-backed desugaring/native subset/proof receipts with explicit unsupported cases. | G15-proof, G15-optimization, G15-parity |
+| B40 (optional) | Research / research | Investigate specialized shared-state Reflex architecture | B29, B30 | Shared encoder/prefill, parallel typed heads, quantization/cache or RLCD-like training experiment only for a demonstrated serving/quality bottleneck; compare against B20 winners. | G14-parallel, G14-version, G14-release |
+| B41 (optional) | OS-K / os | Evaluate the separate bare-metal branch | B01, B36, B39 | Owner-approved kernel plan with actual confinement, syscall, driver and TCB obligations. | G13-tier, G15-proof |
+
+| B42 | M2 / contracts | Implement Reflex conformance fixtures and backend feature/effective-input receipts | B17 | Primitive-specific batch results keyed by QuestionId; provider/logit/sequence/generated score provenance; backend capability manifests; prompt-role/isolation/truncation/retry fixtures. | G05-schema, G05-isolation, G05-tokenization |
+| B43 | M0/M2 / supply-chain | Implement dependency/model/dataset adoption manifests | B01, B02 | Commit/license/security/transitive-model/tokenizer/encoder/dataset/evaluator lineage; benchmark comparability review; SDK transformation and hosted-profile checks. | G00-contract, G01-evidence, G13-tier |
+
+| B44 | M1/M2 / contracts | Freeze MiCode↔Axon experience bridge and conformance fixtures | B04, B13 | Versioned episode/observation/decision/knowledge schemas; authority separation; dummy producer/consumer; migration tests. | G16-schema, G16-authority, G16-version |
+| B45 | M2/M5 / evidence | Import one canonical MiCode coding episode into Cortex | B21, B44 | Provenance-preserving episode import, semantic replay, eligibility/lineage and source-system attribution. | G16-lineage, G16-replay, G10-lineage |
+| B46 | M8 / knowledge | Build external repository/history intake and knowledge-candidate extractor | B32, B45 | Read-only normalized repo/history evidence, pattern/counterexample store, license/data-use manifests and dedupe lineage. | G17-provenance, G17-license, G17-counterexample |
+| B47 | M8 / evaluation | Reproduce and evaluate one cross-repository knowledge candidate | B46 | Resettable local reproduction, benchmark/control evidence and held-out repository-family evaluation. | G17-reproduce, G17-heldout, G01-evidence |
+| B48 | M9 / learning | Synthesize one guarded skill/tool from admitted knowledge/episodes | B30, B47 | Pattern→Skill/Tool candidate with applicability, effects/capabilities, intermediate checks, fallback and full lineage. | G18-ladder, G18-authority, G11-scope |
+| B49 | M9 / admission | Demonstrate skill/tool promotion, use and deoptimization | B48 | Independently admitted artifact used on held-out tasks; injected applicability/regression case returns to previous-good path. | G18-deopt, G11-independent, G11-rollback |
+| B50 | M9 / integrator | Demonstrate closed self/external/generated experience loop | B35, B45, B49 | One report showing common evidence pipeline, source-separated ablations, failure attribution and OS-wide scorecard. | G12-stability, G16-lineage, G18-ladder |
+| B51 (optional) | Compiler/OS / compiler | Promote a proven capability into Axon library/compiler/runtime | B37, B49 | Measured native/library candidate with CX-15 parity/proof/invariant evidence; refusal/fallback if unjustified. | G18-native, G18-equivalence, G15-parity, G15-proof |
+
+| B52 | M0/M1 / contracts | Map existing Axon intent/surface/approval implementation | B01 | Commit-pinned map of `intent compile`, AST review/approve, structured-prose surface, authority/evidence semantics and drift. | G19-parse, G19-render |
+| B53 | M1 / contracts | Implement versioned Intent IR and round-trip fixtures | B04, B52 | Typed goal/constraints/preferences/authority/budget/evidence/ambiguity schema with provenance and migrations. | G19-parse, G19-ambiguity |
+| B54 | M1 / surface | Implement ambiguity resolution and deterministic semantic renderer | B53 | Explicit interpretation alternatives/questions, stable contract renderer/diff and digest-bound approval artifact. | G19-ambiguity, G19-render |
+| B55 | M1 / integrator | Lower approved Intent IR to constrained AIR | B14, B54 | Clause-traceable AIR graph; replanning can narrow/add checks but cannot widen authority/drop required evidence. | G19-authority, G19-trace |
+| B56 | M1 / evaluation | Demonstrate intent-to-evidence vertical slice | B16, B55 | Prose intent → approved contract → bounded repair/optimization → independent evidence → explanation against original clauses. | G19-evidence, G19-trace |
+| B57 | M9 / learning | Demonstrate self-optimization through ImprovementIntent | B30, B50, B56 | Measured bottleneck generates typed improvement proposal that requests authority/evidence and passes normal admission; it cannot activate/edit its own gate. | G19-authority, G19-evidence, G11-independent |
+
+## Scheduling notes
+
+B00–B04 establish contracts and evidence. B05/B10 can develop in parallel against frozen contracts; B07 must establish actual host confinement before B09 runs untrusted checks. B14 proves the deterministic plumbing; B16 proves the model-driven workflow. Neither should be presented as the other.
+
+After B20, prediction work (B22–B26) and admission/crystallization (B27–B30) can proceed separately using B21 eligible data. The mandatory M2 sequence is B17 → B42 → B21 → B18 → B19 → B20; B43 starts after B01/B02 and is required before external backends enter protected comparisons (ABI → eligible grouped corpus → destructive/speculative/shared-state evaluation → calibration/router → bakeoff); B29/B40 remain optional specialized-model research. A failed optional small-model pilot B29 does not block a useful guarded tool/policy promotion. B38/B39 require a demonstrated language/native need; no imperative to churn the compiler just to complete the table.
+
+B41 preserves the OS ambition but cannot claim a kernel until its separate proposal, resources and real isolation evidence are approved. Shared-memory/budget interfaces and R2a-like compiler changes have one integration owner.
+
+B44 freezes the bridge contract without making MiCode a Cortex dependency. B45 can begin as soon as a conforming MiCode episode exists. M8 requires B32 so repository patterns are evaluated through the representation/abstraction machinery rather than dumped straight into training. B48/B49 demonstrate userland crystallization first; B51 is optional and cannot become a required dependency of the self-optimization core.
+
+### v0.5 intent sequencing
+
+B52 maps existing intent functionality before adding schemas. B53/B54 establish the approved semantic contract. B55 depends on the existing AIR vertical plumbing rather than inventing a parallel executor. B56 is the first end-to-end user-intent demonstration. B57 is intentionally late: system-generated self-improvement must use the same contract only after independent admission exists.
+
+| B58 | M2 / models-runtime | Implement Reflex Runtime state handles and branch scheduler | B17, B18, B42 | Immutable/emulated StateHandle contract, shared-state scheduler, candidate packing/order manifests, per-branch accounting and cancellation. | G05-state-handle, G05-branch |
+| B59 | M2 / evaluation | Run question-isolation and candidate-order conformance | B58, B19, B21 | Q1-alone/sibling/adversarial/100-question and permutation suite; calibration-domain drift report and stop/pivot decision per backend. | G05-question-isolation, G05-order-domain, G06-shift |
+| B60 (optional) | M5 / research | Compare listwise and option-conditioned Reflex architectures | B20, B21, B27, B29 | Independent/pointer/listwise compute-matched pilot with dynamic candidate compositions, proper-scoring learning curves and task-level evaluation. | G14-listwise, G14-training-score, G14-quality |
+| B61 (optional) | Compiler / compiler | Implement AIR question-dependency scheduling optimization | B10, B37, B58 | `Independent`/`ConditionallyRelevant`/`AnswerDependent` validation, legal batching/speculation, and changed-policy detection for semantic fusion. | G15-dependency-types, G15-batch-semantics, G15-optimization |
+
+| B62 (optional) | M2 / research | Stand up Kev-style Axon Reflex reference pilot | B21, B58, B59 | Small backbone + adapter + isolated branch mask + pointer/listwise head trained with canonical encoding; reproducible learning curve. | G14-pilot, G14-canonical-encoding |
+| B63 | M2 / evaluation | Freeze Reflex train/calibration/dev/locked-test/transfer suites | B21, B02 | Repo-aware split manifest, revision hashes, inaccessible locked test and explicit transfer ladder. | G14-locked-test, G01-leakage |
+| B64 (optional) | M5 / research | Run permutation-robustness training study | B62, B63 | Canonical-order vs shuffle augmentation vs permutation-consistency objective under matched compute. | G14-permutation-training, G05-order-domain |
+| B65 | M2 / data | Add typed candidate-absence/control examples | B21, B42 | Missing-target/distractor fixtures with registered NONE/OBSERVE_MORE/ESCALATE outcomes and verifier labels. | G14-absent-candidate |
+| B66 | M2 / runtime | Unify canonical decision encoding across train/eval/serve/replay | B58, B63 | Single versioned renderer/encoder API plus effective-input receipts and replay fixtures. | G14-canonical-encoding, G05-conformance |
+| B67 | M5 / evaluation | Measure Coding Transfer Frontier | B62, B63, B65, B66 | Same-repo→unseen-repo→unseen-family/task-family→cross-language transfer curves with selective quality/coverage/compute. | G14-transfer-frontier, G14-quality |
+| B68 (optional) | M5 / research | Compare Kev-style transfer improvements | B64, B67 | Representation/data/backbone/augmentation ablations focused on held-out coding transfer; no locked-test tuning. | G14-transfer-frontier, G14-training-score |

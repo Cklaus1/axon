@@ -1,0 +1,236 @@
+{
+  "schema": "cortex-spec-package/1",
+  "date": "2026-09-17",
+  "status": "Draft",
+  "specs": [
+    {
+      "id": "CX-00",
+      "title": "System contract and trust boundaries",
+      "path": "specs/CX-00-system-contract.md",
+      "depends_on": [],
+      "stage": "M0",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-01",
+      "title": "Evaluation, baselines and assurance evidence",
+      "path": "specs/CX-01-evaluation.md",
+      "depends_on": [
+        "CX-00"
+      ],
+      "stage": "M0",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-02",
+      "title": "Software observations, state and working memory",
+      "path": "specs/CX-02-world-observation.md",
+      "depends_on": [
+        "CX-00"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-03",
+      "title": "Dynamic capabilities and transactional execution",
+      "path": "specs/CX-03-capabilities-executor.md",
+      "depends_on": [
+        "CX-00",
+        "CX-02"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-04",
+      "title": "AIR graph and interpreter-first integration",
+      "path": "specs/CX-04-air-runtime.md",
+      "depends_on": [
+        "CX-00",
+        "CX-03"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-05",
+      "title": "Axon Reflex typed inference and speculative questions",
+      "path": "specs/CX-05-reflex-inference.md",
+      "depends_on": [
+        "CX-01",
+        "CX-04"
+      ],
+      "stage": "M2",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-06",
+      "title": "Calibration, risk-aware routing and abstention",
+      "path": "specs/CX-06-routing-calibration.md",
+      "depends_on": [
+        "CX-01",
+        "CX-05"
+      ],
+      "stage": "M2",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-07",
+      "title": "Predictive software world models",
+      "path": "specs/CX-07-predictive-world.md",
+      "depends_on": [
+        "CX-01",
+        "CX-02",
+        "CX-10"
+      ],
+      "stage": "M3",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-08",
+      "title": "Planning, hypotheses and controlled experiments",
+      "path": "specs/CX-08-planning-experiments.md",
+      "depends_on": [
+        "CX-03",
+        "CX-06",
+        "CX-07"
+      ],
+      "stage": "M4",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-09",
+      "title": "Representation search and transferable abstractions",
+      "path": "specs/CX-09-representation-abstraction.md",
+      "depends_on": [
+        "CX-07",
+        "CX-08"
+      ],
+      "stage": "M6",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-10",
+      "title": "Replay, learning data and error attribution",
+      "path": "specs/CX-10-replay-learning-data.md",
+      "depends_on": [
+        "CX-00",
+        "CX-01",
+        "CX-02"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-11",
+      "title": "Crystallization and independent artifact promotion",
+      "path": "specs/CX-11-crystallization-admission.md",
+      "depends_on": [
+        "CX-01",
+        "CX-06",
+        "CX-10"
+      ],
+      "stage": "M5",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-12",
+      "title": "Per-pillar learning, curricula and meta-governance",
+      "path": "specs/CX-12-learning-meta.md",
+      "depends_on": [
+        "CX-08",
+        "CX-09",
+        "CX-11"
+      ],
+      "stage": "M7",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-13",
+      "title": "Hosted OS integration, resource control and confinement",
+      "path": "specs/CX-13-os-runtime.md",
+      "depends_on": [
+        "CX-03",
+        "CX-04",
+        "CX-10"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-14",
+      "title": "Parallel decision-model research",
+      "path": "specs/CX-14-parallel-model-research.md",
+      "depends_on": [
+        "CX-05",
+        "CX-06",
+        "CX-10",
+        "CX-11"
+      ],
+      "stage": "M5",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-15",
+      "title": "Language, compiler and proof integration",
+      "path": "specs/CX-15-language-compiler-proof.md",
+      "depends_on": [
+        "CX-00",
+        "CX-04"
+      ],
+      "stage": "M2",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-16",
+      "title": "MiCode experience bridge and cross-system conformance",
+      "path": "specs/CX-16-micode-experience-bridge.md",
+      "depends_on": [
+        "CX-00",
+        "CX-02",
+        "CX-10"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-17",
+      "title": "External repository knowledge ingestion and evidence ladder",
+      "path": "specs/CX-17-external-repository-knowledge.md",
+      "depends_on": [
+        "CX-09",
+        "CX-10",
+        "CX-16"
+      ],
+      "stage": "M8",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-18",
+      "title": "Capability synthesis and staged native promotion",
+      "path": "specs/CX-18-capability-synthesis-native-promotion.md",
+      "depends_on": [
+        "CX-11",
+        "CX-15",
+        "CX-16",
+        "CX-17"
+      ],
+      "stage": "M9",
+      "status": "Draft"
+    },
+    {
+      "id": "CX-19",
+      "title": "Intent compiler, typed Intent IR and semantic approval",
+      "path": "specs/CX-19-intent-compiler.md",
+      "depends_on": [
+        "CX-00",
+        "CX-01",
+        "CX-04",
+        "CX-11"
+      ],
+      "stage": "M1",
+      "status": "Draft"
+    }
+  ]
+}

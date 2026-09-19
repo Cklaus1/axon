@@ -1,0 +1,1457 @@
+{
+  "schema": "cortex-task-dag/1",
+  "tasks": [
+    {
+      "id": "B00",
+      "stage": "M0",
+      "title": "Import and reconcile the package",
+      "depends_on": [],
+      "specs": [
+        "CX-00"
+      ],
+      "output": "Owner-reviewed naming, scope and CX-to-repository ID mapping; preserve existing governance.",
+      "gate_targets": [
+        "G00-contract"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B01",
+      "stage": "M0",
+      "title": "Audit Axon seams and engine guarantees",
+      "depends_on": [
+        "B00"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-15"
+      ],
+      "output": "Commit-pinned evidence matrix; record native ceiling, missing-gate, FFI, R44 and OS discrepancies.",
+      "gate_targets": [
+        "G00-missing-gate",
+        "G15-parity"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B02",
+      "stage": "M0",
+      "title": "Freeze task, safety and evaluation policy",
+      "depends_on": [
+        "B01"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-01"
+      ],
+      "output": "Reviewed initial workload, required gates, host profile, budgets, split rules and evaluation margins.",
+      "gate_targets": [
+        "G00-contract",
+        "G01-evidence"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B03",
+      "stage": "M0",
+      "title": "Build resettable task fixtures and simple controls",
+      "depends_on": [
+        "B02"
+      ],
+      "specs": [
+        "CX-01"
+      ],
+      "output": "Tiny repair fixtures plus stale/malicious/crash cases; strong-model and rules control definitions.",
+      "gate_targets": [
+        "G01-reset",
+        "G01-fairness"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B04",
+      "stage": "M0",
+      "title": "Implement common manifests and event schemas",
+      "depends_on": [
+        "B01",
+        "B02"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-04",
+        "CX-10"
+      ],
+      "output": "Validated Run/Action/Evidence contracts, versions, canonical digests and negative schema tests.",
+      "gate_targets": [
+        "G00-contract",
+        "G04-schema",
+        "G10-lineage"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B05",
+      "stage": "M1",
+      "title": "Implement partial software observations",
+      "depends_on": [
+        "B03",
+        "B04"
+      ],
+      "specs": [
+        "CX-02"
+      ],
+      "output": "Content-based snapshots, incomplete AST/diagnostics and scope-expansion path.",
+      "gate_targets": [
+        "G02-canonical",
+        "G02-partial",
+        "G02-recall"
+      ],
+      "lane": "observer",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B06",
+      "stage": "M1",
+      "title": "Implement grants and denial-first catalog",
+      "depends_on": [
+        "B04",
+        "B05"
+      ],
+      "specs": [
+        "CX-03"
+      ],
+      "output": "Principal/session/snapshot-bound grant registry; forged and stale references denied.",
+      "gate_targets": [
+        "G03-forgery",
+        "G03-budget"
+      ],
+      "lane": "executor",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B07",
+      "stage": "M1",
+      "title": "Implement the H0 isolated tool host",
+      "depends_on": [
+        "B01",
+        "B04",
+        "B06"
+      ],
+      "specs": [
+        "CX-13"
+      ],
+      "output": "Tested local sandbox, environment projection, process-tree cancellation and quotas.",
+      "gate_targets": [
+        "G13-escape",
+        "G13-kill",
+        "G13-quota"
+      ],
+      "lane": "executor",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B08",
+      "stage": "M1",
+      "title": "Implement local patch transactions",
+      "depends_on": [
+        "B05",
+        "B06",
+        "B07"
+      ],
+      "specs": [
+        "CX-03"
+      ],
+      "output": "Immutable patch artifacts, constrained apply, locked/CAS commit and rollback.",
+      "gate_targets": [
+        "G03-payload",
+        "G03-race"
+      ],
+      "lane": "executor",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B09",
+      "stage": "M1",
+      "title": "Execute registered checks with durable action states",
+      "depends_on": [
+        "B03",
+        "B07",
+        "B08"
+      ],
+      "specs": [
+        "CX-03",
+        "CX-13"
+      ],
+      "output": "Approved test/build adapter, write-ahead action state and crash reconciliation.",
+      "gate_targets": [
+        "G03-crash",
+        "G13-recovery"
+      ],
+      "lane": "executor",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B10",
+      "stage": "M1",
+      "title": "Implement AIR validation and serial scheduler",
+      "depends_on": [
+        "B04",
+        "B06"
+      ],
+      "specs": [
+        "CX-04"
+      ],
+      "output": "Typed graph execution with explicit dependencies, bounded iteration and effect checks.",
+      "gate_targets": [
+        "G04-schema",
+        "G04-effect",
+        "G04-scheduler"
+      ],
+      "lane": "runtime",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B11",
+      "stage": "M1",
+      "title": "Add mock decision and generation adapters",
+      "depends_on": [
+        "B10"
+      ],
+      "specs": [
+        "CX-05"
+      ],
+      "output": "Deterministic fixture adapters with clear mock provenance, invalid-result tests and no authority.",
+      "gate_targets": [
+        "G05-schema",
+        "G05-branch"
+      ],
+      "lane": "models",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B12",
+      "stage": "M1",
+      "title": "Implement protected final verification",
+      "depends_on": [
+        "B03",
+        "B09"
+      ],
+      "specs": [
+        "CX-01",
+        "CX-03"
+      ],
+      "output": "Agent cannot alter hidden checks; final artifact digest and task contract determine completion.",
+      "gate_targets": [
+        "G03-done",
+        "G01-leakage"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B13",
+      "stage": "M1",
+      "title": "Integrate raw/redacted events and exact replay",
+      "depends_on": [
+        "B04",
+        "B09",
+        "B10",
+        "B11"
+      ],
+      "specs": [
+        "CX-10"
+      ],
+      "output": "Record model/tool seam; replay without effects; secret-safe review view.",
+      "gate_targets": [
+        "G10-replay",
+        "G10-secrets",
+        "G10-crash"
+      ],
+      "lane": "evidence",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B14",
+      "stage": "M1",
+      "title": "Run deterministic end-to-end conformance",
+      "depends_on": [
+        "B11",
+        "B12",
+        "B13"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-01",
+        "CX-03"
+      ],
+      "output": "Safe repair golden path plus adversarial, cancellation and recovery demonstrations.",
+      "gate_targets": [
+        "G00-mutation",
+        "G03-done",
+        "G10-replay"
+      ],
+      "lane": "integrator",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B15",
+      "stage": "M1",
+      "title": "Add an authorized existing-model backend",
+      "depends_on": [
+        "B02",
+        "B07",
+        "B10",
+        "B13"
+      ],
+      "specs": [
+        "CX-04",
+        "CX-05"
+      ],
+      "output": "Pinned model adapter for bounded decisions and untrusted patch generation; explicit fallback and accounting.",
+      "gate_targets": [
+        "G04-fallback",
+        "G05-schema"
+      ],
+      "lane": "models",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B16",
+      "stage": "M1",
+      "title": "Compare the real-model vertical slice to controls",
+      "depends_on": [
+        "B14",
+        "B15"
+      ],
+      "specs": [
+        "CX-01"
+      ],
+      "output": "Protected task-family results, full costs, quality intervals and independent milestone evidence.",
+      "gate_targets": [
+        "G01-ablation",
+        "G01-evidence"
+      ],
+      "lane": "integrator",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B17",
+      "stage": "M2",
+      "title": "Freeze backend-neutral Reflex ABI and score provenance",
+      "depends_on": [
+        "B15",
+        "B16"
+      ],
+      "specs": [
+        "CX-05"
+      ],
+      "output": "Choice/Binary/Ordinal contracts, dynamic candidate manifests, typed probability origins, and generative/direct-logit/sequence/learned adapter conformance scaffold.",
+      "gate_targets": [
+        "G05-schema",
+        "G05-tokenization"
+      ],
+      "lane": "models",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B18",
+      "stage": "M2",
+      "title": "Build Reflex decision corpus, destructive controls and shared-state/speculative path",
+      "depends_on": [
+        "B17",
+        "B21"
+      ],
+      "specs": [
+        "CX-05"
+      ],
+      "output": "Grouped verified decision corpus; shuffled/empty/wrong/stale-state and option-order/ID controls; branch-specific targets; serial/parallel/shared-prefix timing.",
+      "gate_targets": [
+        "G05-branch",
+        "G05-isolation",
+        "G05-performance"
+      ],
+      "lane": "models",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B19",
+      "stage": "M2",
+      "title": "Run calibration lab and implement selective routing",
+      "depends_on": [
+        "B02",
+        "B16",
+        "B17",
+        "B18"
+      ],
+      "specs": [
+        "CX-06"
+      ],
+      "output": "Pinned calibration artifacts by probability origin; proper scoring, risk/coverage/VUC, deterministic fallback, explicit OOD/abstention and budget control.",
+      "gate_targets": [
+        "G06-calibration",
+        "G06-risk",
+        "G06-coverage",
+        "G06-budget"
+      ],
+      "lane": "models",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B20",
+      "stage": "M2",
+      "title": "Run multi-backend Reflex bakeoff and decide adoption",
+      "depends_on": [
+        "B18",
+        "B19"
+      ],
+      "specs": [
+        "CX-01",
+        "CX-05",
+        "CX-06"
+      ],
+      "output": "Compare generative, direct-logit, sequence and learned-head families on one protected corpus; retain only measured useful configurations; baseline remains active when evidence is inconclusive.",
+      "gate_targets": [
+        "G05-performance",
+        "G06-shift",
+        "G01-evidence"
+      ],
+      "lane": "integrator",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B21",
+      "stage": "M2/M3/M5",
+      "title": "Implement eligible learning/decision-corpus export and label lineage",
+      "depends_on": [
+        "B13",
+        "B16"
+      ],
+      "specs": [
+        "CX-10"
+      ],
+      "output": "Purpose-scoped dynamic-choice datasets, grouped protected splits, verified/human/teacher/weak/delayed/unknown labels, attribution records and revocation lineage.",
+      "gate_targets": [
+        "G10-secrets",
+        "G10-lineage",
+        "G10-attribution"
+      ],
+      "lane": "evidence",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B22",
+      "stage": "M3",
+      "title": "Match concrete action predictions to outcomes",
+      "depends_on": [
+        "B05",
+        "B13",
+        "B16",
+        "B21"
+      ],
+      "specs": [
+        "CX-07"
+      ],
+      "output": "Patch/environment-bound prediction schema and simple dependency/base-rate baselines.",
+      "gate_targets": [
+        "G07-target",
+        "G07-unknown"
+      ],
+      "lane": "research",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B23",
+      "stage": "M3",
+      "title": "Train short-horizon software predictors",
+      "depends_on": [
+        "B20",
+        "B22"
+      ],
+      "specs": [
+        "CX-07"
+      ],
+      "output": "Diagnostic/test outcome models with held-out calibration and declared applicability.",
+      "gate_targets": [
+        "G07-holdout",
+        "G07-unknown"
+      ],
+      "lane": "research",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B24",
+      "stage": "M3",
+      "title": "Evaluate real planning value and model exploitation",
+      "depends_on": [
+        "B23"
+      ],
+      "specs": [
+        "CX-07"
+      ],
+      "output": "No-model/simple-model/challenger ablations and adversarial candidate-search evidence.",
+      "gate_targets": [
+        "G07-planning",
+        "G07-exploitation"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B25",
+      "stage": "M4",
+      "title": "Implement hypotheses and permitted probe selection",
+      "depends_on": [
+        "B19",
+        "B24"
+      ],
+      "specs": [
+        "CX-08"
+      ],
+      "output": "Bounded outer planner and concrete experiment artifacts over approved checks.",
+      "gate_targets": [
+        "G08-hypothesis",
+        "G08-authority",
+        "G08-progress"
+      ],
+      "lane": "research",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B26",
+      "stage": "M4",
+      "title": "Evaluate controlled interventions and diagnosis",
+      "depends_on": [
+        "B25"
+      ],
+      "specs": [
+        "CX-08"
+      ],
+      "output": "Matched reset/control experiments; scoped causal claims and baseline comparison.",
+      "gate_targets": [
+        "G08-controls",
+        "G08-value"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B27",
+      "stage": "M5",
+      "title": "Implement independent artifact admission",
+      "depends_on": [
+        "B12",
+        "B19",
+        "B21"
+      ],
+      "specs": [
+        "CX-11"
+      ],
+      "output": "Protected candidate registry, digest-bound gate receipts and shadow/canary states.",
+      "gate_targets": [
+        "G11-independent",
+        "G11-authority"
+      ],
+      "lane": "admission",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B28",
+      "stage": "M5",
+      "title": "Derive one guarded reusable tool/rule/policy",
+      "depends_on": [
+        "B20",
+        "B27"
+      ],
+      "specs": [
+        "CX-11"
+      ],
+      "output": "Candidate with applicability predicate, empirical/proof scope and approved fallback.",
+      "gate_targets": [
+        "G11-scope",
+        "G11-noninferiority"
+      ],
+      "lane": "learning",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B29",
+      "stage": "Research",
+      "title": "Run learned option-conditioned Reflex learning curves",
+      "depends_on": [
+        "B20",
+        "B21",
+        "B27"
+      ],
+      "specs": [
+        "CX-14"
+      ],
+      "output": "Small-model/decision-head experiment over runtime candidate sets with grouped splits, destructive state controls and calibration; pursue or stop based on measured value.",
+      "gate_targets": [
+        "G14-pilot",
+        "G14-quality"
+      ],
+      "lane": "research",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B30",
+      "stage": "M5",
+      "title": "Demonstrate promotion and rollback",
+      "depends_on": [
+        "B27",
+        "B28"
+      ],
+      "specs": [
+        "CX-11"
+      ],
+      "output": "Independently admitted specialization, non-effecting shadow comparison and regression recovery.",
+      "gate_targets": [
+        "G11-rollback",
+        "G11-independent"
+      ],
+      "lane": "integrator",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B31",
+      "stage": "M6",
+      "title": "Compare fixed alternative problem encodings",
+      "depends_on": [
+        "B24",
+        "B26"
+      ],
+      "specs": [
+        "CX-09"
+      ],
+      "output": "Two traceable representations evaluated against compute-matched controls.",
+      "gate_targets": [
+        "G09-lineage",
+        "G09-ablation"
+      ],
+      "lane": "research",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B32",
+      "stage": "M6",
+      "title": "Test learned concepts and held-out transfer",
+      "depends_on": [
+        "B31"
+      ],
+      "specs": [
+        "CX-09"
+      ],
+      "output": "Typed concept/representation proposals with counterexamples, fit and novel-family evidence.",
+      "gate_targets": [
+        "G09-counterexample",
+        "G09-transfer",
+        "G09-compression"
+      ],
+      "lane": "research",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B33",
+      "stage": "M7",
+      "title": "Unify independently useful pillar lifecycles",
+      "depends_on": [
+        "B26",
+        "B30",
+        "B32"
+      ],
+      "specs": [
+        "CX-12"
+      ],
+      "output": "At least two evaluated update pipelines share manifests, admission and rollback without shared authority.",
+      "gate_targets": [
+        "G12-contract",
+        "G12-cause"
+      ],
+      "lane": "learning",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B34",
+      "stage": "M7",
+      "title": "Add bounded curriculum and meta experiment allocation",
+      "depends_on": [
+        "B33"
+      ],
+      "specs": [
+        "CX-12"
+      ],
+      "output": "Meta proposals with budgets; protected policy/audit boundary; task-generator lineage.",
+      "gate_targets": [
+        "G12-meta",
+        "G12-curriculum"
+      ],
+      "lane": "research",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B35",
+      "stage": "M7",
+      "title": "Run longitudinal stability and transfer checks",
+      "depends_on": [
+        "B34"
+      ],
+      "specs": [
+        "CX-12"
+      ],
+      "output": "Pinned-version multi-episode improvement report, regression audit and no self-grading.",
+      "gate_targets": [
+        "G12-stability",
+        "G12-meta"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B36",
+      "stage": "OS-H1",
+      "title": "Harden hosted service operation",
+      "depends_on": [
+        "B16"
+      ],
+      "specs": [
+        "CX-13"
+      ],
+      "output": "Job queues, durable restart, observability, revocation and configured host compatibility matrix.",
+      "gate_targets": [
+        "G13-recovery",
+        "G13-quota",
+        "G13-tier"
+      ],
+      "lane": "os",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B37",
+      "stage": "Compiler",
+      "title": "Audit stable runtime-to-language seams",
+      "depends_on": [
+        "B01",
+        "B16"
+      ],
+      "specs": [
+        "CX-15"
+      ],
+      "output": "Actual R2a status, wrapper APIs, type ownership map, language-surface friction evidence.",
+      "gate_targets": [
+        "G15-types",
+        "G15-docs"
+      ],
+      "lane": "compiler",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B38",
+      "stage": "Compiler",
+      "title": "Integrate authoritative types for new semantics",
+      "depends_on": [
+        "B37"
+      ],
+      "specs": [
+        "CX-15"
+      ],
+      "output": "Sequenced type-map change only when required; preserved import/AST identity and regression evidence.",
+      "gate_targets": [
+        "G15-types",
+        "G15-parity"
+      ],
+      "lane": "compiler",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B39",
+      "stage": "Compiler",
+      "title": "Add justified native/language/proof support",
+      "depends_on": [
+        "B20",
+        "B38"
+      ],
+      "specs": [
+        "CX-15"
+      ],
+      "output": "Evidence-backed desugaring/native subset/proof receipts with explicit unsupported cases.",
+      "gate_targets": [
+        "G15-proof",
+        "G15-optimization",
+        "G15-parity"
+      ],
+      "lane": "compiler",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B40",
+      "stage": "Research",
+      "title": "Investigate specialized shared-state Reflex architecture",
+      "depends_on": [
+        "B29",
+        "B30"
+      ],
+      "specs": [
+        "CX-14"
+      ],
+      "output": "Shared encoder/prefill, parallel typed heads, quantization/cache or RLCD-like training experiment only for a demonstrated serving/quality bottleneck; compare against B20 winners.",
+      "gate_targets": [
+        "G14-parallel",
+        "G14-version",
+        "G14-release"
+      ],
+      "lane": "research",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B41",
+      "stage": "OS-K",
+      "title": "Evaluate the separate bare-metal branch",
+      "depends_on": [
+        "B01",
+        "B36",
+        "B39"
+      ],
+      "specs": [
+        "CX-13",
+        "CX-15"
+      ],
+      "output": "Owner-approved kernel plan with actual confinement, syscall, driver and TCB obligations.",
+      "gate_targets": [
+        "G13-tier",
+        "G15-proof"
+      ],
+      "lane": "os",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B42",
+      "stage": "M2",
+      "title": "Implement Reflex conformance fixtures and backend feature/effective-input receipts",
+      "depends_on": [
+        "B17"
+      ],
+      "specs": [
+        "CX-05"
+      ],
+      "output": "Primitive-specific batch results keyed by QuestionId; provider/logit/sequence/generated score provenance; backend capability manifests; prompt-role/isolation/truncation/retry fixtures.",
+      "gate_targets": [
+        "G05-schema",
+        "G05-isolation",
+        "G05-tokenization"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B43",
+      "stage": "M0/M2",
+      "title": "Implement dependency/model/dataset adoption manifests",
+      "depends_on": [
+        "B01",
+        "B02"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-01",
+        "CX-13"
+      ],
+      "output": "Commit/license/security/transitive-model/tokenizer/encoder/dataset/evaluator lineage; benchmark comparability review; SDK transformation and hosted-profile checks.",
+      "gate_targets": [
+        "G00-contract",
+        "G01-evidence",
+        "G13-tier"
+      ],
+      "lane": "supply-chain",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B44",
+      "stage": "M1/M2",
+      "title": "Freeze MiCode\u2194Axon experience bridge and conformance fixtures",
+      "depends_on": [
+        "B04",
+        "B13"
+      ],
+      "specs": [
+        "CX-16"
+      ],
+      "output": "Versioned episode/observation/decision/knowledge schemas; authority separation; dummy producer/consumer; migration tests.",
+      "gate_targets": [
+        "G16-schema",
+        "G16-authority",
+        "G16-version"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B45",
+      "stage": "M2/M5",
+      "title": "Import one canonical MiCode coding episode into Cortex",
+      "depends_on": [
+        "B21",
+        "B44"
+      ],
+      "specs": [
+        "CX-16",
+        "CX-10"
+      ],
+      "output": "Provenance-preserving episode import, semantic replay, eligibility/lineage and source-system attribution.",
+      "gate_targets": [
+        "G16-lineage",
+        "G16-replay",
+        "G10-lineage"
+      ],
+      "lane": "evidence",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B46",
+      "stage": "M8",
+      "title": "Build external repository/history intake and knowledge-candidate extractor",
+      "depends_on": [
+        "B32",
+        "B45"
+      ],
+      "specs": [
+        "CX-17"
+      ],
+      "output": "Read-only normalized repo/history evidence, pattern/counterexample store, license/data-use manifests and dedupe lineage.",
+      "gate_targets": [
+        "G17-provenance",
+        "G17-license",
+        "G17-counterexample"
+      ],
+      "lane": "knowledge",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B47",
+      "stage": "M8",
+      "title": "Reproduce and evaluate one cross-repository knowledge candidate",
+      "depends_on": [
+        "B46"
+      ],
+      "specs": [
+        "CX-17",
+        "CX-01"
+      ],
+      "output": "Resettable local reproduction, benchmark/control evidence and held-out repository-family evaluation.",
+      "gate_targets": [
+        "G17-reproduce",
+        "G17-heldout",
+        "G01-evidence"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B48",
+      "stage": "M9",
+      "title": "Synthesize one guarded skill/tool from admitted knowledge/episodes",
+      "depends_on": [
+        "B30",
+        "B47"
+      ],
+      "specs": [
+        "CX-18",
+        "CX-11"
+      ],
+      "output": "Pattern\u2192Skill/Tool candidate with applicability, effects/capabilities, intermediate checks, fallback and full lineage.",
+      "gate_targets": [
+        "G18-ladder",
+        "G18-authority",
+        "G11-scope"
+      ],
+      "lane": "learning",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B49",
+      "stage": "M9",
+      "title": "Demonstrate skill/tool promotion, use and deoptimization",
+      "depends_on": [
+        "B48"
+      ],
+      "specs": [
+        "CX-18",
+        "CX-11"
+      ],
+      "output": "Independently admitted artifact used on held-out tasks; injected applicability/regression case returns to previous-good path.",
+      "gate_targets": [
+        "G18-deopt",
+        "G11-independent",
+        "G11-rollback"
+      ],
+      "lane": "admission",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B50",
+      "stage": "M9",
+      "title": "Demonstrate closed self/external/generated experience loop",
+      "depends_on": [
+        "B35",
+        "B45",
+        "B49"
+      ],
+      "specs": [
+        "CX-12",
+        "CX-16",
+        "CX-18"
+      ],
+      "output": "One report showing common evidence pipeline, source-separated ablations, failure attribution and OS-wide scorecard.",
+      "gate_targets": [
+        "G12-stability",
+        "G16-lineage",
+        "G18-ladder"
+      ],
+      "lane": "integrator",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B51",
+      "stage": "Compiler/OS",
+      "title": "Promote a proven capability into Axon library/compiler/runtime",
+      "depends_on": [
+        "B37",
+        "B49"
+      ],
+      "specs": [
+        "CX-18",
+        "CX-15"
+      ],
+      "output": "Measured native/library candidate with CX-15 parity/proof/invariant evidence; refusal/fallback if unjustified.",
+      "gate_targets": [
+        "G18-native",
+        "G18-equivalence",
+        "G15-parity",
+        "G15-proof"
+      ],
+      "lane": "compiler",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B52",
+      "stage": "M0/M1",
+      "title": "Map existing Axon intent/surface/approval implementation",
+      "depends_on": [
+        "B01"
+      ],
+      "specs": [
+        "CX-19"
+      ],
+      "output": "Commit-pinned map of intent compile, AST review/approve, structured-prose surface, authority/evidence semantics and drift.",
+      "gate_targets": [
+        "G19-parse",
+        "G19-render"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B53",
+      "stage": "M1",
+      "title": "Implement versioned Intent IR and round-trip fixtures",
+      "depends_on": [
+        "B04",
+        "B52"
+      ],
+      "specs": [
+        "CX-19",
+        "CX-00"
+      ],
+      "output": "Typed goal/constraints/preferences/authority/budget/evidence/ambiguity schema with provenance and migrations.",
+      "gate_targets": [
+        "G19-parse",
+        "G19-ambiguity"
+      ],
+      "lane": "contracts",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B54",
+      "stage": "M1",
+      "title": "Implement ambiguity resolution and deterministic semantic renderer",
+      "depends_on": [
+        "B53"
+      ],
+      "specs": [
+        "CX-19"
+      ],
+      "output": "Explicit interpretation alternatives/questions, stable contract renderer/diff and digest-bound approval artifact.",
+      "gate_targets": [
+        "G19-ambiguity",
+        "G19-render"
+      ],
+      "lane": "surface",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B55",
+      "stage": "M1",
+      "title": "Lower approved Intent IR to constrained AIR",
+      "depends_on": [
+        "B14",
+        "B54"
+      ],
+      "specs": [
+        "CX-19",
+        "CX-04"
+      ],
+      "output": "Clause-traceable AIR graph; replanning can narrow/add checks but cannot widen authority/drop required evidence.",
+      "gate_targets": [
+        "G19-authority",
+        "G19-trace"
+      ],
+      "lane": "integrator",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B56",
+      "stage": "M1",
+      "title": "Demonstrate intent-to-evidence vertical slice",
+      "depends_on": [
+        "B16",
+        "B55"
+      ],
+      "specs": [
+        "CX-19",
+        "CX-01"
+      ],
+      "output": "Prose intent \u2192 approved contract \u2192 bounded repair/optimization \u2192 independent evidence \u2192 explanation against original clauses.",
+      "gate_targets": [
+        "G19-evidence",
+        "G19-trace"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B57",
+      "stage": "M9",
+      "title": "Demonstrate self-optimization through ImprovementIntent",
+      "depends_on": [
+        "B30",
+        "B50",
+        "B56"
+      ],
+      "specs": [
+        "CX-19",
+        "CX-11",
+        "CX-18"
+      ],
+      "output": "Measured bottleneck generates typed improvement proposal that requests authority/evidence and passes normal admission; it cannot activate/edit its own gate.",
+      "gate_targets": [
+        "G19-authority",
+        "G19-evidence",
+        "G11-independent"
+      ],
+      "lane": "learning",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B58",
+      "stage": "M2",
+      "title": "Implement Reflex Runtime state handles and branch scheduler",
+      "depends_on": [
+        "B17",
+        "B18",
+        "B42"
+      ],
+      "specs": [
+        "CX-05"
+      ],
+      "output": "Immutable/emulated StateHandle contract, shared-state scheduler, candidate packing/order manifests, per-branch accounting and cancellation.",
+      "gate_targets": [
+        "G05-state-handle",
+        "G05-branch"
+      ],
+      "lane": "models-runtime",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B59",
+      "stage": "M2",
+      "title": "Run question-isolation and candidate-order conformance",
+      "depends_on": [
+        "B58",
+        "B19",
+        "B21"
+      ],
+      "specs": [
+        "CX-05",
+        "CX-06"
+      ],
+      "output": "Q1-alone/sibling/adversarial/100-question and permutation suite; calibration-domain drift report and stop/pivot decision per backend.",
+      "gate_targets": [
+        "G05-question-isolation",
+        "G05-order-domain",
+        "G06-shift"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B60",
+      "stage": "M5",
+      "title": "Compare listwise and option-conditioned Reflex architectures",
+      "depends_on": [
+        "B20",
+        "B21",
+        "B27",
+        "B29"
+      ],
+      "specs": [
+        "CX-14"
+      ],
+      "output": "Independent/pointer/listwise compute-matched pilot with dynamic candidate compositions, proper-scoring learning curves and task-level evaluation.",
+      "gate_targets": [
+        "G14-listwise",
+        "G14-training-score",
+        "G14-quality"
+      ],
+      "lane": "research",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B61",
+      "stage": "Compiler",
+      "title": "Implement AIR question-dependency scheduling optimization",
+      "depends_on": [
+        "B10",
+        "B37",
+        "B58"
+      ],
+      "specs": [
+        "CX-15"
+      ],
+      "output": "Independent/ConditionallyRelevant/AnswerDependent validation, legal batching/speculation, and changed-policy detection for semantic fusion.",
+      "gate_targets": [
+        "G15-dependency-types",
+        "G15-batch-semantics",
+        "G15-optimization"
+      ],
+      "lane": "compiler",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B62",
+      "stage": "M2",
+      "title": "Stand up Kev-style Axon Reflex reference pilot",
+      "depends_on": [
+        "B21",
+        "B58",
+        "B59"
+      ],
+      "specs": [
+        "CX-14",
+        "CX-05"
+      ],
+      "output": "Small backbone + adapter + isolated branch mask + pointer/listwise head trained with canonical encoding; reproducible learning curve.",
+      "gate_targets": [
+        "G14-pilot",
+        "G14-canonical-encoding"
+      ],
+      "lane": "research",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B63",
+      "stage": "M2",
+      "title": "Freeze Reflex train/calibration/dev/locked-test/transfer suites",
+      "depends_on": [
+        "B21",
+        "B02"
+      ],
+      "specs": [
+        "CX-01",
+        "CX-10",
+        "CX-14"
+      ],
+      "output": "Repo-aware split manifest, revision hashes, inaccessible locked test and explicit transfer ladder.",
+      "gate_targets": [
+        "G14-locked-test",
+        "G01-leakage"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B64",
+      "stage": "M5",
+      "title": "Run permutation-robustness training study",
+      "depends_on": [
+        "B62",
+        "B63"
+      ],
+      "specs": [
+        "CX-14",
+        "CX-05"
+      ],
+      "output": "Canonical-order vs shuffle augmentation vs permutation-consistency objective under matched compute.",
+      "gate_targets": [
+        "G14-permutation-training",
+        "G05-order-domain"
+      ],
+      "lane": "research",
+      "optional": true,
+      "status": "Not started"
+    },
+    {
+      "id": "B65",
+      "stage": "M2",
+      "title": "Add typed candidate-absence/control examples",
+      "depends_on": [
+        "B21",
+        "B42"
+      ],
+      "specs": [
+        "CX-05",
+        "CX-10",
+        "CX-14"
+      ],
+      "output": "Missing-target/distractor fixtures with registered NONE/OBSERVE_MORE/ESCALATE outcomes and verifier labels.",
+      "gate_targets": [
+        "G14-absent-candidate"
+      ],
+      "lane": "data",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B66",
+      "stage": "M2",
+      "title": "Unify canonical decision encoding across train/eval/serve/replay",
+      "depends_on": [
+        "B58",
+        "B63"
+      ],
+      "specs": [
+        "CX-05",
+        "CX-10",
+        "CX-14"
+      ],
+      "output": "Single versioned renderer/encoder API plus effective-input receipts and replay fixtures.",
+      "gate_targets": [
+        "G14-canonical-encoding",
+        "G05-schema"
+      ],
+      "lane": "runtime",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B67",
+      "stage": "M5",
+      "title": "Measure Coding Transfer Frontier",
+      "depends_on": [
+        "B63",
+        "B65",
+        "B66"
+      ],
+      "specs": [
+        "CX-01",
+        "CX-06",
+        "CX-14"
+      ],
+      "output": "Same-repo to unseen-repo to unseen-family/task-family to cross-language transfer curves with selective quality/coverage/compute. Kev-style model included if B62 exists; otherwise evaluate feasible learned backends.",
+      "gate_targets": [
+        "G14-transfer-frontier",
+        "G14-quality"
+      ],
+      "lane": "evaluation",
+      "optional": false,
+      "status": "Not started"
+    },
+    {
+      "id": "B68",
+      "stage": "M5",
+      "title": "Compare Kev-style transfer improvements",
+      "depends_on": [
+        "B64",
+        "B67"
+      ],
+      "specs": [
+        "CX-14"
+      ],
+      "output": "Representation/data/backbone/augmentation ablations focused on held-out coding transfer; no locked-test tuning.",
+      "gate_targets": [
+        "G14-transfer-frontier",
+        "G14-training-score"
+      ],
+      "lane": "research",
+      "optional": true,
+      "status": "Not started"
+    }
+  ]
+}
