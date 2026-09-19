@@ -1,6 +1,6 @@
-diverge	corpus_ai_extract_uncertain
+agree	corpus_ai_extract_uncertain
 agree	corpus_search_rank
 agree	synthetic_let_field
-diverge	synthetic_matcharm_field
+agree	synthetic_matcharm_field
 agree	synthetic_matcharm_nofield
 native-refused-e0910	synthetic_native_refuses

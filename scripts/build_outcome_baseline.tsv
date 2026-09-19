@@ -1,6 +1,6 @@
 0	crates/axon-core/tests/fixtures/adaptive_basic.ax
 0	crates/axon-core/tests/fixtures/ai_complete.ax
-1	crates/axon-core/tests/fixtures/ai_extract_generic.ax
+0	crates/axon-core/tests/fixtures/ai_extract_generic.ax
 0	crates/axon-core/tests/fixtures/ai_extract_uncertain.ax
 1	crates/axon-core/tests/fixtures/borrow_errors.ax
 0	crates/axon-core/tests/fixtures/chan_spawn.ax
@@ -146,7 +146,7 @@
 0	crates/axon-core/tests/fixtures/uncertain_propagation_f64.ax
 0	crates/axon-core/tests/fixtures/utf8_slice_aligned.ax
 0	crates/axon-core/tests/fixtures/utf8_slice_boundary.ax
-1	crates/axon-core/tests/fixtures/verify_ai_source.ax
+0	crates/axon-core/tests/fixtures/verify_ai_source.ax
 1	crates/axon-core/tests/fixtures/verify_fail.ax
 0	crates/axon-core/tests/fixtures/verify_pass.ax
 0	crates/axon-core/tests/fixtures/verify_runtime_fail.ax
@@ -165,8 +165,8 @@
 1	examples/asi/bandit_ucb.ax
 1	examples/asi/budget_audit.ax
 1	examples/asi/categorical_goal.ax
-1	examples/asi/classify.ax
-1	examples/asi/code_review.ax
+0	examples/asi/classify.ax
+0	examples/asi/code_review.ax
 1	examples/asi/constrained_goal.ax
 0	examples/asi/contained.ax
 1	examples/asi/contained_violation.ax
@@ -187,7 +187,7 @@
 1	examples/asi/persistent_bandit.ax
 1	examples/asi/persistent_learner.ax
 1	examples/asi/planner.ax
-1	examples/asi/pricing.ax
+0	examples/asi/pricing.ax
 1	examples/asi/rank.ax
 0	examples/asi/risk_monitor.ax
 1	examples/asi/safe_bandit.ax
@@ -195,9 +195,9 @@
 0	examples/asi/safety_stack_demo.ax
 0	examples/asi/search_rank.ax
 1	examples/asi/self_improve.ax
-1	examples/asi/summarize.ax
+0	examples/asi/summarize.ax
 0	examples/asi/supervised_agent.ax
-1	examples/asi/taint_flow.ax
+0	examples/asi/taint_flow.ax
 1	examples/asi/word_freq.ax
 1	examples/asi/world_model.ax
 1	examples/bpf/bad_heap.ax
