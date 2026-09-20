@@ -717,6 +717,25 @@
         "wasm": "unknown",
         "guest": "unknown"
       }
+    },
+    {
+      "area": "authority",
+      "subsystem": "cancellation reaches the whole job",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [
+        "crates/axon-os/src/runtime.rs",
+        "governance/cortex-v015/DISCREPANCIES.md"
+      ],
+      "engines": {
+        "interpreter": "n/a",
+        "native": "n/a",
+        "wasm": "n/a",
+        "guest": "not-enforced"
+      },
+      "gap": "PROVEN BY EXECUTION. axon-os cancellation calls child.kill() on the DIRECT CHILD only (runtime.rs:183 timeout path, :191 kill-latch path), not the process group. Measured: a job that execs `sh -c \"nohup sleep 4002 &\"` then loops is killed by the supervisor at the timeout, and the grandchild SURVIVES (0 before, 1 after). Under the `developer` default `exec: any` this is the normal case. The operator kill switch (R27) and the compliance monitor (R29) both terminate through this path, so neither stops a job that spawned a subprocess. Remedy: setsid at spawn + killpg in the existing run_bounded \u2014 the repo's own lesson 'kill the job, not a PID'."
     }
   ]
 }

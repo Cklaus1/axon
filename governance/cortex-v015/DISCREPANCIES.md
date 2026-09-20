@@ -394,9 +394,36 @@ profile default, any grandchild the job spawned survives both paths.
 (R29) both terminate through this path. A job that spawned a subprocess is not
 stopped by either.
 
-**Status of this check.** Verified by reading the two call sites. NOT verified
-by spawning a grandchild and observing survival — that experiment is the
-obvious next evidence step.
+**Status of this check — CONFIRMED BY EXECUTION.**
+
+```
+$ ps ... sleep 4002                                    -> 0
+$ AXON_OS_TIMEOUT_MS=8000 axon-os run gc.axjob
+  DENIED: timed out after 8000 ms (axis: time)         <-- supervisor killed it
+$ ps ... sleep 4002                                    -> 1   <-- SURVIVED
+```
+
+The job `exec`s `sh -c "nohup sleep 4002 &"`, prints, then loops until the
+supervisor kills it. The grandchild outlives the kill.
+
+**Four probe iterations, each broken for its own reason — recorded because the
+third nearly produced a false NEGATIVE:**
+
+1. `axon-os` could not find the interpreter (`AXON_BIN` is an absolute path, not
+   a PATH search) — the job never ran.
+2. `pgrep -fc "$MARK"` matched ITS OWN command line, and its multi-line output
+   broke the numeric comparison. It reported "2 grandchildren" before anything
+   had run.
+3. The marker was passed as an extra `sleep` operand — `sleep 400 MARKER` is an
+   INVALID invocation, so the grandchild exited immediately and never existed.
+   A count of zero then looked like "cancellation works".
+4. Correct: a unique DURATION as the marker (`sleep 4002`) plus a
+   `ps -eo comm,args | awk '$1=="sleep"'` filter, which cannot match the probing
+   shell. Validated standalone first — the grandchild survives a CLEAN exit —
+   before being run under the supervisor.
+
+A probe that fails for its own reasons reports "fine" on broken code. Three of
+the four here would have done exactly that.
 
 **Proposed resolution.** Kill the process GROUP (`setsid` at spawn +
 `killpg`), in the existing `run_bounded`. This is the repository's own
