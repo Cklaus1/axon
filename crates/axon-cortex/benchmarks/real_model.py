@@ -99,6 +99,17 @@ def trial(f, src0, name, mname, mfn, hidden_pref=None):
         # Asked of the FILE, never of the exit code.
         "file_clean": not failing_tests(p),
         "workspace_restored": (open(p).read() == src0[:a] + mutant + src0[b:]),
+        # THE EPISODE, kept whole. The run in flight stored only selected
+        # verdict fields, so "invalid-output cost" — a proposal whose
+        # transport was fine and whose CODE was unusable — could not be
+        # recovered afterwards. `patch_reverted` events are exactly that
+        # signal, and discarding them made a real bucket unmeasurable.
+        "episode": verdict.get("episode"),
+        "reverted": sum(
+            1 for e in (verdict.get("episode") or {}).get("events", [])
+            if e.get("kind") == "patch_reverted"
+        ),
+        "extraction_status": [c.get("extraction_status") for c in calls],
         "proposals": len(calls),
         "bodies": [c["body"] for c in calls],
         "prior_rejections_seen": [c["prior_rejections"] for c in calls],

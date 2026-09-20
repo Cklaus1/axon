@@ -158,6 +158,50 @@ if solved:
     print(f"  median wall / solve     : {statistics.median(walls):.0f}s")
 print(f"  total spend             : ${sum(t['cost_usd'] for t in trials):.2f}\n")
 
+# TRANSPORT vs CAPABILITY.
+#
+# "Follows the output contract" and "knows how to repair the code" are
+# different abilities, and a single solve rate averages them. A run whose
+# driver mangles conventional output would look like a model that cannot
+# repair — which is precisely the defect that voided the previous run.
+#
+# Degrades honestly: runs recorded before the driver reported extraction
+# status say UNMEASURED rather than assuming the favourable value.
+stat = [st for t in trials for st in (t.get("extraction_status") or [])]
+stat = [x for x in stat if x]
+if stat:
+    valid = sum(1 for x in stat if x != "no_code_found")
+    print("  transport:")
+    print(f"    P(valid code proposal | response) : {pct(valid, len(stat))}")
+    for k in ("clean_fence", "prose_plus_fence", "raw_code",
+              "ambiguous_multiple_fences", "no_code_found"):
+        c = stat.count(k)
+        if c:
+            print(f"      {k:<26}{c:>4}")
+    if solved_attempted or attempted:
+        print(f"    P(repair | valid proposal, true target): "
+              f"{pct(len(solved_attempted), len(attempted))}")
+else:
+    print("  transport: UNMEASURED — this run predates the driver recording")
+    print("             extraction status; a body alone cannot distinguish a")
+    print("             strange model answer from a driver that mangled a")
+    print("             conventional one.")
+print()
+
+# INVALID-OUTPUT COST. Transport worked, the code did not: a proposal that was
+# extracted faithfully and still would not compile. Counted apart from both
+# finding and fixing, because it is the model's error rather than the ranker's
+# or the loop's — and apart from extraction failures, which are infrastructure
+# faults that invalidate a run rather than costing it.
+rev = [t.get("reverted") for t in trials if t.get("reverted") is not None]
+if rev:
+    print(f"  invalid-output proposals (extracted fine, would not compile): {sum(rev)}")
+else:
+    print("  invalid-output cost: UNMEASURED — this run did not retain the")
+    print("             episode, and `patch_reverted` is the only record of a")
+    print("             proposal that was read correctly and still broke the build.")
+print()
+
 # WHERE THE MONEY GOES: finding the function, or fixing it.
 #
 # Two different optimisations hide behind one "repair cost". Coverage
