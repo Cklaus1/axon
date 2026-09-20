@@ -487,14 +487,15 @@
       "area": "platform",
       "subsystem": "crate axon-guest-kernel",
       "implementation": "partial",
-      "production_proof": "no",
+      "production_proof": "yes",
       "mutation": "no",
       "docs": "yes",
       "evidence": [
-        "crates/axon-guest-kernel/src/main.rs",
-        "AXON_KERNEL.md"
+        "scripts/kernel_enforce_test.sh",
+        "scripts/gate.sh",
+        "crates/axon-guest-kernel/src/main.rs"
       ],
-      "gap": "ASSESSED. A real freestanding kernel (PVH boot, SYSCALL gate, deny-all bitmask) with hypercall.rs an empty TODO stub \u2014 while main.rs unconditionally prints '[axon-kernel] hypercall substrate active', so a boot transcript reads as if it shipped. All four exercising scripts are manual-only. AXON_KERNEL.md cites qemu_boot_test.sh as proof; that script never references this crate or its target."
+      "gap": "The SYSCALL GATE is now proven live and gated: kernel_enforce_test.sh boots the freestanding kernel under Firecracker and shows the openat DENIED (exit 8) when FS is withheld and PERMITTED when granted \u2014 a real negative control. It was invoked by nothing until now, on a host where all its prerequisites were present. STILL OPEN: hypercall.rs is an empty TODO stub while main.rs unconditionally prints 'hypercall substrate active', so a boot transcript reads as if it shipped; and AXON_KERNEL.md cites qemu_boot_test.sh as proof of this crate, which that script never references."
     },
     {
       "area": "authority",

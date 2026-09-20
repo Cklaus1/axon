@@ -351,6 +351,36 @@ if [ "$STRICT" = 1 ]; then
   # standalone cost 23 SECONDS total (measured: 1s, 7s, 11s, 4s). Minimising the
   # number of WIRINGS and minimising the WORK are different objectives, and here
   # they disagree; this picks the work.
+  # THE GUEST-KERNEL SYSCALL GATE'S ONLY LIVE PROOF, previously invoked by
+  # nothing — not gate.sh, not CI, not another script.
+  #
+  # It is a real two-case differential through Firecracker: policy withholds FS
+  # -> the openat is DENIED and the guest halts with exit 8; policy grants FS ->
+  # the same openat is PERMITTED, with no false violation. The negative case is
+  # what makes it worth running, and it is the shape most of this repo's
+  # stronger gates share.
+  #
+  # Measured on this host, where firecracker, /dev/kvm and the freestanding
+  # kernel artifact are all present: PASS in 20s, both directions.
+  #
+  # Output is NOT discarded. This harness exits 0 when its prerequisites are
+  # absent, so `>/dev/null 2>&1 || fail` would make a skip byte-indistinguishable
+  # from a pass — which is the defect that left 16 harnesses hanging off nothing
+  # in the first place. A skip must be legible to whoever reads this log.
+  if out=$(./scripts/kernel_enforce_test.sh 2>&1); then
+    case "$out" in
+      *"PASS — the syscall gate denies/permits by policy"*)
+        echo "  OK kernel_enforce_test: syscall gate enforced live, both directions" ;;
+      *skipping*)
+        echo "  SKIP kernel_enforce_test — prerequisites absent on this host:"
+        printf '%s\n' "$out" | sed 's/^/       /' | head -3 ;;
+      *)
+        echo "$out"; fail "kernel_enforce_test exited 0 without its PASS line" ;;
+    esac
+  else
+    echo "$out"; fail "kernel_enforce_test (guest-kernel syscall enforcement)"
+  fi
+
   ./scripts/r26_acceptance_gate.sh >/dev/null 2>&1 || fail "R26 acceptance gate"
   ./scripts/r27_acceptance_gate.sh >/dev/null 2>&1 || fail "R27 acceptance gate"
   ./scripts/r28_acceptance_gate.sh >/dev/null 2>&1 || fail "R28 acceptance gate"
