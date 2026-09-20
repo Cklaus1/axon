@@ -454,7 +454,7 @@
         "crates/axon-core/src/interp/eval.rs",
         "governance/specs/R22-domain-modules.md"
       ],
-      "gap": "ASSESSED. Real production call sites in interp and native. Its three end-to-end harnesses (fix_codec.sh, fhir_roundtrip.sh, modbus_roundtrip.sh) are invoked by nothing, and R22's spec ticks all three as done."
+      "gap": "ASSESSED and now GATED. Real production call sites in interp and native. Its three end-to-end round-trips (fix_codec, fhir_roundtrip, modbus_roundtrip) were ticked as done by R22's spec and invoked by NOTHING; all three were run before wiring and PASS, and are now in gate.sh. They are the only evidence the codecs work through the real CLI \u2014 the unit tests exercise the Rust side, these exercise the language boundary."
     },
     {
       "area": "platform",
@@ -663,7 +663,7 @@
       "evidence": [
         "scripts/kernel_enforce_test.sh"
       ],
-      "gap": "16 harnesses are reachable from nothing. Two bite: kernel_enforce_test.sh is a rigorous two-case differential with a negative control and is the ONLY live end-to-end proof of the guest-kernel syscall gate \u2014 it runs nowhere; and CLAUDE.md's platform-verification claim cites a GPU leg (gfx_wgpu_render_gate.sh) and a browser-WebGPU leg that are wired to nothing. Several acceptance gates also assert properties by grepping SOURCE COMMENTS \u2014 r31 backs 'reordering produces a different digest' with the presence of an English phrase."
+      "gap": "PARTLY CLOSED. Wired this session after being run first: kernel_enforce_test.sh (the only live proof of the guest-kernel syscall gate, PASSES both directions), all_examples_parity.sh (the broadest sweep in the repo \u2014 it caught the llvm_sizeof Result-payload corruption \u2014 76 examples native==interp), and the three domain round-trips. STILL UNWIRED: gfx_wgpu_render_gate.sh and browser_webgpu_clear.sh (both legs of the corrected platform-verification claim), qemu_boot_test.sh, fc_boot_test.sh, axon_kernel_gate.sh, axon_safety_gate.sh, r30_acceptance_gate.sh, perf_bench.sh, r1_build_measure.sh, build_outcome_regression.sh, wasm_aot_link_probe.sh, axon_session_demo.sh. reference_gate.sh is unwired but its property IS covered, by cli_run's axon_reference_is_in_sync_with_the_binary \u2014 wiring it would duplicate rather than add."
     }
   ]
 }

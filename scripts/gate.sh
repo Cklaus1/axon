@@ -295,6 +295,35 @@ if [ "$STRICT" = 1 ]; then
   echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
   ./scripts/parity_all.sh --quiet || fail "parity suite"
 
+  # THE BROADEST SWEEP IN THE REPO, and it ran nowhere. `all_examples_parity`
+  # compares EVERY example under interp and native rather than a curated list —
+  # it is what caught the `llvm_sizeof`-reports-8-bytes Result-payload memory
+  # corruption, a bug no per-construct harness had found.
+  #
+  # Placed HERE, immediately after the parity suite, because placement decides
+  # whether it runs at all: this harness SKIPS (exit 0) when `target/debug/axon`
+  # cannot codegen, and the smt stage near the end of this file builds
+  # --no-default-features, leaving exactly that binary behind. Wired at the
+  # bottom it would have skipped on every run while reporting success.
+  #
+  # So the exit code is not trusted on its own — the PASS line carries a COUNT,
+  # and a skip is made loud rather than silent.
+  echo "── gate: all-examples parity (previously unwired) ───────────────"
+  if ape=$(./scripts/all_examples_parity.sh 2>&1); then
+    case "$ape" in
+      *"PASS — "*examples*)
+        echo "  OK $(printf '%s' "$ape" | grep -o 'PASS — .*' | head -1)" ;;
+      *skipping*)
+        printf '%s\n' "$ape" | tail -3 | sed 's/^/  /'
+        fail "all_examples_parity SKIPPED — it needs a codegen binary, and the \
+stage order means it should have had one here" ;;
+      *) printf '%s\n' "$ape" | tail -5
+         fail "all_examples_parity exited 0 without its PASS line" ;;
+    esac
+  else
+    printf '%s\n' "$ape" | tail -10; fail "all-examples parity"
+  fi
+
   # The per-requirement ACCEPTANCE gates. `r22_acceptance_gate.sh` and
   # `r44_acceptance_gate.sh` assert the §0 checks their specs declare — the
   # intent/approve gateway and the accumulating session respectively. Both are
@@ -322,6 +351,18 @@ if [ "$STRICT" = 1 ]; then
   echo "── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──"
   ./scripts/ebpf_verify.sh >/dev/null 2>&1 || fail "eBPF verifier harness"
   ./scripts/tee_sim_run.sh >/dev/null 2>&1 || fail "TEE simulation harness"
+
+  # THE THREE DOMAIN ROUND-TRIPS. `governance/specs/R22-domain-modules.md`
+  # ticks all three as done; nothing ran them. They are the only end-to-end
+  # evidence that axon-domain's codecs work through the real CLI — the unit
+  # tests exercise the Rust side, these exercise the language boundary.
+  #
+  # Measured before wiring, because "orphaned" and "would pass" are different
+  # claims: all three PASS on this host, in seconds.
+  echo "── gate: domain round-trips (FIX, FHIR, Modbus — previously unwired) ──"
+  for dh in fix_codec fhir_roundtrip modbus_roundtrip; do
+    ./scripts/$dh.sh >/dev/null 2>&1 || fail "$dh round-trip"
+  done
 
   # Three MORE acceptance gates nothing invoked, found by re-running the same
   # "which scripts does nothing call?" probe after wiring the first two. Each
