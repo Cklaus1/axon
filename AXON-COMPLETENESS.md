@@ -18,6 +18,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | import resolution determinism | ~ | ✗ | ✗ | ~ | ASSESSED. axon_search_dirs is AXON_PATH, then ~/.axon/lib, then <bindir>/../lib/axon — the ENTRY FILE'S OWN DIRECTORY is never searched, so `use` beside a file does not resolve without ambient AXON_PATH. First match wins and nothing records WHICH file was chosen, so the same source can mean different programs under different environments and no digest distinguishes them. This is the resolution half of the unbound-import-graph finding in the approval rows. |
 | crate axon-rt | ✓ | ✓ | ✗ | ✓ | ASSESSED. Not a Cargo dependency of anything: axon-core SHELLS OUT to `cargo build -p axon-rt` at link time, so the link is by convention, not by the dependency graph — removing the crate breaks nothing at cargo check and fails only at `axon build` link time. Its execution proof is the parity suite, which runs only under gate.sh --strict and never in CI. |
 | crate axon-surface | ✓ | ✓ | ✗ | ~ | ASSESSED. The LIBRARY is production (called from main.rs at three sites). The axon-surface BINARY has no caller. Phase 10 is the only phase with no spec/ file. |
+| AXON_SEED determinism across engines | ✓ | ✓ | ✓ | ✓ | FIXED. Native lowered random_i64 to a bare C rand() and called srand NOWHERE, so AXON_SEED was silently ignored AND a native binary's randomness was CONSTANT — seeds 1/42/999 all produced 289383, on every run and every machine. Two defects: a documented control dropped by one engine, and randomness that was not random. Now seeded from main's prologue; mutation-verified. REMAINING DIFFERENCE, stated: the two engines use different generators, so the same seed yields different VALUES — the contract asserted is that a seed determines the run, not that sequences match across engines. |
 
 ## authority
 
@@ -103,7 +104,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-21 of 21 crates are represented (0 explicitly excused). 29 of 55 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+21 of 21 crates are represented (0 explicitly excused). 30 of 56 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 

@@ -1507,6 +1507,10 @@ impl<'ctx> Codegen<'ctx> {
             // exit-101 panic instead of a raw SIGSEGV (139) — interp parity on the
             // recursion fault. First in the prologue so it covers everything after.
             self.emit_recursion_guard_init();
+            // Seed the C RNG: native lowered `random_*` to a bare `rand()` and
+            // called `srand` nowhere, so every native binary returned the SAME
+            // value on every run and ignored AXON_SEED.
+            self.emit_rng_seed_init();
             self.emit_adaptive_registry_init();
             // BUG_HUNT #19: register every fn name so native goal_run can reject
             // a typo'd metric the same way the interpreter does (I-9 parity).

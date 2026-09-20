@@ -1993,6 +1993,43 @@ pub extern "C" fn __axon_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Seed the C RNG that native `random_i64`/`random_f64` lower to.
+///
+/// Native codegen emits a bare `rand()` and NOTHING ever called `srand`, so a
+/// natively built binary produced the SAME "random" value on every run, on
+/// every machine, and ignored `AXON_SEED` entirely. Measured on one program:
+///
+/// ```text
+/// interp   seed=1 -> 269761   seed=42 -> 75435    seed=999 -> 243488
+/// native   seed=1 -> 289383   seed=42 -> 289383   seed=999 -> 289383
+/// ```
+///
+/// Two defects in one: a documented control (`AXON_SEED`) silently dropped by
+/// one engine, and — worse, because it is not a parity question — randomness
+/// that is not random. `CLAUDE.md` gives `AXON_CLOCK` the caveat "Honoured by
+/// interp AND native"; the `AXON_SEED` row carries no engine caveat at all, so
+/// a reader has no way to know.
+///
+/// Called once from `main`'s prologue, alongside the recursion guard and the
+/// adaptive registry. When `AXON_SEED` is unset the seed comes from the clock,
+/// which restores ordinary randomness; when it is set the run is reproducible,
+/// which is what the variable is for.
+#[no_mangle]
+pub extern "C" fn __axon_rt_seed_rng() {
+    let seed = match std::env::var("AXON_SEED")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        Some(s) => s,
+        None => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1),
+    };
+    // SAFETY: `srand` takes an unsigned int and returns nothing.
+    unsafe { libc::srand(seed as libc::c_uint) };
+}
+
 /// Deterministic virtual clock for the NATIVE runtime — the mirror of
 /// `axon-core`'s `clock.rs`. See that module for the full rationale; the short
 /// version is that a monotonic virtual clock (not a frozen one) is what lets a

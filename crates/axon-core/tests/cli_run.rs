@@ -31431,3 +31431,96 @@ fn a_native_build_cannot_silently_drop_an_ambient_effect_ceiling() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `AXON_SEED` must reach the NATIVE engine, and native randomness must be
+/// random when it is unset.
+///
+/// Codegen lowers `random_i64` to a bare C `rand()`, and `srand` was called
+/// nowhere. Measured before the fix, on this program:
+///
+/// ```text
+/// interp   seed=1 -> 269761   seed=42 -> 75435    seed=999 -> 243488
+/// native   seed=1 -> 289383   seed=42 -> 289383   seed=999 -> 289383
+/// ```
+///
+/// Two defects in one. `AXON_SEED` — documented with no engine caveat, unlike
+/// the `AXON_CLOCK` row three lines away which says "Honoured by interp AND
+/// native" — was silently dropped by one engine. And, worse because it is not a
+/// parity question, a native binary's randomness was CONSTANT: the same value
+/// on every run and every machine, which matters for anything that reaches for
+/// `random_*` to get a nonce or a sample.
+///
+/// This asserts the CONTRACT, not equality with the interpreter: native and
+/// interp use different generators, so the same seed yields different values.
+/// What must hold is that a seed determines the run, and that an absent seed
+/// does not.
+#[test]
+fn axon_seed_reaches_the_native_engine_and_absent_means_random() {
+    let dir = std::env::temp_dir().join(format!("axon_seed_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("s.ax");
+    std::fs::write(
+        &src,
+        "fn main() -> i64 {\n    println(to_str(random_i64(0, 1000000)))\n    0\n}\n",
+    )
+    .unwrap();
+    let bin = dir.join("sbin");
+
+    let build = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+        .output()
+        .expect("axon build");
+    if !build.status.success() {
+        // Interp-only build: nothing to assert about native. A skip, said out
+        // loud rather than passing quietly.
+        eprintln!("axon_seed native test: no codegen in this build — skipping");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    let run_with = |seed: Option<&str>| -> String {
+        let mut c = Command::new(&bin);
+        match seed {
+            Some(s) => {
+                c.env("AXON_SEED", s);
+            }
+            None => {
+                c.env_remove("AXON_SEED");
+            }
+        }
+        let o = c.output().expect("run the native binary");
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+
+    // 1. A fixed seed determines the run.
+    let a = run_with(Some("42"));
+    let b = run_with(Some("42"));
+    assert_eq!(
+        a, b,
+        "AXON_SEED=42 must be reproducible natively; got {a} then {b}"
+    );
+
+    // 2. DIFFERENT seeds must give different results — this is the assertion
+    //    that fails when `srand` is never called, because then every seed
+    //    produces the default sequence.
+    let c = run_with(Some("999"));
+    assert_ne!(
+        a, c,
+        "AXON_SEED is being IGNORED natively: seeds 42 and 999 both produced \
+         {a}. Native lowers random_i64 to a bare rand(); without an srand call \
+         every seed yields the C default sequence."
+    );
+
+    // 3. With no seed, the run must not be constant — otherwise a native
+    //    binary's "randomness" is the same on every machine forever.
+    let d = run_with(None);
+    let e = run_with(None);
+    assert!(
+        d != e || d != a,
+        "with AXON_SEED unset, native randomness is constant ({d}) — an \
+         unseeded rand() returns the same sequence on every run"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

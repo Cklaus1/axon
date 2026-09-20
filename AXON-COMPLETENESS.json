@@ -736,6 +736,26 @@
         "guest": "not-enforced"
       },
       "gap": "PROVEN BY EXECUTION. axon-os cancellation calls child.kill() on the DIRECT CHILD only (runtime.rs:183 timeout path, :191 kill-latch path), not the process group. Measured: a job that execs `sh -c \"nohup sleep 4002 &\"` then loops is killed by the supervisor at the timeout, and the grandchild SURVIVES (0 before, 1 after). Under the `developer` default `exec: any` this is the normal case. The operator kill switch (R27) and the compliance monitor (R29) both terminate through this path, so neither stops a job that spawned a subprocess. Remedy: setsid at spawn + killpg in the existing run_bounded \u2014 the repo's own lesson 'kill the job, not a PID'."
+    },
+    {
+      "area": "compiler",
+      "subsystem": "AXON_SEED determinism across engines",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-rt/src/lib.rs",
+        "crates/axon-core/src/codegen/asi.rs",
+        "crates/axon-core/tests/cli_run.rs"
+      ],
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "n/a",
+        "guest": "enforced"
+      },
+      "gap": "FIXED. Native lowered random_i64 to a bare C rand() and called srand NOWHERE, so AXON_SEED was silently ignored AND a native binary's randomness was CONSTANT \u2014 seeds 1/42/999 all produced 289383, on every run and every machine. Two defects: a documented control dropped by one engine, and randomness that was not random. Now seeded from main's prologue; mutation-verified. REMAINING DIFFERENCE, stated: the two engines use different generators, so the same seed yields different VALUES \u2014 the contract asserted is that a seed determines the run, not that sequences match across engines."
     }
   ]
 }

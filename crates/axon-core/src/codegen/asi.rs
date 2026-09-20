@@ -992,6 +992,40 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Emit a call (in `main`'s prologue) to install the native stack-overflow
     /// guard, so deep recursion exits 101 gracefully instead of SIGSEGV-139.
     /// No-op on wasm (no signals); the runtime fn itself is a no-op on non-unix.
+    /// Seed the C RNG in `main`'s prologue so native `random_*` honours
+    /// `AXON_SEED` and is actually random when it is unset.
+    ///
+    /// Codegen lowers `random_i64` to a bare `rand()`, and `srand` was called
+    /// nowhere — so every native binary returned the same value every run and
+    /// ignored the seed. Verified: interp varied with the seed, native returned
+    /// 289383 for seeds 1, 42 and 999 alike.
+    pub(super) fn emit_rng_seed_init(&mut self) {
+        if self.target_is_wasm {
+            return;
+        }
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
+            return;
+        }
+        let void_ty = self.ir.context.void_type();
+        let fn_ty = void_ty.fn_type(&[], false);
+        let f = self
+            .ir
+            .module
+            .get_function("__axon_rt_seed_rng")
+            .unwrap_or_else(|| {
+                self.ir
+                    .module
+                    .add_function("__axon_rt_seed_rng", fn_ty, None)
+            });
+        let _ = build_wrappers::w_call(&self.ir.builder, f, &[], "");
+    }
+
     pub(super) fn emit_recursion_guard_init(&mut self) {
         if self.target_is_wasm {
             return;
