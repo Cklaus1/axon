@@ -33,7 +33,16 @@ def pct(a, b):
 print(f"Real model: {meta['model']}")
 print(f"Cortex commit {meta['cortex_commit'][:12]} · driver {meta['driver_sha256_16']} "
       f"· candidates={meta['candidates']}")
-print(f"Trials: {n}\n")
+print(f"Trials: {n}")
+if meta.get("stratification_met") is False:
+    print(f"  !! STRATIFICATION NOT MET — asked {meta.get('per_class')} per class, "
+          f"got {meta.get('per_class_achieved')}")
+    print("     Classes below target exhausted the corpus. Their per-class rates")
+    print("     are not comparable with the others, and the overall figures are")
+    print("     weighted by whatever the corpus could supply.")
+elif meta.get("stratification_met") is None:
+    print("  (stratification not recorded — run predates the check)")
+print()
 
 # 1. LOCALIZATION COVERAGE — was the true symbol ever put in front of the
 #    generator at all?

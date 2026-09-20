@@ -195,6 +195,7 @@ meta = {
 print(f"  provenance: {meta}", file=sys.stderr, flush=True)
 
 rows = []
+achieved = {}
 files = sorted(sys.argv[1:])
 for mname, mfn in MUTATORS:
     taken = 0
@@ -219,4 +220,27 @@ for mname, mfn in MUTATORS:
                     file=sys.stderr, flush=True,
                 )
             break  # one function per file per class, so no file dominates
+    achieved[mname] = taken
+
+# STRATIFICATION IS A DESIGN, AND A DESIGN THAT DID NOT HOLD MUST SAY SO.
+#
+# `trial()` returns None when a mutator cannot apply to a file (argswap needs a
+# two-argument function, drop-stmt a multi-statement body), and the loop then
+# moves on. A class can therefore exhaust the corpus far below PER_CLASS — and
+# the run exits 0 having produced a lopsided sample that LOOKS stratified
+# because the header said PER_CLASS=5.
+#
+# Measured: a PER_CLASS=5 run produced argswap 1, boolean 2, constant 5,
+# drop-stmt 1, operator 4 — 13 of an intended 25, with two classes effectively
+# unmeasured, and nothing in the output said so.
+meta["per_class_achieved"] = achieved
+short = {k: v for k, v in achieved.items() if v < PER_CLASS}
+meta["stratification_met"] = not short
+if short:
+    print(f"\n  !! STRATIFICATION NOT MET: asked for {PER_CLASS} per class, got "
+          f"{dict(achieved)}", file=sys.stderr)
+    print("     Classes below target exhausted the corpus (the mutator could not "
+          "apply).", file=sys.stderr)
+    print("     Per-class rates for those classes are NOT comparable with the "
+          "others.", file=sys.stderr)
 print(json.dumps({"meta": meta, "trials": rows}, indent=1))
