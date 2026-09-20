@@ -216,6 +216,26 @@ fn cli_a_malformed_request_decides_nothing() {
         "the error must name the check that does not exist: {text}"
     );
 
+    // AND a name that IS a real function but not a test. This is the case a
+    // cheaper `fn NAME(` grep could never catch — it passed the grep and was
+    // caught downstream, so the two guards produced the same exit for the same
+    // input and neither could be tested apart from the other. The grep is
+    // gone; this is what the remaining check is for.
+    let ws_fn = workspace("nontest_check");
+    let (code_fn, text_fn) = repair_with(
+        &ws_fn,
+        &["--check", "main"],
+        &["--write-prefix", "broken.ax"],
+    );
+    assert_eq!(
+        code_fn, 2,
+        "a function that is not a test cannot adjudicate: {text_fn}"
+    );
+    assert!(
+        text_fn.contains("must name an @[test]"),
+        "and the refusal must say why a mere function is not an adjudicator: {text_fn}"
+    );
+
     // An unknown generator is a REQUEST error too, caught before the loop
     // starts. Discovering it three steps in would report a typo as NeedsInput
     // — a verdict about the task rather than about the command line.
@@ -277,12 +297,17 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
     std::fs::create_dir_all(&ws2).unwrap();
     std::fs::write(
         ws2.join("two.ax"),
-        "fn alpha(n: i64) -> i64 { n }\n\
+        // `beta` is the broken one and `alpha` is correct. Both are reached
+        // by the failing check so they tie, and the ranking breaks ties
+        // alphabetically — which puts `alpha` first. That makes `beta` the
+        // candidate an explicit `--symbol` must reach and localization would
+        // not, which is what row 3 needs in order to test anything.
+        "fn alpha(n: i64) -> i64 { n * 2 }\n\
          fn beta(n: i64) -> i64 { n }\n\
          @[test]\n\
-         fn t() { assert_eq(alpha(1) + beta(1), 3) }\n\
+         fn t() { assert_eq(alpha(1) + beta(1), 4) }\n\
          @[test]\n\
-         fn hidden() { assert_eq(alpha(1), 2) }\n\
+         fn hidden() { assert_eq(beta(1), 2) assert_eq(alpha(1), 2) }\n\
          fn main() { println(to_str(alpha(1))) }\n",
     )
     .unwrap();
@@ -347,7 +372,12 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
     let out3 = Command::new(env!("CARGO_BIN_EXE_cortex"))
         .args(["repair", "--workspace"])
         .arg(&ws2)
-        .args(["--file", "two.ax", "--symbol", "alpha", "--check", "hidden"])
+        // `beta`, NOT `alpha`. The two tie at 1.0 and the ranking breaks ties
+        // alphabetically, so naming `alpha` is naming what localization would
+        // have picked anyway — the row passed with the `--symbol` branch
+        // deleted entirely. Naming the OTHER one is what makes it a test of
+        // the instruction being honoured.
+        .args(["--file", "two.ax", "--symbol", "beta", "--check", "hidden"])
         .arg("--axon")
         .arg(axon_bin())
         .args([
@@ -1363,4 +1393,58 @@ fn cli_ships_evidence_a_reader_can_verify() {
         !ep2.verified_ok(),
         "a non-zero run must not ship an episode claiming verification"
     );
+}
+
+/// C29 — a run that ends mid-repair leaves the workspace as it found it.
+///
+/// The CLI restores the file when a run exits non-zero. That was believed
+/// covered by the candidate-walk test, but it is not: there the abandoned
+/// attempt ends after a REFUSED CLAIM, and the episode's own undo has already
+/// put the file back — so the assertion held with the CLI restore deleted.
+/// The named mechanism was shadowed by a different one.
+///
+/// The case the CLI restore actually exists for is an episode that stops with
+/// a patch still applied. A budget that expires immediately after a patch step
+/// does exactly that: measured, with the restore disabled the file keeps the
+/// patch at `--budget 2` and `--budget 4`, and is clean at 3 — the parity of
+/// where the budget lands decides it, which is why one arbitrary budget is not
+/// enough.
+#[test]
+fn cli_restores_a_workspace_when_a_run_stops_mid_repair() {
+    let ws = workspace("midrepair");
+    let before = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+
+    for budget in ["2", "4"] {
+        std::fs::write(ws.join("broken.ax"), &before).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+            .args(["repair", "--workspace"])
+            .arg(&ws)
+            .args(["--file", "broken.ax", "--symbol", "double"])
+            .args(["--check", "hidden_completion", "--axon"])
+            .arg(axon_bin())
+            .args([
+                "--write-prefix",
+                "broken.ax",
+                "--budget",
+                budget,
+                // Compiles, does not repair — so the episode never reaches a
+                // terminal state that keeps its patch deliberately.
+                "--generator",
+                "literal:\n    n + 7\n",
+            ])
+            .output()
+            .unwrap();
+        assert_ne!(
+            out.status.code(),
+            Some(0),
+            "budget {budget} must not verify"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.join("broken.ax")).unwrap(),
+            before,
+            "budget {budget}: a run that stopped mid-repair must leave the file \
+             byte-identical, and this is the case the episode's own undo does \
+             NOT cover"
+        );
+    }
 }

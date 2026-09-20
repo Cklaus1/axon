@@ -206,29 +206,12 @@ fn main() {
         };
 
     let mut runner = Runner::new(&axon_bin, &workspace);
-
-    // The adjudicating check must EXIST before anything runs.
-    //
-    // A check that matches nothing exits 0 and reports zero tests, which the
-    // runner already refuses to call a pass — so a typo here does not produce
-    // a false success. What it produces is worse to debug: the claim is
-    // refused every time, the loop patches and re-patches, and the operator
-    // gets exit 21 "going in circles" for a mistyped flag. The loop would be
-    // reporting, accurately, on an experiment that could never have concluded.
-    // It judges ONLY what it can establish by reading the file. An unreadable
-    // file or an unrunnable checker is an ENVIRONMENT failure, and the episode
-    // reports those as Blocked (22) with the observer's own reason. Answering
-    // them here as a usage error would tell an operator their command line was
-    // wrong when their toolchain is.
-    if let Ok(src) = std::fs::read_to_string(workspace.join(&file)) {
-        if !src.contains(&format!("fn {check}(")) {
-            usage(&format!(
-                "no check named `{check}` in {file}: a check that matches \
-                 nothing can never accept a repair, so the episode would run \
-                 its whole budget and report going in circles"
-            ));
-        }
-    }
+    // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
+    // was redundant with the check below and strictly worse: it accepted any
+    // FUNCTION, so a `--check` naming an ordinary function passed it and was
+    // then caught downstream anyway. Two mechanisms behind one question, and
+    // the weaker one first — which also made the stronger one's own case
+    // impossible to test, because both produced exit 2 for the same input.)
 
     // THE ADJUDICATOR MUST EXIST, MUST BE A TEST, AND MUST CURRENTLY FAIL.
     //
