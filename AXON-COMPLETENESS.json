@@ -260,13 +260,16 @@
       "area": "evidence",
       "subsystem": "absent-vs-zero coercions",
       "implementation": "partial",
-      "production_proof": "unknown",
-      "mutation": "partial",
+      "production_proof": "yes",
+      "mutation": "yes",
       "docs": "partial",
       "evidence": [
-        "crates/axon-cortex/benchmarks/real_model.py"
+        "scripts/gate_verdict_is_read.sh",
+        "crates/axon-cortex/benchmarks/real_model.py",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py",
+        "crates/axon-web/src/tests.rs"
       ],
-      "gap": "several fixed (verdict identity, failing_tests fail-open, unwrap_or_default on the success path); repo-wide audit lane open"
+      "gap": "ASSESSED \u2014 this repo's dominant defect class, now partly closed and partly open. FIXED AND GATED: a gate returning a non-bool scored as PASSED (interp.rs Ok(_) => 0); `axon verify` exiting 0 with the prover unlinked; an unreadable verdict and an unreadable RANKING charged to localization; a dashboard reporting \u2713 for axes it never evaluated; failing_tests returning [] for a run that never completed. STILL OPEN, each with a named site: axon-web's `message` is built from any prose line containing 'passed', which the reviewed artifact controls; `run_json_merged` falls back to a bare {ok, exit_code} whenever the CLI's JSON line does not parse; AXON_REQUIRE_CERTS and AXON_STRICT treat a SET-but-unrecognised value ('yes', 'on') as off, discarding a stated intent into the permissive default; and axon-ledger's read path accepts a hand-edited file silently."
     },
     {
       "area": "evidence",
