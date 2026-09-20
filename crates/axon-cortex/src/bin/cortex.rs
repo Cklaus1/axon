@@ -457,7 +457,26 @@ fn main() {
                 // applied with its before/after digests, and which generator
                 // proposed it. The verdict above is a summary OF this, not a
                 // substitute for it.
-                "episode": format!("{:?}", runner.episode),
+                // THE EPISODE AS DATA, not as a Rust `Debug` string.
+                //
+                // It was emitted as `format!("{:?}", …)` embedded in a JSON
+                // string, so the one artifact shipped to a consumer could not
+                // be parsed by `parse_strict`, its digest could not be
+                // recomputed, and `verified_ok()` could not be re-evaluated —
+                // while `episode.rs` describes it as append-only and
+                // replayable "so a replay can prove it re-ran the same episode
+                // rather than a similar one". Nothing in the output supported
+                // that claim.
+                "episode": serde_json::to_value(&runner.episode)
+                    .unwrap_or(serde_json::Value::Null),
+                // The digest travels WITH it, so a reader can recompute and
+                // compare rather than trusting the transport. An error here is
+                // reported rather than swallowed: a digest that could not be
+                // computed is not a digest that matched.
+                "episode_digest": match runner.episode.digest() {
+                    Ok(d) => serde_json::Value::String(d),
+                    Err(e) => serde_json::Value::String(format!("<undigestable: {e}>")),
+                },
             })
         );
     } else {

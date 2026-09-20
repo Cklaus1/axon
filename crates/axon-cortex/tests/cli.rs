@@ -389,10 +389,26 @@ fn cli_json_reports_the_outcome_and_the_evidence_behind_it() {
     assert_eq!(v["exit_code"], 0);
     // The verdict is a summary OF the episode, not a substitute for it: the
     // patch and its attribution have to be there to be audited.
-    let ep = v["episode"].as_str().unwrap();
+    //
+    // Read as STRUCTURE, not as a substring of a Debug dump. The episode used
+    // to ship as `format!("{:?}", …)` inside a JSON string, and an assertion
+    // that greps that string passes for any record merely MENTIONING the
+    // words — including one where they appear in a reason or a path.
+    let events = v["episode"]["events"]
+        .as_array()
+        .expect("the episode ships as data, not as a Debug string");
     assert!(
-        ep.contains("PatchApplied") && ep.contains("literal@1"),
-        "the record must show the patch and who proposed it: {ep}"
+        events
+            .iter()
+            .any(|e| e.get("kind").and_then(|k| k.as_str()) == Some("patch_applied")),
+        "the record must show the patch: {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| e
+            .get("name")
+            .and_then(|n| n.as_str())
+            .is_some_and(|n| n.contains("literal@1"))),
+        "and who proposed it: {events:?}"
     );
 }
 
@@ -1241,4 +1257,110 @@ fn cli_shows_the_generator_the_same_body_on_the_warned_path() {
     assert!(std::fs::read_to_string(ws.join("warned_broken.ax"))
         .unwrap()
         .contains("n * 2"));
+}
+
+/// C26 — the evidence a consumer receives can be checked by that consumer.
+///
+/// The episode was shipped as `format!("{:?}", …)` inside a JSON string. So
+/// the one artifact a caller gets could not be parsed by this crate's own
+/// strict parser, its digest could not be recomputed, and its verdict could
+/// not be re-evaluated — while `episode.rs` calls it append-only and
+/// replayable "so a replay can prove it re-ran the same episode rather than a
+/// similar one".
+///
+/// This asserts the three things that claim requires, from the outside: it
+/// parses, it re-digests to the value shipped beside it, and its own verdict
+/// agrees with the exit code.
+#[test]
+fn cli_ships_evidence_a_reader_can_verify() {
+    use axon_cortex::episode::Episode;
+
+    let ws = workspace("evidence");
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(text.trim()).expect("valid JSON");
+
+    // 1. IT PARSES, through this crate's own strict parser — the one the
+    //    Debug-formatted string could never have survived.
+    let ep: Episode = axon_cortex::parse_strict(&v["episode"].to_string())
+        .expect("the shipped episode must parse as an Episode");
+    assert!(
+        ep.events.len() >= 4,
+        "and it must carry the run's events: {:?}",
+        ep.events
+    );
+
+    // 2. IT RE-DIGESTS to the value shipped beside it, so a reader can check
+    //    the transport rather than trust it.
+    assert_eq!(
+        ep.digest().expect("digestable"),
+        v["episode_digest"].as_str().unwrap_or_default(),
+        "the digest must be recomputable from what was shipped"
+    );
+
+    // 3. ITS OWN VERDICT AGREES WITH THE EXIT CODE. Two independent readers of
+    //    the same run — a script reading the code, an auditor reading the
+    //    record — must not be able to disagree.
+    assert!(
+        ep.verified_ok(),
+        "exit 0 must mean the episode itself says a check verified: {:?}",
+        ep.events
+    );
+
+    // And the negative: a run that does NOT verify must not carry an episode
+    // claiming it did.
+    let ws2 = workspace("evidence_fail");
+    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws2)
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    n + 3\n",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_ne!(out2.status.code(), Some(0));
+    let v2: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out2.stdout).trim()).expect("valid JSON");
+    let ep2: Episode = axon_cortex::parse_strict(&v2["episode"].to_string()).expect("parses");
+    assert!(
+        !ep2.verified_ok(),
+        "a non-zero run must not ship an episode claiming verification"
+    );
 }
