@@ -39,11 +39,38 @@ pub enum EpisodeEvent {
         after_digest: String,
     },
     /// A registered check, with its real exit code.
+    ///
+    /// A PROCESS RAN. Nothing else belongs in this variant. Two events used to
+    /// be pushed here that were not checks at all — a candidate's own claim of
+    /// completion, and the identity of whichever generator proposed a patch —
+    /// each with `exit_code: 0, passed: true` invented, because the variant had
+    /// no other shape to carry them. `Claimed` and `Proposed` exist so that is
+    /// no longer necessary.
     CheckRun {
         name: String,
         exit_code: i32,
         passed: bool,
     },
+    /// The candidate asserted it is finished. NOT evidence that it is.
+    ///
+    /// Carries no exit code and no `passed`, deliberately: nothing ran, so
+    /// there is nothing to report an outcome for. `verify()` adjudicates the
+    /// claim against a check the candidate cannot modify, and that adjudication
+    /// is a separate `Verified` event.
+    ///
+    /// This used to be pushed as `CheckRun { name: "claim_done", exit_code: 0,
+    /// passed: claim.done }` — a self-report rendered as a check that ran and
+    /// returned success. The crate's own first rule says a missing fact cannot
+    /// be silently rendered as a present one; this is that rule applied to the
+    /// crate's own evidence trail.
+    Claimed { rationale: String },
+    /// WHO proposed a patch, recorded before it is applied.
+    ///
+    /// Provenance, not a verdict — so it carries neither an exit code nor a
+    /// `passed` flag. Once more than one generator exists, the only interesting
+    /// question about an outcome is which one produced it, and an episode that
+    /// did not record this cannot answer it later.
+    Proposed { generator_id: String },
     /// A patch UNDONE because applying it made the file stop compiling.
     ///
     /// Recorded distinctly from `PatchApplied`, and never by deleting that

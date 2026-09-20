@@ -540,10 +540,8 @@ impl Runner {
                 // No filesystem effect, by construction: the variant carries no
                 // path and this arm touches nothing. A claim is evidence for
                 // verify() to adjudicate, not an act that closes the task.
-                self.episode.push(EpisodeEvent::CheckRun {
-                    name: "claim_done".to_string(),
-                    exit_code: 0,
-                    passed: claim.done,
+                self.episode.push(EpisodeEvent::Claimed {
+                    rationale: claim.rationale.clone(),
                 });
                 ExecOutcome::Claimed {
                     rationale: claim.rationale.clone(),
@@ -791,10 +789,8 @@ impl Runner {
                     // generators exist the only interesting question is which
                     // produced a given outcome, and an episode that did not
                     // record it cannot answer that later.
-                    self.episode.push(EpisodeEvent::CheckRun {
-                        name: format!("patch_proposed_by:{}", proposal.generator_id),
-                        exit_code: 0,
-                        passed: true,
+                    self.episode.push(EpisodeEvent::Proposed {
+                        generator_id: proposal.generator_id.clone(),
                     });
                     last_applied = Some(proposal.body.clone());
                     CortexAction::PatchSymbolBody {

@@ -433,11 +433,48 @@ fn cli_json_reports_the_outcome_and_the_evidence_behind_it() {
             .any(|e| e.get("kind").and_then(|k| k.as_str()) == Some("patch_applied")),
         "the record must show the patch: {events:?}"
     );
+    // ATTRIBUTION IS ITS OWN KIND, and is not a check.
+    //
+    // This used to look for the generator id inside a `check` event's NAME,
+    // because attribution was pushed as
+    // `CheckRun { name: "patch_proposed_by:literal@1", exit_code: 0,
+    //             passed: true }` — a fabricated exit code and a fabricated
+    // verdict for a process that never ran. The second assertion below is the
+    // one that pins the fix: no `check` event may carry the generator id, so a
+    // regression cannot satisfy the first assertion by reverting the shape.
+    assert!(
+        events.iter().any(
+            |e| e.get("kind").and_then(|k| k.as_str()) == Some("proposed")
+                && e.get("generator_id").and_then(|g| g.as_str()) == Some("literal@1")
+        ),
+        "attribution must be a `proposed` event carrying the generator id: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e.get("kind").and_then(|k| k.as_str()) == Some("check")
+                && e.get("name")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| n.contains("literal@1"))),
+        "a generator identity must NOT be recorded as a check that ran: {events:?}"
+    );
+    // The candidate's own claim is likewise not a check: `claimed` carries a
+    // rationale and NO exit code and NO passed flag, because nothing ran.
+    assert!(
+        events.iter().any(
+            |e| e.get("kind").and_then(|k| k.as_str()) == Some("claimed")
+                && e.get("exit_code").is_none()
+                && e.get("passed").is_none()
+        ),
+        "a completion claim must be recorded as `claimed`, with no fabricated \
+         exit code or verdict: {events:?}"
+    );
     assert!(
         events.iter().any(|e| e
             .get("name")
             .and_then(|n| n.as_str())
-            .is_some_and(|n| n.contains("literal@1"))),
+            .is_some_and(|n| n.contains("literal@1"))
+            || e.get("generator_id").and_then(|g| g.as_str()) == Some("literal@1")),
         "and who proposed it: {events:?}"
     );
 }

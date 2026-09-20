@@ -163,6 +163,11 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
             EpisodeEvent::PatchApplied { .. } => "patch",
             EpisodeEvent::PatchReverted { .. } => "reverted",
             EpisodeEvent::CheckRun { .. } => "check",
+            // Distinct kinds, deliberately. These used to be pushed as
+            // `CheckRun` with a fabricated exit code, so a trace could not tell
+            // a check that RAN from a candidate saying it was done.
+            EpisodeEvent::Claimed { .. } => "claimed",
+            EpisodeEvent::Proposed { .. } => "proposed",
             EpisodeEvent::Verified { .. } => "verified",
         })
         .collect();
