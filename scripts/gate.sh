@@ -159,6 +159,12 @@ python3 crates/axon-cortex/benchmarks/selftest_analyse.py \
 python3 scripts/completeness.py \
   || fail "a completeness claim is not backed by evidence"
 
+# A gate function that produced no readable verdict must not be scored as a
+# pass. Landed RED and deliberately unwired; wired here now that it is green,
+# because a gate nobody runs is the defect one layer up.
+bash scripts/gate_verdict_is_read.sh \
+  || fail "a safety gate with no readable verdict is being scored as passed"
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 

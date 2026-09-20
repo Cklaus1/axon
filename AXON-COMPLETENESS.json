@@ -360,26 +360,26 @@
     {
       "area": "authority",
       "subsystem": "safety gate verdict readability",
-      "implementation": "absent",
-      "production_proof": "no",
-      "mutation": "no",
-      "docs": "no",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
       "evidence": [
         "scripts/gate_verdict_is_read.sh"
       ],
-      "gap": "PROVEN with a control on the prebuilt binary: interp.rs maps Ok(_) => 0, so a gate returning Unit/Str/Result/Option is scored PASSED. `fn redteam_check() { println(\"REDTEAM FAILED: blocking deploy\") }` prints that line and reports status:safe / deployed, exit 0 \u2014 and stages_run LISTS it, so the audit record attests a verdict never read. scripts/gate_verdict_is_read.sh is RED and unwired."
+      "gap": "FIXED and gated. interp.rs `Ok(_) => 0` made Unit/Str/Option/Result indistinguishable from Bool(true); a Critical deploy whose simulate, stress and assert_deployable all returned Err(\"...FAILED\") reported status:deployed, exit 0, with all four gates listed in stages_run. Now blocks. Verified across the whole class (str, f64, Option::None/Some, Result::Ok/Err block; bool true and i64 0 still pass). scripts/gate_verdict_is_read.sh wired into gate.sh."
     },
     {
       "area": "authority",
       "subsystem": "axon verify exit code",
-      "implementation": "partial",
-      "production_proof": "no",
-      "mutation": "no",
-      "docs": "partial",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
       "evidence": [
         "crates/axon-core/src/main.rs"
       ],
-      "gap": "cmd_verify exits 0 when the smt feature is absent \u2014 which is the DEFAULT build \u2014 so `axon verify f.ax && axon deploy f.ax` reads as verified when nothing was proved. cmd_redteam's no-function branch was explicitly fixed to say 'NOT RUN ... this is not a pass'; same collapse, one verb over."
+      "gap": "FIXED. cmd_verify exits 2, not 0, when the prover is not linked (the default build) \u2014 proven on a program whose @[verify] bound is false for every input, where `axon verify && axon deploy` previously proceeded. The change broke AXON_REFERENCE.md's 'exits 0' text; the drift gate caught it and the reference was regenerated."
     },
     {
       "area": "compiler",
@@ -590,24 +590,24 @@
       "subsystem": "crate axon-web",
       "implementation": "partial",
       "production_proof": "no",
-      "mutation": "unknown",
+      "mutation": "partial",
       "docs": "partial",
       "evidence": [
         "crates/axon-web"
       ],
-      "gap": "AUDITED. The recurring shape is a correct computation whose QUALIFIER is dropped by its only reader: /api/safety/attest enters mock on FILE ABSENCE and returns attested:true with a literal digest, while safety_status drops `mode`; the UI then prints 'attested (live)' from its own `|| live` fallback. coalition_ok is a hardcoded literal true; killable means 'the runs dir is creatable'. The kill endpoint computes `armed` and a `note` saying armed:false is a PRE-ARM not a confirmed kill \u2014 and html.rs reads only `ok` and prints 'Kill latch tripped'."
+      "gap": "PARTIALLY FIXED. /api/safety/status no longer reports \u2713 for unevaluated axes: coalition_ok is null with a note, attest_mode rides with the tick, killable renamed run_store_writable, and kill files are counted rather than every directory entry. The test that asserted coalition_ok was a BOOLEAN \u2014 which the literal true satisfied \u2014 now asserts null-plus-note. STILL OPEN: the message field is built from any prose line containing 'passed', which the artifact under review controls."
     },
     {
       "area": "authority",
       "subsystem": "ast review covers impl methods",
-      "implementation": "absent",
-      "production_proof": "no",
-      "mutation": "no",
-      "docs": "no",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
       "evidence": [
         "crates/axon-core/src/main.rs"
       ],
-      "gap": "PROVEN at runtime with a control: cmd_ast_review filters Item::FnDef only, so an impl method carrying @[contained(net:[evil.example.com])] and | {Net} is ABSENT from the review a human signs off on \u2014 and the human view prints a confident '2 function(s) / no type errors'. Enforcement is fine (E1001 and E1310 both REFUTED as broken, with controls); the defect is in what is SHOWN. `axon deploy` derives risk:medium from the same method the review renders as effect_set:[]."
+      "gap": "FIXED. cmd_ast_review walks Item::ImplBlock and each fn carries its origin (owner in JSON, [method of Agent] in the human line). Mutation-verified at integration: reverting main.rs alone turns the test red with 'no entry for phone_home \u2014 impl methods are invisible'. OPEN: the schema stayed /2 though the POPULATION of fns changed; and gates implemented as impl methods are still invisible to redteam/deploy."
     },
     {
       "area": "evidence",
