@@ -1,358 +1,1100 @@
 {
  "measured_on": "2026-09-20",
- "corpus": "examples/stdlib/*.ax + examples/*.ax; one operator-swap defect injected per function (cap 3 per file)",
- "trial_selection": "the mutant is kept only if it still compiles AND at least TWO checks now fail: one becomes the adjudicator (it must FAIL, or it cannot witness the repair) and the rest remain as visible evidence",
- "correction": "an earlier run of this benchmark chose the adjudicator up front as the file's last @[test], which usually did not exercise the injected defect. It therefore passed on the broken file, and 54 of 80 runs reported verified_done having changed nothing. Those numbers are withdrawn: the trial set here (44) is not comparable to the earlier 80, and the binary now refuses an adjudicator that already passes.",
- "trials": 44,
+ "binary": "commit 7c0a50f",
+ "corpus": "examples/stdlib/*.ax + examples/*.ax \u2014 29 files, 81 distinct functions",
+ "defect_classes": [
+  "operator",
+  "constant",
+  "boolean",
+  "argswap",
+  "drop-statement"
+ ],
+ "trial_selection": "a mutant is kept only if it still compiles AND at least two checks fail: one becomes the adjudicator (it must FAIL, or it cannot witness a repair) and the rest remain as visible evidence",
  "localization": {
-  "top1_unique": 38.6,
-  "top1_incl_ties": 50.0,
-  "top2": 79.5,
-  "top3": 93.2,
-  "absent": 0.0,
-  "note": "top1_unique is the honest headline: the rest count trials where the truth tied at the top and won an ALPHABETICAL tie-break, which is not evidence."
- },
- "oracle_repair": {
-  "note": "the generator is handed the body the file had before it was broken, so it cannot propose anything wrong. Read as an upper bound on the CONTROL LOOP: every remaining failure is the loop's, not a model's.",
-  "by_candidate_budget": {
-   "candidates_1": {
-    "verified": 20,
-    "of": 44,
-    "pct": 45.5,
-    "file_actually_clean": 20,
-    "repaired_the_right_function": 20,
-    "false_successes": 0,
-    "workspace_restored_on_failure": "24/24"
+  "trials": 111,
+  "top1_sole_candidate": 31.5,
+  "top3": 89.2,
+  "truth_absent": 0.0,
+  "per_class": {
+   "operator": {
+    "n": 43,
+    "top1_sole": 41.9,
+    "top3": 93.0
    },
-   "candidates_3": {
-    "verified": 38,
-    "of": 44,
-    "pct": 86.4,
-    "file_actually_clean": 38,
-    "repaired_the_right_function": 38,
-    "false_successes": 0,
-    "workspace_restored_on_failure": "6/6"
+   "constant": {
+    "n": 47,
+    "top1_sole": 27.7,
+    "top3": 83.0
    },
-   "candidates_5": {
-    "verified": 40,
-    "of": 44,
-    "pct": 90.9,
-    "file_actually_clean": 40,
-    "repaired_the_right_function": 40,
-    "false_successes": 0,
-    "workspace_restored_on_failure": "4/4"
+   "boolean": {
+    "n": 12,
+    "top1_sole": 25.0,
+    "top3": 91.7
+   },
+   "argswap": {
+    "n": 6,
+    "top1_sole": 16.7,
+    "top3": 100.0
+   },
+   "drop-stmt": {
+    "n": 3,
+    "top1_sole": 0.0,
+    "top3": 100.0
    }
   },
-  "correction_2": "an earlier row reported 32/44 at candidates=3. Two loop defects found afterwards account for the gap: a file compiling WITH WARNINGS could never reach a patch at all (selection ran a check, running a check changes no bytes, and stuck-detection fired before a claim was ever made), and an exact-name verdict rule had been over-applied to the symbol-named visible check, which no test is ever called, making that verdict permanently false."
+  "caveat": "'truth absent 0%' is close to guaranteed by construction: the defect is injected into a function some failing check reaches. The informative figures are top-3 and the narrowing (median 6 ranked of 11 blameable)."
  },
+ "oracle_perfect_generator": {
+  "trials": 111,
+  "verified": 99,
+  "file_actually_clean": 99,
+  "repaired_right_function": 99,
+  "false_successes": 0,
+  "workspace_restored_on_failure": "12/12",
+  "key_result": "the failures are EXACTLY the trials whose truth falls outside the top-3 ranking \u2014 the same set, not merely the same count. With a perfect generator the loop repairs precisely what localization finds and loses nothing of its own."
+ },
+ "adversarial_generator": {
+  "trials": 68,
+  "exit_zero": 2,
+  "false_successes": 0,
+  "note": "the two exit-zero rows are genuine repairs: the second mutation happened to land on correct code."
+ },
+ "guessing_generator": {
+  "trials": 15,
+  "repaired": 8,
+  "false_successes": 0,
+  "note": "proposes plausible single-token edits, knows nothing about the injected defect, and must learn from the loop's rejection feedback. Not a model; its numbers are not a model's."
+ },
+ "call_depth_ablation": {
+  "1": {
+   "top3": 80.6,
+   "truth_absent": 2.8,
+   "n": 36,
+   "note": "36-trial subset"
+  },
+  "2": {
+   "top3": 90.1,
+   "truth_absent": 0.9,
+   "n": 111
+  },
+  "4": {
+   "top3": 89.2,
+   "truth_absent": 0.0,
+   "n": 111
+  },
+  "conclusion": "following calls at all is worth ~10 points of top-3. Depth 2 and 4 differ by one trial in each direction, which is noise; 4 is kept as the smallest depth at which the truth was never ABSENT, since a candidate never listed cannot be tried."
+ },
+ "corrections": [
+  "An earlier run chose the adjudicator up front as the file's last @[test], which usually did not exercise the defect and therefore passed on the broken file: 54 of 80 runs reported success having changed nothing. Those figures are withdrawn.",
+  "The published top-1 of 57.5% counted alphabetical tie-breaks as hits; the sole-candidate figure is what is reported now.",
+  "The harness's failing_tests returned [] for a run that never completed, which file_clean read as a CLEAN file \u2014 the same fail-open this release fixes in Rust. Both headline results were re-measured after the fix and survive it.",
+  "measure.py was committed dead: it grepped for a message a later commit renamed and invoked repair with no grant, so every trial scored 'error'. Deleted."
+ ],
+ "limitations": [
+  "All defects are injected and I chose them. An attempt to build a corpus from real bug-fix commits produced ZERO usable trials \u2014 this repository's .ax history is examples being added and refactored, not behavioural bugs caught by in-file tests.",
+  "Every defect lives inside one function body, because that is the only edit the loop can make. Nothing here says how often real defects have that shape.",
+  "A file with a failing check unrelated to the defect can never reach exit 0; it reaches exit 27 with the patch kept. The loop cannot tell which failures it caused.",
+  "No model has ever driven this loop: this environment has no credentials. Both generators measured here are deterministic."
+ ],
  "per_trial": [
+  {
+   "file": "examples/stdlib/agent.ax",
+   "broke": "action",
+   "rank": 1,
+   "n": 7,
+   "tie_at_top": 1,
+   "mutator": "boolean",
+   "how": "bool:false->true"
+  },
+  {
+   "file": "examples/stdlib/agent.ax",
+   "broke": "agent_new",
+   "rank": 1,
+   "n": 7,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/agent.ax",
+   "broke": "agent_new",
+   "rank": 1,
+   "n": 7,
+   "tie_at_top": 2,
+   "mutator": "boolean",
+   "how": "bool:false->true"
+  },
   {
    "file": "examples/stdlib/agent.ax",
    "broke": "agent_step",
    "rank": 3,
    "n": 7,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/agent.ax",
+   "broke": "agent_step",
+   "rank": 1,
+   "n": 5,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:1->2"
   },
   {
    "file": "examples/stdlib/audit_event.ax",
    "broke": "audit_any_denied",
    "rank": 1,
    "n": 5,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
   },
   {
    "file": "examples/stdlib/bandit.ax",
    "broke": "bandit_update",
    "rank": 3,
    "n": 5,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/bandit.ax",
+   "broke": "bandit_update",
+   "rank": 1,
+   "n": 8,
+   "tie_at_top": 1,
+   "mutator": "argswap",
+   "how": "argswap:dict_inc"
   },
   {
    "file": "examples/stdlib/belief.ax",
    "broke": "belief_entropy",
    "rank": 1,
    "n": 2,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/budget.ax",
+   "broke": "budget_new",
+   "rank": 1,
+   "n": 3,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/budget.ax",
    "broke": "budget_spend",
    "rank": 1,
    "n": 5,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/budget.ax",
+   "broke": "rb_new",
+   "rank": 1,
+   "n": 3,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/budget.ax",
+   "broke": "rb_spend",
+   "rank": 1,
+   "n": 2,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:1->2"
   },
   {
    "file": "examples/stdlib/causal.ax",
    "broke": "revenue_of",
    "rank": 6,
    "n": 6,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/causal.ax",
+   "broke": "causal_effect_per_unit",
+   "rank": 3,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:1->2"
   },
   {
    "file": "examples/stdlib/coord.ax",
    "broke": "vcl_tick",
    "rank": 3,
    "n": 7,
-   "tie_at_top": 3
+   "tie_at_top": 3,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "vcl_tick",
+   "rank": 3,
+   "n": 9,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/coord.ax",
    "broke": "vcl_before",
    "rank": 2,
    "n": 8,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "vcl_before",
+   "rank": 3,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "boolean",
+   "how": "bool:true->false"
   },
   {
    "file": "examples/stdlib/coord.ax",
    "broke": "co_can_read",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "co_happens_before",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "argswap",
+   "how": "argswap:vcl_before"
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "coord_goal_propose",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "coord_goal_propose",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/counterfactual.ax",
+   "broke": "cfs_empty",
+   "rank": 4,
+   "n": 8,
+   "tie_at_top": 6,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/counterfactual.ax",
+   "broke": "cfs_count_improving",
+   "rank": 2,
+   "n": 8,
+   "tie_at_top": 6,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "gcounter_new",
+   "rank": 2,
+   "n": 3,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/crdt.ax",
    "broke": "gcounter_increment",
    "rank": 1,
    "n": 9,
-   "tie_at_top": 3
+   "tie_at_top": 3,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "gcounter_increment",
+   "rank": 1,
+   "n": 9,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/crdt.ax",
    "broke": "gcounter_merge",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "gcounter_merge",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "vc_new",
+   "rank": 1,
+   "n": 2,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/crdt.ax",
    "broke": "vc_tick",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "vc_tick",
+   "rank": 2,
+   "n": 5,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/date.ax",
    "broke": "days_from_civil",
    "rank": 2,
    "n": 5,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
   },
   {
    "file": "examples/stdlib/date.ax",
    "broke": "civil_from_days",
    "rank": 1,
    "n": 5,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/date.ax",
+   "broke": "civil_from_days",
+   "rank": 1,
+   "n": 5,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:719468->719469"
+  },
+  {
+   "file": "examples/stdlib/distribution.ax",
+   "broke": "gaussian_new",
+   "rank": 1,
+   "n": 1,
+   "tie_at_top": 1,
+   "mutator": "boolean",
+   "how": "bool:false->true"
+  },
+  {
+   "file": "examples/stdlib/effect.ax",
+   "broke": "ef_has",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/effect.ax",
+   "broke": "ef_subset",
+   "rank": 1,
+   "n": 10,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/goal.ax",
+   "broke": "goal",
+   "rank": 5,
+   "n": 5,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/llm_gateway.ax",
+   "broke": "new_llm",
+   "rank": 5,
+   "n": 6,
+   "tie_at_top": 5,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/llm_gateway.ax",
+   "broke": "new_llm",
+   "rank": 5,
+   "n": 6,
+   "tie_at_top": 5,
+   "mutator": "boolean",
+   "how": "bool:false->true"
   },
   {
    "file": "examples/stdlib/llm_gateway.ax",
    "broke": "call_cost",
    "rank": 3,
    "n": 6,
-   "tie_at_top": 5
+   "tie_at_top": 5,
+   "mutator": "operator",
+   "how": "op:*->+"
   },
   {
    "file": "examples/stdlib/llm_gateway.ax",
    "broke": "affords",
    "rank": 2,
    "n": 6,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:<=-><"
   },
   {
    "file": "examples/stdlib/llm_gateway.ax",
    "broke": "complete",
    "rank": 1,
    "n": 6,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/llm_gateway.ax",
+   "broke": "complete",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "boolean",
+   "how": "bool:true->false"
   },
   {
    "file": "examples/stdlib/path.ax",
    "broke": "path_parts",
    "rank": 2,
    "n": 6,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_parts",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_parts",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "drop-stmt",
+   "how": "drop-stmt"
   },
   {
    "file": "examples/stdlib/path.ax",
    "broke": "path_normalize",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_normalize",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_normalize",
+   "rank": 2,
+   "n": 4,
+   "tie_at_top": 2,
+   "mutator": "drop-stmt",
+   "how": "drop-stmt"
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_basename",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "gcounter_new",
+   "rank": 2,
+   "n": 3,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/phase14_tests.ax",
    "broke": "gcounter_increment",
    "rank": 1,
    "n": 8,
-   "tie_at_top": 3
+   "tie_at_top": 3,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "gcounter_increment",
+   "rank": 1,
+   "n": 8,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/phase14_tests.ax",
    "broke": "gcounter_merge",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "gcounter_merge",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/phase14_tests.ax",
    "broke": "vc_tick",
    "rank": 2,
    "n": 4,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "vc_happens_before",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "replicated_new",
+   "rank": 1,
+   "n": 5,
+   "tie_at_top": 3,
+   "mutator": "argswap",
+   "how": "argswap:arr_repeat"
+  },
+  {
+   "file": "examples/stdlib/plan.ax",
+   "broke": "schedule_should_run",
+   "rank": 3,
+   "n": 3,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/principal_mint.ax",
+   "broke": "budget_new",
+   "rank": 6,
+   "n": 8,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/principal_mint.ax",
    "broke": "budget_spend",
    "rank": 4,
    "n": 9,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
   },
   {
    "file": "examples/stdlib/principal_mint.ax",
    "broke": "budget_exhausted",
    "rank": 1,
    "n": 8,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:>=->>"
   },
   {
    "file": "examples/stdlib/principal_mint.ax",
    "broke": "mint",
    "rank": 2,
    "n": 7,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:&&->||"
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_new",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "argswap",
+   "how": "argswap:arr_repeat"
   },
   {
    "file": "examples/stdlib/replicated.ax",
    "broke": "replicated_write",
    "rank": 2,
    "n": 6,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_write",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/replicated.ax",
    "broke": "replicated_converge",
    "rank": 1,
    "n": 6,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_converge",
+   "rank": 2,
+   "n": 5,
+   "tie_at_top": 1,
+   "mutator": "argswap",
+   "how": "argswap:arr_repeat"
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_converge",
+   "rank": 2,
+   "n": 5,
+   "tie_at_top": 1,
+   "mutator": "drop-stmt",
+   "how": "drop-stmt"
   },
   {
    "file": "examples/stdlib/replicated.ax",
    "broke": "replicated_read",
    "rank": 1,
    "n": 6,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:>=->>"
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_read",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "risk_low",
+   "rank": 6,
+   "n": 7,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "risk_medium",
+   "rank": 4,
+   "n": 10,
+   "tie_at_top": 4,
+   "mutator": "constant",
+   "how": "const:1->2"
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "risk_high",
+   "rank": 4,
+   "n": 4,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:2->3"
   },
   {
    "file": "examples/stdlib/risk.ax",
    "broke": "risk_from_irreversibility",
    "rank": 2,
    "n": 6,
-   "tie_at_top": 2
+   "tie_at_top": 2,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "risk_from_irreversibility",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:1->2"
   },
   {
    "file": "examples/stdlib/risk.ax",
    "broke": "risk_requires_pipeline",
    "rank": 1,
    "n": 11,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:>=->>"
   },
   {
-   "file": "examples/stdlib/safe_action.ax",
-   "broke": "safe_to_act",
+   "file": "examples/stdlib/risk.ax",
+   "broke": "gate_pass",
+   "rank": 1,
+   "n": 11,
+   "tie_at_top": 4,
+   "mutator": "boolean",
+   "how": "bool:true->false"
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "gate_fail",
+   "rank": 1,
+   "n": 11,
+   "tie_at_top": 1,
+   "mutator": "boolean",
+   "how": "bool:false->true"
+  },
+  {
+   "file": "examples/stdlib/set.ax",
+   "broke": "set_has",
    "rank": 2,
-   "n": 2,
-   "tie_at_top": 2
+   "n": 11,
+   "tie_at_top": 3,
+   "mutator": "argswap",
+   "how": "argswap:dict_has"
   },
   {
    "file": "examples/stdlib/set.ax",
    "broke": "set_from_arr",
    "rank": 1,
    "n": 10,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/set.ax",
+   "broke": "set_from_arr",
+   "rank": 1,
+   "n": 9,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/source.ax",
+   "broke": "src_net",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 2,
+   "mutator": "constant",
+   "how": "const:1->2"
+  },
+  {
+   "file": "examples/stdlib/store.ax",
+   "broke": "at_least_once",
+   "rank": 1,
+   "n": 7,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/store.ax",
+   "broke": "new_store",
+   "rank": 5,
+   "n": 6,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/store.ax",
+   "broke": "has_applied",
+   "rank": 2,
+   "n": 7,
+   "tie_at_top": 4,
+   "mutator": "boolean",
+   "how": "bool:true->false"
   },
   {
    "file": "examples/stdlib/store.ax",
    "broke": "apply",
    "rank": 2,
    "n": 6,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
   },
   {
    "file": "examples/stdlib/supervisor.ax",
-   "broke": "approves",
-   "rank": 1,
+   "broke": "new_supervisor",
+   "rank": 3,
    "n": 3,
-   "tie_at_top": 3
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/supervisor.ax",
+   "broke": "new_supervisor",
+   "rank": 2,
+   "n": 3,
+   "tie_at_top": 3,
+   "mutator": "boolean",
+   "how": "bool:false->true"
   },
   {
    "file": "examples/stdlib/supervisor.ax",
    "broke": "observe",
    "rank": 1,
    "n": 3,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "one_for_one",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "one_for_all",
+   "rank": 1,
+   "n": 3,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:1->2"
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "new_supervisor",
+   "rank": 2,
+   "n": 7,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "new_supervisor",
+   "rank": 2,
+   "n": 7,
+   "tie_at_top": 3,
+   "mutator": "boolean",
+   "how": "bool:false->true"
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "restart_set",
+   "rank": 3,
+   "n": 3,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/stdlib/supervisor_tree.ax",
    "broke": "on_failure",
    "rank": 3,
    "n": 7,
-   "tie_at_top": 3
+   "tie_at_top": 3,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "on_failure",
+   "rank": 3,
+   "n": 7,
+   "tie_at_top": 3,
+   "mutator": "constant",
+   "how": "const:1->2"
   },
   {
    "file": "examples/stdlib/tainted.ax",
    "broke": "trust_validate",
    "rank": 2,
    "n": 4,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:>=->>"
   },
   {
    "file": "examples/stdlib/tainted.ax",
    "broke": "secret_can_flow_to",
    "rank": 2,
    "n": 10,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:>=->>"
   },
   {
    "file": "examples/stdlib/trace.ax",
    "broke": "trace_equiv",
    "rank": 2,
    "n": 4,
-   "tie_at_top": 3
+   "tie_at_top": 3,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/trace.ax",
+   "broke": "trace_equiv",
+   "rank": 2,
+   "n": 4,
+   "tie_at_top": 2,
+   "mutator": "boolean",
+   "how": "bool:true->false"
   },
   {
    "file": "examples/stdlib/trace.ax",
    "broke": "trace_divergence",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 3
+   "tie_at_top": 3,
+   "mutator": "operator",
+   "how": "op:+->-"
   },
   {
    "file": "examples/stdlib/world.ax",
    "broke": "predict",
    "rank": 4,
    "n": 7,
-   "tie_at_top": 4
+   "tie_at_top": 4,
+   "mutator": "operator",
+   "how": "op:*->+"
   },
   {
    "file": "examples/stdlib/world.ax",
    "broke": "obs_y",
    "rank": 3,
    "n": 7,
-   "tie_at_top": 4
+   "tie_at_top": 4,
+   "mutator": "operator",
+   "how": "op:*->+"
+  },
+  {
+   "file": "examples/stdlib/world.ax",
+   "broke": "obs_y",
+   "rank": 3,
+   "n": 7,
+   "tie_at_top": 4,
+   "mutator": "constant",
+   "how": "const:3->4"
   },
   {
    "file": "examples/stdlib/world.ax",
    "broke": "fit_error",
    "rank": 1,
    "n": 4,
-   "tie_at_top": 4
+   "tie_at_top": 4,
+   "mutator": "operator",
+   "how": "op:+->-"
+  },
+  {
+   "file": "examples/stdlib/world.ax",
+   "broke": "fit_error",
+   "rank": 1,
+   "n": 7,
+   "tie_at_top": 4,
+   "mutator": "constant",
+   "how": "const:0->1"
   },
   {
    "file": "examples/tests.ax",
    "broke": "add",
    "rank": 1,
    "n": 1,
-   "tie_at_top": 1
+   "tie_at_top": 1,
+   "mutator": "operator",
+   "how": "op:+->-"
   }
  ]
 }
