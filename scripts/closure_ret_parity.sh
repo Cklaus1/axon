@@ -39,6 +39,7 @@ INTERP="${AXON_RUN:-$_TD/debug/axon-run}"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+ran=0   # cases that actually COMPARED the two engines
 check() {
   local name="$1" src="$2"
   printf '%s\n' "$src" > "$WORK/$name.ax"
@@ -54,6 +55,7 @@ check() {
     fail=1; return
   fi
   n_out="$("$WORK/$name" 2>/dev/null)"; n_code=$?
+  ran=$((ran+1))
   if [ "$i_out" = "$n_out" ] && [ "$i_code" = "$n_code" ]; then
     echo "  OK   $name: $i_out (exit $i_code)"
   else
@@ -112,5 +114,11 @@ check i64_ret \
     println("{to_str(h(0-4))}") }'
 
 [ "$fail" -eq 0 ] || { echo "closure_ret_parity: FAIL"; exit 1; }
+# Vacuity guard: with codegen absent EVERY case took the per-case SKIP branch
+# and this still printed PASS — a green line for zero comparisons. A harness
+# that verified nothing is a SKIP, not a pass.
+if [ "$ran" -eq 0 ]; then
+  harness_skip closure_ret_parity "nothing ran (native codegen unavailable for every case)"
+fi
 echo "closure_ret_parity: PASS — f64/narrow-int/bool closure returns match the interpreter ✓"
 exit 0
