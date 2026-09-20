@@ -4,7 +4,7 @@
 
 **Problem:** AI-assisted codebases accumulate decisions at 5–10x the rate of human-only teams. Git commits explain *what* changed. Nothing explains *why* — what the engineer was trying to accomplish, which AI session drove it, whether it worked. Six months in, nobody remembers. Debugging is archaeology.
 
-**Solution:** An append-only provenance ledger that links git commits to the AI agent sessions that produced them, the original goal the engineer typed, and the outcomes measured against that decision.
+**Solution:** A provenance ledger that links git commits to the AI agent sessions that produced them, the original goal the engineer typed, and the outcomes measured against that decision.
 
 ---
 
@@ -57,7 +57,24 @@ SOC2-ready structured output of every AI-assisted change to a sensitive module.
 
 Every record: `(id, principal, effect, causal_parent, ts_ms, payload)`
 
-Append-only. Content-addressed (SHA-256). Safe to re-run any ingest command.
+Content-addressed (SHA-256). Safe to re-run any ingest command.
+
+**NOT append-only, and not tamper-evident.** This said "append-only" and that
+was wrong about the shipped code. `store.rs` exposes three whole-file rewrite
+operations — `prune` (:104), `replace_record` (:147) and `rewrite_principals`
+(:181) — and `hash.rs` hashes `principal | effect | ts_ms | payload` with no
+prev-hash chain, so records are not linked to one another. It does not commit
+to `causal_parent` either, so that edge can be rewritten freely. Nothing on the
+read path re-verifies a `record_id`, so a hand-edited `events.ndjson` is
+accepted silently.
+
+What the SHA-256 buys is content addressing and idempotent ingest, which is
+what the next line says and is true. What it does not buy is any guarantee that
+the file you are reading is the file that was written.
+`governance/specs/R18-provenance-ledger.md` states this plainly ("no prev-hash
+chaining, so tampering detects nothing"); the spec was honest and this document
+was not. The hash CHAIN that would make tamper-evidence real lives in a
+different crate, `axon-audit`.
 
 | Effect | Produced by | Key payload fields |
 |---|---|---|

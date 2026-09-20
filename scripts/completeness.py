@@ -74,12 +74,22 @@ for r in rows:
         if not os.path.exists(path):
             fails.append(f"{name}: cites `{e}`, which does not exist")
 
-    # Existence is not integration. A subsystem is not complete until the
-    # production path is PROVEN to use it.
-    if r.get("implementation") == "complete" and r.get("production_proof") != "yes":
-        fails.append(f"{name}: implementation=complete with "
-                     f"production_proof={r.get('production_proof')!r} — "
-                     f"existence is not integration")
+    # Existence is not integration — but they are SEPARATE AXES, and the
+    # point of having two columns is to be able to say "fully built, wired to
+    # nothing". This rule originally forbade complete+no, which blocked the
+    # most informative honest row in the file: axon-signal is 5,389 lines, 59
+    # tests, and reached by zero execution roots. Forcing those two columns to
+    # agree conflates the thing the manifest exists to separate.
+    #
+    # What is NOT allowed is complete + UNKNOWN: claiming a subsystem is
+    # finished while nobody has checked whether anything calls it.
+    if r.get("implementation") == "complete" and r.get("production_proof") == "unknown":
+        fails.append(f"{name}: implementation=complete with an UNKNOWN "
+                     f"production proof — nobody established whether the "
+                     f"production path uses it")
+    if (r.get("implementation") == "complete" and r.get("production_proof") == "no"
+            and not (r.get("gap") or "").strip()):
+        fails.append(f"{name}: built but not wired, with no gap explaining it")
 
 # COVERAGE. The rows were authored by hand from what someone happened to be
 # working on, so the manifest's own blind spots are invisible in it — an
@@ -91,8 +101,18 @@ for r in rows:
 # not coverage by the table.
 crates = sorted(d.name for d in os.scandir(os.path.join(ROOT, "crates"))
                 if d.is_dir())
+# Derive coverage from the row's NAME, not from where its evidence happens to
+# live. Inferring it from evidence paths was wrong for exactly the rows that
+# matter most: a crate's strongest evidence is its PRODUCTION CALL SITE, which
+# by definition lives in another crate — so assessing axon-domain properly
+# (citing its call site in axon-core) made it read as UNCOVERED.
+#
+# Join on identity, not on a path that correlates with it.
 covered = set()
 for r in rows:
+    sub = r.get("subsystem", "")
+    if sub.startswith("crate "):
+        covered.add(sub[len("crate "):].strip())
     for e in r.get("evidence") or []:
         parts = e.split("/")
         if len(parts) > 1 and parts[0] == "crates":

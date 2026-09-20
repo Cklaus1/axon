@@ -29,8 +29,14 @@ use crate::store::Store;
 /// writes responses to stdout. Each message is newline-delimited JSON.
 ///
 /// The store is re-opened per request so the server always sees the latest
-/// records — safe because the ledger is append-only JSONL and Store::open
-/// is a path wrapper (essentially free).
+/// records. `Store::open` is a path wrapper (essentially free), so this costs
+/// nothing.
+///
+/// The original justification said "safe because the ledger is append-only
+/// JSONL". It is not append-only: `store.rs` has `prune`, `replace_record`
+/// and `rewrite_principals`. Re-opening is still correct — it is what makes
+/// the server see writes from another process — but the reason is freshness,
+/// not an immutability property the store does not have.
 pub fn run_mcp_server(ledger_dir: &Path) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();

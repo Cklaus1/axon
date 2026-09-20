@@ -13,7 +13,7 @@
       "subsystem": "lexer / parser",
       "implementation": "complete",
       "production_proof": "yes",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "yes",
       "evidence": [
         "spec/grammar.ebnf",
@@ -26,7 +26,7 @@
       "subsystem": "type inference / checker",
       "implementation": "complete",
       "production_proof": "yes",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "yes",
       "evidence": [
         "crates/axon-core/src/infer.rs",
@@ -53,7 +53,7 @@
       "subsystem": "single-file diagnostics",
       "implementation": "complete",
       "production_proof": "yes",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "yes",
       "evidence": [
         "crates/axon-core/src/span.rs"
@@ -221,7 +221,7 @@
       "subsystem": "repair action vocabulary",
       "implementation": "partial",
       "production_proof": "yes",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "yes",
       "evidence": [
         "crates/axon-cortex/src/action.rs"
@@ -382,35 +382,38 @@
       "gap": "FIXED. cmd_verify exits 2, not 0, when the prover is not linked (the default build) \u2014 proven on a program whose @[verify] bound is false for every input, where `axon verify && axon deploy` previously proceeded. The change broke AXON_REFERENCE.md's 'exits 0' text; the drift gate caught it and the reference was regenerated."
     },
     {
-      "area": "compiler",
+      "area": "experimental",
       "subsystem": "crate axon-ai",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-ai"
+        "crates/axon-cortex/src/ai.rs",
+        "crates/axon-ai/README.md"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. The COMPILER-side integration is compiled by NOTHING: `asi-runtime` has zero occurrences in scripts/ or .github/workflows/, so main.rs:1661, main.rs:7135 and interp.rs:2195 are cfg'd out of every gated and CI build. The integration that IS built and tested is axon-cortex's `ai` feature, wired at gate.sh:132."
     },
     {
       "area": "authority",
       "subsystem": "crate axon-attest",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-attest"
+        "crates/axon-attest/src/lib.rs",
+        "crates/axon-vm/src/main.rs",
+        "scripts/r31_acceptance_gate.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. verify_report is genuinely sound \u2014 HMAC recomputed, constant-time compare, key required with no silent degrade, hw_root refused rather than trusted. What is MEASURED is bytes at a caller-supplied path at measure time; nothing binds the measurement to the running process, so 'this stack is attested' is asserted, not measured. measure_extended advertises four components and covers at most three distinct artifacts."
     },
     {
       "area": "evidence",
       "subsystem": "crate axon-audit",
       "implementation": "unknown",
       "production_proof": "unknown",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "unknown",
       "evidence": [
         "crates/axon-audit"
@@ -418,35 +421,38 @@
       "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
     },
     {
-      "area": "authority",
+      "area": "formal",
       "subsystem": "crate axon-certcheck",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-certcheck"
+        "crates/axon-core/src/cert_gate.rs",
+        "crates/axon-certcheck/src/policy.rs",
+        "scripts/r23_acceptance_gate.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. The CALL SITE is real (six CLI verbs) and the BODY is a no-op by default: policy.rs returns Discharged without parsing or checking anything unless AXON_REQUIRE_CERTS is set. Existence vs integration, in the sharpest form \u2014 the production path calls it and it returns before doing work. Its only execution is r23. A cross-crate hook to axon-os admission was specified in a comment and never built."
     },
     {
-      "area": "compiler",
+      "area": "platform",
       "subsystem": "crate axon-domain",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-domain"
+        "crates/axon-core/src/interp/eval.rs",
+        "governance/specs/R22-domain-modules.md"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. Real production call sites in interp and native. Its three end-to-end harnesses (fix_codec.sh, fhir_roundtrip.sh, modbus_roundtrip.sh) are invoked by nothing, and R22's spec ticks all three as done."
     },
     {
       "area": "platform",
       "subsystem": "crate axon-gfx",
       "implementation": "unknown",
       "production_proof": "unknown",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "unknown",
       "evidence": [
         "crates/axon-gfx"
@@ -458,7 +464,7 @@
       "subsystem": "crate axon-gfx-mock",
       "implementation": "unknown",
       "production_proof": "unknown",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "unknown",
       "evidence": [
         "crates/axon-gfx-mock"
@@ -470,7 +476,7 @@
       "subsystem": "crate axon-guest-init",
       "implementation": "unknown",
       "production_proof": "unknown",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "unknown",
       "evidence": [
         "crates/axon-guest-init"
@@ -480,45 +486,51 @@
     {
       "area": "platform",
       "subsystem": "crate axon-guest-kernel",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-guest-kernel"
+        "crates/axon-guest-kernel/src/main.rs",
+        "AXON_KERNEL.md"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. A real freestanding kernel (PVH boot, SYSCALL gate, deny-all bitmask) with hypercall.rs an empty TODO stub \u2014 while main.rs unconditionally prints '[axon-kernel] hypercall substrate active', so a boot transcript reads as if it shipped. All four exercising scripts are manual-only. AXON_KERNEL.md cites qemu_boot_test.sh as proof; that script never references this crate or its target."
     },
     {
       "area": "authority",
       "subsystem": "crate axon-intent",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-intent"
+        "crates/axon-intent/src/approval.rs",
+        "crates/axon-os/src/cli.rs",
+        "crates/axon-intent/tests/acceptance.rs",
+        "scripts/r22_acceptance_gate.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED, and the strongest crate here: acceptance.rs drives the real binaries end-to-end and r22 is wired into gate.sh. But the token is an UNKEYED sha256 chain \u2014 anyone who edits the program recomputes all three digests and produces a token that verifies. Tamper-EVIDENT against accident, not forgery. program_digest covers the entry file only, so the import graph is unbound. axon-os's verifier does not check `schema` while axon-intent's does: the ENFORCEMENT side is weaker than the producer."
     },
     {
       "area": "evidence",
       "subsystem": "crate axon-ledger",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "partial",
       "evidence": [
-        "crates/axon-ledger"
+        "crates/axon-ledger/src/store.rs",
+        "crates/axon-ledger/src/hash.rs",
+        "governance/specs/R18-provenance-ledger.md"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. NOT append-only and NOT tamper-evident, though docs claimed both (now corrected): store.rs has prune/replace_record/rewrite_principals, hash.rs has no prev-hash chain and does not commit to causal_parent, and no read path re-verifies a record_id. Depended on only by axon-signal, which is itself wired to nothing. DEAD CODE: crates/axon-ledger/axon-ledger/ is a full nested duplicate crate, ~1100 lines, not a workspace member, never compiled."
     },
     {
       "area": "authority",
       "subsystem": "crate axon-os",
       "implementation": "partial",
       "production_proof": "no",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "partial",
       "evidence": [
         "crates/axon-os"
@@ -528,33 +540,35 @@
     {
       "area": "compiler",
       "subsystem": "crate axon-rt",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-rt"
+        "crates/axon-core/src/codegen/link.rs",
+        "spec/runtime.md",
+        "scripts/parity_all.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. Not a Cargo dependency of anything: axon-core SHELLS OUT to `cargo build -p axon-rt` at link time, so the link is by convention, not by the dependency graph \u2014 removing the crate breaks nothing at cargo check and fails only at `axon build` link time. Its execution proof is the parity suite, which runs only under gate.sh --strict and never in CI."
     },
     {
-      "area": "platform",
+      "area": "experimental",
       "subsystem": "crate axon-signal",
-      "implementation": "unknown",
-      "production_proof": "unknown",
-      "mutation": "unknown",
-      "docs": "unknown",
+      "implementation": "complete",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "yes",
       "evidence": [
-        "crates/axon-signal"
+        "crates/axon-signal/SIGNAL.md"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. 5,389 lines, 59 internal tests, 13 subcommands \u2014 and no caller, no dependent, no gate, no CI. The one crate fully built, fully tested internally, and wired to ZERO execution roots. Its GitHub Action is an uninstalled template pointing at the wrong repository."
     },
     {
       "area": "compiler",
       "subsystem": "crate axon-surface",
       "implementation": "unknown",
       "production_proof": "unknown",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "unknown",
       "evidence": [
         "crates/axon-surface"
@@ -566,7 +580,7 @@
       "subsystem": "crate axon-vm",
       "implementation": "partial",
       "production_proof": "no",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "partial",
       "evidence": [
         "crates/axon-vm"
@@ -578,7 +592,7 @@
       "subsystem": "crate axon-wasm",
       "implementation": "unknown",
       "production_proof": "unknown",
-      "mutation": "unknown",
+      "mutation": "no",
       "docs": "unknown",
       "evidence": [
         "crates/axon-wasm"
