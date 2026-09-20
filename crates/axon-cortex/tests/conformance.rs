@@ -972,3 +972,111 @@ fn cxg_c11_execute_refuses_precisely() {
         other => panic!("expected CheckRan, got {other:?}"),
     }
 }
+
+/// A bounded episode drives itself to a conclusion — or says why it cannot.
+///
+/// The loop closed for one step; this iterates it. What matters is not that it
+/// terminates (a budget guarantees that) but that the REASON it stopped is the
+/// true one, because "it stopped" is not something a caller can act on.
+#[test]
+fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::runner::EpisodeOutcome;
+
+    // 0. SUCCESS FIRST. Repair the fixture, then run the episode: it must
+    //    claim done, have verification HOLD, and finish. Without this row every
+    //    assertion below is satisfied by a loop that never succeeds at
+    //    anything, which is the easiest way to build a controller that looks
+    //    rigorous and cannot work.
+    //
+    //    (An earlier draft of this test asserted the success row and then found
+    //    the fixture produced NoProgress instead — the comment claimed a
+    //    control the test did not have.)
+    let (_, ws0) = stage("ep_success");
+    let fixed = std::fs::read_to_string(ws0.join("broken.ax"))
+        .unwrap()
+        .replace("n + 2", "n * 2");
+    std::fs::write(ws0.join("broken.ax"), fixed).unwrap();
+    let mut r0 = Runner::new(axon_bin(), &ws0);
+    let ok = r0.run_episode(
+        &SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        None,
+        "agent",
+        "hidden_completion",
+        6,
+    );
+    assert!(
+        matches!(ok, EpisodeOutcome::VerifiedDone { .. }),
+        "a repaired fixture must drive to VerifiedDone, got {ok:?}"
+    );
+
+    // 1. The UNREPAIRED fixture: it compiles, so selection claims done, but the
+    //    hidden check refuses the claim and the workspace never changes.
+    let (_, ws) = stage("ep_ok");
+    let mut r = Runner::new(axon_bin(), &ws);
+    // clean.ax has no @[test] of its own, so give it a check that does exist
+    // in the file it is asked about — the point of this row is the SUCCESS
+    // path, and a check that cannot match would test the wrong thing.
+    let outcome = r.run_episode(
+        &SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        None,
+        "agent",
+        "visible_repro",
+        6,
+    );
+    // broken.ax compiles, so selection claims done; visible_repro FAILS on the
+    // unrepaired fixture, so the claim is refused and the loop tries again with
+    // an unchanged workspace — which is exactly NoProgress, not success.
+    assert!(
+        matches!(outcome, EpisodeOutcome::NoProgress { .. }),
+        "an unrepairable claim loop must stop as NoProgress, got {outcome:?}"
+    );
+
+    // 2. NoProgress must be distinguishable from BudgetExhausted. A budget of 1
+    //    cannot detect stuckness — there is no previous step to compare with —
+    //    so the same fixture must report the budget instead.
+    let (_, ws2) = stage("ep_budget");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let outcome2 = r2.run_episode(
+        &SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        None,
+        "agent",
+        "visible_repro",
+        1,
+    );
+    assert!(
+        matches!(outcome2, EpisodeOutcome::BudgetExhausted { steps: 1 }),
+        "one step cannot prove stuckness; it must report the budget, got {outcome2:?}"
+    );
+
+    // 3. A checker that cannot run makes the observation Unknown, and the
+    //    episode must BLOCK carrying that reason rather than guessing.
+    let (_, ws3) = stage("ep_blocked");
+    let mut r3 = Runner::new(ws3.join("no-such-axon"), &ws3);
+    let outcome3 = r3.run_episode(
+        &SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        None,
+        "agent",
+        "visible_repro",
+        6,
+    );
+    match outcome3 {
+        EpisodeOutcome::Blocked { reason, .. } => assert!(
+            reason.contains("unknown"),
+            "the block must carry the observer's reason: {reason}"
+        ),
+        other => panic!("expected Blocked, got {other:?}"),
+    }
+}

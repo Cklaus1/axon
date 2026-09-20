@@ -165,6 +165,33 @@ fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
     None
 }
 
+/// How a bounded repair episode ended.
+///
+/// Every variant is a REASON, not a status code. "It stopped" is not a result a
+/// caller can act on, and an episode that ends without saying why is the same
+/// absent-vs-empty collapse the observer refuses one layer down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EpisodeOutcome {
+    /// A completion claim was made AND independently verified.
+    VerifiedDone { steps: usize },
+    /// The loop ran out of steps. Distinct from being stuck: more budget might
+    /// have finished it, and conflating the two would hide a tuning problem as
+    /// a capability problem.
+    BudgetExhausted { steps: usize },
+    /// Two consecutive steps left the workspace unchanged AND chose the same
+    /// action. Continuing cannot help, so the loop stops and says so instead of
+    /// spinning to the budget.
+    NoProgress { steps: usize, action: String },
+    /// Selection could not choose, carrying the observer's reason.
+    Blocked { steps: usize, reason: String },
+    /// Authority refused the chosen action.
+    Refused { steps: usize, reason: String },
+    /// The loop needs something it cannot produce — today, a patch body. Said
+    /// plainly rather than dressed as a failure: the system is not broken, it
+    /// is out of scope without a generator.
+    NeedsInput { steps: usize, what: String },
+}
+
 pub struct Runner {
     pub axon_bin: PathBuf,
     pub workspace: PathBuf,
@@ -460,6 +487,102 @@ impl Runner {
                 }
             }
         }
+    }
+
+    /// Drive a bounded repair episode: observe → select → authorize → execute,
+    /// re-observing after each step, until the work is verified done or the
+    /// loop can honestly say why it stopped.
+    ///
+    /// `hidden_check` is the independent adjudicator for a completion claim. A
+    /// claim is never self-certifying: when selection proposes `ClaimDone`, the
+    /// loop executes it and then asks `verify()`, and a failed verification does
+    /// NOT end the episode — it is evidence that the claim was wrong.
+    ///
+    /// Two distinct stopping conditions that a single "it stopped" would hide:
+    ///
+    /// * `BudgetExhausted` — more steps might have finished it. A tuning
+    ///   problem.
+    /// * `NoProgress` — the workspace did not change and the same action was
+    ///   chosen again, so more steps cannot help. A capability problem.
+    ///
+    /// Conflating them is how a loop that is stuck gets read as a loop that was
+    /// merely rushed.
+    pub fn run_episode(
+        &mut self,
+        target: &crate::action::SymbolRef,
+        grant: Option<&EditGrant>,
+        principal: &str,
+        hidden_check: &str,
+        budget: usize,
+    ) -> EpisodeOutcome {
+        let mut last: Option<(String, String)> = None; // (workspace fingerprint, action name)
+        for step in 1..=budget {
+            let snap = match self.snapshot(&[target.path.as_str()]) {
+                Ok(s) => s,
+                Err(e) => {
+                    return EpisodeOutcome::Blocked {
+                        steps: step,
+                        reason: format!("cannot snapshot {}: {e}", target.path),
+                    }
+                }
+            };
+            let obs = self.observe(&snap, &target.path);
+            let action = match crate::select::select_action(&obs, target) {
+                crate::select::Selection::Act(a) => a,
+                crate::select::Selection::Blocked(reason) => {
+                    return EpisodeOutcome::Blocked {
+                        steps: step,
+                        reason,
+                    }
+                }
+            };
+
+            // Stuck detection BEFORE acting: identical state plus identical
+            // choice means the previous step achieved nothing and this one will
+            // achieve the same.
+            let fingerprint = snap.snapshot_id.clone();
+            if last.as_ref() == Some(&(fingerprint.clone(), action.name().to_string())) {
+                return EpisodeOutcome::NoProgress {
+                    steps: step,
+                    action: action.name().to_string(),
+                };
+            }
+            last = Some((fingerprint, action.name().to_string()));
+
+            // A patch needs a body this loop cannot generate. Saying so is not
+            // a failure report — the system is out of scope without a
+            // generator, and calling that "blocked" would blame the wrong part.
+            if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
+                if proposed_body.is_empty() {
+                    return EpisodeOutcome::NeedsInput {
+                        steps: step,
+                        what: format!("a patch body for `{}`", target.symbol),
+                    };
+                }
+            }
+
+            let auth = match self.authorize_action(&action, grant, principal, &snap) {
+                Ok(a) => a,
+                Err(why) => {
+                    return EpisodeOutcome::Refused {
+                        steps: step,
+                        reason: why.to_string(),
+                    }
+                }
+            };
+            let outcome = self.execute(auth);
+
+            // A claim is adjudicated, never accepted. If verification holds the
+            // episode is done; if it does not, the loop keeps going and the
+            // next iteration's stuck-detection decides whether that is futile.
+            if matches!(action, CortexAction::ClaimDone { .. }) {
+                let _ = outcome;
+                if self.verify(true, hidden_check, &target.path) {
+                    return EpisodeOutcome::VerifiedDone { steps: step };
+                }
+            }
+        }
+        EpisodeOutcome::BudgetExhausted { steps: budget }
     }
 
     /// Run ONE named check and report how many tests the name matched.
