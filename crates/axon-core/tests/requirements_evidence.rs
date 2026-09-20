@@ -141,6 +141,58 @@ enum Kind {
     Rs,
 }
 
+/// Why a `scripts/<name>.sh` occurrence does or does not count as a caller.
+/// Recorded for EVERY occurrence, including the rejected ones — a violation that
+/// cannot say why a script is unreachable is not actionable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MentionKind {
+    /// Counts: a real invocation in command position.
+    Invocation,
+    /// Counts: matched by a glob the invoker iterates.
+    Glob,
+    /// Rejected: the file names itself. The single largest false-positive class.
+    SelfReference,
+    /// Rejected: inside a `#` / `//` comment.
+    Comment,
+    /// Rejected: inside the text of an `echo`/`printf`.
+    EchoText,
+    /// Rejected: inside a `[ -f … ]` / `[[ -f … ]]` existence test.
+    ExistenceTest,
+    /// Rejected: named in a shell line, but not in command position.
+    NotCommandPosition,
+    /// Rejected: named inside a longer Rust string (a panic message, help text).
+    RustMessage,
+    /// Rejected: named in prose with no `scripts/` path and no command shape.
+    Prose,
+}
+
+impl MentionKind {
+    fn counts(self) -> bool {
+        matches!(self, MentionKind::Invocation | MentionKind::Glob)
+    }
+    fn label(self) -> &'static str {
+        match self {
+            MentionKind::Invocation => "INVOCATION",
+            MentionKind::Glob => "GLOB",
+            MentionKind::SelfReference => "SELF-REFERENCE",
+            MentionKind::Comment => "COMMENT",
+            MentionKind::EchoText => "ECHO TEXT",
+            MentionKind::ExistenceTest => "EXISTENCE TEST",
+            MentionKind::NotCommandPosition => "NOT A COMMAND",
+            MentionKind::RustMessage => "STRING MESSAGE",
+            MentionKind::Prose => "PROSE",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Mention {
+    pub file: String,
+    pub line: usize,
+    pub kind: MentionKind,
+    pub text: String,
+}
+
 #[derive(Debug, Default)]
 pub struct Facts {
     /// script basename -> set of (invoker path, guarded-by env vars)
@@ -152,6 +204,8 @@ pub struct Facts {
     /// script basenames reachable from a root
     reachable: BTreeSet<String>,
     scripts: BTreeSet<String>,
+    /// script basename -> every occurrence anywhere executable, counted or not
+    mentions: BTreeMap<String, Vec<Mention>>,
     root: PathBuf,
 }
 
@@ -229,12 +283,21 @@ fn echo_text_positions(toks: &[String]) -> Vec<bool> {
 /// Does this shell line INVOKE `script` (as opposed to naming it in a test, an
 /// echo, or a message)? Command position is the whole point: `[[ -f
 /// "$REPO/scripts/x.sh" ]]` names it and does not run it.
-fn sh_invokes(line: &str, script: &str) -> bool {
+/// Classify the strongest occurrence of `script` on this shell line. `None` means
+/// the line does not name it at all.
+fn sh_mention_kind(line: &str, script: &str) -> Option<MentionKind> {
     let suffix = format!("scripts/{script}");
     let toks = sh_tokens(line);
     let echoed = echo_text_positions(&toks);
+    let mut worst: Option<MentionKind> = None;
+    let note = |k: MentionKind, worst: &mut Option<MentionKind>| {
+        // Lower discriminant == stronger; keep the strongest seen.
+        if worst.map(|w| k < w).unwrap_or(true) {
+            *worst = Some(k);
+        }
+    };
     for (i, t) in toks.iter().enumerate() {
-        if !t.ends_with(&suffix) || echoed[i] {
+        if !t.ends_with(&suffix) {
             continue;
         }
         // Reject `foo_scripts/x.sh`: the char before `scripts/` must be a path sep.
@@ -242,11 +305,17 @@ fn sh_invokes(line: &str, script: &str) -> bool {
         if !(head.is_empty() || head.ends_with('/')) {
             continue;
         }
-        if i == 0 || CMD_STARTERS.contains(&toks[i - 1].as_str()) {
-            return true;
+        if echoed[i] {
+            note(MentionKind::EchoText, &mut worst);
+        } else if i == 0 || CMD_STARTERS.contains(&toks[i - 1].as_str()) {
+            note(MentionKind::Invocation, &mut worst);
+        } else if matches!(toks[i - 1].as_str(), "-f" | "-e" | "-x" | "-r" | "-s") {
+            note(MentionKind::ExistenceTest, &mut worst);
+        } else {
+            note(MentionKind::NotCommandPosition, &mut worst);
         }
     }
-    false
+    worst
 }
 
 /// Glob patterns this shell line iterates or runs, e.g. `for h in scripts/*_parity.sh`.
@@ -290,8 +359,34 @@ fn glob_matches(pattern: &str, name: &str) -> bool {
 /// `p.push("scripts/x.sh")`, `"{}/../../scripts/x.sh"`. A mention embedded in a
 /// longer message (`panic!("missing scripts/x.sh — deleted?")`, a `--help` string)
 /// is not an invocation, and `src/main.rs` contains exactly that.
-fn rs_invokes(line: &str, script: &str) -> bool {
-    line.contains(&format!("scripts/{script}\""))
+fn rs_mention_kind(line: &str, script: &str) -> Option<MentionKind> {
+    if line.contains(&format!("scripts/{script}\"")) {
+        return Some(MentionKind::Invocation);
+    }
+    line.contains(&format!("scripts/{script}"))
+        .then_some(MentionKind::RustMessage)
+}
+
+/// Does this line name the script WITHOUT a `scripts/` path — the bare basename in
+/// prose? Provenance only; a bare name is never an invocation.
+fn names_bare(line: &str, script: &str) -> bool {
+    let mut rest = line;
+    while let Some(i) = rest.find(script) {
+        let before = rest[..i].chars().next_back();
+        let after = rest[i + script.len()..].chars().next();
+        let path_qualified = rest[..i].ends_with('/');
+        let word_before = before
+            .map(|c| c.is_ascii_alphanumeric() || c == '_')
+            .unwrap_or(false);
+        let word_after = after
+            .map(|c| c.is_ascii_alphanumeric() || c == '_')
+            .unwrap_or(false);
+        if !path_qualified && !word_before && !word_after {
+            return true;
+        }
+        rest = &rest[i + script.len()..];
+    }
+    false
 }
 
 /// Env vars named in enclosing `if`/`elif` conditions that the file never assigns.
@@ -391,11 +486,31 @@ pub fn scan(root: &Path) -> Facts {
             .collect();
 
         let mut guards: Vec<Vec<String>> = Vec::new();
-        for line in text.lines() {
+        for (lineno, line) in text.lines().enumerate() {
+            let lineno = lineno + 1;
             let t = line.trim();
             // Comments are not invocation. This is the fix for false-positive
-            // class (1): a header comment naming the file it sits in.
-            if t.starts_with('#') || (*kind == Kind::Rs && t.starts_with("//")) {
+            // class (1): a header comment naming the file it sits in. They ARE
+            // recorded as mentions, because "its only mention is a comment in
+            // r33:6" is the difference between a violation and an action.
+            let is_comment = t.starts_with('#') || (*kind == Kind::Rs && t.starts_with("//"));
+            if is_comment {
+                for sc in &f.scripts {
+                    let named = line.contains(&format!("scripts/{sc}")) || names_bare(line, sc);
+                    if named {
+                        let kind = if *sc == self_name {
+                            MentionKind::SelfReference
+                        } else {
+                            MentionKind::Comment
+                        };
+                        f.mentions.entry(sc.clone()).or_default().push(Mention {
+                            file: rel.clone(),
+                            line: lineno,
+                            kind,
+                            text: t.chars().take(88).collect(),
+                        });
+                    }
+                }
                 continue;
             }
             if *kind == Kind::Sh {
@@ -412,14 +527,27 @@ pub fn scan(root: &Path) -> Facts {
                 v.join(",")
             };
             for s in &f.scripts {
-                if *s == self_name {
-                    continue; // self-reference is not a caller
-                }
-                let hit = match kind {
-                    Kind::Sh => sh_invokes(line, s),
-                    Kind::Rs => rs_invokes(line, s),
+                let mut mk = match kind {
+                    Kind::Sh => sh_mention_kind(line, s),
+                    Kind::Rs => rs_mention_kind(line, s),
                 };
-                if hit {
+                if mk.is_none() && names_bare(line, s) {
+                    mk = Some(MentionKind::Prose);
+                }
+                let Some(mut mk) = mk else { continue };
+                // Self-reference is not a caller, whatever shape it takes: a
+                // `usage()` line printing `bash scripts/<itself>.sh` reads as a
+                // command and is still not a second process running the gate.
+                if *s == self_name {
+                    mk = MentionKind::SelfReference;
+                }
+                f.mentions.entry(s.clone()).or_default().push(Mention {
+                    file: rel.clone(),
+                    line: lineno,
+                    kind: mk,
+                    text: t.chars().take(88).collect(),
+                });
+                if mk == MentionKind::Invocation {
                     f.direct
                         .entry(s.clone())
                         .or_default()
@@ -434,6 +562,12 @@ pub fn scan(root: &Path) -> Facts {
                                 .entry(s.clone())
                                 .or_default()
                                 .insert((rel.clone(), pat.clone()));
+                            f.mentions.entry(s.clone()).or_default().push(Mention {
+                                file: rel.clone(),
+                                line: lineno,
+                                kind: MentionKind::Glob,
+                                text: format!("matched by `{pat}`"),
+                            });
                         }
                     }
                 }
@@ -550,6 +684,233 @@ impl Facts {
             return Class::ManualOperator;
         }
         Class::Orphaned
+    }
+
+    fn invokers_of(&self, script: &str) -> BTreeSet<String> {
+        self.direct
+            .get(script)
+            .into_iter()
+            .flatten()
+            .map(|(p, _)| p.clone())
+            .chain(
+                self.globs
+                    .get(script)
+                    .into_iter()
+                    .flatten()
+                    .map(|(p, _)| p.clone()),
+            )
+            .collect()
+    }
+
+    /// The shortest chain of real invocations from a root down to `script`, e.g.
+    /// `scripts/gate.sh -> scripts/r23_acceptance_gate.sh`. `None` when nothing
+    /// that runs unasked can reach it.
+    pub fn path_from_root(&self, script: &str) -> Option<Vec<String>> {
+        let start = format!("scripts/{script}");
+        let mut parent: BTreeMap<String, String> = BTreeMap::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        seen.insert(start.clone());
+        let mut queue = vec![start.clone()];
+        let mut cursor = 0;
+        while cursor < queue.len() {
+            let node = queue[cursor].clone();
+            cursor += 1;
+            let Some(base) = node.strip_prefix("scripts/") else {
+                continue;
+            };
+            for inv in self.invokers_of(base) {
+                if self.roots.contains(&inv) {
+                    // Walk the parent chain back down to `script`.
+                    let mut chain = vec![inv, node.clone()];
+                    let mut cur = node;
+                    while let Some(next) = parent.get(&cur) {
+                        chain.push(next.clone());
+                        cur = next.clone();
+                    }
+                    return Some(chain);
+                }
+                if seen.insert(inv.clone()) {
+                    parent.insert(inv.clone(), node.clone());
+                    queue.push(inv);
+                }
+            }
+        }
+        None
+    }
+
+    /// One line saying why an executable is itself unreachable.
+    fn why_dead(&self, file: &str) -> String {
+        let Some(base) = file.strip_prefix("scripts/") else {
+            return "not a script".into();
+        };
+        let invokers = self.invokers_of(base);
+        if invokers.is_empty() {
+            match self.mentions.get(base).map(|m| m.len()).unwrap_or(0) {
+                0 => "orphaned: named nowhere executable".into(),
+                n => format!("orphaned: {n} mention(s), none a caller"),
+            }
+        } else {
+            format!(
+                "unreachable: called only by {}",
+                invokers.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        }
+    }
+
+    /// WHY this script has the class it has, in the terms the graph computed.
+    /// A flat verdict is not actionable; this is the part a reviewer reads.
+    pub fn explain(&self, script: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(path) = self.path_from_root(script) {
+            out.push(format!("path from root: {}", path.join(" -> ")));
+            let guards: BTreeSet<&str> = self
+                .direct
+                .get(script)
+                .into_iter()
+                .flatten()
+                .filter(|(_, g)| !g.is_empty())
+                .map(|(_, g)| g.as_str())
+                .collect();
+            if !guards.is_empty() && self.observe(script) == Class::Conditional {
+                out.push(format!(
+                    "but every invocation site is guarded by: {}",
+                    guards.into_iter().collect::<Vec<_>>().join(", ")
+                ));
+            }
+            return out;
+        }
+        out.push("shortest path from a root: NONE".into());
+        let invokers = self.invokers_of(script);
+        if invokers.is_empty() {
+            let ms: Vec<&Mention> = self
+                .mentions
+                .get(script)
+                .map(|v| v.iter().collect())
+                .unwrap_or_default();
+            if ms.is_empty() {
+                out.push(
+                    "reason: named nowhere under scripts/, .github/ or crates/ —                      no mention at all"
+                        .into(),
+                );
+            } else {
+                out.push(format!(
+                    "reason: {} mention(s), not one of them a caller",
+                    ms.len()
+                ));
+                for m in ms.iter().take(6) {
+                    out.push(format!(
+                        "  · {}:{}  {}  \"{}\"",
+                        m.file,
+                        m.line,
+                        m.kind.label(),
+                        m.text
+                    ));
+                }
+                if ms.len() > 6 {
+                    out.push(format!("  · … and {} more", ms.len() - 6));
+                }
+            }
+        } else {
+            out.push(format!(
+                "reason: reachable only via {}, itself reachable from no root",
+                invokers.iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
+            for inv in invokers.iter().take(4) {
+                out.push(format!("  · {inv} — {}", self.why_dead(inv)));
+                if let Some(base) = inv.strip_prefix("scripts/") {
+                    for up in self.invokers_of(base).into_iter().take(3) {
+                        out.push(format!("      · {up} — {}", self.why_dead(&up)));
+                    }
+                }
+            }
+            // The rejected mentions matter here too: `r28` is named in `r22` and
+            // `r23`, and a reader who greps will find those and conclude it is
+            // wired. Saying they are COMMENTS is the whole point.
+            let rejected: Vec<&Mention> = self
+                .mentions
+                .get(script)
+                .map(|v| v.iter().filter(|m| !m.kind.counts()).collect())
+                .unwrap_or_default();
+            if !rejected.is_empty() {
+                out.push(format!(
+                    "also named {} time(s) by nothing that runs it:",
+                    rejected.len()
+                ));
+                for m in rejected.iter().take(4) {
+                    out.push(format!(
+                        "  · {}:{}  {}  \"{}\"",
+                        m.file,
+                        m.line,
+                        m.kind.label(),
+                        m.text
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// Group the violations by the ONE upstream wiring that would resolve them.
+    /// Wiring five leaves independently, when all five hang off a single gate
+    /// nobody invokes, is four fixes too many — and the leaves would have become
+    /// reachable on their own once the root was wired.
+    pub fn root_fix_groups(&self, violating: &BTreeSet<String>) -> Vec<(String, Vec<String>)> {
+        // Forward edges, restricted to the currently-unreachable subgraph.
+        let mut forward: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for s in &self.scripts {
+            for inv in self.invokers_of(s) {
+                forward.entry(inv).or_default().insert(s.clone());
+            }
+        }
+        let candidates: Vec<String> = self
+            .scripts
+            .iter()
+            .filter(|s| !self.reachable.contains(*s))
+            .cloned()
+            .collect();
+        let covers = |c: &str| -> BTreeSet<String> {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            let mut queue = vec![c.to_string()];
+            while let Some(n) = queue.pop() {
+                if !seen.insert(n.clone()) {
+                    continue;
+                }
+                for d in forward.get(&format!("scripts/{n}")).into_iter().flatten() {
+                    if !self.reachable.contains(d) {
+                        queue.push(d.clone());
+                    }
+                }
+            }
+            seen.intersection(violating).cloned().collect()
+        };
+
+        let mut remaining: BTreeSet<String> = violating.clone();
+        let mut out = Vec::new();
+        while !remaining.is_empty() {
+            let mut best: Option<(String, BTreeSet<String>)> = None;
+            for c in &candidates {
+                let hit: BTreeSet<String> = covers(c).intersection(&remaining).cloned().collect();
+                if hit.is_empty() {
+                    continue;
+                }
+                let better = match &best {
+                    None => true,
+                    Some((bn, bh)) => {
+                        (hit.len(), std::cmp::Reverse(c.clone()))
+                            > (bh.len(), std::cmp::Reverse(bn.clone()))
+                    }
+                };
+                if better {
+                    best = Some((c.clone(), hit));
+                }
+            }
+            let Some((name, hit)) = best else { break };
+            for h in &hit {
+                remaining.remove(h);
+            }
+            out.push((format!("scripts/{name}"), hit.into_iter().collect()));
+        }
+        out
     }
 
     /// Verify a DECLARED (class, witness) against the facts. `Err` is a manifest
@@ -798,6 +1159,11 @@ pub struct Report {
     pub errors: Vec<String>,
     pub acknowledged: Vec<String>,
     pub table: String,
+    /// Per-violation provenance: the class, and WHY the graph says so.
+    pub provenance: String,
+    /// One upstream wiring -> the violations it would resolve, in the order to
+    /// apply them. Wire the root, recompute, do not patch leaves.
+    pub root_fixes: Vec<(String, Vec<String>)>,
     pub n_requirements: usize,
     pub n_citations: usize,
 }
@@ -806,6 +1172,8 @@ pub fn check(root: &Path) -> Report {
     let mut errors = Vec::new();
     let mut acknowledged = Vec::new();
     let mut table = String::new();
+    let mut provenance = String::new();
+    let mut violating: BTreeSet<String> = BTreeSet::new();
 
     let reqs_path = root.join("governance/REQUIREMENTS.md");
     let man_path = root.join("governance/EVIDENCE_CLASSES.md");
@@ -877,8 +1245,8 @@ pub fn check(root: &Path) -> Report {
 
     // The headline rule: a verification claim may not rest on evidence nothing runs.
     table.push_str(&format!(
-        "{:<6} {:<34} {:<18} {:<18} {}\n",
-        "req", "evidence", "declared", "observed", "verdict"
+        "{:<6} {:<34} {:<18} {:<14} {:<13} {}\n",
+        "req", "evidence", "declared", "observed", "verdict", "path from root"
     ));
     for r in &reqs {
         for e in &r.evidence {
@@ -892,21 +1260,43 @@ pub fn check(root: &Path) -> Report {
                 (true, Some(_)) => "VIOLATION",
             };
             table.push_str(&format!(
-                "{:<6} {:<34} {:<18} {:<18} {}\n",
+                "{:<6} {:<34} {:<18} {:<14} {:<13} {}\n",
                 r.id,
                 e,
                 declared.map(|c| c.name()).unwrap_or("-"),
                 observed.name(),
-                verdict
+                verdict,
+                facts
+                    .path_from_root(e)
+                    .map(|p| p.join(" -> "))
+                    .unwrap_or_else(|| "NONE".into())
             ));
             if verdict == "VIOLATION" {
-                errors.push(format!(
-                    "{} (REQUIREMENTS.md:{}) claims verification and cites `scripts/{}`, \
-                     which is `{}` — nothing runs it",
+                let cls = declared.unwrap();
+                violating.insert(e.clone());
+                let why = facts.explain(e);
+                provenance.push_str(&format!(
+                    "{} (REQUIREMENTS.md:{}) -> scripts/{} is `{}`\n",
                     r.id,
                     r.line,
                     e,
-                    declared.unwrap().name()
+                    cls.name()
+                ));
+                for l in &why {
+                    provenance.push_str(&format!("      {l}\n"));
+                }
+                provenance.push('\n');
+                errors.push(format!(
+                    "{} (REQUIREMENTS.md:{}) claims verification and cites `scripts/{}`, \
+                     which is `{}` — nothing runs it\n{}",
+                    r.id,
+                    r.line,
+                    e,
+                    cls.name(),
+                    why.iter()
+                        .map(|l| format!("      {l}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 ));
             } else if verdict == "acknowledged" {
                 acknowledged.push(format!(
@@ -919,13 +1309,42 @@ pub fn check(root: &Path) -> Report {
         }
     }
 
+    let root_fixes = facts.root_fix_groups(&violating);
     Report {
         errors,
         acknowledged,
         table,
+        provenance,
+        root_fixes,
         n_requirements: reqs.len(),
         n_citations,
     }
+}
+
+/// Render the root-fix plan. Ordering is the point: wire the root, recompute,
+/// and the leaves under it stop being violations without a second edit.
+pub fn render_root_fixes(groups: &[(String, Vec<String>)]) -> String {
+    if groups.is_empty() {
+        return String::new();
+    }
+    let mut s =
+        String::from("── root fixes, in dependency order (wire the root, then recompute) ──\n");
+    for (i, (root, covered)) in groups.iter().enumerate() {
+        s.push_str(&format!(
+            "  {:>2}. {:<38} covers {}: {}\n",
+            i + 1,
+            root,
+            covered.len(),
+            covered.join(", ")
+        ));
+    }
+    let leaves: usize = groups.iter().map(|(_, c)| c.len()).sum();
+    s.push_str(&format!(
+        "  {} upstream wiring(s) would clear all {} unreachable evidence script(s).\n",
+        groups.len(),
+        leaves
+    ));
+    s
 }
 
 fn repo_root() -> PathBuf {
@@ -963,15 +1382,24 @@ fn requirements_evidence_is_not_orphaned() {
             println!("  · {a}");
         }
     }
+    if !rep.provenance.is_empty() {
+        println!("\n── why each violation is unreachable ──────────────────────────\n");
+        println!("{}", rep.provenance);
+    }
+    let fixes = render_root_fixes(&rep.root_fixes);
+    if !fixes.is_empty() {
+        println!("{fixes}");
+    }
     assert!(
         rep.errors.is_empty(),
-        "requirements-evidence integrity: {} problem(s)\n{}",
+        "requirements-evidence integrity: {} problem(s)\n{}\n\n{}",
         rep.errors.len(),
         rep.errors
             .iter()
             .map(|e| format!("  ✗ {e}"))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n"),
+        fixes
     );
 }
 
@@ -1531,4 +1959,199 @@ fn fixture_echo_text_is_not_invocation() {
     )
     .write("scripts/advice.sh", "#!/usr/bin/env bash\necho hi\n");
     assert_eq!(g.facts().observe("advice.sh"), Class::StrictGate);
+}
+
+// ---------------------------------------------------------------------------
+// Provenance and dependency-order fixtures
+//
+// A flat verdict is not actionable. These pin that every violation says WHY, in
+// the graph's own terms, and that violations sharing one upstream cause are
+// reported as one fix rather than N.
+// ---------------------------------------------------------------------------
+
+/// The orphan must name the nearest thing that mentions it and why that mention
+/// does not count. This is `r31_acceptance_gate.sh`'s exact shape: its only
+/// mention repo-wide is a comment in another gate.
+#[test]
+fn fixture_provenance_names_the_rejecting_mention() {
+    let f = Fixture::new("prov_comment");
+    f.write(
+        "scripts/gate.sh",
+        "#!/usr/bin/env bash\n./scripts/other_gate.sh\n",
+    )
+    .write(
+        "scripts/other_gate.sh",
+        "#!/usr/bin/env bash\n# line two\n# Follows the pattern of scripts/lonely.sh.\necho hi\n",
+    )
+    .write("scripts/lonely.sh", "#!/usr/bin/env bash\necho hi\n");
+    let why = f.facts().explain("lonely.sh").join("\n");
+    assert!(why.contains("shortest path from a root: NONE"), "{why}");
+    assert!(
+        why.contains("scripts/other_gate.sh:3"),
+        "must cite file:line — {why}"
+    );
+    assert!(
+        why.contains("COMMENT"),
+        "must say WHY it does not count — {why}"
+    );
+}
+
+/// Each rejection reason is reported as itself, not collapsed into "no caller".
+#[test]
+fn fixture_provenance_distinguishes_the_rejection_reasons() {
+    let f = Fixture::new("prov_kinds");
+    f.write(
+        "scripts/gate.sh",
+        "#!/usr/bin/env bash\nif [ -f \"$ROOT/scripts/a.sh\" ]; then\n  echo \"try bash scripts/b.sh\"\nfi\n",
+    )
+    .write("scripts/a.sh", "#!/usr/bin/env bash\necho hi\n")
+    .write("scripts/b.sh", "#!/usr/bin/env bash\n# b.sh — see scripts/b.sh --help\necho hi\n")
+    .write(
+        "crates/x/tests/t.rs",
+        "#[test]\nfn t() {\n    panic!(\"missing scripts/c.sh — deleted?\");\n}\n",
+    )
+    .write("scripts/c.sh", "#!/usr/bin/env bash\necho hi\n");
+    let facts = f.facts();
+    assert!(facts.explain("a.sh").join("\n").contains("EXISTENCE TEST"));
+    let b = facts.explain("b.sh").join("\n");
+    assert!(b.contains("ECHO TEXT"), "{b}");
+    assert!(b.contains("SELF-REFERENCE"), "{b}");
+    assert!(facts.explain("c.sh").join("\n").contains("STRING MESSAGE"));
+}
+
+/// A reachable script prints the real chain, not just "wired".
+#[test]
+fn fixture_provenance_prints_path_from_root() {
+    let f = Fixture::new("prov_path");
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\n./scripts/agg.sh\n")
+        .write(
+            "scripts/agg.sh",
+            "#!/usr/bin/env bash\nfor h in scripts/*_parity.sh; do\n  bash \"$h\"\ndone\n",
+        )
+        .write("scripts/deep_parity.sh", "#!/usr/bin/env bash\necho PASS\n");
+    let facts = f.facts();
+    assert_eq!(
+        facts.path_from_root("deep_parity.sh").unwrap().join(" -> "),
+        "scripts/gate.sh -> scripts/agg.sh -> scripts/deep_parity.sh"
+    );
+    assert!(facts
+        .explain("deep_parity.sh")
+        .join("\n")
+        .contains("path from root: scripts/gate.sh"));
+}
+
+/// A `manual_operator` must name its dead caller AND say why THAT is dead —
+/// the R27 shape, where the chain is two deep.
+#[test]
+fn fixture_provenance_manual_operator_names_the_dead_caller() {
+    let f = Fixture::new("prov_manual");
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
+        .write(
+            "scripts/umbrella.sh",
+            "#!/usr/bin/env bash\nbash scripts/leaf.sh\n",
+        )
+        .write(
+            "scripts/r_other.sh",
+            "#!/usr/bin/env bash\n# leaf.sh is the thing this mirrors\necho hi\n",
+        )
+        .write("scripts/leaf.sh", "#!/usr/bin/env bash\necho ok\n");
+    let why = f.facts().explain("leaf.sh").join("\n");
+    assert!(why.contains("shortest path from a root: NONE"), "{why}");
+    assert!(
+        why.contains("reachable only via scripts/umbrella.sh"),
+        "{why}"
+    );
+    assert!(
+        why.contains("scripts/umbrella.sh — orphaned"),
+        "must explain the CALLER — {why}"
+    );
+    // The comment mention elsewhere is still surfaced: a reviewer greps and
+    // finds it, so the report must say it is not a caller.
+    assert!(
+        why.contains("scripts/r_other.sh:2") && why.contains("COMMENT"),
+        "{why}"
+    );
+}
+
+/// DEPENDENCY ORDER: three violations hanging off one unwired umbrella are ONE
+/// fix, not three — and the chain is followed transitively, so a leaf two hops
+/// down is covered by wiring the top.
+#[test]
+fn fixture_root_fix_groups_one_wiring_covers_the_subtree() {
+    let f = Fixture::new("root_fix");
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
+        .write(
+            "scripts/umbrella.sh",
+            "#!/usr/bin/env bash\nbash scripts/mid.sh\n",
+        )
+        .write(
+            "scripts/mid.sh",
+            "#!/usr/bin/env bash\nbash scripts/leaf.sh\n",
+        )
+        .write("scripts/leaf.sh", "#!/usr/bin/env bash\necho ok\n")
+        .write("scripts/solo.sh", "#!/usr/bin/env bash\necho ok\n")
+        .write(
+            "governance/REQUIREMENTS.md",
+            "| # | Req | Status | Evidence |\n|---|---|---|---|\n\
+             | R90 | A | ✅ Landed | `scripts/umbrella.sh` PASS |\n\
+             | R91 | B | ✅ Landed | `scripts/mid.sh` PASS |\n\
+             | R92 | C | ✅ Landed | `scripts/leaf.sh` PASS |\n\
+             | R93 | D | ✅ Landed | `scripts/solo.sh` PASS |\n",
+        )
+        .write(
+            "governance/EVIDENCE_CLASSES.md",
+            &format!(
+                "{MINI_MANIFEST_HEADER}\
+                 | umbrella.sh | orphaned | `-` | nothing runs it |\n\
+                 | mid.sh | manual_operator | `scripts/umbrella.sh` | dead caller |\n\
+                 | leaf.sh | manual_operator | `scripts/mid.sh` | dead caller |\n\
+                 | solo.sh | orphaned | `-` | nothing runs it |\n"
+            ),
+        );
+    let rep = f.check();
+    assert_eq!(rep.errors.len(), 4, "{:?}", rep.errors);
+    assert_eq!(rep.root_fixes.len(), 2, "{:?}", rep.root_fixes);
+    assert_eq!(rep.root_fixes[0].0, "scripts/umbrella.sh");
+    assert_eq!(
+        rep.root_fixes[0].1,
+        vec!["leaf.sh".to_string(), "mid.sh".into(), "umbrella.sh".into()],
+        "one wiring must cover the whole subtree, two hops down"
+    );
+    assert_eq!(rep.root_fixes[1].0, "scripts/solo.sh");
+    let rendered = render_root_fixes(&rep.root_fixes);
+    assert!(rendered.contains("covers 3:"), "{rendered}");
+    assert!(
+        rendered.contains("2 upstream wiring(s) would clear all 4"),
+        "{rendered}"
+    );
+}
+
+/// …and the grouping must not fire when the violations are genuinely independent.
+#[test]
+fn fixture_root_fix_does_not_invent_a_shared_cause() {
+    let f = Fixture::new("root_fix_none");
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
+        .write("scripts/a_gate.sh", "#!/usr/bin/env bash\necho ok\n")
+        .write("scripts/b_gate.sh", "#!/usr/bin/env bash\necho ok\n")
+        .write(
+            "governance/REQUIREMENTS.md",
+            "| # | Req | Status | Evidence |\n|---|---|---|---|\n\
+             | R90 | A | ✅ Landed | `scripts/a_gate.sh` PASS |\n\
+             | R91 | B | ✅ Landed | `scripts/b_gate.sh` PASS |\n",
+        )
+        .write(
+            "governance/EVIDENCE_CLASSES.md",
+            &format!(
+                "{MINI_MANIFEST_HEADER}\
+                 | a_gate.sh | orphaned | `-` | nothing runs it |\n\
+                 | b_gate.sh | orphaned | `-` | nothing runs it |\n"
+            ),
+        );
+    let rep = f.check();
+    assert_eq!(
+        rep.root_fixes.len(),
+        2,
+        "two causes, two fixes: {:?}",
+        rep.root_fixes
+    );
 }
