@@ -120,13 +120,65 @@ bad_fractions = sorted(
     f for f in set(re.findall(r"\b\d{1,3}\s*/\s*\d{1,3}\b", readme)) if f not in legit
 )
 
+# THE SAME FIGURES LIVE IN TWO OTHER DOCUMENTS.
+#
+# The crate README and CLAUDE.md quote the localization percentages too, and
+# both were corrected BY HAND when the measurement moved. Checking only the
+# benchmark README fixes the instance and leaves the class: the next time a
+# number changes, those two drift silently and the gate stays green.
+#
+# CLAUDE.md is scoped to its Cortex section — the rest of that file is full of
+# unrelated figures, and a checker that cried wolf on them would be switched
+# off within a day.
+def _cortex_section(text):
+    start = text.find("### Cortex — the repair control loop")
+    if start < 0:
+        return ""
+    nxt = text.find("\n## ", start)
+    return text[start : nxt if nxt > 0 else len(text)]
+
+
+ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+elsewhere = []
+crate_readme = os.path.join(HERE, "..", "README.md")
+if os.path.exists(crate_readme):
+    elsewhere.append(("crates/axon-cortex/README.md", open(crate_readme).read()))
+claude = os.path.join(ROOT, "CLAUDE.md")
+if os.path.exists(claude):
+    sec = _cortex_section(open(claude).read())
+    if not sec:
+        broke("CLAUDE.md has no `### Cortex` section to scope the check to")
+    elsewhere.append(("CLAUDE.md (Cortex section)", sec))
+
+# PERCENTAGES ONLY, in these two.
+#
+# A bare-decimal scan flagged `§9.5` (a ROADMAP section reference) and read
+# the exit-code list `20/21/22/23/24` as fractions. Those are false positives,
+# and the comment at the top of this file says what happens to a checker that
+# produces them: it gets switched off, and then it protects nothing.
+#
+# A quoted accuracy is always written with a `%` here, so that is the shape to
+# check. The benchmark README keeps the fuller scan because its tables ARE
+# measurements; these two documents only ever cite one.
+stale_elsewhere = []
+for name, text in elsewhere:
+    for n in sorted(set(re.findall(r"\b(\d{1,3}\.\d)%", text))):
+        if n not in sourced:
+            stale_elsewhere.append((name, n + "%"))
+
+for name, n in stale_elsewhere:
+    print(f"  UNSOURCED in {name}: {n} — no figure in {os.path.basename(art_path)} produces it")
+
 for k, v in missing:
     print(f"  MISSING from the prose: {k} = {v}")
 for n in orphans:
     print(f"  UNSOURCED in the prose: {n} — no figure in {os.path.basename(art_path)} produces it")
 for f in bad_fractions:
     print(f"  UNSOURCED fraction in the prose: {f} — no pair in {os.path.basename(art_path)} produces it")
-if missing or orphans or bad_fractions:
+if missing or orphans or bad_fractions or stale_elsewhere:
     print("\ndocs have drifted from the data they cite")
     sys.exit(1)
-print(f"docs match {os.path.basename(art_path)} in both directions")
+print(
+    f"docs match {os.path.basename(art_path)} in both directions "
+    f"({1 + len(elsewhere)} documents checked)"
+)
