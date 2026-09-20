@@ -1,5 +1,22 @@
 # Cortex v0.15 ↔ live Axon — discrepancy records
 
+## Resolution status
+
+| id | subject | state | branch |
+|---|---|---|---|
+| D-001 | "empty scoped list is not deny-all" is stale | package update proposed | — |
+| **D-002** | ambient ceiling ignored by native | **FIXED** — `axon build` refuses (E0910); mutation-verified | `fix/native-ceiling-parity` |
+| D-003 | approval TTL / max-uses read by nothing | open | — |
+| **D-004** | policy surface was four basenames | **FIXED** — prefix set; mutation-verified | `fix/cortex-evidence-channel` |
+| **D-005** | self-report written as a passing check | **FIXED** — `Claimed`/`Proposed`; mutation-verified | `fix/cortex-evidence-channel` |
+| D-006 | approval row: required work already landed | package update proposed | — |
+| D-007 | four governance registries already exist | consolidation proposed | — |
+| **D-008** | cancellation killed only the direct child | **FIXED** — `process_group` + `killpg`; differential-verified | `fix/kill-the-process-group` |
+
+None of the four fixes is on `main` yet: a `gate.sh --strict` run is in flight
+and several parity harnesses rebuild, so integrating mid-run would invalidate
+it. Each branch is one coherent slice and carries its own evidence.
+
 The build package states its own status as **"documented, not rerun"** and
 instructs: *"Repository paths are taken from the attachment and must be
 confirmed before editing"* and *"For conflicting documentation, add a
