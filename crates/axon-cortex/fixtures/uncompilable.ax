@@ -1,0 +1,14 @@
+// A program that does NOT type-check.
+//
+// `broken.ax` compiles and is wrong; this one does not compile at all. The
+// distinction matters to selection: a program with errors cannot be claimed
+// done and cannot have its behaviour confirmed, so the only honest next step
+// is to read it.
+fn f(a: i64) -> i64 {
+    a + "not a number"
+}
+
+fn main() -> i64 {
+    println(to_str(f(1)))
+    0
+}

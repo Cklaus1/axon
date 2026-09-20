@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 pub mod action;
 pub mod episode;
 pub mod runner;
+pub mod select;
 
 /// `axc1:`-tagged SHA-256 over canonical bytes.
 ///

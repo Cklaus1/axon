@@ -647,3 +647,92 @@ fn cxg_c03_typed_actions_carry_their_own_authority() {
         Err(Refusal::StaleSnapshot { .. })
     ));
 }
+
+/// Observation → typed action selection, against the REAL checker.
+///
+/// Three observed states produce three different actions, and an undetermined
+/// state produces none. The last row is the load-bearing one: `Observed::Unknown`
+/// exists so a fact the checker could not establish stays distinguishable from
+/// one it established as false, and the moment that distinction pays for itself
+/// is exactly here — deciding whether to claim the work is done.
+#[test]
+fn cxg_c02_selection_follows_the_observation_and_refuses_to_guess() {
+    use axon_cortex::action::{CortexAction, SymbolRef};
+    use axon_cortex::select::{select_action, Selection};
+
+    let sym = |p: &str| SymbolRef {
+        path: p.to_string(),
+        symbol: "f".to_string(),
+    };
+
+    // 1. Does not compile → Inspect. You cannot patch what you have not read,
+    //    and the selector cannot invent a patch body.
+    let (_, ws) = stage("sel_err");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let snap = r.snapshot(&["uncompilable.ax"]).expect("snapshot");
+    let obs = r.observe(&snap, "uncompilable.ax");
+    assert!(
+        !obs.diagnostics.is_empty(),
+        "fixture must actually fail to compile, or this row proves nothing"
+    );
+    assert!(
+        matches!(
+            select_action(&obs, &sym("uncompilable.ax")),
+            Selection::Act(CortexAction::Inspect { .. })
+        ),
+        "errors present must select Inspect, got {:?}",
+        select_action(&obs, &sym("uncompilable.ax"))
+    );
+
+    // 2. Compiles WITH warnings → RunCheck. It builds, but the checker
+    //    objected, so behaviour is worth confirming before anything is claimed.
+    //    This is the row that consumes the warnings channel: without it the
+    //    selector could not tell this case from the clean one.
+    let (_, ws2) = stage("sel_warn");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let snap2 = r2.snapshot(&["warned.ax"]).expect("snapshot");
+    let obs2 = r2.observe(&snap2, "warned.ax");
+    assert!(obs2.diagnostics.is_empty() && !obs2.warnings.is_empty());
+    assert!(
+        matches!(
+            select_action(&obs2, &sym("warned.ax")),
+            Selection::Act(CortexAction::RunCheck { .. })
+        ),
+        "compiles-with-warnings must select RunCheck, not a completion claim"
+    );
+
+    // 3. Compiles cleanly → ClaimDone.
+    let (_, ws3) = stage("sel_clean");
+    let mut r3 = Runner::new(axon_bin(), &ws3);
+    let snap3 = r3.snapshot(&["clean.ax"]).expect("snapshot");
+    let obs3 = r3.observe(&snap3, "clean.ax");
+    assert!(obs3.diagnostics.is_empty() && obs3.warnings.is_empty());
+    assert!(
+        matches!(
+            select_action(&obs3, &sym("clean.ax")),
+            Selection::Act(CortexAction::ClaimDone { .. })
+        ),
+        "a clean compile may claim done"
+    );
+
+    // 4. State UNKNOWN → Blocked, never an action. A runner pointed at a
+    //    checker that does not exist observes `compiles: Unknown(reason)`; a
+    //    selector that treated unknown as fine would claim done on a program it
+    //    never managed to check. This is a real unavailable binary, not a
+    //    hand-built Observation.
+    let (_, ws4) = stage("sel_unknown");
+    let mut r4 = Runner::new(ws4.join("no-such-axon-binary"), &ws4);
+    let snap4 = r4.snapshot(&["clean.ax"]).expect("snapshot");
+    let obs4 = r4.observe(&snap4, "clean.ax");
+    match select_action(&obs4, &sym("clean.ax")) {
+        Selection::Blocked(why) => assert!(
+            why.contains("unknown"),
+            "the block must carry the reason, not merely refuse: {why}"
+        ),
+        Selection::Act(a) => panic!(
+            "selected {} from an observation that never ran the checker — \
+             unknown was treated as fine",
+            a.name()
+        ),
+    }
+}
