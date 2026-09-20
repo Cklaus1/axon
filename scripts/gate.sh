@@ -322,6 +322,19 @@ if [ "$STRICT" = 1 ]; then
   # exit 0, "ALL CHECKS PASSED".
   ./scripts/r31_acceptance_gate.sh >/dev/null 2>&1 || fail "R31 acceptance gate"
 
+  # R39 slices 3, 4 and 5. REQUIREMENTS.md cites all three as the evidence R39
+  # landed, all three pass, and nothing invoked any of them.
+  #
+  # 41s total for 29 assertions (measured: 35s/11, 4s/8, 2s/10), which is what
+  # makes them continuous rather than conditional. Verified TWICE in a worktree
+  # that has never run these — once by a subagent and once here — because a gate
+  # verified only in a long-lived checkout can pass on ignored leftover state
+  # and fail in every fresh clone. That is not hypothetical: r27 and r29 were
+  # wired earlier in this session on exactly that mistake.
+  ./scripts/r39_slice3_gate.sh >/dev/null 2>&1 || fail "R39 Slice 3 gate"
+  ./scripts/r39_slice4_gate.sh >/dev/null 2>&1 || fail "R39 Slice 4 gate"
+  ./scripts/r39_slice5_gate.sh >/dev/null 2>&1 || fail "R39 Slice 5 gate"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
