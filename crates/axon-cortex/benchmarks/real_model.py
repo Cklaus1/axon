@@ -226,7 +226,26 @@ for mname, mfn in MUTATORS:
                     f"props={r['proposals']} ${r['cost_usd']}",
                     file=sys.stderr, flush=True,
                 )
-            break  # one function per file per class, so no file dominates
+                # One TRIAL per file per class, so no file dominates — that is
+                # the intent, and it is satisfied by stopping once a trial was
+                # produced.
+                break
+            # `trial` returned None: this mutator cannot apply to THIS function
+            # (argswap needs two parameters, drop-stmt a multi-statement body).
+            # Try the next function rather than abandoning the file.
+            #
+            # The break used to be unconditional, so exactly ONE function per
+            # file was ever attempted and a file whose first function did not
+            # fit the mutator was discarded whole. Measured over the 78-file
+            # corpus, that is the difference between
+            #
+            #     first-candidate-only   argswap 3   drop-stmt 3   boolean 3
+            #     try-until-one-fits     argswap 26  drop-stmt 17  boolean 22
+            #
+            # and it is why a PER_CLASS=5 run returned argswap 1 and
+            # drop-stmt 1. I first recorded that as "the class exhausted the
+            # corpus". It did not: the corpus has 17+ per class for every
+            # class, and the harness was looking at one function per file.
     achieved[mname] = taken
 
 # STRATIFICATION IS A DESIGN, AND A DESIGN THAT DID NOT HOLD MUST SAY SO.

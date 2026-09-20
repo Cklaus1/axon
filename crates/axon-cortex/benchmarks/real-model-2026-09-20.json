@@ -40,7 +40,7 @@
  },
  "stratification_met": false,
  "limitations": [
-  "STRATIFICATION NOT MET: asked for 5 per class, got 13 of 25. argswap and drop-stmt exhausted the corpus (the mutator could not apply). Per-class rates are NOT comparable; the conditional rate is unaffected because it conditions on trials that happened.",
+  "STRATIFICATION NOT MET: asked for 5 per class, got 13 of 25 \u2014 argswap 1, boolean 2, constant 5, drop-stmt 1, operator 4. Per-class rates are NOT comparable; the conditional rate is unaffected because it conditions on trials that happened. CORRECTED CAUSE: this was first recorded as the classes exhausting the corpus. They did not. The harness broke out of its candidate loop UNCONDITIONALLY after the first function in each file, so a file whose first function could not take the mutator was discarded whole. Measured over the same 78-file corpus: first-candidate-only yields argswap 3 / drop-stmt 3 / boolean 3, while trying until one fits yields 26 / 17 / 22. The corpus supports 17+ per class for every class. Fixed for the next run.",
   "n=10 on the conditional. 100% is a ceiling observation, not a proven rate.",
   "Transport quality UNMEASURED: this run predates the driver recording extraction status, so a strange model answer cannot be distinguished from a driver that mangled a conventional one.",
   "Invalid-output cost UNMEASURED: the harness did not retain the episode, and patch_reverted is the only record of a proposal read correctly that still broke the build.",
@@ -68,5 +68,22 @@
   }
  ],
  "finding_cost_usd": 8.5,
- "fixing_cost_usd": 0.79
+ "fixing_cost_usd": 0.79,
+ "corpus_capacity_per_class": {
+  "first_candidate_only": {
+   "operator": 10,
+   "constant": 23,
+   "boolean": 3,
+   "argswap": 3,
+   "drop-stmt": 3
+  },
+  "try_until_one_fits": {
+   "operator": 35,
+   "constant": 35,
+   "boolean": 22,
+   "argswap": 26,
+   "drop-stmt": 17
+  },
+  "note": "Computed over examples/stdlib/*.ax + examples/*.ax with the harness's own mutators and fn_span. Does not apply the `axon check` / `failing_tests` file filters, which reduce both columns further, so these are upper bounds on each rule."
+ }
 }
