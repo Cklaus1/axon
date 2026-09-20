@@ -20,11 +20,32 @@ fn decide(args: &[&str], request: &str) -> (i32, String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn adapter");
-    c.stdin
+    // EPIPE is a LEGITIMATE outcome here, not a test failure, and treating it
+    // as one made these tests flaky (measured: 1 failure in 5 isolated runs of
+    // the snapshot test, 1 in 12 of the whole file, and one strict-gate
+    // failure). The cases that race are exactly the ones where the adapter
+    // refuses WITHOUT reading the request — a missing grant snapshot is
+    // detected from argv, so the child can exit before it ever consumes stdin
+    // and the parent's write loses the race.
+    //
+    // Narrow on purpose: only BrokenPipe is tolerated. Any other write error
+    // still panics, because swallowing them would hide a real defect behind
+    // the same silence this file exists to prevent. The assertions that matter
+    // — the exit code and an EMPTY stdout — are made on the output below
+    // either way, so nothing is skipped when the write is cut short.
+    if let Err(e) = c
+        .stdin
         .as_mut()
         .expect("stdin")
         .write_all(request.as_bytes())
-        .expect("write request");
+    {
+        assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "writing the request failed for a reason other than the adapter \
+             exiting early: {e}"
+        );
+    }
     let out = c.wait_with_output().expect("wait");
     let text = format!(
         "{}{}",
@@ -275,11 +296,32 @@ fn stdout_of(args: &[&str], request: &str) -> (i32, String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn adapter");
-    c.stdin
+    // EPIPE is a LEGITIMATE outcome here, not a test failure, and treating it
+    // as one made these tests flaky (measured: 1 failure in 5 isolated runs of
+    // the snapshot test, 1 in 12 of the whole file, and one strict-gate
+    // failure). The cases that race are exactly the ones where the adapter
+    // refuses WITHOUT reading the request — a missing grant snapshot is
+    // detected from argv, so the child can exit before it ever consumes stdin
+    // and the parent's write loses the race.
+    //
+    // Narrow on purpose: only BrokenPipe is tolerated. Any other write error
+    // still panics, because swallowing them would hide a real defect behind
+    // the same silence this file exists to prevent. The assertions that matter
+    // — the exit code and an EMPTY stdout — are made on the output below
+    // either way, so nothing is skipped when the write is cut short.
+    if let Err(e) = c
+        .stdin
         .as_mut()
         .expect("stdin")
         .write_all(request.as_bytes())
-        .expect("write request");
+    {
+        assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "writing the request failed for a reason other than the adapter \
+             exiting early: {e}"
+        );
+    }
     let out = c.wait_with_output().expect("wait");
     (
         out.status.code().unwrap_or(-1),
