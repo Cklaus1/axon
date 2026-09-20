@@ -467,6 +467,29 @@ fn main() {
             Some(sym) => println!("{kind} after {steps} step(s) — repaired `{sym}`"),
             None => println!("{kind} after {steps} step(s)"),
         }
+        // WHAT THE WHOLE RUN DID, not only its last episode.
+        //
+        // The walk tries several candidates and the verdict above describes
+        // the FINAL one — so a defect that no single-symbol patch can repair
+        // came back as "going in circles", a statement about one episode's
+        // stuck-detection rather than about the run. Measured on 16 defects
+        // deliberately placed outside what one `PatchSymbolBody` can express,
+        // that was the only thing an operator was told.
+        //
+        // Restricted to the outcomes where episodes actually RAN and failed:
+        // saying "tried N candidates" after an authority refusal or a missing
+        // target would describe attempts that never happened, which is the
+        // same overstatement pointing the other way. Exit 27 is excluded too —
+        // there a candidate DID satisfy the check, and its own detail says
+        // what remained.
+        if matches!(code, 20 | 21) && !attempted.is_empty() {
+            println!(
+                "  tried {} candidate(s) ({}); none satisfied `{check}`, so no \
+                 single-symbol repair among them was enough",
+                attempted.len(),
+                attempted.join(", ")
+            );
+        }
         if !detail.is_empty() {
             println!("  {detail}");
         }

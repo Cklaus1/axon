@@ -1448,3 +1448,45 @@ fn cli_restores_a_workspace_when_a_run_stops_mid_repair() {
         );
     }
 }
+
+/// C30 — a failed run says what the RUN did, not what its last episode did.
+///
+/// The walk tries several candidates and the verdict describes the final one.
+/// So a defect no single-symbol patch can repair came back as `no_progress` —
+/// "going in circles" — which is a statement about one episode's
+/// stuck-detection, not about the run. Measured on 16 defects deliberately
+/// placed outside what one `PatchSymbolBody` can express, that was the only
+/// thing an operator was told.
+#[test]
+fn cli_names_the_candidates_it_tried_when_it_fails() {
+    let ws = workspace("tried");
+    let (code, text) = repair(
+        &ws,
+        &[
+            "--write-prefix",
+            "broken.ax",
+            "--budget",
+            "4",
+            // Compiles, never repairs.
+            "--generator",
+            "literal:\n    n + 7\n",
+        ],
+    );
+    assert!(matches!(code, 20 | 21), "{text}");
+    assert!(
+        text.contains("tried 1 candidate(s) (double)") && text.contains("hidden_completion"),
+        "a failed run must name the candidates it tried and the check none \
+         satisfied: {text}"
+    );
+
+    // AND NOT when no episode ran. Saying "tried N candidates" after an
+    // authority refusal describes attempts that never happened — the same
+    // overstatement pointing the other way.
+    let ws2 = workspace("tried_refused");
+    let (code2, text2) = repair(&ws2, &["--generator", "literal:\n    n * 2\n"]);
+    assert_eq!(code2, 23, "{text2}");
+    assert!(
+        !text2.contains("tried"),
+        "a refusal must not claim attempts that never ran: {text2}"
+    );
+}

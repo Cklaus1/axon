@@ -142,6 +142,37 @@ Earlier the loop did all three wrong things at once: it undid the working
 patch, recorded the correct body as "did not fix the problem", and put it on
 the generator's do-not-propose list.
 
+### At the EDGE of what the loop can express
+
+Every class above is a defect the loop CAN repair — one wrong thing inside one
+function body, the exact shape of its single action. So none of them said
+anything about the boundary, which is the part that decides whether a
+controller can be trusted with more.
+
+This class swaps the bodies of two same-signature functions. It compiles, the
+file's own checks catch it, and no single `PatchSymbolBody` can undo it:
+repairing either half leaves the other wrong. The generator is handed the
+correct body for one of them — the best a real generator could ever do here.
+
+| | |
+|---|---|
+| trials | 16 |
+| exit 0 | **0** |
+| false successes | **0** |
+| workspace unchanged | 16 / 16 |
+
+All sixteen ended as `no_progress`. Outside what its action can express, the
+loop does not claim success and does not alter the workspace.
+
+Two things this does NOT show. It says nothing about how OFTEN real defects
+fall outside the capability — the class is synthetic and chosen, so its
+frequency here is a property of the mutator. And the premise had to be checked
+per trial rather than assumed: the first version asserted "a swap needs two
+edits" from the construction, and one swap turned out to be repairable by a
+single patch because the borrowed body still satisfied everything that
+exercised it. That row would have sat in these results as a safety datum about
+a case that does not belong here.
+
 ## Corrections, recorded
 
 Four, because a measurement that was wrong and then quietly restated is worse

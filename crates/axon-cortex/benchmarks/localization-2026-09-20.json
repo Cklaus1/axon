@@ -88,7 +88,8 @@
   "An earlier run chose the adjudicator up front as the file's last @[test], which usually did not exercise the defect and therefore passed on the broken file: 54 of 80 runs reported success having changed nothing. Those figures are withdrawn.",
   "The published top-1 of 57.5% counted alphabetical tie-breaks as hits; the sole-candidate figure is what is reported now.",
   "The harness's failing_tests returned [] for a run that never completed, which file_clean read as a CLEAN file \u2014 the same fail-open this release fixes in Rust. Both headline results were re-measured after the fix and survive it.",
-  "measure.py was committed dead: it grepped for a message a later commit renamed and invoked repair with no grant, so every trial scored 'error'. Deleted."
+  "measure.py was committed dead: it grepped for a message a later commit renamed and invoked repair with no grant, so every trial scored 'error'. Deleted.",
+  "The out-of-scope experiment's yield was 3 trials from 29 files until pairs were matched by signature, and its premise was false for one trial until it was verified per trial rather than assumed from the construction."
  ],
  "limitations": [
   "All defects are injected and I chose them. An attempt to build a corpus from real bug-fix commits produced ZERO usable trials \u2014 this repository's .ax history is examples being added and refactored, not behavioural bugs caught by in-file tests.",
@@ -1096,5 +1097,16 @@
    "mutator": "operator",
    "how": "op:+->-"
   }
- ]
+ ],
+ "out_of_scope_defects": {
+  "trials": 16,
+  "construction": "the bodies of two same-signature functions are exchanged. It compiles, the file's own checks catch it, and NO single PatchSymbolBody can undo it \u2014 repairing either half leaves the other wrong.",
+  "premise_verified_per_trial": "each trial is kept only after checking that restoring EITHER half alone fails to clean the file. Asserting out-of-scope-ness from the construction was wrong: one swap turned out to be repairable by a single patch, because the borrowed body still satisfied everything exercising it.",
+  "generator": "handed the correct body for one of the two swapped functions \u2014 the most favourable case a real generator could hit.",
+  "exit_zero": 0,
+  "false_successes": 0,
+  "workspace_unchanged": "16/16",
+  "result": "On defects outside what its single action can express, the loop never claimed success and never altered the workspace. All 16 ended as no_progress (exit 21).",
+  "what_this_does_not_show": "how OFTEN real defects fall outside the capability. This class is synthetic and chosen; its frequency here is an artefact of the mutator, not a property of real code."
+ }
 }

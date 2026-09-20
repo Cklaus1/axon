@@ -87,6 +87,61 @@ def _mut_drop_stmt(body):
     return None
 
 
+def _mut_swap_bodies(body):
+    """Not a body mutator — see `MUTATORS_WHOLE_FILE`."""
+    return None
+
+
+def swap_two_bodies(src, defined, checks):
+    """Exchange the bodies of two non-test functions.
+
+    OUT OF SCOPE BY CONSTRUCTION. The loop replaces ONE function body, so no
+    single patch can undo this — repairing either half leaves the other wrong.
+    It still compiles, and the file's own checks still catch it.
+
+    That makes it the measurement the corpus was missing. Every other mutator
+    produces a defect the loop can express, so the results said nothing about
+    what happens at the edge of the capability. The question here is not
+    whether it repairs (it cannot) but whether it FAILS HONESTLY: a defect
+    outside what an action can say must never produce exit 0.
+    """
+    import re as _re
+
+    def _sig(name):
+        """The parameter list and return type, as written."""
+        m = _re.search(r"\bfn %s\(([^)]*)\)([^{]*)\{" % _re.escape(name), src)
+        return (m.group(1).strip(), m.group(2).strip()) if m else None
+
+    cands = [f for f in defined if f not in checks and f != "main"]
+    # SAME-SIGNATURE PAIRS FIRST. A swap between differently-typed functions
+    # almost never compiles, and a mutant that does not compile is discarded —
+    # so the first version of this yielded 3 trials from 29 files, which is too
+    # few to conclude anything from. Pairing by signature is not a different
+    # experiment, it is the same one with a usable sample.
+    ordered = [
+        (a, b)
+        for i, a in enumerate(cands)
+        for b in cands[i + 1 :]
+        if _sig(a) is not None and _sig(a) == _sig(b)
+    ]
+    ordered += [(a, b) for i, a in enumerate(cands) for b in cands[i + 1 :]]
+    for a, b in ordered:
+        if True:
+            sa, sb = fn_span(src, a), fn_span(src, b)
+            if not sa or not sb or sa[0] == sb[0]:
+                continue
+            ba, bb = src[sa[0]:sa[1]], src[sb[0]:sb[1]]
+            if ba == bb or not ba.strip() or not bb.strip():
+                continue
+            # Splice the later span first so the earlier offsets stay valid.
+            (lo, lb), (hi, hb) = ((sa, bb), (sb, ba)) if sa[0] < sb[0] else ((sb, ba), (sa, bb))
+            out = src[: hi[0]] + hb + src[hi[1]:]
+            out = out[: lo[0]] + lb + out[lo[1]:]
+            if out != src:
+                return out, f"swap-bodies:{a}<->{b}"
+    return None
+
+
 MUTATORS = [
     ("operator", _mut_operator),
     ("constant", _mut_constant),
