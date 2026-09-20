@@ -1,0 +1,73 @@
+#!/bin/sh
+# A real model behind the `cmd:` seam.
+#
+# Reads Cortex's prompt on stdin, returns ONE function body on stdout. The
+# credentials live in the `claude` CLI's own environment and never enter this
+# repository, this process, or any Axon config — which is the whole reason the
+# seam takes a program rather than an API key.
+#
+# Every call appends one JSON line to $CORTEX_MODEL_LOG: model, tokens, cost,
+# latency, the prompt's proposal number, and the body returned. The harness
+# reads that to attribute an outcome to a specific proposal, which the loop's
+# own episode record cannot do — it sees text arriving, not what it cost or
+# which attempt produced it.
+set -e
+prompt=$(cat)
+model=${CORTEX_MODEL:-claude-haiku-4-5-20251001}
+log=${CORTEX_MODEL_LOG:-/dev/null}
+
+# The generator is a GENERATOR. No tools: it is asked for text and must not be
+# able to read the workspace, run the checks, or see the adjudicator — the
+# separation the loop is built on would be meaningless if the program behind
+# the seam could reach past it.
+out=$(printf '%s\n\nReturn ONLY the replacement body. No fences, no commentary.' "$prompt" \
+  | claude -p --output-format json --model "$model" \
+      --disallowed-tools "Bash" "Read" "Write" "Edit" "Glob" "Grep" "Task" "WebFetch" "WebSearch" \
+  2>/dev/null) || { echo "claude CLI failed" >&2; exit 1; }
+
+# The prompt reaches the reader below, so the proposal number can be read
+# from the rejected-attempts section the loop wrote into it.
+CORTEX_PROMPT_TEXT="$prompt"
+export CORTEX_PROMPT_TEXT
+printf '%s' "$out" | python3 -c '
+import json, os, re, sys
+
+raw = sys.stdin.read()
+try:
+    v = json.loads(raw)
+except ValueError:
+    sys.stderr.write("driver: model output was not JSON\n")
+    sys.exit(1)
+if v.get("is_error"):
+    sys.stderr.write("driver: model reported an error\n")
+    sys.exit(1)
+
+body = v.get("result") or ""
+# Models fence code by habit even when told not to. Stripping it here rather
+# than letting it reach the patch keeps a mangled-good-answer from being
+# reported as a model that proposed nonsense.
+m = re.match(r"\s*```[a-zA-Z]*\n(.*?)```\s*\Z", body, re.S)
+if m:
+    body = m.group(1)
+
+prompt = os.environ.get("CORTEX_PROMPT_TEXT", "")
+log = os.environ.get("CORTEX_MODEL_LOG", "/dev/null")
+u = v.get("usage", {}) or {}
+with open(log, "a") as fh:
+    fh.write(json.dumps({
+        "model": list((v.get("modelUsage") or {}).keys()),
+        "cost_usd": v.get("total_cost_usd"),
+        "duration_api_ms": v.get("duration_api_ms"),
+        "input_tokens": u.get("input_tokens"),
+        "output_tokens": u.get("output_tokens"),
+        "cache_read": u.get("cache_read_input_tokens"),
+        "cache_create": u.get("cache_creation_input_tokens"),
+        # Which attempt this was, read from the prompt the loop built: the
+        # rejected-attempts section is how the loop tells a generator what it
+        # has already tried, so its size IS the proposal number.
+        "proposal_number": 1 + prompt.count("Attempt ") if prompt else None,
+        "prior_rejections": prompt.count("was REJECTED because") if prompt else None,
+        "body": body,
+    }) + "\n")
+sys.stdout.write(body)
+'
