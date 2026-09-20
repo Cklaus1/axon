@@ -76,11 +76,14 @@
       "area": "compiler",
       "subsystem": "import resolution determinism",
       "implementation": "partial",
-      "production_proof": "unknown",
+      "production_proof": "no",
       "mutation": "no",
       "docs": "partial",
-      "evidence": [],
-      "gap": "load_use_decls searches AXON_PATH; the resolved path is not part of any digest, so the same source can mean different programs"
+      "evidence": [
+        "crates/axon-core/src/lib.rs",
+        "examples/modular/agent.ax"
+      ],
+      "gap": "ASSESSED. axon_search_dirs is AXON_PATH, then ~/.axon/lib, then <bindir>/../lib/axon \u2014 the ENTRY FILE'S OWN DIRECTORY is never searched, so `use` beside a file does not resolve without ambient AXON_PATH. First match wins and nothing records WHICH file was chosen, so the same source can mean different programs under different environments and no digest distinguishes them. This is the resolution half of the unbound-import-graph finding in the approval rows."
     },
     {
       "area": "authority",

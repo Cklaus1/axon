@@ -37,7 +37,13 @@ mkdir -p "$WS/m"
   for i in $(seq 12); do echo "// pad $i"; done
   echo 'fn deliberately_broken(a: i64) -> i64 { a + "not a number" }'
 } > "$WS/m/lib.ax"
-printf 'use lib\nfn main() -> i64 {\n    println(to_str(ok_one()))\n    0\n}\n' > "$WS/m/main.ax"
+# `mod NAME` DECLARES the module and `use NAME.{items}` imports from it. The
+# first version of this fixture wrote only `use lib`, which is malformed — the
+# resolver correctly reported E0003 "module not found", and the fixture was
+# then demonstrating the span defect inside a program that did not typecheck.
+# A defect shown only in a malformed program is a weaker claim than one shown
+# in a valid one; re-verified, it reproduces in BOTH.
+printf 'mod lib\nuse lib.{ok_one}\nfn main() -> i64 {\n    println(to_str(ok_one()))\n    0\n}\n' > "$WS/m/main.ax"
 FILES+=("$WS/m/main.ax")
 
 for f in "${FILES[@]}"; do

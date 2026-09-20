@@ -15,7 +15,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | interp/codegen parity | ✓ | ✓ | ~ | ✓ | AUDITED, and softer than this row read. Nothing asserts the '52 harnesses' figure: there are 54 files and parity_all's floor is 40, so 4-9 harnesses can silently flip to SKIP and still pass. ~19 harnesses treat a per-case NATIVE BUILD FAILURE as a skip with stderr to /dev/null — so a codegen regression in the builtin under test reads as 'skipping'. dict_parity and arr_reduce_parity were fixed to FAIL on that; the fix was never propagated. Cores are strong; the classification of non-results is where green means less than it reads. |
 | single-file diagnostics | ✓ | ✓ | ✗ | ✓ |  |
 | MULTI-FILE source identity | ✗ | ✗ | ✗ | ✗ | Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:14 reports as main.ax:6:112, in a 5-line file. scripts/diagnostic_location_gate.sh is RED on HEAD and NOT yet wired into gate.sh. Design landed: ~110 edits, and the HARM is removable first without touching Span, by making SourceMap::line_col refuse instead of clamp. |
-| import resolution determinism | ~ | ? | ✗ | ~ | load_use_decls searches AXON_PATH; the resolved path is not part of any digest, so the same source can mean different programs |
+| import resolution determinism | ~ | ✗ | ✗ | ~ | ASSESSED. axon_search_dirs is AXON_PATH, then ~/.axon/lib, then <bindir>/../lib/axon — the ENTRY FILE'S OWN DIRECTORY is never searched, so `use` beside a file does not resolve without ambient AXON_PATH. First match wins and nothing records WHICH file was chosen, so the same source can mean different programs under different environments and no digest distinguishes them. This is the resolution half of the unbound-import-graph finding in the approval rows. |
 | crate axon-rt | ✓ | ✓ | ✗ | ✓ | ASSESSED. Not a Cargo dependency of anything: axon-core SHELLS OUT to `cargo build -p axon-rt` at link time, so the link is by convention, not by the dependency graph — removing the crate breaks nothing at cargo check and fails only at `axon build` link time. Its execution proof is the parity suite, which runs only under gate.sh --strict and never in CI. |
 | crate axon-surface | ✓ | ✓ | ✗ | ~ | ASSESSED. The LIBRARY is production (called from main.rs at three sites). The axon-surface BINARY has no caller. Phase 10 is the only phase with no spec/ file. |
 
@@ -100,7 +100,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-21 of 21 crates are represented (0 explicitly excused). 27 of 52 subsystems have a production proof; 2 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+21 of 21 crates are represented (0 explicitly excused). 27 of 52 subsystems have a production proof; 1 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
