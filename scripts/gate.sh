@@ -106,6 +106,21 @@ else
   cargo test -p axon-core --no-default-features || fail "tests"
 fi
 
+# The Cortex policy boundary. Its proofs existed but nothing ran them: every
+# `cargo test` in this gate targeted axon-core, so `axon-cortex`'s conformance
+# gates and the adapter's protocol tests were compiled by the clippy line above
+# and executed nowhere. A test that is linted but never run is evidence of
+# nothing, and this is the boundary MiCode consults before every effectful
+# action — the single place where "the check exists" and "the check runs" most
+# need to be the same statement.
+#
+# Found when an omitted --grant-snapshot was discovered to silently disable the
+# staleness refusal: the suite that should have caught it was not part of any
+# gate, and five of its six boundary cases were passing vacuously besides.
+echo "── gate: cortex policy boundary tests ─────────────────────────────"
+cargo test -p axon-cortex -p cortex-policy-adapter \
+  || fail "cortex policy boundary tests"
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 
@@ -153,7 +168,8 @@ echo "── gate: clippy runtime crates (-D warnings) ────────�
 cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
-  -p axon-guest-init -p axon-wasm -p axon-cortex --all-targets -- -D warnings \
+  -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \
+  --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 # COVERAGE CHECK — the note above has been written three times and the list
@@ -169,7 +185,15 @@ CLIPPY_EXCUSED="axon-guest-kernel"
 # tr: `sort -u` is newline-separated, and the `case` glob below matches on
 # SPACES. Without it nothing ever matches — the check fails closed (every crate
 # "uncovered") rather than open, but it would still have been wrong.
-_gated="$(grep -oE '\-p axon-[a-z-]+' "$0" | awk '{print $2}' | sort -u | tr '\n' ' ')"
+#
+# The pattern was `-p axon-[a-z-]+`, which could only ever see crates named
+# `axon-*`. `cortex-policy-adapter` — the process MiCode consults for every
+# effectful action — was therefore reported uncovered no matter what was added
+# to the clippy line above: the detector for drift had the same blind spot as
+# the thing it detects. This is the FIFTH sighting of the class, and the first
+# where the check itself was the cause, so the pattern now matches any crate
+# name rather than one vendor prefix.
+_gated="$(grep -oE '\-p [a-z][a-z0-9_-]*' "$0" | awk '{print $2}' | sort -u | tr '\n' ' ')"
 _missing=""
 for _c in $(ls crates); do
   case " $_gated $CLIPPY_EXCUSED " in
