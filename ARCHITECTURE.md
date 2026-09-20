@@ -26,8 +26,22 @@ must match it, not the other way round. Source is `.ax`.
 
 The thing that makes it unusual is not any one feature but the **direction of the safety argument**:
 capabilities are checked statically at compile time (`@[contained]`, E1001–E1004), enforced again at
-runtime (`sandbox_create`, exit 8), and every consequential action is recorded in a provenance log
-that can be replayed byte-for-byte with the environment stripped away.
+runtime (`sandbox_create`, exit 8), and consequential actions are recorded in a provenance log.
+
+That sentence used to end "…and every consequential action is recorded in a provenance log that
+can be replayed byte-for-byte with the environment stripped away", which merged TWO mechanisms
+into one unconditional claim. They are separate, and the replay half is OFF BY DEFAULT:
+
+* the **provenance log** is always-on and carries run-level evidence — `run_start` with the
+  effective seed, `ai_call` and `agent_action` records (`axon trace`, `axon trace --ai`);
+* **byte-for-byte replay** is the **host journal**, and it exists only when `AXON_RECORD=<path>`
+  is set. Verified: a default `axon run` of a program that prints writes no journal at all;
+  the same run under `AXON_RECORD` writes one. `AXON_REPLAY` then serves the run from it, and a
+  divergence exits 11.
+
+So replay is a capability the operator turns on per run, not a property every run has. The
+distinction matters precisely where the claim was strongest — an auditor reading the old sentence
+would expect to be able to replay a run that recorded nothing.
 
 ---
 
