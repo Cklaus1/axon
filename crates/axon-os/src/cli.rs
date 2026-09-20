@@ -262,8 +262,12 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         let program_src = std::fs::read_to_string(&manifest.program).unwrap_or_default();
         if let Err(reason) = crate::approval::verify_approval(&token, &program_src, &manifest.grant)
         {
-            // An INVALID token is a failure whether or not policy required one:
-            // someone signed this and the signature does not hold.
+            // An INVALID token is a failure whether or not policy required
+            // one. Note what that does and does not mean: `verify_approval`
+            // re-hashes an UNKEYED sha256 over public inputs, so this proves
+            // the program and grant are byte-identical to whatever the token's
+            // author hashed — NOT that a particular human approved anything.
+            // Anyone who can write this file can mint a token that verifies.
             println!("\u{26a0} DENIED: {reason}");
             return ExitCode::from(8);
         }
@@ -272,6 +276,15 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         } else {
             println!("Approval: verified (not required by this job)");
         }
+        // Say what the check is WORTH, not just that it passed. The digest is
+        // unkeyed and every input to it is public, so it establishes integrity
+        // since sign-off and nothing about WHO signed. An operator reading
+        // "verified" beside a named approver would otherwise reasonably infer
+        // authentication that is not happening.
+        println!(
+            "  (integrity only: the approval digest is unkeyed, so this shows \
+             the program and grant are unedited — not who approved them)"
+        );
     } else if manifest.require_approval {
         println!(
             "\u{26a0} DENIED: approval required but missing — this job sets \
