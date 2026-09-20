@@ -1,0 +1,42 @@
+{
+ "measured_on": "2026-09-20",
+ "corpus": "examples/stdlib/*.ax + examples/*.ax, one operator-swap defect injected per function (cap 3 per file)",
+ "trials": 80,
+ "method": "the mutant is kept only if the file still compiles and a non-hidden @[test] now fails; the hidden check is the file's last @[test] and is excluded from the evidence",
+ "v1_direct_calls_refuse_if_more_than_one": {
+  "correct": 7,
+  "wrong": 0,
+  "refused": 73,
+  "error": 0
+ },
+ "v2_ochiai_transitive": {
+  "depth_1": {
+   "n": 80,
+   "top1": 51.2,
+   "top3": 73.8,
+   "absent": 20.0,
+   "unique_top1": 36
+  },
+  "depth_2": {
+   "n": 80,
+   "top1": 58.8,
+   "top3": 88.8,
+   "absent": 5.0,
+   "unique_top1": 41
+  },
+  "depth_4": {
+   "n": 80,
+   "top1": 57.5,
+   "top3": 90.0,
+   "absent": 3.8,
+   "unique_top1": 39
+  },
+  "depth_8": {
+   "n": 80,
+   "top1": 57.5,
+   "top3": 90.0,
+   "absent": 3.8,
+   "unique_top1": 39
+  }
+ }
+}

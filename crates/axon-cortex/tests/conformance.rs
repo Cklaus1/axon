@@ -1817,7 +1817,7 @@ fn cxg_c15_localization_names_one_target_or_admits_it_cannot() {
     .unwrap();
 
     // One failing check calling exactly one defined function.
-    match localize(&src, &["visible_repro".to_string()]) {
+    match localize(&src, &["visible_repro".to_string()], &[]) {
         Localization::Single { symbol, evidence } => {
             assert_eq!(symbol, "double");
             // The evidence travels with the conclusion so a caller can show
@@ -1829,7 +1829,7 @@ fn cxg_c15_localization_names_one_target_or_admits_it_cannot() {
 
     // Nothing failing is NOT an absence of candidates. A caller that treated
     // them alike would report a healthy file as unlocalizable.
-    assert_eq!(localize(&src, &[]), Localization::NothingFailing);
+    assert_eq!(localize(&src, &[], &[]), Localization::NothingFailing);
 
     // Two functions implicated, no basis to choose: reported as ambiguous.
     let two = "\
@@ -1838,7 +1838,7 @@ fn beta(n: i64) -> i64 { n }
 @[test]
 fn t() { assert_eq(alpha(1) + beta(1), 4) }
 ";
-    match localize(two, &["t".to_string()]) {
+    match localize(two, &["t".to_string()], &[]) {
         Localization::Ambiguous { candidates, .. } => {
             assert_eq!(candidates, vec!["alpha".to_string(), "beta".to_string()]);
         }
@@ -1849,7 +1849,7 @@ fn t() { assert_eq(alpha(1) + beta(1), 4) }
     // the remedy differs from ambiguity — the defect may be in a callee, a
     // builtin, or the check itself.
     let none = "@[test]\nfn t() { assert_eq(1, 2) }\n";
-    match localize(none, &["t".to_string()]) {
+    match localize(none, &["t".to_string()], &[]) {
         Localization::NoCandidate { evidence } => assert_eq!(evidence, vec!["t".to_string()]),
         other => panic!("no candidate is not ambiguity: {other:?}"),
     }
@@ -1858,9 +1858,60 @@ fn t() { assert_eq(alpha(1) + beta(1), 4) }
     // failing test localizes to itself — true, and no help at all.
     let selfref = "@[test]\nfn t() { t() }\n";
     assert!(matches!(
-        localize(selfref, &["t".to_string()]),
+        localize(selfref, &["t".to_string()], &[]),
         Localization::NoCandidate { .. }
     ));
+
+    // PASSING checks are evidence too, and they are what turns a tie into an
+    // answer. Both helpers are reached by the failing check; only `safe` is
+    // also reached by a passing one, so `risky` is the more suspicious of the
+    // two and the verdict can name it.
+    //
+    // This is the whole difference between the first version of this module
+    // and the current one. Measured on the real corpus, ignoring the passing
+    // checks answered 8.8% of cases; using them answers 57.5%.
+    let spectrum = "\
+fn risky(n: i64) -> i64 { n }
+fn safe(n: i64) -> i64 { n }
+@[test]
+fn t_fail() { assert_eq(risky(1) + safe(1), 4) }
+@[test]
+fn t_pass() { assert_eq(safe(1), 1) }
+";
+    match localize(spectrum, &["t_fail".to_string()], &["t_pass".to_string()]) {
+        Localization::Single { symbol, .. } => assert_eq!(
+            symbol, "risky",
+            "the helper a passing check also exercises is the less suspicious one"
+        ),
+        other => panic!("passing checks must break the tie: {other:?}"),
+    }
+    // Drop the passing check and the same file is genuinely undecidable — the
+    // control proving the row above is about the EVIDENCE, not about the two
+    // function names.
+    assert!(matches!(
+        localize(spectrum, &["t_fail".to_string()], &[]),
+        Localization::Ambiguous { .. }
+    ));
+
+    // Calls are followed TRANSITIVELY. A check calls a public helper which
+    // calls the broken function; a direct-only scan reports NoCandidate for a
+    // defect two lines away.
+    let deep = "\
+fn inner(n: i64) -> i64 { n }
+fn outer(n: i64) -> i64 { inner(n) }
+@[test]
+fn t() { assert_eq(outer(1), 4) }
+";
+    // `inner` specifically. An earlier version of this row accepted EITHER
+    // name, so it passed with transitivity switched off — it asserted that
+    // localization produced an answer, not that it produced this one.
+    match localize(deep, &["t".to_string()], &[]) {
+        Localization::Ambiguous { candidates, .. } => assert!(
+            candidates.contains(&"inner".to_string()),
+            "a transitively-called function must be a candidate: {candidates:?}"
+        ),
+        other => panic!("a function two hops away must be reachable: {other:?}"),
+    }
 
     // A name that is a suffix of another must not match. `double(` appears
     // inside `redouble(`, and a careless scan gains a candidate that the check
@@ -1872,7 +1923,7 @@ fn redouble(n: i64) -> i64 { n }
 @[test]
 fn t() { assert_eq(redouble(1), 4) }
 ";
-    match localize(suffix, &["t".to_string()]) {
+    match localize(suffix, &["t".to_string()], &[]) {
         Localization::Single { symbol, .. } => assert_eq!(symbol, "redouble"),
         other => panic!("a suffix must not create a phantom candidate: {other:?}"),
     }

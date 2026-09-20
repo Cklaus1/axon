@@ -168,8 +168,12 @@ cortex repair --file broken.ax --check hidden_completion \
               --write-prefix broken.ax --generator ai:claude-haiku-4-5-20251001
 ```
 
-`--symbol` is optional: absent, Cortex localizes from the checks that fail and
-REFUSES when the evidence names more than one candidate (exit 25). Exit 0 means
+`--symbol` is optional: absent, Cortex RANKS the candidate functions by Ochiai
+over the call spectrum (passing checks count as evidence) and tries the top
+three in order, restoring the file between attempts. Measured on real code —
+one injected defect per function across `examples/**.ax` —
+top-1 is 57.5% and top-3 is 90% (`crates/axon-cortex/benchmarks/`). Exit 25
+means no candidate at all, not "several". Exit 0 means
 a hidden check accepted the repair, not that the loop finished; 20/21/22/23/24
 separate budget, futility, environment, authority and missing content, because
 the remedies differ. A patch that makes the file stop compiling is reverted and

@@ -250,13 +250,15 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
     // guess by anyone reading the log afterwards.
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("localized `double`") && err.contains("visible_repro"),
+        err.contains("double") && err.contains("visible_repro"),
         "the localization must name the target AND its evidence: {err}"
     );
 
-    // 2. Ambiguity is refused with its own exit code — not rounded into the
-    //    usage error above (the command line was fine) nor into an episode
-    //    outcome below (no episode ran).
+    // 2. Ambiguity is WALKED, not refused. This row asserted exit 25 when a
+    //    tie meant "give up"; measuring the ranking on the real corpus showed
+    //    the true function is at rank 2 in 17 of the 34 cases where rank 1 is
+    //    wrong, so refusing a tie discarded cases the evidence could decide.
+    //    The tied candidates are tried in order, and the run says so.
     let ws2 = std::env::temp_dir().join(format!("cortex_cli_amb_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&ws2);
     std::fs::create_dir_all(&ws2).unwrap();
@@ -279,16 +281,38 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
         .args(["--write-prefix", "two.ax"])
         .output()
         .unwrap();
-    assert_eq!(
-        out2.status.code(),
-        Some(25),
-        "an ambiguous target must exit 25: {}",
-        String::from_utf8_lossy(&out2.stderr)
-    );
     let err2 = String::from_utf8_lossy(&out2.stderr);
     assert!(
         err2.contains("alpha") && err2.contains("beta"),
-        "the refusal must name the candidates it would not choose between: {err2}"
+        "a tie must be reported as an ORDERED plan, not a refusal: {err2}"
+    );
+
+    // 2b. Exit 25 now means what it says: no candidate AT ALL. A failing check
+    //     that reaches no function defined in the file has nothing to offer,
+    //     and that is a different statement from "several, and I cannot
+    //     choose" — which is now an ordered plan rather than a dead end.
+    std::fs::write(
+        ws2.join("none.ax"),
+        "@[test]\n\
+         fn t() { assert_eq(1, 2) }\n\
+         @[test]\n\
+         fn hidden() { assert_eq(1, 1) }\n\
+         fn main() { println(to_str(1)) }\n",
+    )
+    .unwrap();
+    let out2b = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws2)
+        .args(["--file", "none.ax", "--check", "hidden", "--axon"])
+        .arg(axon_bin())
+        .args(["--write-prefix", "none.ax"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out2b.status.code(),
+        Some(25),
+        "a failing check reaching no defined function must exit 25: {}",
+        String::from_utf8_lossy(&out2b.stderr)
     );
 
     // 3. An explicit --symbol is an INSTRUCTION, not a hypothesis to
@@ -345,4 +369,148 @@ fn cli_json_reports_the_outcome_and_the_evidence_behind_it() {
         ep.contains("PatchApplied") && ep.contains("literal@1"),
         "the record must show the patch and who proposed it: {ep}"
     );
+}
+
+/// C16 — the run walks the ranked candidates, and each attempt starts clean.
+///
+/// Measured on the real corpus, the top-ranked candidate is right 57.5% of the
+/// time and the top three cover 90%. Stopping at the first discards a third of
+/// the cases the evidence could already decide.
+///
+/// `ambiguous.ax` is built so that stopping at one cannot pass: `alpha` and
+/// `beta` tie exactly, `beta` is the broken one, and it sorts second. The
+/// fixture also sets the trap that makes the isolation row necessary —
+/// patching `alpha` makes the VISIBLE check pass while the program stays
+/// wrong, so a loop grading itself on the evidence it can see would stop there
+/// and report success.
+#[test]
+fn cli_walks_the_ranking_and_isolates_each_attempt() {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_walk_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/ambiguous.ax");
+    let before = std::fs::read_to_string(&src).unwrap();
+    std::fs::copy(&src, ws.join("ambiguous.ax")).unwrap();
+
+    let run = |extra: &[&str]| -> (i32, String, String) {
+        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+            .args(["repair", "--workspace"])
+            .arg(&ws)
+            .args([
+                "--file",
+                "ambiguous.ax",
+                "--check",
+                "hidden_completion",
+                "--axon",
+            ])
+            .arg(axon_bin())
+            .args(["--write-prefix", "ambiguous.ax"])
+            .args(extra)
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    let (code, out, err) = run(&["--generator", "literal:\n    n + 2\n"]);
+    assert_eq!(
+        code, 0,
+        "walking to the second candidate must succeed: {err}{out}"
+    );
+    assert!(
+        err.contains("`alpha` did not repair it; trying `beta`"),
+        "the run must say which candidate it abandoned and why it moved on: {err}"
+    );
+    assert!(
+        out.contains("repaired `beta`"),
+        "with a walked ranking, WHICH candidate worked is no longer implied by \
+         the command line: {out}"
+    );
+
+    // ATTEMPT ISOLATION. `alpha` was patched, that patch made the visible
+    // check pass, and it is gone. Without the restore, `beta` would have been
+    // adjudicated against a file the first attempt had already altered, and
+    // its success would not mean what it says.
+    let after = std::fs::read_to_string(ws.join("ambiguous.ax")).unwrap();
+    assert!(
+        after.contains("n * 2"),
+        "a failed attempt must leave no trace: alpha was not restored\n{after}"
+    );
+    // Exactly one function differs. Compared on the function BODIES rather
+    // than by a whole-file string replace, which also rewrote the fixture's
+    // own comments and made this assertion fail for a reason that had nothing
+    // to do with the code under test.
+    let body = |src: &str, name: &str| -> String {
+        let at = src
+            .find(&format!("fn {name}("))
+            .expect("the function exists");
+        let open = at + src[at..].find('{').unwrap();
+        let close = open + src[open..].find('}').unwrap();
+        src[open + 1..close].trim().to_string()
+    };
+    assert_eq!(
+        body(&after, "alpha"),
+        body(&before, "alpha"),
+        "alpha must be untouched"
+    );
+    assert_eq!(
+        body(&after, "beta"),
+        "n + 2",
+        "beta must be the one that changed"
+    );
+
+    // THE CONTROL. Confined to one candidate, the same run fails — so the row
+    // above is about the walk, not about a fixture that any build repairs.
+    std::fs::copy(&src, ws.join("ambiguous.ax")).unwrap();
+    let (code1, _, _) = run(&["--generator", "literal:\n    n + 2\n", "--candidates", "1"]);
+    assert_ne!(
+        code1, 0,
+        "one candidate cannot reach the broken function here"
+    );
+    // And it left the workspace as it found it: a run that reports failure
+    // having rewritten a function is reporting on a workspace nobody asked for.
+    assert_eq!(
+        std::fs::read_to_string(ws.join("ambiguous.ax")).unwrap(),
+        before,
+        "a failed run must restore the file"
+    );
+}
+
+/// C17 — `cortex locate` answers "what is broken?" without repairing anything.
+#[test]
+fn cli_locate_reports_the_ranking_with_its_scores() {
+    let ws = workspace("locate_json");
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["locate", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .arg("--json")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(text.trim()).expect("valid JSON");
+    assert_eq!(v["schema"], "cortex-locate/1");
+    assert_eq!(v["ranked"][0]["symbol"], "double");
+    // The SCORES, not just the order. The spread between first and second is
+    // what says whether the evidence decided anything, and a ranking reported
+    // without it cannot be scored for its own quality.
+    assert!(v["ranked"][0]["score"].as_f64().unwrap() > 0.0);
+    // The hidden check is absent from both spectra — localizing from the
+    // grader would make the target a function of the answer.
+    let spectra = format!("{}{}", v["failing"], v["passing"]);
+    assert!(
+        !spectra.contains("hidden_completion"),
+        "the adjudicating check must not appear in the evidence: {spectra}"
+    );
+    assert!(spectra.contains("visible_repro"));
 }

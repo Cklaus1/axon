@@ -1,0 +1,33 @@
+// Two functions, both reached by the one visible check, so the spectrum cannot
+// tell them apart: they tie at the top and the verdict refuses to choose.
+//
+// `beta` is the broken one — it should add 2. It sorts SECOND in the tie-break,
+// so a loop that stops at its first candidate fails here while a loop that
+// walks the ranking succeeds. That is the whole point of the fixture.
+//
+// It also sets a trap. Patching `alpha` to `n + 2` makes the VISIBLE check pass
+// (3 + 2 = 5) while leaving the program wrong; only the hidden check notices.
+// A loop that graded itself on the evidence it can see would stop there and
+// report success.
+fn alpha(n: i64) -> i64 {
+    n * 2
+}
+
+fn beta(n: i64) -> i64 {
+    n + 1
+}
+
+@[test]
+fn visible() {
+    assert_eq(alpha(1) + beta(1), 5)
+}
+
+@[test]
+fn hidden_completion() {
+    assert_eq(beta(5), 7)
+    assert_eq(alpha(5), 10)
+}
+
+fn main() {
+    println(to_str(alpha(1) + beta(1)))
+}

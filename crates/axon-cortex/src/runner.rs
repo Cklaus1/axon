@@ -824,6 +824,20 @@ impl Runner {
     /// on failure, and an empty list is exactly what a caller reads as
     /// "nothing is broken".
     pub fn failing_checks(&self, rel_path: &str, hidden: &str) -> std::io::Result<Vec<String>> {
+        Ok(self.check_outcomes(rel_path, hidden)?.0)
+    }
+
+    /// Which checks FAIL and which PASS, excluding the one that adjudicates.
+    ///
+    /// Both halves, because localization ranks by spectrum: a function only
+    /// failing checks reach is strong evidence, one every check reaches is
+    /// weak. Reporting only the failures throws away the denominator and
+    /// leaves every helper looking equally suspicious.
+    pub fn check_outcomes(
+        &self,
+        rel_path: &str,
+        hidden: &str,
+    ) -> std::io::Result<(Vec<String>, Vec<String>)> {
         let out = std::process::Command::new(&self.axon_bin)
             .arg("test")
             .arg(self.workspace.join(rel_path))
@@ -833,20 +847,34 @@ impl Runner {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        Ok(text
-            .lines()
-            .filter_map(|l| {
-                let t = l.trim();
-                // The per-test lines are `test NAME ... FAILED`; the summary
-                // line is `test result: FAILED. …` and also begins with
-                // "test ". Requiring the separator keeps the summary from
-                // being parsed as a check called "result: FAILED. 0 passed…",
-                // which then localizes to nothing and reads as a clean file.
-                let name = t.strip_prefix("test ")?.split(" ... ").next()?.trim();
-                (t.contains(" ... ") && t.contains("FAILED")).then(|| name.to_string())
-            })
-            .filter(|n| n != hidden)
-            .collect())
+        let (mut failed, mut passed) = (Vec::new(), Vec::new());
+        for l in text.lines() {
+            let t = l.trim();
+            // The per-test lines are `test NAME ... FAILED`; the summary line
+            // is `test result: FAILED. …` and also begins with "test ".
+            // Requiring the separator keeps the summary from being parsed as a
+            // check called "result: FAILED. 0 passed…", which then localizes
+            // to nothing and reads as a clean file.
+            if !t.starts_with("test ") || !t.contains(" ... ") {
+                continue;
+            }
+            let Some(name) = t
+                .strip_prefix("test ")
+                .and_then(|r| r.split(" ... ").next())
+            else {
+                continue;
+            };
+            let name = name.trim().to_string();
+            if name == hidden {
+                continue;
+            }
+            if t.contains("FAILED") {
+                failed.push(name);
+            } else if t.contains("ok") {
+                passed.push(name);
+            }
+        }
+        Ok((failed, passed))
     }
 
     /// Localize the defect from the checks that fail, without being told.
@@ -859,8 +887,8 @@ impl Runner {
                 }
             }
         };
-        match self.failing_checks(rel_path, hidden) {
-            Ok(failing) => crate::locate::localize(&src, &failing),
+        match self.check_outcomes(rel_path, hidden) {
+            Ok((failing, passing)) => crate::locate::localize(&src, &failing, &passing),
             Err(e) => crate::locate::Localization::Unknown {
                 reason: format!("the checks could not be run: {e}"),
             },

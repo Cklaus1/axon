@@ -34,6 +34,7 @@ use axon_cortex::runner::{EditGrant, EpisodeOutcome, Runner};
 
 const USAGE: &str = "\
 cortex repair --file PATH --check NAME [--symbol NAME] [options]
+cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
 
   --workspace DIR        directory to operate in (default: .)
   --file PATH            workspace-relative file holding the symbol
@@ -49,7 +50,12 @@ cortex repair --file PATH --check NAME [--symbol NAME] [options]
                          NO default: with none given nothing may be written,
                          matching Cortex's convention where \"\" denies.
   --principal NAME       who is acting (default: agent)
-  --budget N             maximum steps (default: 8)
+  --budget N             maximum steps per candidate (default: 8)
+  --candidates N         how many ranked candidates to try (default: 3). Top-1
+                         is right 57.5% of the time on the real corpus and
+                         top-3 covers 90%; each attempt starts from the state
+                         this run found, and the hidden check adjudicates every
+                         one of them.
   --generator SPEC       none (default) | ai:MODEL | literal:BODY
                          literal: applies a body you already know through the
                          same grant check and the same hidden check a model's
@@ -80,6 +86,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("repair") => {}
+        // `locate` answers "what is broken?" without repairing anything. It
+        // exists because the RANKING is the part whose quality has to be
+        // measurable: a verdict that collapses the list to one name cannot be
+        // scored for whether the right answer was second.
+        Some("locate") => return locate_only(args),
         Some("--help" | "-h") | None => {
             println!("{USAGE}");
             return;
@@ -97,6 +108,7 @@ fn main() {
     let mut axon_bin = std::path::PathBuf::from("axon");
     let mut write_prefixes: Vec<String> = Vec::new();
     let mut json = false;
+    let mut candidates: usize = 3;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -112,6 +124,15 @@ fn main() {
             "--generator" => generator_spec = val("--generator"),
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--write-prefix" => write_prefixes.push(val("--write-prefix")),
+            "--candidates" => {
+                let raw = val("--candidates");
+                candidates = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--candidates must be a number, got `{raw}`"))
+                });
+                if candidates == 0 {
+                    usage("--candidates must be at least 1");
+                }
+            }
             "--budget" => {
                 let raw = val("--budget");
                 budget = raw
@@ -188,67 +209,124 @@ fn main() {
         }
     }
 
-    // Localize only when not told. An explicit --symbol is an instruction, not
-    // a hypothesis to second-guess: the operator may know something the failing
-    // checks do not show.
-    if symbol.is_empty() {
-        use axon_cortex::locate::Localization;
-        match runner.locate_target(&file, &check) {
-            Localization::Single {
-                symbol: s,
-                evidence,
-            } => {
-                // Show the working. A target arrived at silently is
-                // indistinguishable from one that was guessed.
-                eprintln!(
-                    "localized `{s}` from failing check(s): {}",
-                    evidence.join(", ")
-                );
-                symbol = s;
+    // The ordered list of functions this run may try.
+    //
+    // An explicit --symbol is an INSTRUCTION, not a hypothesis to second-guess:
+    // the operator may know something the failing checks do not show. Absent
+    // one, the candidates come from the spectrum ranking.
+    //
+    // Measured on the real corpus — a defect injected into each function of
+    // `examples/**.ax`, one at a time — the top-ranked candidate is right 57.5%
+    // of the time and the top THREE cover 90%. Stopping at the first throws
+    // away a third of the cases the evidence could already decide, so the run
+    // walks the list. The hidden check adjudicates every attempt, so walking
+    // further trades budget for coverage and never trades away correctness.
+    let targets: Vec<String> = if !symbol.is_empty() {
+        vec![symbol.clone()]
+    } else {
+        let src = std::fs::read_to_string(workspace.join(&file)).unwrap_or_default();
+        let (failing, passing) = match runner.check_outcomes(&file, &check) {
+            Ok(v) => v,
+            // An unrunnable checker is an environment failure with its own
+            // code, never an empty spectrum: no failing check is what a
+            // HEALTHY file looks like.
+            Err(e) => {
+                eprintln!("the checks could not be run: {e}");
+                std::process::exit(22);
             }
-            Localization::Ambiguous { candidates, .. } => no_target(&format!(
-                "the failing checks implicate {} — pass --symbol to choose",
-                candidates.join(", ")
-            )),
-            Localization::NothingFailing => no_target(
+        };
+        if failing.is_empty() {
+            no_target(
                 "no check fails, so there is nothing to localize; pass --symbol \
                  to attempt a repair anyway",
-            ),
-            Localization::NoCandidate { evidence } => no_target(&format!(
-                "check(s) {} fail but name no function defined in {file}; the \
-                 defect may be in a callee, a builtin, or the check itself",
-                evidence.join(", ")
-            )),
-            Localization::Unknown { reason } => no_target(&format!(
-                "the checks could not be run, so nothing was localized: {reason}"
-            )),
+            );
         }
-    }
-    let snap = match runner.snapshot(&[file.as_str()]) {
-        Ok(s) => s,
-        Err(e) => usage(&format!("cannot read {}/{file}: {e}", workspace.display())),
-    };
-    // The grant is pinned to the state it was issued over. That is what makes
-    // a stale-authority refusal possible at all, and it is taken here rather
-    // than inside the loop so the loop cannot re-issue authority to itself.
-    let grant = EditGrant {
-        grant_id: "cortex-repair".to_string(),
-        principal: principal.clone(),
-        snapshot_id: snap.snapshot_id.clone(),
-        write_prefixes,
+        let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
+        if ranked.is_empty() {
+            no_target(&format!(
+                "check(s) {} fail but reach no function defined in {file}; the \
+                 defect may be in a callee, a builtin, or the check itself",
+                failing.join(", ")
+            ));
+        }
+        // Show the working, WITH the scores. A target arrived at silently
+        // cannot be told from a guess, and the spread between first and second
+        // is what says whether the evidence decided anything at all.
+        let shown: Vec<String> = ranked
+            .iter()
+            .take(candidates)
+            .map(|(n, sc)| format!("{n} ({sc:.2})"))
+            .collect();
+        eprintln!(
+            "from failing check(s) {}: trying {}",
+            failing.join(", "),
+            shown.join(" then ")
+        );
+        ranked
+            .into_iter()
+            .take(candidates)
+            .map(|(n, _)| n)
+            .collect()
     };
 
-    let outcome = runner.run_episode(
-        &SymbolRef {
-            path: file.clone(),
-            symbol: symbol.clone(),
-        },
-        Some(&grant),
-        &principal,
-        &check,
-        budget,
-        generator.as_deref(),
-    );
+    // Each attempt starts from the state this run FOUND, not from whatever the
+    // previous attempt left behind. Without the restore, a compiling-but-wrong
+    // patch to candidate 1 is still in the file when candidate 2 is tried, so
+    // the second attempt is graded against code the first one damaged — and a
+    // success there would not mean what it says.
+    let original = std::fs::read_to_string(workspace.join(&file))
+        .unwrap_or_else(|e| usage(&format!("cannot read {}/{file}: {e}", workspace.display())));
+
+    let mut outcome = EpisodeOutcome::NeedsInput {
+        steps: 0,
+        what: "no candidate was attempted".to_string(),
+    };
+    let mut attempted: Vec<String> = Vec::new();
+    for (i, target) in targets.iter().enumerate() {
+        if i > 0 {
+            if let Err(e) = std::fs::write(workspace.join(&file), &original) {
+                eprintln!("cannot restore {file} between attempts: {e}");
+                std::process::exit(22);
+            }
+            eprintln!("`{}` did not repair it; trying `{target}`", targets[i - 1]);
+        }
+        let snap = match runner.snapshot(&[file.as_str()]) {
+            Ok(s) => s,
+            Err(e) => usage(&format!("cannot read {}/{file}: {e}", workspace.display())),
+        };
+        // A fresh grant per attempt, pinned to the state that attempt starts
+        // from. Reusing one across attempts would hand the second attempt
+        // authority issued over a workspace the first one changed.
+        let grant = EditGrant {
+            grant_id: format!("cortex-repair-{i}"),
+            principal: principal.clone(),
+            snapshot_id: snap.snapshot_id.clone(),
+            write_prefixes: write_prefixes.clone(),
+        };
+        attempted.push(target.clone());
+        outcome = runner.run_episode(
+            &SymbolRef {
+                path: file.clone(),
+                symbol: target.clone(),
+            },
+            Some(&grant),
+            &principal,
+            &check,
+            budget,
+            generator.as_deref(),
+        );
+        match &outcome {
+            // The only success. Everything else is a reason to try the next
+            // candidate, and running out of candidates reports the LAST reason
+            // rather than inventing a summary of all of them.
+            EpisodeOutcome::VerifiedDone { .. } => break,
+            // Authority and environment failures are not about this candidate.
+            // Another one would fail identically and burn the budget proving
+            // it.
+            EpisodeOutcome::Refused { .. } | EpisodeOutcome::Blocked { .. } => break,
+            _ => {}
+        }
+    }
 
     let (code, kind, detail, steps) = match &outcome {
         EpisodeOutcome::VerifiedDone { steps } => (0, "verified_done", String::new(), *steps),
@@ -260,6 +338,13 @@ fn main() {
         EpisodeOutcome::Refused { steps, reason } => (23, "refused", reason.clone(), *steps),
         EpisodeOutcome::NeedsInput { steps, what } => (24, "needs_input", what.clone(), *steps),
     };
+    // Nothing worked: the file is left exactly as it was found. A run that
+    // reports failure while having rewritten a function is reporting on a
+    // workspace nobody asked for.
+    if code != 0 {
+        let _ = std::fs::write(workspace.join(&file), &original);
+    }
+    let repaired = (code == 0).then(|| attempted.last().cloned().unwrap_or_default());
 
     if json {
         println!(
@@ -269,6 +354,11 @@ fn main() {
                 "outcome": kind,
                 "detail": detail,
                 "steps": steps,
+                // WHICH candidate worked, and which were tried before it. With
+                // a walked ranking that is no longer implied by the command
+                // line.
+                "symbol": repaired,
+                "attempted": attempted,
                 "exit_code": code,
                 // The episode, verbatim. Every check that ran, every patch
                 // applied with its before/after digests, and which generator
@@ -278,10 +368,73 @@ fn main() {
             })
         );
     } else {
-        println!("{kind} after {steps} step(s)");
+        match &repaired {
+            Some(sym) => println!("{kind} after {steps} step(s) — repaired `{sym}`"),
+            None => println!("{kind} after {steps} step(s)"),
+        }
         if !detail.is_empty() {
             println!("  {detail}");
         }
     }
     std::process::exit(code);
+}
+
+/// `cortex locate --file F --check C [--json]`
+fn locate_only(mut args: impl Iterator<Item = String>) {
+    let mut workspace = std::path::PathBuf::from(".");
+    let (mut file, mut check) = (String::new(), String::new());
+    let mut axon_bin = std::path::PathBuf::from("axon");
+    let mut json = false;
+    while let Some(a) = args.next() {
+        let mut val = |flag: &str| -> String {
+            args.next()
+                .unwrap_or_else(|| usage(&format!("{flag} needs a value")))
+        };
+        match a.as_str() {
+            "--workspace" => workspace = std::path::PathBuf::from(val("--workspace")),
+            "--file" => file = val("--file"),
+            "--check" => check = val("--check"),
+            "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
+            "--json" => json = true,
+            other => usage(&format!("unknown argument `{other}`")),
+        }
+    }
+    if file.is_empty() {
+        usage("--file is required");
+    }
+    let runner = Runner::new(&axon_bin, &workspace);
+    let src = std::fs::read_to_string(workspace.join(&file))
+        .unwrap_or_else(|e| usage(&format!("cannot read {file}: {e}")));
+    // An unrunnable checker is reported as such, never as an empty spectrum:
+    // no failing check is what a HEALTHY file looks like.
+    let (failing, passing) = match runner.check_outcomes(&file, &check) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("the checks could not be run: {e}");
+            std::process::exit(22);
+        }
+    };
+    let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "cortex-locate/1",
+                "failing": failing,
+                "passing": passing,
+                // Every candidate WITH its score, not just the winner. The
+                // spread between first and second is what says whether the
+                // evidence actually decided anything.
+                "ranked": ranked.iter()
+                    .map(|(n, s)| serde_json::json!({"symbol": n, "score": s}))
+                    .collect::<Vec<_>>(),
+            })
+        );
+    } else if ranked.is_empty() {
+        println!("no candidate: {} failing check(s)", failing.len());
+    } else {
+        for (n, sc) in &ranked {
+            println!("{sc:.4}  {n}");
+        }
+    }
 }

@@ -10,13 +10,14 @@ one thing to that loop — the text of a repair — and nothing else.
 ```bash
 cargo build -p axon-cortex --bins --features ai
 
+cortex locate --file broken.ax --check hidden_completion   # what is broken?
 cortex repair --file broken.ax --check hidden_completion \
               --write-prefix broken.ax --generator ai:claude-haiku-4-5-20251001
 ```
 
 ```
-localized `double` from failing check(s): visible_repro
-verified_done after 3 step(s)
+from failing check(s) visible_repro: trying double (1.00)
+verified_done after 3 step(s) — repaired `double`
 ```
 
 ## What each piece refuses to do
@@ -51,9 +52,14 @@ makes the file stop compiling is undone, and the revert is recorded rather than
 performed silently: an episode that hid its reverts would make a generator that
 breaks the build indistinguishable from one that never proposed anything.
 
-**Localization** returns a candidate set. Several candidates is reported as
-ambiguous, never resolved by picking the first, because repairing the wrong
-function fails every attempt without ever saying why.
+**Localization** ranks the functions the defect might be in, by Ochiai over
+the call spectrum — the PASSING checks are evidence too, because a function
+every check exercises is poor evidence for a defect. Measured against real code
+rather than the fixture (`benchmarks/`), the top candidate is right 57.5% of
+the time and the top three cover 90%, so a run walks the top three rather than
+stopping at one. A wrong candidate costs budget and never costs correctness:
+the hidden check adjudicates every attempt, and each attempt starts from the
+state the run found.
 
 ## Exit codes
 
