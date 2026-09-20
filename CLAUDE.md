@@ -367,6 +367,18 @@ if x > 0 { "pos" } else { "non-pos" }
 while i < 10 { i = i + 1 }
 match val { Ok(n) => n  Err(e) => 0 }
 
+// Modules — TWO declarations, and both are required
+mod scorelib                       // DECLARES the module (registers the symbol)
+use scorelib.{weighted, approve}   // IMPORTS names from it; `.` separates path segments
+// `use X` without a preceding `mod X` is E0003 "module `X` not found". The
+// resolver looks up the use-path's first segment in the symbol table, and only
+// `mod` puts it there — so the two lines are not alternatives.
+//
+// Resolution is AMBIENT: `axon_search_dirs` is AXON_PATH, then ~/.axon/lib,
+// then <bindir>/../lib/axon. THE ENTRY FILE'S OWN DIRECTORY IS NEVER SEARCHED,
+// so a module sitting beside its importer does not resolve without AXON_PATH.
+// First match wins and nothing records which file was chosen.
+
 // Error handling
 fn parse(s: str) -> Result<i64, str> {
     let n = parse_int(s)?
