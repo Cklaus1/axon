@@ -930,7 +930,14 @@ impl Facts {
                 observed.name()
             ));
         }
-        if observed.is_continuous() && declared.rank() < Class::Conditional.rank() {
+        // `external_hardware` is exempt: it is the one excuse that REQUIRES a live
+        // invocation edge (see its arm below), so "it became wired" is its normal
+        // state, not drift. Every other excuse is a statement about something
+        // nothing runs, and must not survive the script becoming continuous.
+        if observed.is_continuous()
+            && declared.rank() < Class::Conditional.rank()
+            && declared != Class::ExternalHardware
+        {
             return Err(format!(
                 "declares `{}` but is now invoked continuously (`{}`) — stale label, reclassify",
                 declared.name(),
@@ -1007,15 +1014,53 @@ impl Facts {
                 }
             }
             Class::RecordedBenchmark => {
+                // A claim may not be its own evidence. The register is where the
+                // status lives; pointing the witness back at it would let
+                // "6.0x faster" in the R1 row justify the R1 row.
+                if witness == REGISTER_PATH {
+                    return Err(format!(
+                        "witness `{witness}` IS the register that makes the claim — \
+                         a claim cannot be its own evidence"
+                    ));
+                }
                 let path = self.root.join(witness);
                 let Ok(text) = fs::read_to_string(&path) else {
                     return Err(format!("recorded measurement `{witness}` does not exist"));
                 };
-                if !text.contains(script) {
+                // The witness must be a measurement ARTIFACT — numbers, and when
+                // they were taken — not a document that merely mentions the
+                // benchmark. `perf_bench.sh` writes no artifact at all: it prints
+                // timings to stdout and exits, so there is nothing to point at.
+                let naming: Vec<&str> = text.lines().filter(|l| l.contains(script)).collect();
+                if naming.is_empty() {
                     return Err(format!("`{witness}` does not name `{script}`"));
+                }
+                if !naming.iter().any(|l| l.chars().any(|c| c.is_ascii_digit())) {
+                    return Err(format!(
+                        "`{witness}` names `{script}` but records no number — \
+                         a measurement artifact, not a mention"
+                    ));
+                }
+                if !has_iso_date(&text) {
+                    return Err(format!(
+                        "`{witness}` carries no YYYY-MM-DD date — an undated measurement \
+                         cannot be known to describe this build"
+                    ));
                 }
             }
             Class::ExternalHardware => {
+                // The excuse covers a gate that SKIPS honestly where the toolchain
+                // is absent. It does not excuse a gate from being wired: one that
+                // nothing invokes never runs on the host that HAS the hardware
+                // either, which is the only host where it could have told us
+                // anything.
+                if !self.reachable.contains(script) {
+                    return Err(format!(
+                        "declared `external_hardware`, but nothing invokes `{script}` — \
+                         the class excuses a gate from being EFFECTIVE on a host without \
+                         the toolchain, never from being wired"
+                    ));
+                }
                 let tool = witness
                     .strip_prefix("NEEDS=")
                     .ok_or("witness must be `NEEDS=<tool>`")?;
@@ -1175,7 +1220,7 @@ pub fn check(root: &Path) -> Report {
     let mut provenance = String::new();
     let mut violating: BTreeSet<String> = BTreeSet::new();
 
-    let reqs_path = root.join("governance/REQUIREMENTS.md");
+    let reqs_path = root.join(REGISTER_PATH);
     let man_path = root.join("governance/EVIDENCE_CLASSES.md");
     let reqs_text = fs::read_to_string(&reqs_path).unwrap_or_default();
     let man_text = fs::read_to_string(&man_path).unwrap_or_default();
@@ -1345,6 +1390,24 @@ pub fn render_root_fixes(groups: &[(String, Vec<String>)]) -> String {
         leaves
     ));
     s
+}
+
+/// The register whose claims this file checks. Named once, because the
+/// `recorded_benchmark` rule has to refuse it as its own evidence.
+pub const REGISTER_PATH: &str = "governance/REQUIREMENTS.md";
+
+/// `YYYY-MM-DD` anywhere in the text. A measurement without a date is a number
+/// with no provenance: nothing says whether it describes this build or one from
+/// two years ago.
+fn has_iso_date(text: &str) -> bool {
+    let b: Vec<char> = text.chars().collect();
+    b.windows(10).any(|w| {
+        w[..4].iter().all(|c| c.is_ascii_digit())
+            && w[4] == '-'
+            && w[5..7].iter().all(|c| c.is_ascii_digit())
+            && w[7] == '-'
+            && w[8..10].iter().all(|c| c.is_ascii_digit())
+    })
 }
 
 fn repo_root() -> PathBuf {
@@ -1680,12 +1743,19 @@ fn fixture_benchmark_is_measured_not_continuous() {
 #[test]
 fn fixture_external_hardware_requires_a_skip_guard() {
     let f = Fixture::new("external_hw");
-    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
-        .write(
-            "scripts/hw_guarded.sh",
-            "#!/usr/bin/env bash\ncommand -v qemu-system-arm >/dev/null || { echo skip; exit 0; }\n",
-        )
-        .write("scripts/hw_bare.sh", "#!/usr/bin/env bash\nqemu-system-arm -kernel k.elf\n");
+    // Both are WIRED: this fixture isolates the skip-guard half of the class.
+    f.write(
+        "scripts/gate.sh",
+        "#!/usr/bin/env bash\n./scripts/hw_guarded.sh\n./scripts/hw_bare.sh\n",
+    )
+    .write(
+        "scripts/hw_guarded.sh",
+        "#!/usr/bin/env bash\ncommand -v qemu-system-arm >/dev/null || { echo skip; exit 0; }\n",
+    )
+    .write(
+        "scripts/hw_bare.sh",
+        "#!/usr/bin/env bash\nqemu-system-arm -kernel k.elf\n",
+    );
     let facts = f.facts();
     assert!(facts
         .verify(
@@ -2168,4 +2238,96 @@ fn fixture_root_fix_does_not_invent_a_shared_cause() {
         "two causes, two fixes: {:?}",
         rep.root_fixes
     );
+}
+
+/// `external_hardware` excuses a gate from being EFFECTIVE on a host that lacks
+/// the toolchain. It does not excuse it from being wired: a gate nothing invokes
+/// does not run on the host that HAS the hardware either, which is the only host
+/// where it could have reported anything.
+#[test]
+fn fixture_external_hardware_still_requires_an_invocation_edge() {
+    let f = Fixture::new("external_hw_edge");
+    let body =
+        "#!/usr/bin/env bash\ncommand -v qemu-system-arm >/dev/null || { echo skip; exit 0; }\n";
+    f.write(
+        "scripts/gate.sh",
+        "#!/usr/bin/env bash\n./scripts/hw_wired.sh\n",
+    )
+    .write("scripts/hw_wired.sh", body)
+    .write("scripts/hw_unwired.sh", body);
+    let facts = f.facts();
+    assert!(facts
+        .verify(
+            "hw_wired.sh",
+            Class::ExternalHardware,
+            "NEEDS=qemu-system-arm"
+        )
+        .is_ok());
+    let e = facts
+        .verify(
+            "hw_unwired.sh",
+            Class::ExternalHardware,
+            "NEEDS=qemu-system-arm",
+        )
+        .unwrap_err();
+    assert!(e.contains("nothing invokes"), "{e}");
+    assert!(e.contains("never from being wired"), "{e}");
+}
+
+/// A claim may not be its own evidence. `perf_bench.sh` writes no artifact — its
+/// "6.0x faster" figure exists only as prose inside the very REQUIREMENTS.md row
+/// it is meant to support — and pointing the witness back at the register would
+/// close that loop rather than break it.
+#[test]
+fn fixture_recorded_benchmark_refuses_a_circular_witness() {
+    let f = Fixture::new("bench_circular");
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
+        .write(
+            "scripts/bench.sh",
+            "#!/usr/bin/env bash\necho 6.0x   # prints, writes nothing\n",
+        )
+        .write(
+            "governance/REQUIREMENTS.md",
+            "| # | Req | Status | Evidence |\n|---|---|---|---|\n\
+             | R90 | Perf | ✅ Landed 2026-09-19 | 6.0x faster (`scripts/bench.sh`) |\n",
+        );
+    let e = f
+        .facts()
+        .verify("bench.sh", Class::RecordedBenchmark, REGISTER_PATH)
+        .unwrap_err();
+    assert!(e.contains("IS the register"), "{e}");
+    assert!(e.contains("cannot be its own evidence"), "{e}");
+}
+
+/// …and the witness must be a measurement ARTIFACT — a number, and when it was
+/// taken — not a document that merely mentions the benchmark.
+#[test]
+fn fixture_recorded_benchmark_requires_a_dated_number() {
+    let f = Fixture::new("bench_artifact");
+    f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
+        .write("scripts/bench.sh", "#!/usr/bin/env bash\necho timing\n")
+        .write(
+            "docs/mentions.md",
+            "We should re-run scripts/bench.sh at some point.\n",
+        )
+        .write(
+            "docs/undated.md",
+            "scripts/bench.sh: native is 6.0x faster than interp\n",
+        )
+        .write(
+            "docs/measured.md",
+            "2026-09-19  scripts/bench.sh  native AOT 6.0x faster over 9 programs\n",
+        );
+    let facts = f.facts();
+    let mention = facts
+        .verify("bench.sh", Class::RecordedBenchmark, "docs/mentions.md")
+        .unwrap_err();
+    assert!(mention.contains("records no number"), "{mention}");
+    let undated = facts
+        .verify("bench.sh", Class::RecordedBenchmark, "docs/undated.md")
+        .unwrap_err();
+    assert!(undated.contains("no YYYY-MM-DD date"), "{undated}");
+    assert!(facts
+        .verify("bench.sh", Class::RecordedBenchmark, "docs/measured.md")
+        .is_ok());
 }

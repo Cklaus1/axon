@@ -66,7 +66,7 @@ cargo test -j 6 -p axon-core --no-default-features --test requirements_evidence 
 | ebpf_verify.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
 | exec_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | gdt_layout_ir_test.sh | cargo_test | `crates/axon-core/tests/integration_fixtures.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
-| perf_bench.sh | orphaned | `-` | nothing invokes it. R1 quotes "6.0x faster" from it; to keep that claim, reclassify as `recorded_benchmark` with a witness file holding the measurement. |
+| perf_bench.sh | orphaned | `-` | nothing invokes it, AND it writes no artifact — it prints timings to stdout and exits. R1 quotes "6.0x faster over 9 pure-compute programs" from it, and that number exists nowhere but inside the R1 row itself, so `recorded_benchmark` is refused twice over: there is no measurement file to point at, and pointing at the register would make the claim its own evidence. Closing this needs the script to WRITE a dated result, or the row to stop citing it. |
 | provenance_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | r22_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
 | r23_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
@@ -97,4 +97,4 @@ cargo test -j 6 -p axon-core --no-default-features --test requirements_evidence 
 | wasm_fs_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_object_prune.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
-| zephyr_qemu_gate.sh | orphaned | `-` | nothing invokes it. Needs a Zephyr/QEMU toolchain; to keep R25s claim, reclassify as `external_hardware` once the script SKIPs honestly on an absent toolchain. |
+| zephyr_qemu_gate.sh | orphaned | `-` | nothing invokes it. The skip-guard half of `external_hardware` is ALREADY satisfied — five honest guards (`west`, `cmake`, `ninja`, `qemu-system-arm`, the Zephyr base and the arm-zephyr-eabi toolchain), each naming what is missing and exiting 0 — so the only unmet obligation is the invocation edge. `external_hardware` excuses a gate from being EFFECTIVE without the toolchain, never from being wired: unwired, it does not run on the host that HAS the hardware either. Wire it, then reclassify to `external_hardware` with `NEEDS=arm-zephyr-eabi`. |
