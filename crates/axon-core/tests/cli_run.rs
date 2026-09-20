@@ -31361,6 +31361,33 @@ fn a_native_build_cannot_silently_drop_an_ambient_effect_ceiling() {
         String::from_utf8_lossy(&run.stderr)
     );
 
+    // EVERY codegen entry point, not just `axon build`.
+    //
+    // The first version of this test checked `axon build` alone, and
+    // `axon target build --engine codegen --target wasm32` walked past the
+    // refusal and emitted an artifact under an active ceiling (verified,
+    // exit 0). One guarded verb is not a guarded boundary.
+    let wasm_out = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args([
+            "target",
+            "build",
+            "--engine",
+            "codegen",
+            "--target",
+            "wasm32",
+            src.to_str().unwrap(),
+        ])
+        .current_dir(&dir)
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .expect("axon target build");
+    assert!(
+        !wasm_out.status.success(),
+        "`axon target build --engine codegen` emitted an artifact under an \
+         active ceiling: {}",
+        String::from_utf8_lossy(&wasm_out.stdout)
+    );
+
     let bin = dir.join("cbin");
     let build = Command::new(env!("CARGO_BIN_EXE_axon"))
         .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])

@@ -2645,6 +2645,7 @@ fn cmd_on_path(cmd: &str) -> bool {
 /// The real iOS `.a`/`.xcframework` link + simulator run are done by the macOS
 /// CI job (`.github/workflows/ios.yml`), never here.
 fn cmd_target_mobile(file: &Path, triple: &str) {
+    refuse_if_ambient_ceiling("axon target build (mobile)");
     use axon_core::error::{E1710, E1711};
     use axon_core::mobile;
 
@@ -2817,6 +2818,7 @@ fn mobile_emit_object(
 /// codegen, the honest E0907 block (R7 §6).
 #[cfg(not(feature = "codegen"))]
 fn build_wasm_object_cli(file: &Path, triple: &str) {
+    refuse_if_ambient_ceiling("axon target build (wasm)");
     emit_error(
         &format!(
             "[{}] AOT wasm build needs the native codegen backend (this axon was built \
@@ -2837,6 +2839,7 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
 /// sysroot + wasm-ld) is the documented remaining gap.
 #[cfg(feature = "codegen")]
 fn build_wasm_object_cli(file: &Path, triple: &str) {
+    refuse_if_ambient_ceiling("axon target build (wasm)");
     validate_ax_extension(file);
     // Normalise the alias `wasm32` to a concrete LLVM triple.
     let llvm_triple = if triple == "wasm32" {
@@ -3082,6 +3085,42 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
 // ── build ─────────────────────────────────────────────────────────────────────
 
 /// Native AOT build via the LLVM/inkwell backend. Only available when axon is
+/// Refuse to emit a native/wasm artifact while an ambient ceiling is active.
+///
+/// CALLED FROM EVERY CODEGEN ENTRY POINT, not just `axon build`. The first
+/// version lived inline in `cmd_build`, and
+/// `axon target build --engine codegen --target wasm32` walked straight past it
+/// and emitted an artifact under an active ceiling with NO refusal (verified,
+/// exit 0) — fixing the instance and missing the class. `context` names the
+/// verb, so the diagnostic says which entry point refused.
+///
+/// KNOWN LIMIT, stated rather than implied: this keys on the BUILD-time
+/// environment. A guest image built where no ceiling is set, then run by
+/// `axon-guest-init` which sets the ceiling at boot and execs the payload, is
+/// NOT covered — nothing on that path re-checks. Tracked as D-002 in
+/// `governance/cortex-v015/DISCREPANCIES.md`.
+fn refuse_if_ambient_ceiling(context: &str) {
+    for var in ["AXON_ALLOWED_EFFECTS", "AXON_BUDGET_TOKENS"] {
+        if let Ok(val) = std::env::var(var) {
+            eprintln!(
+                "error[E0910]: `{var}` is set ({}), but a natively built binary \
+                 cannot enforce it — the ceiling is honoured by the interpreter \
+                 only.\n  \
+                 Refusing to emit a binary that would silently drop the policy.\n  \
+                 Either run under the interpreter (`axon run`), which enforces \
+                 it, or unset `{var}` for the build if the ceiling was meant for \
+                 a different process.",
+                if val.is_empty() {
+                    "empty — deny all"
+                } else {
+                    val.as_str()
+                }
+            );
+            process::exit(2);
+        }
+    }
+}
+
 /// built with the `codegen` feature. (`axon run`/`check`/`test` work without it
 /// via the interpreter.)
 #[cfg(not(feature = "codegen"))]
@@ -3163,25 +3202,7 @@ fn cmd_build(
     //
     // Note the direction: the INTERPRETER is the stricter engine here, so
     // "build native for speed" silently removes a control.
-    for var in ["AXON_ALLOWED_EFFECTS", "AXON_BUDGET_TOKENS"] {
-        if let Ok(val) = std::env::var(var) {
-            eprintln!(
-                "error[E0910]: `{var}` is set ({}), but a natively built binary \
-                 cannot enforce it — the ceiling is honoured by the interpreter \
-                 only.\n  \
-                 Refusing to emit a binary that would silently drop the policy.\n  \
-                 Either run under the interpreter (`axon run`), which enforces \
-                 it, or unset `{var}` for the build if the ceiling was meant for \
-                 a different process.",
-                if val.is_empty() {
-                    "empty — deny all"
-                } else {
-                    val.as_str()
-                }
-            );
-            process::exit(2);
-        }
-    }
+    refuse_if_ambient_ceiling("axon build");
 
     // R14: `--host mobile` requires an Android `--target` on this (Linux) host.
     let mobile = matches!(host.as_deref(), Some("mobile"));

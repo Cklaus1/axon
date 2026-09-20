@@ -447,3 +447,53 @@ the four here would have done exactly that.
 documented lesson from a different context — "kill the job, not a PID".
 
 **Owner.** Repository owner.
+
+---
+
+## D-009 — the ceiling refusal is BUILD-time; the guest path is RUN-time and stays open
+
+**This record exists because my own fix for D-002 named the case it does not
+close, in its own comment, and I did not notice until an audit quoted it back.**
+
+**What D-002's fix does.** `refuse_if_ambient_ceiling` is called from every
+codegen entry point and refuses to emit an artifact when
+`AXON_ALLOWED_EFFECTS` or `AXON_BUDGET_TOKENS` is set IN THE BUILD ENVIRONMENT.
+Verified across `axon build` and `axon target build --engine codegen`, with
+controls, and mutation-verified.
+
+**What it does not.** The guest sequence is:
+
+1. the image is built on a machine where **no ceiling is set** — so the build
+   succeeds, correctly;
+2. `axon-guest-init` refuses to boot without an MMDS policy, then SETS
+   `AXON_ALLOWED_EFFECTS` and `AXON_BUDGET_TOKENS` at boot
+   (`crates/axon-guest-init/src/main.rs:171,177`);
+3. it `exec`s the payload. **Nothing on that path re-checks.**
+
+A natively built payload therefore receives both variables and ignores them, in
+the one deployment where a policy has been attested as applied. `guest-init`'s
+own header still asserts they are "the guest's ENFORCED policy, not just
+labels" — true only when the payload is `axon run`.
+
+**Status of this check.** The build-time half is verified by execution. The
+run-time half is verified by reading `guest-init`'s `set_var`/`exec` sequence
+plus the absence of any ceiling read in `codegen/` and `axon-rt`. NOT verified
+by booting a guest with a native payload.
+
+**Proposed resolution — an OWNER DECISION, deliberately not taken here.**
+Three options, and they differ in where the authority lives:
+
+* **(a) `guest-init` refuses to exec a payload it cannot constrain.** Consistent
+  with what that binary already does — it refuses to boot without a policy — and
+  keeps enforcement in the launcher. Needs a way to tell an interpreter payload
+  from a native one.
+* **(b) the native runtime checks the ceiling at startup and refuses.** Closes
+  it everywhere, but puts a policy check inside `axon-rt`, which the brief's
+  reviewer explicitly questioned: *"probably should not be 'native binary checks
+  the environment variable at runtime' unless that is already the intended Axon
+  security model."*
+* **(c) native actually ENFORCES the ceiling.** The largest piece of work and
+  the only one that makes the capability — not merely the boundary — equivalent.
+
+**Owner.** Repository owner.
+**Invariant.** Protected kernel: *capability/effect enforcement*.
