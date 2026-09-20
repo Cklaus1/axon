@@ -497,3 +497,65 @@ Three options, and they differ in where the authority lives:
 
 **Owner.** Repository owner.
 **Invariant.** Protected kernel: *capability/effect enforcement*.
+
+---
+
+## CORRECTION (post-audit): D-002 was marked FIXED on a build-time-only remedy
+
+`refuse_if_ambient_ceiling` keys on the environment **at build time**. It stops
+`axon build` from emitting a binary while a ceiling is set. It does nothing
+about the case that actually occurs in production:
+
+```
+axon build c.ax -o cbin                 # no ceiling set — emits happily
+AXON_ALLOWED_EFFECTS=Pure ./cbin        # every effect performed, exit 0
+AXON_ALLOWED_EFFECTS=Pure axon run c.ax # exit 8
+```
+
+Same program, same variable, two engines, opposite answers. The guest path is
+exactly this shape: `axon-guest-init` sets the ceiling from MMDS and then
+`exec`s a payload built earlier.
+
+The remedy is not new machinery. `__axon_rt_refuse_interp_only_env`
+(`axon-rt/src/lib.rs`) already runs in every native binary's prologue and
+already refuses three sibling vars at run time. `AXON_ALLOWED_EFFECTS` and
+`AXON_BUDGET_TOKENS` are absent from its list — which is why the class stayed
+open after being declared closed. This also subsumes D-009, which recorded the
+build-time/run-time gap as an owner decision; the audit shows it is broader
+than the guest case and the refusal mechanism already exists.
+
+What I got wrong, recorded because the shape recurs: I verified the fix against
+the failure I had *reproduced* (build under a ceiling) rather than against the
+control's *stated scope* (a run-wide ceiling the program cannot raise). The
+test passed, the mutation was caught, and the control was still open.
+
+### Newly found by the same audit (static, not yet executed)
+
+| id | control | engine | shape |
+|---|---|---|---|
+| D-010 | `AXON_AI_REPLAY` | native | promises "no live call"; native makes a live billed call |
+| D-011 | `AXON_PRINCIPAL` | native | no `ai_call` records emitted; audit trail silently empty |
+| D-012 | `AXON_SEED` + 3 refusals | wasm | `target_is_wasm` early-returns skip both prologue inits |
+| D-013 | `AXON_TEE_ENCLAVE` / `_MEASUREMENT` | registry gate | read via the host seam, which `vars_read()` does not scan — no registry row, absent from `AXON_REFERENCE.md`, while the both-directions gate reports full coverage |
+
+D-013 is the one that undercuts the others: the enumeration tool this whole
+matrix is built on cannot see a var read through `with_host`.
+
+#### D-013 verified by inspection (not taken on the audit's word)
+
+`env_registry::vars_read()` scans for exactly two literal forms,
+`env::var("` and `env::var_os("`, plus a `const NAME: &str = "AXON_…"` shape.
+`crate::host::with_host(|h| h.env_var("AXON_TEE_ENCLAVE"))`
+(`crates/axon-core/src/interp/builtins.rs:3531`, `:3538`) matches none of them.
+
+- registry rows for `AXON_TEE_*`: **0**
+- env-var rows in `AXON_REFERENCE.md`: **0** — the two matches there are prose
+  inside the `tee_in_enclave` / `tee_attest_measurement` doc strings, which is
+  documentation of a builtin, not enumeration of a control
+
+So CLAUDE.md's stated guarantee — "a var read without a registry row fails the
+build" — does not hold for any variable read through the host seam. The
+guarantee is real for `std::env` reads and silently absent for the seam, and
+the seam is the better-behaved path (those reads are recorded and replayed).
+The gate is not wrong about what it checks; it is wrong about what it claims
+to cover, which is the same absent-vs-passed shape as everything else here.

@@ -146,6 +146,52 @@ for c in excused:
     elif not str(excused[c]).strip():
         fails.append(f"crate `{c}` is excused with an empty reason")
 
+# ── CONTROL MATRIX ──────────────────────────────────────────────────────────
+# A runtime/security control must say what EVERY engine does with it. The
+# defect state is nameable (`silently-ignored`) because every divergence found
+# so far had that shape: an engine that neither honours a control nor refuses
+# it, so the control reads as system-wide when it is not.
+CONTROL_STATES = {"enforced", "explicitly-refused", "not-applicable",
+                  "unknown", "silently-ignored"}
+ENGINES = {"interpreter", "native", "wasm", "guest"}
+for c in art.get("controls") or []:
+    cn = c.get("name", "?")
+    eng = c.get("engines") or {}
+    missing = ENGINES - set(eng)
+    if missing:
+        fails.append(f"control `{cn}`: no state for {sorted(missing)} — a "
+                     f"control must say what EVERY engine does with it")
+    for k, v in eng.items():
+        if v not in CONTROL_STATES:
+            fails.append(f"control `{cn}`: engine `{k}` = {v!r}, not in "
+                         f"{sorted(CONTROL_STATES)}")
+    if c.get("status") == "resolved":
+        bad = {k: v for k, v in eng.items()
+               if v in ("unknown", "silently-ignored")}
+        if bad:
+            fails.append(f"control `{cn}`: status=resolved while {bad} — a "
+                         f"control is not resolved while an engine is unknown "
+                         f"or silently ignoring it")
+    ev = c.get("evidence")
+    if ev and not os.path.exists(os.path.join(ROOT, ev.split("::")[0])):
+        fails.append(f"control `{cn}`: cites `{ev}`, which does not exist")
+
+# Every registry variable must have a control row. Without this the matrix
+# could look complete by simply omitting the awkward vars — the same omission
+# direction the env registry itself gates in both directions, and for the same
+# reason. NOTE the known limit, recorded as D-013: the registry is built from a
+# literal scan that cannot see a var read through the host seam, so full
+# coverage OF THE REGISTRY is not full coverage of the vars the code reads.
+import re as _re
+_regsrc = os.path.join(ROOT, "crates/axon-core/src/env_registry.rs")
+if os.path.exists(_regsrc):
+    _reg = set(_re.findall(r'"(AXON_[A-Z0-9_]+)"', open(_regsrc).read()))
+    _named = {c.get("name") for c in (art.get("controls") or [])}
+    for _v in sorted(_reg - _named):
+        fails.append(f"env registry declares `{_v}` but the control matrix has "
+                     f"no row for it — a control matrix that may omit rows "
+                     f"cannot be read as coverage")
+
 if fails:
     for f in fails:
         print(f"  UNBACKED: {f}")
@@ -197,6 +243,51 @@ lines += [
     "0% do not combine into anything a reader can act on.",
     "",
 ]
+# ── Render the control matrix ───────────────────────────────────────────────
+# A matrix only the gate can read is half-built. The interesting rows lead:
+# anything an engine ignores silently or has never been assessed on.
+_c = art.get("controls") or []
+if _c:
+    _bad = lambda c: any(v in ("unknown", "silently-ignored")
+                         for v in (c.get("engines") or {}).values())
+    lines += ["", "## Cross-engine control matrix", "",
+              "Per-engine support for each runtime/security control. States are a "
+              "closed set: `enforced` / `explicitly-refused` / `not-applicable` / "
+              "`unknown` / `silently-ignored`. The defect state is named on purpose "
+              "— a control an engine neither honours nor refuses reads as "
+              "system-wide when it is not, and that shape produced every divergence "
+              "found so far.", "",
+              f"**{len(_c)} controls tracked; "
+              f"{sum(1 for c in _c for v in (c.get('engines') or {}).values() if v in ('unknown','silently-ignored'))} "
+              f"engine states unknown or silently-ignored.**", "",
+              "| control | category | interp | native | wasm | guest | status |",
+              "|---|---|---|---|---|---|---|"]
+    _sym = {"enforced": "✓", "explicitly-refused": "refused",
+            "not-applicable": "n/a", "unknown": "**?**",
+            "silently-ignored": "**IGNORED**"}
+    for c in sorted(_c, key=lambda c: (not _bad(c), c["name"])):
+        e = c.get("engines") or {}
+        cells = " | ".join(_sym.get(e.get(k, "unknown"), "?")
+                           for k in ("interpreter", "native", "wasm", "guest"))
+        lines.append(f"| `{c['name']}` | {c.get('category','')} | {cells} | "
+                     f"{c.get('status','')} |")
+    _open = [c for c in _c if c.get("open")]
+    if _open:
+        lines += ["", "### Open control divergences", ""]
+        for c in _open:
+            lines += [f"- **`{c['name']}`** — {c['open']}"]
+
 open(OUT, "w").write("\n".join(lines) + "\n")
+# The control tally shares this headline on purpose. Reporting "0 unknown"
+# for rows while six controls carry an unknown engine is the same
+# absent-vs-passed collapse the controls section exists to catch, committed
+# by the tool that catches it.
+_ctl = art.get("controls") or []
+_ctl_unknown = sum(1 for c in _ctl
+                   for v in (c.get("engines") or {}).values()
+                   if v in ("unknown", "silently-ignored"))
 print(f"AXON-COMPLETENESS.md generated: {tot} rows, {proven} with a production "
       f"proof, {unknown} unknown")
+print(f"controls: {len(_ctl)} tracked, {_ctl_unknown} engine states unknown or "
+      f"silently-ignored"
+      + ("" if not _ctl_unknown else " — NOT a clean bill"))

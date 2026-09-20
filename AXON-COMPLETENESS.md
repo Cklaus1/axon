@@ -40,7 +40,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | crate axon-vm | ~ | ✗ | ✗ | ~ | AUDITED. `run --quorum` mints an unpredictable run_id with no --run-id flag, then filters votes by it — approvals are always 0, so the gate is unsatisfiable and reports it as 'insufficient approvals' rather than as unusable. Fail-closed, so not a safety hole. attest with no --verify-digest sets ok:true having compared nothing; key_source (operator vs ephemeral — 'the whole security story' per its own comment) is stderr-only and absent from the JSON. |
 | ast review covers impl methods | ✓ | ✓ | ✓ | ✓ | FIXED. cmd_ast_review walks Item::ImplBlock and each fn carries its origin (owner in JSON, [method of Agent] in the human line). Mutation-verified at integration: reverting main.rs alone turns the test red with 'no entry for phone_home — impl methods are invisible'. OPEN: the schema stayed /2 though the POPULATION of fns changed; and gates implemented as impl methods are still invisible to redteam/deploy. |
 | CVE-Bench prevention claim | ✓ | ✓ | ✗ | ✓ | AUDITED AND UPHELD — recorded because a session that reports only overstatements leaves a false impression. README claims Axon prevents ~28 of CVE-Bench's 40 critical CVEs. TRIAGE.md buckets ALL 40 with per-class mechanisms; COVERAGE.md is titled 'the whole 40, honestly', carries explicit OUT OF SCOPE rows (weak password hashing: 'a type system can't pick a strong KDF for you') and records a real escaping defect it found and fixed (single-quote-only escaping let a backslash consume its closing quote on MySQL). 8 CVEs have reproduction directories, driven by a cargo test; the flagship demo is gated. NOT mutation-tested, and the SQL escaping is explicitly MySQL-dialect rather than neutral — both stated in the source docs. |
-| ambient effect ceiling reaches native | ~ | ✗ | ✗ | ~ | PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure — `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. STILL OPEN: native does not ENFORCE the ceiling, it refuses to be built under one — the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED. |
+| ambient effect ceiling reaches native | ~ | ✗ | ✗ | ~ | PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure — `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. CORRECTED AFTER AUDIT: the refusal keys on the BUILD-TIME environment only. A binary built with no ceiling and RUN under one performs every effect, exit 0 — and that is the production shape, since axon-guest-init sets the ceiling from MMDS and execs a payload built earlier. Native is therefore SILENTLY-IGNORING at run time, not refusing; the run-time refusal hook already exists in axon-rt and these two vars are simply not in its list. See the D-002 correction in governance/cortex-v015/DISCREPANCIES.md. Native does not ENFORCE the ceiling — the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED. |
 | cancellation reaches the whole job | ✗ | ✗ | ✗ | ✗ | PROVEN BY EXECUTION. axon-os cancellation calls child.kill() on the DIRECT CHILD only (runtime.rs:183 timeout path, :191 kill-latch path), not the process group. Measured: a job that execs `sh -c "nohup sleep 4002 &"` then loops is killed by the supervisor at the timeout, and the grandchild SURVIVES (0 before, 1 after). Under the `developer` default `exec: any` this is the normal case. The operator kill switch (R27) and the compliance monitor (R29) both terminate through this path, so neither stops a job that spawned a subprocess. Remedy: setsid at spawn + killpg in the existing run_bounded — the repo's own lesson 'kill the job, not a PID'. |
 
 ## cortex
@@ -109,3 +109,78 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
+
+## Cross-engine control matrix
+
+Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
+
+**52 controls tracked; 39 engine states unknown or silently-ignored.**
+
+| control | category | interp | native | wasm | guest | status |
+|---|---|---|---|---|---|---|
+| `AXON_AI_API_KEY` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_AI_BASE_URL` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_AI_MOCK` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_AI_MODEL_BALANCED` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_AI_PROVIDER` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_AI_REPLAY` | replay/record/audit | ✓ | **IGNORED** | **?** | **?** | open |
+| `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | **IGNORED** | **?** | **?** | open |
+| `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
+| `AXON_BUDGET_TOKENS` | resource-budget | ✓ | **IGNORED** | **?** | **?** | open |
+| `AXON_CLOCK` | determinism | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_NATIVE_TRACE` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_PRINCIPAL` | replay/record/audit | ✓ | **IGNORED** | **?** | n/a | open |
+| `AXON_RECORD` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
+| `AXON_REPLAY` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
+| `AXON_SEED` | determinism | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_TEE_ENCLAVE` | approval/attestation | ✓ | **?** | **?** | **?** | open |
+| `AXON_TEE_MEASUREMENT` | approval/attestation | ✓ | **?** | **?** | **?** | open |
+| `AXON_AI_MODEL_CHEAP` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
+| `AXON_AI_MODEL_STRONG` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
+| `AXON_ANDROID_API` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_ATTEST_KEY` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_AUDIT_DETERMINISTIC` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_BIN` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_CI_NO_KVM` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_CONFIG_DIR` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_CORTEX_GENERATOR_TIMEOUT_MS` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_DOTENV` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_DOTENV_WALK` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_DUMP_BINDINGS` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_DUMP_SHAPES` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_GOAL_CONTINUE` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_GUEST_ALLOW_NO_POLICY` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
+| `AXON_HOST_SOCKET` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_INTENT_GEN` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_INTENT_TIMEOUT_MS` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_KILL_FILE` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_MAX_DEPTH` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_OS_TIMEOUT_MS` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_PATH` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_PROOF_DEPTH` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_PROOF_TIMEOUT_MS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_REQUIRE_CERTS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_STRICT` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_TEST_DOTENV_NEW` | test-fixture | n/a | n/a | n/a | n/a | resolved |
+| `AXON_TEST_DOTENV_VAR` | test-fixture | n/a | n/a | n/a | n/a | resolved |
+| `AXON_VM_ALLOWED_EFFECTS` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
+| `AXON_VM_DEBUG` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
+| `AXON_VM_QUIET` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
+| `AXON_VM_SOCKET_TIMEOUT_SECS` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
+| `AXON_VM_TIMEOUT_SECS` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
+| `AXON_VM_VSOCK_PORT` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_WASM_RT` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+
+### Open control divergences
+
+- **`AXON_ALLOWED_EFFECTS`** — RESIDUAL, found by static audit: `refuse_if_ambient_ceiling` keys on the BUILD-time environment. A binary built with no ceiling and RUN under one performs every effect, exit 0, no warning. The run-time refusal hook already exists and fires for three sibling vars; these two are simply not in its list (axon-rt/src/lib.rs, __axon_rt_refuse_interp_only_env). Marking native `explicitly-refused` on the strength of the build-time path was my own absent-vs-passed collapse.
+- **`AXON_BUDGET_TOKENS`** — RESIDUAL, found by static audit: `refuse_if_ambient_ceiling` keys on the BUILD-time environment. A binary built with no ceiling and RUN under one performs every effect, exit 0, no warning. The run-time refusal hook already exists and fires for three sibling vars; these two are simply not in its list (axon-rt/src/lib.rs, __axon_rt_refuse_interp_only_env). Marking native `explicitly-refused` on the strength of the build-time path was my own absent-vs-passed collapse.
+- **`AXON_REPLAY`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
+- **`AXON_RECORD`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
+- **`AXON_AUDIT_LEDGER`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
+- **`AXON_SEED`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
+- **`AXON_CLOCK`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
+- **`AXON_AI_REPLAY`** — Registry and CLAUDE.md both promise 'no live call / mock / API key' with NO engine caveat. Native lowers ai_complete to __axon_ai_complete in axon-ai, which contains no AXON_AI_REPLAY read, and the var is not in the refusal list — so a native binary makes a LIVE billed call while the operator believes the run is replayed. Static audit; not yet executed.
+- **`AXON_PRINCIPAL`** — Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine.
+- **`AXON_TEE_ENCLAVE`** — BLIND SPOT IN THE REGISTRY GATE ITSELF: read through the host seam (with_host(|h| h.env_var(..))), which env_registry::vars_read() does not scan for — it matches only literal env::var( forms. So an attestation-category signal that makes tee_in_enclave() return true has no registry row and does not appear in AXON_REFERENCE.md, while the gate reports full coverage in both directions.
+- **`AXON_TEE_MEASUREMENT`** — Same host-seam blind spot as AXON_TEE_ENCLAVE.

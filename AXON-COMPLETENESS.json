@@ -6,7 +6,8 @@
     "production_proof": "yes = the PRODUCTION path is proven to use it (not just that it exists and has tests) | no | unknown",
     "mutation": "yes = a load-bearing assertion was mutation-verified | partial | no | unknown",
     "docs": "yes | partial | no",
-    "engines": "For SECURITY-SENSITIVE semantics only. Per-engine enforcement: enforced | not-enforced | refused (the engine refuses rather than pretending) | n/a | unknown. Added because a single row reading 'effect ceiling: implemented' is how one implementation gets mistaken for system-wide support \u2014 which is exactly the D-002 defect: the interpreter enforced the ambient ceiling and a natively built binary ignored it, proven by execution. The generator REFUSES a row whose engines disagree (one enforced, another not-enforced) unless its implementation is marked partial or absent."
+    "engines": "For SECURITY-SENSITIVE semantics only. Per-engine enforcement: enforced | not-enforced | refused (the engine refuses rather than pretending) | n/a | unknown. Added because a single row reading 'effect ceiling: implemented' is how one implementation gets mistaken for system-wide support \u2014 which is exactly the D-002 defect: the interpreter enforced the ambient ceiling and a natively built binary ignored it, proven by execution. The generator REFUSES a row whose engines disagree (one enforced, another not-enforced) unless its implementation is marked partial or absent.",
+    "controls": "Per-engine support for a runtime/security CONTROL, as a closed state set: enforced | explicitly-refused | not-applicable | unknown | silently-ignored. `silently-ignored` is the defect state and is nameable on purpose \u2014 a control an engine neither honours nor refuses is the shape that produced every divergence found so far. A control may not be `status: resolved` while any engine is `unknown` or `silently-ignored`. Lives here rather than in a new file because this repository already carries four governance registries and D-007 records that as a problem, not a pattern to extend."
   },
   "rows": [
     {
@@ -710,7 +711,7 @@
         "governance/cortex-v015/DISCREPANCIES.md",
         "crates/axon-core/src/interp.rs"
       ],
-      "gap": "PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure \u2014 `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. STILL OPEN: native does not ENFORCE the ceiling, it refuses to be built under one \u2014 the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED.",
+      "gap": "PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure \u2014 `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. CORRECTED AFTER AUDIT: the refusal keys on the BUILD-TIME environment only. A binary built with no ceiling and RUN under one performs every effect, exit 0 \u2014 and that is the production shape, since axon-guest-init sets the ceiling from MMDS and execs a payload built earlier. Native is therefore SILENTLY-IGNORING at run time, not refusing; the run-time refusal hook already exists in axon-rt and these two vars are simply not in its list. See the D-002 correction in governance/cortex-v015/DISCREPANCIES.md. Native does not ENFORCE the ceiling \u2014 the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED.",
       "engines": {
         "interpreter": "enforced",
         "native": "refused",
@@ -776,6 +777,691 @@
         "guest": "unknown"
       },
       "gap": "PROVEN, then CLOSED BY REFUSAL \u2014 three controls, one list. AXON_REPLAY: interp replay created no file while native printed the replayed output AND performed the write, exit 0. AXON_RECORD: native records nothing, leaving an empty journal. AXON_AUDIT_LEDGER: interp wrote 2 entries for one write_file, native did not create the ledger file at all. All three now REFUSE natively (exit 2) via one list in __axon_rt_refuse_interp_only_env \u2014 adding a row is the whole cost of covering the next one. Mutation-verified on the SIDE EFFECT, with a control proving ordinary native runs still work. STILL OPEN: native does not IMPLEMENT any of the three. wasm and guest UNASSESSED."
+    }
+  ],
+  "controls": [
+    {
+      "name": "AXON_ALLOWED_EFFECTS",
+      "category": "authorization/effect-ceiling",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "PROVEN: interp refused a println under Pure (exit 8), native emitted a binary that printed, exit 0. Native now refuses EMISSION at every codegen entry point. Build-time only \u2014 the guest sets it at boot, which D-009 tracks.",
+      "open": "RESIDUAL, found by static audit: `refuse_if_ambient_ceiling` keys on the BUILD-time environment. A binary built with no ceiling and RUN under one performs every effect, exit 0, no warning. The run-time refusal hook already exists and fires for three sibling vars; these two are simply not in its list (axon-rt/src/lib.rs, __axon_rt_refuse_interp_only_env). Marking native `explicitly-refused` on the strength of the build-time path was my own absent-vs-passed collapse."
+    },
+    {
+      "name": "AXON_BUDGET_TOKENS",
+      "category": "resource-budget",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Same refusal path as the effect ceiling. Zero reads in codegen/ or axon-rt.",
+      "open": "RESIDUAL, found by static audit: `refuse_if_ambient_ceiling` keys on the BUILD-time environment. A binary built with no ceiling and RUN under one performs every effect, exit 0, no warning. The run-time refusal hook already exists and fires for three sibling vars; these two are simply not in its list (axon-rt/src/lib.rs, __axon_rt_refuse_interp_only_env). Marking native `explicitly-refused` on the strength of the build-time path was my own absent-vs-passed collapse."
+    },
+    {
+      "name": "AXON_REPLAY",
+      "category": "replay/record/audit",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "crates/axon-core/tests/cli_run.rs",
+      "note": "PROVEN: interp replay created no file; native printed the replayed output AND performed the write, exit 0 \u2014 an authoritative-looking transcript of a run that never happened.",
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+    },
+    {
+      "name": "AXON_RECORD",
+      "category": "replay/record/audit",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "crates/axon-core/tests/cli_run.rs",
+      "note": "Native recorded nothing, leaving an empty journal indistinguishable from a run that touched nothing.",
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+    },
+    {
+      "name": "AXON_AUDIT_LEDGER",
+      "category": "replay/record/audit",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "crates/axon-core/tests/cli_run.rs",
+      "note": "PROVEN: interp wrote 2 entries for one write_file; native did not create the ledger file at all.",
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+    },
+    {
+      "name": "AXON_SEED",
+      "category": "determinism",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "crates/axon-core/tests/cli_run.rs",
+      "note": "PROVEN: native ignored it entirely \u2014 seeds 1/42/999 all gave 289383 \u2014 because codegen lowers random_i64 to a bare rand() and srand was called nowhere. Now seeded from main's prologue. The generators differ, so a seed determines the run but values are not equal across engines.",
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+    },
+    {
+      "name": "AXON_CLOCK",
+      "category": "determinism",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "scripts/clock_parity.sh",
+      "note": "The precedent: the only control whose CLAUDE.md row already said 'Honoured by interp AND native', with a parity harness behind it.",
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+    },
+    {
+      "name": "AXON_AI_REPLAY",
+      "category": "replay/record/audit",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "open": "Registry and CLAUDE.md both promise 'no live call / mock / API key' with NO engine caveat. Native lowers ai_complete to __axon_ai_complete in axon-ai, which contains no AXON_AI_REPLAY read, and the var is not in the refusal list \u2014 so a native binary makes a LIVE billed call while the operator believes the run is replayed. Static audit; not yet executed."
+    },
+    {
+      "name": "AXON_PRINCIPAL",
+      "category": "replay/record/audit",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "unknown",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "open": "Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine."
+    },
+    {
+      "name": "AXON_TEE_ENCLAVE",
+      "category": "approval/attestation",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "unknown",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "open": "BLIND SPOT IN THE REGISTRY GATE ITSELF: read through the host seam (with_host(|h| h.env_var(..))), which env_registry::vars_read() does not scan for \u2014 it matches only literal env::var( forms. So an attestation-category signal that makes tee_in_enclave() return true has no registry row and does not appear in AXON_REFERENCE.md, while the gate reports full coverage in both directions."
+    },
+    {
+      "name": "AXON_TEE_MEASUREMENT",
+      "category": "approval/attestation",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "unknown",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "open": "Same host-seam blind spot as AXON_TEE_ENCLAVE."
+    },
+    {
+      "name": "AXON_PATH",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_STRICT",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_PROOF_TIMEOUT_MS",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_PROOF_DEPTH",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_REQUIRE_CERTS",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_DOTENV",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_DOTENV_WALK",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+    },
+    {
+      "name": "AXON_VM_ALLOWED_EFFECTS",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "enforced"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_GUEST_ALLOW_NO_POLICY",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "enforced"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_KILL_FILE",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_OS_TIMEOUT_MS",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_VM_TIMEOUT_SECS",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "enforced"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_VM_SOCKET_TIMEOUT_SECS",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "enforced"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_INTENT_TIMEOUT_MS",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_CORTEX_GENERATOR_TIMEOUT_MS",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_ATTEST_KEY",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_VM_DEBUG",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "enforced"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_VM_QUIET",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "enforced"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_CI_NO_KVM",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_CONFIG_DIR",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_BIN",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_WASM_RT",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_ANDROID_API",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+    },
+    {
+      "name": "AXON_AI_MOCK",
+      "category": "ai-routing/diagnostic",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+    },
+    {
+      "name": "AXON_AI_PROVIDER",
+      "category": "ai-routing/diagnostic",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+    },
+    {
+      "name": "AXON_AI_BASE_URL",
+      "category": "ai-routing/diagnostic",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+    },
+    {
+      "name": "AXON_AI_API_KEY",
+      "category": "ai-routing/diagnostic",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+    },
+    {
+      "name": "AXON_AI_MODEL_BALANCED",
+      "category": "ai-routing/diagnostic",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+    },
+    {
+      "name": "AXON_NATIVE_TRACE",
+      "category": "ai-routing/diagnostic",
+      "status": "native-closed",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+    },
+    {
+      "name": "AXON_HOST_SOCKET",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_VM_VSOCK_PORT",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_DUMP_BINDINGS",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_DUMP_SHAPES",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_GOAL_CONTINUE",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_INTENT_GEN",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_AI_MODEL_CHEAP",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_AI_MODEL_STRONG",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_AUDIT_DETERMINISTIC",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_MAX_DEPTH",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+    },
+    {
+      "name": "AXON_TEST_DOTENV_VAR",
+      "category": "test-fixture",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Test fixture only; not a runtime control."
+    },
+    {
+      "name": "AXON_TEST_DOTENV_NEW",
+      "category": "test-fixture",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "Test fixture only; not a runtime control."
     }
   ]
 }

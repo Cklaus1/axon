@@ -31361,6 +31361,42 @@ fn a_native_build_cannot_silently_drop_an_ambient_effect_ceiling() {
         String::from_utf8_lossy(&run.stderr)
     );
 
+    // CAPABILITY PROBE, with its reason proven rather than assumed.
+    //
+    // This test failed in the gate's `--no-default-features` stage, where
+    // there is no codegen at all: `axon build` fails for an unrelated reason,
+    // its stderr naturally says nothing about the ceiling, and the
+    // "refused for the wrong reason" assertion fires. A skip keyed on "the
+    // build failed" would be worse than the bug — every genuine regression
+    // looks like an absent toolchain.
+    //
+    // So probe with a CONTROL build, no ceiling set. If that fails, this build
+    // has no codegen and there is no second engine to diverge from, so there
+    // is nothing to test. If it succeeds, codegen is present — and a refusal
+    // under the ceiling below is then a real refusal rather than the same
+    // incidental failure wearing a policy's name.
+    let probe_bin = dir.join("probe");
+    let probe = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args([
+            "build",
+            src.to_str().unwrap(),
+            "-o",
+            probe_bin.to_str().unwrap(),
+        ])
+        .env_remove("AXON_ALLOWED_EFFECTS")
+        .env_remove("AXON_BUDGET_TOKENS")
+        .output()
+        .expect("control build");
+    if !probe.status.success() {
+        eprintln!(
+            "codegen unavailable (control build with NO ceiling failed) — \
+             ambient-ceiling parity skipped. stderr: {}",
+            String::from_utf8_lossy(&probe.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
     // EVERY codegen entry point, not just `axon build`.
     //
     // The first version of this test checked `axon build` alone, and

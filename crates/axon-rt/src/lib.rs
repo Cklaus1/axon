@@ -2078,6 +2078,20 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
 /// adaptive registry. When `AXON_SEED` is unset the seed comes from the clock,
 /// which restores ordinary randomness; when it is set the run is reproducible,
 /// which is what the variable is for.
+///
+/// Gated on `cfg(unix)`, which is how `libc` is DECLARED in this crate's
+/// manifest — not on `not(target_arch = "wasm32")`. The first version of this
+/// function was ungated and broke the wasm32 build of `axon-rt` outright
+/// (E0433: unresolved crate `libc`), taking eight wasm parity harnesses down
+/// with it. Gating on the architecture would have fixed the symptom and left
+/// the same hole on Windows; gating on the same predicate as the dependency
+/// cannot drift from it.
+///
+/// The non-unix arm is a no-op rather than absent, so the symbol every native
+/// `main` prologue calls always exists. Codegen additionally skips the call
+/// entirely for wasm targets — which is a real gap, not a fix, and is tracked
+/// as D-012: a wasm artifact honours no seed at all.
+#[cfg(unix)]
 #[no_mangle]
 pub extern "C" fn __axon_rt_seed_rng() {
     let seed = match std::env::var("AXON_SEED")
@@ -2093,6 +2107,13 @@ pub extern "C" fn __axon_rt_seed_rng() {
     // SAFETY: `srand` takes an unsigned int and returns nothing.
     unsafe { libc::srand(seed as libc::c_uint) };
 }
+
+/// No-op seeding where there is no `libc` to seed. The symbol must still
+/// exist: `main`'s prologue emits a call to it unconditionally on non-wasm
+/// targets, so removing it would trade a compile error for a link error.
+#[cfg(not(unix))]
+#[no_mangle]
+pub extern "C" fn __axon_rt_seed_rng() {}
 
 /// Deterministic virtual clock for the NATIVE runtime — the mirror of
 /// `axon-core`'s `clock.rs`. See that module for the full rationale; the short
