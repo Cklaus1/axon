@@ -31231,6 +31231,8 @@ mod skip_rule_table {
         assert!(!tail_says_skipping("foo_parity: PASS — all good\n"));
         assert!(!tail_says_skipping(""));
     }
+}
+
 /// A diagnostic in a `use`-IMPORTED module must name that module's path and its
 /// line — not the entry file's.
 ///

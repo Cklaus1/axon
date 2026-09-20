@@ -493,7 +493,19 @@ stage order means it should have had one here" ;;
   # point — an unwired gate is a gate nothing can fail, and this one guards a
   # class (one file's offsets rendered against another file's SourceMap) that
   # returns every time a new path merges programs.
-  ./scripts/diagnostic_location_gate.sh >/dev/null 2>&1 || fail "diagnostic location (a reported line must exist in the file named)"
+  # Output preserved, not discarded: this gate exits 2 for "examined NO located
+  # diagnostics" — a broken probe — and 1 for a real failure. `>/dev/null` makes
+  # those identical in the log, and a probe that measured nothing is the failure
+  # mode this whole class of check exists to expose.
+  if dlg=$(./scripts/diagnostic_location_gate.sh 2>&1); then
+    echo "  OK $(printf '%s' "$dlg" | tail -1)"
+  else
+    dlg_rc=$?
+    printf '%s\n' "$dlg" | tail -4 | sed 's/^/     /'
+    [ "$dlg_rc" = 2 ] \
+      && fail "diagnostic location gate examined NO diagnostics (broken probe, not a clean tree)" \
+      || fail "diagnostic location (a reported line must exist in the file named)"
+  fi
 
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
