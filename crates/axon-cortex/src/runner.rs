@@ -153,7 +153,7 @@ impl Runner {
             .arg("check")
             .arg(self.workspace.join(target))
             .output();
-        let (diagnostics, facts, omissions) = match out {
+        let (diagnostics, warnings, facts, omissions) = match out {
             Ok(o) => {
                 let text = format!(
                     "{}{}",
@@ -165,11 +165,57 @@ impl Runner {
                     .filter(|l| l.contains("\"severity\":\"error\""))
                     .map(|l| l.to_string())
                     .collect();
+                // Warnings were previously discarded by the error-only filter,
+                // which made a program carrying `W0005 unreachable code`
+                // indistinguishable from a clean one. They are a different
+                // signal, not a lesser one: the program compiles AND the
+                // checker found something.
+                let warns: Vec<String> = text
+                    .lines()
+                    .filter(|l| l.contains("\"severity\":\"warning\""))
+                    .map(|l| l.to_string())
+                    .collect();
                 let compiles = diags.is_empty();
                 let mut facts = vec![(
                     "compiles".to_string(),
                     Observed::known(compiles.to_string()),
                 )];
+                // `compiles` alone cannot express "builds, but the checker
+                // objected". A repair agent needs that distinction to know
+                // whether it is done.
+                facts.push((
+                    "compiles_cleanly".to_string(),
+                    Observed::known((compiles && warns.is_empty()).to_string()),
+                ));
+                facts.push((
+                    "warning_count".to_string(),
+                    Observed::known(warns.len().to_string()),
+                ));
+                // The CODES, not just a count — a consumer choosing what to do
+                // next needs to know it is W0005 (dead code) rather than
+                // E0302 (dropped Result), and re-parsing raw JSON at every
+                // call site is how that knowledge gets lost.
+                let mut codes: Vec<String> = warns
+                    .iter()
+                    .filter_map(|l| l.split("\"code\":\"").nth(1))
+                    .filter_map(|r| r.split('"').next())
+                    .map(|c| c.to_string())
+                    .collect();
+                codes.sort();
+                codes.dedup();
+                facts.push((
+                    "warning_codes".to_string(),
+                    if warns.is_empty() {
+                        Observed::known(String::new())
+                    } else if codes.is_empty() {
+                        // Warnings exist but carry no parseable code. Unknown
+                        // WITH A REASON beats an empty string that reads as
+                        // "no codes".
+                        Observed::unknown("warnings present but none carried a `code` field")
+                    } else {
+                        Observed::known(codes.join(","))
+                    },
+                ));
                 let mut omissions = Vec::new();
                 // The type of the target symbol is only knowable once the
                 // program type-checks. Unknown WITH A REASON rather than a
@@ -186,21 +232,29 @@ impl Runner {
                             .to_string(),
                     );
                 }
-                (diags, facts, omissions)
+                (diags, warns, facts, omissions)
             }
             Err(e) => (
+                Vec::new(),
+                // NOT an empty warning list: the checker did not run, so
+                // "no warnings" is unknown rather than observed. The omission
+                // below carries the reason.
                 Vec::new(),
                 vec![(
                     "compiles".to_string(),
                     Observed::unknown(format!("checker could not run: {e}")),
                 )],
-                vec![format!("compiles: checker unavailable ({e})")],
+                vec![
+                    format!("compiles: checker unavailable ({e})"),
+                    format!("warnings: not observed, checker unavailable ({e})"),
+                ],
             ),
         };
         let obs = Observation {
             observation_id: "o1".into(),
             snapshot_id: snap.snapshot_id.clone(),
             diagnostics,
+            warnings,
             facts,
             omission_report: omissions,
         };

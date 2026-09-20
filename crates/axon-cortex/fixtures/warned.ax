@@ -1,0 +1,18 @@
+// A program that COMPILES and that the checker still objects to.
+//
+// This fixture exists to make one distinction observable: "no errors" and
+// "nothing to report" are not the same state. The `9` can never run, so the
+// checker emits W0005 (unreachable code) while type-checking cleanly.
+//
+// Before the observation path carried warnings, a Cortex episode looking at
+// this file saw `diagnostics: []` and `compiles: true` — byte-identical to a
+// clean program. The dead code was invisible to the agent meant to repair it.
+fn f(a: i64) -> i64 {
+    return 7
+    9
+}
+
+fn main() -> i64 {
+    println(to_str(f(1)))
+    0
+}

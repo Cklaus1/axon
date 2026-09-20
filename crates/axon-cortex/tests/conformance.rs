@@ -399,3 +399,86 @@ fn cxg_c12_a_check_that_did_not_run_is_not_a_check_that_failed() {
     assert!(!d2.contains("DID NOT RUN"), "{d2}");
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// G02-partial, second half — a warning is a FACT, not a non-error.
+///
+/// The observer filtered for `"severity":"error"` and discarded the rest, so a
+/// program the checker objected to was reported as `diagnostics: []`,
+/// `compiles: true` — indistinguishable from a clean one. An agent repairing
+/// code through Cortex could not see that the checker had found dead code.
+///
+/// This runs the REAL `axon check` against two fixtures that differ only in
+/// whether they contain unreachable code. The clean control is what makes the
+/// assertions mean something: an observer that reported a warning for
+/// everything would satisfy the warned half alone.
+#[test]
+fn cxg_g02_an_observation_distinguishes_clean_from_warned() {
+    let fact = |obs: &axon_cortex::Observation, k: &str| -> String {
+        obs.facts
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| format!("{v:?}"))
+            .unwrap_or_else(|| panic!("observation has no `{k}` fact"))
+    };
+
+    // ── warned: compiles, and the checker has something to say ──────────────
+    let (_, ws) = stage("warned");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let snap = r.snapshot(&["warned.ax"]).expect("snapshot");
+    let obs = r.observe(&snap, "warned.ax");
+
+    assert!(
+        obs.diagnostics.is_empty(),
+        "warned.ax type-checks; a warning must not be reported as an error: {:?}",
+        obs.diagnostics
+    );
+    assert!(
+        !obs.warnings.is_empty(),
+        "the checker emits W0005 for this fixture and the observation dropped it \
+         — that is the absent-vs-empty collapse this test exists to catch"
+    );
+    assert!(
+        fact(&obs, "compiles").contains("true"),
+        "it does compile: {}",
+        fact(&obs, "compiles")
+    );
+    assert!(
+        fact(&obs, "compiles_cleanly").contains("false"),
+        "compiling and compiling CLEANLY are different states: {}",
+        fact(&obs, "compiles_cleanly")
+    );
+    assert!(
+        fact(&obs, "warning_codes").contains("W0005"),
+        "the code itself must survive, not just a count — a consumer deciding \
+         what to do next needs to know it is dead code: {}",
+        fact(&obs, "warning_codes")
+    );
+
+    // ── clean control: same shape, nothing to report ────────────────────────
+    let (_, ws2) = stage("clean");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let snap2 = r2.snapshot(&["clean.ax"]).expect("snapshot");
+    let obs2 = r2.observe(&snap2, "clean.ax");
+
+    assert!(
+        obs2.warnings.is_empty(),
+        "the control has no dead code; reporting a warning here would mean the \
+         observer flags everything: {:?}",
+        obs2.warnings
+    );
+    assert!(
+        fact(&obs2, "compiles_cleanly").contains("true"),
+        "control must be clean: {}",
+        fact(&obs2, "compiles_cleanly")
+    );
+    assert_eq!(
+        fact(&obs2, "warning_count"),
+        fact(&obs2, "warning_count"),
+        "sanity"
+    );
+    assert!(
+        fact(&obs2, "warning_count").contains('0'),
+        "control warning_count must be 0: {}",
+        fact(&obs2, "warning_count")
+    );
+}

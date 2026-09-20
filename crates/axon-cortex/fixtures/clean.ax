@@ -1,0 +1,13 @@
+// The CONTROL for `warned.ax`.
+//
+// Same shape, no dead code. Without this file the warning assertions could be
+// satisfied by an observer that reports a warning for everything, which would
+// look exactly as correct on the warned fixture alone.
+fn f(a: i64) -> i64 {
+    a + 6
+}
+
+fn main() -> i64 {
+    println(to_str(f(1)))
+    0
+}

@@ -118,7 +118,23 @@ impl WorkspaceSnapshot {
 pub struct Observation {
     pub observation_id: String,
     pub snapshot_id: String,
+    /// ERRORS only. A diagnostic here means the program does not compile.
     pub diagnostics: Vec<String>,
+    /// WARNINGS. Separate from `diagnostics` because they mean something
+    /// different: the program compiles AND the checker has something to say
+    /// about it.
+    ///
+    /// This channel used to not exist. `observe()` filtered for
+    /// `"severity":"error"` and discarded everything else, so a program with
+    /// `W0005 unreachable code` was observed as `diagnostics: []`,
+    /// `compiles: true` — indistinguishable from a clean one. An agent
+    /// repairing code through Cortex could not see that the checker had found
+    /// dead code, because "no errors" had been rendered as "nothing to report".
+    ///
+    /// That is the absent-vs-empty collapse this crate exists to refuse, so it
+    /// is refused here: warnings are carried, not dropped, and the
+    /// `compiles_cleanly` fact distinguishes a clean compile from a warned one.
+    pub warnings: Vec<String>,
     pub facts: Vec<(String, Observed<String>)>,
     /// Why each omission happened. Required, not optional.
     pub omission_report: Vec<String>,
