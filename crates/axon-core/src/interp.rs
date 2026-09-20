@@ -1295,7 +1295,37 @@ pub fn run_named_fn_as_bool_with_score(
             Ok(Value::Bool(false)) => 1,
             Ok(Value::Int(0)) => 0,
             Ok(Value::Int(_)) => 1,
-            Ok(_) => 0,
+            // A GATE THAT PRODUCED NO READABLE VERDICT IS NOT A GATE THAT
+            // PASSED.
+            //
+            // This arm used to be `=> 0`, making Unit, Str, Struct, Option and
+            // Result indistinguishable from `Bool(true)`. Measured on a
+            // Critical-risk program whose simulate, stress and
+            // assert_deployable all returned `Err("... FAILED")`: the deploy
+            // reported `status:"deployed"`, exit 0, with all four gates listed
+            // in `stages_run` — which makes it look MORE audited than the
+            // skipped-gate case that `gates_skipped` exists to expose. The
+            // gate was not absent; it was unreadable, and unreadable meant
+            // pass.
+            //
+            // Two shapes reach this and neither is exotic: a gate written with
+            // no return type at all, and `-> Result<bool, str>` returning
+            // `Err`, which is what "no null, no exceptions — Result<T,E>
+            // everywhere" pushes an author toward.
+            //
+            // 2, matching the arity error above: the gate's ABI is unusable,
+            // which is a different fact from the gate having judged and
+            // refused (1). Any non-zero code blocks the deploy.
+            Ok(other) => {
+                let _ = std::io::stdout().flush();
+                eprintln!(
+                    "axon: gate `{fn_name}` returned {} — a gate must return \
+                     bool (true = pass) or i64 (0 = pass). No verdict was \
+                     produced, so this is NOT a pass.",
+                    other.type_name()
+                );
+                2
+            }
             Err(Flow::Exit(c)) => c,
             Err(Flow::VerifyFailed(msg)) => {
                 let _ = std::io::stdout().flush();

@@ -209,7 +209,9 @@ enum Command {
     },
 
     /// Statically prove each `@[verify]` bound via Z3 (R9). Requires the `smt`
-    /// feature; without it, prints a notice and exits 0.
+    /// feature; without it NOTHING IS PROVED and it exits 2, because the exit
+    /// code is the only machine-readable signal this verb emits and a 0 reads
+    /// as "the bounds hold" to any `axon verify && axon deploy`.
     Verify {
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
@@ -2446,9 +2448,19 @@ fn cmd_verify(file: PathBuf) {
     eprintln!(
         "axon verify: SMT static proof of @[verify] bounds requires the `smt` feature.\n  \
          Build with: cargo build -p axon-core --no-default-features --features smt --bin axon\n  \
-         (The runtime @[verify] gate still applies when you `axon run` the program.)"
+         (The runtime @[verify] gate still applies when you `axon run` the program.)\n  \
+         NOT VERIFIED: nothing was proved, so this exits 2 rather than 0."
     );
-    process::exit(0);
+    // 2, not 0. The exit code is the only MACHINE-readable signal this verb
+    // emits, and `axon verify f.ax && axon deploy f.ax` reads a 0 as "the
+    // bounds hold". Measured on a program whose @[verify] bound is false for
+    // every input: the default build exited 0 and the deploy proceeded.
+    //
+    // `smt` is opt-in, so this was the shipped behaviour of the default
+    // binary rather than an edge case. Same collapse `cmd_redteam`'s
+    // no-function branch was fixed for — "NOT RUN ... this is not a pass" —
+    // one verb over.
+    process::exit(2);
 }
 
 // ── target (R7 cross-platform) ───────────────────────────────────────────────────

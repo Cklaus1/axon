@@ -36,7 +36,7 @@ Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap
 | `axon target` | Cross-platform targets: list buildable targets / build for one (R7) |
 | `axon test` | Run all @[test]-tagged functions in one or more .ax files |
 | `axon trace` | Summarize the provenance log: per-`@[adaptive]`-fn score trajectory |
-| `axon verify` | Statically prove each `@[verify]` bound via Z3 (R9). Requires the `smt` feature; without it, prints a notice and exits 0 |
+| `axon verify` | Statically prove each `@[verify]` bound via Z3 (R9). Requires the `smt` feature; without it NOTHING IS PROVED and it exits 2, because the exit code is the only machine-readable signal this verb emits and a 0 reads as "the bounds hold" to any `axon verify && axon deploy` |
 | `axon verify-lock` | Recompute each module's hash and compare to `axon.lock` (R6 tamper check) |
 
 Run `axon <verb> --help` for flags and long-form help.
