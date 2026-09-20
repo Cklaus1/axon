@@ -450,38 +450,42 @@
     {
       "area": "platform",
       "subsystem": "crate axon-gfx",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "complete",
+      "production_proof": "no",
       "mutation": "no",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
-        "crates/axon-gfx"
+        "crates/axon-gfx",
+        "scripts/gfx_wgpu_render_gate.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. A real wgpu implementation behind the `gfx-wgpu` feature, which is off by default and built by NOTHING. Its sole gate (gfx_wgpu_render_gate.sh) is invoked by nothing, and its name does not match parity_all.sh's *_parity.sh glob, so it could not be picked up even accidentally. This is one of the two legs of CLAUDE.md's platform-verification claim, now corrected."
     },
     {
       "area": "platform",
       "subsystem": "crate axon-gfx-mock",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "complete",
+      "production_proof": "yes",
       "mutation": "no",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
-        "crates/axon-gfx-mock"
+        "crates/axon-rt/src/gfx_mock_ffi.rs",
+        "crates/axon-core/tests/cli_run.rs",
+        "scripts/native_gfx_parity.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED, and the best-covered platform crate. Real production use: axon-rt/src/gfx_mock_ffi.rs imports it and interp dispatches through it. native_gfx_parity.sh is reached BOTH by a cargo test (cli_run.rs) and by parity_all.sh's glob \u2014 verified by caller search after a lane cited a line number that did not hold. Caveat: parity runs only under gate.sh --strict and never in CI."
     },
     {
-      "area": "authority",
+      "area": "platform",
       "subsystem": "crate axon-guest-init",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "complete",
+      "production_proof": "no",
       "mutation": "no",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
-        "crates/axon-guest-init"
+        "crates/axon-guest-init",
+        "scripts/build-guest-image.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. Built only by build-guest-image.sh, which is itself referenced only inside COMMENTS. The I/O half \u2014 HTTP/MMDS policy fetch, prctl, seccomp, execve, reap \u2014 has zero execution coverage; three unit tests cover the pure decision function. Note this crate is what reads the VM's MMDS policy to set AXON_BUDGET_TOKENS, so it is on the authority path."
     },
     {
       "area": "platform",
@@ -567,14 +571,15 @@
     {
       "area": "compiler",
       "subsystem": "crate axon-surface",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "complete",
+      "production_proof": "yes",
       "mutation": "no",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
+        "crates/axon-core/src/main.rs",
         "crates/axon-surface"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. The LIBRARY is production (called from main.rs at three sites). The axon-surface BINARY has no caller. Phase 10 is the only phase with no spec/ file."
     },
     {
       "area": "authority",
@@ -591,14 +596,16 @@
     {
       "area": "platform",
       "subsystem": "crate axon-wasm",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "partial",
+      "production_proof": "yes",
       "mutation": "no",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
-        "crates/axon-wasm"
+        "crates/axon-wasm/src/lib.rs",
+        "examples/browser/build-playground.sh",
+        "scripts/browser_compute_parity.sh"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "ASSESSED. Production use is the browser playground build. is_prose_goal/compile_prose are #[allow(dead_code)] with no callers \u2014 VERIFIED at lib.rs:51 and :62 \u2014 while Cargo.toml advertises that the playground 'compiles a PROSE goal file in-browser'. Its real parity test defaults to SKIPPING unless BROWSER_PARITY=1, so the browser leg of interp/native parity is asserted by no automated run."
     },
     {
       "area": "evidence",
