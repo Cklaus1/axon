@@ -29,6 +29,8 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | grant / snapshot binding | ~ | ✗ | ~ | ~ | AUDITED, CONFIRMED BY READING: the adapter builds `current` from req["snapshot_id"] verbatim with files:[], and StaleSnapshot is string equality against it — so the requester chooses the value the check compares. The grant's pin is on the adapter's command line (readable via /proc). The module doc forbids deriving the GRANT from the request; the same tautology sits on the other side. Also: `cortex repair` builds grant.principal from the acting principal and pins to a snapshot taken one line earlier, so both checks are structurally unreachable there. |
 | path authority covers all actions | ~ | ✗ | ✗ | ✗ | authorize returns early when !requires_write_authority(), BEFORE the traversal/policy-file/prefix checks. Inspect then reads an arbitrary path and hands the body to the model; RunCheck runs the interpreter on an arbitrary path. Both are caller-path-controlled with no path check. |
 | durable pre-effect authorization receipt | ✗ | ✗ | ✗ | ✗ | ActionAllowed is pushed into an in-memory Episode the adapter drops at exit; cortex repair serialises it only in its final --json, after every effect. No durable record shows authorization PRECEDED an effect. |
+| safety gate verdict readability | ✗ | ✗ | ✗ | ✗ | PROVEN with a control on the prebuilt binary: interp.rs maps Ok(_) => 0, so a gate returning Unit/Str/Result/Option is scored PASSED. `fn redteam_check() { println("REDTEAM FAILED: blocking deploy") }` prints that line and reports status:safe / deployed, exit 0 — and stages_run LISTS it, so the audit record attests a verdict never read. scripts/gate_verdict_is_read.sh is RED and unwired. |
+| axon verify exit code | ~ | ✗ | ✗ | ~ | cmd_verify exits 0 when the smt feature is absent — which is the DEFAULT build — so `axon verify f.ax && axon deploy f.ax` reads as verified when nothing was proved. cmd_redteam's no-function branch was explicitly fixed to say 'NOT RUN ... this is not a pass'; same collapse, one verb over. |
 
 ## cortex
 
@@ -72,7 +74,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-15 of 29 subsystems have a production proof; 2 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+15 of 31 subsystems have a production proof; 2 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 

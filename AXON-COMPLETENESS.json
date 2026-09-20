@@ -356,6 +356,30 @@
       "docs": "no",
       "evidence": [],
       "gap": "ActionAllowed is pushed into an in-memory Episode the adapter drops at exit; cortex repair serialises it only in its final --json, after every effect. No durable record shows authorization PRECEDED an effect."
+    },
+    {
+      "area": "authority",
+      "subsystem": "safety gate verdict readability",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [
+        "scripts/gate_verdict_is_read.sh"
+      ],
+      "gap": "PROVEN with a control on the prebuilt binary: interp.rs maps Ok(_) => 0, so a gate returning Unit/Str/Result/Option is scored PASSED. `fn redteam_check() { println(\"REDTEAM FAILED: blocking deploy\") }` prints that line and reports status:safe / deployed, exit 0 \u2014 and stages_run LISTS it, so the audit record attests a verdict never read. scripts/gate_verdict_is_read.sh is RED and unwired."
+    },
+    {
+      "area": "authority",
+      "subsystem": "axon verify exit code",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-core/src/main.rs"
+      ],
+      "gap": "cmd_verify exits 0 when the smt feature is absent \u2014 which is the DEFAULT build \u2014 so `axon verify f.ax && axon deploy f.ax` reads as verified when nothing was proved. cmd_redteam's no-function branch was explicitly fixed to say 'NOT RUN ... this is not a pass'; same collapse, one verb over."
     }
   ]
 }
