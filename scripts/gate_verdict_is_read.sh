@@ -72,5 +72,18 @@ if (cd "$WS" && "$AXON" deploy cannot_eval.ax --json 2>&1) \
   fails=$((fails+1))
 fi
 
+# SAME CLASS, DIFFERENT VERB. `axon verify` exits 0 when the prover is not
+# linked — which is the DEFAULT build, since `smt` is opt-in. The stderr note
+# is honest; the exit code is the only MACHINE-readable signal the verb emits,
+# and it says verified. Measured on a program whose @[verify] bound is false
+# for every input.
+printf '@[verify(value > 100)]\nfn always_small() -> i64 { 1 }\nfn main() -> i64 { 0 }\n' \
+  > "$WS/refuted.ax"
+if (cd "$WS" && "$AXON" verify refuted.ax) >/dev/null 2>&1; then
+  echo "FAIL verify/refuted: exit 0 on a @[verify] bound that is false for all"
+  echo "     inputs and was never proved — \`axon verify && axon deploy\` proceeds"
+  fails=$((fails+1))
+fi
+
 echo "gate-verdict readability: $fails unreadable verdict(s) scored as passed"
 [ "$fails" -eq 0 ]
