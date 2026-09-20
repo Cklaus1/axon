@@ -26,10 +26,14 @@ SRC = os.path.join(ROOT, "AXON-COMPLETENESS.json")
 OUT = os.path.join(ROOT, "AXON-COMPLETENESS.md")
 MIN_ROWS = 25
 
-IMPL = {"complete", "partial", "staged", "absent"}
+# `unknown` is legal on EVERY axis, deliberately. Forcing a value where none
+# has been established is how a placeholder becomes a claim: the first version
+# of this file omitted `unknown` from `docs`, which would have made every
+# unassessed crate assert something about its documentation.
+IMPL = {"complete", "partial", "staged", "absent", "unknown"}
 TRI = {"yes", "no", "unknown"}
 QUAD = {"yes", "partial", "no", "unknown"}
-DOCS = {"yes", "partial", "no"}
+DOCS = {"yes", "partial", "no", "unknown"}
 
 
 def die(why, code=2):
@@ -77,6 +81,35 @@ for r in rows:
                      f"production_proof={r.get('production_proof')!r} — "
                      f"existence is not integration")
 
+# COVERAGE. The rows were authored by hand from what someone happened to be
+# working on, so the manifest's own blind spots are invisible in it — an
+# absent row reads exactly like an absent problem. Derive which crates are
+# represented (from the evidence paths, not from a restated list) and require
+# every crate to be either covered or EXPLICITLY excused with a reason.
+#
+# This is the manifest applying its own rule to itself: existence of a table is
+# not coverage by the table.
+crates = sorted(d.name for d in os.scandir(os.path.join(ROOT, "crates"))
+                if d.is_dir())
+covered = set()
+for r in rows:
+    for e in r.get("evidence") or []:
+        parts = e.split("/")
+        if len(parts) > 1 and parts[0] == "crates":
+            covered.add(parts[1])
+excused = art.get("crates_excused") or {}
+uncovered = [c for c in crates if c not in covered and c not in excused]
+for c in uncovered:
+    fails.append(f"crate `{c}` has no row and no entry in `crates_excused` — "
+                 f"its state is unrecorded, which in a completeness manifest "
+                 f"reads as 'nothing to report'")
+for c in excused:
+    if c not in crates:
+        fails.append(f"`{c}` is excused but is not a crate — the excuse list "
+                     f"has drifted")
+    elif not str(excused[c]).strip():
+        fails.append(f"crate `{c}` is excused with an empty reason")
+
 if fails:
     for f in fails:
         print(f"  UNBACKED: {f}")
@@ -117,6 +150,8 @@ unknown = sum(1 for r in rows if r["production_proof"] == "unknown")
 lines += [
     "## Where the gaps are",
     "",
+    f"{len(covered)} of {len(crates)} crates are represented "
+    f"({len(excused)} explicitly excused). "
     f"{proven} of {tot} subsystems have a production proof; {unknown} are "
     f"UNKNOWN — not failing, unestablished, which is the state most worth "
     f"acting on.",

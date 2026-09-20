@@ -380,6 +380,222 @@
         "crates/axon-core/src/main.rs"
       ],
       "gap": "cmd_verify exits 0 when the smt feature is absent \u2014 which is the DEFAULT build \u2014 so `axon verify f.ax && axon deploy f.ax` reads as verified when nothing was proved. cmd_redteam's no-function branch was explicitly fixed to say 'NOT RUN ... this is not a pass'; same collapse, one verb over."
+    },
+    {
+      "area": "compiler",
+      "subsystem": "crate axon-ai",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-ai"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "authority",
+      "subsystem": "crate axon-attest",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-attest"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "crate axon-audit",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-audit"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "authority",
+      "subsystem": "crate axon-certcheck",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-certcheck"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "compiler",
+      "subsystem": "crate axon-domain",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-domain"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "platform",
+      "subsystem": "crate axon-gfx",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-gfx"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "platform",
+      "subsystem": "crate axon-gfx-mock",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-gfx-mock"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "authority",
+      "subsystem": "crate axon-guest-init",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-guest-init"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "platform",
+      "subsystem": "crate axon-guest-kernel",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-guest-kernel"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "authority",
+      "subsystem": "crate axon-intent",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-intent"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "crate axon-ledger",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-ledger"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "authority",
+      "subsystem": "crate axon-os",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-os"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "compiler",
+      "subsystem": "crate axon-rt",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-rt"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "platform",
+      "subsystem": "crate axon-signal",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-signal"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "compiler",
+      "subsystem": "crate axon-surface",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-surface"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "authority",
+      "subsystem": "crate axon-vm",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-vm"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "platform",
+      "subsystem": "crate axon-wasm",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-wasm"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "crate axon-web",
+      "implementation": "unknown",
+      "production_proof": "unknown",
+      "mutation": "unknown",
+      "docs": "unknown",
+      "evidence": [
+        "crates/axon-web"
+      ],
+      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
     }
   ]
 }

@@ -16,6 +16,10 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | single-file diagnostics | ✓ | ✓ | ? | ✓ |  |
 | MULTI-FILE source identity | ✗ | ✗ | ✗ | ✗ | Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:14 reports as main.ax:6:112, in a 5-line file. scripts/diagnostic_location_gate.sh is RED on HEAD and NOT yet wired into gate.sh. Design landed: ~110 edits, and the HARM is removable first without touching Span, by making SourceMap::line_col refuse instead of clamp. |
 | import resolution determinism | ~ | ? | ✗ | ~ | load_use_decls searches AXON_PATH; the resolved path is not part of any digest, so the same source can mean different programs |
+| crate axon-ai | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-domain | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-rt | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-surface | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
 
 ## authority
 
@@ -31,6 +35,12 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | durable pre-effect authorization receipt | ✗ | ✗ | ✗ | ✗ | ActionAllowed is pushed into an in-memory Episode the adapter drops at exit; cortex repair serialises it only in its final --json, after every effect. No durable record shows authorization PRECEDED an effect. |
 | safety gate verdict readability | ✗ | ✗ | ✗ | ✗ | PROVEN with a control on the prebuilt binary: interp.rs maps Ok(_) => 0, so a gate returning Unit/Str/Result/Option is scored PASSED. `fn redteam_check() { println("REDTEAM FAILED: blocking deploy") }` prints that line and reports status:safe / deployed, exit 0 — and stages_run LISTS it, so the audit record attests a verdict never read. scripts/gate_verdict_is_read.sh is RED and unwired. |
 | axon verify exit code | ~ | ✗ | ✗ | ~ | cmd_verify exits 0 when the smt feature is absent — which is the DEFAULT build — so `axon verify f.ax && axon deploy f.ax` reads as verified when nothing was proved. cmd_redteam's no-function branch was explicitly fixed to say 'NOT RUN ... this is not a pass'; same collapse, one verb over. |
+| crate axon-attest | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-certcheck | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-guest-init | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-intent | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-os | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-vm | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
 
 ## cortex
 
@@ -51,6 +61,9 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | docs join by metric identity | ✓ | ✓ | ✓ | ✓ | 4 mutations caught incl. a vacuity guard; covers 2 READMEs, CLAUDE.md and locate.rs |
 | absent-vs-zero coercions | ~ | ? | ~ | ~ | several fixed (verdict identity, failing_tests fail-open, unwrap_or_default on the success path); repo-wide audit lane open |
 | env var / reference drift gates | ✓ | ✓ | ✓ | ✓ | gated in BOTH directions; caught two vars documented as enforced and read by nothing |
+| crate axon-audit | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-ledger | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-web | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
 
 ## experimental
 
@@ -72,9 +85,19 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 |---|---|---|---|---|---|
 | learned repair policy | ✗ | ✗ | ✗ | ~ | localization/generation policies are fixed; nothing learns from prior episodes |
 
+## platform
+
+| subsystem | impl | production proof | mutation | docs | gap |
+|---|---|---|---|---|---|
+| crate axon-gfx | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-gfx-mock | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-guest-kernel | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-signal | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+| crate axon-wasm | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
+
 ## Where the gaps are
 
-15 of 31 subsystems have a production proof; 2 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+21 of 21 crates are represented (0 explicitly excused). 15 of 49 subsystems have a production proof; 20 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
