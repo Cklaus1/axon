@@ -40,7 +40,8 @@
 
 use std::io::Read;
 
-use axon_cortex::runner::{EditGrant, Runner};
+use axon_cortex::action::{CheckRef, CompletionClaim, CortexAction, SymbolRef};
+use axon_cortex::runner::{EditGrant, Refusal, Runner};
 use axon_cortex::WorkspaceSnapshot;
 
 const PROTOCOL_VERSION: u64 = 1;
@@ -143,7 +144,64 @@ fn main() {
         std::path::PathBuf::from("axon"),
         std::env::current_dir().unwrap_or_default(),
     );
-    let decision = runner.authorize(action, Some(&grant), req_principal, &current, target);
+    // The STRING EDGE. A request arrives as JSON from another process, so the
+    // action is a string here and nowhere deeper: it is parsed into a typed
+    // `CortexAction` before any authority question is asked. That is the only
+    // place an unknown action can appear, and the only place `NotInCatalog`
+    // still fires — past this point the type is the catalog.
+    //
+    // `patch_symbol_body` REQUIRES a symbol. The protocol did not carry one, so
+    // the adapter was authorising an edit without knowing what it edited: the
+    // grant check could say the path was in range while the request named no
+    // symbol at all. Refusing that is not new strictness, it is the question
+    // finally being answerable.
+    let symbol = req["symbol"].as_str();
+    let typed = match action {
+        "inspect" => Ok(CortexAction::Inspect {
+            target: SymbolRef {
+                path: target.to_string(),
+                symbol: symbol.unwrap_or("").to_string(),
+            },
+        }),
+        "run_check" => Ok(CortexAction::RunCheck {
+            check: CheckRef {
+                name: symbol.unwrap_or("").to_string(),
+                path: target.to_string(),
+            },
+        }),
+        "claim_done" => Ok(CortexAction::ClaimDone {
+            claim: CompletionClaim {
+                done: true,
+                // The claim's rationale is evidence, not an input to the
+                // verdict. An absent one is recorded as absent rather than
+                // invented.
+                rationale: req["rationale"]
+                    .as_str()
+                    .unwrap_or("<none given>")
+                    .to_string(),
+            },
+        }),
+        "patch_symbol_body" => match symbol {
+            Some(s) if !s.is_empty() => Ok(CortexAction::PatchSymbolBody {
+                symbol: SymbolRef {
+                    path: target.to_string(),
+                    symbol: s.to_string(),
+                },
+                proposed_body: req["proposed_body"].as_str().unwrap_or("").to_string(),
+            }),
+            _ => Err(Refusal::NotInCatalog(
+                "patch_symbol_body without a `symbol`: an edit that does not \
+                 name what it edits cannot be authorised"
+                    .to_string(),
+            )),
+        },
+        other => Err(Refusal::NotInCatalog(other.to_string())),
+    };
+
+    let decision = match typed {
+        Ok(a) => runner.authorize_action(&a, Some(&grant), req_principal, &current),
+        Err(refusal) => Err(refusal),
+    };
 
     let out = match decision {
         Ok(()) => serde_json::json!({

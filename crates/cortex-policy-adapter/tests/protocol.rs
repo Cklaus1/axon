@@ -35,6 +35,17 @@ fn decide(args: &[&str], request: &str) -> (i32, String) {
 }
 
 fn req(action: &str, target: &str, snapshot: &str) -> String {
+    // Carries a `symbol`, because an edit must name what it edits. The adapter
+    // now parses the request into a typed CortexAction, and
+    // `patch_symbol_body` without a symbol is refused rather than authorised
+    // against the path alone — see `an_edit_that_does_not_name_its_symbol_is_refused`.
+    format!(
+        r#"{{"protocol_version":1,"action":"{action}","principal":"agent","target_path":"{target}","snapshot_id":"{snapshot}","symbol":"add"}}"#
+    )
+}
+
+/// Requests WITHOUT a symbol, for the negative case.
+fn req_no_symbol(action: &str, target: &str, snapshot: &str) -> String {
     format!(
         r#"{{"protocol_version":1,"action":"{action}","principal":"agent","target_path":"{target}","snapshot_id":"{snapshot}"}}"#
     )
@@ -237,5 +248,64 @@ fn the_same_request_with_a_grant_basis_still_decides() {
     assert!(
         stdout.contains("\"decision\":\"allow\""),
         "expected an allow for an in-scope path under a current grant: {stdout}"
+    );
+}
+
+/// An edit that does not name what it edits cannot be authorised.
+///
+/// The protocol carried `action` and `target_path` but no `symbol`, so the
+/// adapter authorised `patch_symbol_body` knowing only the FILE. The grant
+/// check could answer "that path is in range" while the request named no
+/// symbol at all — a coherent-looking allow for an edit with no stated subject.
+///
+/// Typed actions make the question answerable: `PatchSymbolBody` requires a
+/// `SymbolRef`, so the adapter must either supply one or refuse. This is not
+/// added strictness; it is a check that previously had nothing to check.
+#[test]
+fn an_edit_that_does_not_name_its_symbol_is_refused() {
+    let args = &[
+        "--principal",
+        "agent",
+        "--grant-snapshot",
+        "s1",
+        "--write-prefix",
+        "crates/",
+    ];
+
+    // Control FIRST: the same request WITH a symbol is allowed. Without this,
+    // the refusal below could be explained by the grant, the prefix, or the
+    // snapshot rather than by the missing symbol.
+    let (rc, out) = decide(args, &req("patch_symbol_body", "crates/foo.rs", "s1"));
+    assert_eq!(rc, 0, "{out}");
+    assert!(
+        out.contains(r#""decision":"allow""#),
+        "a named edit inside the grant must still be allowed: {out}"
+    );
+
+    // The same request, minus the symbol.
+    let (rc, out) = decide(
+        args,
+        &req_no_symbol("patch_symbol_body", "crates/foo.rs", "s1"),
+    );
+    assert_eq!(
+        rc, 0,
+        "a refusal is a decision, not an infrastructure failure"
+    );
+    assert!(
+        out.contains(r#""decision":"refuse""#),
+        "an edit with no named symbol must be refused: {out}"
+    );
+    assert!(
+        out.contains("does not name what it edits"),
+        "the refusal must say WHY — a generic denial here is indistinguishable \
+         from a grant or path problem: {out}"
+    );
+
+    // Read-only actions are unaffected: they need no symbol to be coherent.
+    let (rc, out) = decide(args, &req_no_symbol("inspect", "docs/x.md", "s1"));
+    assert_eq!(rc, 0, "{out}");
+    assert!(
+        out.contains(r#""decision":"allow""#),
+        "inspect does not edit, so it needs no symbol: {out}"
     );
 }
