@@ -992,6 +992,38 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Emit a call (in `main`'s prologue) to install the native stack-overflow
     /// guard, so deep recursion exits 101 gracefully instead of SIGSEGV-139.
     /// No-op on wasm (no signals); the runtime fn itself is a no-op on non-unix.
+    /// Refuse to run under `AXON_RECORD`/`AXON_REPLAY`, which native ignores.
+    ///
+    /// Measured: a native binary under `AXON_REPLAY` printed the replayed
+    /// output AND performed the write for real, exit 0 — indistinguishable
+    /// from a correct replay.
+    pub(super) fn emit_replay_refusal_init(&mut self) {
+        if self.target_is_wasm {
+            return;
+        }
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
+            return;
+        }
+        let void_ty = self.ir.context.void_type();
+        let fn_ty = void_ty.fn_type(&[], false);
+        let f = self
+            .ir
+            .module
+            .get_function("__axon_rt_refuse_replay")
+            .unwrap_or_else(|| {
+                self.ir
+                    .module
+                    .add_function("__axon_rt_refuse_replay", fn_ty, None)
+            });
+        let _ = build_wrappers::w_call(&self.ir.builder, f, &[], "");
+    }
+
     /// Seed the C RNG in `main`'s prologue so native `random_*` honours
     /// `AXON_SEED` and is actually random when it is unset.
     ///

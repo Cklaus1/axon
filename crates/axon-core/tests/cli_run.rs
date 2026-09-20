@@ -31524,3 +31524,85 @@ fn axon_seed_reaches_the_native_engine_and_absent_means_random() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A native binary must REFUSE to run under `AXON_RECORD`/`AXON_REPLAY` rather
+/// than silently ignoring them.
+///
+/// Neither variable is read anywhere in `codegen/`. Measured before the fix, on
+/// a program whose only effect is one `write_file`:
+///
+/// ```text
+/// interp  AXON_REPLAY=j axon run w.ax  -> "done", exit 0, file NOT created
+/// native  AXON_REPLAY=j ./wbin         -> "done", exit 0, file CREATED
+/// ```
+///
+/// The native run looked exactly like a successful replay and performed the
+/// effect anyway. `scripts/replay_host_gate.sh` names the stake in its own
+/// header: a replay that quietly consults live state "produces an
+/// authoritative-looking transcript of a run that never happened, which is
+/// strictly worse for an auditor than having no replay at all".
+///
+/// The assertion is on the SIDE EFFECT, not on the exit code alone — an exit
+/// code can be right while the write still lands.
+#[test]
+fn a_native_binary_refuses_to_run_under_record_or_replay() {
+    let dir = std::env::temp_dir().join(format!("axon_replay_native_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("w.ax");
+    std::fs::write(
+        &src,
+        "fn main() -> i64 {\n    let r = write_file(\"./evidence.txt\", \"WROTE\")\n    println(\"done\")\n    0\n}\n",
+    )
+    .unwrap();
+    let bin = dir.join("wbin");
+    let build = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+        .output()
+        .expect("axon build");
+    if !build.status.success() {
+        eprintln!("native replay-refusal test: no codegen in this build — skipping");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let evidence = dir.join("evidence.txt");
+
+    for var in ["AXON_REPLAY", "AXON_RECORD"] {
+        let _ = std::fs::remove_file(&evidence);
+        let out = Command::new(&bin)
+            .current_dir(&dir)
+            .env(var, dir.join("j.journal"))
+            .output()
+            .expect("run the native binary");
+        assert!(
+            !out.status.success(),
+            "a native binary must refuse under `{var}`; it exited {:?}",
+            out.status.code()
+        );
+        assert!(
+            !evidence.exists(),
+            "under `{var}` the native binary PERFORMED its write — the effect \
+             landed while the run looked like a replay"
+        );
+    }
+
+    // CONTROL: without those variables the binary must still run and still
+    // perform its effect, or the refusal has simply broken native execution.
+    let _ = std::fs::remove_file(&evidence);
+    let ok = Command::new(&bin)
+        .current_dir(&dir)
+        .env_remove("AXON_REPLAY")
+        .env_remove("AXON_RECORD")
+        .output()
+        .expect("run the native binary");
+    assert!(
+        ok.status.success(),
+        "an ordinary native run must still succeed"
+    );
+    assert!(
+        evidence.exists(),
+        "an ordinary native run must still perform its write"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

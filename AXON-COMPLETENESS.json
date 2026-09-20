@@ -756,6 +756,26 @@
         "guest": "enforced"
       },
       "gap": "FIXED. Native lowered random_i64 to a bare C rand() and called srand NOWHERE, so AXON_SEED was silently ignored AND a native binary's randomness was CONSTANT \u2014 seeds 1/42/999 all produced 289383, on every run and every machine. Two defects: a documented control dropped by one engine, and randomness that was not random. Now seeded from main's prologue; mutation-verified. REMAINING DIFFERENCE, stated: the two engines use different generators, so the same seed yields different VALUES \u2014 the contract asserted is that a seed determines the run, not that sequences match across engines."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "host journal record/replay across engines",
+      "implementation": "partial",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-rt/src/lib.rs",
+        "crates/axon-core/tests/cli_run.rs",
+        "scripts/replay_host_gate.sh"
+      ],
+      "engines": {
+        "interpreter": "enforced",
+        "native": "refused",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "gap": "PROVEN, then CLOSED BY REFUSAL. A native binary ignored AXON_REPLAY entirely: measured on a one-write program, interp replay created NO file while the native binary printed the replayed output AND performed the write, exit 0 \u2014 an authoritative-looking transcript of a run that never happened, which replay_host_gate.sh's own header calls worse than no replay at all. Native now REFUSES under AXON_REPLAY and AXON_RECORD (exit 2); mutation-verified on the SIDE EFFECT, not the exit code. STILL OPEN: native does not IMPLEMENT the journal, it declines to run under one \u2014 the boundary is equivalent, the capability is not. wasm and guest UNASSESSED."
     }
   ]
 }

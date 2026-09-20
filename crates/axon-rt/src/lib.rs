@@ -1993,6 +1993,55 @@ pub extern "C" fn __axon_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Refuse to run a native binary under `AXON_RECORD` or `AXON_REPLAY`.
+///
+/// Neither variable is read anywhere in `codegen/` or in this crate's host
+/// paths, so a native binary silently ignores both. Measured on a program whose
+/// only effect is one `write_file`:
+///
+/// ```text
+/// interp  AXON_REPLAY=j axon run w.ax  -> "done", exit 0, file NOT created
+/// native  AXON_REPLAY=j ./wbin         -> "done", exit 0, file CREATED
+/// ```
+///
+/// The native run looks exactly like a successful replay and performs the
+/// effect anyway. `scripts/replay_host_gate.sh` states the stake in its own
+/// header: "a replay that quietly consults live state produces an
+/// authoritative-looking transcript of a run that never happened, which is
+/// strictly worse for an auditor than having no replay at all."
+///
+/// `AXON_RECORD` is refused for the mirror reason: a native run would write NO
+/// journal, and an empty journal is indistinguishable from a run that touched
+/// nothing.
+///
+/// REFUSAL, not implementation. Native replay would mean routing every host
+/// call through a journal in `axon-rt`, which is a substantial piece of work;
+/// refusing costs nothing and converts a silent wrong answer into an explicit
+/// one. This is a RUN-time check because these variables are only ever set at
+/// run time — the build-time refusal used for `AXON_ALLOWED_EFFECTS` cannot
+/// apply. It is consistent with what this crate already does: it reads
+/// `AXON_CLOCK`, `AXON_AI_MOCK` and `AXON_MAX_DEPTH` at runtime today.
+#[no_mangle]
+pub extern "C" fn __axon_rt_refuse_replay() {
+    for var in ["AXON_REPLAY", "AXON_RECORD"] {
+        if std::env::var_os(var).is_some() {
+            eprintln!(
+                "axon: `{var}` is set, but this is a NATIVELY BUILT binary and \
+                 the host journal is honoured by the interpreter only.\n  \
+                 Refusing to run: continuing would {}.\n  \
+                 Run the program with `axon run`, which implements the journal.",
+                if var == "AXON_REPLAY" {
+                    "perform the effects for real while looking like a replay"
+                } else {
+                    "record nothing, leaving an empty journal that reads as a run \
+                     which touched nothing"
+                }
+            );
+            std::process::exit(2);
+        }
+    }
+}
+
 /// Seed the C RNG that native `random_i64`/`random_f64` lower to.
 ///
 /// Native codegen emits a bare `rand()` and NOTHING ever called `srand`, so a

@@ -1511,6 +1511,9 @@ impl<'ctx> Codegen<'ctx> {
             // called `srand` nowhere, so every native binary returned the SAME
             // value on every run and ignored AXON_SEED.
             self.emit_rng_seed_init();
+            // Native ignores AXON_RECORD/AXON_REPLAY entirely: a replayed run
+            // PERFORMED its writes for real while printing the replayed output.
+            self.emit_replay_refusal_init();
             self.emit_adaptive_registry_init();
             // BUG_HUNT #19: register every fn name so native goal_run can reject
             // a typo'd metric the same way the interpreter does (I-9 parity).
