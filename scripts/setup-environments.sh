@@ -146,8 +146,17 @@ setup_formal() {
     # is the portable fallback for hosts without this apt package).
     sudo apt-get install -y -q coq
   fi
+  # REPORT WHAT RAN, not a number written here.
+  #
+  # This printed the literal "20/20 PASS, 0 SKIPPED" on the strength of an exit
+  # code alone — and the gate it is reporting on exits 0 whenever FAIL=0,
+  # INCLUDING when TLC and coqc are absent and its two behavioural checks
+  # skipped. So on any host without coqc this line asserted "0 SKIPPED" while
+  # checks were skipping, which is the exact claim the gate's own prose refuses
+  # to make ("SKIPPED is not a substitute for PASS").
   bash scripts/r32_acceptance_gate.sh >/tmp/_r32_probe.log 2>&1 \
-    && ok "r32_acceptance_gate.sh: 20/20 PASS, 0 SKIPPED" \
+    && ok "r32_acceptance_gate.sh: $(grep -o 'PASS=[0-9]* FAIL=[0-9]* SKIPPED=[0-9]*' \
+             /tmp/_r32_probe.log | tail -1 || echo 'summary line not found')" \
     || { echo "  ✗ r32_acceptance_gate.sh did not pass cleanly -- see /tmp/_r32_probe.log"; return 1; }
 }
 
