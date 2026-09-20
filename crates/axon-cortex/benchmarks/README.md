@@ -263,6 +263,35 @@ thing under test:
 **Every failure was localization.** True ranks 4, 5 and 5 — never put to the
 generator at all. Not one generator failure.
 
+### What to do about it: walk more candidates
+
+The experiment says localization is the whole bottleneck, so the next question
+is how much wider the walk has to be. That needed no new measurement — the
+per-trial ranks were already in `localization-2026-09-20.json`:
+
+| k | coverage |
+|---|---|
+| 1 | 47.7% |
+| 2 | 76.6% |
+| 3 (shipped) | 89.2% |
+| 4 | 93.7% |
+| 5 | 97.3% |
+| **6** | **100.0%** |
+
+Across 111 trials the true symbol was **never ranked lower than 6**.
+
+The widening is cheaper than it looks, because a MISS already walks all three
+candidates and fails — that spend is sunk. Three more candidates convert a
+guaranteed total loss into a repair, and the real-model run measured 0.92
+proposals on the true target against 7.15 before reaching it: reaching it at
+all is what matters.
+
+Not changed here. This is a controller policy decision, it should be made
+deliberately rather than as a side effect of an analysis, and "never beyond 6"
+may be partly a property of a corpus that injects each defect into a function
+some failing check reaches — the same construction that makes `truth absent`
+0%. It bounds the walk for THIS corpus.
+
 ### The generator is not the bottleneck, and it is not close
 
 | | |

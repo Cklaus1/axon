@@ -1117,5 +1117,17 @@
    "verified_in_this_artifact": false,
    "note": "Describes the FIRST localization design \u2014 every function a failing check calls, refusing whenever more than one matched \u2014 which no longer exists. Recorded because crates/axon-cortex/src/locate.rs states these figures and the doc gate must be able to tell a historical measurement from an unsourced one. NOT re-measured: `verified_in_this_artifact` is false and the gate reports it as accepted-but-unverified rather than silently passing it."
   }
+ },
+ "topk_curve": {
+  "pct_by_k": {
+   "1": 47.7,
+   "2": 76.6,
+   "3": 89.2,
+   "4": 93.7,
+   "5": 97.3,
+   "6": 100.0
+  },
+  "max_rank_observed": 6,
+  "note": "Computed from the per_trial ranks already in this file \u2014 no new measurement. Coverage is COMPLETE at k=6: across 111 trials the true symbol was never ranked lower. The shipped walk is k=3 at 89.2%. Economically the widening is cheaper than it looks: a MISS already walks all 3 candidates and fails, so that spend is sunk \u2014 three more candidates convert a guaranteed total loss into a repair. The real-model run measured 0.92 proposals on the true target against 7.15 before reaching it, so reaching it at all dominates. CAVEAT: 'never beyond 6' may be partly a property of this corpus, which injects a defect into a function some failing check reaches \u2014 the same construction that makes truth_absent 0%. It bounds the walk for THIS corpus and should not be read as a universal bound."
  }
 }
