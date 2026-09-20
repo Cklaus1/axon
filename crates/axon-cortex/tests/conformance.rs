@@ -298,11 +298,33 @@ fn cxg_g03_payload_refuses_traversal_and_policy_files() {
         // check and not from a narrow prefix.
         write_prefixes: vec!["*".into()],
     };
+    // The policy surface is a PREFIX set, not four basenames.
+    //
+    // Measured through the policy adapter with this same `*` grant BEFORE the
+    // fix, only `scripts/gate.sh` refused — the one literal basename. A gate
+    // script beside it, the evaluation matrix and the gate-execution registry
+    // were all ALLOWED, so `G00-authority`'s "a learner attempts to edit gate
+    // code, evaluation data, policy or signer credentials" held for one file.
+    //
+    // The `allow` rows are not decoration: a policy surface that refuses
+    // everything would satisfy every refusal row here and be useless. Cortex
+    // has to remain able to patch ordinary repair targets.
     for (path, want) in [
         ("../outside.ax", "traversal"),
         ("nested/../../escape.ax", "traversal"),
         ("axon.lock", "policy"),
         ("profile.rs", "policy"),
+        // gate CODE — any of it, not just the one named basename
+        ("scripts/gate.sh", "policy"),
+        ("scripts/gate_verdict_is_read.sh", "policy"),
+        ("./scripts/parity_all.sh", "policy"),
+        // EVALUATION DATA and the gate-execution registry
+        ("AXON-COMPLETENESS.json", "policy"),
+        ("governance/cortex_gate_execution_registry.json", "policy"),
+        ("governance/REQUIREMENTS.md", "policy"),
+        // CONTROL: ordinary repair targets must still be permitted.
+        ("src/broken.ax", "allow"),
+        ("examples/stdlib/date.ax", "allow"),
     ] {
         let got = r
             .authorize_action(&patch_at(path), Some(&grant), "repair-agent", &snap)
@@ -310,6 +332,7 @@ fn cxg_g03_payload_refuses_traversal_and_policy_files() {
         match (&got, want) {
             (Err(Refusal::PathTraversal(_)), "traversal") => {}
             (Err(Refusal::PolicyFile(_)), "policy") => {}
+            (Ok(()), "allow") => {}
             other => panic!("`{path}` must refuse as {want}, got {other:?}"),
         }
     }

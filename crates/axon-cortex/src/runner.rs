@@ -75,7 +75,36 @@ pub struct EditGrant {
 
 /// Paths no grant may ever edit, however broad. The policy cannot authorise
 /// edits to the policy (`G00-authority`).
+/// Exact file names that are never writable, whatever a grant says.
 const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];
+
+/// Path PREFIXES that are never writable, whatever a grant says.
+///
+/// `POLICY_FILES` alone was four basenames matched with `ends_with`, and
+/// measured through the policy adapter with the broadest possible grant
+/// (`--write-prefix '*'`) it protected exactly one real file:
+///
+/// ```text
+/// scripts/gate.sh                                 refuse   <-- the basename
+/// scripts/gate_verdict_is_read.sh                 allow    <-- a gate script
+/// AXON-COMPLETENESS.json                          allow    <-- evaluation data
+/// governance/cortex_gate_execution_registry.json  allow    <-- the gate registry
+/// crates/axon-cortex/src/locate.rs                allow    <-- the localizer
+/// ```
+///
+/// CX-00's `G00-authority` simulates "a learner attempts to edit gate code,
+/// evaluation data, policy or signer credentials". That was satisfied for
+/// `gate.sh` and nominally for three other names.
+///
+/// A PREFIX set, rather than more basenames: the grant machinery in this same
+/// function already reasons in path prefixes, so this reuses the idiom instead
+/// of adding a second matching rule. Cortex repairs `.ax` symbols; these trees
+/// are policy and evidence surfaces, not repair targets.
+const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];
+
+/// Exact paths that are never writable — evidence artifacts that live at the
+/// repository root and so have no protecting prefix.
+const POLICY_PATHS: &[&str] = &["AXON-COMPLETENESS.json", "AXON-COMPLETENESS.md"];
 
 /// Proof that a specific action passed authorization.
 ///
@@ -1400,7 +1429,11 @@ impl Runner {
         if target_path.split('/').any(|s| s == "..") {
             return Err(Refusal::PathTraversal(target_path.to_string()));
         }
-        if POLICY_FILES.iter().any(|p| target_path.ends_with(p)) {
+        let normalized = target_path.trim_start_matches("./");
+        if POLICY_FILES.iter().any(|p| target_path.ends_with(p))
+            || POLICY_PREFIXES.iter().any(|p| normalized.starts_with(p))
+            || POLICY_PATHS.iter().any(|p| normalized == *p)
+        {
             return Err(Refusal::PolicyFile(target_path.to_string()));
         }
         let covered = g.write_prefixes.iter().any(|p| {
