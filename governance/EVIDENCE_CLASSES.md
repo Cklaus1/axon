@@ -34,6 +34,20 @@ TRANSITIVE: a gate invoked only by a gate nobody invokes is still invoked by
 nobody. That is why the R26-R29 gates below are not `strict_gate` despite having
 a caller.
 
+## Reading a failure
+
+A violation is never reported as a bare verdict. Each one prints the shortest
+path from a root (or `NONE`), and then WHY — the nearest mention with its
+`file:line` and the reason it does not count (`COMMENT`, `SELF-REFERENCE`,
+`ECHO TEXT`, `EXISTENCE TEST`, `NOT A COMMAND`, `STRING MESSAGE`, `PROSE`), or
+the dead caller and why *it* is dead. A reviewer who greps and finds a mention
+is told, in the same report, that the mention is a comment.
+
+The violations are then grouped by the single upstream wiring that would clear
+them, largest first. **Wire the root and recompute; do not patch leaves** — five
+gates hanging off one unwired umbrella are one fix, and four of them stop being
+violations the moment the umbrella is reachable.
+
 Regenerate the observed ceiling for a new row with:
 
 ```bash
