@@ -37,6 +37,31 @@ print(f"Trials: {n}\n")
 
 # 1. LOCALIZATION COVERAGE — was the true symbol ever put in front of the
 #    generator at all?
+# AN UNREADABLE VERDICT IS NOT A LOCALIZATION MISS.
+#
+# The harness identifies cortex's verdict as the LAST LINE of stdout and
+# collapses any parse failure to `{}` — so a crash, a timeout, or a stray
+# trailing line yields `attempted: []`, which reads here as "the ranker never
+# put the true symbol in front of the generator". That charges an
+# infrastructure failure to localization, which is precisely the confusion the
+# three-factor decomposition exists to prevent.
+#
+# The signature is internally contradictory and therefore detectable after the
+# fact: proposals were made, so SOME candidate was attempted, yet the attempted
+# list is empty. Trials carrying it are unevaluated, not failed.
+contradictory = [t for t in trials
+                 if not t["attempted"] and (t.get("proposals") or 0) > 0]
+if contradictory:
+    print(f"  !! {len(contradictory)} trial(s) have proposals but an EMPTY "
+          f"attempted list.")
+    print( "     The verdict could not be read, so these are UNEVALUATED, not")
+    print( "     localization misses. Excluded from coverage below:")
+    for t in contradictory:
+        print(f"       {t['file']}::{t['symbol']} "
+              f"({t.get('proposals')} proposals, outcome={t.get('outcome')})")
+    trials = [t for t in trials if t not in contradictory]
+    n = len(trials)
+
 attempted = [t for t in trials if t["target_attempted"]]
 print(f"  true target among attempted candidates : {len(attempted)}/{n}  {pct(len(attempted), n)}")
 

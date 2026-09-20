@@ -82,10 +82,26 @@ def trial(f, src0, name, mname, mfn, hidden_pref=None):
         capture_output=True, text=True, timeout=1800, env=env,
     )
     wall = __import__("time").time() - began
-    try:
-        verdict = json.loads(proc.stdout.strip().split("\n")[-1])
-    except Exception:
-        verdict = {}
+    # THE VERDICT IS IDENTIFIED BY ITS SCHEMA, not by being last.
+    #
+    # Taking the last line made the verdict's identity positional: a crash, a
+    # timeout, or any stray trailing line collapsed it to `{}`, which reads
+    # downstream as `attempted: []` — an empty candidate list, indistinguishable
+    # from the ranker having genuinely missed. That charges an infrastructure
+    # failure to localization, which is the one attribution the whole experiment
+    # is built to keep straight.
+    #
+    # `verdict_read` records WHETHER it was found, so a trial with no verdict is
+    # unevaluated rather than silently zero-valued.
+    verdict, verdict_read = {}, False
+    for line in reversed(proc.stdout.strip().split("\n")):
+        try:
+            cand = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(cand, dict) and cand.get("schema") == "cortex-repair/1":
+            verdict, verdict_read = cand, True
+            break
     calls = []
     if os.path.exists(log):
         calls = [json.loads(l) for l in open(log) if l.strip()]
@@ -96,6 +112,9 @@ def trial(f, src0, name, mname, mfn, hidden_pref=None):
         "attempted": verdict.get("attempted", []),
         "target_attempted": name in verdict.get("attempted", []),
         "outcome": verdict.get("outcome"), "exit": proc.returncode,
+        # Absent verdict != empty verdict. Without this the two are the same
+        # row, and the analyser cannot tell a miss from a non-measurement.
+        "verdict_read": verdict_read,
         # Asked of the FILE, never of the exit code.
         "file_clean": not failing_tests(p),
         "workspace_restored": (open(p).read() == src0[:a] + mutant + src0[b:]),
