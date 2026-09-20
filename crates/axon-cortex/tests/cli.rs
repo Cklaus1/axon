@@ -13,20 +13,27 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn axon_bin() -> PathBuf {
-    // Next to the test binary, which is where cargo puts the workspace's
-    // binaries. Falls back to the PATH name so a failure reads as "the checker
-    // could not run" rather than as a mysterious Blocked.
-    let mut p = std::env::current_exe().unwrap();
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
-    }
-    let candidate = p.join("axon");
-    if candidate.exists() {
-        candidate
-    } else {
-        PathBuf::from("axon")
-    }
+    // Resolved from the MANIFEST, and it fails rather than falling back.
+    //
+    // This used to look next to the test binary and, failing that, return the
+    // bare name `axon` — so with a custom CARGO_TARGET_DIR the candidate never
+    // existed and every CLI test silently ran whatever `axon` was on PATH.
+    // On this machine that happened to be a symlink to the very binary under
+    // test, so the results stood; on any other machine the suite would have
+    // been measuring something nobody chose. A fallback that cannot say which
+    // binary it ran is not a fallback, it is an unlogged substitution.
+    let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .join("target/debug/axon");
+    assert!(
+        bin.exists(),
+        "the CLI suite needs the interpreter at {}; build it with \
+         `cargo build -p axon-core --no-default-features --bin axon`",
+        bin.display()
+    );
+    bin
 }
 
 /// A fresh workspace holding the broken fixture, named per-test so concurrent

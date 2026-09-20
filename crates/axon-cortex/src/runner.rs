@@ -77,16 +77,6 @@ pub struct EditGrant {
 /// edits to the policy (`G00-authority`).
 const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];
 
-/// The legal action catalog. Denial-first: an action absent from this list is
-/// refused, rather than allowed because nothing forbade it.
-pub const LEGAL_ACTIONS: &[&str] = &[
-    "inspect",
-    "search",
-    "patch_symbol_body",
-    "run_check",
-    "claim_done",
-];
-
 /// Proof that a specific action passed authorization.
 ///
 /// The field is private and there is no public constructor, so the only way to
@@ -400,7 +390,29 @@ impl Runner {
     ) -> Result<Authorized<'a>, Refusal> {
         let r = self.check_typed_authority(action, grant, principal, current_snapshot);
         match r {
-            Ok(()) => Ok(Authorized { action }),
+            // BOTH halves recorded. `ActionDenied`'s own doc claims it is
+            // "recorded with the same weight as an allowed one", and the
+            // weight was zero on one side: `ActionAllowed` was defined,
+            // documented, and never constructed, so an episode could show what
+            // it was stopped from doing and never what it was permitted to do.
+            // `grant_id` was written at three production sites and read
+            // nowhere — this is the field it existed for.
+            Ok(()) => {
+                self.episode.push(EpisodeEvent::ActionAllowed {
+                    action: action.name().to_string(),
+                    // An action needing no grant records the ABSENCE rather
+                    // than borrowing a name: "no grant was required" and "a
+                    // grant authorised this" are different facts.
+                    grant_id: grant
+                        .map(|g| g.grant_id.clone())
+                        .unwrap_or_else(|| "<none required>".to_string()),
+                    target_digest: action
+                        .write_target()
+                        .map(|p| content_digest(p.as_bytes()))
+                        .unwrap_or_default(),
+                });
+                Ok(Authorized { action })
+            }
             Err(why) => {
                 self.episode.push(EpisodeEvent::ActionDenied {
                     action: action.name().to_string(),
@@ -1087,130 +1099,6 @@ impl Runner {
             return Err(Refusal::PathOutsideGrant(target_path.to_string()));
         }
         Ok(())
-    }
-
-    /// Validate an action against the catalog and the grant, BEFORE any write.
-    ///
-    /// Every refusal here happens with no side effect, which is what
-    /// `G03-forgery` actually demands — refusing after writing is not refusing.
-    pub fn authorize(
-        &mut self,
-        action: &str,
-        grant: Option<&EditGrant>,
-        principal: &str,
-        current_snapshot: &WorkspaceSnapshot,
-        target_path: &str,
-    ) -> Result<(), Refusal> {
-        let r = self.check_authority(action, grant, principal, current_snapshot, target_path);
-        if let Err(ref why) = r {
-            self.episode.push(EpisodeEvent::ActionDenied {
-                action: action.to_string(),
-                reason: why.to_string(),
-            });
-        }
-        r
-    }
-
-    /// The authority decision WITHOUT recording it. Same code path as
-    /// `authorize`; exists so callers can ask "would this be allowed?" without
-    /// writing a denial into the episode.
-    pub fn authorize_dry(
-        &self,
-        action: &str,
-        grant: Option<&EditGrant>,
-        principal: &str,
-        current: &WorkspaceSnapshot,
-        target_path: &str,
-    ) -> Result<(), Refusal> {
-        self.check_authority(action, grant, principal, current, target_path)
-    }
-
-    fn check_authority(
-        &self,
-        action: &str,
-        grant: Option<&EditGrant>,
-        principal: &str,
-        current: &WorkspaceSnapshot,
-        target_path: &str,
-    ) -> Result<(), Refusal> {
-        if !LEGAL_ACTIONS.contains(&action) {
-            return Err(Refusal::NotInCatalog(action.to_string()));
-        }
-        if action != "patch_symbol_body" {
-            return Ok(());
-        }
-        let g = grant.ok_or_else(|| Refusal::UnknownGrant("<none>".into()))?;
-        if g.principal != principal {
-            return Err(Refusal::WrongPrincipal {
-                expected: g.principal.clone(),
-                got: principal.to_string(),
-            });
-        }
-        // Authority does not survive the state it was granted over.
-        if g.snapshot_id != current.snapshot_id {
-            return Err(Refusal::StaleSnapshot {
-                expected: g.snapshot_id.clone(),
-                got: current.snapshot_id.clone(),
-            });
-        }
-        // Payload checks run even with a VALID grant: authority to edit is not
-        // authority to edit anything (`G03-payload`).
-        if target_path.split('/').any(|s| s == "..") {
-            return Err(Refusal::PathTraversal(target_path.to_string()));
-        }
-        if POLICY_FILES.iter().any(|p| target_path.ends_with(p)) {
-            return Err(Refusal::PolicyFile(target_path.to_string()));
-        }
-        let covered = g.write_prefixes.iter().any(|p| {
-            p == "*"
-                || (!p.is_empty()
-                    && (target_path == p
-                        || target_path.starts_with(&format!("{}/", p.trim_end_matches('/')))))
-        });
-        if !covered {
-            return Err(Refusal::PathOutsideGrant(target_path.to_string()));
-        }
-        Ok(())
-    }
-
-    /// Apply a patch to the COPY. Callers must have passed `authorize` first;
-    /// this re-reads the file and records both digests so the evidence shows
-    /// what actually changed rather than what was intended.
-    pub fn apply_patch(
-        &mut self,
-        rel_path: &str,
-        find: &str,
-        replace: &str,
-    ) -> std::io::Result<bool> {
-        let p = self.workspace.join(rel_path);
-        let before = std::fs::read_to_string(&p)?;
-        if !before.contains(find) {
-            return Ok(false);
-        }
-        let after = before.replacen(find, replace, 1);
-        std::fs::write(&p, &after)?;
-        self.episode.push(EpisodeEvent::PatchApplied {
-            path: rel_path.to_string(),
-            before_digest: content_digest(before.as_bytes()),
-            after_digest: content_digest(after.as_bytes()),
-        });
-        Ok(true)
-    }
-
-    /// Run a registered check — a real process, with its real exit code.
-    pub fn run_check(&mut self, name: &str, rel_path: &str) -> std::io::Result<bool> {
-        let out = std::process::Command::new(&self.axon_bin)
-            .arg("test")
-            .arg(self.workspace.join(rel_path))
-            .output()?;
-        let code = out.status.code().unwrap_or(-1);
-        let passed = out.status.success();
-        self.episode.push(EpisodeEvent::CheckRun {
-            name: name.to_string(),
-            exit_code: code,
-            passed,
-        });
-        Ok(passed)
     }
 
     /// Independent verification, out-of-band from whatever proposed the patch.

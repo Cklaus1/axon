@@ -43,6 +43,25 @@ fn stage(name: &str) -> (PathBuf, PathBuf) {
     (src, ws)
 }
 
+/// A patch action aimed at `path`, for the authority rows.
+///
+/// These rows used to call `Runner::authorize`, a STRING-keyed twin of the
+/// authority check that the binary never reached — so every property they
+/// proved was proved about a second implementation maintained only by them.
+/// The two enforced the same six rules, which is why nothing broke; it is also
+/// why nothing would have caught it if they had drifted.
+fn patch_at(path: &str) -> axon_cortex::action::CortexAction {
+    axon_cortex::action::CortexAction::PatchSymbolBody {
+        symbol: axon_cortex::action::SymbolRef {
+            path: path.to_string(),
+            // The authority question is about the PATH; the symbol is required
+            // by the type, which is the point of the type.
+            symbol: "double".to_string(),
+        },
+        proposed_body: String::new(),
+    }
+}
+
 /// C11 — the whole episode, end to end.
 #[test]
 fn cxg_c11_repair_episode_runs_end_to_end() {
@@ -60,9 +79,33 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
 
     // 3. The visible reproduction check must FAIL before the repair — without
     //    this the episode could "succeed" on an unbroken fixture.
+    // Run through the same authorize → execute pipeline production uses. The
+    // old version called `Runner::run_check` and `Runner::apply_patch`, public
+    // twins of the real code that nothing outside this test ever called — so
+    // the "end to end" run went end to end through a second implementation.
+    let run_visible = |r: &mut Runner| -> bool {
+        let act = axon_cortex::action::CortexAction::RunCheck {
+            check: axon_cortex::action::CheckRef {
+                name: "visible_repro".into(),
+                path: "broken.ax".into(),
+            },
+        };
+        // A check needs no grant: running one is not editing.
+        let auth = r
+            .authorize_action(&act, None, "repair-agent", &snap)
+            .expect("a check needs no write authority");
+        match r.execute(auth) {
+            axon_cortex::runner::ExecOutcome::CheckRan {
+                passed, matched, ..
+            } => {
+                assert!(matched > 0, "a filter matching nothing is not a pass");
+                passed
+            }
+            other => panic!("expected a check result, got {other:?}"),
+        }
+    };
     assert!(
-        !r.run_check("visible_repro", "broken.ax")
-            .expect("check runs"),
+        !run_visible(&mut r),
         "precondition: the fixture is genuinely broken"
     );
 
@@ -73,21 +116,26 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
         snapshot_id: snap.snapshot_id.clone(),
         write_prefixes: vec!["broken.ax".into()],
     };
-    r.authorize(
-        "patch_symbol_body",
-        Some(&grant),
-        "repair-agent",
-        &snap,
-        "broken.ax",
-    )
-    .expect("a well-formed action under a valid grant is allowed");
+    let patch = axon_cortex::action::CortexAction::PatchSymbolBody {
+        symbol: axon_cortex::action::SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        proposed_body: "\n    n * 2\n".into(),
+    };
+    let auth = r
+        .authorize_action(&patch, Some(&grant), "repair-agent", &snap)
+        .expect("a well-formed action under a valid grant is allowed");
     assert!(
-        r.apply_patch("broken.ax", "n + 2", "n * 2").expect("patch"),
+        matches!(
+            r.execute(auth),
+            axon_cortex::runner::ExecOutcome::Patched { .. }
+        ),
         "the patch must actually apply"
     );
 
     // 5. Checks now pass, and an INDEPENDENT verifier agrees.
-    assert!(r.run_check("visible_repro", "broken.ax").expect("recheck"));
+    assert!(run_visible(&mut r), "the repair must fix the visible check");
     assert!(
         r.verify(true, "hidden_completion", "broken.ax"),
         "hidden completion tests must pass after a correct repair"
@@ -118,9 +166,39 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
             EpisodeEvent::Verified { .. } => "verified",
         })
         .collect();
+    // WHICH grant authorised each action, and where none was required. An
+    // episode that recorded only denials could show what the run was stopped
+    // from doing and never what it was permitted to do — and a blank grant id
+    // would collapse "no grant was needed" into "a grant with no name", which
+    // an auditor cannot tell apart from a bug.
+    let allowed: Vec<String> = r
+        .episode
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            EpisodeEvent::ActionAllowed {
+                action, grant_id, ..
+            } => Some(format!("{action}:{grant_id}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        allowed,
+        vec![
+            "run_check:<none required>".to_string(),
+            "patch_symbol_body:g1".to_string(),
+            "run_check:<none required>".to_string(),
+        ],
+        "each permitted action records the grant that authorised it, or that \
+         none was required"
+    );
+
     assert_eq!(
         kinds,
-        vec!["snapshot", "observed", "check", "patch", "check", "verified"],
+        vec![
+            "snapshot", "observed", "allowed", "check", "allowed", "patch", "allowed", "check",
+            "verified"
+        ],
         "the evidence must show the real order, including the failing check BEFORE the patch"
     );
     let d1 = r.episode.digest().unwrap();
@@ -154,24 +232,12 @@ fn cxg_g03_forgery_refuses_without_side_effect() {
 
     // No grant at all.
     assert!(matches!(
-        r.authorize(
-            "patch_symbol_body",
-            None,
-            "repair-agent",
-            &snap,
-            "broken.ax"
-        ),
+        r.authorize_action(&patch_at("broken.ax"), None, "repair-agent", &snap),
         Err(Refusal::UnknownGrant(_))
     ));
     // A grant belonging to someone else.
     assert!(matches!(
-        r.authorize(
-            "patch_symbol_body",
-            Some(&valid),
-            "other-agent",
-            &snap,
-            "broken.ax"
-        ),
+        r.authorize_action(&patch_at("broken.ax"), Some(&valid), "other-agent", &snap),
         Err(Refusal::WrongPrincipal { .. })
     ));
     // A grant pinned to a state the workspace has genuinely moved past.
@@ -194,13 +260,7 @@ fn cxg_g03_forgery_refuses_without_side_effect() {
     );
     assert!(matches!(
         // `valid` is pinned to snap; the workspace is now at snap2.
-        r.authorize(
-            "patch_symbol_body",
-            Some(&valid),
-            "repair-agent",
-            &snap2,
-            "broken.ax"
-        ),
+        r.authorize_action(&patch_at("broken.ax"), Some(&valid), "repair-agent", &snap2),
         Err(Refusal::StaleSnapshot { .. })
     ));
     std::fs::write(ws.join("broken.ax"), &before).unwrap();
@@ -235,13 +295,9 @@ fn cxg_g03_payload_refuses_traversal_and_policy_files() {
         ("axon.lock", "policy"),
         ("profile.rs", "policy"),
     ] {
-        let got = r.authorize(
-            "patch_symbol_body",
-            Some(&grant),
-            "repair-agent",
-            &snap,
-            path,
-        );
+        let got = r
+            .authorize_action(&patch_at(path), Some(&grant), "repair-agent", &snap)
+            .map(|_| ());
         match (&got, want) {
             (Err(Refusal::PathTraversal(_)), "traversal") => {}
             (Err(Refusal::PolicyFile(_)), "policy") => {}
@@ -323,14 +379,56 @@ fn cxg_c12_catalog_is_denial_first() {
     let (_src, ws) = stage("catalog");
     let mut r = Runner::new(axon_bin(), &ws);
     let snap = r.snapshot(&["broken.ax"]).expect("snapshot");
-    assert!(matches!(
-        r.authorize("rm_rf", None, "repair-agent", &snap, "broken.ax"),
-        Err(Refusal::NotInCatalog(_))
-    ));
-    // ...and a listed, non-editing action needs no grant.
-    assert!(r
-        .authorize("inspect", None, "repair-agent", &snap, "broken.ax")
-        .is_ok());
+    // "An action nobody listed" can no longer be SPELLED at this boundary:
+    // `CortexAction` is a closed enum, and `action.rs` carries three
+    // `compile_fail` doctests proving the sentences the old string API could
+    // say — an unknown action, a check with an edit payload, a claim naming a
+    // file — do not compile. `cargo test` runs those, so the claim is checked
+    // rather than asserted here.
+    //
+    // This row used to pass the string "rm_rf" to a string-keyed authority
+    // check the binary never reached. `Refusal::NotInCatalog` still exists for
+    // the one place an unknown action can still arrive — a JSON request from
+    // another process — and that edge is tested where it lives, in
+    // `cortex-policy-adapter`.
+    //
+    // What remains testable HERE is the other half of denial-first: authority
+    // is decided by the ACTION, and only the one action that writes needs a
+    // grant.
+    for (action, needs_grant) in [
+        (patch_at("broken.ax"), true),
+        (
+            axon_cortex::action::CortexAction::Inspect {
+                target: axon_cortex::action::SymbolRef {
+                    path: "broken.ax".into(),
+                    symbol: "double".into(),
+                },
+            },
+            false,
+        ),
+        (
+            axon_cortex::action::CortexAction::ClaimDone {
+                claim: axon_cortex::action::CompletionClaim {
+                    done: true,
+                    rationale: "tests pass".into(),
+                },
+            },
+            false,
+        ),
+    ] {
+        let got = r.authorize_action(&action, None, "repair-agent", &snap);
+        assert_eq!(
+            got.is_err(),
+            needs_grant,
+            "`{}` with no grant: needs_grant={needs_grant}, got {got:?}",
+            action.name()
+        );
+        assert_eq!(action.requires_write_authority(), needs_grant);
+        // The path checks are asked of `write_target()`, so for every other
+        // action there is no path to check rather than a path checked and
+        // ignored.
+        assert_eq!(action.write_target().is_some(), needs_grant);
+    }
     let _ = std::fs::remove_dir_all(&ws);
 }
 
@@ -349,7 +447,7 @@ fn cxg_c12_write_prefix_is_a_path_not_a_string() {
         write_prefixes: vec![p.to_string()],
     };
     let can = |r: &Runner, grant: &EditGrant, path: &str| {
-        r.authorize_dry("patch_symbol_body", Some(grant), "a", &snap, path)
+        r.authorize_action_dry(&patch_at(path), Some(grant), "a", &snap)
             .is_ok()
     };
     assert!(can(&r, &g("src"), "src/lib.ax"));
