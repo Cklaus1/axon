@@ -1,0 +1,33 @@
+{
+  "id": "trace-a-claim-to-its-executed-predicate",
+  "trigger": "Anything presents a success, verified, passing, covered or completed claim — a status table, a green check, a coverage number, a requirements register, a function returning Ok, a gate reporting exit 0.",
+  "probe": [
+    "name the PREDICATE the claim rests on: what boolean, computed where, would be false if the claim were false",
+    "find the code that evaluates it, and establish that something actually CALLS that code — existence of a checker is not evidence the checker ran",
+    "trace the call chain TRANSITIVELY to a real execution root (a CI job, a gate script, a test runner). A checker invoked only by another checker nobody invokes is not invoked",
+    "reject the four mention-shaped false positives: a self-reference in a header comment, a mention inside a comment or an example, an existence test like `[ -f x ]`, and a name inside echo/printf or a panic message",
+    "if the predicate does run, ask whether it can FAIL: break the thing it guards and confirm something turns red",
+    "report the claim's real support as the weakest link in that chain, not as the claim's own wording"
+  ],
+  "priority": "Highest when the claim is load-bearing for a decision — a requirements register that answers 'is this done?', a coverage number used to decide where to test next, a gate whose green lets a release proceed. The cost of a false claim scales with who acts on it.",
+  "evidence": [
+    {
+      "file": "governance/REQUIREMENTS.md",
+      "finding": "The register cites `scripts/*.sh` as evidence for landed requirements. Measured: 15 violations across 13 rows — 8 scripts nothing invokes at all, and 6 reachable only through another orphan. A requirement read as verified while its cited gate had never run."
+    },
+    {
+      "file": "scripts/wasm_aot_stdout_parity.sh",
+      "finding": "Exited 0 having compared nothing: `AXON=/bin/false` produced '0 match, 0 differ, 42 skipped' and a SUCCESS code. The harness said nothing ran, and said it with the only field any caller reads."
+    },
+    {
+      "file": "crates/axon-core/src/codegen/mod.rs",
+      "finding": "A function whose body failed to lower returned a fabricated zero on a CLEAN build — the same shape at the innermost level: a value presented as a result that no computation produced."
+    },
+    {
+      "file": "crates/axon-cortex/skills/documented-limitation-fabricates-value.json",
+      "finding": "Same defect at four nesting levels in one codebase — function, test, gate, register — which is why this is stated as one skill rather than four observations."
+    }
+  ],
+  "transfers": "The shape is substrate-independent: a claim, a predicate that would justify it, and a missing edge between them. It applies to build systems, CI dashboards, compliance registers, test-coverage tooling and model evaluation harnesses equally. Nothing in it is specific to compilers or to Axon.",
+  "limits": "Establishes only that a predicate RUNS and CAN fail. It cannot establish that the predicate tests what its name claims — a wired gate whose body is `exit 0` passes every step of this probe. That is a review question, and the probe's honest output is 'reachable', not 'correct'."
+}
