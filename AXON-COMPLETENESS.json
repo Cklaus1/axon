@@ -5,7 +5,8 @@
     "implementation": "complete | partial | staged | absent",
     "production_proof": "yes = the PRODUCTION path is proven to use it (not just that it exists and has tests) | no | unknown",
     "mutation": "yes = a load-bearing assertion was mutation-verified | partial | no | unknown",
-    "docs": "yes | partial | no"
+    "docs": "yes | partial | no",
+    "engines": "For SECURITY-SENSITIVE semantics only. Per-engine enforcement: enforced | not-enforced | refused (the engine refuses rather than pretending) | n/a | unknown. Added because a single row reading 'effect ceiling: implemented' is how one implementation gets mistaken for system-wide support \u2014 which is exactly the D-002 defect: the interpreter enforced the ambient ceiling and a natively built binary ignored it, proven by execution. The generator REFUSES a row whose engines disagree (one enforced, another not-enforced) unless its implementation is marked partial or absent."
   },
   "rows": [
     {
@@ -128,7 +129,13 @@
         "scripts/axon_safety_gate.sh",
         "crates/axon-core/src/capabilities.rs"
       ],
-      "gap": ""
+      "gap": "",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      }
     },
     {
       "area": "authority",
@@ -153,7 +160,13 @@
       "evidence": [
         "crates/axon-cortex/src/runner.rs"
       ],
-      "gap": "AUDITED, CONFIRMED BY READING: the adapter builds `current` from req[\"snapshot_id\"] verbatim with files:[], and StaleSnapshot is string equality against it \u2014 so the requester chooses the value the check compares. The grant's pin is on the adapter's command line (readable via /proc). The module doc forbids deriving the GRANT from the request; the same tautology sits on the other side. Also: `cortex repair` builds grant.principal from the acting principal and pins to a snapshot taken one line earlier, so both checks are structurally unreachable there."
+      "gap": "AUDITED, CONFIRMED BY READING: the adapter builds `current` from req[\"snapshot_id\"] verbatim with files:[], and StaleSnapshot is string equality against it \u2014 so the requester chooses the value the check compares. The grant's pin is on the adapter's command line (readable via /proc). The module doc forbids deriving the GRANT from the request; the same tautology sits on the other side. Also: `cortex repair` builds grant.principal from the acting principal and pins to a snapshot taken one line earlier, so both checks are structurally unreachable there.",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "n/a",
+        "wasm": "n/a",
+        "guest": "unknown"
+      }
     },
     {
       "area": "cortex",
@@ -373,7 +386,13 @@
       "evidence": [
         "scripts/gate_verdict_is_read.sh"
       ],
-      "gap": "FIXED and gated. interp.rs `Ok(_) => 0` made Unit/Str/Option/Result indistinguishable from Bool(true); a Critical deploy whose simulate, stress and assert_deployable all returned Err(\"...FAILED\") reported status:deployed, exit 0, with all four gates listed in stages_run. Now blocks. Verified across the whole class (str, f64, Option::None/Some, Result::Ok/Err block; bool true and i64 0 still pass). scripts/gate_verdict_is_read.sh wired into gate.sh."
+      "gap": "FIXED and gated. interp.rs `Ok(_) => 0` made Unit/Str/Option/Result indistinguishable from Bool(true); a Critical deploy whose simulate, stress and assert_deployable all returned Err(\"...FAILED\") reported status:deployed, exit 0, with all four gates listed in stages_run. Now blocks. Verified across the whole class (str, f64, Option::None/Some, Result::Ok/Err block; bool true and i64 0 still pass). scripts/gate_verdict_is_read.sh wired into gate.sh.",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "n/a",
+        "wasm": "n/a",
+        "guest": "n/a"
+      }
     },
     {
       "area": "authority",
@@ -683,7 +702,7 @@
     {
       "area": "authority",
       "subsystem": "ambient effect ceiling reaches native",
-      "implementation": "absent",
+      "implementation": "partial",
       "production_proof": "no",
       "mutation": "no",
       "docs": "partial",
@@ -691,7 +710,13 @@
         "governance/cortex-v015/DISCREPANCIES.md",
         "crates/axon-core/src/interp.rs"
       ],
-      "gap": "PROVEN END-TO-END. Same 3-line program, same AXON_ALLOWED_EFFECTS=Pure: `axon run` refuses with a sandbox violation (exit 8); `axon build` emits a binary WITHOUT refusing (exit 0); the binary prints and exits 0. Zero reads of AXON_ALLOWED_EFFECTS or AXON_BUDGET_TOKENS anywhere in codegen/. Sharpened by the VM path: axon-guest-init REFUSES TO BOOT without an MMDS policy, then exports both ceilings into a guest whose natively built payload ignores them \u2014 a policy attested as applied and then unenforced. The failure direction is inverted from intuition: the INTERPRETER is the stricter engine. Filed as D-002; the proposed remedy is for `axon build` to E0910-refuse when an ambient ceiling is set, which is this repo's own convention for 'interp has it, codegen cannot express it'."
+      "gap": "PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure \u2014 `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. STILL OPEN: native does not ENFORCE the ceiling, it refuses to be built under one \u2014 the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED.",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "refused",
+        "wasm": "unknown",
+        "guest": "unknown"
+      }
     }
   ]
 }

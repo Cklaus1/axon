@@ -63,6 +63,22 @@ for r in rows:
             fails.append(f"{name}: {field}={r.get(field)!r} is not one of "
                          f"{sorted(legal)}")
 
+    # ENGINE DIVERGENCE. A security-sensitive semantic enforced by one engine
+    # and not another is the D-002 shape: the interpreter enforced the ambient
+    # effect ceiling and a natively built binary ignored it. A row may record
+    # that state, but it may not also call itself complete.
+    eng = r.get("engines")
+    if isinstance(eng, dict):
+        legal = {"enforced", "not-enforced", "refused", "n/a", "unknown"}
+        bad = {k: v for k, v in eng.items() if v not in legal}
+        if bad:
+            fails.append(f"{name}: engines {bad} not in {sorted(legal)}")
+        if "enforced" in eng.values() and "not-enforced" in eng.values() \
+                and r.get("implementation") == "complete":
+            fails.append(
+                f"{name}: engines DISAGREE ({eng}) while implementation=complete "
+                f"— one engine enforcing is not system-wide support")
+
     ev = r.get("evidence") or []
     claims = [f for f in ("production_proof", "mutation") if r.get(f) == "yes"]
     if claims and not ev:
