@@ -183,7 +183,18 @@ separate budget, futility, environment, authority and missing content, because
 the remedies differ. A patch that makes the file stop compiling is reverted and
 the revert is RECORDED. See `crates/axon-cortex/README.md`.
 
-> Platform-target verification: `ENVIRONMENTS.md` + `scripts/setup-environments.sh` reproduce the GPU (lavapipe/wgpu), browser (headless Chrome), Android (NDK+emulator), and iOS (macOS-CI) gate environments.
+> Platform-target verification: `ENVIRONMENTS.md` + `scripts/setup-environments.sh`
+> reproduce the GPU (lavapipe/wgpu), browser (headless Chrome), Android
+> (NDK+emulator), and iOS (macOS-CI) gate ENVIRONMENTS. Reproducing an
+> environment is not running a gate in it, and the two legs differ:
+> **Android is wired** (through `cli_run.rs`), while **the GPU leg
+> (`gfx_wgpu_render_gate.sh`) and the browser-WebGPU leg
+> (`browser_webgpu_clear.sh`) are invoked by nothing** — not `gate.sh`, not CI,
+> not another script. `scripts/browser_compute_parity.sh` is reachable but
+> opt-in: it exits 0 with "skipping" unless `BROWSER_PARITY=1`, so the browser
+> leg of interp/native parity is asserted by no automated run. Verified by
+> searching for callers, which is the only way this kind of claim can be
+> checked.
 
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
 `codegen` feature via the tree-walking interpreter (`interp.rs`). The native
@@ -196,7 +207,12 @@ compiler; `axon build foo.ax` emits a native binary. **Do not enable
 `codegen` + `serde-json` together** until the AST derives are decoupled — that
 combo reintroduces the stall. `axon parse`/`lsp` (JSON) opt in with
 `--features serde-json` (interpreter build, no codegen). Add `--features
-asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
+asi-runtime` to enable live `ai_complete`/`ai_extract_*` — **a feature NOTHING
+in `scripts/` or `.github/workflows/` compiles**, so the compiler-side AI
+integration (`main.rs` `cmd_intent_compile`, `interp.rs`'s live path) is
+`cfg`-ed out of every gated and CI build and its only automated coverage is
+`axon-ai`'s own unit tests. The AI integration that IS built and gated is
+`axon-cortex`'s `ai` feature (`gate.sh`). Used by
 `examples/asi/*` and `axon goal`).
 
 ### Interpreter env vars
