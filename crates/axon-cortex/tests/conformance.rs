@@ -263,13 +263,17 @@ fn cxg_g03_forgery_refuses_without_side_effect() {
         r.authorize_action(&patch_at("broken.ax"), Some(&valid), "repair-agent", &snap2),
         Err(Refusal::StaleSnapshot { .. })
     ));
-    std::fs::write(ws.join("broken.ax"), &before).unwrap();
-
+    // THE SIDE-EFFECT CHECK, taken against the state each refusal actually
+    // saw. It used to run after the line below, which writes `before` back —
+    // so it compared the file with itself and held whatever the refusals had
+    // done. The headline claim of this test ("refusing after writing is not
+    // refusing") was asserted by a comparison whose outcome was forced.
     assert_eq!(
         std::fs::read_to_string(ws.join("broken.ax")).unwrap(),
-        before,
-        "a refused action must leave the workspace byte-identical"
+        "fn main() { println(\"moved on\") }\n",
+        "a refused action must not have touched the workspace it was refused over"
     );
+    std::fs::write(ws.join("broken.ax"), &before).unwrap();
     assert_eq!(r.episode.denials().len(), 3, "and each refusal is recorded");
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -2153,10 +2157,35 @@ fn cxg_c25_a_snapshot_cannot_name_two_different_states() {
     );
     assert!(a.files[0].1.contains("absent"), "{:?}", a.files);
 
-    // The SCOPE is covered by the digest. Same files (both absent), different
-    // scope — the digests must differ.
+    // The SCOPE is covered by the digest.
+    //
+    // The comparison has to hold the FILE LIST fixed, or it proves nothing: an
+    // earlier version compared a one-path scope against a two-path scope,
+    // whose file lists already differ, so it passed with the scope component
+    // of the digest deleted. Here both snapshots list exactly `ghost_a.ax` as
+    // absent; only the declared scope differs.
     let wide = r.snapshot(&["ghost_a.ax", "ghost_b.ax"]).unwrap();
-    assert_ne!(a.digest(), wide.digest(), "the scope must be attested");
+    // Hold EVERYTHING else fixed — the file list and the parent link. The
+    // first attempt held only the files, so the two still differed in their
+    // parent, and the assertion passed through that instead: it survived
+    // deleting the scope from the digest. One variable at a time, or the
+    // control is not a control.
+    let mut same_files = wide.clone();
+    same_files.files = a.files.clone();
+    same_files.parent_snapshot_id = a.parent_snapshot_id.clone();
+    assert_eq!(
+        same_files.files, a.files,
+        "the two must agree on files, so only the scope can explain a difference"
+    );
+    assert_ne!(
+        a.observation_scope, same_files.observation_scope,
+        "and they must genuinely differ in scope"
+    );
+    assert_ne!(
+        a.digest(),
+        same_files.digest(),
+        "the scope must be attested: it decides what the episode may reason about"
+    );
 
     // The PARENT is covered. Rewriting the chain must not leave every
     // recorded digest still validating.
@@ -2176,5 +2205,132 @@ fn cxg_c25_a_snapshot_cannot_name_two_different_states() {
         wide.digest(),
         reordered.digest(),
         "order must not change identity"
+    );
+}
+
+/// C27 — the verdict comes from the test that was NAMED.
+///
+/// `--filter` is a substring match, so asking for `hidden_x` also runs
+/// `hidden_x_edge`. "Nothing in the filtered set failed" and "the test I named
+/// passed" are therefore different questions, and reading the first as the
+/// second grades a repair against a test nobody named — measured once as exit
+/// 0 with zero bytes written.
+///
+/// Nothing exercised the distinction: every other fixture's adjudicator name
+/// is a substring of no other test, so both readings agreed everywhere. This
+/// is the case where they differ — the named check passes while its sibling
+/// fails.
+#[test]
+fn cxg_c27_a_sibling_check_does_not_cast_the_verdict() {
+    let ws = std::env::temp_dir().join(format!("cortex_sibling_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/sibling_check.ax"),
+        ws.join("sibling_check.ax"),
+    )
+    .unwrap();
+    let mut r = Runner::new(axon_bin(), &ws);
+
+    // Precondition, asserted rather than assumed: the filter really does pull
+    // in both, and they really do disagree. Without this the row silently
+    // becomes a duplicate of every other verify test.
+    let (failing, passing) = r.check_outcomes("sibling_check.ax", "").unwrap();
+    assert!(
+        passing.contains(&"hidden_x".to_string()) && failing.contains(&"hidden_x_edge".to_string()),
+        "the fixture must have a PASSING named check and a FAILING sibling: \
+         failing={failing:?} passing={passing:?}"
+    );
+
+    // The named check passed, so the verdict is true — even though a test the
+    // filter also selected did not. Read the old way, this is false, and a
+    // correct repair would be reported as unverified forever.
+    assert!(
+        r.verify(true, "hidden_x", "sibling_check.ax"),
+        "the verdict must come from `hidden_x`, not from everything the filter \
+         happened to select"
+    );
+
+    // And the converse still holds: the named check FAILING is a failure, no
+    // matter what its siblings did.
+    let mut r2 = Runner::new(axon_bin(), &ws);
+    assert!(
+        !r2.verify(true, "hidden_x_edge", "sibling_check.ax"),
+        "a failing named check must fail, whatever else passed"
+    );
+}
+
+/// C28 — the adjudicator passing is not the file being repaired.
+///
+/// A run can satisfy its adjudicator, break nothing, and still leave the file
+/// failing checks that were ALREADY failing. Measured with a deliberately
+/// wrong generator, that shape produced 4 false successes in 68 runs — each a
+/// patch to the wrong function that the single hidden check happened to
+/// accept.
+///
+/// The rule that closed it — verified means NO check in the file is failing —
+/// had no test at all, nor did exit 27, the regression attribution, or the
+/// patch-is-kept branch.
+#[test]
+fn cxg_c28_a_repair_that_leaves_the_file_failing_is_not_verified() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::LiteralGenerator;
+    use axon_cortex::runner::EpisodeOutcome;
+
+    let ws = std::env::temp_dir().join(format!("cortex_prefail_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/pre_existing_failure.ax"),
+        ws.join("pre_existing_failure.ax"),
+    )
+    .unwrap();
+    let mut r = Runner::new(axon_bin(), &ws);
+    let snap = r.snapshot(&["pre_existing_failure.ax"]).unwrap();
+    let grant = EditGrant {
+        grant_id: "g".into(),
+        principal: "agent".into(),
+        snapshot_id: snap.snapshot_id,
+        write_prefixes: vec!["pre_existing_failure.ax".into()],
+    };
+
+    // The fixture has TWO independent defects, so repairing the target cannot
+    // make the file clean. Asserted, because if it ever became repairable in
+    // one edit this row would quietly become a plain success test.
+    let (failing, _) = r.check_outcomes("pre_existing_failure.ax", "").unwrap();
+    assert!(
+        failing.contains(&"visible_other".to_string()),
+        "the fixture must carry a failure the run is not asked about: {failing:?}"
+    );
+
+    let out = r.run_episode(
+        &SymbolRef {
+            path: "pre_existing_failure.ax".into(),
+            symbol: "target".into(),
+        },
+        Some(&grant),
+        "agent",
+        "hidden_target",
+        8,
+        Some(&LiteralGenerator::new("\n    n * 2\n")),
+    );
+    match &out {
+        EpisodeOutcome::AdjudicatedNotClean { still_failing, .. } => assert_eq!(
+            still_failing,
+            &vec!["visible_other".to_string()],
+            "the outcome must name what is still failing"
+        ),
+        other => {
+            panic!("an adjudicated-but-unclean file is neither verified nor futile, got {other:?}")
+        }
+    }
+    // NOT verified.
+    assert!(!matches!(out, EpisodeOutcome::VerifiedDone { .. }));
+    // And the repair is KEPT: it did what it was asked, and discarding it
+    // would throw away work that succeeded on the only question posed.
+    let after = std::fs::read_to_string(ws.join("pre_existing_failure.ax")).unwrap();
+    assert!(
+        after.contains("n * 2"),
+        "the patch must survive: it satisfied the adjudicator and broke nothing\n{after}"
     );
 }

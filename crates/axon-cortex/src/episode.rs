@@ -92,7 +92,13 @@ impl Episode {
     /// are a different episode, because "checked then patched" and "patched
     /// then checked" are different claims about what was verified.
     pub fn digest(&self) -> Result<String, ContractError> {
-        let body = crate::to_canonical_json(&self.events)?;
+        // The ID is covered. It is documented as "identity of the whole
+        // episode" and hashed only the events, so the one field that could
+        // distinguish two runs was outside the thing that attests them — and
+        // every Runner was constructed with the same constant id besides, so
+        // two repairs of different files with coincidentally identical event
+        // sequences were indistinguishable by both.
+        let body = crate::to_canonical_json(&(&self.episode_id, &self.events))?;
         Ok(content_digest(body.as_bytes()))
     }
 

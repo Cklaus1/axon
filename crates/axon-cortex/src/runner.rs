@@ -585,6 +585,16 @@ impl Runner {
         // would spin until the budget ran out — reporting "out of budget" for
         // what is really "going in circles".
         let mut seen: Vec<(String, String, usize)> = Vec::new();
+        // The episode NAMES this run. Every Runner was built with the same
+        // constant, so the id could not tell two repairs apart — which is what
+        // an id is for. Derived from the target and the adjudicator, so it is
+        // deterministic (a replay of the same request produces the same id)
+        // and distinguishing (a different target or a different grader does
+        // not).
+        self.episode.episode_id = format!(
+            "cortex-repair:{}:{}:{}",
+            target.path, target.symbol, hidden_check
+        );
         let mut ctx = crate::select::SelectionContext::default();
         // Attempts that did not stick, and the body most recently applied.
         // Carried across steps so the generator is not asked the same question

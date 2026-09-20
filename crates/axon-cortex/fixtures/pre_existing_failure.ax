@@ -1,0 +1,38 @@
+// Two INDEPENDENT defects. Repairing one cannot make the file clean.
+//
+// `target` is what a run is asked to fix, and `hidden_target` adjudicates it.
+// `unrelated` is broken too, and `visible_other` fails because of it — before
+// the run starts, and still afterwards. The run neither caused that failure
+// nor was asked about it.
+//
+// This is the shape that produced 4 false successes in 68 adversarial runs:
+// the adjudicator passes while the file still fails. It must not be exit 0,
+// it must not be reported as the generator going in circles, and the repair
+// must be KEPT.
+fn target(n: i64) -> i64 {
+    n + 2
+}
+
+fn unrelated(n: i64) -> i64 {
+    n + 99
+}
+
+@[test]
+fn visible_target() {
+    assert_eq(target(5), 10)
+}
+
+@[test]
+fn visible_other() {
+    assert_eq(unrelated(1), 2)
+}
+
+@[test]
+fn hidden_target() {
+    assert_eq(target(7), 14)
+    assert_eq(target(0), 0)
+}
+
+fn main() {
+    println(to_str(target(21)))
+}

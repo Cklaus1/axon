@@ -1,0 +1,26 @@
+// Two checks whose names share a prefix.
+//
+// `axon test --filter hidden_x` matches BOTH `hidden_x` and `hidden_x_edge`,
+// because the filter is a substring match. So "nothing in the filtered set
+// failed" and "the test I named passed" are different questions, and a verdict
+// read the first way is graded by a test nobody named.
+//
+// Here the named adjudicator PASSES and its sibling FAILS — the case where the
+// two answers differ.
+fn subject(n: i64) -> i64 {
+    n * 2
+}
+
+@[test]
+fn hidden_x() {
+    assert_eq(subject(5), 10)
+}
+
+@[test]
+fn hidden_x_edge() {
+    assert_eq(subject(1), 99)
+}
+
+fn main() {
+    println(to_str(subject(21)))
+}

@@ -110,9 +110,24 @@ fn main() {
         );
     }
 
+    // BOUNDED. An authority request is a handful of short fields; reading an
+    // arbitrarily large one buffers it whole, and the failure mode is an
+    // allocation abort — a non-2 exit with no decision and no message, which
+    // is the one outcome this program is built to never produce.
+    const MAX_REQUEST: u64 = 1 << 20;
     let mut body = String::new();
-    if std::io::stdin().read_to_string(&mut body).is_err() {
+    if std::io::stdin()
+        .take(MAX_REQUEST + 1)
+        .read_to_string(&mut body)
+        .is_err()
+    {
         fail("could not read the request");
+    }
+    if body.len() as u64 > MAX_REQUEST {
+        fail(&format!(
+            "request is larger than {MAX_REQUEST} bytes; an authority request \
+             is a handful of short fields and nothing was decided"
+        ));
     }
     // STRICTLY. This is the only place untrusted JSON enters the system, and
     // `parse_strict` exists for exactly it — yet it had no production caller
@@ -187,6 +202,12 @@ fn main() {
     // finally being answerable.
     let symbol = req["symbol"].as_str();
     let typed = match action {
+        // A read needs no symbol to be coherent, and that asymmetry with
+        // `patch_symbol_body` is deliberate: an EDIT that does not name what
+        // it edits cannot be authorised, while inspecting or checking a path
+        // is a complete request on its own. A review suggested requiring one
+        // everywhere; the suite said otherwise, in a test whose comment states
+        // the contrast in as many words. The tests were right.
         "inspect" => Ok(CortexAction::Inspect {
             target: SymbolRef {
                 path: target.to_string(),
@@ -217,6 +238,11 @@ fn main() {
                     path: target.to_string(),
                     symbol: s.to_string(),
                 },
+                // The body does not enter the authority decision — Cortex
+                // checks the principal, the grant's state and the path, none
+                // of which depend on what is being written. Refusing for its
+                // absence would answer a question nobody asked. What the
+                // decision DOES cover is stated in `basis`.
                 proposed_body: req["proposed_body"].as_str().unwrap_or("").to_string(),
             }),
             _ => Err(Refusal::NotInCatalog(
