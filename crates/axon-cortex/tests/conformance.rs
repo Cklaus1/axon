@@ -2117,3 +2117,64 @@ fn cxg_c15_the_spectrum_is_read_from_the_machine_readable_contract() {
         "an unrunnable checker must not report as nothing-failing"
     );
 }
+
+/// C25 — a snapshot identifies the state it is presented as identifying.
+///
+/// Two defects in the evidence layer, both of which let two genuinely
+/// different workspaces produce the same recorded identity:
+///
+/// * a file in scope that does not EXIST was skipped silently, so a scope of
+///   `["a.ax"]` with `a.ax` deleted hashed identically to `["b.ax"]` with
+///   `b.ax` deleted, and to an empty scope. A grant pinned to one was accepted
+///   as current in the other, so `StaleSnapshot` could not fire between them;
+/// * the digest covered only the file list, so the observation SCOPE — which
+///   decides what the episode is entitled to reason about — and the PARENT
+///   link, which makes a chain of states auditable rather than a set of
+///   orphans, were both outside the thing that attests them.
+#[test]
+fn cxg_c25_a_snapshot_cannot_name_two_different_states() {
+    let (_, ws) = stage("snap_identity");
+    let mut r = Runner::new(axon_bin(), &ws);
+
+    // Two scopes, each naming a DIFFERENT file that is not there.
+    let a = r.snapshot(&["ghost_a.ax"]).unwrap();
+    let b = r.snapshot(&["ghost_b.ax"]).unwrap();
+    assert_ne!(
+        a.snapshot_id, b.snapshot_id,
+        "two different states must not share an id"
+    );
+    // And the absence is RECORDED rather than omitted: an empty file list is
+    // what a workspace that never contained the file looks like.
+    assert_eq!(
+        a.files.len(),
+        1,
+        "the absent path must appear: {:?}",
+        a.files
+    );
+    assert!(a.files[0].1.contains("absent"), "{:?}", a.files);
+
+    // The SCOPE is covered by the digest. Same files (both absent), different
+    // scope — the digests must differ.
+    let wide = r.snapshot(&["ghost_a.ax", "ghost_b.ax"]).unwrap();
+    assert_ne!(a.digest(), wide.digest(), "the scope must be attested");
+
+    // The PARENT is covered. Rewriting the chain must not leave every
+    // recorded digest still validating.
+    let mut forged = a.clone();
+    forged.parent_snapshot_id = Some("a-parent-that-never-was".to_string());
+    assert_ne!(
+        a.digest(),
+        forged.digest(),
+        "the parent link must be attested, or the chain has no integrity"
+    );
+
+    // The control: the digest still names the SET, not the order.
+    let mut reordered = wide.clone();
+    reordered.observation_scope.reverse();
+    reordered.files.reverse();
+    assert_eq!(
+        wide.digest(),
+        reordered.digest(),
+        "order must not change identity"
+    );
+}

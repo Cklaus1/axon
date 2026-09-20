@@ -153,25 +153,112 @@ fn a_broken_request_fails_without_deciding() {
     // Exit 2 with NO decision on stdout. A malformed request means nothing was
     // decided; printing a refusal would report a broken adapter as strict
     // policy, and the caller could not tell the two apart.
-    for (args, body, why) in [
+    //
+    // Every case below supplies BOTH required flags. Without them the run
+    // exits 2 at the missing-flag gate, which is before stdin is read, before
+    // the JSON is parsed and before the version is checked — so the earlier
+    // version of this test reached none of the paths it named, and passed
+    // with the version check and the malformed-JSON arm deleted.
+    let ok_flags = vec!["--principal", "agent", "--grant-snapshot", "s1"];
+    for (body, why, expect) in [
         (
-            vec!["--principal", "agent"],
             r#"{"protocol_version":99,"action":"inspect","principal":"a","target_path":"x","snapshot_id":"s"}"#,
             "protocol version mismatch",
+            "protocol version",
         ),
+        ("not json", "malformed request", "malformed request"),
         (
-            vec!["--principal", "agent"],
-            "not json",
+            // DUPLICATE KEYS. `serde_json` resolves these last-wins, so the
+            // request a human reads and the request the machine decides on are
+            // different documents. Measured before this was refused: with
+            // `intruder` and a traversal path FIRST and benign values last,
+            // the adapter answered `allow`.
+            r#"{"protocol_version":1,"action":"patch_symbol_body","symbol":"f","principal":"intruder","principal":"agent","target_path":"../../etc/shadow","target_path":"ok.ax","snapshot_id":"s1"}"#,
+            "duplicate keys are ambiguous, not last-wins",
             "malformed request",
         ),
     ] {
-        let (rc, out) = decide(&args, body);
+        let (rc, out) = decide(&ok_flags, body);
         assert_eq!(rc, 2, "{why}: expected exit 2, got {rc}: {out}");
         assert!(
             !out.contains(r#""decision""#),
             "{why}: a failure must not emit a decision: {out}"
         );
+        // The REASON, not merely the exit code — this file's header says each
+        // case is distinguished by why it failed, and asserting only the code
+        // is what let all of them fail for the same unrelated reason.
+        assert!(
+            out.contains(expect),
+            "{why}: must fail for its own reason, got: {out}"
+        );
     }
+}
+
+/// Every field of the grant is REQUIRED, including the third one.
+///
+/// The module doc enumerates this class for `--grant-snapshot` and
+/// `--write-prefix` and concludes "Both now fail closed". `--principal`, the
+/// third field of the same grant, still defaulted to `agent` — so a write
+/// could be authorised in the name of a principal no operator ever named, and
+/// the wrong-principal refusal was unreachable for anyone who guessed the
+/// default. Every existing test passed `--principal` explicitly, so nothing
+/// exercised it.
+#[test]
+fn a_grant_with_no_principal_is_refused_not_defaulted() {
+    let body = r#"{"protocol_version":1,"action":"inspect","principal":"agent","target_path":"x","snapshot_id":"s1"}"#;
+    let (rc, out) = decide(&["--grant-snapshot", "s1"], body);
+    assert_eq!(rc, 2, "a missing principal must fail closed: {out}");
+    assert!(
+        out.contains("--principal is required"),
+        "and say which flag: {out}"
+    );
+    assert!(
+        !out.contains(r#""decision""#),
+        "nothing was decided, so nothing may be reported: {out}"
+    );
+}
+
+/// An `allow` says WHAT WAS CHECKED.
+///
+/// Cortex returns Ok immediately for any action needing no write authority —
+/// before the principal, staleness, traversal and policy-file checks. So an
+/// `inspect` naming a principal the grant does not belong to, a snapshot that
+/// never existed and a `..` path produced the same bytes as a granted write.
+/// "The grant authorised this" and "no authority question was asked" were one
+/// token.
+#[test]
+fn an_allow_distinguishes_granted_from_unchecked() {
+    let flags = vec![
+        "--principal",
+        "agent",
+        "--grant-snapshot",
+        "s1",
+        "--write-prefix",
+        "ok.ax",
+    ];
+
+    let (rc, out) = decide(
+        &flags,
+        r#"{"protocol_version":1,"action":"inspect","principal":"nobody-at-all","target_path":"../../../../etc/shadow","snapshot_id":"never-existed"}"#,
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains(r#""decision":"allow""#), "{out}");
+    assert!(
+        out.contains("no write authority required") && out.contains("NOT evaluated"),
+        "an unchecked allow must say so: {out}"
+    );
+
+    // And a real grant check says the opposite, so the two are never confused.
+    let (rc2, out2) = decide(
+        &flags,
+        r#"{"protocol_version":1,"action":"patch_symbol_body","symbol":"f","principal":"agent","target_path":"ok.ax","snapshot_id":"s1"}"#,
+    );
+    assert_eq!(rc2, 0, "{out2}");
+    assert!(
+        out2.contains(r#""decision":"allow""#) && out2.contains("granted"),
+        "a granted write must be distinguishable from an unchecked one: {out2}"
+    );
+    assert!(!out2.contains("NOT evaluated"), "{out2}");
 }
 
 /// Stdout ONLY, kept separate from stderr on purpose.

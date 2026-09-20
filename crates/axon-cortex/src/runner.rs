@@ -244,6 +244,22 @@ impl Runner {
             if p.is_file() {
                 let bytes = std::fs::read(&p)?;
                 files.push(((*rel).to_string(), content_digest(&bytes)));
+            } else {
+                // AN ABSENT FILE IS RECORDED AS ABSENT, not omitted.
+                //
+                // Skipping it silently made two different workspaces share an
+                // id: a scope of ["a.ax"] with `a.ax` deleted produced exactly
+                // the same empty file list — and therefore the same
+                // snapshot_id — as a scope of ["b.ax"] with `b.ax` deleted, or
+                // as an empty scope. A grant pinned to the first state was
+                // accepted as current in the second, so `StaleSnapshot` could
+                // not fire between two genuinely different states.
+                //
+                // It also meant deleting the file under repair moved nothing
+                // in the recorded evidence. That is this crate's first rule —
+                // an absence must not render as a present fact — broken in the
+                // function that computes the evidence.
+                files.push(((*rel).to_string(), "<absent>".to_string()));
             }
         }
         files.sort();

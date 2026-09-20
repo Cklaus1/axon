@@ -149,7 +149,7 @@ def failing_tests(path):
     """
     import json as _json
     _, t = run([AXON, "test", path, "--json"])
-    out = []
+    out, saw_summary = [], False
     for line in t.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -158,6 +158,22 @@ def failing_tests(path):
             v = _json.loads(line)
         except ValueError:
             continue
+        if v.get("type") == "summary":
+            saw_summary = True
+            continue
         if v.get("status") == "failed" and "name" in v:
             out.append(v["name"])
+    if not saw_summary:
+        # THE RUN DID NOT COMPLETE, which is not "nothing failed".
+        #
+        # `axon test` exits before emitting any JSON when the file does not
+        # type-check, and a crash truncates the stream. Returning [] made
+        # `file_clean = not failing_tests(p)` report a file nobody could check
+        # as a CLEAN one — and that field is the independent evidence behind
+        # every "0 false successes" in the results.
+        #
+        # The Rust side had this same collapse and a comment forbidding it;
+        # the harness twin did not, which is the more dangerous half: a
+        # measurement that fails open reports the system as better than it is.
+        return ["<RUN DID NOT COMPLETE>"]
     return out

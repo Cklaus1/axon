@@ -187,21 +187,30 @@ fn reachable(src: &str, start: &str, defined: &[String]) -> Vec<String> {
 
 /// How far a call chain is followed from a check.
 ///
-/// Four, measured rather than guessed. Ablated on the real corpus (one defect
-/// injected per function across `examples/**.ax`, 80 trials):
+/// Four, and the honest reason is narrower than the first version of this
+/// comment claimed.
 ///
-/// | depth | top-1 | top-3 | truth absent from the ranking |
+/// Ablated on the corpus in `benchmarks/` — one defect injected per function
+/// across `examples/**.ax`, five defect classes, 111 trials per depth:
+///
+/// | depth | top-1 (sole candidate) | top-3 | truth absent from the ranking |
 /// |---|---|---|---|
-/// | 1 (direct calls only) | 51.2% | 73.8% | 20.0% |
-/// | 2 | 58.8% | 88.8% | 5.0% |
-/// | 4 | 57.5% | 90.0% | 3.8% |
-/// | 8 | 57.5% | 90.0% | 3.8% |
+/// | 1 (direct calls only) | — | 80.6% | 2.8% |
+/// | 2 | 33.3% | 90.1% | 0.9% |
+/// | 4 | 31.5% | 89.2% | **0.0%** |
 ///
-/// Following calls at all is worth 16 points of top-3 recall and takes "the
-/// broken function was not even a candidate" from one trial in five to one in
-/// twenty-six. Past 4 the numbers stop moving: the graph is cyclic and a
-/// function that far from the failing check is reached by everything else too,
-/// so it adds candidates without adding discrimination.
+/// (The depth-1 row is from a 36-trial subset; the others are the full corpus.)
+///
+/// Following calls at all is worth about ten points of top-3 recall, and that
+/// much the evidence states plainly. Beyond that it does NOT: depth 2 and
+/// depth 4 differ by a single trial in each direction, which is noise, and an
+/// earlier version of this table read those differences as a result. It also
+/// quoted a measurement the benchmark README had since withdrawn.
+///
+/// Four is kept for the one thing that does separate them: it is the smallest
+/// depth at which the broken function was never ABSENT from the ranking. A
+/// candidate that is never listed cannot be tried; one ranked slightly lower
+/// still can.
 const MAX_CALL_DEPTH: usize = 4;
 
 /// (see [`rank`])

@@ -112,7 +112,31 @@ impl WorkspaceSnapshot {
             .map(|(p, d)| format!("{p}\u{0}{d}"))
             .collect::<Vec<_>>()
             .join("\u{1}");
-        content_digest(canon.as_bytes())
+        // The SCOPE and the PARENT are covered too.
+        //
+        // Hashing `files` alone left this unable to witness most of what it is
+        // presented as identifying. `observation_scope` decides what the
+        // episode is entitled to reason about — its own doc says an episode
+        // reasoning beyond it "is reasoning about things it never observed" —
+        // and two snapshots over different scopes hashed identically whenever
+        // the extra paths happened to be absent. `parent_snapshot_id` is what
+        // makes a chain of states auditable rather than a set of orphans, and
+        // it could be rewritten to any value with every recorded digest still
+        // validating.
+        //
+        // The scope is sorted so the digest names the SET, not the order the
+        // caller happened to pass — the same property the file list already
+        // had.
+        let mut scope = self.observation_scope.clone();
+        scope.sort();
+        content_digest(
+            format!(
+                "{canon}\u{2}{}\u{2}{}",
+                scope.join("\u{1}"),
+                self.parent_snapshot_id.as_deref().unwrap_or("<root>")
+            )
+            .as_bytes(),
+        )
     }
 }
 

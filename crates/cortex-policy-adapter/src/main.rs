@@ -56,7 +56,13 @@ fn fail(reason: &str) -> ! {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let mut principal = "agent".to_string();
+    // No default. The module doc two screens up enumerates this exact class of
+    // bug for the other two grant fields and concludes "Both now fail closed";
+    // the THIRD field of the same grant still defaulted to `agent`, so a write
+    // could be authorised in the name of a principal no operator ever named.
+    // `Refusal::WrongPrincipal` was unreachable for any client that guessed
+    // the default.
+    let mut principal = String::new();
     let mut grant_snapshot = String::new();
     let mut write_prefixes: Vec<String> = Vec::new();
     while let Some(a) = args.next() {
@@ -88,6 +94,14 @@ fn main() {
     // `fail` exits non-zero with no decision on stdout, so the client records an infrastructure
     // failure rather than an allow or a refuse. A refusal here would misreport a misconfigured
     // adapter as a strict policy.
+    if principal.trim().is_empty() {
+        fail(
+            "--principal is required: a grant belongs to somebody, and defaulting \
+             that to a well-known name makes the wrong-principal refusal \
+             unreachable for anyone who guesses it.",
+        );
+    }
+
     if grant_snapshot.trim().is_empty() {
         fail(
             "--grant-snapshot is required: the state the grant was issued over must be supplied \
@@ -100,7 +114,23 @@ fn main() {
     if std::io::stdin().read_to_string(&mut body).is_err() {
         fail("could not read the request");
     }
-    let req: serde_json::Value = match serde_json::from_str(body.trim()) {
+    // STRICTLY. This is the only place untrusted JSON enters the system, and
+    // `parse_strict` exists for exactly it — yet it had no production caller
+    // and this line used `serde_json` directly.
+    //
+    // `serde_json` resolves a duplicate key by last-wins, so a request can be
+    // read one way by a human and decided another way by the machine.
+    // Measured, before this change:
+    //
+    //   {"principal":"intruder","principal":"agent",
+    //    "target_path":"../../etc/shadow","target_path":"ok.ax", …}
+    //     → {"decision":"allow"}
+    //
+    // A reviewer scanning that request sees `intruder` and a traversal path.
+    // The decision was made on `agent` and `ok.ax`. Ambiguous input must be
+    // refused, not silently resolved — and refused as an INFRASTRUCTURE
+    // failure (exit 2, no decision), because nothing was decided.
+    let req: serde_json::Value = match axon_cortex::parse_strict(body.trim()) {
         Ok(v) => v,
         Err(e) => fail(&format!("malformed request: {e}")),
     };
@@ -213,9 +243,27 @@ fn main() {
     let out = match decision {
         // Mapped to () above: this adapter DECIDES, it does not execute. That
         // boundary is the point — Cortex answers "may I?", the caller acts.
+        // WHAT WAS CHECKED, not merely the verdict.
+        //
+        // Cortex answers Ok immediately for any action that needs no write
+        // authority, BEFORE the principal, staleness, traversal and
+        // policy-file checks. So `inspect` with a principal the grant does not
+        // belong to, a snapshot that never existed, and a `..` path returned
+        // the same four bytes as a granted write — measured. "The grant
+        // authorised this" and "no authority question was asked" were the same
+        // token, which is this crate's own absent-vs-passed collapse sitting
+        // in its security boundary.
         Ok(()) => serde_json::json!({
             "protocol_version": PROTOCOL_VERSION,
             "decision": "allow",
+            "basis": if typed.as_ref().map(|a| a.requires_write_authority()).unwrap_or(false) {
+                "granted: the principal, the grant's state and the path were all checked"
+            } else {
+                "no write authority required: this action cannot modify the \
+                 workspace, so no grant was consulted and the principal, \
+                 snapshot and path in this request were NOT evaluated"
+            },
+            "action": typed.as_ref().map(|a| a.name()).unwrap_or("<unparsed>"),
         }),
         Err(refusal) => serde_json::json!({
             "protocol_version": PROTOCOL_VERSION,
