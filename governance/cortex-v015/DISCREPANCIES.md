@@ -559,3 +559,21 @@ guarantee is real for `std::env` reads and silently absent for the seam, and
 the seam is the better-behaved path (those reads are recorded and replayed).
 The gate is not wrong about what it checks; it is wrong about what it claims
 to cover, which is the same absent-vs-passed shape as everything else here.
+
+### Post-audit closures
+
+| id | status | how |
+|---|---|---|
+| D-002 residual | **CLOSED** | both ceilings added to `axon-rt`'s run-time refusal table; build-with-no-ceiling-then-run-under-one now exits 2. Mutation-verified, with an unconstrained-run control. |
+| D-009 | **SUBSUMED** by the above — it recorded the build-time/run-time gap as an owner decision; the audit showed it was broader than the guest case and the refusal mechanism already existed. |
+| D-010 | **CLOSED** | `AXON_AI_REPLAY` refused on native. Proven first: interp served from cache with no key; native ignored the cache and reached for the live API. |
+| D-011 | open | `AXON_PRINCIPAL` — native emits no `ai_call` records at all, so attribution is absent rather than wrong. Refusal is the wrong remedy here: the var does not CAUSE the gap, native simply has no AI audit trail. Needs the trail, not a refusal. |
+| D-012 | open | `AXON_SEED` and the three refusals on wasm — both prologue inits early-return on `target_is_wasm`, so a wasm artifact honours no seed and refuses nothing. Note this is the SAME early return that, left ungated in `axon-rt`, broke every wasm build (see commit `94c69b1`): emission is guarded, compilation was not. |
+| D-013 | open | the registry's literal scan cannot see a var read through the host seam; verified by inspection, see above. |
+
+**A note on what the refusals do and do not buy.** Native now refuses five
+controls it cannot honour. That makes the safety BOUNDARY equivalent across
+engines — neither engine performs an effect the interpreter would forbid — and
+it does not make the CAPABILITY equivalent. A natively built binary still
+cannot enforce an effect ceiling, record a journal, or replay an AI call. Every
+matrix row says `explicitly-refused`, not `enforced`, for exactly that reason.

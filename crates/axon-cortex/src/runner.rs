@@ -1432,7 +1432,7 @@ impl Runner {
         let normalized = target_path.trim_start_matches("./");
         if POLICY_FILES.iter().any(|p| target_path.ends_with(p))
             || POLICY_PREFIXES.iter().any(|p| normalized.starts_with(p))
-            || POLICY_PATHS.iter().any(|p| normalized == *p)
+            || POLICY_PATHS.contains(&normalized)
         {
             return Err(Refusal::PolicyFile(target_path.to_string()));
         }
