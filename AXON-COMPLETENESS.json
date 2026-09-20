@@ -759,7 +759,7 @@
     },
     {
       "area": "evidence",
-      "subsystem": "host journal record/replay across engines",
+      "subsystem": "interpreter-only env controls across engines",
       "implementation": "partial",
       "production_proof": "yes",
       "mutation": "yes",
@@ -775,7 +775,7 @@
         "wasm": "unknown",
         "guest": "unknown"
       },
-      "gap": "PROVEN, then CLOSED BY REFUSAL. A native binary ignored AXON_REPLAY entirely: measured on a one-write program, interp replay created NO file while the native binary printed the replayed output AND performed the write, exit 0 \u2014 an authoritative-looking transcript of a run that never happened, which replay_host_gate.sh's own header calls worse than no replay at all. Native now REFUSES under AXON_REPLAY and AXON_RECORD (exit 2); mutation-verified on the SIDE EFFECT, not the exit code. STILL OPEN: native does not IMPLEMENT the journal, it declines to run under one \u2014 the boundary is equivalent, the capability is not. wasm and guest UNASSESSED."
+      "gap": "PROVEN, then CLOSED BY REFUSAL \u2014 three controls, one list. AXON_REPLAY: interp replay created no file while native printed the replayed output AND performed the write, exit 0. AXON_RECORD: native records nothing, leaving an empty journal. AXON_AUDIT_LEDGER: interp wrote 2 entries for one write_file, native did not create the ledger file at all. All three now REFUSE natively (exit 2) via one list in __axon_rt_refuse_interp_only_env \u2014 adding a row is the whole cost of covering the next one. Mutation-verified on the SIDE EFFECT, with a control proving ordinary native runs still work. STILL OPEN: native does not IMPLEMENT any of the three. wasm and guest UNASSESSED."
     }
   ]
 }

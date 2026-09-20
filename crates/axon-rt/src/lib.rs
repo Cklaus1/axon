@@ -1993,7 +1993,7 @@ pub extern "C" fn __axon_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Refuse to run a native binary under `AXON_RECORD` or `AXON_REPLAY`.
+/// Refuse to run a native binary under an INTERPRETER-ONLY control.
 ///
 /// Neither variable is read anywhere in `codegen/` or in this crate's host
 /// paths, so a native binary silently ignores both. Measured on a program whose
@@ -2022,19 +2022,34 @@ pub extern "C" fn __axon_now_ms() -> i64 {
 /// apply. It is consistent with what this crate already does: it reads
 /// `AXON_CLOCK`, `AXON_AI_MOCK` and `AXON_MAX_DEPTH` at runtime today.
 #[no_mangle]
-pub extern "C" fn __axon_rt_refuse_replay() {
-    for var in ["AXON_REPLAY", "AXON_RECORD"] {
+pub extern "C" fn __axon_rt_refuse_interp_only_env() {
+    // One list, not three one-offs. Each of these is honoured by the
+    // interpreter and read nowhere in `codegen/` or this crate's host paths,
+    // so a native binary silently ignores it. Adding a row here is the whole
+    // cost of covering the next one.
+    for var in ["AXON_REPLAY", "AXON_RECORD", "AXON_AUDIT_LEDGER"] {
         if std::env::var_os(var).is_some() {
             eprintln!(
                 "axon: `{var}` is set, but this is a NATIVELY BUILT binary and \
                  the host journal is honoured by the interpreter only.\n  \
                  Refusing to run: continuing would {}.\n  \
                  Run the program with `axon run`, which implements the journal.",
-                if var == "AXON_REPLAY" {
-                    "perform the effects for real while looking like a replay"
-                } else {
-                    "record nothing, leaving an empty journal that reads as a run \
-                     which touched nothing"
+                match var {
+                    "AXON_REPLAY" => {
+                        "perform the effects for real while looking like a replay"
+                    }
+                    "AXON_RECORD" => {
+                        "record nothing, leaving an empty journal that reads as a \
+                         run which touched nothing"
+                    }
+                    // Measured: interp wrote 2 ledger entries for one
+                    // `write_file`; the native binary did not create the ledger
+                    // file at all.
+                    _ => {
+                        "perform capability-bearing operations while writing NO \
+                         audit entries — a ledger indistinguishable from a run \
+                         that did nothing"
+                    }
                 }
             );
             std::process::exit(2);

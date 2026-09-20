@@ -31545,7 +31545,7 @@ fn axon_seed_reaches_the_native_engine_and_absent_means_random() {
 /// The assertion is on the SIDE EFFECT, not on the exit code alone — an exit
 /// code can be right while the write still lands.
 #[test]
-fn a_native_binary_refuses_to_run_under_record_or_replay() {
+fn a_native_binary_refuses_interpreter_only_env_controls() {
     let dir = std::env::temp_dir().join(format!("axon_replay_native_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -31567,7 +31567,12 @@ fn a_native_binary_refuses_to_run_under_record_or_replay() {
     }
     let evidence = dir.join("evidence.txt");
 
-    for var in ["AXON_REPLAY", "AXON_RECORD"] {
+    // The whole interpreter-only list, not just the two that prompted it.
+    // `AXON_AUDIT_LEDGER` is the sharpest of the three: measured, the
+    // interpreter wrote 2 ledger entries for one `write_file` and the native
+    // binary did not create the ledger file at all — an audit trail
+    // indistinguishable from a run that did nothing.
+    for var in ["AXON_REPLAY", "AXON_RECORD", "AXON_AUDIT_LEDGER"] {
         let _ = std::fs::remove_file(&evidence);
         let out = Command::new(&bin)
             .current_dir(&dir)
@@ -31593,6 +31598,7 @@ fn a_native_binary_refuses_to_run_under_record_or_replay() {
         .current_dir(&dir)
         .env_remove("AXON_REPLAY")
         .env_remove("AXON_RECORD")
+        .env_remove("AXON_AUDIT_LEDGER")
         .output()
         .expect("run the native binary");
     assert!(

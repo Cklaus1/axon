@@ -997,7 +997,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Measured: a native binary under `AXON_REPLAY` printed the replayed
     /// output AND performed the write for real, exit 0 — indistinguishable
     /// from a correct replay.
-    pub(super) fn emit_replay_refusal_init(&mut self) {
+    pub(super) fn emit_interp_only_env_refusal_init(&mut self) {
         if self.target_is_wasm {
             return;
         }
@@ -1015,11 +1015,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let f = self
             .ir
             .module
-            .get_function("__axon_rt_refuse_replay")
+            .get_function("__axon_rt_refuse_interp_only_env")
             .unwrap_or_else(|| {
                 self.ir
                     .module
-                    .add_function("__axon_rt_refuse_replay", fn_ty, None)
+                    .add_function("__axon_rt_refuse_interp_only_env", fn_ty, None)
             });
         let _ = build_wrappers::w_call(&self.ir.builder, f, &[], "");
     }
