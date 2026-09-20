@@ -14,7 +14,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | type inference / checker | ✓ | ✓ | ? | ✓ |  |
 | interp/codegen parity | ✓ | ✓ | ~ | ✓ | 52 harnesses green; coverage is by construct, not exhaustive |
 | single-file diagnostics | ✓ | ✓ | ? | ✓ |  |
-| MULTI-FILE source identity | ✗ | ✗ | ✗ | ✗ | Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:15 reports as main.ax:6, in a 5-line file. Affects axon build/test, LSP, ast review. Design lane open. |
+| MULTI-FILE source identity | ✗ | ✗ | ✗ | ✗ | Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:14 reports as main.ax:6:112, in a 5-line file. scripts/diagnostic_location_gate.sh is RED on HEAD and NOT yet wired into gate.sh. Design landed: ~110 edits, and the HARM is removable first without touching Span, by making SourceMap::line_col refuse instead of clamp. |
 | import resolution determinism | ~ | ? | ✗ | ~ | load_use_decls searches AXON_PATH; the resolved path is not part of any digest, so the same source can mean different programs |
 
 ## authority

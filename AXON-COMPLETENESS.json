@@ -67,8 +67,10 @@
       "production_proof": "no",
       "mutation": "no",
       "docs": "no",
-      "evidence": [],
-      "gap": "Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:15 reports as main.ax:6, in a 5-line file. Affects axon build/test, LSP, ast review. Design lane open."
+      "evidence": [
+        "scripts/diagnostic_location_gate.sh"
+      ],
+      "gap": "Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:14 reports as main.ax:6:112, in a 5-line file. scripts/diagnostic_location_gate.sh is RED on HEAD and NOT yet wired into gate.sh. Design landed: ~110 edits, and the HARM is removable first without touching Span, by making SourceMap::line_col refuse instead of clamp."
     },
     {
       "area": "compiler",
