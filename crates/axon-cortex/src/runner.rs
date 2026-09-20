@@ -812,6 +812,61 @@ impl Runner {
         EpisodeOutcome::BudgetExhausted { steps: budget }
     }
 
+    /// Which checks in `rel_path` FAIL, excluding the one that adjudicates.
+    ///
+    /// `hidden` is excluded rather than filtered by the caller, because a
+    /// localization computed from the grader would make the repair target a
+    /// function of the answer — the loop would be aiming at whatever the
+    /// hidden check touches, and passing it would stop being evidence.
+    ///
+    /// An `Err` here is "the checks could not run", which is NOT "the checks
+    /// passed". The two collapse into one only if this returns an empty list
+    /// on failure, and an empty list is exactly what a caller reads as
+    /// "nothing is broken".
+    pub fn failing_checks(&self, rel_path: &str, hidden: &str) -> std::io::Result<Vec<String>> {
+        let out = std::process::Command::new(&self.axon_bin)
+            .arg("test")
+            .arg(self.workspace.join(rel_path))
+            .output()?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(text
+            .lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                // The per-test lines are `test NAME ... FAILED`; the summary
+                // line is `test result: FAILED. …` and also begins with
+                // "test ". Requiring the separator keeps the summary from
+                // being parsed as a check called "result: FAILED. 0 passed…",
+                // which then localizes to nothing and reads as a clean file.
+                let name = t.strip_prefix("test ")?.split(" ... ").next()?.trim();
+                (t.contains(" ... ") && t.contains("FAILED")).then(|| name.to_string())
+            })
+            .filter(|n| n != hidden)
+            .collect())
+    }
+
+    /// Localize the defect from the checks that fail, without being told.
+    pub fn locate_target(&self, rel_path: &str, hidden: &str) -> crate::locate::Localization {
+        let src = match std::fs::read_to_string(self.workspace.join(rel_path)) {
+            Ok(s) => s,
+            Err(e) => {
+                return crate::locate::Localization::Unknown {
+                    reason: format!("cannot read {rel_path}: {e}"),
+                }
+            }
+        };
+        match self.failing_checks(rel_path, hidden) {
+            Ok(failing) => crate::locate::localize(&src, &failing),
+            Err(e) => crate::locate::Localization::Unknown {
+                reason: format!("the checks could not be run: {e}"),
+            },
+        }
+    }
+
     /// Run ONE named check and report how many tests the name matched.
     ///
     /// `run_check` passes the name to the episode record but not to the

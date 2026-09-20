@@ -186,6 +186,112 @@ fn cli_a_malformed_request_decides_nothing() {
 }
 
 #[test]
+fn cli_localizes_its_own_target_and_refuses_to_guess() {
+    // `--symbol` asked the operator to do the interesting half: decide what is
+    // broken. Without it Cortex localizes from the failing checks — and the
+    // refusal rows matter more than the success one, because a wrong target
+    // fails every attempt without ever saying why.
+
+    // 1. One failing check naming one function: repaired without being told.
+    let ws = workspace("loc_ok");
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // It shows its working. A target arrived at silently cannot be told from a
+    // guess by anyone reading the log afterwards.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("localized `double`") && err.contains("visible_repro"),
+        "the localization must name the target AND its evidence: {err}"
+    );
+
+    // 2. Ambiguity is refused with its own exit code — not rounded into the
+    //    usage error above (the command line was fine) nor into an episode
+    //    outcome below (no episode ran).
+    let ws2 = std::env::temp_dir().join(format!("cortex_cli_amb_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws2);
+    std::fs::create_dir_all(&ws2).unwrap();
+    std::fs::write(
+        ws2.join("two.ax"),
+        "fn alpha(n: i64) -> i64 { n }\n\
+         fn beta(n: i64) -> i64 { n }\n\
+         @[test]\n\
+         fn t() { assert_eq(alpha(1) + beta(1), 4) }\n\
+         @[test]\n\
+         fn hidden() { assert_eq(alpha(1), 2) }\n\
+         fn main() { println(to_str(alpha(1))) }\n",
+    )
+    .unwrap();
+    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws2)
+        .args(["--file", "two.ax", "--check", "hidden", "--axon"])
+        .arg(axon_bin())
+        .args(["--write-prefix", "two.ax"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out2.status.code(),
+        Some(25),
+        "an ambiguous target must exit 25: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    let err2 = String::from_utf8_lossy(&out2.stderr);
+    assert!(
+        err2.contains("alpha") && err2.contains("beta"),
+        "the refusal must name the candidates it would not choose between: {err2}"
+    );
+
+    // 3. An explicit --symbol is an INSTRUCTION, not a hypothesis to
+    //    second-guess: the same ambiguous file repairs fine when told which.
+    //    Without this row, "refuses when ambiguous" is satisfied by a build
+    //    that refuses always.
+    let out3 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws2)
+        .args(["--file", "two.ax", "--symbol", "alpha", "--check", "hidden"])
+        .arg("--axon")
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "two.ax",
+            "--generator",
+            "literal:\n    n + 1\n",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out3.status.code(),
+        Some(0),
+        "being told the target must bypass localization: {}",
+        String::from_utf8_lossy(&out3.stderr)
+    );
+}
+
+#[test]
 fn cli_json_reports_the_outcome_and_the_evidence_behind_it() {
     let ws = workspace("json");
     let (code, text) = repair(

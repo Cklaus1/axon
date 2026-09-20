@@ -29,6 +29,7 @@ pub mod action;
 pub mod ai;
 pub mod episode;
 pub mod generate;
+pub mod locate;
 pub mod runner;
 pub mod select;
 

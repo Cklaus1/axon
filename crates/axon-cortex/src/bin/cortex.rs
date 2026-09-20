@@ -23,6 +23,7 @@
 //! | 22 | blocked | the environment is wrong — the checker could not run |
 //! | 23 | refused | authority is wrong — widen `--write-prefix`, deliberately |
 //! | 24 | needs input | no usable proposal — supply or fix `--generator` |
+//! | 25 | no target | the failing checks did not name one function — pass `--symbol` |
 //!
 //! Note what 0 means here: a hidden check the generator never saw accepted the
 //! result. It is not "the loop finished", and no other outcome is rounded up
@@ -32,11 +33,15 @@ use axon_cortex::action::SymbolRef;
 use axon_cortex::runner::{EditGrant, EpisodeOutcome, Runner};
 
 const USAGE: &str = "\
-cortex repair --file PATH --symbol NAME --check NAME [options]
+cortex repair --file PATH --check NAME [--symbol NAME] [options]
 
   --workspace DIR        directory to operate in (default: .)
   --file PATH            workspace-relative file holding the symbol
-  --symbol NAME          the function whose body may be replaced
+  --symbol NAME          the function whose body may be replaced. OPTIONAL:
+                         without it, Cortex localizes from the checks that
+                         fail. It refuses when the evidence names more than one
+                         candidate, because repairing the wrong function fails
+                         every attempt without ever saying why.
   --check NAME           the check that adjudicates the claim. It is never
                          shown to the generator: a result graded by something
                          the author could read is not evidence.
@@ -59,6 +64,16 @@ fn usage(msg: &str) -> ! {
     // and printing an outcome here would report a typo as a repair verdict.
     eprintln!("{msg}\n\n{USAGE}");
     std::process::exit(2)
+}
+
+/// Exit 25: no target could be established.
+///
+/// Its own code, separate from the usage error above and from every episode
+/// outcome below. The command line was fine and no episode ran, so reporting
+/// it as either would send an operator to fix the wrong thing.
+fn no_target(reason: &str) -> ! {
+    eprintln!("could not localize a repair target: {reason}");
+    std::process::exit(25)
 }
 
 fn main() {
@@ -110,11 +125,9 @@ fn main() {
             other => usage(&format!("unknown argument `{other}`")),
         }
     }
-    for (name, v) in [
-        ("--file", &file),
-        ("--symbol", &symbol),
-        ("--check", &check),
-    ] {
+    // --symbol is absent from this list on purpose: it is optional, and an
+    // absent one is localized below rather than rejected.
+    for (name, v) in [("--file", &file), ("--check", &check)] {
         if v.is_empty() {
             usage(&format!("{name} is required"));
         }
@@ -151,6 +164,43 @@ fn main() {
         };
 
     let mut runner = Runner::new(&axon_bin, &workspace);
+
+    // Localize only when not told. An explicit --symbol is an instruction, not
+    // a hypothesis to second-guess: the operator may know something the failing
+    // checks do not show.
+    if symbol.is_empty() {
+        use axon_cortex::locate::Localization;
+        match runner.locate_target(&file, &check) {
+            Localization::Single {
+                symbol: s,
+                evidence,
+            } => {
+                // Show the working. A target arrived at silently is
+                // indistinguishable from one that was guessed.
+                eprintln!(
+                    "localized `{s}` from failing check(s): {}",
+                    evidence.join(", ")
+                );
+                symbol = s;
+            }
+            Localization::Ambiguous { candidates, .. } => no_target(&format!(
+                "the failing checks implicate {} — pass --symbol to choose",
+                candidates.join(", ")
+            )),
+            Localization::NothingFailing => no_target(
+                "no check fails, so there is nothing to localize; pass --symbol \
+                 to attempt a repair anyway",
+            ),
+            Localization::NoCandidate { evidence } => no_target(&format!(
+                "check(s) {} fail but name no function defined in {file}; the \
+                 defect may be in a callee, a builtin, or the check itself",
+                evidence.join(", ")
+            )),
+            Localization::Unknown { reason } => no_target(&format!(
+                "the checks could not be run, so nothing was localized: {reason}"
+            )),
+        }
+    }
     let snap = match runner.snapshot(&[file.as_str()]) {
         Ok(s) => s,
         Err(e) => usage(&format!("cannot read {}/{file}: {e}", workspace.display())),

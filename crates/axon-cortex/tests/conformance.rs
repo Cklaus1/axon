@@ -1796,3 +1796,117 @@ fn cxg_c14_a_rejected_attempt_is_fed_back_without_leaking_the_grader() {
         "nothing may be written under a stale grant"
     );
 }
+
+/// C15 — Cortex finds the target itself, and refuses to guess when it cannot.
+///
+/// `--symbol` asked the operator to do the interesting half: decide what is
+/// broken. This does it from the only evidence available without a model —
+/// which checks fail, and which functions those checks call.
+///
+/// The refusal rows are the point. A wrong localization sends a generator to
+/// rewrite a working function; the hidden check refuses every attempt without
+/// saying why, and the episode burns its budget repairing the wrong thing and
+/// reports "no progress" — true, and useless.
+#[test]
+fn cxg_c15_localization_names_one_target_or_admits_it_cannot() {
+    use axon_cortex::locate::{localize, Localization};
+
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"),
+    )
+    .unwrap();
+
+    // One failing check calling exactly one defined function.
+    match localize(&src, &["visible_repro".to_string()]) {
+        Localization::Single { symbol, evidence } => {
+            assert_eq!(symbol, "double");
+            // The evidence travels with the conclusion so a caller can show
+            // its working rather than assert an answer.
+            assert_eq!(evidence, vec!["visible_repro".to_string()]);
+        }
+        other => panic!("one check naming one function must localize: {other:?}"),
+    }
+
+    // Nothing failing is NOT an absence of candidates. A caller that treated
+    // them alike would report a healthy file as unlocalizable.
+    assert_eq!(localize(&src, &[]), Localization::NothingFailing);
+
+    // Two functions implicated, no basis to choose: reported as ambiguous.
+    let two = "\
+fn alpha(n: i64) -> i64 { n }
+fn beta(n: i64) -> i64 { n }
+@[test]
+fn t() { assert_eq(alpha(1) + beta(1), 4) }
+";
+    match localize(two, &["t".to_string()]) {
+        Localization::Ambiguous { candidates, .. } => {
+            assert_eq!(candidates, vec!["alpha".to_string(), "beta".to_string()]);
+        }
+        other => panic!("two candidates must not be resolved by picking one: {other:?}"),
+    }
+
+    // A failing check that calls nothing defined here. Its own case, because
+    // the remedy differs from ambiguity — the defect may be in a callee, a
+    // builtin, or the check itself.
+    let none = "@[test]\nfn t() { assert_eq(1, 2) }\n";
+    match localize(none, &["t".to_string()]) {
+        Localization::NoCandidate { evidence } => assert_eq!(evidence, vec!["t".to_string()]),
+        other => panic!("no candidate is not ambiguity: {other:?}"),
+    }
+
+    // A check is not a candidate for its own repair. Without this every
+    // failing test localizes to itself — true, and no help at all.
+    let selfref = "@[test]\nfn t() { t() }\n";
+    assert!(matches!(
+        localize(selfref, &["t".to_string()]),
+        Localization::NoCandidate { .. }
+    ));
+
+    // A name that is a suffix of another must not match. `double(` appears
+    // inside `redouble(`, and a careless scan gains a candidate that the check
+    // never called — which is how a one-answer localization turns into a
+    // refusal for no reason.
+    let suffix = "\
+fn double(n: i64) -> i64 { n }
+fn redouble(n: i64) -> i64 { n }
+@[test]
+fn t() { assert_eq(redouble(1), 4) }
+";
+    match localize(suffix, &["t".to_string()]) {
+        Localization::Single { symbol, .. } => assert_eq!(symbol, "redouble"),
+        other => panic!("a suffix must not create a phantom candidate: {other:?}"),
+    }
+}
+
+/// C15b — localization runs against the real compiler, and never reads the
+/// grader.
+#[test]
+fn cxg_c15_the_hidden_check_is_not_evidence_for_the_target() {
+    use axon_cortex::locate::Localization;
+
+    let (_, ws) = stage("locate_live");
+    let r = Runner::new(axon_bin(), &ws);
+
+    // Both checks fail on the unrepaired fixture. The hidden one is excluded
+    // HERE rather than by the caller: a target localized from the grader is a
+    // target chosen by the answer, and passing that grader would stop being
+    // evidence of a repair.
+    let failing = r
+        .failing_checks("broken.ax", "hidden_completion")
+        .expect("checks run");
+    assert_eq!(failing, vec!["visible_repro".to_string()]);
+
+    match r.locate_target("broken.ax", "hidden_completion") {
+        Localization::Single { symbol, .. } => assert_eq!(symbol, "double"),
+        other => panic!("the live path must localize `double`: {other:?}"),
+    }
+
+    // A checker that cannot run is Unknown, not "nothing failing". Those
+    // collapse the moment an error is reported as an empty list, and an empty
+    // list is what a caller reads as a healthy file.
+    let broken_runner = Runner::new(ws.join("no-such-axon"), &ws);
+    assert!(matches!(
+        broken_runner.locate_target("broken.ax", "hidden_completion"),
+        Localization::Unknown { .. }
+    ));
+}
