@@ -136,7 +136,20 @@ pub enum ExecOutcome {
 /// `SymbolNotFound` rather than as an empty body, because an empty body is a
 /// real thing a function can have.
 fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
-    let needle = format!("fn {symbol}");
+    // The open paren is load-bearing. Without it `fn fib` matches `fn fib_rec`
+    // defined earlier in the file, and every caller of this function then
+    // operates on the WRONG body: Inspect reads it, the generator is shown it,
+    // and the patch overwrites it. Measured on the corpus: 5 collisions across
+    // 4 files (`fib`/`fib_rec`, `belief_map`/`belief_map_index`,
+    // `approx_eq`/`approx_eq_b`, …), so the selected function was unrepairable
+    // by construction and a working one took the damage.
+    //
+    // It also re-opened the grader-not-patchable guard, which compares the
+    // symbol by exact string while the write resolved by prefix.
+    //
+    // `locate.rs` already spelled its needle with the paren; the two modules
+    // disagreed about what "the body of X" means.
+    let needle = format!("fn {symbol}(");
     let at = src.find(&needle)?;
     let open = src[at..].find('{')? + at;
     let mut depth = 0usize;
@@ -561,6 +574,21 @@ impl Runner {
         // digest different from the one it recorded, and the next step is
         // refused as stale. The check goes from "anything moved" to "something
         // other than us moved", which is what it was for.
+        // Which checks PASSED before anything was touched.
+        //
+        // The adjudicator is necessary but not sufficient: it is one test, and
+        // a patch can satisfy it while breaking others. Measured with a
+        // deliberately wrong generator, 4 of 68 runs exited 0 with a file that
+        // still failed — every one of them a patch to the WRONG function that
+        // the single hidden check happened to accept.
+        //
+        // Captured once, at the start, because the question is whether THIS
+        // episode broke something that worked, not whether the file was
+        // perfect to begin with.
+        let baseline_passing: Vec<String> = self
+            .check_outcomes(&target.path, "")
+            .map(|(_, passing)| passing)
+            .unwrap_or_default();
         let mut effective: Option<EditGrant> = grant.cloned();
         let mut rejected: Vec<crate::generate::RejectedAttempt> = Vec::new();
         let mut last_applied: Option<String> = None;
@@ -747,7 +775,7 @@ impl Runner {
                 // is followed by another patch — the generator repeats itself,
                 // nothing changes, and the loop reports going in circles on a
                 // repair that had already worked.
-                ctx.last_check = None;
+                ctx.last_check = crate::select::VisibleCheck::NotRun;
             }
             // The bytes as they stand, kept only for the one action that can
             // damage them. A controller that can leave a workspace worse than
@@ -773,10 +801,32 @@ impl Runner {
                 passed, matched, ..
             } = &outcome
             {
-                // Zero matched is not a pass and not a failure: it is no
-                // answer. Recording it as `false` would send the loop to patch
-                // on the strength of a check that never ran.
-                ctx.last_check = (*matched > 0).then_some(*passed);
+                use crate::select::VisibleCheck;
+                // Zero matched is neither a pass nor a failure: it is no
+                // answer, and it needs its OWN state. Folding it into "not yet
+                // run" left the loop choosing the same action against an
+                // unchanged workspace until stuck-detection fired — the
+                // warned-file stall, still open for the 72.6% of symbols whose
+                // name matches no test.
+                ctx.last_check = match (*matched > 0, *passed) {
+                    (false, _) => VisibleCheck::NoSuchCheck,
+                    (true, true) => VisibleCheck::Passed,
+                    (true, false) => VisibleCheck::Failed,
+                };
+                // A failing check is also the moment the PREVIOUS patch is
+                // known not to have worked. Without this the check-driven
+                // patch path recorded no rejection at all, so the generator
+                // was asked the same question with an empty history every time
+                // and a deterministic one repeated itself until the budget ran
+                // out.
+                if ctx.last_check == VisibleCheck::Failed {
+                    if let Some(body) = last_applied.take() {
+                        rejected.push(crate::generate::RejectedAttempt {
+                            body,
+                            reason: crate::generate::RejectionReason::CheckRefused,
+                        });
+                    }
+                }
             }
 
             match &outcome {
@@ -890,7 +940,56 @@ impl Runner {
             if matches!(action, CortexAction::ClaimDone { .. }) {
                 let _ = outcome;
                 if self.verify(true, hidden_check, &target.path) {
-                    return EpisodeOutcome::VerifiedDone { steps: step };
+                    // The adjudicator accepted. That is a witness, not the
+                    // whole truth: it is ONE test, and a patch can satisfy it
+                    // while the file still fails others.
+                    //
+                    // Measured with a deliberately wrong generator, 4 of 68
+                    // runs exited 0 with a file that still failed — every one
+                    // a patch to the WRONG function that the single hidden
+                    // check happened to accept. A regression guard alone did
+                    // not close it: in the surviving case nothing REGRESSED,
+                    // the episode simply left failures it was there to fix.
+                    //
+                    // So the rule is the one an operator can act on: verified
+                    // means NO check in the file is failing. A file that still
+                    // fails checks has not been repaired, whatever the
+                    // adjudicator says about its own test.
+                    let still_failing: Vec<String> = self
+                        .check_outcomes(&target.path, "")
+                        .map(|(failing, _)| failing)
+                        .unwrap_or_default();
+                    if still_failing.is_empty() {
+                        return EpisodeOutcome::VerifiedDone { steps: step };
+                    }
+                    let regressed: Vec<&String> = still_failing
+                        .iter()
+                        .filter(|n| baseline_passing.contains(n))
+                        .collect();
+                    self.episode.push(EpisodeEvent::Verified {
+                        passed: false,
+                        detail: format!(
+                            "hidden check `{hidden_check}` passed, but {} check(s) \
+                             still fail ({}){}",
+                            still_failing.len(),
+                            still_failing.join(", "),
+                            if regressed.is_empty() {
+                                String::new()
+                            } else {
+                                // Worth naming separately: leaving a failure
+                                // alone and CREATING one are different
+                                // mistakes with different remedies.
+                                format!(
+                                    " — and this episode BROKE {} that passed before it",
+                                    regressed
+                                        .iter()
+                                        .map(|s| s.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
+                            }
+                        ),
+                    });
                 }
                 // The claim was refused. That is the signal the code compiles
                 // and is still wrong — the only state in which proposing a
@@ -1063,12 +1162,21 @@ impl Runner {
     /// The match count is returned rather than folded into the boolean because
     /// "nothing matched" and "everything that matched failed" are different
     /// facts. A filter matching nothing exits 0 and prints an `ok` summary.
-    pub fn run_hidden_check(&self, rel_path: &str, name: &str) -> std::io::Result<(bool, usize)> {
+    pub fn run_hidden_check(&self, rel_path: &str, name: &str) -> std::io::Result<Option<bool>> {
         let (failed, passed, _) = self.run_tests_json(rel_path, Some(name))?;
-        Ok((
-            verdict_for(name, &failed, &passed),
-            failed.len() + passed.len(),
-        ))
+        // `None` means NO TEST BY THAT NAME RAN — a different fact from "it
+        // ran and failed", and collapsing them is how a `--check` naming an
+        // ordinary function came to be treated as a failing adjudicator and
+        // allowed the run to proceed. The size of the filtered set is
+        // irrelevant here: a substring filter can run several tests, none of
+        // them the one named.
+        if passed.iter().any(|n| n == name) {
+            Ok(Some(true))
+        } else if failed.iter().any(|n| n == name) {
+            Ok(Some(false))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Side-effect-free twin of [`Runner::authorize_action`], for a caller that
@@ -1142,81 +1250,63 @@ impl Runner {
     /// is IGNORED for the verdict — it is recorded so a reviewer can see that a
     /// confident wrong claim was made and overruled.
     pub fn verify(&mut self, claimed_done: bool, hidden_check: &str, rel_path: &str) -> bool {
-        // `hidden_check` used to appear ONLY in the detail string: the command
-        // was `axon test <file>`, so every verification ran the whole file and
-        // then reported that a NAMED check had passed. The evidence asserted
-        // something the run never evaluated individually. Selecting it is what
-        // makes the name mean anything.
-        let out = std::process::Command::new(&self.axon_bin)
-            .arg("test")
-            .arg(self.workspace.join(rel_path))
-            .arg("--filter")
-            .arg(hidden_check)
-            .output();
-        // Three outcomes, not two. A check that could not RUN is not a check
-        // that failed, and neither is a pass — collapsing "unobserved" into
-        // either one is how an absent verification comes to read as a result.
-        // The VERDICT is fail-closed for both non-pass cases; only the recorded
-        // evidence distinguishes them, which is precisely who needs to know.
-        let (hidden_passed, outcome) = match out {
-            Ok(o) if o.status.success() => {
-                // Filtering introduces a hole that running the whole file did
-                // not have: `axon test --filter nope` matches nothing, runs
-                // zero tests and exits 0 — "test result: ok. 0 passed, 0
-                // failed". Taken at face value that is a hidden check reporting
-                // PASSED while never existing, which is worse than the
-                // mislabelling this change set out to fix.
-                //
-                // So a zero-test run is NOT a pass. It is the same
-                // "unobserved" outcome as a checker that could not start, and
-                // it is fail-closed for the same reason.
-                let text = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&o.stdout),
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                let ran = text
-                    .split("running ")
-                    .nth(1)
-                    .and_then(|r| r.split(' ').next())
-                    .and_then(|n| n.parse::<usize>().ok())
-                    // 0 is the FAIL-CLOSED default and the choice is
-                    // deliberate: if the count cannot be read, we have not
-                    // observed that the check ran, so it is treated as not
-                    // run. `unwrap_or(1)` would read an unparseable line as
-                    // "something ran" and let a pass through on output we did
-                    // not understand.
-                    //
-                    // A mutation to 1 SURVIVES the suite, and that is honest
-                    // rather than a gap: `axon test` always emits
-                    // "running N tests", so this default is unreachable today.
-                    // It is kept because the direction matters the moment that
-                    // output format changes — which is not a contract — and a
-                    // future reader must not "simplify" it to fail-open.
-                    .unwrap_or(0);
-                if ran == 0 {
-                    (
-                        false,
-                        format!(
-                            "DID NOT RUN: no test matched `{hidden_check}` in {rel_path} \
-                             (a filter that matches nothing exits 0 and is not a pass)"
-                        ),
+        // THE VERDICT COMES FROM THE NAMED TEST, and from nothing else.
+        //
+        // This used to read the exit status of `axon test --filter NAME` over
+        // the whole substring-matched set, which asks a different question
+        // from the pre-flight that decides whether the check can witness
+        // anything at all. The two disagreed exactly when `--check` named
+        // something that is not itself a test: the pre-flight saw no verdict
+        // for that name and let the run proceed, and this saw a filtered set
+        // in which everything passed and returned true.
+        //
+        // Measured: `--check helper` on a file with a passing `t_helper_ok`
+        // and a failing `t_main` exited 0 with `verified_done after 1 step`,
+        // having written zero bytes, with the defect untouched. That is the
+        // false success this whole module exists to prevent, reached through
+        // the one function that can grant it.
+        let (failed, passed, _) = match self.run_tests_json(rel_path, Some(hidden_check)) {
+            Ok(v) => v,
+            Err(e) => {
+                self.episode.push(EpisodeEvent::Verified {
+                    passed: false,
+                    detail: format!("hidden check `{hidden_check}` DID NOT RUN: {e}"),
+                });
+                return false;
+            }
+        };
+        let ran = failed.len() + passed.len();
+        let ok = claimed_done && verdict_for(hidden_check, &failed, &passed);
+        self.episode.push(EpisodeEvent::Verified {
+            passed: ok,
+            // `claim_done=` is carried in every case so a reviewer can see a
+            // claim WAS made and overruled, rather than inferring it from the
+            // verdict. Confidence is evidence of nothing; that confidence was
+            // asserted is still worth recording.
+            detail: format!(
+                "claim_done={claimed_done}: {}",
+                if !claimed_done {
+                    "no completion was claimed".to_string()
+                } else if ok {
+                    format!("hidden check `{hidden_check}` passed ({ran} test(s) ran)")
+                } else if !passed.iter().any(|n| n == hidden_check)
+                    && !failed.iter().any(|n| n == hidden_check)
+                {
+                    // The SAME vocabulary a checker that could not be spawned
+                    // gets, because it is the same fact: no verdict was
+                    // produced for the name asked about. Calling it FAILED
+                    // would send an operator to debug a repair when the check
+                    // they named does not exist.
+                    format!(
+                        "hidden check `{hidden_check}` DID NOT RUN ({ran} test(s) \
+                         matched the filter, none of them that name)"
                     )
                 } else {
-                    (true, format!("passed ({ran} test(s) matched)"))
+                    format!("hidden check `{hidden_check}` FAILED")
                 }
-            }
-            Ok(o) => (false, format!("FAILED (exit {:?})", o.status.code())),
-            Err(e) => (false, format!("DID NOT RUN: {e}")),
-        };
-        let detail = format!(
-            "hidden check `{hidden_check}` {outcome}; claim_done={claimed_done} (claim does not affect the verdict)"
-        );
-        self.episode.push(EpisodeEvent::Verified {
-            passed: hidden_passed,
-            detail,
+            ),
         });
-        hidden_passed
+        ok
     }
 
     /// Prepare a resettable COPY of a fixture directory. The original is never

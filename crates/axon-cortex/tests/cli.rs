@@ -274,7 +274,7 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
         "fn alpha(n: i64) -> i64 { n }\n\
          fn beta(n: i64) -> i64 { n }\n\
          @[test]\n\
-         fn t() { assert_eq(alpha(1) + beta(1), 4) }\n\
+         fn t() { assert_eq(alpha(1) + beta(1), 3) }\n\
          @[test]\n\
          fn hidden() { assert_eq(alpha(1), 2) }\n\
          fn main() { println(to_str(alpha(1))) }\n",
@@ -333,7 +333,9 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
     );
 
     // 3. An explicit --symbol is an INSTRUCTION, not a hypothesis to
-    //    second-guess: the same ambiguous file repairs fine when told which.
+    //    second-guess. Note `t` expects 3, not 4: the repair below has to
+    //    leave the WHOLE file passing, because a run that fixes the
+    //    adjudicator and leaves another check failing is not a repair: the same ambiguous file repairs fine when told which.
     //    Without this row, "refuses when ambiguous" is satisfied by a build
     //    that refuses always.
     let out3 = Command::new(env!("CARGO_BIN_EXE_cortex"))
@@ -687,6 +689,54 @@ fn cli_repairs_a_file_that_compiles_with_warnings() {
         after.contains("n * 2"),
         "the repair must actually be in the file: {after}"
     );
+
+    // AND when the symbol's name matches NO test name.
+    //
+    // The first version of this fix only worked when the visible check —
+    // which is filtered by the SYMBOL's name — happened to match something.
+    // For 421 of the 580 candidate symbols in `examples/**.ax` (72.6%) it
+    // matches nothing, and "matched nothing" rendered as the same value the
+    // episode started with, so the loop chose the same action against an
+    // unchanged workspace and stalled exactly as before.
+    //
+    // `helper_alpha` is covered by `visible_case` and `hidden_case`, neither
+    // of which contains its name.
+    std::fs::write(
+        ws.join("nomatch.ax"),
+        "fn helper_alpha(n: i64) -> i64 {\n\
+         \x20   let n = n + 0\n\
+         \x20   n + 3\n\
+         }\n\
+         @[test]\n\
+         fn visible_case() { assert_eq(helper_alpha(2), 4) }\n\
+         @[test]\n\
+         fn hidden_case() { assert_eq(helper_alpha(5), 10) }\n\
+         fn main() { println(to_str(helper_alpha(2))) }\n",
+    )
+    .unwrap();
+    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args(["--file", "nomatch.ax", "--check", "hidden_case", "--axon"])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "nomatch.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out2.status.code(),
+        Some(0),
+        "a symbol matching no test name must still be repairable: {}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert!(std::fs::read_to_string(ws.join("nomatch.ax"))
+        .unwrap()
+        .contains("n * 2"));
 }
 
 /// C20 — the operator's own program as the generator.
@@ -808,5 +858,67 @@ fn cli_drives_an_external_generator_and_shows_it_no_grader() {
             .unwrap()
             .contains("n + 2"),
         "a failed generation must leave the workspace alone"
+    );
+}
+
+/// C21 — a patch lands on the symbol that was SELECTED, not on one whose name
+/// it is a prefix of.
+///
+/// The body lookup searched for `fn NAME` without the opening paren, so
+/// selecting `fib` found `fib_rec` defined earlier in the file. Every caller
+/// was affected: Inspect read the wrong body, the generator was SHOWN the
+/// wrong body, and the patch overwrote the wrong function — so the selected
+/// symbol was unrepairable by construction and a working one took the damage.
+///
+/// Corpus-reachable: 5 collisions across 4 files in `examples/`
+/// (`fib`/`fib_rec`, `belief_map`/`belief_map_index`, `approx_eq`/`approx_eq_b`).
+/// It also re-opened the grader-not-patchable guard, which compares the symbol
+/// by exact name while the write resolved by prefix.
+#[test]
+fn cli_patches_the_selected_symbol_not_a_name_it_prefixes() {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_prefix_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    // `scale_twice` is defined FIRST and its name begins with `scale`, so a
+    // prefix search for `fn scale` finds it rather than `scale`.
+    std::fs::write(
+        ws.join("p.ax"),
+        "fn scale_twice(n: i64) -> i64 { n * 4 }\n\
+         fn scale(n: i64) -> i64 { n + 3 }\n\
+         @[test]\n\
+         fn visible() { assert_eq(scale(2), 4) }\n\
+         @[test]\n\
+         fn hidden_c() { assert_eq(scale(5), 10) assert_eq(scale_twice(2), 8) }\n\
+         fn main() { println(to_str(scale(2))) }\n",
+    )
+    .unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file", "p.ax", "--symbol", "scale", "--check", "hidden_c", "--axon",
+        ])
+        .arg(axon_bin())
+        .args(["--write-prefix", "p.ax", "--generator", "literal: n * 2 "])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "`scale` must be repairable even though `scale_twice` is defined first: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let after = std::fs::read_to_string(ws.join("p.ax")).unwrap();
+    // The neighbour is UNTOUCHED. Asserting only that the file passes would
+    // miss the case where both were rewritten.
+    assert!(
+        after.contains("fn scale_twice(n: i64) -> i64 { n * 4 }"),
+        "the earlier-defined neighbour must be byte-identical:\n{after}"
+    );
+    assert!(
+        after.contains("fn scale(n: i64) -> i64 { n * 2 }"),
+        "the selected symbol must be the one that changed:\n{after}"
     );
 }

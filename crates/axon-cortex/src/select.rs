@@ -55,18 +55,36 @@ pub struct SelectionContext {
     /// signal that the code compiles and is still wrong, which is the only
     /// situation where proposing a patch is justified rather than a guess.
     pub claim_refused: bool,
-    /// The result of the last check this episode ran, if it ran one.
+    /// What the last visible check said — including that it said nothing.
     ///
-    /// Without it, a file that compiles WITH WARNINGS was unrepairable. The
-    /// selector chose `RunCheck`, running a check changes no bytes, so the next
-    /// step saw the same workspace and the same choice and stopped as
-    /// `NoProgress` — before ever reaching a claim, let alone a patch.
+    /// An `Option<bool>` was not enough, and the gap was a whole class of
+    /// files. The visible check is named after the SYMBOL under repair, and a
+    /// substring filter for that name matches no test at all for 421 of the
+    /// 580 candidate symbols in `examples/**.ax` (72.6%). "Matched nothing"
+    /// then rendered as `None`, the same value the episode started with, so
+    /// selection chose `RunCheck` again, the workspace had not moved, and
+    /// stuck-detection fired — the exact warned-file stall the previous fix
+    /// was supposed to close, still open for three symbols in four.
     ///
-    /// Measured: every one of the 9 remaining oracle failures was this, and
-    /// every one had the right function ranked first or second. It never showed
-    /// up against the fixture because the fixture compiles clean, which is not
-    /// what real Axon code does.
-    pub last_check: Option<bool>,
+    /// Four states, because they imply three different next moves.
+    pub last_check: VisibleCheck,
+}
+
+/// What a visible check reported.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VisibleCheck {
+    /// Nothing has been run yet.
+    #[default]
+    NotRun,
+    /// It ran and passed: nothing the observation can see is outstanding.
+    Passed,
+    /// It ran and failed: direct evidence the code is wrong, which arrives a
+    /// step earlier than waiting for a completion claim to be refused.
+    Failed,
+    /// It matched no test. NOT a failure and NOT a pass — there is simply no
+    /// visible evidence for this symbol, so the hidden check has to be the one
+    /// to decide. Treating this as "not yet run" is what stalled the loop.
+    NoSuchCheck,
 }
 
 /// Choose the next action for `target`, given what was actually observed.
@@ -148,16 +166,28 @@ pub fn select_action_with(
         // check's answer has to be acted on, or the loop asks the same
         // question forever.
         Some(Observed::Known { .. }) => match ctx.last_check {
+            // No visible check exists for this symbol, so there is nothing
+            // more to learn without acting. Claim, and let the hidden check
+            // adjudicate — the same thing a clean file does.
+            VisibleCheck::NoSuchCheck => Selection::Act(CortexAction::ClaimDone {
+                claim: CompletionClaim {
+                    done: true,
+                    rationale: format!(
+                        "{} compiles; no visible check covers `{}`",
+                        target.path, target.symbol
+                    ),
+                },
+            }),
             // The check ran and FAILED. That is direct evidence the code is
             // wrong — stronger than waiting for a completion claim to be
             // refused, and it arrives a step earlier.
-            Some(false) => Selection::Act(CortexAction::PatchSymbolBody {
+            VisibleCheck::Failed => Selection::Act(CortexAction::PatchSymbolBody {
                 symbol: target.clone(),
                 proposed_body: String::new(),
             }),
             // The check ran and passed. Nothing else the observation can see
             // is outstanding, so claim — and let the hidden check adjudicate.
-            Some(true) => Selection::Act(CortexAction::ClaimDone {
+            VisibleCheck::Passed => Selection::Act(CortexAction::ClaimDone {
                 claim: CompletionClaim {
                     done: true,
                     rationale: format!("{} compiles and its visible check passes", target.path),
@@ -165,7 +195,7 @@ pub fn select_action_with(
             }),
             // Nothing has been run yet. Confirm the behaviour before either
             // claiming or patching.
-            None => Selection::Act(CortexAction::RunCheck {
+            VisibleCheck::NotRun => Selection::Act(CortexAction::RunCheck {
                 check: CheckRef {
                     // The selector does not invent a check name it cannot know
                     // exists; naming the symbol keeps the choice traceable to

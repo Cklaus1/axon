@@ -223,52 +223,43 @@ fn main() {
         }
     }
 
-    // THE ADJUDICATOR MUST BE ABLE TO WITNESS THE REPAIR.
+    // THE ADJUDICATOR MUST EXIST, MUST BE A TEST, AND MUST CURRENTLY FAIL.
     //
-    // Exit 0 means "a hidden check accepted the result". That is worth nothing
-    // if the check would have accepted the file BEFORE any repair — and
-    // measured on real code, that was the common case rather than an edge one:
-    // 54 of 80 runs reported verified_done, most of them at step 1, having
-    // changed nothing at all. The check passed because it never exercised the
-    // broken function.
+    // Exit 0 means "a hidden check accepted the result", which is worth
+    // nothing if the check would have accepted the file BEFORE any repair —
+    // measured on real code, 54 of 80 runs reported verified_done, most at
+    // step 1, having changed nothing.
     //
-    // A check that passes on the unrepaired file is not a weak adjudicator; it
-    // is not an adjudicator. Refusing here is the same discipline the runner
-    // applies when a filter matches zero tests: an absent verdict must not be
-    // reported as a favourable one.
-    // Naming the adjudicator as the repair target is a REQUEST error, caught
-    // before anything runs. The episode refuses it too, but saying so here
-    // names the mistake instead of reporting it as a refused action.
-    if symbol == check {
-        usage(&format!(
-            "--symbol and --check are both `{check}`: patching the check that \
-             decides whether the work is done would grade the repair against \
-             bytes the repair just wrote"
-        ));
-    }
-
+    // An earlier version also grepped the source for `fn NAME(`. That accepts
+    // any function, which is precisely the hole: a non-test name passed the
+    // grep, matched no test, and the run proceeded. Running the check answers
+    // all three questions at once.
     match runner.run_hidden_check(&file, &check) {
         Err(e) => {
             eprintln!("the adjudicating check could not be run: {e}");
             std::process::exit(22);
         }
-        Ok((true, _)) => {
+        // It ran and PASSED. It would accept this file unchanged, so it cannot
+        // witness a repair of it.
+        Ok(Some(true)) => {
             eprintln!(
                 "`{check}` already passes on {file}, so it cannot witness a \
-                 repair: it would accept this file unchanged. Name a check that \
-                 currently FAILS, or there is nothing here to prove."
+                 repair: it would accept this file unchanged. Name a check \
+                 that currently FAILS, or there is nothing here to prove."
             );
             std::process::exit(26);
         }
-        Ok((false, 0)) => {
-            eprintln!(
-                "`{check}` matched no test in {file}. A filter matching nothing \
-                 exits 0 and reports ok, which is why this is checked rather \
-                 than inferred from the exit code."
-            );
-            std::process::exit(2);
-        }
-        Ok((false, _)) => {}
+        // NO TEST BY THAT NAME RAN. Distinct from "it failed", and treating
+        // the two alike is what let a `--check` naming an ordinary function
+        // through: the run proceeded and then graded itself against a set that
+        // never contained the name.
+        Ok(None) => usage(&format!(
+            "no test named `{check}` ran in {file}. `--check` must name an \
+             @[test] function: a name matching nothing can never accept a \
+             repair, and a name that is merely a FUNCTION is not an \
+             adjudicator at all."
+        )),
+        Ok(Some(false)) => {}
     }
 
     // The ordered list of functions this run may try.
