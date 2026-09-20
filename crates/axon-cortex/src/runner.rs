@@ -182,6 +182,17 @@ pub enum EpisodeOutcome {
     /// action. Continuing cannot help, so the loop stops and says so instead of
     /// spinning to the budget.
     NoProgress { steps: usize, action: String },
+    /// The target does not exist in the file.
+    ///
+    /// Its own variant because the remedies differ, and the two codes it used
+    /// to borrow were both actively misleading: a mistyped `--symbol` reported
+    /// as `Blocked` sends an operator to debug a checker that ran fine, and as
+    /// `NoProgress` it blames a generator that was never asked.
+    NoSuchSymbol {
+        steps: usize,
+        symbol: String,
+        path: String,
+    },
     /// Selection could not choose, carrying the observer's reason.
     Blocked { steps: usize, reason: String },
     /// Authority refused the chosen action.
@@ -625,13 +636,14 @@ impl Runner {
                                     .map(|(a, b)| src[a..b].to_string())
                             }) {
                             Some(b) => b,
+                            // Not Blocked: the environment is fine and the
+                            // checker ran. The target simply is not there,
+                            // which has its own answer and its own remedy.
                             None => {
-                                return EpisodeOutcome::Blocked {
+                                return EpisodeOutcome::NoSuchSymbol {
                                     steps: step,
-                                    reason: format!(
-                                        "cannot read the body of `{}` in {}",
-                                        symbol.symbol, symbol.path
-                                    ),
+                                    symbol: symbol.symbol.clone(),
+                                    path: symbol.path.clone(),
                                 }
                             }
                         };
@@ -682,6 +694,26 @@ impl Runner {
                 action
             };
 
+            // THE GRADER IS NOT PATCHABLE. Defence in depth: ranking already
+            // refuses to nominate a test, and an operator can still name one
+            // with --symbol. Rewriting the check that decides whether the work
+            // is done to `assert(true)` passes every subsequent adjudication
+            // while the defect stands — the strongest possible false success,
+            // and the exact inverse of what this loop claims to provide.
+            if let CortexAction::PatchSymbolBody { symbol, .. } = &action {
+                if symbol.symbol == hidden_check {
+                    return EpisodeOutcome::Refused {
+                        steps: step,
+                        reason: format!(
+                            "`{}` is the check that adjudicates this repair; \
+                             patching it would grade the work against bytes the \
+                             patch just wrote",
+                            symbol.symbol
+                        ),
+                    };
+                }
+            }
+
             let auth = match self.authorize_action(&action, effective.as_ref(), principal, &snap) {
                 Ok(a) => a,
                 Err(why) => {
@@ -710,6 +742,27 @@ impl Runner {
                 None
             };
             let outcome = self.execute(auth);
+            // What execute REPORTED, acted on. These used to be discarded, so
+            // an unwritable file and a mistyped symbol both came back as the
+            // loop "going in circles" or as a broken checker — verdicts about
+            // the generator and about the environment, for failures that were
+            // neither.
+            match &outcome {
+                ExecOutcome::Failed(why) => {
+                    return EpisodeOutcome::Blocked {
+                        steps: step,
+                        reason: format!("the action could not be carried out: {why}"),
+                    }
+                }
+                ExecOutcome::SymbolNotFound { symbol, path } => {
+                    return EpisodeOutcome::NoSuchSymbol {
+                        steps: step,
+                        symbol: symbol.clone(),
+                        path: path.clone(),
+                    }
+                }
+                _ => {}
+            }
 
             if let Some(before) = rollback {
                 // "Worse" is defined narrowly and mechanically: it compiled,
@@ -734,7 +787,21 @@ impl Runner {
                     .map(|o| observed_compiles(&o) == Some(false))
                     .unwrap_or(false);
                 if broke {
-                    let _ = std::fs::write(self.workspace.join(&target.path), &before);
+                    // Checked, not assumed. The event below asserts the file
+                    // now holds these bytes; recording that after an ignored
+                    // write would make the evidence record claim something
+                    // about the filesystem it never verified — in the one
+                    // event whose whole purpose is that a revert is recorded
+                    // rather than performed silently.
+                    if let Err(e) = std::fs::write(self.workspace.join(&target.path), &before) {
+                        return EpisodeOutcome::Blocked {
+                            steps: step,
+                            reason: format!(
+                                "a patch broke the build and {} could not be restored: {e}",
+                                target.path
+                            ),
+                        };
+                    }
                     if let Some(body) = last_applied.take() {
                         rejected.push(crate::generate::RejectedAttempt {
                             body,
@@ -812,121 +879,150 @@ impl Runner {
         EpisodeOutcome::BudgetExhausted { steps: budget }
     }
 
-    /// Which checks in `rel_path` FAIL, excluding the one that adjudicates.
-    ///
-    /// `hidden` is excluded rather than filtered by the caller, because a
-    /// localization computed from the grader would make the repair target a
-    /// function of the answer — the loop would be aiming at whatever the
-    /// hidden check touches, and passing it would stop being evidence.
-    ///
-    /// An `Err` here is "the checks could not run", which is NOT "the checks
-    /// passed". The two collapse into one only if this returns an empty list
-    /// on failure, and an empty list is exactly what a caller reads as
-    /// "nothing is broken".
-    pub fn failing_checks(&self, rel_path: &str, hidden: &str) -> std::io::Result<Vec<String>> {
-        Ok(self.check_outcomes(rel_path, hidden)?.0)
-    }
-
     /// Which checks FAIL and which PASS, excluding the one that adjudicates.
     ///
     /// Both halves, because localization ranks by spectrum: a function only
     /// failing checks reach is strong evidence, one every check reaches is
     /// weak. Reporting only the failures throws away the denominator and
     /// leaves every helper looking equally suspicious.
+    ///
+    /// An `Err` here is "the checks could not run", which is NOT "the checks
+    /// passed". The two collapse into one the moment an error is reported as
+    /// an empty list, and an empty list is exactly what a caller reads as a
+    /// healthy file.
     pub fn check_outcomes(
         &self,
         rel_path: &str,
         hidden: &str,
     ) -> std::io::Result<(Vec<String>, Vec<String>)> {
-        let out = std::process::Command::new(&self.axon_bin)
-            .arg("test")
+        let (failed, passed, _) = self.run_tests_json(rel_path, None)?;
+        Ok((
+            failed.into_iter().filter(|n| n != hidden).collect(),
+            passed.into_iter().filter(|n| n != hidden).collect(),
+        ))
+    }
+
+    /// Run `axon test` and read its MACHINE-READABLE output.
+    ///
+    /// This used to parse the human transcript, and every shape that transcript
+    /// can take which the parser did not expect was a silent wrong answer
+    /// rather than an error:
+    ///
+    /// * `test NAME [should_fail] ... FAILED` — the annotation is printed ONLY
+    ///   on the failure branch, so the name came out as `NAME [should_fail]`,
+    ///   the `== hidden` comparison never matched, and the ADJUDICATING check
+    ///   was fed to localization as ordinary evidence.
+    /// * the classifier looked for `FAILED` before `ok` anywhere in the line,
+    ///   so a PASSING test named `test_FAILED_path` was recorded as failed.
+    /// * test bodies run in-process and their stdout is not captured, so a
+    ///   `print` without a trailing newline glues the next result line to it
+    ///   and that test vanishes from the run.
+    ///
+    /// Each of those is a different bug with one cause: the transcript is for
+    /// people, and its shape may change for reasons that have nothing to do
+    /// with this caller. `--json` is the contract meant to be parsed. A test
+    /// body could still print a line that happens to be a matching JSON
+    /// object; nothing here can prevent that, and it is a far narrower target
+    /// than a line beginning with "test ".
+    ///
+    /// Returns `(failed, passed, total)`. `total` comes from the run's own
+    /// summary, so "the filter matched nothing" is distinguishable from "every
+    /// test passed" — those are byte-identical in the human transcript, and
+    /// both exit 0.
+    fn run_tests_json(
+        &self,
+        rel_path: &str,
+        filter: Option<&str>,
+    ) -> std::io::Result<(Vec<String>, Vec<String>, usize)> {
+        let mut cmd = std::process::Command::new(&self.axon_bin);
+        cmd.arg("test")
             .arg(self.workspace.join(rel_path))
-            .output()?;
+            .arg("--json");
+        if let Some(f) = filter {
+            cmd.arg("--filter").arg(f);
+        }
+        let out = cmd.output()?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let (mut failed, mut passed) = (Vec::new(), Vec::new());
-        for l in text.lines() {
-            let t = l.trim();
-            // The per-test lines are `test NAME ... FAILED`; the summary line
-            // is `test result: FAILED. …` and also begins with "test ".
-            // Requiring the separator keeps the summary from being parsed as a
-            // check called "result: FAILED. 0 passed…", which then localizes
-            // to nothing and reads as a clean file.
-            if !t.starts_with("test ") || !t.contains(" ... ") {
+        let (mut failed, mut passed, mut total) = (Vec::new(), Vec::new(), None);
+        for line in text.lines() {
+            let line = line.trim();
+            if !line.starts_with('{') {
                 continue;
             }
-            let Some(name) = t
-                .strip_prefix("test ")
-                .and_then(|r| r.split(" ... ").next())
-            else {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-            let name = name.trim().to_string();
-            if name == hidden {
+            if v.get("type").and_then(|t| t.as_str()) == Some("summary") {
+                total = v.get("total").and_then(|t| t.as_u64()).map(|t| t as usize);
                 continue;
             }
-            if t.contains("FAILED") {
-                failed.push(name);
-            } else if t.contains("ok") {
-                passed.push(name);
+            let (Some(name), Some(status)) = (
+                v.get("name").and_then(|n| n.as_str()),
+                v.get("status").and_then(|s| s.as_str()),
+            ) else {
+                continue;
+            };
+            match status {
+                "ok" => passed.push(name.to_string()),
+                "failed" => failed.push(name.to_string()),
+                // An unknown status is neither. Guessing which it resembles is
+                // how a new status becomes a silent wrong answer.
+                _ => {}
             }
         }
-        Ok((failed, passed))
-    }
-
-    /// Localize the defect from the checks that fail, without being told.
-    pub fn locate_target(&self, rel_path: &str, hidden: &str) -> crate::locate::Localization {
-        let src = match std::fs::read_to_string(self.workspace.join(rel_path)) {
-            Ok(s) => s,
-            Err(e) => {
-                return crate::locate::Localization::Unknown {
-                    reason: format!("cannot read {rel_path}: {e}"),
-                }
-            }
+        // No summary means the run did not finish — a compile error, a crash,
+        // a missing binary. That is an ERROR, never "no tests failed".
+        let Some(total) = total else {
+            return Err(std::io::Error::other(format!(
+                "`axon test --json` produced no summary for {rel_path}; the run \
+                 did not complete, which is not the same as nothing failing"
+            )));
         };
-        match self.check_outcomes(rel_path, hidden) {
-            Ok((failing, passing)) => crate::locate::localize(&src, &failing, &passing),
-            Err(e) => crate::locate::Localization::Unknown {
-                reason: format!("the checks could not be run: {e}"),
-            },
-        }
+        Ok((failed, passed, total))
     }
 
-    /// Run ONE named check and report how many tests the name matched.
+    /// Run ONE named check and report how many tests the name matched.    /// Run ONE named check and report how many tests the name matched.
     ///
     /// `run_check` passes the name to the episode record but not to the
     /// command, so it runs the whole file and reports a named result — the same
     /// defect `verify()` had. This selects, and returns the match count so a
     /// zero-match run can be told from a pass.
     fn run_named_check(&mut self, name: &str, rel_path: &str) -> std::io::Result<(bool, usize)> {
-        let out = std::process::Command::new(&self.axon_bin)
-            .arg("test")
-            .arg(self.workspace.join(rel_path))
-            .arg("--filter")
-            .arg(name)
-            .output()?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let matched = text
-            .split("running ")
-            .nth(1)
-            .and_then(|r| r.split(' ').next())
-            .and_then(|n| n.parse::<usize>().ok())
-            .unwrap_or(0);
-        // A filter matching nothing exits 0. Zero matched tests is not a pass.
-        let passed = out.status.success() && matched > 0;
+        let (failed, passed, _) = self.run_tests_json(rel_path, Some(name))?;
+        // `--filter` is a SUBSTRING match, so it can select more than the
+        // check asked for. The count reported is what actually ran under that
+        // name, and a filter matching nothing exits 0 with an `ok` summary —
+        // zero matched tests is not a pass.
+        let matched = failed.len() + passed.len();
+        let ok = verdict_for(name, &failed, &passed);
         self.episode.push(EpisodeEvent::CheckRun {
             name: name.to_string(),
-            exit_code: out.status.code().unwrap_or(-1),
-            passed,
+            exit_code: i32::from(!ok),
+            passed: ok,
         });
-        Ok((passed, matched))
+        Ok((ok, matched))
+    }
+
+    /// Run the adjudicating check and report `(passed, how many matched)`.
+    ///
+    /// Public because the decision that needs it belongs to the CALLER: an
+    /// adjudicator that already passes cannot witness a repair, and that has to
+    /// be established BEFORE an episode starts rather than discovered by an
+    /// episode that then reports success for doing nothing.
+    ///
+    /// The match count is returned rather than folded into the boolean because
+    /// "nothing matched" and "everything that matched failed" are different
+    /// facts. A filter matching nothing exits 0 and prints an `ok` summary.
+    pub fn run_hidden_check(&self, rel_path: &str, name: &str) -> std::io::Result<(bool, usize)> {
+        let (failed, passed, _) = self.run_tests_json(rel_path, Some(name))?;
+        Ok((
+            verdict_for(name, &failed, &passed),
+            failed.len() + passed.len(),
+        ))
     }
 
     /// Side-effect-free twin of [`Runner::authorize_action`], for a caller that
@@ -1213,6 +1309,21 @@ impl Runner {
         }
         Ok(())
     }
+}
+
+/// The verdict for exactly the check that was named.
+///
+/// `--filter` is a SUBSTRING match, so asking for `hidden_completion` also
+/// runs `hidden_completion_edge`. Reading the verdict as "nothing in the
+/// filtered set failed" therefore graded the repair against a test nobody
+/// named — and in the other direction, a sibling failing for its own reasons
+/// would veto a correct repair.
+///
+/// Absent from both lists is `false`: a check that did not run did not pass.
+/// Same rule as the zero-match case, for the same reason — an absent verdict
+/// must never be reported as a favourable one.
+fn verdict_for(name: &str, failed: &[String], passed: &[String]) -> bool {
+    passed.iter().any(|n| n == name) && !failed.iter().any(|n| n == name)
 }
 
 /// Whether the observation established that the file compiles — and `None`

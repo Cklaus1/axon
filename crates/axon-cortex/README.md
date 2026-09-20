@@ -47,6 +47,13 @@ and nothing the grader said. A generator that could read why it failed the
 hidden check would be writing against the grader, at which point passing it
 stops being evidence.
 
+**The adjudicator** must be able to witness the repair. A check that already
+passes would accept the file unchanged, so it is refused (exit 26) rather than
+run — measured, that case was 54 of 80 runs reporting success having changed
+nothing. The check named by `--check` can never itself be patched: rewriting
+the grader to `assert(true)` passes every later adjudication while the defect
+stands, which is this crate's headline claim exactly inverted.
+
 **The episode** cannot leave the workspace worse than it found it. A patch that
 makes the file stop compiling is undone, and the revert is recorded rather than
 performed silently: an episode that hid its reverts would make a generator that
@@ -54,10 +61,10 @@ breaks the build indistinguishable from one that never proposed anything.
 
 **Localization** ranks the functions the defect might be in, by Ochiai over
 the call spectrum — the PASSING checks are evidence too, because a function
-every check exercises is poor evidence for a defect. Measured against real code
-rather than the fixture (`benchmarks/`), the top candidate is right 57.5% of
-the time and the top three cover 90%, so a run walks the top three rather than
-stopping at one. A wrong candidate costs budget and never costs correctness:
+every check exercises is poor evidence for a defect. Measured against real code rather
+than the fixture (`benchmarks/`), the top candidate is the sole most-suspicious
+one in 38.6% of cases and the truth reaches rank 3 in 93.2%, so a run walks the
+top three rather than stopping at one. A test is never a candidate. A wrong candidate costs budget and never costs correctness:
 the hidden check adjudicates every attempt, and each attempt starts from the
 state the run found.
 
@@ -75,7 +82,8 @@ about whether to widen a grant, supply a generator, or fix a PATH.
 | 22 | the checker could not run |
 | 23 | authority: the grant does not cover this |
 | 24 | no usable proposal |
-| 25 | no repair target could be established |
+| 25 | no repair target could be established, or the named symbol does not exist |
+| 26 | `--check` already passes — it cannot witness a repair |
 
 ## Generators
 

@@ -11,16 +11,19 @@ candidates in order; if it is usually absent, ranking deeper buys nothing.
 """
 import os, re, json, subprocess, sys, tempfile, shutil, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from measure import (tests_in, fn_span, defined_fns, run, failing_tests,
-                     AXON, SWAPS)
+from common import ROOT, tests_in, fn_span, defined_fns, run, failing_tests, AXON, SWAPS
 
-CORTEX = os.environ.get("CORTEX_BIN")
+CORTEX = os.environ.get("CORTEX_BIN", f"{ROOT}/target/debug/cortex")
 rows = []
 for f in sorted(sys.argv[1:]):
     src0 = open(f).read()
     checks = tests_in(src0)
     if len(checks) < 2: continue
-    hidden = checks[-1]
+    # hidden is chosen per-mutant below: it must be a check that FAILS on the
+    # mutant, or it cannot witness the repair. Choosing it up front (the last
+    # @[test] in the file) was the flaw that made the first oracle run report
+    # 54 successes, most of them having changed nothing — the check passed on
+    # the broken file because it never exercised the broken function.
     if run([AXON, "check", f])[0] != 0: continue
     if failing_tests(f): continue
     targets = [n for n in defined_fns(src0) if n not in checks and n != "main"]
@@ -39,7 +42,16 @@ for f in sorted(sys.argv[1:]):
             open(os.path.join(ws, rel), "w").write(mutant)
             if run([AXON, "check", os.path.join(ws, rel)])[0] != 0:
                 shutil.rmtree(ws, ignore_errors=True); continue
-            if not [t for t in failing_tests(os.path.join(ws, rel)) if t != hidden]:
+            allf = failing_tests(os.path.join(ws, rel))
+            # Need at least two: one to adjudicate (hidden, and it must fail or
+            # it witnesses nothing) and one to remain as visible evidence for
+            # localization. With only one failing check there is nothing left
+            # to localize from once it is hidden.
+            if len(allf) < 2:
+                shutil.rmtree(ws, ignore_errors=True); continue
+            hidden = allf[-1]
+            fails = [t for t in allf if t != hidden]
+            if not fails:
                 shutil.rmtree(ws, ignore_errors=True); continue
             rc, out = run([CORTEX, "locate", "--workspace", ws, "--file", rel,
                            "--check", hidden, "--axon", AXON, "--json"])

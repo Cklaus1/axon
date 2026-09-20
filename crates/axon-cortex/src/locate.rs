@@ -46,33 +46,47 @@
 //! repairing the wrong thing and report "no progress", which is true and
 //! useless.
 
-/// What the evidence supports.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Localization {
-    /// Exactly one function is implicated by the failing checks.
-    Single {
-        symbol: String,
-        /// The failing checks that named it. Carried so a caller can show its
-        /// working rather than asserting a conclusion.
-        evidence: Vec<String>,
-    },
-    /// Several functions are implicated and the evidence does not choose
-    /// between them. NOT resolved by picking one: a wrong target is worse than
-    /// no target, because the loop cannot tell it is repairing the wrong thing.
-    Ambiguous {
-        candidates: Vec<String>,
-        evidence: Vec<String>,
-    },
-    /// Every check passed. There is nothing to localize, which is a different
-    /// statement from "nothing was found".
-    NothingFailing,
-    /// Checks failed and named no function defined in this file. Reported as
-    /// its own case because the remedy differs from ambiguity: the defect may
-    /// be in a callee, in a builtin, or in the check itself.
-    NoCandidate { evidence: Vec<String> },
-    /// The checks could not be run at all. Not a localization — an absence of
-    /// evidence, kept distinct from an absence of candidates.
-    Unknown { reason: String },
+/// Functions carrying a test attribute — `@[test]`, `@[test(should_fail)]`,
+/// `@[forall]`.
+///
+/// A test is NEVER a repair target. That was previously enforced by removing
+/// the checks the spectrum had observed, which left two holes, and the second
+/// was severe:
+///
+/// * the ADJUDICATING check is stripped from both spectra before ranking, so
+///   the one name that must never be a candidate was the one name the filter
+///   could not see. A run could therefore select the grader, rewrite it to
+///   `assert(true)`, leave the actual defect untouched, and exit 0 —
+///   measured, not hypothesised;
+/// * a check that neither passed nor failed (it errored, it was filtered out,
+///   its signature was rejected) is absent from both lists and was a candidate
+///   by default.
+///
+/// Reading the attribute answers the question at its source instead of
+/// inferring it from which names happened to appear in a test run.
+fn test_fns(src: &str) -> Vec<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        if !(t.starts_with("@[test") || t.starts_with("@[forall")) {
+            continue;
+        }
+        // The annotation may sit above other annotations; take the next `fn`.
+        for next in lines.iter().skip(i + 1).take(4) {
+            let n = next.trim_start();
+            if let Some(rest) = n.strip_prefix("fn ") {
+                if let Some(name) = rest.split('(').next() {
+                    out.push(name.trim().to_string());
+                }
+                break;
+            }
+            if !n.starts_with('@') {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Names of functions DEFINED in the source, in order.
@@ -190,46 +204,12 @@ fn reachable(src: &str, start: &str, defined: &[String]) -> Vec<String> {
 /// so it adds candidates without adding discrimination.
 const MAX_CALL_DEPTH: usize = 4;
 
-/// Localize from a source file and the checks that failed and passed.
+/// (see [`rank`])
 ///
 /// Split from running the checks so the analysis is testable without a
 /// compiler, and so the caller decides which checks count as visible. The
 /// hidden check must never be passed here: localizing from the grader would
 /// make the repair target a function of the answer.
-pub fn localize(src: &str, failing: &[String], passing: &[String]) -> Localization {
-    if failing.is_empty() {
-        return Localization::NothingFailing;
-    }
-    let ranked = rank(src, failing, passing);
-    match ranked.len() {
-        0 => Localization::NoCandidate {
-            evidence: failing.to_vec(),
-        },
-        _ => {
-            let top = ranked[0].1;
-            // Strictly greater than the runner-up. An equal score means the
-            // evidence genuinely does not distinguish them, and picking one
-            // would be a guess wearing a number.
-            let tied: Vec<String> = ranked
-                .iter()
-                .filter(|(_, s)| (*s - top).abs() < f64::EPSILON)
-                .map(|(n, _)| n.clone())
-                .collect();
-            if tied.len() == 1 {
-                Localization::Single {
-                    symbol: tied.into_iter().next().unwrap_or_default(),
-                    evidence: failing.to_vec(),
-                }
-            } else {
-                Localization::Ambiguous {
-                    candidates: tied,
-                    evidence: failing.to_vec(),
-                }
-            }
-        }
-    }
-}
-
 /// Every candidate with its suspiciousness, most suspicious first.
 ///
 /// Exposed separately from [`localize`] because the ranking answers a question
@@ -242,7 +222,12 @@ pub fn rank(src: &str, failing: &[String], passing: &[String]) -> Vec<(String, f
         return Vec::new();
     }
     let defined = defined_fns(src);
-    let is_check = |n: &String| failing.contains(n) || passing.contains(n);
+    // Anything carrying a test attribute, plus anything the spectrum observed.
+    // The attribute is the authority: the adjudicating check is removed from
+    // both spectra before this runs, so a name-based filter alone cannot see
+    // the one name that matters most.
+    let annotated = test_fns(src);
+    let is_check = |n: &String| annotated.contains(n) || failing.contains(n) || passing.contains(n);
 
     // ef / ep per candidate. A check is never a candidate for its own repair:
     // without that, every failing test localizes to itself — true, and no help.

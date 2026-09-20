@@ -23,7 +23,8 @@
 //! | 22 | blocked | the environment is wrong — the checker could not run |
 //! | 23 | refused | authority is wrong — widen `--write-prefix`, deliberately |
 //! | 24 | needs input | no usable proposal — supply or fix `--generator` |
-//! | 25 | no target | the failing checks did not name one function — pass `--symbol` |
+//! | 25 | no target | no candidate could be established, or the named symbol does not exist |
+//! | 26 | check cannot witness | `--check` already passes; it would accept the file unchanged |
 //!
 //! Note what 0 means here: a hidden check the generator never saw accepted the
 //! result. It is not "the loop finished", and no other outcome is rounded up
@@ -39,10 +40,11 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
   --workspace DIR        directory to operate in (default: .)
   --file PATH            workspace-relative file holding the symbol
   --symbol NAME          the function whose body may be replaced. OPTIONAL:
-                         without it, Cortex localizes from the checks that
-                         fail. It refuses when the evidence names more than one
-                         candidate, because repairing the wrong function fails
-                         every attempt without ever saying why.
+                         without it, Cortex ranks the candidates from the
+                         checks that fail and tries the top --candidates of
+                         them in order, restoring the file between attempts.
+                         A test is never a candidate, and the check named by
+                         --check can never be patched.
   --check NAME           the check that adjudicates the claim. It is never
                          shown to the generator: a result graded by something
                          the author could read is not evidence.
@@ -209,6 +211,54 @@ fn main() {
         }
     }
 
+    // THE ADJUDICATOR MUST BE ABLE TO WITNESS THE REPAIR.
+    //
+    // Exit 0 means "a hidden check accepted the result". That is worth nothing
+    // if the check would have accepted the file BEFORE any repair — and
+    // measured on real code, that was the common case rather than an edge one:
+    // 54 of 80 runs reported verified_done, most of them at step 1, having
+    // changed nothing at all. The check passed because it never exercised the
+    // broken function.
+    //
+    // A check that passes on the unrepaired file is not a weak adjudicator; it
+    // is not an adjudicator. Refusing here is the same discipline the runner
+    // applies when a filter matches zero tests: an absent verdict must not be
+    // reported as a favourable one.
+    // Naming the adjudicator as the repair target is a REQUEST error, caught
+    // before anything runs. The episode refuses it too, but saying so here
+    // names the mistake instead of reporting it as a refused action.
+    if symbol == check {
+        usage(&format!(
+            "--symbol and --check are both `{check}`: patching the check that \
+             decides whether the work is done would grade the repair against \
+             bytes the repair just wrote"
+        ));
+    }
+
+    match runner.run_hidden_check(&file, &check) {
+        Err(e) => {
+            eprintln!("the adjudicating check could not be run: {e}");
+            std::process::exit(22);
+        }
+        Ok((true, _)) => {
+            eprintln!(
+                "`{check}` already passes on {file}, so it cannot witness a \
+                 repair: it would accept this file unchanged. Name a check that \
+                 currently FAILS, or there is nothing here to prove."
+            );
+            std::process::exit(26);
+        }
+        Ok((false, 0)) => {
+            eprintln!(
+                "`{check}` matched no test in {file}. A filter matching nothing \
+                 exits 0 and reports ok, which is why this is checked rather \
+                 than inferred from the exit code."
+            );
+            std::process::exit(2);
+        }
+        Ok((false, _)) => {}
+    }
+
     // The ordered list of functions this run may try.
     //
     // An explicit --symbol is an INSTRUCTION, not a hypothesis to second-guess:
@@ -337,6 +387,16 @@ fn main() {
         EpisodeOutcome::Blocked { steps, reason } => (22, "blocked", reason.clone(), *steps),
         EpisodeOutcome::Refused { steps, reason } => (23, "refused", reason.clone(), *steps),
         EpisodeOutcome::NeedsInput { steps, what } => (24, "needs_input", what.clone(), *steps),
+        EpisodeOutcome::NoSuchSymbol {
+            steps,
+            symbol,
+            path,
+        } => (
+            25,
+            "no_such_symbol",
+            format!("`{symbol}` is not defined in {path}"),
+            *steps,
+        ),
     };
     // Nothing worked: the file is left exactly as it was found. A run that
     // reports failure while having rewritten a function is reporting on a
@@ -401,6 +461,17 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     }
     if file.is_empty() {
         usage("--file is required");
+    }
+    // Required, not optional. Omitted, `check_outcomes` excludes nothing and
+    // the ADJUDICATING test becomes evidence for choosing what to repair —
+    // which makes the target a function of the answer, the one thing this
+    // module exists to prevent. The JSON gave no sign the spectrum was
+    // contaminated.
+    if check.is_empty() {
+        usage(
+            "--check is required: without it the adjudicating test is counted \
+             as evidence, and the target becomes a function of the answer",
+        );
     }
     let runner = Runner::new(&axon_bin, &workspace);
     let src = std::fs::read_to_string(workspace.join(&file))

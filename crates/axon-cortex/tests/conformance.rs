@@ -472,14 +472,13 @@ fn cxg_g02_an_observation_distinguishes_clean_from_warned() {
         "control must be clean: {}",
         fact(&obs2, "compiles_cleanly")
     );
-    assert_eq!(
-        fact(&obs2, "warning_count"),
-        fact(&obs2, "warning_count"),
-        "sanity"
-    );
+    // (An assertion here compared `fact(...)` with itself — x == x, green with
+    // the observer deleted. The real property is asserted directly below.)
+    // A count of ZERO specifically. The previous `contains('0')` also passed
+    // for 10, 20 or 100 — it matched the digit, not the number.
     assert!(
-        fact(&obs2, "warning_count").contains('0'),
-        "control warning_count must be 0: {}",
+        fact(&obs2, "warning_count").contains("value: \"0\""),
+        "a clean file reports zero warnings, not merely a count containing a 0: {}",
         fact(&obs2, "warning_count")
     );
 }
@@ -1797,79 +1796,65 @@ fn cxg_c14_a_rejected_attempt_is_fed_back_without_leaking_the_grader() {
     );
 }
 
-/// C15 — Cortex finds the target itself, and refuses to guess when it cannot.
+/// C15 — Cortex finds the target itself, and what it refuses to nominate.
 ///
-/// `--symbol` asked the operator to do the interesting half: decide what is
-/// broken. This does it from the only evidence available without a model —
-/// which checks fail, and which functions those checks call.
-///
-/// The refusal rows are the point. A wrong localization sends a generator to
-/// rewrite a working function; the hidden check refuses every attempt without
-/// saying why, and the episode burns its budget repairing the wrong thing and
-/// reports "no progress" — true, and useless.
+/// These exercise `rank`, which is the function the binary calls. An earlier
+/// version tested a `localize` wrapper that returned one name or a refusal;
+/// production stopped using it when the run began walking the ranking, and a
+/// second localization semantics maintained only by its own tests is the
+/// defect this suite exists to find, not a safety net.
 #[test]
-fn cxg_c15_localization_names_one_target_or_admits_it_cannot() {
-    use axon_cortex::locate::{localize, Localization};
+fn cxg_c15_ranking_nominates_by_evidence_and_never_nominates_a_check() {
+    use axon_cortex::locate::rank;
 
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"),
     )
     .unwrap();
+    let names = |r: Vec<(String, f64)>| -> Vec<String> { r.into_iter().map(|(n, _)| n).collect() };
 
-    // One failing check calling exactly one defined function.
-    match localize(&src, &["visible_repro".to_string()], &[]) {
-        Localization::Single { symbol, evidence } => {
-            assert_eq!(symbol, "double");
-            // The evidence travels with the conclusion so a caller can show
-            // its working rather than assert an answer.
-            assert_eq!(evidence, vec!["visible_repro".to_string()]);
-        }
-        other => panic!("one check naming one function must localize: {other:?}"),
-    }
+    // One failing check reaching one function.
+    assert_eq!(
+        names(rank(&src, &["visible_repro".to_string()], &[])),
+        vec!["double".to_string()]
+    );
 
-    // Nothing failing is NOT an absence of candidates. A caller that treated
-    // them alike would report a healthy file as unlocalizable.
-    assert_eq!(localize(&src, &[], &[]), Localization::NothingFailing);
+    // Nothing failing is not a ranking of nothing — it is no question at all.
+    assert!(rank(&src, &[], &[]).is_empty());
 
-    // Two functions implicated, no basis to choose: reported as ambiguous.
-    let two = "\
-fn alpha(n: i64) -> i64 { n }
-fn beta(n: i64) -> i64 { n }
-@[test]
-fn t() { assert_eq(alpha(1) + beta(1), 4) }
-";
-    match localize(two, &["t".to_string()], &[]) {
-        Localization::Ambiguous { candidates, .. } => {
-            assert_eq!(candidates, vec!["alpha".to_string(), "beta".to_string()]);
-        }
-        other => panic!("two candidates must not be resolved by picking one: {other:?}"),
-    }
-
-    // A failing check that calls nothing defined here. Its own case, because
-    // the remedy differs from ambiguity — the defect may be in a callee, a
-    // builtin, or the check itself.
-    let none = "@[test]\nfn t() { assert_eq(1, 2) }\n";
-    match localize(none, &["t".to_string()], &[]) {
-        Localization::NoCandidate { evidence } => assert_eq!(evidence, vec!["t".to_string()]),
-        other => panic!("no candidate is not ambiguity: {other:?}"),
-    }
-
-    // A check is not a candidate for its own repair. Without this every
-    // failing test localizes to itself — true, and no help at all.
-    let selfref = "@[test]\nfn t() { t() }\n";
-    assert!(matches!(
-        localize(selfref, &["t".to_string()], &[]),
-        Localization::NoCandidate { .. }
-    ));
-
-    // PASSING checks are evidence too, and they are what turns a tie into an
-    // answer. Both helpers are reached by the failing check; only `safe` is
-    // also reached by a passing one, so `risky` is the more suspicious of the
-    // two and the verdict can name it.
+    // A TEST IS NEVER A CANDIDATE, and the one that must never be nominated is
+    // the adjudicator — which is stripped from both spectra before ranking, so
+    // a name-based filter cannot see it. Candidacy is decided by the `@[test]`
+    // attribute instead.
     //
-    // This is the whole difference between the first version of this module
-    // and the current one. Measured on the real corpus, ignoring the passing
-    // checks answered 8.8% of cases; using them answers 57.5%.
+    // Measured before the fix: a run could nominate `hidden_completion`,
+    // rewrite it to `assert(true)`, leave `double` broken, and exit 0.
+    // The discriminating case is a failing check that REACHES another check.
+    // Asserting it against `broken.ax` proved nothing: `visible_repro` never
+    // calls `hidden_completion`, so the grader was absent from the ranking for
+    // a reason that had nothing to do with the guard, and the assertion passed
+    // with the guard deleted.
+    let reaches_grader = "\
+fn helper(n: i64) -> i64 { n }
+@[test]
+fn t_fail() { assert_eq(helper(1), 2) t_hidden() }
+@[test]
+fn t_hidden() { assert_eq(helper(2), 4) }
+";
+    let ranked = names(rank(reaches_grader, &["t_fail".to_string()], &[]));
+    assert!(
+        !ranked.contains(&"t_hidden".to_string()),
+        "a test reached from a failing check must still never be a repair \
+         target — it is the thing that decides whether the work is done: \
+         {ranked:?}"
+    );
+    assert_eq!(ranked, vec!["helper".to_string()]);
+
+    // PASSING checks are evidence, and they are what turns a tie into an
+    // answer. Both helpers are reached by the failing check; only `safe` is
+    // also reached by a passing one, so `risky` is the more suspicious.
+    // Measured on the real corpus, ignoring the passing checks answered 8.8%
+    // of cases; using them answers 48.8% outright.
     let spectrum = "\
 fn risky(n: i64) -> i64 { n }
 fn safe(n: i64) -> i64 { n }
@@ -1878,86 +1863,150 @@ fn t_fail() { assert_eq(risky(1) + safe(1), 4) }
 @[test]
 fn t_pass() { assert_eq(safe(1), 1) }
 ";
-    match localize(spectrum, &["t_fail".to_string()], &["t_pass".to_string()]) {
-        Localization::Single { symbol, .. } => assert_eq!(
-            symbol, "risky",
-            "the helper a passing check also exercises is the less suspicious one"
-        ),
-        other => panic!("passing checks must break the tie: {other:?}"),
-    }
+    let with_pass = rank(spectrum, &["t_fail".to_string()], &["t_pass".to_string()]);
+    assert_eq!(with_pass[0].0, "risky");
+    assert!(
+        with_pass[0].1 > with_pass[1].1,
+        "the ranking must SEPARATE them, not merely order them: {with_pass:?}"
+    );
     // Drop the passing check and the same file is genuinely undecidable — the
-    // control proving the row above is about the EVIDENCE, not about the two
-    // function names.
-    assert!(matches!(
-        localize(spectrum, &["t_fail".to_string()], &[]),
-        Localization::Ambiguous { .. }
-    ));
+    // control proving the row above is about the EVIDENCE, not the two names.
+    let without = rank(spectrum, &["t_fail".to_string()], &[]);
+    assert_eq!(
+        without[0].1, without[1].1,
+        "with no passing check there is nothing to separate them: {without:?}"
+    );
 
-    // Calls are followed TRANSITIVELY. A check calls a public helper which
-    // calls the broken function; a direct-only scan reports NoCandidate for a
-    // defect two lines away.
+    // Calls are followed TRANSITIVELY: a check calls a public helper which
+    // calls the broken function. Ablated on the real corpus, following calls
+    // at all is worth 16 points of top-3 recall.
     let deep = "\
 fn inner(n: i64) -> i64 { n }
 fn outer(n: i64) -> i64 { inner(n) }
 @[test]
 fn t() { assert_eq(outer(1), 4) }
 ";
-    // `inner` specifically. An earlier version of this row accepted EITHER
-    // name, so it passed with transitivity switched off — it asserted that
-    // localization produced an answer, not that it produced this one.
-    match localize(deep, &["t".to_string()], &[]) {
-        Localization::Ambiguous { candidates, .. } => assert!(
-            candidates.contains(&"inner".to_string()),
-            "a transitively-called function must be a candidate: {candidates:?}"
-        ),
-        other => panic!("a function two hops away must be reachable: {other:?}"),
-    }
+    assert!(
+        names(rank(deep, &["t".to_string()], &[])).contains(&"inner".to_string()),
+        "a function two hops from the check must be reachable"
+    );
 
-    // A name that is a suffix of another must not match. `double(` appears
-    // inside `redouble(`, and a careless scan gains a candidate that the check
-    // never called — which is how a one-answer localization turns into a
-    // refusal for no reason.
+    // A failing check reaching nothing defined here yields no candidates —
+    // distinct from "several, and I cannot choose", which is now an ordered
+    // plan rather than a dead end.
+    assert!(rank(
+        "@[test]\nfn t() { assert_eq(1, 2) }\n",
+        &["t".to_string()],
+        &[]
+    )
+    .is_empty());
+
+    // A name that is a SUFFIX of another must not match inside it. `double(`
+    // appears in `redouble(`, and a careless scan gains a candidate the check
+    // never called.
     let suffix = "\
 fn double(n: i64) -> i64 { n }
 fn redouble(n: i64) -> i64 { n }
 @[test]
 fn t() { assert_eq(redouble(1), 4) }
 ";
-    match localize(suffix, &["t".to_string()], &[]) {
-        Localization::Single { symbol, .. } => assert_eq!(symbol, "redouble"),
-        other => panic!("a suffix must not create a phantom candidate: {other:?}"),
-    }
+    assert_eq!(
+        names(rank(suffix, &["t".to_string()], &[])),
+        vec!["redouble".to_string()]
+    );
 }
 
-/// C15b — localization runs against the real compiler, and never reads the
-/// grader.
+/// C15d — the episode itself refuses to patch the adjudicator.
+///
+/// The CLI rejects `--symbol == --check` as a request error, which is friendly
+/// but is NOT the guarantee: it left the runner's own guard untested, and
+/// deleting that guard passed the whole suite. This drives `run_episode`
+/// directly, which is the layer a library caller reaches.
 #[test]
-fn cxg_c15_the_hidden_check_is_not_evidence_for_the_target() {
-    use axon_cortex::locate::Localization;
+fn cxg_c15_the_episode_will_not_patch_the_check_that_grades_it() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::LiteralGenerator;
+    use axon_cortex::runner::EpisodeOutcome;
 
+    let (_, ws) = stage("patch_grader");
+    let before = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    let mut r = Runner::new(axon_bin(), &ws);
+    let g = broken_grant(&mut r);
+    // A tautology. Applied to the grader it would pass every subsequent
+    // adjudication while `double` stays broken — measured, exit 0 with
+    // `repaired hidden_completion`.
+    let tautology = LiteralGenerator::new("\n    assert(true)\n");
+    let out = r.run_episode(
+        &SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "hidden_completion".into(),
+        },
+        Some(&g),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&tautology),
+    );
+    match &out {
+        EpisodeOutcome::Refused { reason, .. } => assert!(
+            reason.contains("adjudicates"),
+            "the refusal must say why: {reason}"
+        ),
+        other => panic!("patching the grader must be refused, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(ws.join("broken.ax")).unwrap(),
+        before,
+        "the adjudicating check must be byte-identical afterwards"
+    );
+}
+
+/// C15b — the spectrum comes from the real compiler, read as DATA.
+#[test]
+fn cxg_c15_the_spectrum_is_read_from_the_machine_readable_contract() {
     let (_, ws) = stage("locate_live");
     let r = Runner::new(axon_bin(), &ws);
 
-    // Both checks fail on the unrepaired fixture. The hidden one is excluded
-    // HERE rather than by the caller: a target localized from the grader is a
-    // target chosen by the answer, and passing that grader would stop being
-    // evidence of a repair.
-    let failing = r
-        .failing_checks("broken.ax", "hidden_completion")
-        .expect("checks run");
+    // Both checks fail on the unrepaired fixture. The adjudicator is excluded
+    // here rather than by the caller: a target localized from the grader is a
+    // target chosen by the answer.
+    let (failing, passing) = r.check_outcomes("broken.ax", "hidden_completion").unwrap();
     assert_eq!(failing, vec!["visible_repro".to_string()]);
+    // `clean_helper` passes on the broken file, and the PASSING side is what
+    // makes a spectrum a spectrum: without it every helper looks equally
+    // suspicious.
+    assert_eq!(passing, vec!["clean_helper".to_string()]);
 
-    match r.locate_target("broken.ax", "hidden_completion") {
-        Localization::Single { symbol, .. } => assert_eq!(symbol, "double"),
-        other => panic!("the live path must localize `double`: {other:?}"),
-    }
+    // An ANNOTATED failure line is still one check name. `axon test` prints
+    // `test NAME [should_fail] ... FAILED`, and the annotation appears only on
+    // the failure branch — the only branch localization reads — so a corpus of
+    // passing tests can never reveal it. Reading the `--json` contract removes
+    // the question: three corpus trials produced an empty ranking before this.
+    let src = std::fs::read_to_string(ws.join("broken.ax"))
+        .unwrap()
+        .replace(
+            "@[test]\nfn visible_repro() {\n    assert_eq(double(5), 10)\n}",
+            "@[test(should_fail)]\nfn visible_repro() {\n    assert_eq(double(5), 7)\n}",
+        );
+    assert!(
+        src.contains("should_fail"),
+        "the fixture edit must land, or this row tests nothing"
+    );
+    std::fs::write(ws.join("broken.ax"), &src).unwrap();
+    let (failing2, _) = r.check_outcomes("broken.ax", "hidden_completion").unwrap();
+    assert_eq!(
+        failing2,
+        vec!["visible_repro".to_string()],
+        "the annotation is not part of the check's name"
+    );
 
-    // A checker that cannot run is Unknown, not "nothing failing". Those
-    // collapse the moment an error is reported as an empty list, and an empty
-    // list is what a caller reads as a healthy file.
+    // A checker that cannot run is an ERROR, never an empty spectrum: an empty
+    // failing list is exactly what a HEALTHY file looks like.
     let broken_runner = Runner::new(ws.join("no-such-axon"), &ws);
-    assert!(matches!(
-        broken_runner.locate_target("broken.ax", "hidden_completion"),
-        Localization::Unknown { .. }
-    ));
+    assert!(
+        broken_runner
+            .check_outcomes("broken.ax", "hidden_completion")
+            .is_err(),
+        "an unrunnable checker must not report as nothing-failing"
+    );
 }

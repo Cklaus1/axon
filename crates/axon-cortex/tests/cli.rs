@@ -286,8 +286,18 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
         err2.contains("alpha") && err2.contains("beta"),
         "a tie must be reported as an ORDERED plan, not a refusal: {err2}"
     );
+    // And the plan is CARRIED OUT. The line above is printed before the
+    // attempt loop, so asserting only it left this row green with the walk
+    // deleted — it pinned that a plan was announced, not that anything
+    // happened. The hand-off line is printed only by a second attempt.
+    assert!(
+        err2.contains("did not repair it; trying"),
+        "the second candidate must actually be attempted: {err2}"
+    );
 
-    // 2b. Exit 25 now means what it says: no candidate AT ALL. A failing check
+    // 2b. Exit 25 now means what it says: no candidate AT ALL. Note `hidden`
+    //     must itself FAIL here: a check that already passes is refused before
+    //     this point, because it would accept the file unchanged. A failing check
     //     that reaches no function defined in the file has nothing to offer,
     //     and that is a different statement from "several, and I cannot
     //     choose" — which is now an ordered plan rather than a dead end.
@@ -296,7 +306,7 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
         "@[test]\n\
          fn t() { assert_eq(1, 2) }\n\
          @[test]\n\
-         fn hidden() { assert_eq(1, 1) }\n\
+         fn hidden() { assert_eq(1, 2) }\n\
          fn main() { println(to_str(1)) }\n",
     )
     .unwrap();
@@ -513,4 +523,88 @@ fn cli_locate_reports_the_ranking_with_its_scores() {
         "the adjudicating check must not appear in the evidence: {spectra}"
     );
     assert!(spectra.contains("visible_repro"));
+}
+
+/// C18 — the grader is not a repair target, and an unwitnessable check is not
+/// a pass.
+///
+/// Both rows are false successes found by measuring against real code, and
+/// both are the same collapse wearing different clothes: something that was
+/// never established being reported as established.
+#[test]
+fn cli_refuses_to_grade_a_repair_against_bytes_the_repair_wrote() {
+    // 1. Naming the adjudicator as the target rewrote it to a tautology, left
+    //    the defect untouched, and exited 0 — `verified_done — repaired
+    //    hidden_completion`. That is the crate's headline claim exactly
+    //    inverted.
+    let ws = workspace("grader");
+    let before = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    let (code, text) = repair(
+        &ws,
+        &[
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    assert(true)\n",
+            "--symbol",
+            "hidden_completion",
+        ],
+    );
+    assert_ne!(code, 0, "patching the grader must never verify: {text}");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("broken.ax")).unwrap(),
+        before,
+        "the adjudicating check must be byte-identical afterwards"
+    );
+
+    // 2. A check that ALREADY PASSES cannot witness a repair — it would accept
+    //    the file unchanged. Measured: 54 of 80 oracle runs reported
+    //    verified_done, most at step 1, having changed nothing, because the
+    //    named check never exercised the broken function.
+    let ws2 = workspace("unwitnessable");
+    let before2 = std::fs::read_to_string(ws2.join("broken.ax")).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws2)
+        .args(["--file", "broken.ax", "--symbol", "double"])
+        // `clean_helper` passes on the broken file: it says nothing about
+        // `double`.
+        .args(["--check", "clean_helper", "--axon"])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(26),
+        "a check that already passes must be refused as an adjudicator: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws2.join("broken.ax")).unwrap(),
+        before2,
+        "nothing may be written when no adjudication is possible"
+    );
+
+    // 3. A symbol that does not exist is its own answer. It used to come back
+    //    as exit 22 "the checker could not run" — sending an operator to debug
+    //    a toolchain that was fine.
+    let ws3 = workspace("nosuch");
+    let (code3, text3) = repair(
+        &ws3,
+        &[
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+            "--symbol",
+            "no_such_function",
+        ],
+    );
+    assert_eq!(code3, 25, "a missing symbol must exit 25: {text3}");
 }

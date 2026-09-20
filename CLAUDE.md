@@ -170,10 +170,12 @@ cortex repair --file broken.ax --check hidden_completion \
 
 `--symbol` is optional: absent, Cortex RANKS the candidate functions by Ochiai
 over the call spectrum (passing checks count as evidence) and tries the top
-three in order, restoring the file between attempts. Measured on real code —
-one injected defect per function across `examples/**.ax` —
-top-1 is 57.5% and top-3 is 90% (`crates/axon-cortex/benchmarks/`). Exit 25
-means no candidate at all, not "several". Exit 0 means
+three in order, restoring the file between attempts. Measured on real code — one injected
+defect per function across `examples/**.ax`, 44 trials — the top candidate is
+the sole most-suspicious one 38.6% of the time and the truth reaches rank 3 in
+93.2% (`crates/axon-cortex/benchmarks/`). A test is never a candidate and the
+adjudicating check can never be patched. Exit 25 means no candidate at all;
+exit 26 means the named check already passes, so it cannot witness a repair. Exit 0 means
 a hidden check accepted the repair, not that the loop finished; 20/21/22/23/24
 separate budget, futility, environment, authority and missing content, because
 the remedies differ. A patch that makes the file stop compiling is reverted and

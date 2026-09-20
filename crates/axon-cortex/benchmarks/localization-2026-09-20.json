@@ -1,42 +1,336 @@
 {
  "measured_on": "2026-09-20",
- "corpus": "examples/stdlib/*.ax + examples/*.ax, one operator-swap defect injected per function (cap 3 per file)",
- "trials": 80,
- "method": "the mutant is kept only if the file still compiles and a non-hidden @[test] now fails; the hidden check is the file's last @[test] and is excluded from the evidence",
- "v1_direct_calls_refuse_if_more_than_one": {
-  "correct": 7,
-  "wrong": 0,
-  "refused": 73,
-  "error": 0
+ "corpus": "examples/stdlib/*.ax + examples/*.ax; one operator-swap defect injected per function (cap 3 per file)",
+ "trial_selection": "the mutant is kept only if it still compiles AND at least TWO checks now fail: one becomes the adjudicator (it must FAIL, or it cannot witness the repair) and the rest remain as visible evidence",
+ "correction": "an earlier run of this benchmark chose the adjudicator up front as the file's last @[test], which usually did not exercise the injected defect. It therefore passed on the broken file, and 54 of 80 runs reported verified_done having changed nothing. Those numbers are withdrawn: the trial set here (44) is not comparable to the earlier 80, and the binary now refuses an adjudicator that already passes.",
+ "trials": 44,
+ "localization": {
+  "top1_unique": 38.6,
+  "top1_incl_ties": 50.0,
+  "top2": 79.5,
+  "top3": 93.2,
+  "absent": 0.0,
+  "note": "top1_unique is the honest headline: the rest count trials where the truth tied at the top and won an ALPHABETICAL tie-break, which is not evidence."
  },
- "v2_ochiai_transitive": {
-  "depth_1": {
-   "n": 80,
-   "top1": 51.2,
-   "top3": 73.8,
-   "absent": 20.0,
-   "unique_top1": 36
+ "oracle_repair": {
+  "trials": 44,
+  "note": "the generator is handed the body the file had before it was broken, so it cannot propose anything wrong. Read as an upper bound on the CONTROL LOOP: every remaining failure is the loop's, not a model's.",
+  "verified": 32,
+  "verified_pct": 72.7,
+  "file_actually_clean": 32,
+  "repaired_the_right_function": 32,
+  "false_successes": 0,
+  "failed": 12,
+  "workspace_restored_on_failure": 12
+ },
+ "per_trial": [
+  {
+   "file": "examples/stdlib/agent.ax",
+   "broke": "agent_step",
+   "rank": 3,
+   "n": 7,
+   "tie_at_top": 1
   },
-  "depth_2": {
-   "n": 80,
-   "top1": 58.8,
-   "top3": 88.8,
-   "absent": 5.0,
-   "unique_top1": 41
+  {
+   "file": "examples/stdlib/audit_event.ax",
+   "broke": "audit_any_denied",
+   "rank": 1,
+   "n": 5,
+   "tie_at_top": 1
   },
-  "depth_4": {
-   "n": 80,
-   "top1": 57.5,
-   "top3": 90.0,
-   "absent": 3.8,
-   "unique_top1": 39
+  {
+   "file": "examples/stdlib/bandit.ax",
+   "broke": "bandit_update",
+   "rank": 3,
+   "n": 5,
+   "tie_at_top": 1
   },
-  "depth_8": {
-   "n": 80,
-   "top1": 57.5,
-   "top3": 90.0,
-   "absent": 3.8,
-   "unique_top1": 39
+  {
+   "file": "examples/stdlib/belief.ax",
+   "broke": "belief_entropy",
+   "rank": 1,
+   "n": 2,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/budget.ax",
+   "broke": "budget_spend",
+   "rank": 1,
+   "n": 5,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/causal.ax",
+   "broke": "revenue_of",
+   "rank": 6,
+   "n": 6,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "vcl_tick",
+   "rank": 3,
+   "n": 7,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "vcl_before",
+   "rank": 2,
+   "n": 8,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/coord.ax",
+   "broke": "co_can_read",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "gcounter_increment",
+   "rank": 1,
+   "n": 9,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "gcounter_merge",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/crdt.ax",
+   "broke": "vc_tick",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/date.ax",
+   "broke": "days_from_civil",
+   "rank": 2,
+   "n": 5,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/date.ax",
+   "broke": "civil_from_days",
+   "rank": 1,
+   "n": 5,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/llm_gateway.ax",
+   "broke": "call_cost",
+   "rank": 3,
+   "n": 6,
+   "tie_at_top": 5
+  },
+  {
+   "file": "examples/stdlib/llm_gateway.ax",
+   "broke": "affords",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/llm_gateway.ax",
+   "broke": "complete",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_parts",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/path.ax",
+   "broke": "path_normalize",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "gcounter_increment",
+   "rank": 1,
+   "n": 8,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "gcounter_merge",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/phase14_tests.ax",
+   "broke": "vc_tick",
+   "rank": 2,
+   "n": 4,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/principal_mint.ax",
+   "broke": "budget_spend",
+   "rank": 4,
+   "n": 9,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/principal_mint.ax",
+   "broke": "budget_exhausted",
+   "rank": 1,
+   "n": 8,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/principal_mint.ax",
+   "broke": "mint",
+   "rank": 2,
+   "n": 7,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_write",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_converge",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/replicated.ax",
+   "broke": "replicated_read",
+   "rank": 1,
+   "n": 6,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "risk_from_irreversibility",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/risk.ax",
+   "broke": "risk_requires_pipeline",
+   "rank": 1,
+   "n": 11,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/safe_action.ax",
+   "broke": "safe_to_act",
+   "rank": 2,
+   "n": 2,
+   "tie_at_top": 2
+  },
+  {
+   "file": "examples/stdlib/set.ax",
+   "broke": "set_from_arr",
+   "rank": 1,
+   "n": 10,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/store.ax",
+   "broke": "apply",
+   "rank": 2,
+   "n": 6,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/supervisor.ax",
+   "broke": "approves",
+   "rank": 1,
+   "n": 3,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/supervisor.ax",
+   "broke": "observe",
+   "rank": 1,
+   "n": 3,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/supervisor_tree.ax",
+   "broke": "on_failure",
+   "rank": 3,
+   "n": 7,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/tainted.ax",
+   "broke": "trust_validate",
+   "rank": 2,
+   "n": 4,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/tainted.ax",
+   "broke": "secret_can_flow_to",
+   "rank": 2,
+   "n": 10,
+   "tie_at_top": 1
+  },
+  {
+   "file": "examples/stdlib/trace.ax",
+   "broke": "trace_equiv",
+   "rank": 2,
+   "n": 4,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/trace.ax",
+   "broke": "trace_divergence",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 3
+  },
+  {
+   "file": "examples/stdlib/world.ax",
+   "broke": "predict",
+   "rank": 4,
+   "n": 7,
+   "tie_at_top": 4
+  },
+  {
+   "file": "examples/stdlib/world.ax",
+   "broke": "obs_y",
+   "rank": 3,
+   "n": 7,
+   "tie_at_top": 4
+  },
+  {
+   "file": "examples/stdlib/world.ax",
+   "broke": "fit_error",
+   "rank": 1,
+   "n": 4,
+   "tie_at_top": 4
+  },
+  {
+   "file": "examples/tests.ax",
+   "broke": "add",
+   "rank": 1,
+   "n": 1,
+   "tie_at_top": 1
   }
- }
+ ]
 }
