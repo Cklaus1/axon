@@ -10,3 +10,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
+axon-ai = { path = "../axon-ai", optional = true }
+
+[features]
+default = []
+# A model-backed patch generator. Off by default: a controller that could not
+# be built without a model dependency would make the model load-bearing for
+# every part of it that does not need one.
+ai = ["dep:axon-ai"]

@@ -1018,6 +1018,7 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
     //    hidden check refuses the claim and the workspace never changes.
     let (_, ws) = stage("ep_ok");
     let mut r = Runner::new(axon_bin(), &ws);
+    let g = broken_grant(&mut r);
     // clean.ax has no @[test] of its own, so give it a check that does exist
     // in the file it is asked about — the point of this row is the SUCCESS
     // path, and a check that cannot match would test the wrong thing.
@@ -1026,7 +1027,7 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
             path: "broken.ax".into(),
             symbol: "double".into(),
         },
-        None,
+        Some(&g),
         "agent",
         "visible_repro",
         6,
@@ -1096,6 +1097,22 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
     }
 }
 
+/// A grant covering `broken.ax`, pinned to the state it is issued over.
+///
+/// Patching is the one action needing write authority, and authority is now
+/// checked BEFORE a body is generated — so any row whose subject is the
+/// CONTENT of a proposal must have authority already in order, or it quietly
+/// tests the permission check instead of the thing it names.
+fn broken_grant(r: &mut Runner) -> EditGrant {
+    let snap = r.snapshot(&["broken.ax"]).unwrap();
+    EditGrant {
+        grant_id: "g".into(),
+        principal: "agent".into(),
+        snapshot_id: snap.snapshot_id,
+        write_prefixes: vec!["broken.ax".into()],
+    }
+}
+
 /// C12 — the model contributes the missing CONTENT, not the control.
 ///
 /// Every other capability in the loop existed before this test: observe,
@@ -1158,19 +1175,9 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     // Patching is the one action that needs write authority, so every row that
     // reaches the filesystem carries one — and row 7 proves the generator
     // cannot substitute for it.
-    fn grant_for(r: &mut Runner) -> EditGrant {
-        let snap = r.snapshot(&["broken.ax"]).unwrap();
-        EditGrant {
-            grant_id: "g".into(),
-            principal: "agent".into(),
-            snapshot_id: snap.snapshot_id,
-            write_prefixes: vec!["broken.ax".into()],
-        }
-    }
-
     let (_, ws) = stage("gen_ok");
     let mut r = Runner::new(axon_bin(), &ws);
-    let g = grant_for(&mut r);
+    let g = broken_grant(&mut r);
     let good = Fixed {
         id: "fixed/correct@1",
         // A body slice runs from just after the opening brace to just
@@ -1214,7 +1221,7 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     //    fails loudly; this one fails by looking exactly like row 1.
     let (_, ws2) = stage("gen_wrong");
     let mut r2 = Runner::new(axon_bin(), &ws2);
-    let g2 = grant_for(&mut r2);
+    let g2 = broken_grant(&mut r2);
     let wrong = Fixed {
         id: "fixed/wrong@1",
         answer: Ok("\n    n + 3\n"),
@@ -1238,6 +1245,7 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     //    what is missing.
     let (_, ws3) = stage("gen_invalid");
     let mut r3 = Runner::new(axon_bin(), &ws3);
+    let g3 = broken_grant(&mut r3);
     let before3 = std::fs::read_to_string(ws3.join("broken.ax")).unwrap();
     let empty = Fixed {
         id: "fixed/empty@1",
@@ -1245,7 +1253,7 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     };
     let out3 = r3.run_episode(
         &target(),
-        None,
+        Some(&g3),
         "agent",
         "hidden_completion",
         8,
@@ -1270,13 +1278,14 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     //    Collapsing them would send the operator to debug a checker that works.
     let (_, ws4) = stage("gen_down");
     let mut r4 = Runner::new(axon_bin(), &ws4);
+    let g4 = broken_grant(&mut r4);
     let down = Fixed {
         id: "fixed/offline@1",
         answer: Err(GenerationFailure::Unavailable("no API key".into())),
     };
     let out4 = r4.run_episode(
         &target(),
-        None,
+        Some(&g4),
         "agent",
         "hidden_completion",
         8,
@@ -1296,7 +1305,8 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     //    have regressed the property the slot exists to preserve.
     let (_, ws5) = stage("gen_none");
     let mut r5 = Runner::new(axon_bin(), &ws5);
-    let out5 = r5.run_episode(&target(), None, "agent", "hidden_completion", 8, None);
+    let g5 = broken_grant(&mut r5);
+    let out5 = r5.run_episode(&target(), Some(&g5), "agent", "hidden_completion", 8, None);
     assert!(
         matches!(out5, EpisodeOutcome::NeedsInput { .. }),
         "without a generator the loop must still say what it needs, got {out5:?}"
@@ -1308,7 +1318,7 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
     //    patch-and-claim forever.
     let (_, ws6) = stage("gen_noop");
     let mut r6 = Runner::new(axon_bin(), &ws6);
-    let g6 = grant_for(&mut r6);
+    let g6 = broken_grant(&mut r6);
     let noop = Fixed {
         id: "fixed/noop@1",
         // BYTE-IDENTICAL to the fixture's current body. The assertion below
@@ -1369,6 +1379,107 @@ fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
         before7,
         "a refused patch must not have been written"
     );
+
+    // 8. The generator is SHOWN the code it is replacing. Without it a real
+    //    model is being asked to rewrite a function it cannot see, and the one
+    //    correct answer it could give is a guess. This row proves the runner
+    //    actually fills `current_body` rather than passing the field empty —
+    //    a defect that would be invisible to every row above, because the
+    //    fixed generators there ignore their input and still answer correctly.
+    struct Picky;
+    impl PatchGenerator for Picky {
+        fn id(&self) -> String {
+            "picky@1".into()
+        }
+        fn propose(
+            &self,
+            _o: &Observation,
+            t: &SymbolRef,
+            c: &PatchConstraints,
+        ) -> Result<ProposedPatch, GenerationFailure> {
+            if !c.current_body.contains("n + 2") {
+                return Err(GenerationFailure::Declined(format!(
+                    "was shown no body for `{}`",
+                    t.symbol
+                )));
+            }
+            Ok(ProposedPatch {
+                body: c.current_body.replace("n + 2", "n * 2"),
+                generator_id: self.id(),
+            })
+        }
+    }
+    let (_, ws8) = stage("gen_sees_body");
+    let mut r8 = Runner::new(axon_bin(), &ws8);
+    let g8 = broken_grant(&mut r8);
+    let out8 = r8.run_episode(
+        &target(),
+        Some(&g8),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&Picky),
+    );
+    assert!(
+        matches!(out8, EpisodeOutcome::VerifiedDone { .. }),
+        "a generator that edits the body it was shown must succeed, got {out8:?}"
+    );
+
+    // 9. An unauthorized edit is refused WITHOUT asking the generator.
+    //
+    //    Row 7 proved the patch is refused; it could not tell whether the
+    //    refusal came before or after a proposal was obtained, because both
+    //    orderings end in Refused. The ordering is the point: whether this
+    //    principal may edit this path does not depend on the body, so asking
+    //    afterwards spends a model call — real money, and for a live model a
+    //    real side effect — on an edit that could never be applied.
+    //
+    //    Removing the early check passes every other test in this file and in
+    //    the CLI suite. This is the only row that sees it.
+    struct Tattle(std::sync::atomic::AtomicBool);
+    impl PatchGenerator for Tattle {
+        fn id(&self) -> String {
+            "tattle@1".into()
+        }
+        fn propose(
+            &self,
+            _o: &Observation,
+            _t: &SymbolRef,
+            c: &PatchConstraints,
+        ) -> Result<ProposedPatch, GenerationFailure> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(ProposedPatch {
+                body: c.current_body.replace("n + 2", "n * 2"),
+                generator_id: self.id(),
+            })
+        }
+    }
+    let (_, ws9) = stage("gen_unauthorized");
+    let mut r9 = Runner::new(axon_bin(), &ws9);
+    let snap9 = r9.snapshot(&["broken.ax"]).unwrap();
+    let elsewhere = EditGrant {
+        grant_id: "g".into(),
+        principal: "agent".into(),
+        snapshot_id: snap9.snapshot_id,
+        write_prefixes: vec!["clean.ax".into()],
+    };
+    let tattle = Tattle(std::sync::atomic::AtomicBool::new(false));
+    let out9 = r9.run_episode(
+        &target(),
+        Some(&elsewhere),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&tattle),
+    );
+    assert!(
+        matches!(out9, EpisodeOutcome::Refused { .. }),
+        "an out-of-scope patch must be refused, got {out9:?}"
+    );
+    assert!(
+        !tattle.0.load(std::sync::atomic::Ordering::SeqCst),
+        "the generator must not be asked for a body that could never be applied"
+    );
 }
 
 /// C12b — every constraint `validate` states is one it enforces.
@@ -1389,6 +1500,7 @@ fn cxg_c12_validate_enforces_each_constraint_it_states() {
             symbol: "double".into(),
         },
         max_bytes: 16,
+        current_body: "\n    n + 2\n".into(),
     };
     let patch = |body: &str, id: &str| ProposedPatch {
         body: body.into(),

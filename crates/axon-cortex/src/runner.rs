@@ -567,6 +567,22 @@ impl Runner {
             } = &action
             {
                 if proposed_body.is_empty() {
+                    // AUTHORITY FIRST, before the generator is asked. The
+                    // question "may this principal edit this path, under a
+                    // grant still valid for this state" does not depend on the
+                    // body, so asking it afterwards would spend a model call on
+                    // an edit that could never be applied — and then report the
+                    // result as NeedsInput, which blames the missing content
+                    // for what is really a missing permission.
+                    //
+                    // Dry, so the probe does not put an authorization event in
+                    // the episode for an action that has not been built yet.
+                    if let Err(why) = self.authorize_action_dry(&action, grant, principal, &snap) {
+                        return EpisodeOutcome::Refused {
+                            steps: step,
+                            reason: why.to_string(),
+                        };
+                    }
                     let Some(gen) = generator else {
                         return EpisodeOutcome::NeedsInput {
                             steps: step,
@@ -576,9 +592,33 @@ impl Runner {
                             ),
                         };
                     };
+                    // What the generator is allowed to see, assembled by
+                    // Cortex through its own typed read rather than by the
+                    // generator opening the file. If the symbol cannot be
+                    // located the request stops here: proposing a replacement
+                    // for a body nobody could read is guessing.
+                    let current_body =
+                        match std::fs::read_to_string(self.workspace.join(&symbol.path))
+                            .ok()
+                            .and_then(|src| {
+                                symbol_body(&src, &symbol.symbol)
+                                    .map(|(a, b)| src[a..b].to_string())
+                            }) {
+                            Some(b) => b,
+                            None => {
+                                return EpisodeOutcome::Blocked {
+                                    steps: step,
+                                    reason: format!(
+                                        "cannot read the body of `{}` in {}",
+                                        symbol.symbol, symbol.path
+                                    ),
+                                }
+                            }
+                        };
                     let constraints = crate::generate::PatchConstraints {
                         symbol: symbol.clone(),
                         max_bytes: 4096,
+                        current_body,
                     };
                     let proposal = match gen.propose(&obs, target, &constraints) {
                         Ok(p) => p,

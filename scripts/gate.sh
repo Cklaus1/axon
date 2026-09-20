@@ -121,6 +121,17 @@ echo "── gate: cortex policy boundary tests ──────────�
 cargo test -p axon-cortex -p cortex-policy-adapter \
   || fail "cortex policy boundary tests"
 
+# The same crate again with `ai` on, because that feature gates the only
+# model-backed generator — the one production path where a model contributes to
+# a repair episode. A default-feature run neither compiles nor lints it, so the
+# module would rot exactly the way lsp.rs did below: present, plausible, and
+# verified by nothing. Clippy as well as test, since the default clippy sweep
+# further down also passes no features.
+cargo clippy -p axon-cortex --all-targets --features ai -- -D warnings \
+  || fail "cortex ai-generator lint"
+cargo test -p axon-cortex --features ai \
+  || fail "cortex ai-generator tests"
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 

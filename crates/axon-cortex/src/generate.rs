@@ -29,6 +29,14 @@ pub struct PatchConstraints {
     /// Upper bound on the proposed body. Not a security control — the grant is
     /// that — but a bound on the obviously-wrong.
     pub max_bytes: usize,
+    /// The body as it stands, the exact bytes a patch would replace.
+    ///
+    /// Supplied BY Cortex rather than read by the generator. A generator that
+    /// opened the file itself would be a second filesystem agent with its own
+    /// view of the workspace, and a disagreement between the two views would
+    /// have no arbiter. Here there is nothing to disagree about: it is handed
+    /// what Cortex would overwrite, and that is the whole of its read access.
+    pub current_body: String,
 }
 
 /// A generated body, plus WHO generated it.
@@ -125,4 +133,46 @@ pub fn validate(
         )));
     }
     Ok(())
+}
+
+/// Proposes one fixed body, supplied by the operator.
+///
+/// Not a test double — it is reachable from the CLI as `--generator
+/// literal:BODY`, and it is the honest way to apply a known fix: the patch goes
+/// through the same grant check, the same witness and the same hidden check as
+/// a model's would, instead of being hand-edited into the file where none of
+/// those run. "I already know the answer" is a reason to skip the model, not a
+/// reason to skip the adjudication.
+///
+/// It also makes the loop's success path reachable without a network, which is
+/// why the CLI's exit-0 contract can be tested at all.
+pub struct LiteralGenerator {
+    body: String,
+}
+
+impl LiteralGenerator {
+    pub fn new(body: impl Into<String>) -> Self {
+        Self { body: body.into() }
+    }
+}
+
+impl PatchGenerator for LiteralGenerator {
+    fn id(&self) -> String {
+        // Names the mechanism, not the content. The body is already recorded
+        // in the episode as a before/after digest pair, and repeating it here
+        // would put the patch text in the attribution field.
+        "literal@1".to_string()
+    }
+
+    fn propose(
+        &self,
+        _observation: &Observation,
+        _target: &SymbolRef,
+        _constraints: &PatchConstraints,
+    ) -> Result<ProposedPatch, GenerationFailure> {
+        Ok(ProposedPatch {
+            body: self.body.clone(),
+            generator_id: self.id(),
+        })
+    }
 }
