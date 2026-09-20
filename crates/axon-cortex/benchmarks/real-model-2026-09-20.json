@@ -84,6 +84,25 @@
    "argswap": 26,
    "drop-stmt": 17
   },
-  "note": "Computed over examples/stdlib/*.ax + examples/*.ax with the harness's own mutators and fn_span. Does not apply the `axon check` / `failing_tests` file filters, which reduce both columns further, so these are upper bounds on each rule."
+  "note": "Computed over examples/stdlib/*.ax + examples/*.ax with the harness's own mutators and fn_span. Does not apply the `axon check` / `failing_tests` file filters, which reduce both columns further, so these are upper bounds on each rule.",
+  "selection_simulation_per_class_5": {
+   "old_unconditional_break": {
+    "operator": 5,
+    "constant": 5,
+    "boolean": 3,
+    "argswap": 3,
+    "drop-stmt": 3,
+    "total": 19
+   },
+   "new_break_on_success": {
+    "operator": 5,
+    "constant": 5,
+    "boolean": 5,
+    "argswap": 5,
+    "drop-stmt": 5,
+    "total": 25
+   },
+   "note": "Replays the harness's SELECTION loop with trial() stubbed to succeed exactly when the mutator applies, so it measures the thing the break controls. The old loop was structurally incapable of reaching PER_CLASS=5 for three of five classes, regardless of corpus size. Both columns exclude the `axon check` / `failing_tests` file filters, which is why the real run came in below even the OLD column (argswap 1 observed vs 3 simulated)."
+  }
  }
 }
