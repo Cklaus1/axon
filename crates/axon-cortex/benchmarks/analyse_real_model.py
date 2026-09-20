@@ -47,15 +47,43 @@ solved_attempted = [t for t in attempted if t["exit"] == 0 and t["file_clean"]]
 print(f"  generator success | target attempted   : {len(solved_attempted)}/{len(attempted)}"
       f"  {pct(len(solved_attempted), len(attempted))}")
 
+def last_segment(t):
+    segs, cur = [], []
+    for c in t["per_proposal"]:
+        if (c["priors"] or 0) == 0 and cur:
+            segs.append(cur)
+            cur = []
+        cur.append(c)
+    if cur:
+        segs.append(cur)
+    return segs[-1] if segs else []
+
+
+for t in trials:
+    t["_final_proposals"] = len(last_segment(t))
+
+
 # 3. RECOVERY — does the feedback loop earn its complexity?
-multi = [t for t in attempted if t["proposals"] > 1]
+multi = [t for t in attempted if len(last_segment(t)) > 1]
 recovered = [t for t in multi if t["exit"] == 0 and t["file_clean"]]
 print(f"  recovery | first proposal rejected     : {len(recovered)}/{len(multi)}"
       f"  {pct(len(recovered), len(multi))}\n")
 
-first_shot = [t for t in solved_attempted if t["proposals"] == 1]
-after_fb = [t for t in solved_attempted if t["proposals"] > 1]
-failed_fb = [t for t in attempted if t not in solved_attempted and t["proposals"] > 1]
+# PROPOSALS ARE ATTRIBUTED TO CANDIDATES, not summed across the run.
+#
+# A trial at localization rank 2 spends proposals on the WRONG candidate
+# first. Counting `proposals > 1` as "recovered after feedback" would credit
+# the retry loop for work the generator never needed — it may have first-shot
+# the correct target after the walk moved on. Cost of a bad rank and
+# difficulty for the generator are different things, and this is where they
+# get confused.
+#
+# The rejected-attempts list is per-episode, so `priors` returning to 0 marks
+# the start of a new candidate. The last segment is the candidate that was
+# live when the run ended — the one a verdict is about.
+first_shot = [t for t in solved_attempted if t["_final_proposals"] == 1]
+after_fb = [t for t in solved_attempted if t["_final_proposals"] > 1]
+failed_fb = [t for t in attempted if t not in solved_attempted and t["_final_proposals"] > 1]
 gen_err = [t for t in trials if t["outcome"] == "needs_input"]
 print(f"    first-shot repair       : {len(first_shot)}")
 print(f"    recovered after feedback: {len(after_fb)}")
@@ -77,8 +105,8 @@ print("  localization rank vs outcome:")
 print(f"    {'rank':<8}{'first-shot':>11}{'recovered':>11}{'failed':>9}")
 for r in (1, 2, 3):
     at_r = [t for t in attempted if t["localization_rank"] == r]
-    fs = sum(1 for t in at_r if t in solved_attempted and t["proposals"] == 1)
-    rc = sum(1 for t in at_r if t in solved_attempted and t["proposals"] > 1)
+    fs = sum(1 for t in at_r if t in solved_attempted and t["_final_proposals"] == 1)
+    rc = sum(1 for t in at_r if t in solved_attempted and t["_final_proposals"] > 1)
     fl = len(at_r) - fs - rc
     if at_r:
         print(f"    {r:<8}{fs:>11}{rc:>11}{fl:>9}")
@@ -97,7 +125,8 @@ if solved:
     props = [t["proposals"] for t in solved]
     costs = [t["cost_usd"] for t in solved]
     walls = [t["wall_s"] for t in solved]
-    print(f"  median proposals / solve: {statistics.median(props):.0f}")
+    print(f"  median proposals / solve: {statistics.median(props):.0f} total, "
+          f"{statistics.median([t['_final_proposals'] for t in solved]):.0f} on the candidate that worked")
     print(f"  median cost / solve     : ${statistics.median(costs):.3f}")
     print(f"  median wall / solve     : {statistics.median(walls):.0f}s")
 print(f"  total spend             : ${sum(t['cost_usd'] for t in trials):.2f}\n")
