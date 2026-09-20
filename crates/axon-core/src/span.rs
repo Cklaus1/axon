@@ -341,6 +341,33 @@ mod tests {
         assert_eq!(Span::merge(in_b, Span::dummy()), in_b);
     }
 
+    /// `axon parse` publishes `Span` as JSON. Adding a field to a serialized
+    /// type is a compatibility event, so: an UNKNOWN source must not appear in
+    /// the output at all (single-file output stays byte-identical to what it
+    /// was before this field existed), and JSON written without the field must
+    /// still deserialize.
+    #[cfg(feature = "serde-json")]
+    #[test]
+    fn serialized_span_omits_an_unknown_source_and_accepts_json_without_one() {
+        let plain = Span::new(3, 9);
+        let json = serde_json::to_string(&plain).unwrap();
+        assert_eq!(
+            json, r#"{"start":3,"end":9}"#,
+            "an UNKNOWN source must be absent from the wire, not present as 0"
+        );
+
+        let old: Span = serde_json::from_str(r#"{"start":3,"end":9}"#).unwrap();
+        assert_eq!(old, plain, "JSON from a build without the field must load");
+
+        let located = Span::with_source(3, 9, SourceId(7));
+        let json = serde_json::to_string(&located).unwrap();
+        assert!(
+            json.contains("\"source\""),
+            "a known source IS published: {json}"
+        );
+        assert_eq!(serde_json::from_str::<Span>(&json).unwrap(), located);
+    }
+
     #[test]
     fn interning_is_keyed_on_path_and_bytes() {
         let first = intern_source("same.ax", "one\n");
