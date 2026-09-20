@@ -1700,10 +1700,17 @@ fn cxg_c13_a_patch_that_breaks_the_build_is_undone() {
         "a reverted patch must not send the loop back to claiming done: {record}"
     );
 
-    // 2. CONTROL. A body that compiles and is simply wrong must NOT be
-    //    reverted. Without this row the rule above is satisfied by one that
-    //    undoes every patch, which would make repair impossible while looking
-    //    careful.
+    // 2. CONTROL. The rollback rule must stay NARROW — it may not fire on a
+    //    patch that merely fails to fix things. Without this row the rule
+    //    above is satisfied by a build that undoes every patch, which would
+    //    make repair impossible while looking careful.
+    //
+    //    The observable changed when rejected patches began being undone too:
+    //    both now leave the file as it was, so the file alone no longer
+    //    distinguishes them. The RECORD does. `PatchReverted` means "this
+    //    broke the build"; a patch that compiled and simply did not fix the
+    //    problem is recorded as a rejected ATTEMPT and fed back to the
+    //    generator. Two different facts, two different remedies.
     let (_, ws2) = stage("revert_control");
     let mut r2 = Runner::new(axon_bin(), &ws2);
     let g2 = broken_grant(&mut r2);
@@ -1720,14 +1727,16 @@ fn cxg_c13_a_patch_that_breaks_the_build_is_undone() {
         !matches!(out2, EpisodeOutcome::VerifiedDone { .. }),
         "a wrong body must not verify, got {out2:?}"
     );
-    let after2 = std::fs::read_to_string(ws2.join("broken.ax")).unwrap();
+    let record2 = format!("{:?}", r2.episode);
     assert!(
-        after2.contains("n + 3"),
-        "a compiling patch must survive even when it is wrong: {after2}"
+        record2.contains("PatchApplied"),
+        "the attempt must be recorded as having been made: {record2}"
     );
     assert!(
-        !format!("{:?}", r2.episode).contains("PatchReverted"),
-        "nothing here broke the build, so nothing may be reverted"
+        !record2.contains("PatchReverted"),
+        "nothing here broke the BUILD, so the build-break revert must not \
+         fire — undoing a merely-wrong patch is a different mechanism with a \
+         different record: {record2}"
     );
 }
 

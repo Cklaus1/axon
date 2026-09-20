@@ -11,7 +11,7 @@ candidates in order; if it is usually absent, ranking deeper buys nothing.
 """
 import os, re, json, subprocess, sys, tempfile, shutil, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import ROOT, tests_in, fn_span, defined_fns, run, failing_tests, AXON, SWAPS
+from common import ROOT, tests_in, fn_span, defined_fns, run, failing_tests, AXON, MUTATORS
 
 CORTEX = os.environ.get("CORTEX_BIN", f"{ROOT}/target/debug/cortex")
 rows = []
@@ -29,14 +29,16 @@ for f in sorted(sys.argv[1:]):
     targets = [n for n in defined_fns(src0) if n not in checks and n != "main"]
     done = 0
     for name in targets:
-        if done >= 3: break
+        if done >= 8: break
         span = fn_span(src0, name)
         if not span: continue
         a, b = span
         body = src0[a:b]
-        for old, new in SWAPS:
-            if old not in body: continue
-            mutant = src0[:a] + body.replace(old, new, 1) + src0[b:]
+        for mname, mfn in MUTATORS:
+            made = mfn(body)
+            if made is None: continue
+            newbody, how = made
+            mutant = src0[:a] + newbody + src0[b:]
             ws = tempfile.mkdtemp(prefix="topk_")
             rel = os.path.basename(f)
             open(os.path.join(ws, rel), "w").write(mutant)
@@ -67,8 +69,8 @@ for f in sorted(sys.argv[1:]):
             # answer.
             tie = sum(1 for s in scores if scores and abs(s - scores[0]) < 1e-12)
             rows.append({"file": f, "broke": name, "rank": rank,
-                         "n": len(ranked), "tie_at_top": tie})
+                         "n": len(ranked), "tie_at_top": tie,
+                         "mutator": mname, "how": how})
             shutil.rmtree(ws, ignore_errors=True)
             done += 1
-            break
 print(json.dumps(rows))

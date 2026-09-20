@@ -557,7 +557,7 @@ impl Runner {
         // last-step comparison cannot see a two-step cycle and the episode
         // would spin until the budget ran out — reporting "out of budget" for
         // what is really "going in circles".
-        let mut seen: Vec<(String, String)> = Vec::new();
+        let mut seen: Vec<(String, String, usize)> = Vec::new();
         let mut ctx = crate::select::SelectionContext::default();
         // Attempts that did not stick, and the body most recently applied.
         // Carried across steps so the generator is not asked the same question
@@ -592,6 +592,16 @@ impl Runner {
         let mut effective: Option<EditGrant> = grant.cloned();
         let mut rejected: Vec<crate::generate::RejectedAttempt> = Vec::new();
         let mut last_applied: Option<String> = None;
+        // The file as this candidate found it. Every proposal is a replacement
+        // for THIS, not for whatever the previous proposal left behind.
+        let candidate_base: Option<String> =
+            std::fs::read_to_string(self.workspace.join(&target.path)).ok();
+        // …and the state-pin that went with it. Undoing a patch must put the
+        // grant back where it was, not re-pin it to NOW: re-pinning advanced a
+        // grant whose workspace had already moved before the episode began,
+        // laundering a stale grant into a current one. The suite caught it —
+        // a row that must refuse returned VerifiedDone.
+        let base_pin: Option<String> = effective.as_ref().map(|g| g.snapshot_id.clone());
         for step in 1..=budget {
             let snap = match self.snapshot(&[target.path.as_str()]) {
                 Ok(s) => s,
@@ -616,7 +626,22 @@ impl Runner {
             // Stuck detection BEFORE acting: identical state plus identical
             // choice means the previous step achieved nothing and this one will
             // achieve the same.
-            let point = (snap.snapshot_id.clone(), action.name().to_string());
+            // The stuck-check has to know what the episode has LEARNED, not
+            // only where it is. Undoing a rejected patch returns the workspace
+            // to a state already visited, so a plain (state, action) pair made
+            // the loop stop the moment the generator was about to try its
+            // second idea — futility declared on a cycle the reset created.
+            //
+            // The rejected-attempt count is the missing coordinate: same state,
+            // same action, but strictly more known-bad answers is a different
+            // situation. It stays a real futility check because `rejected` is
+            // deduplicated — a generator that repeats itself does not grow it,
+            // so the pair repeats and the episode stops.
+            let point = (
+                snap.snapshot_id.clone(),
+                action.name().to_string(),
+                rejected.len(),
+            );
             if seen.contains(&point) {
                 return EpisodeOutcome::NoProgress {
                     steps: step,
@@ -821,10 +846,11 @@ impl Runner {
                 // out.
                 if ctx.last_check == VisibleCheck::Failed {
                     if let Some(body) = last_applied.take() {
-                        rejected.push(crate::generate::RejectedAttempt {
+                        push_rejected(
+                            &mut rejected,
                             body,
-                            reason: crate::generate::RejectionReason::CheckRefused,
-                        });
+                            crate::generate::RejectionReason::CheckRefused,
+                        );
                     }
                 }
             }
@@ -885,10 +911,11 @@ impl Runner {
                         };
                     }
                     if let Some(body) = last_applied.take() {
-                        rejected.push(crate::generate::RejectedAttempt {
+                        push_rejected(
+                            &mut rejected,
                             body,
-                            reason: crate::generate::RejectionReason::DidNotCompile,
-                        });
+                            crate::generate::RejectionReason::DidNotCompile,
+                        );
                     }
                     self.episode.push(EpisodeEvent::PatchReverted {
                         path: target.path.clone(),
@@ -995,15 +1022,42 @@ impl Runner {
                 // and is still wrong — the only state in which proposing a
                 // repair is justified rather than a guess.
                 ctx.claim_refused = true;
+                // UNDO the rejected patch. Each proposal replaces the SAME
+                // body — the one this candidate started from — so the
+                // rejected-attempts list and `current_body` describe the same
+                // question. Leaving it applied made the next proposal a
+                // replacement for code the last proposal had broken, and a
+                // generator editing back toward the original then re-created
+                // an earlier state and tripped the cycle detector on a cycle
+                // the loop had manufactured.
+                if let Some(bytes) = &candidate_base {
+                    if std::fs::write(self.workspace.join(&target.path), bytes).is_err() {
+                        return EpisodeOutcome::Blocked {
+                            steps: step,
+                            reason: format!(
+                                "a rejected patch could not be undone in {}",
+                                target.path
+                            ),
+                        };
+                    }
+                    // The pin the candidate STARTED with. Restoring it keeps
+                    // a grant that was stale stale, and a grant that was
+                    // current current — the file is back at exactly the state
+                    // both statements were about.
+                    if let (Some(g), Some(pin)) = (effective.as_mut(), base_pin.as_ref()) {
+                        g.snapshot_id = pin.clone();
+                    }
+                }
                 // The claim covered whatever was last applied, so that body is
                 // now a known-insufficient attempt. Recorded WITHOUT the
                 // check's output: the generator learns its answer was rejected,
                 // not what the grader wanted.
                 if let Some(body) = last_applied.take() {
-                    rejected.push(crate::generate::RejectedAttempt {
+                    push_rejected(
+                        &mut rejected,
                         body,
-                        reason: crate::generate::RejectionReason::CheckRefused,
-                    });
+                        crate::generate::RejectionReason::CheckRefused,
+                    );
                 }
             }
         }
@@ -1320,6 +1374,21 @@ impl Runner {
             }
         }
         Ok(())
+    }
+}
+
+/// Record a rejected attempt, once.
+///
+/// Deduplicated on the body, because the count of rejections is a coordinate
+/// of the stuck-check: a generator that proposes the same thing twice must not
+/// look like progress. Recorded once, the pair repeats and the episode stops.
+fn push_rejected(
+    rejected: &mut Vec<crate::generate::RejectedAttempt>,
+    body: String,
+    reason: crate::generate::RejectionReason,
+) {
+    if !rejected.iter().any(|r| r.body == body) {
+        rejected.push(crate::generate::RejectedAttempt { body, reason });
     }
 }
 

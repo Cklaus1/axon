@@ -18,11 +18,82 @@ import subprocess
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 AXON = os.environ.get("AXON_BIN", f"{ROOT}/target/debug/axon")
 
-# One operator swap per function: a real behavioural change that still
-# compiles, which is the class localization is for. NOT representative of every
-# defect -- a missing branch or a wrong constant exercises the same machinery
-# differently, and neither is measured here.
+# The defect corpus.
+#
+# Everything published about localization and repair once rested on a single
+# class -- one operator swap -- so "93% top-3" was a claim about arithmetic
+# typos and nothing else. These add four more shapes that fail differently: a
+# wrong constant carries no operator to spot, a flipped boolean changes a
+# decision rather than a value, swapped arguments leave every token in place,
+# and a deleted statement removes code rather than altering it.
+#
+# Being liberal here is safe by construction: a mutant is DISCARDED unless it
+# still compiles and at least one check notices it, so a mutator that usually
+# produces nonsense costs sample size and never costs correctness.
 SWAPS = [("+", "-"), ("*", "+"), ("<=", "<"), (">=", ">"), ("&&", "||")]
+
+
+def _mut_operator(body):
+    for old, new in SWAPS:
+        if old in body:
+            return body.replace(old, new, 1), f"op:{old}->{new}"
+    return None
+
+
+def _mut_constant(body):
+    """Bump the first integer literal. No operator to notice; only behaviour."""
+    m = re.search(r"(?<![\w.])(\d+)(?![\w.])", body)
+    if not m:
+        return None
+    v = int(m.group(1))
+    return body[: m.start()] + str(v + 1) + body[m.end() :], f"const:{v}->{v+1}"
+
+
+def _mut_bool(body):
+    """Flip a boolean literal: a decision changes, not a value."""
+    for old, new in (("true", "false"), ("false", "true")):
+        m = re.search(r"(?<![\w])%s(?![\w])" % old, body)
+        if m:
+            return body[: m.start()] + new + body[m.end() :], f"bool:{old}->{new}"
+    return None
+
+
+def _mut_argswap(body):
+    """Swap two simple arguments. Every token stays; only the order moves."""
+    m = re.search(r"\b([a-z_][\w]*)\(\s*([a-z_][\w.]*)\s*,\s*([a-z_][\w.]*)\s*\)", body)
+    if not m or m.group(2) == m.group(3):
+        return None
+    rep = f"{m.group(1)}({m.group(3)}, {m.group(2)})"
+    return body[: m.start()] + rep + body[m.end() :], f"argswap:{m.group(1)}"
+
+
+def _mut_drop_stmt(body):
+    """Delete a standalone statement -- code removed, not altered.
+
+    Bindings are skipped: dropping a `let` almost always fails to compile, and
+    a mutant that does not compile is discarded anyway, so trying is only a
+    waste of sample size.
+    """
+    lines = body.split("\n")
+    for i, l in enumerate(lines):
+        t = l.strip()
+        if not t or t.startswith("//") or t.startswith("let ") or t.startswith("own "):
+            continue
+        if any(c in t for c in "{}") or "=" not in t:
+            continue
+        if i == len(lines) - 2:  # the tail expression is the return value
+            continue
+        return "\n".join(lines[:i] + lines[i + 1 :]), "drop-stmt"
+    return None
+
+
+MUTATORS = [
+    ("operator", _mut_operator),
+    ("constant", _mut_constant),
+    ("boolean", _mut_bool),
+    ("argswap", _mut_argswap),
+    ("drop-stmt", _mut_drop_stmt),
+]
 
 
 def tests_in(src):

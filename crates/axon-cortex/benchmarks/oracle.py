@@ -17,7 +17,7 @@ generator would have saved it.
 """
 import os, re, json, subprocess, sys, tempfile, shutil, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import ROOT, tests_in, fn_span, defined_fns, run, failing_tests, AXON, SWAPS
+from common import ROOT, tests_in, fn_span, defined_fns, run, failing_tests, AXON, MUTATORS
 
 CORTEX = os.environ.get("CORTEX_BIN", f"{ROOT}/target/debug/cortex")
 CANDIDATES = os.environ.get("CANDIDATES", "3")
@@ -37,14 +37,16 @@ for f in sorted(sys.argv[1:]):
     targets = [n for n in defined_fns(src0) if n not in checks and n != "main"]
     done = 0
     for name in targets:
-        if done >= 3: break
+        if done >= 8: break
         span = fn_span(src0, name)
         if not span: continue
         a, b = span
         body = src0[a:b]
-        for old, new in SWAPS:
-            if old not in body: continue
-            mutant = src0[:a] + body.replace(old, new, 1) + src0[b:]
+        for mname, mfn in MUTATORS:
+            made = mfn(body)
+            if made is None: continue
+            newbody, how = made
+            mutant = src0[:a] + newbody + src0[b:]
             ws = tempfile.mkdtemp(prefix="oracle_")
             rel = os.path.basename(f)
             p = os.path.join(ws, rel)
@@ -66,7 +68,7 @@ for f in sorted(sys.argv[1:]):
                            "--generator", "literal:" + body], timeout=180)
             restored = open(p).read()
             rows.append({
-                "file": f, "broke": name, "swap": f"{old}->{new}",
+                "file": f, "broke": name, "mutator": mname, "how": how,
                 "exit": rc,
                 "repaired": bool(re.search(r"repaired `%s`" % re.escape(name), out)),
                 # Did the loop end with a file that actually passes everything,
@@ -82,5 +84,4 @@ for f in sorted(sys.argv[1:]):
             })
             shutil.rmtree(ws, ignore_errors=True)
             done += 1
-            break
 print(json.dumps(rows))
