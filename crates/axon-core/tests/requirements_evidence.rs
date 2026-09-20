@@ -578,7 +578,7 @@ pub fn scan(root: &Path) -> Facts {
     // Reachability. "Invoked by something that is itself invoked by nothing" is
     // still invoked by nothing — the ledger's probe stopped at one hop, which is
     // why it counted the R26-R29 gates (called only by the orphaned
-    // axon_safety_gate.sh) as wired.
+    // R30 unified gate) as wired.
     loop {
         let mut grew = false;
         let names: Vec<String> = f.scripts.iter().cloned().collect();
@@ -1970,7 +1970,7 @@ fn fixture_echo_text_is_not_invocation() {
 // ---------------------------------------------------------------------------
 
 /// The orphan must name the nearest thing that mentions it and why that mention
-/// does not count. This is `r31_acceptance_gate.sh`'s exact shape: its only
+/// does not count. This is the R31 acceptance gate's exact shape: its only
 /// mention repo-wide is a comment in another gate.
 #[test]
 fn fixture_provenance_names_the_rejecting_mention() {
@@ -2053,7 +2053,7 @@ fn fixture_provenance_manual_operator_names_the_dead_caller() {
         .write(
             "scripts/r_other.sh",
             // Names BOTH: the dead caller (so `why_dead` takes its mention-count
-            // branch, the one the real axon_safety_gate.sh takes with 9 mentions)
+            // branch, the one the real R30 unified gate takes with 8 mentions)
             // and the leaf (so the grep-finds-it case is exercised).
             "#!/usr/bin/env bash\n# leaf.sh mirrors scripts/umbrella.sh\necho hi\n",
         )
