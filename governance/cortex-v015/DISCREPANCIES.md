@@ -193,3 +193,77 @@ A prefix set is also what the repository's own write-prefix grant machinery
 already uses, so this reuses an existing idiom.
 
 **Owner.** Repository owner.
+
+---
+
+## D-005 — CONFLICT: self-report is written into the evidence channel as a passing check
+
+**The crate breaks, in its own evidence trail, the rule it states in its own
+module docs.** `crates/axon-cortex/src/lib.rs:11`:
+
+> **"Absent, null/None, empty and Unknown are not interchangeable."** … a
+> missing fact cannot be silently rendered as a present one. This is the
+> absent-vs-passed collapse the rest of this repo keeps finding, stated as
+> a type.
+
+**Spec passages.** CX-10 v0.13 appendix (NEW in v0.15, absent from the v0.7
+package the crate cites as its basis):
+
+> Outcome labels must come from downstream evidence/verification or remain
+> unknown; **component self-report is not retrospective ground truth**.
+
+CX-04 §Graph contract:
+
+> **No implicit empty artifact, default success**, guessed distribution or
+> hidden provider fallback is permitted.
+
+**Live implementation — verified verbatim.** `crates/axon-cortex/src/episode.rs:41`
+documents the variant as:
+
+> `/// A registered check, with its real exit code.`
+
+and two call sites push events that are neither:
+
+* `crates/axon-cortex/src/runner.rs:543` —
+  `CheckRun { name: "claim_done", exit_code: 0, passed: claim.done }`.
+  No process ran. The exit code is invented, and `passed` is **the candidate's
+  own claim about itself**.
+* `crates/axon-cortex/src/runner.rs:794` —
+  `CheckRun { name: format!("patch_proposed_by:{}", …), exit_code: 0,
+  passed: true }`. Not a check at all — generator identity — with both fields
+  fabricated.
+
+A patched step therefore emits TWO synthetic passing `CheckRun` events
+alongside the real ones.
+
+**Blast radius — measured, and contained TODAY.** `Episode::verified_ok`
+(`episode.rs:110`) matches only `EpisodeEvent::Verified { passed: true, .. }`,
+so the adjudication path is NOT fooled by the synthetic events. Confirmed by
+reading the function. But the whole episode ships as `cortex-repair/1` JSON
+(`bin/cortex.rs:453`), and any consumer computing a check pass-rate — which is
+exactly what a CX-10 learning export does — would count self-report as
+evidence. The containment is a property of one function, not of the record.
+
+**Status of this check.** Verified by reading the two call sites, the variant's
+doc comment, and `verified_ok`. NOT verified by a test: the conformance test
+asserting an exact event-kind trace runs the NON-AI generator path, so
+`patch_proposed_by` is never exercised by any assertion.
+
+**Why it matters most.** This is the defect class the whole session has been
+closing — a non-observation rendered as an observation — occurring inside the
+crate written specifically to refuse it, in the channel that a learning
+pipeline would treat as ground truth.
+
+**Proposed resolution.** Add two variants to the EXISTING closed enum in
+`crates/axon-cortex/src/episode.rs`: `Claimed { rationale }` and
+`Proposed { generator_id }`. Neither carries an exit code or a `passed` field,
+because neither is a check. This is a schema-version bump, which
+`schemas/PROTOCOLS.md` §Compatibility already requires; the compiler will force
+the conformance test's match arms to be updated, which is the right forcing
+function. No new files.
+
+**Invariant link.** Protected kernel: *provenance integrity*.
+
+**Owner.** Repository owner.
+**Blocks.** CX-10 `G10-lineage` must not be reported as satisfiable while the
+evidence channel carries fabricated checks.
