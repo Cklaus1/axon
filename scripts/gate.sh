@@ -349,6 +349,23 @@ if [ "$STRICT" = 1 ]; then
   # caller. So this is wired to RUN, not to certify: its evidence class is
   # toolchain-conditional, and EVIDENCE_CLASSES.md types it rather than this
   # line pretending it is continuous.
+  # R25 — an Axon program running AS a Zephyr application on ARM Cortex-M under
+  # QEMU. This could not be wired before today: the gate was UNPASSABLE, because
+  # synthesize_freestanding_trap emitted x86 port I/O ("outb", constraints
+  # {dx},{al}) for every --freestanding target, so the thumbv7m build died at
+  # codegen with `couldn't allocate input reg for constraint '{dx}'`. The trap is
+  # now target-aware (x86 keeps outb+hlt; ARM gets bkpt #<marker> + wfi).
+  #
+  # Verified end to end here, not inferred: exit 0, "PASS: Axon ran on
+  # Zephyr/Cortex-M under QEMU — banner + computed 23 + 42", with every skip
+  # guard passing (west, cmake, ninja, qemu-system-arm, ZEPHYR_BASE, the
+  # arm-zephyr-eabi SDK) rather than the gate skipping past them.
+  #
+  # On a host without the Zephyr SDK it skips honestly, naming the missing tool.
+  # That is the external_hardware class: excused from being EFFECTIVE without
+  # the toolchain, never from being wired — unwired it would not run on the host
+  # that HAS the hardware either.
+  ./scripts/zephyr_qemu_gate.sh >/dev/null 2>&1 || fail "R25 Zephyr/Cortex-M gate"
   ./scripts/r32_acceptance_gate.sh >/dev/null 2>&1 || fail "R32 acceptance gate"
   ./scripts/r39_slice2_gate.sh >/dev/null 2>&1 || fail "R39 Slice 2 gate"
   ./scripts/r39_slice3_gate.sh >/dev/null 2>&1 || fail "R39 Slice 3 gate"
