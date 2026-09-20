@@ -1501,6 +1501,7 @@ fn cxg_c12_validate_enforces_each_constraint_it_states() {
             symbol: "double".into(),
         },
         max_bytes: 16,
+        rejected: Vec::new(),
         current_body: "\n    n + 2\n".into(),
     };
     let patch = |body: &str, id: &str| ProposedPatch {
@@ -1630,5 +1631,168 @@ fn cxg_c13_a_patch_that_breaks_the_build_is_undone() {
     assert!(
         !format!("{:?}", r2.episode).contains("PatchReverted"),
         "nothing here broke the build, so nothing may be reverted"
+    );
+}
+
+/// C14 — a retry is told what already failed, and never told why by the grader.
+///
+/// Before this, the loop asked the generator the same question after every
+/// rejection with no record of its last answer. A deterministic generator
+/// repeats itself and the episode gives up; a model retries the same idea in
+/// different words. Three attempts at one idea is a worse use of a budget than
+/// one attempt each at three.
+///
+/// The second row is the constraint that makes the first safe: the feedback
+/// says an attempt was rejected and roughly how, and carries nothing from the
+/// adjudicating check. A generator that could read why it failed the hidden
+/// check would be writing against the grader, and a result graded by something
+/// the author can read stops being evidence of anything.
+#[test]
+fn cxg_c14_a_rejected_attempt_is_fed_back_without_leaking_the_grader() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::{
+        GenerationFailure, LiteralGenerator, PatchConstraints, PatchGenerator, ProposedPatch,
+        RejectionReason,
+    };
+    use axon_cortex::runner::EpisodeOutcome;
+    use axon_cortex::Observation;
+
+    let target = || SymbolRef {
+        path: "broken.ax".into(),
+        symbol: "double".into(),
+    };
+
+    /// Gets it wrong first, then right — but ONLY if it is told the first
+    /// answer was rejected. Blind, it repeats itself forever.
+    struct Learner {
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+    impl PatchGenerator for Learner {
+        fn id(&self) -> String {
+            "learner@1".into()
+        }
+        fn propose(
+            &self,
+            _o: &Observation,
+            _t: &SymbolRef,
+            c: &PatchConstraints,
+        ) -> Result<ProposedPatch, GenerationFailure> {
+            // Record what the loop actually told us, so the assertions below
+            // inspect the real payload rather than a reconstruction of it.
+            self.seen.lock().unwrap().push(format!("{:?}", c.rejected));
+            let body = if c.rejected.is_empty() {
+                "\n    n + 3\n".to_string()
+            } else {
+                "\n    n * 2\n".to_string()
+            };
+            Ok(ProposedPatch {
+                body,
+                generator_id: self.id(),
+            })
+        }
+    }
+
+    let (_, ws) = stage("feedback");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let g = broken_grant(&mut r);
+    let learner = Learner {
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let out = r.run_episode(
+        &target(),
+        Some(&g),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&learner),
+    );
+    assert!(
+        matches!(out, EpisodeOutcome::VerifiedDone { .. }),
+        "a generator that learns from a rejection must be able to converge, got {out:?}"
+    );
+
+    let seen = learner.seen.lock().unwrap().clone();
+    assert!(
+        seen.len() >= 2,
+        "the loop must have asked more than once: {seen:?}"
+    );
+    assert!(
+        seen[0].contains("[]"),
+        "the first request has nothing to report: {}",
+        seen[0]
+    );
+    // The second request names the rejected body and the CLASS of rejection.
+    assert!(
+        seen[1].contains("n + 3") && seen[1].contains("CheckRefused"),
+        "a retry must be told what failed and roughly how: {}",
+        seen[1]
+    );
+    // And carries nothing from the grader. The check's name, its output and
+    // the expected values are all absent — the generator learns that its
+    // answer was wrong, not what the answer is.
+    for leaked in ["hidden_completion", "assert_eq", "14", "double(7)"] {
+        assert!(
+            !seen[1].contains(leaked),
+            "the feedback leaked `{leaked}` from the adjudicating check: {}",
+            seen[1]
+        );
+    }
+
+    // A body that broke the BUILD is classified differently from one that
+    // compiled and was refused. Collapsing them would tell a generator to
+    // avoid a whole approach when all it had was a syntax error.
+    assert_eq!(
+        format!("{}", RejectionReason::DidNotCompile),
+        "it did not compile"
+    );
+    assert_ne!(
+        format!("{}", RejectionReason::DidNotCompile),
+        format!("{}", RejectionReason::CheckRefused)
+    );
+
+    // THE CONTROL for making multi-attempt repair possible at all.
+    //
+    // Letting the episode advance its grant's state-pin is what allows a second
+    // attempt; done carelessly it would let a loop re-issue authority to
+    // itself and the staleness check would mean nothing. It advances only
+    // across transitions the episode performed, so a workspace that moved
+    // underneath the grant BEFORE the episode started must still be refused.
+    //
+    // Without this row, "the pin advances" is satisfied by a pin that never
+    // checks anything.
+    let (_, ws2) = stage("stale_pin");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let g2 = broken_grant(&mut r2);
+    // Somebody else edits the workspace after the grant was issued. The grant
+    // names a state that no longer exists.
+    let moved = std::fs::read_to_string(ws2.join("broken.ax"))
+        .unwrap()
+        .replace(
+            "// A localized",
+            "// edited by someone else\n// A localized",
+        );
+    std::fs::write(ws2.join("broken.ax"), moved).unwrap();
+    let willing = LiteralGenerator::new("\n    n * 2\n");
+    let out2 = r2.run_episode(
+        &target(),
+        Some(&g2),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&willing),
+    );
+    match &out2 {
+        EpisodeOutcome::Refused { reason, .. } => assert!(
+            reason.contains("pinned snapshot"),
+            "a grant whose state moved underneath it must refuse FOR THAT \
+             REASON, not as a generic denial: {reason}"
+        ),
+        other => panic!("a stale grant must still refuse, got {other:?}"),
+    }
+    assert!(
+        std::fs::read_to_string(ws2.join("broken.ax"))
+            .unwrap()
+            .contains("n + 2"),
+        "nothing may be written under a stale grant"
     );
 }

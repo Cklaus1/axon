@@ -48,13 +48,33 @@ impl AiPatchGenerator {
             };
             facts.push_str(&format!("- {k}: {rendered}\n"));
         }
+        // What has already failed, oldest first. A model told only the current
+        // state proposes the same thing again; the whole reason this list is
+        // threaded through the constraints is so a retry can be a different
+        // IDEA rather than the same one reworded.
+        let mut history = String::new();
+        for (i, r) in c.rejected.iter().enumerate() {
+            history.push_str(&format!(
+                "\nAttempt {} was REJECTED because {}:\n```\n{}\n```\n",
+                i + 1,
+                r.reason,
+                r.body
+            ));
+        }
+        if !history.is_empty() {
+            history = format!(
+                "\nAlready tried in this episode — do NOT propose any of these \
+                 again, and prefer a materially different approach:\n{history}"
+            );
+        }
         format!(
             "You are repairing one function in an Axon program.\n\n\
              File: {path}\n\
              Function: {symbol}\n\n\
              Its body is currently:\n\
              ```\n{body}\n```\n\n\
-             What a checker observed about the file:\n{facts}\n\
+             What a checker observed about the file:\n{facts}\
+             {history}\n\
              The function is believed to be semantically wrong. Return the \
              REPLACEMENT BODY only — the text between the function's braces, \
              with no braces, no signature, and no explanation. Keep it under \
@@ -62,6 +82,7 @@ impl AiPatchGenerator {
             path = target.path,
             symbol = target.symbol,
             body = c.current_body,
+            history = history,
             max = c.max_bytes,
         )
     }

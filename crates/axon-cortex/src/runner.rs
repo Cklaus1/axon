@@ -523,6 +523,24 @@ impl Runner {
         // what is really "going in circles".
         let mut seen: Vec<(String, String)> = Vec::new();
         let mut ctx = crate::select::SelectionContext::default();
+        // Attempts that did not stick, and the body most recently applied.
+        // Carried across steps so the generator is not asked the same question
+        // with no record of what its last answer was.
+        // The grant, with its state-pin advanced across transitions THIS
+        // episode performed. Everything that confers authority — the principal,
+        // the write prefixes, the grant id — is copied once and never touched.
+        //
+        // The pin exists so authority issued over state A cannot be spent on a
+        // state the granter never saw. Refusing to advance it at all does not
+        // achieve that; it makes a second edit impossible, so no repair can
+        // take more than one attempt. And the property it buys survives the
+        // narrowing: a change the episode did NOT make leaves the workspace
+        // digest different from the one it recorded, and the next step is
+        // refused as stale. The check goes from "anything moved" to "something
+        // other than us moved", which is what it was for.
+        let mut effective: Option<EditGrant> = grant.cloned();
+        let mut rejected: Vec<crate::generate::RejectedAttempt> = Vec::new();
+        let mut last_applied: Option<String> = None;
         for step in 1..=budget {
             let snap = match self.snapshot(&[target.path.as_str()]) {
                 Ok(s) => s,
@@ -577,7 +595,9 @@ impl Runner {
                     //
                     // Dry, so the probe does not put an authorization event in
                     // the episode for an action that has not been built yet.
-                    if let Err(why) = self.authorize_action_dry(&action, grant, principal, &snap) {
+                    if let Err(why) =
+                        self.authorize_action_dry(&action, effective.as_ref(), principal, &snap)
+                    {
                         return EpisodeOutcome::Refused {
                             steps: step,
                             reason: why.to_string(),
@@ -619,6 +639,7 @@ impl Runner {
                         symbol: symbol.clone(),
                         max_bytes: 4096,
                         current_body,
+                        rejected: rejected.clone(),
                     };
                     let proposal = match gen.propose(&obs, target, &constraints) {
                         Ok(p) => p,
@@ -649,6 +670,7 @@ impl Runner {
                         exit_code: 0,
                         passed: true,
                     });
+                    last_applied = Some(proposal.body.clone());
                     CortexAction::PatchSymbolBody {
                         symbol: symbol.clone(),
                         proposed_body: proposal.body,
@@ -660,7 +682,7 @@ impl Runner {
                 action
             };
 
-            let auth = match self.authorize_action(&action, grant, principal, &snap) {
+            let auth = match self.authorize_action(&action, effective.as_ref(), principal, &snap) {
                 Ok(a) => a,
                 Err(why) => {
                     return EpisodeOutcome::Refused {
@@ -713,6 +735,12 @@ impl Runner {
                     .unwrap_or(false);
                 if broke {
                     let _ = std::fs::write(self.workspace.join(&target.path), &before);
+                    if let Some(body) = last_applied.take() {
+                        rejected.push(crate::generate::RejectedAttempt {
+                            body,
+                            reason: crate::generate::RejectionReason::DidNotCompile,
+                        });
+                    }
                     self.episode.push(EpisodeEvent::PatchReverted {
                         path: target.path.clone(),
                         reason: "the patched file no longer compiles".to_string(),
@@ -731,7 +759,29 @@ impl Runner {
                     // claiming done on code it was just told is wrong — rather
                     // than leaving that resting on a coincidence of digests.
                     ctx.claim_refused = true;
+                    // The pin follows the RESTORED state, not the patched one.
+                    // Left pointing at bytes that were undone, every later step
+                    // would be refused as stale — the episode would punish
+                    // itself for cleaning up after a bad proposal.
+                    if let (Some(g), Ok(now)) =
+                        (effective.as_mut(), self.snapshot(&[target.path.as_str()]))
+                    {
+                        g.snapshot_id = now.snapshot_id;
+                    }
                     continue;
+                }
+            }
+
+            // The episode's own transition, recorded once the step's final
+            // state is settled. A foreign edit in the window between the write
+            // and this line is not the threat being guarded: the pin protects a
+            // grant issued over a state the granter saw, against a workspace
+            // that has since moved on.
+            if matches!(action, CortexAction::PatchSymbolBody { .. }) {
+                if let (Some(g), Ok(now)) =
+                    (effective.as_mut(), self.snapshot(&[target.path.as_str()]))
+                {
+                    g.snapshot_id = now.snapshot_id;
                 }
             }
 
@@ -747,6 +797,16 @@ impl Runner {
                 // and is still wrong — the only state in which proposing a
                 // repair is justified rather than a guess.
                 ctx.claim_refused = true;
+                // The claim covered whatever was last applied, so that body is
+                // now a known-insufficient attempt. Recorded WITHOUT the
+                // check's output: the generator learns its answer was rejected,
+                // not what the grader wanted.
+                if let Some(body) = last_applied.take() {
+                    rejected.push(crate::generate::RejectedAttempt {
+                        body,
+                        reason: crate::generate::RejectionReason::CheckRefused,
+                    });
+                }
             }
         }
         EpisodeOutcome::BudgetExhausted { steps: budget }

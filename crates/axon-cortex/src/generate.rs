@@ -37,6 +37,49 @@ pub struct PatchConstraints {
     /// have no arbiter. Here there is nothing to disagree about: it is handed
     /// what Cortex would overwrite, and that is the whole of its read access.
     pub current_body: String,
+    /// What has already been tried in this episode and rejected, oldest first.
+    ///
+    /// Without this a generator is asked the same question repeatedly with no
+    /// way to know its last answer was wrong, so a deterministic one repeats
+    /// itself and a model retries the same idea in different words. Three
+    /// attempts at one idea is a worse use of a budget than one attempt each at
+    /// three.
+    pub rejected: Vec<RejectedAttempt>,
+}
+
+/// Why a previous proposal did not stick.
+///
+/// Two reasons, and deliberately no third carrying detail. The adjudicating
+/// check's OUTPUT is never in here: a generator that could read why it failed
+/// the hidden check would be writing against the grader, and a result graded by
+/// something the author can read stops being evidence. What it learns is that
+/// an attempt was rejected and roughly how — enough to try a different idea,
+/// not enough to aim at the answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejectionReason {
+    /// The patched file stopped compiling. The compiler's own diagnostics are
+    /// already visible to the generator through the observation, so naming the
+    /// class here leaks nothing new.
+    DidNotCompile,
+    /// It compiled, and the check that adjudicates completion refused it. The
+    /// check's name and output are both withheld.
+    CheckRefused,
+}
+
+impl std::fmt::Display for RejectionReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RejectionReason::DidNotCompile => write!(f, "it did not compile"),
+            RejectionReason::CheckRefused => write!(f, "it compiled but did not fix the problem"),
+        }
+    }
+}
+
+/// A body that was already tried and rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedAttempt {
+    pub body: String,
+    pub reason: RejectionReason,
 }
 
 /// A generated body, plus WHO generated it.
