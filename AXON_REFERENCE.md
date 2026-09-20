@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 49 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 50 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (49)
+## Environment variables (50)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -83,6 +83,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_REPLAY` | serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD |
 | `AXON_AI_REPLAY` | path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call |
 | `AXON_AI_MOCK` | use deterministic stub AI responses instead of live calls (the real per-token cost is still metered) |
+| `AXON_CORTEX_GENERATOR_TIMEOUT_MS` | how long `cortex repair --generator cmd:PATH` waits for the operator's program to answer (default 120s). Exists so the deadline can be TESTED: a suite cannot wait two minutes, and an untested deadline is the kind of check that turns out never to fire. A malformed or zero value is ignored in favour of the default rather than disabling every generator |
 | `AXON_AI_PROVIDER` | live-AI codec: `anthropic` or `openai` |
 | `AXON_AI_BASE_URL` | gateway URL for live AI calls |
 | `AXON_AI_API_KEY` | API key for live AI calls |

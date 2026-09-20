@@ -32,6 +32,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_AI_REPLAY", "path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call"),
     // ── AI routing & policy ──────────────────────────────────────────────
     ("AXON_AI_MOCK", "use deterministic stub AI responses instead of live calls (the real per-token cost is still metered)"),
+    ("AXON_CORTEX_GENERATOR_TIMEOUT_MS", "how long `cortex repair --generator cmd:PATH` waits for the operator's program to answer (default 120s). Exists so the deadline can be TESTED: a suite cannot wait two minutes, and an untested deadline is the kind of check that turns out never to fire. A malformed or zero value is ignored in favour of the default rather than disabling every generator"),
     ("AXON_AI_PROVIDER", "live-AI codec: `anthropic` or `openai`"),
     ("AXON_AI_BASE_URL", "gateway URL for live AI calls"),
     ("AXON_AI_API_KEY", "API key for live AI calls"),

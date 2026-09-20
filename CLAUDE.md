@@ -201,7 +201,7 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 
 ### Interpreter env vars
 
-A SELECTION of the **47** `AXON_*` vars the shipped code reads. The exhaustive
+A SELECTION of the **50** `AXON_*` vars the shipped code reads. The exhaustive
 list — with what each one does — is in `AXON_REFERENCE.md`, generated from
 `env_registry::ALL_ENV_VARS` and gated in BOTH directions: a var read without a
 registry row fails the build, and a registry row for a var nothing reads fails
