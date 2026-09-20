@@ -43,12 +43,24 @@ if v.get("is_error"):
     sys.exit(1)
 
 body = v.get("result") or ""
-# Models fence code by habit even when told not to. Stripping it here rather
-# than letting it reach the patch keeps a mangled-good-answer from being
-# reported as a model that proposed nonsense.
-m = re.match(r"\s*```[a-zA-Z]*\n(.*?)```\s*\Z", body, re.S)
-if m:
-    body = m.group(1)
+# EXTRACT THE CODE, wherever the model put it.
+#
+# The first version only stripped a fence when the response was ENTIRELY a
+# fence. Measured against a real run, half the proposals on a hard trial came
+# back as prose wrapped around a fenced block — "Looking at the pattern of
+# failed attempts... let me try:\n```\n2\n```" — and the whole paragraph was
+# passed through as the function body. It cannot compile, the loop rejects it,
+# and a proposal is burned on a parse failure that never reached the question.
+#
+# That inflates generator effort, understates first-shot success, and spends
+# money on unparsed prose. It is a transport defect being measured as model
+# quality.
+fences = re.findall(r"```[a-zA-Z]*\n(.*?)```", body, re.S)
+if fences:
+    # The LAST block: a model that reasons before answering puts the answer
+    # last, and one that shows a rejected alternative first would otherwise
+    # have its own discarded attempt submitted.
+    body = fences[-1]
 
 prompt = os.environ.get("CORTEX_PROMPT_TEXT", "")
 log = os.environ.get("CORTEX_MODEL_LOG", "/dev/null")
