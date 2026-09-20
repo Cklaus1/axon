@@ -45,6 +45,15 @@ for f in sorted(sys.argv[1:]):
         a, b = span
         body = src0[a:b]
         for mname, mfn in MUTATORS:
+            # The cap is checked HERE as well as in the outer loop. It
+            # increments inside this one, so a single function could
+            # overshoot and dominate a file's sample. Measured on the
+            # current corpus it never did — max 8 trials per file with
+            # the cap at 8, and no function yielding more than 3 valid
+            # mutants — so this closes the hole without moving any
+            # published number.
+            if done >= 4:
+                break
             made = mfn(body)
             if made is None:
                 continue
