@@ -138,19 +138,19 @@
         "crates/cortex-policy-adapter/src/main.rs",
         "crates/axon-cortex/src/lib.rs"
       ],
-      "gap": "duplicate-key and unicode-escape bypasses both closed at the parser, not by a scanner"
+      "gap": "parse_strict verified sound at every depth (decoded keys, recurses maps AND seqs). But the adapter AUTHENTICATES NOBODY: req[\"principal\"] is compared to the operator's --principal and nothing binds a request to its claimed identity \u2014 no signature, token, or channel credential."
     },
     {
       "area": "authority",
       "subsystem": "grant / snapshot binding",
       "implementation": "partial",
-      "production_proof": "unknown",
+      "production_proof": "no",
       "mutation": "partial",
       "docs": "partial",
       "evidence": [
         "crates/axon-cortex/src/runner.rs"
       ],
-      "gap": "audit lane open: is a grant re-verified against the workspace at every use, or only at issue?"
+      "gap": "AUDITED, CONFIRMED BY READING: the adapter builds `current` from req[\"snapshot_id\"] verbatim with files:[], and StaleSnapshot is string equality against it \u2014 so the requester chooses the value the check compares. The grant's pin is on the adapter's command line (readable via /proc). The module doc forbids deriving the GRANT from the request; the same tautology sits on the other side. Also: `cortex repair` builds grant.principal from the acting principal and pins to a snapshot taken one line earlier, so both checks are structurally unreachable there."
     },
     {
       "area": "cortex",
@@ -334,6 +334,28 @@
       "docs": "partial",
       "evidence": [],
       "gap": "localization/generation policies are fixed; nothing learns from prior episodes"
+    },
+    {
+      "area": "authority",
+      "subsystem": "path authority covers all actions",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [
+        "crates/axon-cortex/src/runner.rs"
+      ],
+      "gap": "authorize returns early when !requires_write_authority(), BEFORE the traversal/policy-file/prefix checks. Inspect then reads an arbitrary path and hands the body to the model; RunCheck runs the interpreter on an arbitrary path. Both are caller-path-controlled with no path check."
+    },
+    {
+      "area": "authority",
+      "subsystem": "durable pre-effect authorization receipt",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [],
+      "gap": "ActionAllowed is pushed into an in-memory Episode the adapter drops at exit; cortex repair serialises it only in its final --json, after every effect. No durable record shows authorization PRECEDED an effect."
     }
   ]
 }

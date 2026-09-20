@@ -25,8 +25,10 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | approval binds IMPORT GRAPH | ✗ | ✗ | ✗ | ✗ | DEMONSTRATED: approve main.ax, then rewrite an imported module to write:[/] net:[*] exec:any — the approval still validates. End-to-end deploy exploitability NOT established. |
 | ast review shows import origin | ✗ | ✗ | ✗ | ✗ | imported fns and their @[contained] caps are listed as the entry file's own, with no origin marker |
 | @[contained] capability enforcement | ✓ | ✓ | ~ | ✓ |  |
-| policy adapter strict parsing | ✓ | ✓ | ✓ | ✓ | duplicate-key and unicode-escape bypasses both closed at the parser, not by a scanner |
-| grant / snapshot binding | ~ | ? | ~ | ~ | audit lane open: is a grant re-verified against the workspace at every use, or only at issue? |
+| policy adapter strict parsing | ✓ | ✓ | ✓ | ✓ | parse_strict verified sound at every depth (decoded keys, recurses maps AND seqs). But the adapter AUTHENTICATES NOBODY: req["principal"] is compared to the operator's --principal and nothing binds a request to its claimed identity — no signature, token, or channel credential. |
+| grant / snapshot binding | ~ | ✗ | ~ | ~ | AUDITED, CONFIRMED BY READING: the adapter builds `current` from req["snapshot_id"] verbatim with files:[], and StaleSnapshot is string equality against it — so the requester chooses the value the check compares. The grant's pin is on the adapter's command line (readable via /proc). The module doc forbids deriving the GRANT from the request; the same tautology sits on the other side. Also: `cortex repair` builds grant.principal from the acting principal and pins to a snapshot taken one line earlier, so both checks are structurally unreachable there. |
+| path authority covers all actions | ~ | ✗ | ✗ | ✗ | authorize returns early when !requires_write_authority(), BEFORE the traversal/policy-file/prefix checks. Inspect then reads an arbitrary path and hands the body to the model; RunCheck runs the interpreter on an arbitrary path. Both are caller-path-controlled with no path check. |
+| durable pre-effect authorization receipt | ✗ | ✗ | ✗ | ✗ | ActionAllowed is pushed into an in-memory Episode the adapter drops at exit; cortex repair serialises it only in its final --json, after every effect. No durable record shows authorization PRECEDED an effect. |
 
 ## cortex
 
@@ -70,7 +72,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-15 of 27 subsystems have a production proof; 3 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+15 of 29 subsystems have a production proof; 2 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
