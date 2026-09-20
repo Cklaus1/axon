@@ -444,7 +444,12 @@ pub fn parse_source_files(paths: &[std::path::PathBuf]) -> Result<Vec<NamedProgr
                         return;
                     }
                 };
-                match parse_source(&src) {
+                // Each file gets its own id: `axon test a.ax b.ax` merges
+                // these programs and then renders every diagnostic against
+                // `files[0]`, so without identity a diagnostic from `b.ax` is
+                // labelled `a.ax`.
+                let sid = span::intern_source(&file, &src);
+                match parse_source_in(&src, sid) {
                     Ok(program) => {
                         results.lock().unwrap()[idx] = Some((file, program));
                     }
@@ -797,7 +802,15 @@ fn load_module_recursive(
         }
 
         match std::fs::read_to_string(&candidate) {
-            Ok(src) => match parse_source(&src) {
+            // Parse the module with ITS OWN source id. Without this, the items
+            // prepended into the entry program below carry offsets into this
+            // file wearing no identity at all, and the renderer resolves them
+            // against the ENTRY file's SourceMap — which is how an error truly
+            // at `lib.ax:14` came out as `main.ax:6`.
+            Ok(src) => match parse_source_in(
+                &src,
+                span::intern_source(&candidate.display().to_string(), &src),
+            ) {
                 Ok(mod_prog) => {
                     // Mark as in-progress before recursing to detect cycles.
                     loading_stack.push(path_str.clone());

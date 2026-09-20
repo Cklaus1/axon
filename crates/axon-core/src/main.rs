@@ -6141,16 +6141,32 @@ fn run_check_pipeline_located(
     let source_map = axon_core::span::SourceMap::new(src.to_string());
     let mut diags: Vec<PipelineDiagnostic> = Vec::new();
 
-    // Resolve a span → (line, col); dummy spans (or an empty source) yield 0.
-    let loc = |span: &axon_core::span::Span| -> (u32, u32) {
+    // Resolve a span → (line, col, FILE). Dummy spans yield 0 and the entry
+    // file's name.
+    //
+    // The file is returned, not assumed. This function used to stamp one
+    // constant `file` on every diagnostic and resolve every offset against one
+    // `SourceMap` — the entry file's — while `load_use_decls` had just
+    // prepended imported modules' items carrying offsets into THEIR files. A
+    // span now names its own file, and the renderer asks it.
+    //
+    // An UNKNOWN source (a synthesized span, or one from a parse path that
+    // does not intern) still resolves against the entry file, which is the
+    // pre-existing behaviour and correct for the entry program itself.
+    let loc = |span: &axon_core::span::Span| -> (u32, u32, String) {
         if span.is_dummy() {
-            (0, 0)
-        } else {
-            let (l, c) = source_map.line_col(span.start);
-            (l as u32, c as u32)
+            return (0, 0, file.clone());
         }
+        if let Some(map) = axon_core::span::source_map_of(span.source) {
+            let path = axon_core::span::source_path_of(span.source).unwrap_or_else(|| file.clone());
+            let (l, c) = map.line_col(span.start);
+            return (l as u32, c as u32, path);
+        }
+        let (l, c) = source_map.line_col(span.start);
+        (l as u32, c as u32, file.clone())
     };
     let push = |diags: &mut Vec<PipelineDiagnostic>,
+                dfile: String,
                 code: String,
                 message: String,
                 severity: &str,
@@ -6169,7 +6185,7 @@ fn run_check_pipeline_located(
         diags.push(PipelineDiagnostic {
             code,
             message,
-            file: file.clone(),
+            file: dfile,
             line,
             col,
             severity: severity.to_string(),
@@ -6183,6 +6199,7 @@ fn run_check_pipeline_located(
     // fix fields (the infer/check errors that have them), so the JSON exposes
     // `expected`/`found`/`help` as discrete keys, not folded into `message`.
     let push_typed = |diags: &mut Vec<PipelineDiagnostic>,
+                      dfile: String,
                       code: String,
                       message: String,
                       line: u32,
@@ -6193,7 +6210,7 @@ fn run_check_pipeline_located(
         diags.push(PipelineDiagnostic {
             code,
             message,
-            file: file.clone(),
+            file: dfile,
             line,
             col,
             severity: "error".to_string(),
@@ -6213,8 +6230,12 @@ fn run_check_pipeline_located(
     // MergeErrors carry no span (they're file-level), so line/col stay 0.
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
     for e in axon_core::load_use_decls(program, &search_dirs) {
+        // A MergeError is about the ENTRY file's `use` line (the module it
+        // names could not be found or is circular), so the entry file is the
+        // right label here — unlike everything below, which is about a span.
         push(
             &mut diags,
+            file.clone(),
             e.code.to_string(),
             e.message.clone(),
             "error",
@@ -6226,7 +6247,7 @@ fn run_check_pipeline_located(
     // Step 1: name resolution
     let resolve_result = axon_core::resolver::resolve_program(program, &file);
     for diag in &resolve_result.errors {
-        let (line, col) = loc(&diag.span);
+        let (line, col, dfile) = loc(&diag.span);
         // The resolver computes a "did you mean `x`?" suggestion (Levenshtein ≤ 3)
         // and stores it in `diag.fix`. Render it through the structured `help`
         // field instead of dropping it — historically `push` discarded `fix`, so
@@ -6234,6 +6255,7 @@ fn run_check_pipeline_located(
         // to resurface the lost hint, double-reporting every undefined name.
         push_typed(
             &mut diags,
+            dfile,
             diag.code.to_string(),
             diag.message.clone(),
             line,
@@ -6259,11 +6281,11 @@ fn run_check_pipeline_located(
         // the ERROR list — a non-empty one exits 2 and every entry prints with an
         // `error:` prefix — so putting a warning in it would fail the build on a
         // shadowed name and mislabel it as an error.
-        let (line, col) = loc(&warn.span);
+        let (line, col, dfile) = loc(&warn.span);
         let d = PipelineDiagnostic {
             code: warn.code.to_string(),
             message: warn.message.clone(),
-            file: file.clone(),
+            file: dfile,
             line,
             col,
             severity: "warning".to_string(),
@@ -6296,13 +6318,14 @@ fn run_check_pipeline_located(
         if let Some(fnd) = &err.found {
             msg.push_str(&format!(", found {fnd}"));
         }
-        let (line, col) = loc(&err.span);
+        let (line, col, dfile) = loc(&err.span);
         // R8: also expose expected/found as discrete fields. `InferError` now
         // also carries a `help` for the shapes it can name — it previously had
         // none, so every E0102 raised by inference reached the reader without
         // advice, and this call site hard-coded that by passing `None`.
         push_typed(
             &mut diags,
+            dfile,
             err.code.to_string(),
             msg,
             line,
@@ -6353,15 +6376,15 @@ fn run_check_pipeline_located(
             // strict-by-default policy could be relaxed safely — was being thrown
             // away exactly on the path that is now the default. Caught by
             // `e0302_warns_by_default_errors_under_strict_and_names_the_discard`.
-            let (wline, wcol) = if !err.span.is_dummy() {
+            let (wline, wcol, wdfile) = if !err.span.is_dummy() {
                 loc(&err.span)
             } else {
-                (err.line, err.col)
+                (err.line, err.col, file.clone())
             };
             let wd = PipelineDiagnostic {
                 code: err.code.to_string(),
                 message: msg.clone(),
-                file: file.clone(),
+                file: wdfile,
                 line: wline,
                 col: wcol,
                 severity: "warning".to_string(),
@@ -6379,14 +6402,15 @@ fn run_check_pipeline_located(
         }
         // CheckError tracks both a byte-span and legacy line/col; prefer the
         // span (real offset), fall back to the explicit line/col when no span.
-        let (line, col) = if !err.span.is_dummy() {
+        let (line, col, dfile) = if !err.span.is_dummy() {
             loc(&err.span)
         } else {
-            (err.line, err.col)
+            (err.line, err.col, file.clone())
         };
         // R8: expose expected/found/fix(help) as discrete structured fields.
         push_typed(
             &mut diags,
+            dfile,
             err.code.to_string(),
             msg,
             line,
@@ -6413,7 +6437,7 @@ fn run_check_pipeline_located(
                         std::collections::HashMap::new()
                     };
                 for err in axon_core::borrow::check_fn(fndef, param_types) {
-                    let (line, col) = loc(&err.span());
+                    let (line, col, dfile) = loc(&err.span());
                     let code = match &err {
                         axon_core::borrow::BorrowError::UseAfterMove { .. } => {
                             axon_core::error::E0601
@@ -6427,6 +6451,7 @@ fn run_check_pipeline_located(
                     };
                     push(
                         &mut diags,
+                        dfile,
                         code.to_string(),
                         err.to_string(),
                         "error",
@@ -6455,7 +6480,7 @@ fn run_check_pipeline_located(
                             std::collections::HashMap::new()
                         };
                     for err in axon_core::borrow::check_fn(method, param_types) {
-                        let (line, col) = loc(&err.span());
+                        let (line, col, dfile) = loc(&err.span());
                         let code = match &err {
                             axon_core::borrow::BorrowError::UseAfterMove { .. } => {
                                 axon_core::error::E0601
@@ -6469,6 +6494,7 @@ fn run_check_pipeline_located(
                         };
                         push(
                             &mut diags,
+                            dfile,
                             code.to_string(),
                             err.to_string(),
                             "error",
@@ -6486,9 +6512,10 @@ fn run_check_pipeline_located(
     // (E1001). Previously only run by the library check path, so the CLI did not
     // reject containment violations; wire it in so `axon check`/`run` enforce it.
     for err in axon_core::capabilities::check_capabilities(program) {
-        let (line, col) = loc(&err.span);
+        let (line, col, dfile) = loc(&err.span);
         push(
             &mut diags,
+            dfile,
             err.code.to_string(),
             err.message.clone(),
             "error",
@@ -6501,9 +6528,10 @@ fn run_check_pipeline_located(
     // effect outside the enclosing fn's declared row. `main` without a clause is
     // the top-level escape hatch, so existing programs are unaffected.
     for err in axon_core::effects::check_effects(program) {
-        let (line, col) = loc(&err.span);
+        let (line, col, dfile) = loc(&err.span);
         push(
             &mut diags,
+            dfile,
             err.code.to_string(),
             err.message.clone(),
             "error",
@@ -6517,9 +6545,10 @@ fn run_check_pipeline_located(
     // (Same CLI-pipeline gap as the capability check; non-`confidence` predicates
     // are skipped, so runtime-gated verifies are unaffected.)
     for err in axon_core::verify::check_verify(program) {
-        let (line, col) = loc(&err.span);
+        let (line, col, dfile) = loc(&err.span);
         push(
             &mut diags,
+            dfile,
             err.code.to_string(),
             err.message.clone(),
             "error",

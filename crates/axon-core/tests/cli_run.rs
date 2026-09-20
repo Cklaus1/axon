@@ -31231,4 +31231,83 @@ mod skip_rule_table {
         assert!(!tail_says_skipping("foo_parity: PASS — all good\n"));
         assert!(!tail_says_skipping(""));
     }
+/// A diagnostic in a `use`-IMPORTED module must name that module's path and its
+/// line — not the entry file's.
+///
+/// `scripts/diagnostic_location_gate.sh` checks only that a reported line
+/// EXISTS in the file the diagnostic names. That is a real floor and it caught
+/// the original defect (`lib.ax:14` reported as `main.ax:6` in a 5-line
+/// `main.ax`), but it is satisfied by any wrong file that happens to be long
+/// enough — and it is satisfied just as well by reporting NO location at all.
+/// Both of those were observed while fixing this: making `line_col` refuse an
+/// out-of-range offset turned the gate green by dropping the location, and the
+/// located-diagnostic count fell 55 -> 54 to show for it.
+///
+/// So this asserts the positive fact the gate cannot: the file is `lib.ax`, and
+/// the line is the line the error is actually on.
+#[test]
+fn a_diagnostic_in_an_imported_module_names_that_module_and_its_line() {
+    let dir = std::env::temp_dir().join(format!("axon_span_imp_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // `lib.ax` must be LONGER than `main.ax`: the padding is what puts the
+    // error's byte offset past `main.ax`'s EOF, which is the condition under
+    // which the old renderer produced an impossible location rather than a
+    // merely wrong one.
+    let mut lib = String::from("fn ok_one() -> i64 { 1 }\n");
+    for i in 1..=12 {
+        lib.push_str(&format!("// pad {i}\n"));
+    }
+    let bad_line = lib.lines().count() + 1; // the next line is the broken one
+    lib.push_str("fn deliberately_broken(a: i64) -> i64 { a + \"not a number\" }\n");
+    std::fs::write(dir.join("lib.ax"), &lib).unwrap();
+
+    let main_src = "use lib\nfn main() -> i64 {\n    println(to_str(ok_one()))\n    0\n}\n";
+    std::fs::write(dir.join("main.ax"), main_src).unwrap();
+    let main_lines = main_src.lines().count();
+    assert!(
+        bad_line > main_lines,
+        "fixture must place the error past main.ax's last line ({bad_line} vs {main_lines}), \
+         or it cannot distinguish a right answer from a clamped one"
+    );
+
+    let out = axon()
+        .arg("check")
+        .arg("main.ax")
+        .current_dir(&dir)
+        .env("AXON_PATH", &dir)
+        .output()
+        .expect("run axon check");
+    // Diagnostics go to STDERR. Reading stdout here would find nothing and the
+    // assertions below would then be vacuous.
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    let e0301: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("\"E0301\""))
+        .collect();
+    assert_eq!(
+        e0301.len(),
+        1,
+        "expected exactly one E0301 from the imported module; got:\n{stderr}"
+    );
+    let d = e0301[0];
+
+    assert!(
+        d.contains("lib.ax"),
+        "the diagnostic must name the file the error is IN (lib.ax), not the \
+         entry file: {d}"
+    );
+    assert!(
+        !d.contains("\"file\":\"main.ax\""),
+        "the diagnostic is labelled with the entry file — this is the original \
+         defect: {d}"
+    );
+    assert!(
+        d.contains(&format!("\"line\":{bad_line}")),
+        "expected line {bad_line} (the line `deliberately_broken` is on): {d}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

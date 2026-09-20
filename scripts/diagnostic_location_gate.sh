@@ -64,7 +64,17 @@ if d.get("line"): print(d.get("file",""), d["line"])
 ') || continue
     [ -n "${dl:-}" ] || continue
     diags=$((diags+1))
-    target="$(dirname "$f")/$df"
+    # `$df` is whatever path the compiler resolved the file at. For the entry
+    # file that is the relative name it was invoked with; for a `use`-imported
+    # module it is the AXON_PATH entry joined with the module path, which is
+    # ABSOLUTE whenever AXON_PATH is. Joining an absolute path onto a directory
+    # produces a path that exists nowhere, which this gate would then report as
+    # "names a file that does not exist" — a FAIL for the right location
+    # rendered in the right file.
+    case "$df" in
+      /*) target="$df" ;;
+      *)  target="$(dirname "$f")/$df" ;;
+    esac
     if [ ! -f "$target" ]; then
       echo "FAIL $f: diagnostic names \`$df\`, which does not exist"; fails=$((fails+1)); continue
     fi
