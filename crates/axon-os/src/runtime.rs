@@ -9,6 +9,7 @@ use crate::gate::DeclaredEffects;
 use crate::grant::{Budget, EffectSet, Grant};
 use crate::record::RawEvent;
 use crate::verdict::Verdict;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 
 /// An opaque handle to a minted Principal in the runtime's registry.
@@ -138,10 +139,42 @@ fn run_bounded(
     timeout: Duration,
     kill_file: Option<&std::path::Path>,
 ) -> std::io::Result<ProcOutcome> {
+    /// SIGKILL the child's whole process GROUP, then reap the child.
+    ///
+    /// Falls back to killing the child alone if the group signal fails, so a
+    /// platform or permission quirk degrades to the previous behaviour rather
+    /// than to no kill at all. The child was spawned as a group leader, so its
+    /// pid IS the group id.
+    fn kill_group(child: &mut std::process::Child) {
+        let pid = child.id() as i32;
+        // SAFETY: `killpg` takes a pgid and a signal and returns an int; the
+        // child is a group leader so `pid` is its pgid. A failure (ESRCH: the
+        // group is already gone) is not actionable here.
+        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };
+        if rc != 0 {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+    }
+
+    // KILL THE JOB, NOT A PID.
+    //
+    // `process_group(0)` makes the child a process-group LEADER, so every
+    // descendant it spawns inherits that group and one `killpg` reaches all of
+    // them. Without it, `child.kill()` signals the direct child only.
+    //
+    // Measured before this change, through the real supervisor: a job that
+    // execs `sh -c "nohup sleep 4002 &"` and then loops is killed at the
+    // timeout, and the grandchild SURVIVES (0 such processes before the run,
+    // 1 after). Under the `developer` profile default `exec: any` that is the
+    // ordinary case, and BOTH the operator kill switch (R27) and the compliance
+    // monitor (R29) terminate through this path — so neither stopped a job that
+    // had spawned a subprocess.
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()?;
 
     let stdout_pipe = child.stdout.take();
@@ -180,16 +213,14 @@ fn run_bounded(
             Some(status) => break Some(status.code().unwrap_or(-1)),
             None => {
                 if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    kill_group(&mut child);
                     break None;
                 }
                 // R27/R29 poll-before-progress: check the kill file if set.
                 if let Some(kf) = kill_file {
                     if is_kill_file_tripped(kf) {
                         killed_by_latch = true;
-                        let _ = child.kill();
-                        let _ = child.wait();
+                        kill_group(&mut child);
                         break Some(4); // HALTED_EXIT_CODE (R27); R29 overrides to 12 in cmd_run
                     }
                 }
