@@ -13,15 +13,37 @@
   "note": "top1_unique is the honest headline: the rest count trials where the truth tied at the top and won an ALPHABETICAL tie-break, which is not evidence."
  },
  "oracle_repair": {
-  "trials": 44,
   "note": "the generator is handed the body the file had before it was broken, so it cannot propose anything wrong. Read as an upper bound on the CONTROL LOOP: every remaining failure is the loop's, not a model's.",
-  "verified": 32,
-  "verified_pct": 72.7,
-  "file_actually_clean": 32,
-  "repaired_the_right_function": 32,
-  "false_successes": 0,
-  "failed": 12,
-  "workspace_restored_on_failure": 12
+  "by_candidate_budget": {
+   "candidates_1": {
+    "verified": 20,
+    "of": 44,
+    "pct": 45.5,
+    "file_actually_clean": 20,
+    "repaired_the_right_function": 20,
+    "false_successes": 0,
+    "workspace_restored_on_failure": "24/24"
+   },
+   "candidates_3": {
+    "verified": 38,
+    "of": 44,
+    "pct": 86.4,
+    "file_actually_clean": 38,
+    "repaired_the_right_function": 38,
+    "false_successes": 0,
+    "workspace_restored_on_failure": "6/6"
+   },
+   "candidates_5": {
+    "verified": 40,
+    "of": 44,
+    "pct": 90.9,
+    "file_actually_clean": 40,
+    "repaired_the_right_function": 40,
+    "false_successes": 0,
+    "workspace_restored_on_failure": "4/4"
+   }
+  },
+  "correction_2": "an earlier row reported 32/44 at candidates=3. Two loop defects found afterwards account for the gap: a file compiling WITH WARNINGS could never reach a patch at all (selection ran a check, running a check changes no bytes, and stuck-detection fired before a claim was ever made), and an exact-name verdict rule had been over-applied to the symbol-named visible check, which no test is ever called, making that verdict permanently false."
  },
  "per_trial": [
   {

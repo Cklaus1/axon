@@ -742,6 +742,12 @@ impl Runner {
             // is followed by another patch and the episode never converges.
             if matches!(action, CortexAction::PatchSymbolBody { .. }) {
                 ctx.claim_refused = false;
+                // The check's answer described the code BEFORE this edit, and
+                // the edit is the whole point. Left stale, a SUCCESSFUL patch
+                // is followed by another patch — the generator repeats itself,
+                // nothing changes, and the loop reports going in circles on a
+                // repair that had already worked.
+                ctx.last_check = None;
             }
             // The bytes as they stand, kept only for the one action that can
             // damage them. A controller that can leave a workspace worse than
@@ -759,6 +765,20 @@ impl Runner {
             // loop "going in circles" or as a broken checker — verdicts about
             // the generator and about the environment, for failures that were
             // neither.
+            // The check's ANSWER feeds the next selection. Without this the
+            // loop ran a check, saw an unchanged workspace, chose the same
+            // action, and stopped as NoProgress — so a file that compiles with
+            // warnings could never reach a patch at all.
+            if let ExecOutcome::CheckRan {
+                passed, matched, ..
+            } = &outcome
+            {
+                // Zero matched is not a pass and not a failure: it is no
+                // answer. Recording it as `false` would send the loop to patch
+                // on the strength of a check that never ran.
+                ctx.last_check = (*matched > 0).then_some(*passed);
+            }
+
             match &outcome {
                 ExecOutcome::Failed(why) => {
                     return EpisodeOutcome::Blocked {
@@ -1010,7 +1030,21 @@ impl Runner {
         // name, and a filter matching nothing exits 0 with an `ok` summary —
         // zero matched tests is not a pass.
         let matched = failed.len() + passed.len();
-        let ok = verdict_for(name, &failed, &passed);
+        // A DIFFERENT question from the hidden check's, and it took a
+        // regression to make that clear. The adjudicator is an exact test name
+        // the operator supplied, so its verdict must come from that exact name
+        // (`verdict_for`). This check is named after the SYMBOL under repair,
+        // which is not a test name at all — it is a filter selecting the tests
+        // that touch that symbol, and the question is whether any of THEM
+        // failed.
+        //
+        // Applying the exact-name rule here made the verdict permanently
+        // false, because no test is ever called `gcounter_increment`. The loop
+        // then ran the check, learned nothing, and went in circles.
+        //
+        // Zero matched is still not a pass: a filter matching nothing exits 0
+        // and prints an `ok` summary.
+        let ok = matched > 0 && failed.is_empty();
         self.episode.push(EpisodeEvent::CheckRun {
             name: name.to_string(),
             exit_code: i32::from(!ok),

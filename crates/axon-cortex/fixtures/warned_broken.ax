@@ -1,0 +1,32 @@
+// A file that COMPILES WITH A WARNING and is also wrong.
+//
+// Every other fixture here compiles clean, and that is not what real Axon code
+// does — measured, most of `examples/stdlib/*.ax` emits at least one warning.
+// The difference is not cosmetic: a clean file makes the loop claim completion
+// and get refused, which is what drives it to propose a patch. A warned file
+// made it run a check instead, and running a check changes no bytes, so the
+// next step saw the same workspace and the same choice and stopped as
+// NoProgress — before ever reaching a patch.
+//
+// So this fixture pins a path that no hand-written fixture exercised and that
+// nine of the corpus trials failed on.
+fn scale(n: i64) -> i64 {
+    // W0002: `let n = …` re-declares `n` from its own value.
+    let n = n + 0
+    n + 3
+}
+
+@[test]
+fn visible_scale() {
+    assert_eq(scale(2), 4)
+}
+
+@[test]
+fn hidden_scale() {
+    assert_eq(scale(5), 10)
+    assert_eq(scale(0), 0)
+}
+
+fn main() {
+    println(to_str(scale(2)))
+}

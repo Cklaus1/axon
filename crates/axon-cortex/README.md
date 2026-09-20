@@ -54,6 +54,12 @@ nothing. The check named by `--check` can never itself be patched: rewriting
 the grader to `assert(true)` passes every later adjudication while the defect
 stands, which is this crate's headline claim exactly inverted.
 
+**The loop** acts on what a check ACTUALLY said. A file that compiles with
+warnings is repaired like any other — it was not, for a while: selection ran a
+check, running a check changes no bytes, and stuck-detection fired before a
+patch was ever proposed. Every fixture here compiled clean; most real Axon code
+does not.
+
 **The episode** cannot leave the workspace worse than it found it. A patch that
 makes the file stop compiling is undone, and the revert is recorded rather than
 performed silently: an episode that hid its reverts would make a generator that

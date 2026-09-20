@@ -615,3 +615,76 @@ fn cli_refuses_to_grade_a_repair_against_bytes_the_repair_wrote() {
     );
     assert_eq!(code3, 25, "a missing symbol must exit 25: {text3}");
 }
+
+/// C19 — a file that compiles WITH WARNINGS can still be repaired.
+///
+/// This is the single largest defect the corpus found. Every fixture here
+/// compiled clean, which is not what real Axon code does — most of
+/// `examples/stdlib/*.ax` emits at least one warning — and the difference is
+/// not cosmetic.
+///
+/// A clean file makes selection claim completion; the claim is refused, and
+/// THAT refusal is what drives it to propose a patch. A warned file made
+/// selection run a check instead, and running a check changes no bytes, so the
+/// next step saw the same workspace and the same choice and stopped as
+/// `NoProgress` — before ever reaching a patch. Nine of the corpus trials
+/// failed this way, every one of them with the right function ranked first or
+/// second.
+#[test]
+fn cli_repairs_a_file_that_compiles_with_warnings() {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_warned_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/warned_broken.ax");
+    std::fs::copy(&src, ws.join("warned_broken.ax")).unwrap();
+
+    // Precondition: it really does warn. Without this the row silently becomes
+    // a duplicate of the clean-file test the moment the fixture stops warning
+    // — the guard testing nothing while still passing.
+    let check = Command::new(axon_bin())
+        .arg("check")
+        .arg(ws.join("warned_broken.ax"))
+        .output()
+        .unwrap();
+    let diag = String::from_utf8_lossy(&check.stdout).to_string()
+        + &String::from_utf8_lossy(&check.stderr);
+    assert!(
+        diag.contains("\"severity\":\"warning\""),
+        "the fixture must COMPILE WITH A WARNING, or this row tests the clean \
+         path over again: {diag}"
+    );
+    assert!(check.status.success(), "and it must still compile");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "warned_broken.ax",
+            "--check",
+            "hidden_scale",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "warned_broken.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a warned file must still be repairable: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Asked of the FILE. The exit code is the claim under test.
+    let after = std::fs::read_to_string(ws.join("warned_broken.ax")).unwrap();
+    assert!(
+        after.contains("n * 2"),
+        "the repair must actually be in the file: {after}"
+    );
+}

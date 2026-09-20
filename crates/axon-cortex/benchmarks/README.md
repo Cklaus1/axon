@@ -72,15 +72,39 @@ stopping at one, and a tie became an ordered plan rather than a dead end.
 The generator is handed the body the file had before it was broken, so it
 cannot propose anything wrong. Every remaining failure is the control loop's.
 
-| | |
-|---|---|
-| verified, and the file really is clean | 32 / 44 (72.7%) |
-| verified but the file still fails | **0** |
-| failed, workspace restored byte-for-byte | 12 / 12 |
+| `--candidates` | verified & file really clean | false successes | workspace restored on failure |
+|---|---|---|---|
+| 1 | 20 / 44 (45.5%) | 0 | 24/24 |
+| **3 (default)** | **38 / 44 (86.4%)** | **0** | 6/6 |
+| 5 | 40 / 44 (90.9%) | 0 | 4/4 |
 
-The 12 failures are all exit 21 — the ranking put the broken function outside
-the top three, so the loop went in circles and said so. None of them left the
-workspace altered.
+Every verified run repaired the function that was actually broken, and no run
+ever reported success on a file that still fails. Failures leave the workspace
+byte-identical.
 
-Read the 72.7% as an upper bound on repair, not as a repair rate: a real
-generator proposes text that may be wrong, and this one cannot.
+Walking is worth 41 points over stopping at the first candidate. The step from
+3 to 5 buys 4.5 more for 67% more episodes — and each episode is a model call,
+so the default stays at 3 and the knob is documented rather than raised.
+
+Read these as an upper bound on repair, not as a repair rate: a real generator
+proposes text that may be wrong, and this one cannot.
+
+#### What the first version of this table got wrong
+
+It reported 32/44 at `--candidates 3`. Two control-loop defects found
+afterwards account for the gap, and both were invisible to every hand-written
+fixture:
+
+* **a file that compiles WITH WARNINGS could never be repaired at all.** A
+  clean file makes selection claim completion, the claim is refused, and that
+  refusal is what drives it to propose a patch. A warned file made selection
+  run a check instead — and running a check changes no bytes, so the next step
+  saw the same workspace and the same choice and stopped as `NoProgress`,
+  before a patch was ever considered. Nine trials failed this way, every one
+  with the right function ranked first or second. Every fixture in this crate
+  compiled clean; most of `examples/stdlib/*.ax` does not.
+* **an exact-name verdict rule had been over-applied.** It is right for the
+  adjudicating check, which is an exact test name the operator supplied. It is
+  wrong for the visible check, which is named after the SYMBOL under repair —
+  no test is ever called `gcounter_increment`, so that verdict was permanently
+  false and the loop learned nothing from running it.

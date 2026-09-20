@@ -55,6 +55,18 @@ pub struct SelectionContext {
     /// signal that the code compiles and is still wrong, which is the only
     /// situation where proposing a patch is justified rather than a guess.
     pub claim_refused: bool,
+    /// The result of the last check this episode ran, if it ran one.
+    ///
+    /// Without it, a file that compiles WITH WARNINGS was unrepairable. The
+    /// selector chose `RunCheck`, running a check changes no bytes, so the next
+    /// step saw the same workspace and the same choice and stopped as
+    /// `NoProgress` — before ever reaching a claim, let alone a patch.
+    ///
+    /// Measured: every one of the 9 remaining oracle failures was this, and
+    /// every one had the right function ranked first or second. It never showed
+    /// up against the fixture because the fixture compiles clean, which is not
+    /// what real Axon code does.
+    pub last_check: Option<bool>,
 }
 
 /// Choose the next action for `target`, given what was actually observed.
@@ -131,15 +143,38 @@ pub fn select_action_with(
                 },
             })
         }
-        Some(Observed::Known { .. }) => Selection::Act(CortexAction::RunCheck {
-            check: CheckRef {
-                // The hidden check is named by the caller's convention; the
-                // selector does not invent a check name it cannot know exists.
-                // Naming the symbol keeps the choice traceable to the target.
-                name: target.symbol.clone(),
-                path: target.path.clone(),
-            },
-        }),
+        // It compiles, with warnings. Running a check is the right FIRST move
+        // — the warnings might be harmless and the behaviour fine — but the
+        // check's answer has to be acted on, or the loop asks the same
+        // question forever.
+        Some(Observed::Known { .. }) => match ctx.last_check {
+            // The check ran and FAILED. That is direct evidence the code is
+            // wrong — stronger than waiting for a completion claim to be
+            // refused, and it arrives a step earlier.
+            Some(false) => Selection::Act(CortexAction::PatchSymbolBody {
+                symbol: target.clone(),
+                proposed_body: String::new(),
+            }),
+            // The check ran and passed. Nothing else the observation can see
+            // is outstanding, so claim — and let the hidden check adjudicate.
+            Some(true) => Selection::Act(CortexAction::ClaimDone {
+                claim: CompletionClaim {
+                    done: true,
+                    rationale: format!("{} compiles and its visible check passes", target.path),
+                },
+            }),
+            // Nothing has been run yet. Confirm the behaviour before either
+            // claiming or patching.
+            None => Selection::Act(CortexAction::RunCheck {
+                check: CheckRef {
+                    // The selector does not invent a check name it cannot know
+                    // exists; naming the symbol keeps the choice traceable to
+                    // the target.
+                    name: target.symbol.clone(),
+                    path: target.path.clone(),
+                },
+            }),
+        },
         Some(Observed::Unknown { reason }) => Selection::Blocked(format!(
             "compiles, but cleanliness is unknown ({reason}) — refusing to \
              choose between confirming behaviour and claiming completion"
