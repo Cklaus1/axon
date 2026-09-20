@@ -114,7 +114,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**52 controls tracked; 37 engine states unknown or silently-ignored.**
+**52 controls tracked; 36 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -123,7 +123,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_AI_MOCK` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_AI_MODEL_BALANCED` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_AI_PROVIDER` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
-| `AXON_AI_REPLAY` | replay/record/audit | ✓ | **IGNORED** | **?** | **?** | open |
+| `AXON_AI_REPLAY` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
 | `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | refused | **?** | **?** | native-closed |
 | `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
 | `AXON_BUDGET_TOKENS` | resource-budget | ✓ | refused | **?** | **?** | native-closed |
@@ -180,7 +180,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_AUDIT_LEDGER`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_SEED`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_CLOCK`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
-- **`AXON_AI_REPLAY`** — Registry and CLAUDE.md both promise 'no live call / mock / API key' with NO engine caveat. Native lowers ai_complete to __axon_ai_complete in axon-ai, which contains no AXON_AI_REPLAY read, and the var is not in the refusal list — so a native binary makes a LIVE billed call while the operator believes the run is replayed. Static audit; not yet executed.
+- **`AXON_AI_REPLAY`** — PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED.
 - **`AXON_PRINCIPAL`** — Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine.
 - **`AXON_TEE_ENCLAVE`** — BLIND SPOT IN THE REGISTRY GATE ITSELF: read through the host seam (with_host(|h| h.env_var(..))), which env_registry::vars_read() does not scan for — it matches only literal env::var( forms. So an attestation-category signal that makes tee_in_enclave() return true has no registry row and does not appear in AXON_REFERENCE.md, while the gate reports full coverage in both directions.
 - **`AXON_TEE_MEASUREMENT`** — Same host-seam blind spot as AXON_TEE_ENCLAVE.

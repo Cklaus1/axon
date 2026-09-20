@@ -2056,6 +2056,17 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
             "perform capability-bearing operations while writing NO audit \
              entries — a ledger indistinguishable from a run that did nothing",
         ),
+        // Measured, with one cache and one program: `axon run` returned the
+        // cached response with no key set; the native binary ignored the cache
+        // and reached for the live API ("ANTHROPIC_API_KEY is not set"). With
+        // a key present that is a live, billed call — under a variable whose
+        // documented promise is "no live call / mock / API key".
+        (
+            "AXON_AI_REPLAY",
+            "make LIVE model calls while the operator believes the run is \
+             replayed — billing real tokens and returning fresh answers under \
+             a variable that promises neither",
+        ),
         // Measured: same 3-line program, same `AXON_ALLOWED_EFFECTS=Pure`.
         // `axon run` refused with exit 8; a binary built earlier printed
         // "IO HAPPENED" and exited 0.

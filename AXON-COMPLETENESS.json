@@ -881,15 +881,15 @@
     {
       "name": "AXON_AI_REPLAY",
       "category": "replay/record/audit",
-      "status": "open",
+      "status": "native-closed",
       "engines": {
         "interpreter": "enforced",
-        "native": "silently-ignored",
+        "native": "explicitly-refused",
         "wasm": "unknown",
         "guest": "unknown"
       },
-      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "Registry and CLAUDE.md both promise 'no live call / mock / API key' with NO engine caveat. Native lowers ai_complete to __axon_ai_complete in axon-ai, which contains no AXON_AI_REPLAY read, and the var is not in the refusal list \u2014 so a native binary makes a LIVE billed call while the operator believes the run is replayed. Static audit; not yet executed."
+      "evidence": "crates/axon-core/tests/cli_run.rs",
+      "open": "PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED."
     },
     {
       "name": "AXON_PRINCIPAL",

@@ -31706,7 +31706,40 @@ fn a_native_binary_refuses_interpreter_only_env_controls() {
     // interpreter wrote 2 ledger entries for one `write_file` and the native
     // binary did not create the ledger file at all — an audit trail
     // indistinguishable from a run that did nothing.
-    for var in ["AXON_REPLAY", "AXON_RECORD", "AXON_AUDIT_LEDGER"] {
+    // Derived from the production table, not restated. A hardcoded list here
+    // would drift from `axon-rt`'s `REFUSED` the moment a control is added —
+    // and a coverage test that silently stops covering the newest entry is
+    // worse than none, because the gap is invisible. `AXON_AI_REPLAY` was
+    // added to that table after this test was written; parsing the source is
+    // what makes it covered without anyone remembering to come back here.
+    let rt_src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../axon-rt/src/lib.rs"
+    ))
+    .expect("read axon-rt source");
+    let table = rt_src
+        .split("const REFUSED: &[(&str, &str)] = &[")
+        .nth(1)
+        .expect(
+            "axon-rt no longer declares a REFUSED table — this test's \
+                 premise is gone, not satisfied",
+        );
+    let table = &table[..table.find("];").expect("unterminated REFUSED table")];
+    let refused: Vec<String> = table
+        .match_indices("\"AXON_")
+        .map(|(i, _)| {
+            let rest = &table[i + 1..];
+            rest[..rest.find('"').expect("unterminated name")].to_string()
+        })
+        .collect();
+    assert!(
+        refused.len() >= 5,
+        "expected the refusal table to carry at least the five known controls, \
+         parsed {refused:?} — a parse that silently found nothing would make \
+         every assertion below vacuous"
+    );
+
+    for var in refused.iter().map(String::as_str) {
         let _ = std::fs::remove_file(&evidence);
         let out = Command::new(&bin)
             .current_dir(&dir)
@@ -31728,13 +31761,16 @@ fn a_native_binary_refuses_interpreter_only_env_controls() {
     // CONTROL: without those variables the binary must still run and still
     // perform its effect, or the refusal has simply broken native execution.
     let _ = std::fs::remove_file(&evidence);
-    let ok = Command::new(&bin)
-        .current_dir(&dir)
-        .env_remove("AXON_REPLAY")
-        .env_remove("AXON_RECORD")
-        .env_remove("AXON_AUDIT_LEDGER")
-        .output()
-        .expect("run the native binary");
+    // Cleared from the SAME derived list. Hardcoding three names here would
+    // mean a newly-refused control stayed set during the control run, the
+    // binary would refuse, and the failure would look like a broken refusal
+    // rather than a stale test.
+    let mut clean = Command::new(&bin);
+    clean.current_dir(&dir);
+    for var in refused.iter() {
+        clean.env_remove(var);
+    }
+    let ok = clean.output().expect("run the native binary");
     assert!(
         ok.status.success(),
         "an ordinary native run must still succeed"
