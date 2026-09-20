@@ -1,3 +1,9 @@
+# `/target/` with a trailing slash matches a DIRECTORY only. A worktree lane
+# given CARGO_TARGET_DIR elsewhere can leave a SYMLINK named `target`, which
+# slipped past this rule and was committed — and then REPLACED the real target
+# directory in the main checkout on cherry-pick. Caught by
+# scripts/artifact_admission_gate.sh, which is exactly why that gate exists.
+/target
 /target/
 Cargo.lock
 *.o
