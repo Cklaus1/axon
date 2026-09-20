@@ -171,25 +171,45 @@ mismatch = []
 LABEL = {"operator": "operator", "constant": "constant", "boolean": "boolean",
          "argswap": "argswap", "drop-statement": "drop-stmt"}
 seen_rows = 0
+compared = 0        # COMPARISONS PERFORMED, which is the thing to be vacuous about
 
 
 def _check(where, cols, cells, label, want):
     """Compare named columns of one row against the artifact."""
-    global seen_rows
+    global seen_rows, compared
     seen_rows += 1
+    resolvable = 0
     for name_opts, expect in want:
         if expect is None:
             continue
         i = _col(cols, *name_opts)
         if i is None or i >= len(cells):
-            continue                      # this document omits the column
+            # The artifact HAS a value for this column, and the table does not
+            # offer a column to compare it against. That is drift, not an
+            # omission: a document that genuinely does not report a metric
+            # shows up as `expect is None` above, because the artifact has no
+            # field for it. Silently skipping here is what made a renamed
+            # header invisible.
+            mismatch.append(f"{where} row `{label}`: no column matching "
+                            f"`{name_opts[0]}` — the artifact has a value for "
+                            f"it, so the header was renamed or dropped and "
+                            f"this figure is going unchecked")
+            continue
+        resolvable += 1
         cell = cells[i].strip()
         if cell in ("—", "-", ""):
             continue                      # explicitly withdrawn, not claimed
+        compared += 1
         got = _num(cell)
         if got is None or abs(got - float(expect)) > 1e-9:
             mismatch.append(f"{where} row `{label}` column {name_opts[0]}: "
                             f"the doc says {cell}, the artifact says {expect}")
+    # A row whose every column is unaddressable was MATCHED but not CHECKED.
+    # That is drift — the columns were renamed out from under the join — and
+    # it is invisible to a guard that counts rows.
+    if resolvable == 0:
+        mismatch.append(f"{where} row `{label}`: matched the row but resolved "
+                        f"NONE of its columns — counted and never checked")
 
 
 cols, rows = _table(readme, "top-1 (sole candidate)")
@@ -236,12 +256,22 @@ for where, text in depth_docs:
                 (("truth absent",), row.get("truth_absent")),
                 (("top-1",), row.get("top1"))])
 
-# A row-keyed check that matched no rows would pass on anything — the same
-# vacuous-pass the coverage guards elsewhere in this repo exist to prevent.
-if seen_rows < 8:
-    broke(f"the row-keyed check matched only {seen_rows} table rows; the "
-          f"tables it joins on have moved or been renamed, so it is "
-          f"verifying almost nothing")
+# VACUITY, measured on comparisons rather than on rows.
+#
+# The first version of this guard counted MATCHED ROWS, which is one level
+# above the thing that can go vacuous. Measured: renaming the `top-3` column
+# header made every `_col` lookup return None, so every comparison was skipped
+# while `seen_rows` still cleared the threshold — and the gate printed "docs
+# match ... 12 table rows joined by row label" on a README whose operator
+# top-3 read 83.0, a real figure belonging to another row. Right answer from
+# the value-set check on an unsourced number, no answer at all on a sourced
+# one.
+#
+# Count what actually happened.
+if compared < 20:
+    broke(f"the row-keyed check performed only {compared} comparison(s) over "
+          f"{seen_rows} matched row(s); the tables or their column headers have "
+          f"moved, so it is verifying almost nothing")
 
 # FRACTIONS TOO — "99 / 111", "16 / 16".
 #
@@ -364,6 +394,6 @@ for where, v in unverified:
           f"design that no longer exists; not re-measured")
 print(
     f"docs match {os.path.basename(art_path)} in both directions "
-    f"({1 + len(elsewhere)} documents checked, {seen_rows} table rows "
-    f"joined by row label)"
+    f"({1 + len(elsewhere)} documents checked, {compared} figures joined "
+    f"by row+column identity over {seen_rows} rows)"
 )
