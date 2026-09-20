@@ -87,6 +87,84 @@ pub const LEGAL_ACTIONS: &[&str] = &[
     "claim_done",
 ];
 
+/// Proof that a specific action passed authorization.
+///
+/// The field is private and there is no public constructor, so the only way to
+/// hold one is to have been given it by [`Runner::authorize_action`]. That is
+/// what makes `execute` unable to run an unauthorized action: not a check
+/// inside execute that could be forgotten or reordered, but a value the caller
+/// cannot produce without passing the gate.
+///
+/// It borrows the action rather than copying it, so the thing executed is
+/// necessarily the thing authorized — a copy could drift between the two calls.
+#[derive(Debug)]
+pub struct Authorized<'a> {
+    action: &'a CortexAction,
+}
+
+impl<'a> Authorized<'a> {
+    pub fn action(&self) -> &'a CortexAction {
+        self.action
+    }
+}
+
+/// What executing an action actually did.
+///
+/// Every variant is a distinct observed outcome. There is no `Ok`/`Err` pair,
+/// because "the symbol was not found" and "the check failed" are different
+/// facts that a caller and an auditor both need to tell apart, and collapsing
+/// them into one error string is how a missing target comes to read as a
+/// failing test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecOutcome {
+    /// Read a symbol's body. No side effect.
+    Inspected { symbol: String, body: String },
+    /// The named symbol is not in the file. NOT an error and NOT a failure:
+    /// the action could not be carried out, which is a third thing.
+    SymbolNotFound { symbol: String, path: String },
+    /// A named check ran. `matched` is how many tests the name selected — 0
+    /// means the check does not exist, which is never a pass.
+    CheckRan {
+        name: String,
+        passed: bool,
+        matched: usize,
+    },
+    /// A symbol body was replaced.
+    Patched { path: String, symbol: String },
+    /// A completion claim was recorded. Deliberately effect-free: the claim is
+    /// evidence for `verify()` to adjudicate, not an action that closes
+    /// anything by itself.
+    Claimed { rationale: String },
+    /// The action could not be attempted at all, with the reason.
+    Failed(String),
+}
+
+/// Find a function body in Axon source: the text between the brace that opens
+/// `fn <symbol>` and its matching close.
+///
+/// Returns None when the symbol is absent — the caller reports that as
+/// `SymbolNotFound` rather than as an empty body, because an empty body is a
+/// real thing a function can have.
+fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
+    let needle = format!("fn {symbol}");
+    let at = src.find(&needle)?;
+    let open = src[at..].find('{')? + at;
+    let mut depth = 0usize;
+    for (i, c) in src[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((open + 1, open + i));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 pub struct Runner {
     pub axon_bin: PathBuf,
     pub workspace: PathBuf,
@@ -275,21 +353,147 @@ impl Runner {
     /// nonsense combinations the string API could express are not decided here
     /// — they cannot be built. `ClaimDone` carries no path, so no path check is
     /// skipped for it; there is nothing to skip.
-    pub fn authorize_action(
+    pub fn authorize_action<'a>(
         &mut self,
-        action: &CortexAction,
+        action: &'a CortexAction,
         grant: Option<&EditGrant>,
         principal: &str,
         current_snapshot: &WorkspaceSnapshot,
-    ) -> Result<(), Refusal> {
+    ) -> Result<Authorized<'a>, Refusal> {
         let r = self.check_typed_authority(action, grant, principal, current_snapshot);
-        if let Err(ref why) = r {
-            self.episode.push(EpisodeEvent::ActionDenied {
-                action: action.name().to_string(),
-                reason: why.to_string(),
-            });
+        match r {
+            Ok(()) => Ok(Authorized { action }),
+            Err(why) => {
+                self.episode.push(EpisodeEvent::ActionDenied {
+                    action: action.name().to_string(),
+                    reason: why.to_string(),
+                });
+                Err(why)
+            }
         }
-        r
+    }
+
+    /// Carry out an authorized action. Closes the loop: observe -> select ->
+    /// authorize -> EXECUTE -> verify.
+    ///
+    /// Takes [`Authorized`], not a bare action. An unauthorized action is not
+    /// rejected here — it cannot be passed here, because the caller has no way
+    /// to build the witness except by clearing the gate. That is the same move
+    /// as the typed catalog: push the failure from a runtime check that must be
+    /// remembered to a value that cannot be produced.
+    pub fn execute(&mut self, auth: Authorized<'_>) -> ExecOutcome {
+        match auth.action() {
+            CortexAction::Inspect { target } => {
+                let p = self.workspace.join(&target.path);
+                let src = match std::fs::read_to_string(&p) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return ExecOutcome::Failed(format!("cannot read {}: {e}", target.path))
+                    }
+                };
+                match symbol_body(&src, &target.symbol) {
+                    Some((a, b)) => ExecOutcome::Inspected {
+                        symbol: target.symbol.clone(),
+                        body: src[a..b].to_string(),
+                    },
+                    None => ExecOutcome::SymbolNotFound {
+                        symbol: target.symbol.clone(),
+                        path: target.path.clone(),
+                    },
+                }
+            }
+            CortexAction::RunCheck { check } => {
+                match self.run_named_check(&check.name, &check.path) {
+                    Ok((passed, matched)) => ExecOutcome::CheckRan {
+                        name: check.name.clone(),
+                        passed,
+                        matched,
+                    },
+                    Err(e) => ExecOutcome::Failed(format!("check could not run: {e}")),
+                }
+            }
+            CortexAction::PatchSymbolBody {
+                symbol,
+                proposed_body,
+            } => {
+                let p = self.workspace.join(&symbol.path);
+                let src = match std::fs::read_to_string(&p) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return ExecOutcome::Failed(format!("cannot read {}: {e}", symbol.path))
+                    }
+                };
+                let Some((a, b)) = symbol_body(&src, &symbol.symbol) else {
+                    // NOT a silent no-op. The old apply_patch returned
+                    // Ok(false) when its needle was absent, which a caller
+                    // could read as "applied, nothing changed".
+                    return ExecOutcome::SymbolNotFound {
+                        symbol: symbol.symbol.clone(),
+                        path: symbol.path.clone(),
+                    };
+                };
+                let after = format!("{}{}{}", &src[..a], proposed_body, &src[b..]);
+                if let Err(e) = std::fs::write(&p, &after) {
+                    return ExecOutcome::Failed(format!("cannot write {}: {e}", symbol.path));
+                }
+                self.episode.push(EpisodeEvent::PatchApplied {
+                    path: symbol.path.clone(),
+                    before_digest: content_digest(src.as_bytes()),
+                    after_digest: content_digest(after.as_bytes()),
+                });
+                ExecOutcome::Patched {
+                    path: symbol.path.clone(),
+                    symbol: symbol.symbol.clone(),
+                }
+            }
+            CortexAction::ClaimDone { claim } => {
+                // No filesystem effect, by construction: the variant carries no
+                // path and this arm touches nothing. A claim is evidence for
+                // verify() to adjudicate, not an act that closes the task.
+                self.episode.push(EpisodeEvent::CheckRun {
+                    name: "claim_done".to_string(),
+                    exit_code: 0,
+                    passed: claim.done,
+                });
+                ExecOutcome::Claimed {
+                    rationale: claim.rationale.clone(),
+                }
+            }
+        }
+    }
+
+    /// Run ONE named check and report how many tests the name matched.
+    ///
+    /// `run_check` passes the name to the episode record but not to the
+    /// command, so it runs the whole file and reports a named result — the same
+    /// defect `verify()` had. This selects, and returns the match count so a
+    /// zero-match run can be told from a pass.
+    fn run_named_check(&mut self, name: &str, rel_path: &str) -> std::io::Result<(bool, usize)> {
+        let out = std::process::Command::new(&self.axon_bin)
+            .arg("test")
+            .arg(self.workspace.join(rel_path))
+            .arg("--filter")
+            .arg(name)
+            .output()?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let matched = text
+            .split("running ")
+            .nth(1)
+            .and_then(|r| r.split(' ').next())
+            .and_then(|n| n.parse::<usize>().ok())
+            .unwrap_or(0);
+        // A filter matching nothing exits 0. Zero matched tests is not a pass.
+        let passed = out.status.success() && matched > 0;
+        self.episode.push(EpisodeEvent::CheckRun {
+            name: name.to_string(),
+            exit_code: out.status.code().unwrap_or(-1),
+            passed,
+        });
+        Ok((passed, matched))
     }
 
     /// Side-effect-free twin of [`Runner::authorize_action`], for a caller that

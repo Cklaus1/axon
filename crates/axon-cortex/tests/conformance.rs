@@ -570,9 +570,9 @@ fn cxg_c03_typed_actions_carry_their_own_authority() {
         },
         proposed_body: "a + b".into(),
     };
-    assert_eq!(
-        r.authorize_action(&patch, Some(&grant), "agent", &snap),
-        Ok(()),
+    assert!(
+        r.authorize_action(&patch, Some(&grant), "agent", &snap)
+            .is_ok(),
         "a well-formed patch inside the granted prefix must be allowed — a \
          refusal-only test proves nothing about a system that can also say yes"
     );
@@ -606,9 +606,8 @@ fn cxg_c03_typed_actions_carry_their_own_authority() {
         "claiming done must not be able to name a file to touch"
     );
     assert!(!claim.requires_write_authority());
-    assert_eq!(
-        r.authorize_action(&claim, None, "agent", &snap),
-        Ok(()),
+    assert!(
+        r.authorize_action(&claim, None, "agent", &snap).is_ok(),
         "a claim needs no grant; verify() adjudicates it independently"
     );
 
@@ -627,9 +626,8 @@ fn cxg_c03_typed_actions_carry_their_own_authority() {
     };
     for a in [&inspect, &check] {
         assert_eq!(a.write_target(), None, "{} must not write", a.name());
-        assert_eq!(
-            r.authorize_action(a, None, "agent", &snap),
-            Ok(()),
+        assert!(
+            r.authorize_action(a, None, "agent", &snap).is_ok(),
             "{} is read-only and needs no grant",
             a.name()
         );
@@ -734,5 +732,243 @@ fn cxg_c02_selection_follows_the_observation_and_refuses_to_guess() {
              unknown was treated as fine",
             a.name()
         ),
+    }
+}
+
+/// The loop closes: observe → select → authorize → EXECUTE → verify.
+///
+/// Every earlier test exercised one link. This drives the whole chain against
+/// the real checker and a real workspace copy, and it has to end with the bug
+/// actually FIXED — a loop that only ever refuses proves the gates work and
+/// says nothing about whether the system can do the job.
+#[test]
+fn cxg_c11_the_repair_loop_closes_end_to_end() {
+    use axon_cortex::action::{CortexAction, SymbolRef};
+    use axon_cortex::runner::ExecOutcome;
+    use axon_cortex::select::{select_action, Selection};
+
+    let (_, ws) = stage("loop");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let target = SymbolRef {
+        path: "broken.ax".into(),
+        symbol: "double".into(),
+    };
+
+    // ── 1. Observe. `double` adds instead of multiplying: it COMPILES, so the
+    //       defect is semantic and the checker cannot see it.
+    let snap = r.snapshot(&["broken.ax"]).expect("snapshot");
+    let obs = r.observe(&snap, "broken.ax");
+    assert!(
+        obs.diagnostics.is_empty(),
+        "the bug is semantic, not a type error"
+    );
+
+    // ── 2. Select. Clean compile ⇒ the observation has nothing left to see, so
+    //       the selector proposes a completion claim.
+    let sel = select_action(&obs, &target);
+    assert!(matches!(
+        sel,
+        Selection::Act(CortexAction::ClaimDone { .. })
+    ));
+
+    // ── 3. Authorize + execute the claim. It must be EFFECT-FREE: the file is
+    //       unchanged afterwards, because a claim is evidence, not an act.
+    let before = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    let claim = sel.action().unwrap().clone();
+    let auth = r
+        .authorize_action(&claim, None, "agent", &snap)
+        .expect("a claim needs no grant");
+    assert!(matches!(r.execute(auth), ExecOutcome::Claimed { .. }));
+    assert_eq!(
+        std::fs::read_to_string(ws.join("broken.ax")).unwrap(),
+        before,
+        "claiming done must not touch the workspace"
+    );
+
+    // ── 4. Verify adjudicates the claim independently — and REFUSES it. This
+    //       is G03-done: confidence is not evidence.
+    assert!(
+        !r.verify(true, "hidden_completion", "broken.ax"),
+        "the hidden check still fails, so the claim cannot close the task"
+    );
+
+    // ── 5. Now actually repair it. Inspect first — the loop reads before it
+    //       writes, and the body it reads is the real one.
+    let inspect = CortexAction::Inspect {
+        target: target.clone(),
+    };
+    let auth = r
+        .authorize_action(&inspect, None, "agent", &snap)
+        .expect("reading needs no grant");
+    match r.execute(auth) {
+        ExecOutcome::Inspected { body, .. } => {
+            assert!(body.contains("n + 2"), "read the real body, got {body:?}")
+        }
+        other => panic!("expected Inspected, got {other:?}"),
+    }
+
+    // ── 6. Patch, under a grant pinned to the CURRENT snapshot.
+    let grant = EditGrant {
+        grant_id: "g-loop".into(),
+        principal: "agent".into(),
+        snapshot_id: snap.snapshot_id.clone(),
+        write_prefixes: vec!["broken.ax".into()],
+    };
+    let patch = CortexAction::PatchSymbolBody {
+        symbol: target.clone(),
+        proposed_body: "\n    n * 2\n".into(),
+    };
+    let auth = r
+        .authorize_action(&patch, Some(&grant), "agent", &snap)
+        .expect("the patch is inside the grant");
+    assert!(matches!(r.execute(auth), ExecOutcome::Patched { .. }));
+
+    // ── 7. Verify again. The same hidden check, the same call — now it passes,
+    //       because the code is actually fixed.
+    assert!(
+        r.verify(true, "hidden_completion", "broken.ax"),
+        "after the repair the hidden check must pass — if this cannot flip, \
+         the loop can only ever refuse"
+    );
+
+    // ── 8. And the episode is a record of all of it, in order.
+    assert!(r.episode.verified_ok(), "the episode must end verified");
+}
+
+/// Execute's refusal branches — added because mutation found the end-to-end
+/// test pinned none of them.
+///
+/// `cxg_c11_the_repair_loop_closes_end_to_end` proves the loop can do the job.
+/// Four mutations survived it: a ClaimDone that writes a file, a missing symbol
+/// reported as Patched, a zero-match check reported as passing, and a missing
+/// symbol read as an empty body. Three were untested branches; the fourth was
+/// an assertion too narrow to see — it compared ONE file, and the mutation
+/// wrote a different one.
+///
+/// A loop that works on the happy path and lies on the unhappy one is worse
+/// than one that does neither, because the happy path is what gets
+/// demonstrated.
+#[test]
+fn cxg_c11_execute_refuses_precisely() {
+    use axon_cortex::action::{CheckRef, CompletionClaim, CortexAction, SymbolRef};
+    use axon_cortex::runner::ExecOutcome;
+
+    let (_, ws) = stage("exec_neg");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let snap = r.snapshot(&["broken.ax"]).expect("snapshot");
+
+    // Fingerprint the WHOLE workspace, not one file. The narrow assertion is
+    // what let a stray write survive.
+    let fingerprint = |dir: &std::path::Path| -> Vec<(String, u64)> {
+        let mut v: Vec<(String, u64)> = std::fs::read_dir(dir)
+            .expect("read ws")
+            .filter_map(|e| e.ok())
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().to_string(),
+                    e.metadata().map(|m| m.len()).unwrap_or(0),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+
+    // 1. ClaimDone touches NOTHING anywhere in the workspace.
+    let before = fingerprint(&ws);
+    let claim = CortexAction::ClaimDone {
+        claim: CompletionClaim {
+            done: true,
+            rationale: "believe it is fixed".into(),
+        },
+    };
+    let auth = r.authorize_action(&claim, None, "agent", &snap).unwrap();
+    assert!(matches!(r.execute(auth), ExecOutcome::Claimed { .. }));
+    assert_eq!(
+        fingerprint(&ws),
+        before,
+        "a completion claim created or changed a file — it must be effect-free, \
+         and comparing only the target file cannot see that"
+    );
+
+    // 2. Inspecting a symbol that is not there is NOT an empty body. An empty
+    //    body is a real thing a function can have; absence is a different fact.
+    let ghost = SymbolRef {
+        path: "broken.ax".into(),
+        symbol: "no_such_symbol".into(),
+    };
+    let inspect = CortexAction::Inspect {
+        target: ghost.clone(),
+    };
+    let auth = r.authorize_action(&inspect, None, "agent", &snap).unwrap();
+    match r.execute(auth) {
+        ExecOutcome::SymbolNotFound { symbol, .. } => assert_eq!(symbol, "no_such_symbol"),
+        other => panic!("expected SymbolNotFound, got {other:?}"),
+    }
+
+    // 3. Patching a symbol that is not there must NOT report Patched. The old
+    //    apply_patch returned Ok(false) when its needle was absent, which a
+    //    caller could read as "applied, nothing to change".
+    let grant = EditGrant {
+        grant_id: "g-neg".into(),
+        principal: "agent".into(),
+        snapshot_id: snap.snapshot_id.clone(),
+        write_prefixes: vec!["broken.ax".into()],
+    };
+    let patch_ghost = CortexAction::PatchSymbolBody {
+        symbol: ghost,
+        proposed_body: "irrelevant".into(),
+    };
+    let before = fingerprint(&ws);
+    let auth = r
+        .authorize_action(&patch_ghost, Some(&grant), "agent", &snap)
+        .unwrap();
+    match r.execute(auth) {
+        ExecOutcome::SymbolNotFound { .. } => {}
+        other => panic!("a patch to a missing symbol reported {other:?}"),
+    }
+    assert_eq!(
+        fingerprint(&ws),
+        before,
+        "a patch that found no symbol must not have written anything"
+    );
+
+    // 4. A check whose name matches no test is not a passing check — the same
+    //    zero-match hole verify() has, in the execute path.
+    let check = CortexAction::RunCheck {
+        check: CheckRef {
+            name: "no_such_check".into(),
+            path: "broken.ax".into(),
+        },
+    };
+    let auth = r.authorize_action(&check, None, "agent", &snap).unwrap();
+    match r.execute(auth) {
+        ExecOutcome::CheckRan {
+            passed, matched, ..
+        } => {
+            assert_eq!(matched, 0, "nothing should have matched");
+            assert!(
+                !passed,
+                "a filter matching nothing exits 0; reporting that as a pass \
+                 lets any check be satisfied by naming one that does not exist"
+            );
+        }
+        other => panic!("expected CheckRan, got {other:?}"),
+    }
+
+    // Control: a check that DOES exist still runs and reports its match count,
+    // so the assertions above are not satisfied by everything failing.
+    let real = CortexAction::RunCheck {
+        check: CheckRef {
+            name: "visible_repro".into(),
+            path: "broken.ax".into(),
+        },
+    };
+    let auth = r.authorize_action(&real, None, "agent", &snap).unwrap();
+    match r.execute(auth) {
+        ExecOutcome::CheckRan { matched, .. } => {
+            assert!(matched > 0, "the real check must have matched")
+        }
+        other => panic!("expected CheckRan, got {other:?}"),
     }
 }

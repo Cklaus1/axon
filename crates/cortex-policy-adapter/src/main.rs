@@ -198,12 +198,21 @@ fn main() {
         other => Err(Refusal::NotInCatalog(other.to_string())),
     };
 
-    let decision = match typed {
-        Ok(a) => runner.authorize_action(&a, Some(&grant), req_principal, &current),
-        Err(refusal) => Err(refusal),
+    // `typed` is bound OUTSIDE the match so the action outlives the decision.
+    // That is the Authorized witness doing its job rather than an inconvenience:
+    // it borrows the action, so the thing authorized cannot be dropped while a
+    // proof of its authorization is still held, and cannot be swapped for a
+    // copy that drifted.
+    let decision = match &typed {
+        Ok(a) => runner
+            .authorize_action(a, Some(&grant), req_principal, &current)
+            .map(|_authorized| ()),
+        Err(refusal) => Err(refusal.clone()),
     };
 
     let out = match decision {
+        // Mapped to () above: this adapter DECIDES, it does not execute. That
+        // boundary is the point — Cortex answers "may I?", the caller acts.
         Ok(()) => serde_json::json!({
             "protocol_version": PROTOCOL_VERSION,
             "decision": "allow",
