@@ -312,6 +312,16 @@ if [ "$STRICT" = 1 ]; then
   ./scripts/r28_acceptance_gate.sh >/dev/null 2>&1 || fail "R28 acceptance gate"
   ./scripts/r29_acceptance_gate.sh >/dev/null 2>&1 || fail "R29 acceptance gate"
 
+  # R31 — its own header has said, since it was written:
+  #   "Wire into gate.sh --strict once R28/R29 reach stable artifact paths."
+  # R28 and R29 are wired directly above as of this session, so the precondition
+  # the author named is now met. The gate does not merely check that its ten
+  # normative test names EXIST; it parses a real suite run and requires each to
+  # report `... ok`, because a name-grep cannot distinguish a passing test from
+  # an #[ignore]d one or from a name that survives only in a comment. Measured:
+  # exit 0, "ALL CHECKS PASSED".
+  ./scripts/r31_acceptance_gate.sh >/dev/null 2>&1 || fail "R31 acceptance gate"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
