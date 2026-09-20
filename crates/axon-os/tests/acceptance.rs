@@ -396,6 +396,15 @@ fn acc_a2_example_jobs_run_and_overreach_denied() {
     let store = tmp("a2");
     let store_s = store.to_str().unwrap();
 
+    // `summarize.axjob` declares `fs_write = ["./out/"]` and writes
+    // `./out/summary.txt`. That directory is in .gitignore — correctly, it is
+    // build output — so it exists in a long-lived checkout and is ABSENT in a
+    // fresh clone or worktree. The job then took its write_file Err arm,
+    // returned value=1, and this test failed for everyone except whoever had
+    // run it before. A test must create the state it requires rather than
+    // inherit it from the machine's history.
+    let _ = std::fs::create_dir_all(examples().join("out"));
+
     let r = os(
         &[
             "run",
