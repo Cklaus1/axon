@@ -73,7 +73,7 @@ def trial(attempted, symbol, rank, props):
             "localization_rank": rank, "ranked": attempted,
             "attempted": attempted, "target_attempted": symbol in attempted,
             "outcome": "verified_done", "exit": 0, "file_clean": True,
-            "verdict_read": True,
+            "verdict_read": True, "rank_read": True,
             "workspace_restored": True, "episode": None, "reverted": 0,
             "extraction_status": [None] * len(props), "proposals": len(props),
             "bodies": [""] * len(props), "prior_rejections_seen": [c["priors"] for c in props],

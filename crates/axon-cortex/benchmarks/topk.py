@@ -66,18 +66,45 @@ for f in sorted(sys.argv[1:]):
                 shutil.rmtree(ws, ignore_errors=True); continue
             rc, out = run([CORTEX, "locate", "--workspace", ws, "--file", rel,
                            "--check", hidden, "--axon", AXON, "--json"])
-            try:
-                d = json.loads(out.strip().split("\n")[-1])
-                ranked = [r["symbol"] for r in d["ranked"]]
-                scores = [r["score"] for r in d["ranked"]]
-            except Exception:
-                ranked, scores = [], []
+            # A RANKING THAT COULD NOT BE READ IS NOT A RANKING THAT MISSED.
+            #
+            # `rank = 0` is this file's encoding for "the truth was ABSENT from
+            # the ranking", and `truth_absent` is the figure
+            # localization-*.json publishes and locate.rs cites as the sole
+            # reason MAX_CALL_DEPTH is 4. A crash, a 60s timeout (common.run
+            # returns (-1, "TIMEOUT")), or a non-JSON trailing line all landed
+            # in one `except` and became rank 0 — an infrastructure failure
+            # reported as a localization miss, in the number that justifies a
+            # compiler constant.
+            #
+            # Identified by schema rather than by position: `run()` returns
+            # stdout+stderr CONCATENATED, so "the last line" is not an identity.
+            ranked, scores, rank_read = [], [], False
+            if rc == 0:
+                for line in reversed(out.strip().split("\n")):
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(d, dict) and d.get("schema") == "cortex-locate/1":
+                        ranked = [r["symbol"] for r in d.get("ranked", [])]
+                        scores = [r["score"] for r in d.get("ranked", [])]
+                        rank_read = True
+                        break
+            if not rank_read:
+                # Excluded rather than scored. Counting it as absent inflates
+                # exactly the figure this harness exists to report.
+                rows.append({"file": f, "broke": name, "rank": None,
+                             "rank_read": False, "mutator": mname, "how": how,
+                             "why": f"cortex locate did not produce a ranking (rc={rc})"})
+                shutil.rmtree(ws, ignore_errors=True); continue
             rank = ranked.index(name) + 1 if name in ranked else 0
             # A tie at the top is a refusal in the verdict, so record the width
             # of the top group: a rank-1 answer inside a 5-way tie is not an
             # answer.
             tie = sum(1 for s in scores if scores and abs(s - scores[0]) < 1e-12)
             rows.append({"file": f, "broke": name, "rank": rank,
+                         "rank_read": True,
                          "n": len(ranked), "tie_at_top": tie,
                          "mutator": mname, "how": how})
             shutil.rmtree(ws, ignore_errors=True)

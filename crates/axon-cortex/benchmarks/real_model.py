@@ -66,10 +66,30 @@ def trial(f, src0, name, mname, mfn, hidden_pref=None):
     # localization or to the generator rather than to "the run".
     rc, out = run([CORTEX, "locate", "--workspace", ws, "--file", rel,
                    "--check", hidden, "--axon", AXON, "--json"])
-    try:
-        ranked = [r["symbol"] for r in json.loads(out.strip().split("\n")[-1])["ranked"]]
-    except Exception:
-        ranked = []
+    # A RANKING THAT COULD NOT BE READ IS NOT A RANKING THAT MISSED.
+    #
+    # `rank = 0` is the encoding for "the true target was absent from the
+    # ranking", and the analyser prints it to a human as
+    # "LOCALIZATION (true rank absent)". Collapsing a crash, a 60s timeout, or
+    # a non-JSON trailing line into `ranked = []` therefore charges an
+    # infrastructure failure to the RANKER — the one attribution this
+    # experiment is built to keep straight.
+    #
+    # Identified by schema, not by position, for the same reason the verdict
+    # below is: the last line of a merged stdout+stderr stream is not an
+    # identity. `rank_read` records whether a ranking was obtained at all, so
+    # absent stays distinguishable from missed.
+    ranked, rank_read = [], False
+    if rc == 0:
+        for line in reversed(out.strip().split("\n")):
+            try:
+                cand = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(cand, dict) and cand.get("schema") == "cortex-locate/1":
+                ranked = [r["symbol"] for r in cand.get("ranked", [])]
+                rank_read = True
+                break
     rank = ranked.index(name) + 1 if name in ranked else 0
 
     log = os.path.join(ws, "model.jsonl")
@@ -109,6 +129,10 @@ def trial(f, src0, name, mname, mfn, hidden_pref=None):
     row = {
         "file": f, "symbol": name, "mutator": mname, "how": how,
         "localization_rank": rank, "ranked": ranked[: int(CANDIDATES)],
+        # Absent != missed. Without this a crashed `cortex locate` is
+        # indistinguishable from the ranker genuinely failing to list the
+        # true symbol, and the analyser blames localization for it.
+        "rank_read": rank_read,
         "attempted": verdict.get("attempted", []),
         "target_attempted": name in verdict.get("attempted", []),
         "outcome": verdict.get("outcome"), "exit": proc.returncode,

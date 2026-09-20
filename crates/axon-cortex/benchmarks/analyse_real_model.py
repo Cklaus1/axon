@@ -50,7 +50,9 @@ print(f"Trials: {n}\n")
 # fact: proposals were made, so SOME candidate was attempted, yet the attempted
 # list is empty. Trials carrying it are unevaluated, not failed.
 contradictory = [t for t in trials
-                 if not t["attempted"] and (t.get("proposals") or 0) > 0]
+                 if (not t["attempted"] and (t.get("proposals") or 0) > 0)
+                 or t.get("rank_read") is False
+                 or t.get("verdict_read") is False]
 if contradictory:
     print(f"  !! {len(contradictory)} trial(s) have proposals but an EMPTY "
           f"attempted list.")
