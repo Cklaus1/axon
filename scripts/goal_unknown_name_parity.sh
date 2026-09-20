@@ -16,6 +16,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -62,17 +63,18 @@ run_interp() {
   return $code
 }
 
+# Captures stderr so a FAILED build can be told apart from an unavailable one.
+BUILD_ERR=""
 build_native() {
   local src="$1" bin="$2"
-  AXON_AI_MOCK=1 "$AXON" build "$src" -o "$bin" --no-cache >/dev/null 2>&1
+  BUILD_ERR="$(AXON_AI_MOCK=1 "$AXON" build "$src" -o "$bin" --no-cache 2>&1)"
 }
 
 # ── (a) typo: both engines must panic + exit 101 with the same message ────────
 I_OUT="$(run_interp "$TYPO")"; I_EXIT=$?
 TBIN="$WORK/typo_bin"
 if ! build_native "$TYPO" "$TBIN"; then
-  echo "goal_unknown_name_parity: native build failed — skipping"
-  exit 0
+  native_build_failed goal_unknown_name_parity "typo program" "$BUILD_ERR" || exit 1
 fi
 N_OUT="$(AXON_AI_MOCK=1 "$TBIN" 2>&1)"; N_EXIT=$?
 
@@ -94,7 +96,7 @@ echo "goal_unknown_name_parity: typo path OK — both abort exit 101, identical 
 # ── (b) correct name: both engines must succeed with the same score ───────────
 IO_OUT="$(run_interp "$OK")"; IO_EXIT=$?
 OBIN="$WORK/ok_bin"
-build_native "$OK" "$OBIN" || { echo "goal_unknown_name_parity: ok native build failed — skipping"; exit 0; }
+build_native "$OK" "$OBIN" || native_build_failed goal_unknown_name_parity "correct-name program" "$BUILD_ERR" || exit 1
 NO_OUT="$(AXON_AI_MOCK=1 "$OBIN" 2>&1)"; NO_EXIT=$?
 
 if [ "$IO_EXIT" -ne 0 ] || [ "$NO_EXIT" -ne 0 ]; then

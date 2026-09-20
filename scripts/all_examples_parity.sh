@@ -17,6 +17,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 # Build the codegen binary up front. When this harness is invoked from INSIDE a
 # `cargo test` run (the cli_run wrapper), the parent cargo holds the build lock
@@ -50,11 +51,17 @@ fi
 # correct here: an interp-only binary means codegen is not under test in this
 # invocation, and a skip says so where 29 BUILD-FAILs actively mislead.
 _probe="$(mktemp -d)"; printf 'fn main() -> i64 { 0 }\n' > "$_probe/p.ax"
-if ! "$AXON" build "$_probe/p.ax" -o "$_probe/p" >/dev/null 2>&1; then
+if ! berr="$("$AXON" build "$_probe/p.ax" -o "$_probe/p" 2>&1)"; then
   rm -rf "$_probe"
-  echo "all_examples_parity: \`$AXON\` cannot codegen (interp-only build, or LLVM absent) — skipping"
-  echo "all_examples_parity: this is a SKIP, not a pass: set AXON=<codegen binary> to actually run it."
-  exit 0
+  # "cannot codegen (interp-only build, or LLVM absent)" was ASSERTED for every
+  # build failure — including a compiler that is simply broken. Prove it.
+  if native_build_unavailable "$berr"; then
+    echo "all_examples_parity: this is a SKIP, not a pass: set AXON=<codegen binary> to actually run it."
+    harness_skip all_examples_parity "\`$AXON\` cannot codegen (interp-only build, or LLVM absent)"
+  fi
+  echo "all_examples_parity: FAIL — \`$AXON\` cannot build a trivial program (a build error is not a skip):"
+  printf '%s\n' "$berr" | head -5 | sed 's/^/        /'
+  exit 1
 fi
 rm -rf "$_probe"
 
@@ -65,9 +72,8 @@ trap 'rm -rf "$WORK"' EXIT
 # `--no-default-features` test run may have left a codegen-less `axon` in place.)
 # If a trivial build fails, codegen is unavailable here — skip cleanly.
 printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"
-if ! AXON_AI_MOCK=1 "$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache >/dev/null 2>&1; then
-  echo "all_examples_parity: this axon binary cannot emit native builds (no codegen feature) — skipping"
-  exit 0
+if ! berr="$(AXON_AI_MOCK=1 "$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache 2>&1)"; then
+  native_build_failed all_examples_parity "trivial probe program" "$berr" || exit 1
 fi
 
 pass=0; diff=0; failbuild=0; refused=0; total=0

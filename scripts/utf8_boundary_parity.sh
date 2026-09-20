@@ -24,6 +24,7 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. "$(pwd)/scripts/lib/harness_skip.sh"
 
 AXON="${AXON:-./target/debug/axon}"
 WORK="$(mktemp -d)"
@@ -53,8 +54,17 @@ run_expect() { # <label> <axon-expr> <expected-stdout>
 
   # Native must agree AND be right. A build failure here is a real failure, not
   # a skip: the whole point is that both engines are checked.
-  if ! "$AXON" build "$f" -o "$WORK/bin" >/dev/null 2>&1; then
-    echo "  SKIP $label: codegen unavailable"
+  local berr
+  if ! berr="$("$AXON" build "$f" -o "$WORK/bin" 2>&1)"; then
+    # "codegen unavailable" has to be PROVED, not asserted: a UTF-8 codegen
+    # regression used to print this same line and the harness still passed.
+    if native_build_unavailable "$berr"; then
+      echo "  SKIP $label: codegen unavailable"
+      return
+    fi
+    echo "  FAIL $label: native build FAILED (a build error is not a skip):"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
     return
   fi
   local n_out n_code
@@ -94,8 +104,14 @@ for range in "0, 4" "4, 5" "0, 4" ; do
        fail=$((fail+1)); continue ;;
   esac
 
-  if ! "$AXON" build "$f" -o "$WORK/sbin" >/dev/null 2>&1; then
-    echo "  SKIP split($range): codegen unavailable"
+  if ! berr="$("$AXON" build "$f" -o "$WORK/sbin" 2>&1)"; then
+    if native_build_unavailable "$berr"; then
+      echo "  SKIP split($range): codegen unavailable"
+      continue
+    fi
+    echo "  FAIL split($range): native build FAILED (a build error is not a skip):"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
     continue
   fi
   n_all="$("$WORK/sbin" 2>&1)"; n_code=$?

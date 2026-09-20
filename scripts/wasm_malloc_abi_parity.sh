@@ -13,6 +13,7 @@
 # wasm toolchain is absent.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -88,9 +89,16 @@ for name in arr tostr interp eprint combo; do
   I="$("$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
   [ -n "$I" ] || { echo "  FAIL $name: interp printed nothing"; fail=1; continue; }
   # native
-  if "$AXON" build "$SRC" -o "$WORK/$name.n" >/dev/null 2>&1; then
+  # A failed native build used to vanish silently out of this `if`.
+  if berr="$("$AXON" build "$SRC" -o "$WORK/$name.n" 2>&1)"; then
     N="$("$WORK/$name.n" 2>/dev/null | tail -1)"
     if [ "$N" != "$I" ]; then echo "  FAIL $name: native=$N != interp=$I"; fail=1; fi
+  elif native_build_unavailable "$berr"; then
+    echo "  SKIP $name (native leg: codegen unavailable)"
+  else
+    echo "  FAIL $name: native build FAILED (a build error is not a skip):"
+    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+    fail=1
   fi
   # AOT-wasm
   if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" >/dev/null 2>&1; then

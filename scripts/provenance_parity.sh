@@ -23,6 +23,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -61,9 +62,10 @@ fi
 NPROV="$WORK/ncache"
 mkdir -p "$NPROV"
 BIN="$WORK/adaptive_bin"
-if ! XDG_CACHE_HOME="$NPROV" "$AXON" build "$PROG" -o "$BIN" >/dev/null 2>&1; then
-  echo "provenance_parity: native build of the .ax failed — skipping native half"
-  exit 0
+if ! berr="$(XDG_CACHE_HOME="$NPROV" "$AXON" build "$PROG" -o "$BIN" 2>&1)"; then
+  # A build that FAILED is a RESULT, not an absence — see
+  # scripts/lib/harness_skip.sh. This used to drop the whole native half.
+  native_build_failed provenance_parity "adaptive provenance" "$berr" || exit 1
 fi
 XDG_CACHE_HOME="$NPROV" "$BIN" >/dev/null 2>&1
 NLOG="$NPROV/axon/provenance.jsonl"

@@ -13,6 +13,7 @@
 # Skips (exit 0) when codegen / the wasm toolchain is absent.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -75,10 +76,19 @@ I="$(AXON_AOT_ENV="$VAL" "$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id '
 echo "wasm_aot_env_parity: interp = $I"
 
 # native AOT
-if "$AXON" build "$SRC" -o "$WORK/native" >/dev/null 2>&1; then
+# A failed native build used to fall out of this `if` in SILENCE: no native
+# line, no skip, no failure — the leg simply did not happen and the harness
+# still summarised green.
+if berr="$("$AXON" build "$SRC" -o "$WORK/native" 2>&1)"; then
   N="$(AXON_AOT_ENV="$VAL" "$WORK/native" 2>/dev/null | tail -1)"
   echo "wasm_aot_env_parity: native = $N"
   if [ "$N" != "$I" ]; then echo "wasm_aot_env_parity: FAIL — native ($N) != interp ($I)"; exit 1; fi
+elif native_build_unavailable "$berr"; then
+  echo "wasm_aot_env_parity: native leg skipped (codegen unavailable)"
+else
+  echo "wasm_aot_env_parity: FAIL — native build FAILED (a build error is not a skip):"
+  printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+  exit 1
 fi
 
 # AOT-wasm — the strlen size_t bridge under test.

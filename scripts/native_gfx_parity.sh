@@ -23,6 +23,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -36,9 +37,12 @@ AXON="${AXON:-target/debug/axon}"
 
 # Probe: can this binary actually emit native code?
 printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"
-if ! "$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache >/dev/null 2>&1; then
-  echo "native_gfx_parity: this axon binary cannot emit native builds — skipping"
-  exit 0
+if ! berr="$("$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache 2>&1)"; then
+  # Even the capability PROBE has to prove its reason: `fn main() -> i64 { 0 }`
+  # failing to build is only a skip when the binary says it has no codegen.
+  # Anything else is a broken compiler, and calling that "cannot emit native
+  # builds" is how a codegen regression exits 0.
+  native_build_failed native_gfx_parity "trivial probe program" "$berr" || exit 1
 fi
 
 fail=0
@@ -64,9 +68,10 @@ fn main() -> i64 {
 }
 EOF
 
-if ! "$AXON" build "$WORK/gfx.ax" -o "$WORK/gfx.bin" --no-cache >/dev/null 2>&1; then
-  echo "native_gfx_parity: native build of the gfx program failed — skipping"
-  exit 0
+if ! berr="$("$AXON" build "$WORK/gfx.ax" -o "$WORK/gfx.bin" --no-cache 2>&1)"; then
+  # The probe above already proved this binary CAN codegen, so a failure here
+  # is about the gfx program — i.e. exactly the thing under test.
+  native_build_failed native_gfx_parity "gfx program" "$berr" || exit 1
 fi
 
 # 1+2: stdout + exit-code parity.

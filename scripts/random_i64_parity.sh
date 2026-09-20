@@ -13,6 +13,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -34,9 +35,16 @@ AXON="${AXON:-target/debug/axon}"
 # Print a sentinel the caller can test instead. A subshell cannot end the script,
 # so the decision has to come back as data.
 SKIP_SENTINEL="__SKIP__"
-build_run() { # <src-file> <out-bin>  → prints the guest exit code, or the skip sentinel
-  if ! "$AXON" build "$1" -o "$2" --no-cache >/dev/null 2>&1; then
-    echo "$SKIP_SENTINEL"
+FAIL_SENTINEL="__BUILDFAIL__"
+BUILD_ERR_FILE="$WORK/_build.err"
+build_run() { # <src-file> <out-bin>  → prints the guest exit code, or a sentinel
+  # Two sentinels, not one: a build that FAILED is a RESULT and must not be
+  # laundered into "unavailable". `build_run` runs inside a command
+  # substitution, so the decision has to come back as DATA either way.
+  local berr
+  if ! berr="$("$AXON" build "$1" -o "$2" --no-cache 2>&1)"; then
+    printf '%s' "$berr" > "$BUILD_ERR_FILE"
+    if native_build_unavailable "$berr"; then echo "$SKIP_SENTINEL"; else echo "$FAIL_SENTINEL"; fi
     return 0
   fi
   "$2" >/dev/null 2>&1
@@ -46,9 +54,13 @@ build_run() { # <src-file> <out-bin>  → prints the guest exit code, or the ski
 # Exit the whole script as a clean SKIP when a build was unavailable. Called from
 # the top level, where `exit` actually exits.
 skip_if_unavailable() { # <value> <what>
+  if [ "$1" = "$FAIL_SENTINEL" ]; then
+    echo "random_i64_parity: FAIL ($2) — native build FAILED (a build error is not a skip):"
+    head -5 "$BUILD_ERR_FILE" 2>/dev/null | sed 's/^/        /'
+    exit 1
+  fi
   if [ "$1" = "$SKIP_SENTINEL" ]; then
-    echo "random_i64_parity: native build of $2 unavailable — skipping"
-    exit 0
+    harness_skip random_i64_parity "native build of $2 unavailable"
   fi
 }
 

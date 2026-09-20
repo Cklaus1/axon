@@ -15,6 +15,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -50,9 +51,11 @@ ISET="$(extract "$IPROV/axon/provenance.jsonl")"
 
 NPROV="$WORK/ncache"; mkdir -p "$NPROV"
 BIN="$WORK/agent_bin"
-if ! XDG_CACHE_HOME="$NPROV" "$AXON" build "$PROG" -o "$BIN" --no-cache >/dev/null 2>&1; then
-  echo "agent_action_parity: native build failed — skipping"
-  exit 0
+if ! berr="$(XDG_CACHE_HOME="$NPROV" "$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
+  # A build that FAILED is a RESULT, not an absence. This used to discard
+  # stderr and report a codegen regression in the feature under test as
+  # "skipping" — see scripts/lib/harness_skip.sh.
+  native_build_failed agent_action_parity "agent_action" "$berr" || exit 1
 fi
 XDG_CACHE_HOME="$NPROV" "$BIN" >/dev/null 2>&1
 NSET="$(extract "$NPROV/axon/provenance.jsonl")"

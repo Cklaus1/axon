@@ -15,6 +15,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -42,9 +43,11 @@ AXON="${AXON:-target/debug/axon}"
 interp_out="$("$AXON" run "$PROG" 2>/dev/null)"
 
 BIN="$WORK/pi_bin"
-if ! "$AXON" build "$PROG" -o "$BIN" --no-cache >/dev/null 2>&1; then
-  echo "parse_int_err_parity: native build failed — skipping"
-  exit 0
+if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
+  # A build that FAILED is a RESULT, not an absence. This used to discard
+  # stderr and report a codegen regression in the feature under test as
+  # "skipping" — see scripts/lib/harness_skip.sh.
+  native_build_failed parse_int_err_parity "parse_int_err" "$berr" || exit 1
 fi
 native_out="$("$BIN" 2>/dev/null)"
 

@@ -17,6 +17,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 ran=0
 fail=0
@@ -29,7 +30,11 @@ TESTS=(
   kernel::tests::scheduler_fanout_collect_and_failure_is_observable
 )
 for t in "${TESTS[@]}"; do
-  if cargo test -q -p axon-core --no-default-features --lib "$t" -- --exact >/dev/null 2>&1; then
+  # `cargo test <filter>` exits 0 when the filter matches NOTHING, so testing
+  # the exit status alone counted a renamed/moved/#[ignore]d test as "ran" —
+  # and the `ran -eq 0` vacuity guard below then saw a healthy count.
+  if cargo_test_must_run "$t" \
+       cargo test -q -p axon-core --no-default-features --lib "$t" -- --exact; then
     echo "  ok  [$t]"
     ran=$((ran+1))
   else

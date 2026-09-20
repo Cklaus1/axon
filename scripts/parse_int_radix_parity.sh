@@ -13,6 +13,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -49,9 +50,11 @@ AXON="${AXON:-target/debug/axon}"
 I_OUT="$(AXON_AI_MOCK=1 "$AXON" run "$PROG" 2>&1)"; I_EXIT=$?
 I_OUT="$(printf '%s\n' "$I_OUT" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
 BIN="$WORK/pir_bin"
-if ! AXON_AI_MOCK=1 "$AXON" build "$PROG" -o "$BIN" --no-cache >/dev/null 2>&1; then
-  echo "parse_int_radix_parity: native build failed — skipping"
-  exit 0
+if ! berr="$(AXON_AI_MOCK=1 "$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
+  # A build that FAILED is a RESULT, not an absence. This used to discard
+  # stderr and report a codegen regression in the feature under test as
+  # "skipping" — see scripts/lib/harness_skip.sh.
+  native_build_failed parse_int_radix_parity "parse_int_radix" "$berr" || exit 1
 fi
 N_OUT="$(AXON_AI_MOCK=1 "$BIN" 2>&1)"; N_EXIT=$?
 

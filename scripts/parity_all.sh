@@ -30,6 +30,35 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
+
+# ── THE skip rule ────────────────────────────────────────────────────────────
+# Kept byte-for-byte in step with `harness_skipped` in
+# crates/axon-core/tests/cli_run.rs — the two used to DISAGREE: this file judged
+# by `tail -1` alone while cli_run.rs scanned the last three non-empty lines, so
+# a harness that printed its skip prose and then elaborated (handler_resume,
+# exit_code_parity's catch-all — both ended on build-error text) was SKIP to one
+# reader and PASS to the other. Same run, two verdicts.
+#
+# Preferred shape is the EXPLICIT final marker `<name>: SKIP — <reason>` that
+# `harness_skip` emits; the prose forms are grandfathered for harnesses that
+# have not been converted. A non-zero exit is a FAILURE and never a skip — that
+# is decided on `$rc` before this is consulted.
+# A skip line is HARNESS-LEVEL: it starts at column 0. An indented
+# "  SKIP <case>" is one case of many and says nothing about the verdict —
+# that distinction is why a whole-output grep was wrong in the first place.
+_skip_re=': SKIP|skipping|this is a SKIP'
+_verdict_re='PASS|FAILED|FAIL|: OK|OK —'
+harness_says_skip() { # <output>
+  local body final
+  body="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')"
+  final="$(printf '%s\n' "$body" | tail -1)"
+  # 1. The final line decides when it states anything at all.
+  printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_skip_re)" && return 0
+  printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_verdict_re)" && return 1
+  # 2. Otherwise a skip may have been followed by elaboration (up to 2 lines).
+  printf '%s\n' "$body" | tail -3 | grep -qE "^[^[:space:]].*($_skip_re)"
+}
 
 QUIET=0
 for arg in "$@"; do
@@ -65,14 +94,14 @@ for h in scripts/*_parity.sh; do
   # skips a single loop program) while its overall result is PASS — grepping the
   # whole output then false-labels the harness as skipped and DROPS real
   # coverage. Judge by the last line only.
-  last_line="$(echo "$out" | tail -1)"
+  last_line="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -1)"
   if [ "$rc" -ne 0 ]; then
     printf "  FAIL  %-30s (exit %d)\n" "$name" "$rc"
     fail=$((fail+1))
     failed_names="$failed_names $name"
     # On failure, always show the harness output — that's the divergence.
     echo "$out" | sed 's/^/        | /'
-  elif echo "$last_line" | grep -qiE "skip|unavailable"; then
+  elif harness_says_skip "$out"; then
     # Print the harness's OWN reason, not a guess.
     #
     # This said "(toolchain absent)" for every skip. Two harnesses are OPT-IN

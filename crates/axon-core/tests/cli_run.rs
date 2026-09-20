@@ -77,14 +77,55 @@ fn harness_skipped(out: &std::process::Output, stdout: &str, stderr: &str, what:
     // is enforced on the exit status, not the text) while tolerating a trailing
     // explanation. Bounded at 3 so a passing harness that merely MENTIONS
     // skipping somewhere in its body is still read as a pass.
-    let tail_says_skipping = |s: &str| {
-        s.lines()
-            .rev()
-            .filter(|l| !l.trim().is_empty())
-            .take(3)
-            .any(|l| l.contains("skipping") || l.contains("this is a SKIP"))
-    };
     tail_says_skipping(stdout) || tail_says_skipping(stderr)
+}
+
+/// The skip rule, kept byte-for-byte in step with `harness_says_skip` in
+/// `scripts/parity_all.sh`.
+///
+/// The two USED to disagree: `parity_all.sh` judged by `tail -1` alone, this
+/// function scanned the last three non-empty lines. A harness that printed its
+/// skip prose and then ELABORATED — `handler_resume_parity.sh` and
+/// `exit_code_parity.sh`'s catch-all both ended on build-error text — was a
+/// SKIP to one reader and a PASS to the other, from the same bytes.
+///
+/// Three rules, in order:
+///   1. A skip line is HARNESS-LEVEL: it starts at column 0. An indented
+///      `  SKIP <case>` is one case among many and says nothing about the
+///      verdict — that is why a whole-output substring scan was wrong.
+///   2. The FINAL non-empty line decides whenever it states anything: a skip
+///      marker means skip, a verdict (PASS/FAIL/OK) means not-skip.
+///   3. Only if the final line states neither do we look back two more lines,
+///      which is what tolerates a skip followed by an explanation.
+///
+/// The preferred shape is the explicit `<name>: SKIP — <reason>` marker that
+/// `scripts/lib/harness_skip.sh`'s `harness_skip` emits LAST; the prose forms
+/// are grandfathered for harnesses not yet converted.
+fn tail_says_skipping(s: &str) -> bool {
+    let is_harness_level = |l: &str| !l.starts_with(char::is_whitespace);
+    let says_skip = |l: &str| {
+        is_harness_level(l)
+            && (l.contains(": SKIP") || l.contains("skipping") || l.contains("this is a SKIP"))
+    };
+    let says_verdict = |l: &str| {
+        is_harness_level(l)
+            && (l.contains("PASS")
+                || l.contains("FAILED")
+                || l.contains("FAIL")
+                || l.contains(": OK")
+                || l.contains("OK —"))
+    };
+    let body: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+    let Some(final_line) = body.last() else {
+        return false;
+    };
+    if says_skip(final_line) {
+        return true;
+    }
+    if says_verdict(final_line) {
+        return false;
+    }
+    body.iter().rev().take(3).any(|l| says_skip(l))
 }
 
 #[cfg(test)]
@@ -31143,4 +31184,51 @@ fn eprint_writes_to_stderr_without_a_newline() {
         !stdout.contains("err-"),
         "eprint/eprintln must not leak onto stdout"
     );
+}
+
+/// The skip-rule table, checked against the REAL `tail_says_skipping` rather
+/// than a local re-implementation (the two tests above re-implement it, which
+/// is precisely how they stayed green while the function was wrong).
+///
+/// Every row here is also a row in the shell unit check for
+/// `harness_says_skip` in `scripts/parity_all.sh`. If you change one, change
+/// both — a harness must not be a SKIP to one reader and a PASS to the other.
+#[cfg(test)]
+mod skip_rule_table {
+    use super::tail_says_skipping;
+
+    #[test]
+    fn detectors_agree_on_every_shape() {
+        // Explicit marker (what `harness_skip` emits).
+        assert!(tail_says_skipping(
+            "foo_parity: SKIP — native codegen unavailable\n"
+        ));
+        // Elaboration first, marker last.
+        assert!(tail_says_skipping(
+            "  error: cannot codegen\nfoo_parity: SKIP — reason\n"
+        ));
+        // Grandfathered prose followed by build-error text: THE disagreement
+        // case (handler_resume_parity / exit_code_parity's catch-all).
+        assert!(tail_says_skipping(
+            "foo_parity: native build failed — skipping\nerror: IR verification failed\n"
+        ));
+        // A skip that elaborates at column 0 (all_examples_parity's shape).
+        assert!(tail_says_skipping(
+            "all_examples_parity: cannot codegen — skipping\nall_examples_parity: this is a SKIP, not a pass.\n"
+        ));
+
+        // Per-case skips are INDENTED and never decide the verdict.
+        assert!(!tail_says_skipping(
+            "  SKIP case_a (native build unavailable)\nfoo_parity: PASS — 12 cases\n"
+        ));
+        assert!(!tail_says_skipping(
+            "  SKIP split(3): codegen unavailable\n  SKIP split(4): codegen unavailable\nfoo_parity: OK — done\n"
+        ));
+        // A mid-run note is not a skipped harness.
+        assert!(!tail_says_skipping(
+            "foo_parity: skipping 2 of 40 cases\nfoo_parity: PASS — 38 cases agree\n"
+        ));
+        assert!(!tail_says_skipping("foo_parity: PASS — all good\n"));
+        assert!(!tail_says_skipping(""));
+    }
 }

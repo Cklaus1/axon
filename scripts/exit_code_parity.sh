@@ -24,6 +24,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -70,13 +71,19 @@ if ! probe_err="$("$AXON" build "$WORK/_probe.ax" -o "$WORK/_probe.bin" 2>&1)"; 
     *"requires building axon with the \`codegen\` feature"*)
       echo "exit_code_parity: \$AXON ($AXON) is an interpreter-only build — it cannot"
       echo "  produce native binaries, so interp↔native parity is not measurable with it."
-      echo "  Skipping. Use a codegen-capable binary (\`cargo build -p axon-core\`)."
-      exit 0
+      # The marker goes LAST and at column 0: an indented trailing "Skipping."
+      # line is invisible to the shared skip rule (see scripts/parity_all.sh).
+      harness_skip exit_code_parity "\$AXON ($AXON) is an interpreter-only build; use \`cargo build -p axon-core\`"
       ;;
     *)
-      echo "exit_code_parity: \$AXON ($AXON) failed a trivial native build — skipping:"
-      echo "$probe_err" | head -3
-      exit 0
+      # NOT a skip. `fn main() -> i64 { 0 }` is the simplest program there is:
+      # a codegen-capable binary that cannot build it is BROKEN, and saying
+      # "skipping" here hid that. It also ended on the error text, so
+      # `parity_all.sh` (last line only) scored the run PASS while
+      # `cli_run.rs` (3-line window) scored it SKIP — one run, two verdicts.
+      echo "exit_code_parity: FAIL — \$AXON ($AXON) cannot build a trivial program:"
+      echo "$probe_err" | head -5 | sed 's/^/        /'
+      exit 1
       ;;
   esac
 fi

@@ -14,6 +14,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -32,8 +33,11 @@ run_case() {
   local i_out i_code n_out n_code
   i_out="$("$AXON" run "$prog" 2>&1)"; i_code=$?
   i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
-  if ! "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then
-    echo "i64_radix_panic_parity: native build failed for $label — skipping"; exit 0
+  if ! berr="$("$AXON" build "$prog" -o "$bin" --no-cache 2>&1)"; then
+    # A build that FAILED is a RESULT, not an absence. This used to discard
+    # stderr and report a codegen regression in the feature under test as
+    # "skipping" — see scripts/lib/harness_skip.sh.
+    native_build_failed i64_radix_panic_parity "$label" "$berr" || exit 1
   fi
   n_out="$("$bin" 2>&1)"; n_code=$?
   if [ "$i_out" != "$n_out" ] || [ "$i_code" != "$n_code" ]; then

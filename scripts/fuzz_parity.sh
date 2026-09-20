@@ -43,6 +43,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 SEED="${AXON_SEED:-42}"
 N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
@@ -63,8 +64,10 @@ trap 'rm -rf "$WORK"' EXIT
 # Probe: can this binary actually emit native code? (A --no-default-features
 # build leaves a codegen-less `axon` that can `run` but not `build`.)
 printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"
-if ! "$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache >/dev/null 2>&1; then
-  echo "fuzz_parity: this axon binary cannot emit native builds (no codegen feature) — skipping"; exit 0
+if ! berr="$("$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache 2>&1)"; then
+  # The probe must prove its own reason — "no codegen feature" was asserted for
+  # every possible build failure, including a broken compiler.
+  native_build_failed fuzz_parity "trivial probe program" "$berr" || exit 1
 fi
 
 fail=0

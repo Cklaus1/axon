@@ -14,6 +14,7 @@
 # Skips (exit 0) when codegen / the wasm toolchain is absent.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -92,14 +93,18 @@ I_EXIT="$("$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
 echo "wasm_str_abi_parity: interp = $I_EXIT"
 
 # 2) native AOT
-if "$AXON" build "$SRC" -o "$WORK/native" >/dev/null 2>&1; then
+if berr="$("$AXON" build "$SRC" -o "$WORK/native" 2>&1)"; then
   N_EXIT="$("$WORK/native" 2>/dev/null | tail -1)"
   echo "wasm_str_abi_parity: native = $N_EXIT"
   if [ "$N_EXIT" != "$I_EXIT" ]; then
     echo "wasm_str_abi_parity: FAIL — native ($N_EXIT) != interp ($I_EXIT)"; exit 1
   fi
-else
+elif native_build_unavailable "$berr"; then
   echo "wasm_str_abi_parity: native build unavailable — skipping native leg"
+else
+  echo "wasm_str_abi_parity: FAIL — native build FAILED (a build error is not a skip):"
+  printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+  exit 1
 fi
 
 # 3) AOT-wasm — the bridge under test. Must LINK (no signature mismatch) and RUN.
@@ -147,11 +152,15 @@ if [ -z "$C_INTERP" ]; then
   echo "wasm_str_abi_parity: FAIL — str_cmp produced no interpreter output"; exit 1
 fi
 
-if "$AXON" build "$CMP" -o "$WORK/ncmp" >/dev/null 2>&1; then
+if berr="$("$AXON" build "$CMP" -o "$WORK/ncmp" 2>&1)"; then
   C_NATIVE="$("$WORK/ncmp" 2>/dev/null | tr '\n' ' ')"
   if [ "$C_NATIVE" != "$C_INTERP" ]; then
     echo "wasm_str_abi_parity: FAIL — str_cmp native [$C_NATIVE] != interp [$C_INTERP]"; exit 1
   fi
+elif ! native_build_unavailable "$berr"; then
+  echo "wasm_str_abi_parity: FAIL — str_cmp native build FAILED (not a skip):"
+  printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
+  exit 1
 fi
 
 if "$AXON" target build --engine codegen --target wasm32-wasip1 "$CMP" >/dev/null 2>&1; then

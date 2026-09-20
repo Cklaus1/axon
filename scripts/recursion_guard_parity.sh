@@ -21,6 +21,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 case "$(uname -s)" in
   Linux|Darwin|*BSD) ;;
@@ -48,8 +49,11 @@ if [ "$iexit" -ne 101 ] || ! printf '%s' "$iout" | grep -q "recursion limit"; th
 fi
 
 BIN="$WORK/rec_bin"
-if ! "$AXON" build "$REC" -o "$BIN" --no-cache >/dev/null 2>&1; then
-  echo "recursion_guard_parity: native build/link unavailable in this env — skipping"; exit 0
+if ! berr="$("$AXON" build "$REC" -o "$BIN" --no-cache 2>&1)"; then
+  # "unavailable in this env" was asserted, never proved: any codegen error in
+  # the recursion guard itself printed the same line. See
+  # scripts/lib/harness_skip.sh — a skip must name a reason it can show.
+  native_build_failed recursion_guard_parity "deep recursion" "$berr" || exit 1
 fi
 nout="$("$BIN" 2>&1)"; nexit=$?
 if [ "$iexit" -ne "$nexit" ]; then

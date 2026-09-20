@@ -24,6 +24,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 if ! echo 'int main(){return 0;}' | cc -xc - -lz3 -o /dev/null 2>/dev/null; then
   echo "smt_mint_parity: libz3 not found — skipping (install to enable)"
@@ -86,11 +87,14 @@ fi
 
 # ── 3. TRIPWIRE: the R20 prover + grid tests pass ──
 echo "smt_mint_parity: running R20 obligation + tripwire tests…"
-if CARGO_TARGET_DIR="$WORK/smt-target" \
-   cargo test -q -p axon-core --no-default-features --features smt --lib 'r20_' 2>/dev/null; then
+# `cargo test 'r20_'` exits 0 if NO test matches `r20_` — which is precisely
+# what a rename of the R20 tripwire tests looks like. Require a passed count.
+if cargo_test_must_run "r20_ tripwire" \
+     env CARGO_TARGET_DIR="$WORK/smt-target" \
+     cargo test -q -p axon-core --no-default-features --features smt --lib 'r20_'; then
   echo "  PASS tripwire: R20 prover refutes weakenings + grid test confirms the impl"
 else
-  echo "  FAIL tripwire: an R20 obligation/tripwire test failed"
+  echo "  FAIL tripwire: an R20 obligation/tripwire test failed (or matched nothing)"
   fail=1
 fi
 

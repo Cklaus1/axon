@@ -16,6 +16,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -45,9 +46,12 @@ check() {
     return
   fi
   if [ ! -x "$bin" ]; then
-    echo "handler_resume_parity: native build/link unavailable for $name — skipping"
-    echo "  $berr" | head -2
-    exit 0
+    # Two bugs here, both fixed: (1) a FAILED build was called "unavailable"
+    # without proving it, and (2) the skip prose was followed by build-error
+    # text, so `parity_all.sh` (last line only) called the run a PASS while
+    # `cli_run.rs` (3-line window) called it a SKIP. `harness_skip` always
+    # prints the explicit marker LAST.
+    native_build_failed handler_resume_parity "$name" "$berr" || { fail=1; return; }
   fi
   AXON_AI_MOCK=1 AXON_SEED=42 "$bin" >"$WORK/$name.nout" 2>/dev/null
   local n_exit=$?

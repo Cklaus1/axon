@@ -26,6 +26,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -108,8 +109,9 @@ SLICE2_TESTS=(
   r15_slice2_send_value_round_trip_is_lossless
 )
 for t in "${SLICE2_TESTS[@]}"; do
-  if cargo test -q -p axon-core --no-default-features --lib "interp::tests::$t" \
-       -- --exact >/dev/null 2>&1; then
+  # An empty filter exits 0 — require a PASSED count, not just a status.
+  if cargo_test_must_run "$t" \
+       cargo test -q -p axon-core --no-default-features --lib "interp::tests::$t" -- --exact; then
     echo "  ok  [$t]"
     ran=$((ran+1))
   else
