@@ -1,5 +1,17 @@
 # CORRECTION: I wired two gates on evidence from a contaminated checkout
 
+> **RESOLVED.** Root cause found, fixed (`90a53f0`), and all six gates
+> re-verified in a clean worktree. `scripts/gate.sh` is no longer known-red.
+> Details at the end; the analysis below is kept because the method mattered
+> more than the outcome.
+>
+> | evidence | before | now, in a CLEAN tree |
+> |---|---|---|
+> | `crates/axon-os/tests/acceptance.rs` | 2 failed, 9 passed | **11 passed, 0 failed** |
+> | `r27_acceptance_gate.sh` | failed | **19 passed, 0 failed** |
+> | `r29_acceptance_gate.sh` | exit 101 | **ALL CHECKS PASSED** |
+> | `r23` · `r26` · `r28` · `r31` | unmeasured | **all exit 0** |
+
 Earlier this session I ran `scripts/r27_acceptance_gate.sh` and
 `scripts/r29_acceptance_gate.sh`, observed exit 0 (7s and 4s), and wired both
 into `scripts/gate.sh` (commit `57771c0`) citing those runs as the evidence.
@@ -159,3 +171,47 @@ So: the risk is concentrated in r27 and r29, with a named mechanism. r26, r28
 and r31 have no identified mechanism — but they remain UNMEASURED, and "no
 mechanism found by grep" is a weaker claim than "verified in a clean tree".
 Only a pristine run settles them.
+
+## Resolution — measured, not argued
+
+**The root cause.** `crates/axon-os/tests/acceptance.rs` runs
+`examples/jobs/summarize.axjob` and asserts `examples/jobs/out/summary.txt`
+exists, while nothing creates that directory. One line added to create it; the
+test now provides the state it requires instead of inheriting it from the
+machine's history.
+
+**RED and GREEN in the SAME clean tree**, which is the only comparison that
+settles it. A worktree that had never run `axon-os` tests, so genuinely lacked
+the ignored directory:
+
+    before the fix   2 failed, 9 passed
+                     acc_a2_example_jobs_run_and_overreach_denied
+                     acc_a6b_verdict_seed_and_run_id_are_sealed_into_the_chain_p6_exit_03
+    after the fix    11 passed, 0 failed
+
+Two failures, matching the count a subagent independently found from the other
+direction. Two methods, one answer, before any repair was attempted.
+
+**Every gate re-verified there, none in my own checkout:**
+
+    r23  exit 0     r26  exit 0     r27  exit 0 (19 passed, 0 failed)
+    r28  exit 0     r29  exit 0     r31  exit 0
+
+`r27` and `r29` were cleared by the single `acceptance.rs` fix, exactly as the
+transitive analysis predicted — both run the WHOLE `axon-os` suite, so both
+inherited one dependency. The prediction was made before the fix and held.
+
+**The three "no mechanism found" rows were right, but that is luck, not
+method.** A grep that finds no mechanism is not evidence of absence; it happens
+to have agreed with the pristine run here. The pristine run is what licenses
+the claim.
+
+## What made this findable
+
+The RED measurement needed a clean checkout, and the tooling for creating one
+was unavailable. The route that worked was
+`cargo test --manifest-path <other-worktree>/Cargo.toml` — running from here
+while resolving `workspace_root()` there. Worth keeping: a test harness that
+derives its paths from the manifest can be pointed at a different tree without
+changing directory, which is also how each gate was run by absolute path
+against the clean worktree rather than the contaminated one.
