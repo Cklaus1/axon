@@ -677,7 +677,63 @@ impl Runner {
             if matches!(action, CortexAction::PatchSymbolBody { .. }) {
                 ctx.claim_refused = false;
             }
+            // The bytes as they stand, kept only for the one action that can
+            // damage them. A controller that can leave a workspace worse than
+            // it found it and walk away is not a safety mechanism, and that is
+            // exactly what a generator proposing an unparseable body did:
+            // exit non-zero with the file no longer compiling.
+            let rollback = if matches!(action, CortexAction::PatchSymbolBody { .. }) {
+                std::fs::read_to_string(self.workspace.join(&target.path)).ok()
+            } else {
+                None
+            };
             let outcome = self.execute(auth);
+
+            if let Some(before) = rollback {
+                // "Worse" is defined narrowly and mechanically: it compiled,
+                // and now it does not. NOT "more warnings" or "fewer tests
+                // passing" — those are judgements, and a rollback rule built on
+                // a judgement would start reverting repairs that were working.
+                let re = self.snapshot(&[target.path.as_str()]).ok();
+                // Only a KNOWN failure to compile triggers a revert. An
+                // observation that could not tell is not evidence of damage,
+                // and undoing a patch on "I could not check" would discard
+                // work on the strength of a checker that did not run.
+                //
+                // Nothing tests that branch, because nothing can reach it: a
+                // patch is only selected after a completion claim was refused,
+                // which requires the file to have compiled, and an Unknown
+                // observation blocks the episode before any action is chosen.
+                // It is written for the direction it should fail in if that
+                // ever stops being true.
+                let broke = re
+                    .as_ref()
+                    .map(|s| self.observe(s, &target.path))
+                    .map(|o| observed_compiles(&o) == Some(false))
+                    .unwrap_or(false);
+                if broke {
+                    let _ = std::fs::write(self.workspace.join(&target.path), &before);
+                    self.episode.push(EpisodeEvent::PatchReverted {
+                        path: target.path.clone(),
+                        reason: "the patched file no longer compiles".to_string(),
+                        restored_digest: content_digest(before.as_bytes()),
+                    });
+                    // The claim stands refused: the code is back to compiling
+                    // and still wrong, which is where it was.
+                    //
+                    // Honestly: no test distinguishes this line today, and
+                    // neutralising it changes nothing observable. The restore
+                    // puts the file back byte-for-byte, so the cycle detector
+                    // sees the same (state, action) pair and stops the episode
+                    // before a second claim can be made either way. It is kept
+                    // because it states the invariant the cycle detector
+                    // happens to enforce — that the loop must not go back to
+                    // claiming done on code it was just told is wrong — rather
+                    // than leaving that resting on a coincidence of digests.
+                    ctx.claim_refused = true;
+                    continue;
+                }
+            }
 
             // A claim is adjudicated, never accepted. If verification holds the
             // episode is done; if it does not, the loop keeps going and the
@@ -1014,4 +1070,21 @@ impl Runner {
         }
         Ok(())
     }
+}
+
+/// Whether the observation established that the file compiles — and `None`
+/// when the checker could not say.
+///
+/// An `Option`, not a `bool`: `Unknown` is neither a yes nor a no, and folding
+/// it into either would make "the checker did not run" indistinguishable from
+/// an answer. The rollback rule needs both ends of that distinction, because
+/// the two imply opposite actions.
+fn observed_compiles(obs: &Observation) -> Option<bool> {
+    obs.facts
+        .iter()
+        .find(|(k, _)| k == "compiles")
+        .and_then(|(_, v)| match v {
+            Observed::Known { value } => Some(value == "true"),
+            Observed::Unknown { .. } => None,
+        })
 }

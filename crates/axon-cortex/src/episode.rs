@@ -44,6 +44,23 @@ pub enum EpisodeEvent {
         exit_code: i32,
         passed: bool,
     },
+    /// A patch UNDONE because applying it made the file stop compiling.
+    ///
+    /// Recorded distinctly from `PatchApplied`, and never by deleting that
+    /// event: the episode is append-only, so the record must show that
+    /// something was tried and withdrawn rather than quietly showing a
+    /// workspace that was never touched. An episode that hid its reverts would
+    /// make a generator that breaks the build indistinguishable from one that
+    /// never proposes anything.
+    PatchReverted {
+        path: String,
+        /// Why it was withdrawn, in the terms the observation gave.
+        reason: String,
+        /// The digest the file was restored TO — the same bytes as the
+        /// corresponding `PatchApplied`'s `before_digest`, so the pair can be
+        /// matched up by a reader who was not there.
+        restored_digest: String,
+    },
     /// The independent verifier's verdict — produced out-of-band from whatever
     /// proposed the patch.
     Verified { passed: bool, detail: String },

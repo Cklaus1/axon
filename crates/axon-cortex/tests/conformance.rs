@@ -113,6 +113,7 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
             EpisodeEvent::ActionAllowed { .. } => "allowed",
             EpisodeEvent::ActionDenied { .. } => "denied",
             EpisodeEvent::PatchApplied { .. } => "patch",
+            EpisodeEvent::PatchReverted { .. } => "reverted",
             EpisodeEvent::CheckRun { .. } => "check",
             EpisodeEvent::Verified { .. } => "verified",
         })
@@ -1534,4 +1535,100 @@ fn cxg_c12_validate_enforces_each_constraint_it_states() {
         validate(&patch("   \n ", "m@1"), &c),
         Err(GenerationFailure::Invalid(_))
     ));
+}
+
+/// C13 — the episode does not leave the workspace worse than it found it.
+///
+/// A generator that proposes an unparseable body used to exit non-zero with
+/// the file no longer compiling: the loop reported honestly that it had
+/// failed, and the damage stayed. A controller that can break a workspace and
+/// walk away is not a safety mechanism, whatever its exit code says.
+///
+/// "Worse" is deliberately narrow and mechanical — it compiled, and now it does
+/// not. The second row is the control that keeps it narrow: a patch that
+/// compiles and is merely WRONG must survive, or the rule would start reverting
+/// repairs that were on their way to working.
+#[test]
+fn cxg_c13_a_patch_that_breaks_the_build_is_undone() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::LiteralGenerator;
+    use axon_cortex::runner::EpisodeOutcome;
+
+    let target = || SymbolRef {
+        path: "broken.ax".into(),
+        symbol: "double".into(),
+    };
+
+    // 1. Unparseable. The patch applies, the file stops compiling, and the
+    //    episode restores it.
+    let (_, ws) = stage("revert_broken");
+    let before = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    let mut r = Runner::new(axon_bin(), &ws);
+    let g = broken_grant(&mut r);
+    let junk = LiteralGenerator::new("\n    this is not axon at all ]]}\n");
+    let out = r.run_episode(
+        &target(),
+        Some(&g),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&junk),
+    );
+    assert!(
+        !matches!(out, EpisodeOutcome::VerifiedDone { .. }),
+        "junk must not verify, got {out:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.join("broken.ax")).unwrap(),
+        before,
+        "a patch that broke the build must be undone, not left behind"
+    );
+    // The revert is RECORDED. An episode that silently restored the file would
+    // make a generator that breaks the build indistinguishable from one that
+    // never proposed anything — and the record is the only place that
+    // difference survives.
+    let record = format!("{:?}", r.episode);
+    assert!(
+        record.contains("PatchApplied") && record.contains("PatchReverted"),
+        "the record must show what was tried AND that it was withdrawn: {record}"
+    );
+    // ONE adjudication, not two. A second `Verified` would be the controller
+    // asking the same question about the same bytes and expecting a different
+    // answer — the file is back exactly where it started, so re-claiming
+    // completion on it would be incoherent.
+    assert_eq!(
+        record.matches("Verified").count(),
+        1,
+        "a reverted patch must not send the loop back to claiming done: {record}"
+    );
+
+    // 2. CONTROL. A body that compiles and is simply wrong must NOT be
+    //    reverted. Without this row the rule above is satisfied by one that
+    //    undoes every patch, which would make repair impossible while looking
+    //    careful.
+    let (_, ws2) = stage("revert_control");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let g2 = broken_grant(&mut r2);
+    let wrong = LiteralGenerator::new("\n    n + 3\n");
+    let out2 = r2.run_episode(
+        &target(),
+        Some(&g2),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&wrong),
+    );
+    assert!(
+        !matches!(out2, EpisodeOutcome::VerifiedDone { .. }),
+        "a wrong body must not verify, got {out2:?}"
+    );
+    let after2 = std::fs::read_to_string(ws2.join("broken.ax")).unwrap();
+    assert!(
+        after2.contains("n + 3"),
+        "a compiling patch must survive even when it is wrong: {after2}"
+    );
+    assert!(
+        !format!("{:?}", r2.episode).contains("PatchReverted"),
+        "nothing here broke the build, so nothing may be reverted"
+    );
 }
