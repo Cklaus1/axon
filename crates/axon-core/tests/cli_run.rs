@@ -31283,10 +31283,7 @@ fn a_diagnostic_in_an_imported_module_names_that_module_and_its_line() {
     // assertions below would then be vacuous.
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
 
-    let e0301: Vec<&str> = stderr
-        .lines()
-        .filter(|l| l.contains("\"E0301\""))
-        .collect();
+    let e0301: Vec<&str> = stderr.lines().filter(|l| l.contains("\"E0301\"")).collect();
     assert_eq!(
         e0301.len(),
         1,

@@ -487,6 +487,14 @@ stage order means it should have had one here" ;;
   ./scripts/r39_slice4_gate.sh >/dev/null 2>&1 || fail "R39 Slice 4 gate"
   ./scripts/r39_slice5_gate.sh >/dev/null 2>&1 || fail "R39 Slice 5 gate"
 
+  # A reported diagnostic location must EXIST in the file the diagnostic names.
+  # Written RED and left unwired; it stayed red for as long as `Span` was
+  # (start, end) with no file identity. Wiring it now that it is green is the
+  # point — an unwired gate is a gate nothing can fail, and this one guards a
+  # class (one file's offsets rendered against another file's SourceMap) that
+  # returns every time a new path merges programs.
+  ./scripts/diagnostic_location_gate.sh >/dev/null 2>&1 || fail "diagnostic location (a reported line must exist in the file named)"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was

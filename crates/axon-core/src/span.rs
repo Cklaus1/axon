@@ -163,8 +163,16 @@ pub fn intern_source(path: &str, source: &str) -> SourceId {
     SourceId(t.len() as u32)
 }
 
-/// The `SourceMap` for an interned id, or `None` for UNKNOWN / an id from a
-/// different process (a deserialized AST).
+/// The `SourceMap` for an interned id, or `None` when the id is UNKNOWN or is
+/// not in this process's table.
+///
+/// Note what this does NOT do: an id deserialized from another process's JSON
+/// is just a small integer, and if this process has interned that many files it
+/// will resolve — to the wrong one. Nothing in the compiler feeds a
+/// deserialized AST back into the diagnostic renderer today (`axon parse` is
+/// one-way), and `Span::source` is omitted from that JSON entirely while
+/// UNKNOWN, so the situation does not arise. If an AST ever round-trips, the
+/// ids must be remapped on the way in rather than trusted.
 pub fn source_map_of(id: SourceId) -> Option<std::sync::Arc<SourceMap>> {
     if id.is_unknown() {
         return None;
@@ -262,5 +270,98 @@ impl SourceMap {
         let padding = " ".repeat(col - 1);
         let carets = "^".repeat(caret_len.min(line_text.len().saturating_sub(col - 1) + 1));
         format!("{line:4} │ {line_text}\n     │ {padding}{carets}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_col_refuses_an_offset_past_the_end_instead_of_clamping() {
+        // Five lines, as in the fixture that produced the original defect.
+        let map = SourceMap::new("a\nb\nc\nd\ne\n".to_string());
+        let past_eof = map.source.len() + 200;
+
+        assert_eq!(
+            map.try_line_col(past_eof),
+            None,
+            "an offset this source does not contain has no line:col in it"
+        );
+        // The clamping version returned the LAST line and a huge column here,
+        // which is how `lib.ax:14` became `main.ax:6:112` in a 5-line file.
+        assert_eq!(map.line_col(past_eof), (0, 0));
+        assert_eq!(
+            map.render_caret(Span::new(past_eof, past_eof + 1)),
+            "",
+            "no caret can be drawn for an offset outside the source"
+        );
+
+        // The in-range cases are unchanged.
+        assert_eq!(map.try_line_col(0), Some((1, 1)));
+        assert_eq!(map.try_line_col(2), Some((2, 1)));
+        // One-past-the-last-byte is the standard end-exclusive position and
+        // must still resolve, or every span ending at EOF would lose its caret.
+        assert_eq!(map.try_line_col(map.source.len()), Some((6, 1)));
+    }
+
+    #[test]
+    fn merge_does_not_blend_spans_from_two_different_files() {
+        let a = intern_source(
+            "a.ax", "aaaa
+",
+        );
+        let b = intern_source(
+            "b.ax",
+            "bbbbbbbbbbbb
+",
+        );
+        assert_ne!(a, b);
+
+        let in_a = Span::with_source(0, 4, a);
+        let in_b = Span::with_source(8, 12, b);
+
+        // min/max across files would yield (0, 12) — a span that indexes
+        // neither file, and reads as valid to everything downstream.
+        assert_eq!(Span::merge(in_a, in_b), in_a);
+        assert_eq!(Span::merge(in_b, in_a), in_b);
+
+        // Same file: the ordinary union, identity preserved.
+        let also_a = Span::with_source(10, 20, a);
+        assert_eq!(Span::merge(in_a, also_a), Span::with_source(0, 20, a));
+
+        // UNKNOWN is an absence of information, not a third file: it adopts
+        // whichever side knows.
+        let unknown = Span::new(10, 20);
+        assert_eq!(Span::merge(in_a, unknown), Span::with_source(0, 20, a));
+        assert_eq!(Span::merge(unknown, in_a), Span::with_source(0, 20, a));
+
+        // A dummy operand is absorbed whole.
+        assert_eq!(Span::merge(Span::dummy(), in_b), in_b);
+        assert_eq!(Span::merge(in_b, Span::dummy()), in_b);
+    }
+
+    #[test]
+    fn interning_is_keyed_on_path_and_bytes() {
+        let first = intern_source("same.ax", "one\n");
+        assert_eq!(
+            intern_source("same.ax", "one\n"),
+            first,
+            "re-parsing an unchanged file must not grow the table — `axon \
+             session` re-checks the whole program every cell"
+        );
+        let edited = intern_source("same.ax", "one\ntwo\n");
+        assert_ne!(
+            edited, first,
+            "the same path with different bytes needs a NEW id: serving fresh \
+             spans from a stale map is the bug this type exists to prevent"
+        );
+        assert_eq!(source_path_of(edited).as_deref(), Some("same.ax"));
+        assert_eq!(
+            source_map_of(edited).map(|m| m.source.clone()).as_deref(),
+            Some("one\ntwo\n")
+        );
+        assert!(source_map_of(SourceId::UNKNOWN).is_none());
+        assert!(source_path_of(SourceId::UNKNOWN).is_none());
     }
 }
