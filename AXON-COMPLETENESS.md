@@ -114,7 +114,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**52 controls tracked; 36 engine states unknown or silently-ignored.**
+**53 controls tracked; 36 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -151,6 +151,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_GOAL_CONTINUE` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
 | `AXON_GUEST_ALLOW_NO_POLICY` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
 | `AXON_HOST_SOCKET` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_HOST_TEST_VAR` | test-fixture | n/a | n/a | n/a | n/a | resolved |
 | `AXON_INTENT_GEN` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
 | `AXON_INTENT_TIMEOUT_MS` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_KILL_FILE` | launcher-side | n/a | n/a | n/a | n/a | resolved |
@@ -182,5 +183,5 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_CLOCK`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_AI_REPLAY`** — PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED.
 - **`AXON_PRINCIPAL`** — Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine.
-- **`AXON_TEE_ENCLAVE`** — BLIND SPOT IN THE REGISTRY GATE ITSELF: read through the host seam (with_host(|h| h.env_var(..))), which env_registry::vars_read() does not scan for — it matches only literal env::var( forms. So an attestation-category signal that makes tee_in_enclave() return true has no registry row and does not appear in AXON_REFERENCE.md, while the gate reports full coverage in both directions.
-- **`AXON_TEE_MEASUREMENT`** — Same host-seam blind spot as AXON_TEE_ENCLAVE.
+- **`AXON_TEE_ENCLAVE`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
+- **`AXON_TEE_MEASUREMENT`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.

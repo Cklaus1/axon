@@ -79,6 +79,12 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Test fixtures that shipped code reads ────────────────────────────
     ("AXON_TEST_DOTENV_VAR", "(test fixture) name of a variable the .env loader test expects to find"),
     ("AXON_TEST_DOTENV_NEW", "(test fixture) asserts the .env loader does not clobber an already-set variable"),
+    ("AXON_HOST_TEST_VAR", "(test fixture) exercises the host seam's env_var path"),
+    // ── Read through the HOST SEAM, not std::env ─────────────────────────
+    // These two had no row for as long as they have existed, because the
+    // scan above matched only literal `env::var(` forms. R24 TEE.
+    ("AXON_TEE_ENCLAVE", "R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed"),
+    ("AXON_TEE_MEASUREMENT", "R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam"),
 ];
 
 #[cfg(test)]
@@ -123,7 +129,21 @@ mod tests {
     /// Every `AXON_*` literal handed to `env::var`/`env::var_os` in shipped code.
     fn vars_read(src: &str) -> HashSet<String> {
         let mut found = HashSet::new();
-        for pat in ["env::var(\"", "env::var_os(\""] {
+        // `.env_var("` is the HOST SEAM, and leaving it out was a hole in the
+        // guard rather than a gap in the registry. `tee_in_enclave` and
+        // `tee_attest_measurement` read `AXON_TEE_ENCLAVE` and
+        // `AXON_TEE_MEASUREMENT` through `with_host(|h| h.env_var(..))`, so
+        // neither matched the scan, neither had a registry row, and neither
+        // appeared in `AXON_REFERENCE.md` — while this test reported full
+        // coverage in both directions. An attestation-category signal that
+        // decides whether `tee_in_enclave()` returns true was invisible to the
+        // tool whose whole job is enumerating controls.
+        //
+        // Reading via the seam is the BETTER choice, not a mistake: those
+        // reads are recorded and replayed, unlike every `std::env::var` read.
+        // The scan had simply never been taught the shape. Measured when
+        // added: exactly three new names, no false positives from prose.
+        for pat in ["env::var(\"", "env::var_os(\"", ".env_var(\""] {
             let mut rest = src;
             while let Some(i) = rest.find(pat) {
                 rest = &rest[i + pat.len()..];

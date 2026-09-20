@@ -915,7 +915,7 @@
         "guest": "unknown"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "BLIND SPOT IN THE REGISTRY GATE ITSELF: read through the host seam (with_host(|h| h.env_var(..))), which env_registry::vars_read() does not scan for \u2014 it matches only literal env::var( forms. So an attestation-category signal that makes tee_in_enclave() return true has no registry row and does not appear in AXON_REFERENCE.md, while the gate reports full coverage in both directions."
+      "open": "REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var(\"` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open \u2014 these builtins are interpreter-side and whether codegen refuses them is UNASSESSED."
     },
     {
       "name": "AXON_TEE_MEASUREMENT",
@@ -928,7 +928,7 @@
         "guest": "unknown"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "Same host-seam blind spot as AXON_TEE_ENCLAVE."
+      "open": "REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var(\"` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open \u2014 these builtins are interpreter-side and whether codegen refuses them is UNASSESSED."
     },
     {
       "name": "AXON_PATH",
@@ -1462,6 +1462,19 @@
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Test fixture only; not a runtime control."
+    },
+    {
+      "name": "AXON_HOST_TEST_VAR",
+      "category": "test-fixture",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "(test fixture) exercises the host seam's env_var path. Surfaced by extending vars_read() to the host-seam form."
     }
   ]
 }

@@ -3084,7 +3084,6 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
 
 // ── build ─────────────────────────────────────────────────────────────────────
 
-/// Native AOT build via the LLVM/inkwell backend. Only available when axon is
 /// Refuse to emit a native/wasm artifact while an ambient ceiling is active.
 ///
 /// CALLED FROM EVERY CODEGEN ENTRY POINT, not just `axon build`. The first
@@ -3094,11 +3093,15 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
 /// exit 0) — fixing the instance and missing the class. `context` names the
 /// verb, so the diagnostic says which entry point refused.
 ///
-/// KNOWN LIMIT, stated rather than implied: this keys on the BUILD-time
-/// environment. A guest image built where no ceiling is set, then run by
-/// `axon-guest-init` which sets the ceiling at boot and execs the payload, is
-/// NOT covered — nothing on that path re-checks. Tracked as D-002 in
-/// `governance/cortex-v015/DISCREPANCIES.md`.
+/// This keys on the BUILD-time environment, and that used to be the whole
+/// story — a guest image built where no ceiling was set, then run by
+/// `axon-guest-init` which sets the ceiling at boot and execs the payload, was
+/// NOT covered by anything. That was D-002's residual and it is now closed at
+/// the other end: `axon-rt`'s `__axon_rt_refuse_interp_only_env` refuses both
+/// ceilings at RUN time, so a binary built before the policy existed exits 2
+/// rather than silently dropping it. This check remains worth keeping because
+/// it fails EARLIER and more cheaply — at build time, with the source in
+/// hand — instead of at the end of a deployment.
 fn refuse_if_ambient_ceiling(context: &str) {
     for var in ["AXON_ALLOWED_EFFECTS", "AXON_BUDGET_TOKENS"] {
         if let Ok(val) = std::env::var(var) {
@@ -3106,7 +3109,8 @@ fn refuse_if_ambient_ceiling(context: &str) {
                 "error[E0910]: `{var}` is set ({}), but a natively built binary \
                  cannot enforce it — the ceiling is honoured by the interpreter \
                  only.\n  \
-                 Refusing to emit a binary that would silently drop the policy.\n  \
+                 Refusing to emit a binary that would silently drop the policy \
+                 (`{context}`).\n  \
                  Either run under the interpreter (`axon run`), which enforces \
                  it, or unset `{var}` for the build if the ceiling was meant for \
                  a different process.",
@@ -3121,6 +3125,7 @@ fn refuse_if_ambient_ceiling(context: &str) {
     }
 }
 
+/// Native AOT build via the LLVM/inkwell backend. Only available when axon is
 /// built with the `codegen` feature. (`axon run`/`check`/`test` work without it
 /// via the interpreter.)
 #[cfg(not(feature = "codegen"))]
