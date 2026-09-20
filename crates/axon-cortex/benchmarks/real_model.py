@@ -159,6 +159,13 @@ def trial(f, src0, name, mname, mfn, hidden_pref=None):
         "models": sorted({m for c in calls for m in (c["model"] or [])}),
         "per_proposal": [
             {
+                # WHICH CANDIDATE this proposal was for, carried by name.
+                # Before this, ownership was inferred from POSITION, which is
+                # wrong whenever a candidate is selected and never reaches the
+                # generator — measured, that reported "ranking waste is 100% of
+                # inference spend" with half the proposals on the true target.
+                "candidate": c.get("candidate"),
+                "extraction_status": c.get("extraction_status"),
                 "n": c["proposal_number"],
                 "priors": c["prior_rejections"],
                 "input": c["input_tokens"],

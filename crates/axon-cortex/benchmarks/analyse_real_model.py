@@ -147,9 +147,36 @@ def split_on_target(t):
     it is for each proposal to CARRY its candidate, which is staged for the
     next run.
     """
-    segs = segments(t)
     if not t["target_attempted"] or t["symbol"] not in t["attempted"]:
-        return [c for seg in segs for c in seg], []
+        return [c for seg in segments(t) for c in seg], []
+
+    # 1. IDENTITY. Each proposal names the candidate it was made for, so
+    #    ownership is read, not inferred, and a silent candidate is simply a
+    #    candidate with no proposals rather than a corrupted join.
+    named = [c for c in t["per_proposal"] if c.get("candidate")]
+    if named and len(named) == len(t["per_proposal"]):
+        on = [c for c in named if c["candidate"] == t["symbol"]]
+        # "Before" means before the true target was REACHED, not merely every
+        # other candidate: proposals made after it are not search cost.
+        first = next((k for k, c in enumerate(named)
+                      if c["candidate"] == t["symbol"]), len(named))
+        before = [c for c in named[:first]]
+        return before, on
+
+    # 2. Position — admitted ONLY on a positive proof of completeness, not on
+    #    the absence of an obvious problem:
+    #
+    #        number of candidate episodes == number of proposal segments
+    #
+    #    That is a real proof only because one episode yields exactly one
+    #    segment. VERIFIED, not assumed: `rejected` is declared once per
+    #    episode (runner.rs:642) and only ever pushed to, never cleared, so
+    #    `priors == 0` occurs exactly once per candidate. If that ever changed
+    #    — if the rejected list were reset mid-episode — a candidate would
+    #    split into two segments, the counts could match WHILE a candidate was
+    #    silent, and this check would pass on a corrupted join. The identity
+    #    path above is what stops that premise from mattering.
+    segs = segments(t)
     if len(segs) != len(t["attempted"]):
         t["_unattributable"] = True
         return [], []

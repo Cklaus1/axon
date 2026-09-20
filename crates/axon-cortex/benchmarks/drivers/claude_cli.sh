@@ -55,14 +55,37 @@ body = v.get("result") or ""
 # That inflates generator effort, understates first-shot success, and spends
 # money on unparsed prose. It is a transport defect being measured as model
 # quality.
+# The model's own text, kept before `body` is reassigned. Classifying against
+# `raw` would be classifying the JSON envelope the CLI wraps it in, which
+# always starts with `{` — the status would be a constant, and a constant
+# dressed as a measurement is the failure this field exists to detect.
+text = body
 fences = re.findall(r"```[a-zA-Z]*\n(.*?)```", body, re.S)
 if fences:
     # The LAST block: a model that reasons before answering puts the answer
     # last, and one that shows a rejected alternative first would otherwise
     # have its own discarded attempt submitted.
     body = fences[-1]
+    status = ("ambiguous_multiple_fences" if len(fences) > 1
+              else "clean_fence" if text.strip().startswith("```")
+              else "prose_plus_fence")
+else:
+    # No fence at all: either the model returned bare code as asked, or it
+    # returned nothing usable. `{`/`}` and a newline are weak signals, so the
+    # distinction is left to whether there is any non-empty content — the
+    # verifier decides whether it COMPILES, which is a different question and
+    # a different cost bucket.
+    status = "raw_code" if text.strip() else "no_code_found"
 
 prompt = os.environ.get("CORTEX_PROMPT_TEXT", "")
+m = re.search(r"^Function: (.+)$", prompt, re.M)
+if not m:
+    # Fail loudly. A None candidate would silently return the analysis to
+    # positional inference, which is the defect this exists to remove.
+    sys.stderr.write("driver: prompt has no `Function:` line; cannot "
+                     "attribute this proposal to a candidate\n")
+    sys.exit(3)
+candidate = m.group(1).strip()
 log = os.environ.get("CORTEX_MODEL_LOG", "/dev/null")
 u = v.get("usage", {}) or {}
 with open(log, "a") as fh:
@@ -80,6 +103,11 @@ with open(log, "a") as fh:
         "proposal_number": 1 + prompt.count("Attempt ") if prompt else None,
         "prior_rejections": prompt.count("was REJECTED because") if prompt else None,
         "body": body,
+        "extraction_status": status,
+        # WHICH CANDIDATE this proposal was for, by name. The prompt states it
+        # outright; nothing here infers it from position.
+        "candidate": candidate,
+        "proposal_index_for_candidate": 1 + prompt.count("was REJECTED because"),
     }) + "\n")
 sys.stdout.write(body)
 '

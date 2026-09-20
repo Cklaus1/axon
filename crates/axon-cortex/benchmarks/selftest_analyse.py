@@ -93,6 +93,27 @@ CASE_SILENT_FIRST = trial(["wrong_A", "true_B"], "true_B", 2, [call(0)])
 CASE_CLEAN = trial(["wrong_A", "true_B"], "true_B", 2, [call(0), call(0), call(1)])
 
 
+def named(cand, priors, cost=0.1):
+    c = call(priors, cost)
+    c["candidate"] = cand
+    return c
+
+
+# THE IDENTITY CASE. A candidate is silent — which defeats every positional
+# join — but every proposal NAMES its candidate, so ownership is READ rather
+# than inferred and the metrics stay measurable.
+#
+#   attempted = [A, B, true_C]    A -> 2 proposals named A
+#                                 B -> silent
+#                                 true_C -> 1 proposal, the true target
+#
+# The point of this case is the OPPOSITE of the two above: it must NOT report
+# UNMEASURED. An identity join that quietly fell through to the positional
+# guard would pass the entire adversarial suite while recovering nothing.
+CASE_IDENTITY = trial(["A", "B", "true_C"], "true_C", 3,
+                      [named("A", 0), named("A", 1), named("true_C", 0)])
+
+
 def run(trials):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
         json.dump({"meta": {"model": "m", "cortex_commit": "a" * 40,
@@ -138,8 +159,22 @@ if "ranking waste is" not in out:
     fails.append("clean: no finding-vs-fixing split was reported on a soundly "
                  "attributable trial")
 
+# The identity path must RECOVER what position cannot.
+out = run([CASE_IDENTITY])
+if "UNATTRIBUTABLE" in out:
+    fails.append("identity: a silent candidate forced UNMEASURED even though "
+                 "every proposal named its candidate — the identity join is "
+                 "not being used, or fell through to the positional guard")
+if "ranking waste is" not in out:
+    fails.append("identity: no finding-vs-fixing split from an "
+                 "exactly-attributable trial")
+# Ground truth: 2 of 3 proposals on wrong candidates, 1 on the true target.
+if "$0.20 finding vs $0.10 fixing" not in out:
+    fails.append("identity: the split does not match ground truth "
+                 "($0.20 finding vs $0.10 fixing) — ownership was misread")
+
 if fails:
     for f in fails:
         print("FAIL " + f, file=sys.stderr)
     sys.exit(1)
-print("analyse_real_model self-test: 3 cases pass (2 adversarial + 1 control)")
+print("analyse_real_model self-test: 4 cases pass (2 adversarial + 1 control + 1 identity)")
