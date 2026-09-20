@@ -331,6 +331,13 @@ if [ "$STRICT" = 1 ]; then
   # verified only in a long-lived checkout can pass on ignored leftover state
   # and fail in every fresh clone. That is not hypothetical: r27 and r29 were
   # wired earlier in this session on exactly that mistake.
+  # Slice 2 is wired ahead of 3-5 because it carries r39_slice2_validate.sh:
+  # that script's only caller is this one, so wiring this makes BOTH reachable.
+  # Its check B is the interesting half — a scratch copy of governance/specs/
+  # with four deliberately injected bugs, which both validators must find. It
+  # proves the port detects bugs rather than proving two validators agree an
+  # already-clean tree is clean.
+  ./scripts/r39_slice2_gate.sh >/dev/null 2>&1 || fail "R39 Slice 2 gate"
   ./scripts/r39_slice3_gate.sh >/dev/null 2>&1 || fail "R39 Slice 3 gate"
   ./scripts/r39_slice4_gate.sh >/dev/null 2>&1 || fail "R39 Slice 4 gate"
   ./scripts/r39_slice5_gate.sh >/dev/null 2>&1 || fail "R39 Slice 5 gate"
