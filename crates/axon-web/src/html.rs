@@ -557,15 +557,24 @@ async function refreshSafetyStatus() {
     const j = await r.json();
     if (j.ok) {
       const parts = [
-        'attested: ' + (j.attested ? '✓' : '✗'),
-        'killable: ' + (j.killable ? '✓' : '✗'),
+        // The MODE rides with the tick. An attestation that entered mock
+        // because no kernel image exists is not the same fact as a measured
+        // one, and the aggregate row is where that distinction used to vanish.
+        'attested: ' + (j.attested ? '✓' : '✗')
+          + (j.attest_mode && j.attest_mode !== 'live' ? ' (' + j.attest_mode + ')' : ''),
+        'run store writable: ' + (j.run_store_writable ? '✓' : '✗'),
         'ledger: ' + (j.ledger_ok ? '✓' : 'R28 pending'),
-        'coalition: ' + (j.coalition_ok ? '✓' : '✗'),
+        // null = UNEVALUATED. A tick that is always shown carries no
+        // information; '?' says nothing measured this.
+        'coalition: ' + (j.coalition_ok === null || j.coalition_ok === undefined
+                          ? '? (not evaluated)'
+                          : (j.coalition_ok ? '✓' : '✗')),
       ];
       msg.innerHTML = '<span class="ok">' + parts.join(' &middot; ') + '</span>';
-      if (j.coalition_principals !== undefined) {
+      if (j.coalition_kill_files !== undefined) {
         document.getElementById('coalition-display').textContent =
-          'coalition: ' + j.coalition_principals + ' / ' + (j.coalition_max || 3) + ' principals';
+          'kill files in run store: ' + j.coalition_kill_files
+          + ' (coalition bound ' + (j.coalition_max || 3) + ', not evaluated)';
       }
     } else {
       msg.innerHTML = '<span class="err">status check failed</span>';

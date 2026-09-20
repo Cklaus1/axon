@@ -413,20 +413,35 @@ pub fn safety_status() -> String {
         .as_bool()
         .or_else(|| attest_val["ok"].as_bool())
         .unwrap_or(false);
+    // CARRY THE QUALIFIER. `safety_attest` enters MOCK when no guest kernel
+    // image exists — file absence, not only an explicit opt-in — and returns
+    // attested:true with a literal digest. Dropping `mode` here left the
+    // aggregate with no field at all that distinguishes a measured kernel from
+    // a stubbed one, and the UI then printed "live" from its own fallback.
+    let attest_mode = attest_val["mode"].as_str().unwrap_or("unreported").to_string();
 
     let ledger_val: serde_json::Value =
         serde_json::from_str(&safety_ledger()).unwrap_or(serde_json::Value::Null);
     let ledger_ok = ledger_val["ok"].as_bool().unwrap_or(false);
 
-    // R27: kill infrastructure is available when ~/.axon/runs/ can be created.
+    // WHAT THIS ACTUALLY ESTABLISHES: that the run store is writable. It is
+    // NOT "this job can be stopped" — nothing here consults a latch, a
+    // supervisor, or the `<run_id>.kill.ptr` channel that `axon-os kill`
+    // resolves. The field is named for what it measures.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let runs_dir = std::path::Path::new(&home).join(".axon").join("runs");
-    let killable = runs_dir.exists() || fs::create_dir_all(&runs_dir).is_ok();
+    let run_store_writable = runs_dir.exists() || fs::create_dir_all(&runs_dir).is_ok();
 
-    // Coalition bound: count .kill files as a proxy for stopped/active runs.
-    let coalition_principals = if runs_dir.exists() {
+    // The comment said ".kill files"; the code counted EVERY directory entry —
+    // .json records, .axjob copies, .audit.jsonl, .kill.ptr — so a store with
+    // 12 run artifacts rendered as "12 / 3 principals". Count what was meant.
+    let kill_files = if runs_dir.exists() {
         fs::read_dir(&runs_dir)
-            .map(|d| d.filter_map(|e| e.ok()).count())
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.file_name().to_string_lossy().ends_with(".kill"))
+                    .count()
+            })
             .unwrap_or(0)
     } else {
         0
@@ -435,10 +450,20 @@ pub fn safety_status() -> String {
     serde_json::json!({
         "ok": true,
         "attested": attested,
-        "killable": killable,
+        // Never dropped again: a consumer can now tell a measured attestation
+        // from a mocked one without reading the attest endpoint separately.
+        "attest_mode": attest_mode,
+        "run_store_writable": run_store_writable,
         "ledger_ok": ledger_ok,
-        "coalition_ok": true,
-        "coalition_principals": coalition_principals,
+        // `coalition_ok` was the literal `true`. Nothing computed it, and the
+        // dashboard rendered a green tick for an axis that had never been
+        // evaluated. Null means UNEVALUATED, which is the honest answer until
+        // something measures it — a tick that is always shown carries no
+        // information, and a reader cannot tell it from one that was earned.
+        "coalition_ok": serde_json::Value::Null,
+        "coalition_note": "not evaluated — no coalition-bound check is wired to \
+                           this endpoint",
+        "coalition_kill_files": kill_files,
         "coalition_max": 3,
     })
     .to_string()

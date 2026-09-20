@@ -521,16 +521,38 @@ fn test_safety_status_aggregate() {
         "safety/status must include 'attested' bool, got: {v}"
     );
     assert!(
-        v["killable"].is_boolean(),
-        "safety/status must include 'killable' bool, got: {v}"
+        v["run_store_writable"].is_boolean(),
+        "safety/status must include 'run_store_writable' bool, got: {v}"
     );
     assert!(
         v["ledger_ok"].is_boolean(),
         "safety/status must include 'ledger_ok' bool, got: {v}"
     );
+    // `coalition_ok` must NOT be a bare bool while nothing computes it.
+    //
+    // This assertion previously required a boolean, and the handler satisfied
+    // it with the literal `true` — so the test enshrined the defect: a green
+    // tick on the safety dashboard for an axis that had never been evaluated.
+    // A test that pins a constant is worse than no test, because it makes the
+    // constant look load-bearing.
+    //
+    // Null means UNEVALUATED, and a note must say so. When something real
+    // measures coalition bounds, this flips to `is_boolean()` and the note
+    // goes away — and that change will be visible in the diff rather than
+    // silent.
     assert!(
-        v["coalition_ok"].is_boolean(),
-        "safety/status must include 'coalition_ok' bool, got: {v}"
+        v["coalition_ok"].is_null(),
+        "coalition_ok must be null while nothing evaluates it, got: {v}"
+    );
+    assert!(
+        v["coalition_note"].as_str().is_some_and(|s| s.contains("not evaluated")),
+        "an unevaluated axis must carry a note saying so, got: {v}"
+    );
+    // The mode rides with the attestation, so a consumer of the AGGREGATE can
+    // tell a measured kernel from a stubbed one without a second request.
+    assert!(
+        v["attest_mode"].as_str().is_some(),
+        "safety/status must carry attest_mode, got: {v}"
     );
 }
 
