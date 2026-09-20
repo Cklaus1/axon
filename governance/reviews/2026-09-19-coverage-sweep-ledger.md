@@ -793,3 +793,71 @@ evidence column checkable: a test that reads REQUIREMENTS.md, extracts every
 cited `scripts/*.sh`, and fails when one is invoked by nothing — the same
 two-directional drift gate the env registry and `AXON_REFERENCE.md` already
 have, applied to the register that cites them. That is proposed, not built.
+
+## The invariant, in its final form
+
+Three attempts, each defeated by a false-positive class the next one fixed:
+
+1. *"the gate exists"* — defeated by gates nothing invokes (7 found)
+2. *"the gate is NAMED somewhere executable"* — defeated by self-reference, by
+   mentions inside comments, and by `[ -f … ]` existence checks. This is what
+   my probe checked, and it under-reported by more than half.
+3. **the form that survives:**
+
+> **Every requirement row citing executable evidence must have a live,
+> TRANSITIVE path from a real execution root to that evidence — unless the row
+> explicitly declares a different evidence mode, whose witness obligation is
+> itself checked.**
+
+"Transitive" is the word doing the work. Six of the fifteen violations are
+gates reachable only through `axon_safety_gate.sh`, which is itself reachable
+only from the orphaned `r30_acceptance_gate.sh`. A one-hop check calls all six
+wired. They are not: the whole subtree hangs off nothing.
+
+## Merge rule for a checker that reports true violations
+
+> **Do not land a checker while it correctly reports unresolved violations,
+> unless those violations are simultaneously resolved or explicitly
+> reclassified with evidence.**
+
+The reasoning matters more than the rule. The 15 violations are not a
+regression — they are pre-existing drift that the project has only just become
+able to SEE. Landing the checker alone would turn `main` red for the crime of
+acquiring sight, and the pressure would then be to weaken the checker rather
+than fix the drift. That is how a gate gets `#[ignore]`d and joins the set of
+checks that exist and never run.
+
+The lane was explicitly told not to reclassify `perf_bench.sh` or
+`zephyr_qemu_gate.sh` to get green, and did not. Their classes carry checked
+witness obligations — a `recorded_benchmark` needs a repo file that exists AND
+names the script; an `external_hardware` gate must contain a real skip guard for
+the absent tool. Labels that are checked are evidence; labels that are asserted
+are decoration.
+
+## Resolution order — roots before leaves, recompute between
+
+1. wire any ROOT-ish orphan that legitimately activates several downstream
+   gates (`axon_safety_gate.sh` covers r27/r28/r29);
+2. RECOMPUTE the invocation graph;
+3. only then touch leaves that remain unreachable;
+4. leave the two special classes alone until their witness obligations hold;
+5. merge the checker when the remaining set is zero, or is entirely
+   explicitly-supported non-continuous evidence.
+
+Step 2 is not bookkeeping. Without it we would "fix" five leaves independently
+that all become reachable the moment one upstream gate is wired — five commits
+of motion for one commit of work, and four of them wrong.
+
+## What the checker must SAY, not just decide
+
+A flat list of violations is nearly useless for acting in dependency order. Each
+one needs its provenance in the terms the graph already computes:
+
+    R31 -> orphaned
+      reason: only mention is a COMMENT in scripts/r33_acceptance_gate.sh:6
+    R27 -> manual_operator
+      reason: reachable only via axon_safety_gate.sh, itself reachable only
+              from r30_acceptance_gate.sh (orphaned); shortest root path: NONE
+
+and, for anything reachable, the actual path from the root. Requested from the
+lane while it still holds the graph.
