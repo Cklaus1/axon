@@ -105,6 +105,57 @@ image while firecracker and KVM were both present. `dist/` is also ignored. So
 this is not a quirk of one job's output directory: it is what happens whenever
 a check depends on generated state that `.gitignore` correctly excludes.
 
-The cheap static form of the question, available without running anything:
-**does this gate read a path that appears in `.gitignore`?** If yes, its result
-in any long-lived tree is unreliable by construction.
+## CORRECTION to the paragraph above: that static test does not work
+
+I proposed: *"does this gate read a path that appears in `.gitignore`?"* — and
+then tested it against the case that motivated it.
+
+    grep -c "out/" scripts/r29_acceptance_gate.sh   ->   0
+
+It returns NO for the one gate known to be affected. The dependency is three
+hops away, not in the gate at all:
+
+    r29_acceptance_gate.sh
+      -> cargo test -p axon-os              (line 59, the WHOLE crate)
+        -> crates/axon-os/tests/acceptance.rs
+          -> examples/jobs/summarize.axjob   fs_write = ["./out/"]
+
+A one-hop grep cannot see that, which is the same shape as the one-hop
+invocation probe that under-reported orphans by more than half. I proposed a
+cheap test one tick after being burned by a cheap test. Recording it rather
+than quietly deleting it, because the reflex is the point.
+
+## What the transitive analysis DOES establish
+
+Mapping each wired gate to what it actually executes, then checking those
+targets for ignored-path dependencies:
+
+| gate | executes | ignored-path dependency |
+|---|---|---|
+| `r27` | `cargo test -p axon-os` (whole crate) | **YES** — `tests/acceptance.rs` → `./out/` |
+| `r29` | `cargo test -p axon-os` (whole crate) | **YES** — same path |
+| `r26` | `cargo test -p axon-attest` | none found |
+| `r28` | `cargo test -p axon-audit` | none found |
+| `r31` | `cargo test -p axon-attest -p axon-vm` | none found |
+
+r27 and r29 share ONE cause, and it is the same one: both run the entire
+`axon-os` suite rather than a targeted target, so both inherit the acceptance
+tests' dependency on a directory `.gitignore` excludes. That is consistent with
+the independent empirical result — a subagent saw both fail in a fresh
+worktree — arrived at from the opposite direction.
+
+The three "none found" rows needed a second look, and the reason is worth
+keeping. A naive grep DID match `axon-attest` and `axon-vm`:
+
+    crates/axon-vm/src/main.rs:88    /// Guest kernel image (default: dist/guest/vmlinuz)
+    crates/axon-attest/src/lib.rs:831   let job = b"summarize --input ./data/ --out ./out/";
+
+Neither is a filesystem read. The first is a DOC COMMENT describing a CLI
+default; the second is a byte-string used as test DATA to be hashed. Mention is
+not dependency — precisely the comment-vs-caller distinction the evidence
+checker had to learn for invocation, reappearing here for filesystem state.
+
+So: the risk is concentrated in r27 and r29, with a named mechanism. r26, r28
+and r31 have no identified mechanism — but they remain UNMEASURED, and "no
+mechanism found by grep" is a weaker claim than "verified in a clean tree".
+Only a pristine run settles them.
