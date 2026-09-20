@@ -2307,6 +2307,10 @@ fn fixture_recorded_benchmark_requires_a_dated_number() {
     f.write("scripts/gate.sh", "#!/usr/bin/env bash\necho hi\n")
         .write("scripts/bench.sh", "#!/usr/bin/env bash\necho timing\n")
         .write(
+            "docs/unrelated.md",
+            "2026-09-19  some other run  4.2x faster\n",
+        )
+        .write(
             "docs/mentions.md",
             "We should re-run scripts/bench.sh at some point.\n",
         )
@@ -2319,6 +2323,12 @@ fn fixture_recorded_benchmark_requires_a_dated_number() {
             "2026-09-19  scripts/bench.sh  native AOT 6.0x faster over 9 programs\n",
         );
     let facts = f.facts();
+    // A witness that never names the script must say THAT, and not blame the
+    // number: a wrong reason sends the reader to fix the wrong thing.
+    let unrelated = facts
+        .verify("bench.sh", Class::RecordedBenchmark, "docs/unrelated.md")
+        .unwrap_err();
+    assert!(unrelated.contains("does not name"), "{unrelated}");
     let mention = facts
         .verify("bench.sh", Class::RecordedBenchmark, "docs/mentions.md")
         .unwrap_err();
