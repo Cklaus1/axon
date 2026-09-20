@@ -154,6 +154,27 @@ axon deploy        examples/goals/hello-goal.ax    # safety-gate pipeline → ru
 axon redteam       examples/goals/hello-goal.ax    # run redteam_check fn (--json → axon-redteam/1)
 ```
 
+### Cortex — the repair control loop
+
+`crates/axon-cortex` (+ the `cortex` binary) is a control loop that repairs one
+function and can prove it did: observe → select a typed action → authorize →
+execute → adjudicate against a check the generator is never shown. A model
+contributes the TEXT of a repair and nothing else — it holds no tool and
+chooses no action.
+
+```bash
+cargo build -p axon-cortex --bins --features ai
+cortex repair --file broken.ax --check hidden_completion \
+              --write-prefix broken.ax --generator ai:claude-haiku-4-5-20251001
+```
+
+`--symbol` is optional: absent, Cortex localizes from the checks that fail and
+REFUSES when the evidence names more than one candidate (exit 25). Exit 0 means
+a hidden check accepted the repair, not that the loop finished; 20/21/22/23/24
+separate budget, futility, environment, authority and missing content, because
+the remedies differ. A patch that makes the file stop compiling is reverted and
+the revert is RECORDED. See `crates/axon-cortex/README.md`.
+
 > Platform-target verification: `ENVIRONMENTS.md` + `scripts/setup-environments.sh` reproduce the GPU (lavapipe/wgpu), browser (headless Chrome), Android (NDK+emulator), and iOS (macOS-CI) gate environments.
 
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the

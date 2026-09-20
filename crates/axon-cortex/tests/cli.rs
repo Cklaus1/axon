@@ -41,11 +41,18 @@ fn workspace(name: &str) -> PathBuf {
 }
 
 fn repair(ws: &Path, extra: &[&str]) -> (i32, String) {
+    repair_with(ws, &["--check", "hidden_completion"], extra)
+}
+
+/// `repair` with the adjudicating check spelled by the caller, for the rows
+/// whose subject IS which check was named.
+fn repair_with(ws: &Path, check: &[&str], extra: &[&str]) -> (i32, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
         .args(["repair", "--workspace"])
         .arg(ws)
         .args(["--file", "broken.ax", "--symbol", "double"])
-        .args(["--check", "hidden_completion", "--axon"])
+        .args(check)
+        .arg("--axon")
         .arg(axon_bin())
         .args(extra)
         .output()
@@ -176,6 +183,25 @@ fn cli_a_malformed_request_decides_nothing() {
             );
         }
     }
+
+    // A check that does not exist is a REQUEST error, caught before the loop
+    // starts. It cannot produce a false success — a filter matching nothing
+    // reports zero tests and the runner refuses to call that a pass — but left
+    // to run it produces something worse to debug: the claim is refused every
+    // time and a mistyped flag comes back as exit 21, "going in circles". The
+    // loop would be reporting accurately on an experiment that could never
+    // have concluded.
+    let ws_typo = workspace("typo");
+    let (code, text) = repair_with(
+        &ws_typo,
+        &["--check", "hidden_completon"],
+        &["--write-prefix", "broken.ax"],
+    );
+    assert_eq!(code, 2, "a nonexistent check is a usage error: {text}");
+    assert!(
+        text.contains("hidden_completon"),
+        "the error must name the check that does not exist: {text}"
+    );
 
     // An unknown generator is a REQUEST error too, caught before the loop
     // starts. Discovering it three steps in would report a typo as NeedsInput
