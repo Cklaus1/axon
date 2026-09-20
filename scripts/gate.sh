@@ -152,6 +152,13 @@ python3 crates/axon-cortex/benchmarks/check_docs.py \
 python3 crates/axon-cortex/benchmarks/selftest_analyse.py \
   || fail "analyser attributes proposals to candidates unsoundly"
 
+# The completeness manifest regenerates AXON-COMPLETENESS.md and refuses a row
+# claiming a production proof or a mutation it cannot cite. Wired here because
+# a manifest nobody runs is a table of assertions, which is the state it was
+# written to replace.
+python3 scripts/completeness.py \
+  || fail "a completeness claim is not backed by evidence"
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 

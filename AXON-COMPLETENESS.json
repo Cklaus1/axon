@@ -1,0 +1,336 @@
+{
+  "schema": "axon-completeness/1",
+  "purpose": "Machine-readable completeness state. AXON-COMPLETENESS.md is GENERATED from this file by scripts/completeness.py; edit this, never the markdown. Every claim of proof must cite evidence that exists on disk, and the generator fails if it does not \u2014 the point is to stop 'how close is Axon?' being an intuition question, which a hand-maintained table would not.",
+  "legend": {
+    "implementation": "complete | partial | staged | absent",
+    "production_proof": "yes = the PRODUCTION path is proven to use it (not just that it exists and has tests) | no | unknown",
+    "mutation": "yes = a load-bearing assertion was mutation-verified | partial | no | unknown",
+    "docs": "yes | partial | no"
+  },
+  "rows": [
+    {
+      "area": "compiler",
+      "subsystem": "lexer / parser",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "unknown",
+      "docs": "yes",
+      "evidence": [
+        "spec/grammar.ebnf",
+        "crates/axon-core/src/parser.rs"
+      ],
+      "gap": ""
+    },
+    {
+      "area": "compiler",
+      "subsystem": "type inference / checker",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "unknown",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-core/src/infer.rs",
+        "crates/axon-core/src/checker.rs"
+      ],
+      "gap": ""
+    },
+    {
+      "area": "compiler",
+      "subsystem": "interp/codegen parity",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "partial",
+      "docs": "yes",
+      "evidence": [
+        "scripts/parity_all.sh",
+        "scripts/exit_code_parity.sh",
+        "scripts/checked_arith_parity.sh"
+      ],
+      "gap": "52 harnesses green; coverage is by construct, not exhaustive"
+    },
+    {
+      "area": "compiler",
+      "subsystem": "single-file diagnostics",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "unknown",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-core/src/span.rs"
+      ],
+      "gap": ""
+    },
+    {
+      "area": "compiler",
+      "subsystem": "MULTI-FILE source identity",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [],
+      "gap": "Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:15 reports as main.ax:6, in a 5-line file. Affects axon build/test, LSP, ast review. Design lane open."
+    },
+    {
+      "area": "compiler",
+      "subsystem": "import resolution determinism",
+      "implementation": "partial",
+      "production_proof": "unknown",
+      "mutation": "no",
+      "docs": "partial",
+      "evidence": [],
+      "gap": "load_use_decls searches AXON_PATH; the resolved path is not part of any digest, so the same source can mean different programs"
+    },
+    {
+      "area": "authority",
+      "subsystem": "approval binds entry file",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-core/src/main.rs"
+      ],
+      "gap": ""
+    },
+    {
+      "area": "authority",
+      "subsystem": "approval binds IMPORT GRAPH",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [],
+      "gap": "DEMONSTRATED: approve main.ax, then rewrite an imported module to write:[/] net:[*] exec:any \u2014 the approval still validates. End-to-end deploy exploitability NOT established."
+    },
+    {
+      "area": "authority",
+      "subsystem": "ast review shows import origin",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [],
+      "gap": "imported fns and their @[contained] caps are listed as the entry file's own, with no origin marker"
+    },
+    {
+      "area": "authority",
+      "subsystem": "@[contained] capability enforcement",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "partial",
+      "docs": "yes",
+      "evidence": [
+        "scripts/axon_safety_gate.sh",
+        "crates/axon-core/src/capabilities.rs"
+      ],
+      "gap": ""
+    },
+    {
+      "area": "authority",
+      "subsystem": "policy adapter strict parsing",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/cortex-policy-adapter/src/main.rs",
+        "crates/axon-cortex/src/lib.rs"
+      ],
+      "gap": "duplicate-key and unicode-escape bypasses both closed at the parser, not by a scanner"
+    },
+    {
+      "area": "authority",
+      "subsystem": "grant / snapshot binding",
+      "implementation": "partial",
+      "production_proof": "unknown",
+      "mutation": "partial",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-cortex/src/runner.rs"
+      ],
+      "gap": "audit lane open: is a grant re-verified against the workspace at every use, or only at issue?"
+    },
+    {
+      "area": "cortex",
+      "subsystem": "repair control loop",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/README.md",
+        "crates/axon-cortex/benchmarks/oracle.py"
+      ],
+      "gap": ""
+    },
+    {
+      "area": "cortex",
+      "subsystem": "localization (Ochiai)",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "partial",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/topk.py",
+        "crates/axon-cortex/benchmarks/localization-2026-09-20.json"
+      ],
+      "gap": "31.5% top-1 sole, 89.2% top-3, 0% absent over 111 trials"
+    },
+    {
+      "area": "cortex",
+      "subsystem": "adjudication cannot be gamed",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/adversary.py",
+        "crates/axon-cortex/src/bin/cortex.rs"
+      ],
+      "gap": "0 false successes / 67 adversarial trials; grader unpatchable at 3 layers; exit 26 refuses a check that already passes"
+    },
+    {
+      "area": "cortex",
+      "subsystem": "workspace restoration on failure",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/out_of_scope.py"
+      ],
+      "gap": "64/64 completed adversarial runs restored; 16/16 out-of-scope unchanged"
+    },
+    {
+      "area": "cortex",
+      "subsystem": "candidate / proposal identity",
+      "implementation": "staged",
+      "production_proof": "no",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/pending_driver_patch.py",
+        "crates/axon-cortex/benchmarks/selftest_analyse.py"
+      ],
+      "gap": "driver patch verified on a copy but NOT APPLIED \u2014 held until the real-model run ends. Analyser fails closed meanwhile."
+    },
+    {
+      "area": "cortex",
+      "subsystem": "repair action vocabulary",
+      "implementation": "partial",
+      "production_proof": "yes",
+      "mutation": "unknown",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/src/action.rs"
+      ],
+      "gap": "4 actions; only whole-symbol-body replacement can edit. No finer-grained or multi-site repair."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "no positional joins in reporting",
+      "implementation": "partial",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/selftest_analyse.py",
+        "crates/axon-cortex/benchmarks/check_docs.py"
+      ],
+      "gap": "fixed in the analyser and the doc gate; a repo-wide audit found the class also in axon-core span handling"
+    },
+    {
+      "area": "evidence",
+      "subsystem": "docs join by metric identity",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/check_docs.py"
+      ],
+      "gap": "4 mutations caught incl. a vacuity guard; covers 2 READMEs, CLAUDE.md and locate.rs"
+    },
+    {
+      "area": "evidence",
+      "subsystem": "absent-vs-zero coercions",
+      "implementation": "partial",
+      "production_proof": "unknown",
+      "mutation": "partial",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/real_model.py"
+      ],
+      "gap": "several fixed (verdict identity, failing_tests fail-open, unwrap_or_default on the success path); repo-wide audit lane open"
+    },
+    {
+      "area": "evidence",
+      "subsystem": "env var / reference drift gates",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "scripts/claims_gate.sh",
+        "AXON_REFERENCE.md"
+      ],
+      "gap": "gated in BOTH directions; caught two vars documented as enforced and read by nothing"
+    },
+    {
+      "area": "experimental",
+      "subsystem": "real-model generation evaluation",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-cortex/benchmarks/real_model.py",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py"
+      ],
+      "gap": "25-trial stratified run IN FLIGHT. Transport quality and invalid-output cost UNMEASURED for this run by construction."
+    },
+    {
+      "area": "experimental",
+      "subsystem": "authority-discrimination corpus",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [],
+      "gap": "no corpus tests permit-vs-refuse with matched pairs; current adversarial evidence shows no false success, not that authority discriminates. Design lane open."
+    },
+    {
+      "area": "experimental",
+      "subsystem": "feedback-vs-blind ablation",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [],
+      "gap": "deferred until the stratified run lands; would isolate the retry loop's contribution"
+    },
+    {
+      "area": "formal",
+      "subsystem": "SMT discharge",
+      "implementation": "partial",
+      "production_proof": "unknown",
+      "mutation": "no",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-core/src/smt.rs",
+        "crates/axon-core/src/verify.rs"
+      ],
+      "gap": "CLAUDE.md says discharge is wired into the DEFAULT pipeline; that is not yet independently confirmed here, so the row says unknown rather than inheriting the claim. Also a possible name-collision: Discharged keys on BARE fn names and impl methods share that namespace. Investigation lane open."
+    },
+    {
+      "area": "self-improvement",
+      "subsystem": "learned repair policy",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "partial",
+      "evidence": [],
+      "gap": "localization/generation policies are fixed; nothing learns from prior episodes"
+    }
+  ]
+}
