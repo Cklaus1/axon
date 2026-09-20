@@ -196,7 +196,7 @@ fn reachable(src: &str, start: &str, defined: &[String]) -> Vec<String> {
 /// | depth | top-1 (sole candidate) | top-3 | truth absent from the ranking |
 /// |---|---|---|---|
 /// | 1 (direct calls only) | — | 80.6% | 2.8% |
-/// | 2 | 33.3% | 90.1% | 0.9% |
+/// | 2 | — | 90.1% | 0.9% |
 /// | 4 | 31.5% | 89.2% | **0.0%** |
 ///
 /// (The depth-1 row is from a 36-trial subset; the others are the full corpus.)

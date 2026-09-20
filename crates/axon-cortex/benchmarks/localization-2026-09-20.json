@@ -1109,5 +1109,13 @@
   "workspace_unchanged": "16/16",
   "result": "On defects outside what its single action can express, the loop never claimed success and never altered the workspace. All 16 ended as no_progress (exit 21).",
   "what_this_does_not_show": "how OFTEN real defects fall outside the capability. This class is synthetic and chosen; its frequency here is an artefact of the mutator, not a property of real code."
+ },
+ "superseded_measurements": {
+  "call_count_ranking": {
+   "answered": 8.8,
+   "refused": 91.2,
+   "verified_in_this_artifact": false,
+   "note": "Describes the FIRST localization design \u2014 every function a failing check calls, refusing whenever more than one matched \u2014 which no longer exists. Recorded because crates/axon-cortex/src/locate.rs states these figures and the doc gate must be able to tell a historical measurement from an unsourced one. NOT re-measured: `verified_in_this_artifact` is false and the gate reports it as accepted-but-unverified rather than silently passing it."
+  }
  }
 }

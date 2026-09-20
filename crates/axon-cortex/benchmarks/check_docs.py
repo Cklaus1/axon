@@ -72,6 +72,39 @@ sourced.add(str(round(100 * orc["verified"] / orc["trials"], 1)))
 g = art["guessing_generator"]
 oos = art["out_of_scope_defects"]
 sourced.add(str(round(100 * g["repaired"] / g["trials"], 1)))
+# HISTORICAL FIGURES, ACCEPTED BUT NOT SILENTLY.
+#
+# Some prose describes a design that no longer exists — `locate.rs` states
+# what the pre-Ochiai ranking answered and refused. Those numbers cannot be
+# reproduced from current data, so a gate that only knows "sourced / not
+# sourced" must either fail forever or be switched off.
+#
+# The artifact records them under a section flagged
+# `verified_in_this_artifact: false`. They count as sourced, and the gate SAYS
+# it accepted them without verification — the distinction between a measured
+# figure and a remembered one stays visible instead of being laundered by
+# appearing in the data file. Found by scanning for the flag rather than by an
+# allow-list, so recording a new one needs no edit here.
+unverified = []
+
+
+def _unverified(node, path="art"):
+    if isinstance(node, dict):
+        if node.get("verified_in_this_artifact") is False:
+            for k, v in node.items():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    unverified.append((f"{path}.{k}", v))
+            return
+        for k, v in node.items():
+            _unverified(v, f"{path}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            _unverified(v, f"{path}[{i}]")
+
+
+_unverified(art)
+sourced |= {str(v) for _, v in unverified}
+
 orphans = sorted(n for n in set(re.findall(r"\b\d{1,3}\.\d\b", readme)) if n not in sourced)
 
 # ROW-KEYED CHECK — a figure must match the metric it is PRINTED AGAINST.
@@ -96,12 +129,23 @@ def _num(cell):
         return None
 
 
-def _rows(text, header_frag):
-    """Body rows of the first markdown table whose header contains a fragment."""
-    out, in_tbl = [], False
+def _table(text, header_frag):
+    """(column-name -> index, body rows) for the first matching markdown table.
+
+    Columns are addressed BY HEADER NAME, not by position. The first version
+    of this check indexed them positionally, which is the very defect it was
+    written to catch: the same table is printed with different column orders
+    in different documents (the benchmarks README omits top-1, `locate.rs`
+    includes it), so a positional read compares the wrong cells and reports a
+    confident mismatch — or worse, a confident match.
+    """
+    cols, out, in_tbl = {}, [], False
     for line in text.splitlines():
         if not in_tbl:
             if line.startswith("|") and header_frag in line:
+                hdr = [c.strip().strip("*").lower()
+                       for c in line.strip().strip("|").split("|")]
+                cols = {name: i for i, name in enumerate(hdr)}
                 in_tbl = True
             continue
         if not line.startswith("|"):
@@ -110,7 +154,16 @@ def _rows(text, header_frag):
         if all(set(c.strip()) <= set("- :") for c in cells):
             continue          # the |---|---| separator
         out.append(cells)
-    return out
+    return cols, out
+
+
+def _col(cols, *names):
+    """Index of the first header matching any of these names, else None."""
+    for n in names:
+        for have, i in cols.items():
+            if n in have:
+                return i
+    return None
 
 
 mismatch = []
@@ -118,41 +171,70 @@ mismatch = []
 LABEL = {"operator": "operator", "constant": "constant", "boolean": "boolean",
          "argswap": "argswap", "drop-statement": "drop-stmt"}
 seen_rows = 0
-for cells in _rows(readme, "top-1 (sole candidate)"):
+
+
+def _check(where, cols, cells, label, want):
+    """Compare named columns of one row against the artifact."""
+    global seen_rows
+    seen_rows += 1
+    for name_opts, expect in want:
+        if expect is None:
+            continue
+        i = _col(cols, *name_opts)
+        if i is None or i >= len(cells):
+            continue                      # this document omits the column
+        cell = cells[i].strip()
+        if cell in ("—", "-", ""):
+            continue                      # explicitly withdrawn, not claimed
+        got = _num(cell)
+        if got is None or abs(got - float(expect)) > 1e-9:
+            mismatch.append(f"{where} row `{label}` column {name_opts[0]}: "
+                            f"the doc says {cell}, the artifact says {expect}")
+
+
+cols, rows = _table(readme, "top-1 (sole candidate)")
+for cells in rows:
     label = cells[0].strip().strip("*")
     if label in LABEL:
         row = loc["per_class"][LABEL[label]]
-        want = [("n", row["n"]), ("top-1", row["top1_sole"]), ("top-3", row["top3"])]
+        want = [(("n",), row["n"]), (("top-1",), row["top1_sole"]),
+                (("top-3",), row["top3"])]
     elif label == "all":
-        want = [("n", loc["trials"]), ("top-1", loc["top1_sole_candidate"]),
-                ("top-3", loc["top3"]), ("truth absent", loc["truth_absent"])]
+        want = [(("n",), loc["trials"]), (("top-1",), loc["top1_sole_candidate"]),
+                (("top-3",), loc["top3"]), (("truth absent",), loc["truth_absent"])]
     else:
         continue
-    seen_rows += 1
-    for i, (what, expect) in enumerate(want, start=1):
-        got = _num(cells[i])
-        if got is None or abs(got - float(expect)) > 1e-9:
-            mismatch.append(f"localization row `{label}` column {what}: "
-                            f"the doc says {cells[i].strip()}, the artifact says {expect}")
+    _check("localization", cols, cells, label, want)
 
 # --- call-depth ablation table ---
-for cells in _rows(readme, "| depth |"):
-    label = cells[0].strip().strip("*")
-    m = re.match(r"(\d+)", label)
-    if not m:
-        continue
-    row = art["call_depth_ablation"].get(m.group(1))
-    if not isinstance(row, dict):
-        continue
-    seen_rows += 1
-    for i, (what, expect) in enumerate(
-            [("top-3", row.get("top3")), ("truth absent", row.get("truth_absent"))], start=1):
-        if expect is None:
+# The SAME table is restated in `locate.rs`'s doc comment, which is what a
+# reader of the compiler consults for why MAX_CALL_DEPTH is 4 — and it was
+# covered by nothing. Its column order differs from the README's, which is why
+# columns are addressed by name above.
+depth_docs = [("call-depth", readme)]
+loc_rs = os.path.join(HERE, "..", "src", "locate.rs")
+if os.path.exists(loc_rs):
+    stripped = "\n".join(
+        re.sub(r"^\s*///\s?", "", ln) for ln in open(loc_rs).read().splitlines())
+    depth_docs.append(("locate.rs call-depth", stripped))
+else:
+    broke("crates/axon-cortex/src/locate.rs is missing; its restatement of "
+          "the ablation table would go ungated")
+
+for where, text in depth_docs:
+    cols, rows = _table(text, "| depth |")
+    for cells in rows:
+        label = cells[0].strip().strip("*")
+        m = re.match(r"(\d+)", label)
+        if not m:
             continue
-        got = _num(cells[i])
-        if got is None or abs(got - float(expect)) > 1e-9:
-            mismatch.append(f"call-depth row `{label}` column {what}: "
-                            f"the doc says {cells[i].strip()}, the artifact says {expect}")
+        row = art["call_depth_ablation"].get(m.group(1))
+        if not isinstance(row, dict):
+            continue
+        _check(where, cols, cells, label,
+               [(("top-3",), row.get("top3")),
+                (("truth absent",), row.get("truth_absent")),
+                (("top-1",), row.get("top1"))])
 
 # A row-keyed check that matched no rows would pass on anything — the same
 # vacuous-pass the coverage guards elsewhere in this repo exist to prevent.
@@ -237,6 +319,16 @@ if os.path.exists(claude):
         broke("CLAUDE.md has no `### Cortex` section to scope the check to")
     elsewhere.append(("CLAUDE.md (Cortex section)", sec))
 
+# `locate.rs` restates the ablation table in the doc comment a reader of the
+# COMPILER consults for why MAX_CALL_DEPTH is 4 — the most authoritative place
+# these numbers appear, and the one place nothing checked. Its row values are
+# joined by label above; this adds the other direction, a figure sourced from
+# nowhere.
+if os.path.exists(loc_rs):
+    elsewhere.append(("crates/axon-cortex/src/locate.rs", "\n".join(
+        re.sub(r"^\s*///\s?", "", ln)
+        for ln in open(loc_rs).read().splitlines())))
+
 # PERCENTAGES ONLY, in these two.
 #
 # A bare-decimal scan flagged `§9.5` (a ROADMAP section reference) and read
@@ -267,6 +359,9 @@ for m in mismatch:
 if missing or orphans or bad_fractions or stale_elsewhere or mismatch:
     print("\ndocs have drifted from the data they cite")
     sys.exit(1)
+for where, v in unverified:
+    print(f"  accepted UNVERIFIED (historical): {v} from {where} — describes a "
+          f"design that no longer exists; not re-measured")
 print(
     f"docs match {os.path.basename(art_path)} in both directions "
     f"({1 + len(elsewhere)} documents checked, {seen_rows} table rows "
