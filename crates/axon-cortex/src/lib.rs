@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod action;
 pub mod episode;
+pub mod generate;
 pub mod runner;
 pub mod select;
 

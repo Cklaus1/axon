@@ -42,6 +42,21 @@ fn fact<'a>(obs: &'a Observation, key: &str) -> Option<&'a Observed<String>> {
     obs.facts.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
 
+/// What the loop has learned that the observation cannot show.
+///
+/// The checker sees whether a program compiles; it cannot see whether it is
+/// CORRECT. `broken.ax` compiles and is wrong. So an observation alone can
+/// never justify a repair, and a selector given only an observation can only
+/// ever propose reading, checking, or claiming — which is precisely why
+/// `NeedsInput` was unreachable before this existed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SelectionContext {
+    /// A completion claim was made and verification REFUSED it. That is the
+    /// signal that the code compiles and is still wrong, which is the only
+    /// situation where proposing a patch is justified rather than a guess.
+    pub claim_refused: bool,
+}
+
 /// Choose the next action for `target`, given what was actually observed.
 ///
 /// Three known states, three different actions, and one refusal:
@@ -56,8 +71,18 @@ fn fact<'a>(obs: &'a Observation, key: &str) -> Option<&'a Observed<String>> {
 /// `Inspect` rather than `PatchSymbolBody` for the failing case is deliberate.
 /// A patch needs a body, and a selector that invented one would be fabricating
 /// the very thing the episode exists to produce. Selection picks the next
-/// INVESTIGATIVE step; generating the body is a separate, model-driven move.
+/// INVESTIGATIVE step; generating the body is a separate, model-driven move —
+/// see [`SelectionContext`] for the one state that justifies proposing one.
 pub fn select_action(obs: &Observation, target: &SymbolRef) -> Selection {
+    select_action_with(obs, target, &SelectionContext::default())
+}
+
+/// Selection with what the loop has learned so far.
+pub fn select_action_with(
+    obs: &Observation,
+    target: &SymbolRef,
+    ctx: &SelectionContext,
+) -> Selection {
     let compiles = match fact(obs, "compiles") {
         Some(Observed::Known { value }) => value == "true",
         Some(Observed::Unknown { reason }) => {
@@ -82,6 +107,18 @@ pub fn select_action(obs: &Observation, target: &SymbolRef) -> Selection {
     // behaviour and claiming completion — which is exactly why the observer
     // carries warnings separately instead of reporting "no errors" as "nothing
     // to report".
+    // It compiles, and a claim of completion has already been refused: the
+    // program is syntactically fine and semantically wrong. This is the one
+    // state where a repair is warranted, and the body is left EMPTY on purpose
+    // — the selector does not invent it. The loop reports NeedsInput and a
+    // generator fills it, keeping the creative step outside the control loop.
+    if ctx.claim_refused {
+        return Selection::Act(CortexAction::PatchSymbolBody {
+            symbol: target.clone(),
+            proposed_body: String::new(),
+        });
+    }
+
     match fact(obs, "compiles_cleanly") {
         Some(Observed::Known { value }) if value == "true" => {
             Selection::Act(CortexAction::ClaimDone {

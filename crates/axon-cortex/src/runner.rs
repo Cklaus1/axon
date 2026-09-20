@@ -514,8 +514,15 @@ impl Runner {
         principal: &str,
         hidden_check: &str,
         budget: usize,
+        generator: Option<&dyn crate::generate::PatchGenerator>,
     ) -> EpisodeOutcome {
-        let mut last: Option<(String, String)> = None; // (workspace fingerprint, action name)
+        // Every (workspace state, action) pair already tried. A SET, not just
+        // the previous step: the loop alternates patch → claim → patch, so a
+        // last-step comparison cannot see a two-step cycle and the episode
+        // would spin until the budget ran out — reporting "out of budget" for
+        // what is really "going in circles".
+        let mut seen: Vec<(String, String)> = Vec::new();
+        let mut ctx = crate::select::SelectionContext::default();
         for step in 1..=budget {
             let snap = match self.snapshot(&[target.path.as_str()]) {
                 Ok(s) => s,
@@ -527,7 +534,7 @@ impl Runner {
                 }
             };
             let obs = self.observe(&snap, &target.path);
-            let action = match crate::select::select_action(&obs, target) {
+            let action = match crate::select::select_action_with(&obs, target, &ctx) {
                 crate::select::Selection::Act(a) => a,
                 crate::select::Selection::Blocked(reason) => {
                     return EpisodeOutcome::Blocked {
@@ -540,26 +547,78 @@ impl Runner {
             // Stuck detection BEFORE acting: identical state plus identical
             // choice means the previous step achieved nothing and this one will
             // achieve the same.
-            let fingerprint = snap.snapshot_id.clone();
-            if last.as_ref() == Some(&(fingerprint.clone(), action.name().to_string())) {
+            let point = (snap.snapshot_id.clone(), action.name().to_string());
+            if seen.contains(&point) {
                 return EpisodeOutcome::NoProgress {
                     steps: step,
                     action: action.name().to_string(),
                 };
             }
-            last = Some((fingerprint, action.name().to_string()));
+            seen.push(point);
 
-            // A patch needs a body this loop cannot generate. Saying so is not
-            // a failure report — the system is out of scope without a
-            // generator, and calling that "blocked" would blame the wrong part.
-            if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
+            // The creative step. Selection proposes a patch with an EMPTY body;
+            // filling it is the one thing the control loop cannot do itself.
+            // The generator contributes DATA — it is never handed a tool, never
+            // chooses an action, and what it returns re-enters the same typed
+            // pipeline as anything else.
+            let action = if let CortexAction::PatchSymbolBody {
+                symbol,
+                proposed_body,
+            } = &action
+            {
                 if proposed_body.is_empty() {
-                    return EpisodeOutcome::NeedsInput {
-                        steps: step,
-                        what: format!("a patch body for `{}`", target.symbol),
+                    let Some(gen) = generator else {
+                        return EpisodeOutcome::NeedsInput {
+                            steps: step,
+                            what: format!(
+                                "a patch body for `{}` and no generator was supplied",
+                                target.symbol
+                            ),
+                        };
                     };
+                    let constraints = crate::generate::PatchConstraints {
+                        symbol: symbol.clone(),
+                        max_bytes: 4096,
+                    };
+                    let proposal = match gen.propose(&obs, target, &constraints) {
+                        Ok(p) => p,
+                        Err(why) => {
+                            // A generator that cannot or will not propose is
+                            // NeedsInput, not Blocked: authority and environment
+                            // are fine, the missing piece is content.
+                            return EpisodeOutcome::NeedsInput {
+                                steps: step,
+                                what: format!("{why} (generator `{}`)", gen.id()),
+                            };
+                        }
+                    };
+                    // Re-checked rather than trusted. "The constraints were
+                    // passed in" is not evidence they were honoured.
+                    if let Err(why) = crate::generate::validate(&proposal, &constraints) {
+                        return EpisodeOutcome::NeedsInput {
+                            steps: step,
+                            what: format!("{why} (generator `{}`)", proposal.generator_id),
+                        };
+                    }
+                    // WHO proposed it, recorded before it is applied. Once two
+                    // generators exist the only interesting question is which
+                    // produced a given outcome, and an episode that did not
+                    // record it cannot answer that later.
+                    self.episode.push(EpisodeEvent::CheckRun {
+                        name: format!("patch_proposed_by:{}", proposal.generator_id),
+                        exit_code: 0,
+                        passed: true,
+                    });
+                    CortexAction::PatchSymbolBody {
+                        symbol: symbol.clone(),
+                        proposed_body: proposal.body,
+                    }
+                } else {
+                    action.clone()
                 }
-            }
+            } else {
+                action
+            };
 
             let auth = match self.authorize_action(&action, grant, principal, &snap) {
                 Ok(a) => a,
@@ -570,6 +629,14 @@ impl Runner {
                     }
                 }
             };
+            // The refusal described the state BEFORE this edit. Once a patch
+            // lands, that description is stale: the loop must re-observe and
+            // re-claim rather than keep patching on the strength of a verdict
+            // about code that no longer exists. Left sticky, a CORRECT repair
+            // is followed by another patch and the episode never converges.
+            if matches!(action, CortexAction::PatchSymbolBody { .. }) {
+                ctx.claim_refused = false;
+            }
             let outcome = self.execute(auth);
 
             // A claim is adjudicated, never accepted. If verification holds the
@@ -580,6 +647,10 @@ impl Runner {
                 if self.verify(true, hidden_check, &target.path) {
                     return EpisodeOutcome::VerifiedDone { steps: step };
                 }
+                // The claim was refused. That is the signal the code compiles
+                // and is still wrong — the only state in which proposing a
+                // repair is justified rather than a guess.
+                ctx.claim_refused = true;
             }
         }
         EpisodeOutcome::BudgetExhausted { steps: budget }

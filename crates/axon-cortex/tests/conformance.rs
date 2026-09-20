@@ -1007,6 +1007,7 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
         "agent",
         "hidden_completion",
         6,
+        None,
     );
     assert!(
         matches!(ok, EpisodeOutcome::VerifiedDone { .. }),
@@ -1029,14 +1030,26 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
         "agent",
         "visible_repro",
         6,
+        None,
     );
     // broken.ax compiles, so selection claims done; visible_repro FAILS on the
-    // unrepaired fixture, so the claim is refused and the loop tries again with
-    // an unchanged workspace — which is exactly NoProgress, not success.
-    assert!(
-        matches!(outcome, EpisodeOutcome::NoProgress { .. }),
-        "an unrepairable claim loop must stop as NoProgress, got {outcome:?}"
-    );
+    // unrepaired fixture, so the claim is refused. THAT refusal is the signal
+    // the code is syntactically fine and semantically wrong — the one state
+    // that justifies proposing a repair — so selection now asks for a patch
+    // body, and with no generator supplied the loop says so.
+    //
+    // This row used to assert NoProgress, and the change is the point rather
+    // than a relaxation: "I ran out of ideas" and "I need a patch body for
+    // `double`" are different facts with different remedies, and the second is
+    // actionable. NoProgress is still reachable and still asserted — by C12
+    // row 6, where a generator proposes a body that changes nothing.
+    match &outcome {
+        EpisodeOutcome::NeedsInput { what, .. } => assert!(
+            what.contains("double"),
+            "the request must name what is missing: {what}"
+        ),
+        other => panic!("a refused claim must ask for a patch body, got {other:?}"),
+    }
 
     // 2. NoProgress must be distinguishable from BudgetExhausted. A budget of 1
     //    cannot detect stuckness — there is no previous step to compare with —
@@ -1052,6 +1065,7 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
         "agent",
         "visible_repro",
         1,
+        None,
     );
     assert!(
         matches!(outcome2, EpisodeOutcome::BudgetExhausted { steps: 1 }),
@@ -1071,6 +1085,7 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
         "agent",
         "visible_repro",
         6,
+        None,
     );
     match outcome3 {
         EpisodeOutcome::Blocked { reason, .. } => assert!(
@@ -1079,4 +1094,332 @@ fn cxg_c11_a_bounded_episode_terminates_with_a_reason() {
         ),
         other => panic!("expected Blocked, got {other:?}"),
     }
+}
+
+/// C12 — the model contributes the missing CONTENT, not the control.
+///
+/// Every other capability in the loop existed before this test: observe,
+/// select, authorize, execute, verify. What was missing was the one thing a
+/// control loop cannot do for itself — invent the body of a repair — and it was
+/// reported honestly as `NeedsInput` rather than faked. This closes that gap
+/// and checks the closure did not also hand over the steering wheel.
+///
+/// The division under test: the generator returns a STRING. It chooses no
+/// action, touches no file, holds no tool. What it returns re-enters the same
+/// typed pipeline as anything else — authorized against the same grant,
+/// executed through the same witness, adjudicated by the same hidden check that
+/// the episode never shows it.
+#[test]
+fn cxg_c12_a_generator_supplies_the_body_and_nothing_else() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::{
+        GenerationFailure, PatchConstraints, PatchGenerator, ProposedPatch,
+    };
+    use axon_cortex::runner::EpisodeOutcome;
+    use axon_cortex::Observation;
+
+    /// A deterministic stand-in for a model. A real generator would call one;
+    /// the SEAM is what this test is about, and a fixed generator makes the
+    /// control-flow assertions below decidable instead of probabilistic.
+    struct Fixed {
+        id: &'static str,
+        answer: Result<&'static str, GenerationFailure>,
+    }
+    impl PatchGenerator for Fixed {
+        fn id(&self) -> String {
+            self.id.to_string()
+        }
+        fn propose(
+            &self,
+            _obs: &Observation,
+            _target: &SymbolRef,
+            _c: &PatchConstraints,
+        ) -> Result<ProposedPatch, GenerationFailure> {
+            self.answer.clone().map(|body| ProposedPatch {
+                body: body.to_string(),
+                generator_id: self.id.to_string(),
+            })
+        }
+    }
+
+    let target = || SymbolRef {
+        path: "broken.ax".into(),
+        symbol: "double".into(),
+    };
+
+    // 1. THE SUCCESS ROW, first. A generator that proposes the correct body
+    //    drives the whole loop: observe → claim → claim REFUSED → patch →
+    //    re-observe → claim → hidden check HOLDS → VerifiedDone.
+    //
+    //    The hidden check (`hidden_completion`) is never shown to the
+    //    generator, so a correct outcome here means the body was right, not
+    //    that the adjudicator was leaked.
+    // A grant covering the target, pinned to the state it was issued over.
+    // Patching is the one action that needs write authority, so every row that
+    // reaches the filesystem carries one — and row 7 proves the generator
+    // cannot substitute for it.
+    fn grant_for(r: &mut Runner) -> EditGrant {
+        let snap = r.snapshot(&["broken.ax"]).unwrap();
+        EditGrant {
+            grant_id: "g".into(),
+            principal: "agent".into(),
+            snapshot_id: snap.snapshot_id,
+            write_prefixes: vec!["broken.ax".into()],
+        }
+    }
+
+    let (_, ws) = stage("gen_ok");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let g = grant_for(&mut r);
+    let good = Fixed {
+        id: "fixed/correct@1",
+        // A body slice runs from just after the opening brace to just
+        // before the closing one, so it carries its own leading newline —
+        // the same bytes an Inspect would have returned.
+        answer: Ok("\n    n * 2\n"),
+    };
+    let out = r.run_episode(
+        &target(),
+        Some(&g),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&good),
+    );
+    assert!(
+        matches!(out, EpisodeOutcome::VerifiedDone { .. }),
+        "a correct generated body must drive the episode to VerifiedDone, got {out:?}"
+    );
+    // WHO proposed it, recorded in the episode. Not decoration: the moment a
+    // second generator exists, "which one produced this outcome" is the only
+    // interesting question, and an episode that did not record it cannot be
+    // asked retrospectively.
+    let record = format!("{:?}", r.episode);
+    assert!(
+        record.contains("fixed/correct@1"),
+        "the episode must record which generator proposed the patch: {record}"
+    );
+    // And the repair is real, not an accepted claim: the file changed.
+    let after = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        after.contains("n * 2") && !after.contains("n + 2"),
+        "the generated body must actually be in the file: {after}"
+    );
+
+    // 2. A WRONG body is not a successful episode. The generator proposes
+    //    something that compiles and is still incorrect; the hidden check
+    //    refuses it, and the loop must NOT report success.
+    //
+    //    This is the negative control that matters most. Everything else here
+    //    fails loudly; this one fails by looking exactly like row 1.
+    let (_, ws2) = stage("gen_wrong");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let g2 = grant_for(&mut r2);
+    let wrong = Fixed {
+        id: "fixed/wrong@1",
+        answer: Ok("\n    n + 3\n"),
+    };
+    let out2 = r2.run_episode(
+        &target(),
+        Some(&g2),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&wrong),
+    );
+    assert!(
+        !matches!(out2, EpisodeOutcome::VerifiedDone { .. }),
+        "a wrong body must never verify done, got {out2:?}"
+    );
+
+    // 3. An INVALID proposal is caught before it reaches the filesystem. An
+    //    empty body would delete the function's behaviour while looking like a
+    //    successful proposal, so `validate` rejects it and the episode reports
+    //    what is missing.
+    let (_, ws3) = stage("gen_invalid");
+    let mut r3 = Runner::new(axon_bin(), &ws3);
+    let before3 = std::fs::read_to_string(ws3.join("broken.ax")).unwrap();
+    let empty = Fixed {
+        id: "fixed/empty@1",
+        answer: Ok("   \n  "),
+    };
+    let out3 = r3.run_episode(
+        &target(),
+        None,
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&empty),
+    );
+    match &out3 {
+        EpisodeOutcome::NeedsInput { what, .. } => assert!(
+            what.contains("empty body") && what.contains("fixed/empty@1"),
+            "the refusal must name the defect AND the generator: {what}"
+        ),
+        other => panic!("an invalid proposal must be NeedsInput, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(ws3.join("broken.ax")).unwrap(),
+        before3,
+        "a rejected proposal must not have touched the file"
+    );
+
+    // 4. An UNAVAILABLE generator is NeedsInput, not Blocked. The distinction
+    //    is the remedy: Blocked means the environment or the authority is
+    //    wrong, NeedsInput means both are fine and the content is missing.
+    //    Collapsing them would send the operator to debug a checker that works.
+    let (_, ws4) = stage("gen_down");
+    let mut r4 = Runner::new(axon_bin(), &ws4);
+    let down = Fixed {
+        id: "fixed/offline@1",
+        answer: Err(GenerationFailure::Unavailable("no API key".into())),
+    };
+    let out4 = r4.run_episode(
+        &target(),
+        None,
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&down),
+    );
+    match &out4 {
+        EpisodeOutcome::NeedsInput { what, .. } => assert!(
+            what.contains("unavailable") && what.contains("no API key"),
+            "an unreachable generator must report as unavailable: {what}"
+        ),
+        other => panic!("an unavailable generator must be NeedsInput, got {other:?}"),
+    }
+
+    // 5. NO generator at all is still NeedsInput — the honest report this seam
+    //    was built to replace, which must survive its own replacement. A loop
+    //    that started fabricating bodies once a generator slot existed would
+    //    have regressed the property the slot exists to preserve.
+    let (_, ws5) = stage("gen_none");
+    let mut r5 = Runner::new(axon_bin(), &ws5);
+    let out5 = r5.run_episode(&target(), None, "agent", "hidden_completion", 8, None);
+    assert!(
+        matches!(out5, EpisodeOutcome::NeedsInput { .. }),
+        "without a generator the loop must still say what it needs, got {out5:?}"
+    );
+
+    // 6. A patch that changes NOTHING is NoProgress, not success. The
+    //    generator proposes the body the file already has; the workspace
+    //    fingerprint does not move and the loop must notice rather than
+    //    patch-and-claim forever.
+    let (_, ws6) = stage("gen_noop");
+    let mut r6 = Runner::new(axon_bin(), &ws6);
+    let g6 = grant_for(&mut r6);
+    let noop = Fixed {
+        id: "fixed/noop@1",
+        // BYTE-IDENTICAL to the fixture's current body. The assertion below
+        // proves that rather than assuming it: a "no-op" proposal that
+        // actually changed a byte would move the snapshot and make this row
+        // test something else entirely, while still looking like it passed.
+        answer: Ok("\n    n + 2\n"),
+    };
+    let before6 = std::fs::read_to_string(ws6.join("broken.ax")).unwrap();
+    let out6 = r6.run_episode(
+        &target(),
+        Some(&g6),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&noop),
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws6.join("broken.ax")).unwrap(),
+        before6,
+        "this row is only meaningful if the proposal really changed nothing"
+    );
+    assert!(
+        matches!(out6, EpisodeOutcome::NoProgress { .. }),
+        "a patch that changes nothing must read as NoProgress, not as a budget \
+         overrun — the remedy differs, got {out6:?}"
+    );
+
+    // 7. AUTHORITY still binds the generated patch. A grant that does not
+    //    cover the target path must refuse the edit even though the content
+    //    came from a generator — the generator supplies bytes, it does not
+    //    supply permission.
+    let (_, ws7) = stage("gen_ungranted");
+    let mut r7 = Runner::new(axon_bin(), &ws7);
+    let snap7 = r7.snapshot(&["broken.ax"]).unwrap();
+    let grant = EditGrant {
+        grant_id: "g".into(),
+        principal: "agent".into(),
+        snapshot_id: snap7.snapshot_id.clone(),
+        // Covers a DIFFERENT file. The patch target is out of scope.
+        write_prefixes: vec!["clean.ax".into()],
+    };
+    let before7 = std::fs::read_to_string(ws7.join("broken.ax")).unwrap();
+    let out7 = r7.run_episode(
+        &target(),
+        Some(&grant),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&good),
+    );
+    assert!(
+        matches!(out7, EpisodeOutcome::Refused { .. }),
+        "an out-of-scope generated patch must be refused, got {out7:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws7.join("broken.ax")).unwrap(),
+        before7,
+        "a refused patch must not have been written"
+    );
+}
+
+/// C12b — every constraint `validate` states is one it enforces.
+///
+/// The episode test exercises the empty-body branch because that is the one
+/// reachable from a plausible generator. The other two are reachable only from
+/// a generator that ignores what it was told, which is exactly the case
+/// re-checking exists for — so they are tested directly rather than left as
+/// guards nothing has ever fired.
+#[test]
+fn cxg_c12_validate_enforces_each_constraint_it_states() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::{validate, GenerationFailure, PatchConstraints, ProposedPatch};
+
+    let c = PatchConstraints {
+        symbol: SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        max_bytes: 16,
+    };
+    let patch = |body: &str, id: &str| ProposedPatch {
+        body: body.into(),
+        generator_id: id.into(),
+    };
+
+    assert!(validate(&patch("n * 2", "m@1"), &c).is_ok());
+
+    // Unattributable. Accepting it would put a patch in the episode record
+    // with no answer to "which generator produced this", which is the one
+    // question the record exists to answer.
+    match validate(&patch("n * 2", "  "), &c) {
+        Err(GenerationFailure::Invalid(why)) => assert!(why.contains("generator_id"), "{why}"),
+        other => panic!("an unattributed patch must be invalid, got {other:?}"),
+    }
+
+    // Over the stated bound. Not a security control — the grant is that — but
+    // a bound that is stated and not checked is worse than no bound, because
+    // callers read the constraint and assume it held.
+    match validate(&patch("n * 2 + 0000000000000000", "m@1"), &c) {
+        Err(GenerationFailure::Invalid(why)) => assert!(
+            why.contains("limit is 16"),
+            "the refusal must name the bound it enforced: {why}"
+        ),
+        other => panic!("an oversized patch must be invalid, got {other:?}"),
+    }
+
+    // Whitespace-only is empty. A body of spaces would delete the function's
+    // behaviour while passing an `is_empty()` check.
+    assert!(matches!(
+        validate(&patch("   \n ", "m@1"), &c),
+        Err(GenerationFailure::Invalid(_))
+    ));
 }
