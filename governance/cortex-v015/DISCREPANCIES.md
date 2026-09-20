@@ -267,3 +267,120 @@ function. No new files.
 **Owner.** Repository owner.
 **Blocks.** CX-10 `G10-lineage` must not be reported as satisfiable while the
 evidence channel carries fabricated checks.
+
+---
+
+## D-006 — `EXISTING_AXON_MAP.md` approval row: the required work has LANDED; the real hole is invisible
+
+**Package passage** (row "CLI/web approval and risk gate", *Required check /
+new work*):
+
+> Bind approval to final content digest; missing required gate becomes
+> rejection in Cortex profile.
+
+**Live implementation — BOTH halves already exist, and are tested.**
+
+* Content-digest binding: `crates/axon-core/src/main.rs:7470` (`cmd_ast_approve`
+  writes an `axsha256:` digest) and `:7999-8044` (deploy recomputes the CURRENT
+  source's digest and compares; approved-then-edited is exit 8,
+  `status:"blocked_approval"`). The header comment records the measured pre-fix
+  defect: approval bound a FILENAME, so one could "approve a benign file,
+  rewrite it to exfiltrate /etc/passwd, and deploy still reported
+  approved:true".
+* Missing gate → rejection: `main.rs:8127-8150`. At Risk ≥ High a missing gate
+  fn becomes `failed_gate = missing:…` and blocks unless
+  `--allow-missing-gates` is passed, which is surfaced as `gates_override`.
+* Evidence class: **a test asserts it** —
+  `cli_run.rs:2878 deploy_approval_binds_the_program_text_not_the_filename`,
+  plus `:23139/:23160/:23175` for the gate fields. Plain `cargo test`, so
+  unconditional.
+
+**What the row does NOT say, and should.** The genuine hole is that approval
+binds ONE FILE of a program:
+
+* `cmd_ast_approve` hashes only the entry file's bytes. Demonstrated earlier in
+  this session: approve `main.ax`, rewrite an imported module to
+  `write:["/"] net:["*"] exec:any`, and the approval still validates.
+* A transitive mechanism EXISTS — `axon lock` / `verify-lock`
+  (`main.rs:1211-1320`, transitive closure, `axh1:` hashes) — and **no approval
+  or deploy path calls it**.
+* `ast review` showed imported fns as the entry file's own with no origin
+  marker. FIXED this session (impl methods and origin now rendered), but the
+  digest gap remains.
+* Import resolution is itself order-dependent with no record of which file was
+  chosen (see D-001's sibling finding, recorded in the completeness matrix), so
+  no digest can distinguish two meanings of the same source.
+
+**Why it matters.** An implementer following this row rebuilds digest binding
+and gate-rejection from scratch — both already exist with subtle correct
+behaviour they would likely lose (the legacy-hash non-blocking arm at
+`main.rs:8019-8027` exists because changing the hash algorithm without it told
+upgrading users "source changed since approval" about files nobody had edited).
+Meanwhile the real defect is invisible in the row, so a Cortex profile inherits
+it.
+
+**Proposed resolution.** Rewrite the row to: entry-file binding and Risk≥High
+missing-gate rejection ARE landed and tested at the cited lines; the OPEN work
+is binding the IMPORT GRAPH — reuse `axon lock`'s existing transitive hash
+rather than building a second one — and deciding whether a MISSING approval
+should reject (today it warns by design, which is the genuine Cortex-profile
+delta).
+
+**Owner.** Repository owner.
+
+---
+
+## D-007 — The "do not build a second governance registry" row is already violated four times
+
+**Package passage** (row "R39 typed governance/evidence graph"):
+
+> Import CX specs after namespace reconciliation; **do not build a second
+> governance registry**.
+
+**Live implementation.** FOUR registries exist, all carrying a completion claim
+plus evidence paths, at three different granularities, for overlapping subjects:
+
+| registry | schema | read by | gated |
+|---|---|---|---|
+| `AXON-COMPLETENESS.json` | `axon-completeness/1` | `scripts/completeness.py` | YES, unconditional (`gate.sh:159`), fails on a nonexistent evidence path |
+| `governance/state/specs.jsonl` | `axon-gov-spec/1` | R39 slice gates | yes, `--strict` only |
+| `governance/REQUIREMENTS.md` | hand-maintained markdown | **nothing parses it** | **no** |
+| `governance/cortex_gate_execution_registry.json` | `cortex-gate-execution/1` | `scripts/cortex_package_gate.sh` | YES, unconditional (`gate.sh:92`) |
+
+**Why it matters.** The row reads as PREVENTION. The live job is
+CONSOLIDATION across four that already exist — and specifically deciding which
+is authoritative, given that the UNGATED one (`REQUIREMENTS.md`) is the one
+`gate.sh`'s own comments cite as the evidence index.
+
+**Proposed resolution.** Do not add a fifth for CX gates.
+`governance/cortex_gate_execution_registry.json` already exists for exactly
+this purpose, is validated by a gate that runs unconditionally, and rejects a
+row naming a script nothing invokes. Its `gates` and `tasks` arrays are empty —
+that is where CX gate execution belongs, NOT in the vendored
+`gate_manifest.json`, which is SHA-pinned and whose own validator hard-fails on
+a non-`NOT_RUN` result.
+
+**Owner.** Repository owner.
+
+---
+
+## D-008 — live-code defect, not a package discrepancy: cancellation kills only the direct child
+
+**Live implementation.** `crates/axon-os/src/runtime.rs:187` (timeout path) and
+`:196` (kill-file latch path) call `child.kill()` — SIGKILL to the DIRECT CHILD
+only, not the process group. Under `exec: any`, which is the `developer`
+profile default, any grandchild the job spawned survives both paths.
+
+**Why it matters.** The operator kill switch (R27) and the compliance monitor
+(R29) both terminate through this path. A job that spawned a subprocess is not
+stopped by either.
+
+**Status of this check.** Verified by reading the two call sites. NOT verified
+by spawning a grandchild and observing survival — that experiment is the
+obvious next evidence step.
+
+**Proposed resolution.** Kill the process GROUP (`setsid` at spawn +
+`killpg`), in the existing `run_bounded`. This is the repository's own
+documented lesson from a different context — "kill the job, not a PID".
+
+**Owner.** Repository owner.
