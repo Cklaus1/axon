@@ -311,6 +311,18 @@ pub struct Codegen<'ctx> {
     /// to false (hosted builds keep linking the real `axon-rt` implementation,
     /// unchanged).
     pub(super) freestanding: bool,
+    /// R25: the LLVM target triple this build is emitting for, as resolved by
+    /// the CLI (`--target`, with the friendly aliases already expanded). Empty
+    /// means "not specified", which for a freestanding build is the historical
+    /// x86_64 default (`link.rs` substitutes `x86_64-unknown-none`).
+    ///
+    /// Needed DURING emission — not just at object-write time — because the
+    /// implicit freestanding trap (`synthesize_freestanding_trap`) is inline
+    /// assembly, and assembly is per-architecture: x86 port I/O (`outb`/`hlt`)
+    /// does not exist on ARM Cortex-M and LLVM rejects its register constraints
+    /// (`couldn't allocate input reg for constraint '{dx}'`). Set by
+    /// `set_target_triple` BEFORE `emit_program`.
+    pub(super) target_triple: String,
     /// Hard codegen errors collected during emission (e.g. a known builtin that
     /// has no native lowering). emit_program does not return a Result, so these
     /// accumulate here; the build pipeline checks `codegen_errors()` after
@@ -438,6 +450,7 @@ impl<'ctx> Codegen<'ctx> {
             current_ret_refine: None,
             target_is_wasm: false,
             freestanding: false,
+            target_triple: String::new(),
             codegen_errors: Vec::new(),
             transitive_effects: HashMap::new(),
             handler_ctx: Vec::new(),
@@ -470,6 +483,23 @@ impl<'ctx> Codegen<'ctx> {
     /// `emit_program`; defaults to false (hosted).
     pub fn set_freestanding(&mut self, freestanding: bool) {
         self.freestanding = freestanding;
+    }
+
+    /// R25: record the resolved LLVM target triple. Call BEFORE `emit_program`
+    /// so architecture-dependent emission (today: the freestanding trap's
+    /// inline assembly) can branch on it. Defaults to empty (= the historical
+    /// x86_64 assumption).
+    pub fn set_target_triple(&mut self, triple: &str) {
+        self.target_triple = triple.to_string();
+    }
+
+    /// True when the current target triple is an ARM/thumb one. Mirrors the
+    /// same prefix test `link::freestanding_reloc_codemodel` uses to pick the
+    /// code model, so the trap's ISA and the object's code model cannot
+    /// disagree about what architecture is being emitted.
+    pub(super) fn target_is_arm(&self) -> bool {
+        let t = &self.target_triple;
+        t.starts_with("thumb") || t.starts_with("arm") || t.starts_with("aarch64")
     }
 
     /// R7: the LLVM integer type of a C `size_t` on the current target — i32 on

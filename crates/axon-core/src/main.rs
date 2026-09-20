@@ -6776,6 +6776,10 @@ fn build_ir_and_link(
     // safety-check panic hooks (arith/bounds/refine) get a minimal in-module
     // trap instead of an external symbol nothing will provide.
     cg.set_freestanding(freestanding);
+    // R25: architecture-dependent emission (the freestanding trap's inline
+    // assembly) needs the resolved triple BEFORE emit_program, not just at
+    // object-write time. `None` = the historical x86_64 default.
+    cg.set_target_triple(target_triple.unwrap_or_default());
     // R23: solver-free mint cert gate before emitting a native binary, too.
     axon_core::cert_gate::enforce_or_exit();
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks

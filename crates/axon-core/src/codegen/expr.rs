@@ -769,11 +769,26 @@ impl<'ctx> super::Codegen<'ctx> {
     /// module — used in place of declaring an external panic-hook symbol for
     /// `--freestanding` builds, since `axon-rt` is never linked into one.
     /// Ignores every argument (no formatting capability without a host
-    /// runtime); writes `marker` to the QEMU debugcon port (0xE9) via the same
-    /// hand-written inline asm `port_out_u8`/`lidt` already use, then halts
-    /// forever. The function never returns (matches the external symbol's
-    /// noreturn contract the call sites already assume via a trailing
-    /// `unreachable`), so no block needs a `ret`.
+    /// runtime); signals `marker` and then halts forever. The function never
+    /// returns (matches the external symbol's noreturn contract the call sites
+    /// already assume via a trailing `unreachable`), so no block needs a `ret`.
+    ///
+    /// R25: the signal and the halt are inline assembly, so both are chosen by
+    /// TARGET ARCHITECTURE — there is no architecture-neutral spelling:
+    ///
+    /// * **x86** (the R17 bare-metal kernel): write `marker` to the QEMU
+    ///   debugcon port (0xE9) with `outb`, the same diagnostic convention every
+    ///   other R17 example/test uses, then `hlt` in a loop.
+    /// * **ARM / thumb** (Cortex-M, the R25 Zephyr target): Cortex-M has NO
+    ///   port I/O at all, so there is nothing for `outb` to be — and its
+    ///   x86 register constraints (`{dx}`, `{al}`) name registers that do not
+    ///   exist on ARM, which made every `--freestanding --target zephyr` build
+    ///   die in the backend with `couldn't allocate input reg for constraint
+    ///   '{dx}'`. The marker is carried instead in the immediate of a `bkpt`
+    ///   (`bkpt #marker`, an 8-bit field that holds an ASCII marker exactly),
+    ///   which is visible to a debugger and faults to the Zephyr fault handler
+    ///   when none is attached; the halt loop is `wfi`. Nothing external is
+    ///   referenced, so the object stays self-contained.
     pub(super) fn synthesize_freestanding_trap(
         &mut self,
         name: &str,
@@ -785,37 +800,60 @@ impl<'ctx> super::Codegen<'ctx> {
         let halt = self.ir.context.append_basic_block(fn_val, "halt");
         self.ir.builder.position_at_end(entry);
 
-        let i16_ty = self.ir.context.i16_type();
-        let i8_ty = self.ir.context.i8_type();
         let void_ty = self.ir.context.void_type();
-        let outb_fn_ty = void_ty.fn_type(&[i16_ty.into(), i8_ty.into()], false);
-        let outb_asm = self.ir.context.create_inline_asm(
-            outb_fn_ty,
-            "outb $1, $0".to_string(),
-            "{dx},{al},~{memory}".to_string(),
-            true,
-            false,
-            None,
-            false,
-        );
-        let port = i16_ty.const_int(0xE9, false);
-        let val = i8_ty.const_int(marker as u64, false);
-        self.ir
-            .builder
-            .build_indirect_call(
+        let is_arm = self.target_is_arm();
+
+        // ── signal the marker ────────────────────────────────────────────────
+        if is_arm {
+            // `bkpt #<marker>` — no operands, the marker is an immediate baked
+            // into the instruction text (Cortex-M has no port I/O to write to).
+            let bkpt_fn_ty = void_ty.fn_type(&[], false);
+            let bkpt_asm = self.ir.context.create_inline_asm(
+                bkpt_fn_ty,
+                format!("bkpt #{marker}"),
+                "~{memory}".to_string(),
+                true,
+                false,
+                None,
+                false,
+            );
+            self.ir
+                .builder
+                .build_indirect_call(bkpt_fn_ty, bkpt_asm, &[], "trap_bkpt")
+                .unwrap();
+        } else {
+            let i16_ty = self.ir.context.i16_type();
+            let i8_ty = self.ir.context.i8_type();
+            let outb_fn_ty = void_ty.fn_type(&[i16_ty.into(), i8_ty.into()], false);
+            let outb_asm = self.ir.context.create_inline_asm(
                 outb_fn_ty,
-                outb_asm,
-                &[port.into(), val.into()],
-                "trap_outb",
-            )
-            .unwrap();
+                "outb $1, $0".to_string(),
+                "{dx},{al},~{memory}".to_string(),
+                true,
+                false,
+                None,
+                false,
+            );
+            let port = i16_ty.const_int(0xE9, false);
+            let val = i8_ty.const_int(marker as u64, false);
+            self.ir
+                .builder
+                .build_indirect_call(
+                    outb_fn_ty,
+                    outb_asm,
+                    &[port.into(), val.into()],
+                    "trap_outb",
+                )
+                .unwrap();
+        }
         self.ir.builder.build_unconditional_branch(halt).unwrap();
 
+        // ── halt forever ─────────────────────────────────────────────────────
         self.ir.builder.position_at_end(halt);
-        let hlt_fn_ty = void_ty.fn_type(&[], false);
-        let hlt_asm = self.ir.context.create_inline_asm(
-            hlt_fn_ty,
-            "hlt".to_string(),
+        let halt_fn_ty = void_ty.fn_type(&[], false);
+        let halt_asm = self.ir.context.create_inline_asm(
+            halt_fn_ty,
+            if is_arm { "wfi" } else { "hlt" }.to_string(),
             "~{memory}".to_string(),
             true,
             false,
@@ -824,7 +862,7 @@ impl<'ctx> super::Codegen<'ctx> {
         );
         self.ir
             .builder
-            .build_indirect_call(hlt_fn_ty, hlt_asm, &[], "trap_hlt")
+            .build_indirect_call(halt_fn_ty, halt_asm, &[], "trap_halt")
             .unwrap();
         self.ir.builder.build_unconditional_branch(halt).unwrap();
 
@@ -10578,5 +10616,71 @@ impl<'ctx> super::Codegen<'ctx> {
 
         let call = self.ir.builder.build_call(fn_v, &arg_vals, "call").unwrap();
         call.try_as_basic_value().left()
+    }
+}
+
+#[cfg(test)]
+mod freestanding_trap_tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// Emit the implicit freestanding trap for one target triple and return the
+    /// module's IR text.
+    fn trap_ir(triple: &str) -> String {
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "trap_test");
+        cg.set_freestanding(true);
+        cg.set_target_triple(triple);
+        let void_ty = ctx.void_type();
+        let fn_ty = void_ty.fn_type(&[], false);
+        cg.synthesize_freestanding_trap("__axon_arith_panic", fn_ty, b'A');
+        cg.emit_llvm_ir()
+    }
+
+    /// R25: the trap is inline assembly, so it MUST be chosen per architecture.
+    /// x86 keeps the QEMU debugcon `outb` + `hlt`; ARM/thumb — which has no
+    /// port I/O and no `dx`/`al` registers, so the x86 form made the backend
+    /// die with `couldn't allocate input reg for constraint '{dx}'` — carries
+    /// the marker in a `bkpt` immediate and halts with `wfi`.
+    #[test]
+    fn freestanding_trap_is_target_aware() {
+        let x86 = trap_ir("x86_64-unknown-none");
+        assert!(
+            x86.contains("outb"),
+            "x86 trap lost its debugcon write:\n{x86}"
+        );
+        assert!(
+            x86.contains("{dx}"),
+            "x86 trap lost its port constraint:\n{x86}"
+        );
+        assert!(x86.contains("hlt"), "x86 trap lost its halt:\n{x86}");
+        assert!(!x86.contains("bkpt"), "x86 trap emitted ARM asm:\n{x86}");
+
+        let arm = trap_ir("thumbv7m-none-eabi");
+        assert!(
+            arm.contains("bkpt #65"),
+            "ARM trap lost its marker bkpt:\n{arm}"
+        );
+        assert!(arm.contains("wfi"), "ARM trap lost its halt:\n{arm}");
+        assert!(
+            !arm.contains("outb"),
+            "ARM trap emitted x86 port I/O:\n{arm}"
+        );
+        assert!(
+            !arm.contains("{dx}"),
+            "ARM trap emitted an x86 register constraint:\n{arm}"
+        );
+    }
+
+    /// The default (no `--target`) is the historical x86_64 freestanding
+    /// assumption `link.rs` also substitutes, so an unchanged R17 kernel build
+    /// keeps the exact asm it had.
+    #[test]
+    fn freestanding_trap_defaults_to_x86() {
+        let ir = trap_ir("");
+        assert!(
+            ir.contains("outb"),
+            "empty triple changed the x86 default:\n{ir}"
+        );
     }
 }
