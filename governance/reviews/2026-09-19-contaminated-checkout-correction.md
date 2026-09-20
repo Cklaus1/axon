@@ -67,3 +67,44 @@ Recorded now; repaired and verified when the tooling returns.
   claims to hide a real failure — worse than a visible red.
 * Treat `scripts/gate.sh` as KNOWN-RED on a fresh clone until the `out/`
   dependency is fixed and re-verified in a pristine worktree.
+
+## The class, not the instance
+
+`r29` is one instance. The defect is in the METHOD, so every gate wired this
+session on the same method carries the same doubt. Scored by where its evidence
+was actually produced:
+
+| gate | evidence produced in | status of that evidence |
+|---|---|---|
+| `r39_slice3_gate.sh` | a worktree created fresh by a subagent | **clean** |
+| `r39_slice4_gate.sh` | same | **clean** |
+| `r39_slice5_gate.sh` | same | **clean** |
+| `r26_acceptance_gate.sh` | my main checkout | UNRELIABLE |
+| `r27_acceptance_gate.sh` | my main checkout | UNRELIABLE — independently shown to fail elsewhere |
+| `r28_acceptance_gate.sh` | my main checkout | UNRELIABLE |
+| `r29_acceptance_gate.sh` | my main checkout | **DISPROVEN** — fails in a fresh worktree |
+| `r31_acceptance_gate.sh` | my main checkout | UNRELIABLE |
+| `r23_acceptance_gate.sh` | a long-lived gate worktree | UNRELIABLE |
+
+Six of nine wirings rest on evidence from a tree that differs from a fresh
+clone in ways `git status` cannot show. One of those six is already disproven;
+the other five are simply unmeasured, which is a different claim from "they
+fail" and should not be reported as one.
+
+Note the asymmetry that makes this worth writing down: the three CLEAN results
+are clean for a reason that has nothing to do with my care. They were produced
+by a subagent, and a subagent was given a fresh worktree because of an
+UNRELATED concern — keeping concurrent agents from mutating one checkout. The
+isolation that protects a parallel run from its siblings is the same isolation
+that makes its measurement trustworthy. I got the better evidence by accident.
+
+## A second instance, already in hand
+
+`axon_kernel_gate.sh` skipped its microVM layer for a missing `dist/guest/`
+image while firecracker and KVM were both present. `dist/` is also ignored. So
+this is not a quirk of one job's output directory: it is what happens whenever
+a check depends on generated state that `.gitignore` correctly excludes.
+
+The cheap static form of the question, available without running anything:
+**does this gate read a path that appears in `.gitignore`?** If yes, its result
+in any long-lived tree is unreliable by construction.
