@@ -297,6 +297,21 @@ if [ "$STRICT" = 1 ]; then
   # gate's smt stage is -p axon-core only.
   ./scripts/r23_acceptance_gate.sh >/dev/null 2>&1 || fail "R23 acceptance gate"
 
+  # R26/R27/R28/R29 — cited by REQUIREMENTS.md as the evidence those landed,
+  # and reachable from no execution root. They ARE run by axon_safety_gate.sh,
+  # which nothing invokes, so the whole subtree hung off nothing.
+  #
+  # Wired DIRECTLY rather than by wiring their parent. The parent re-runs BUILD
+  # and the full unit suite and a flagship demo — all of which this gate has
+  # already done by this point — for about 25 minutes of duplication. These four
+  # standalone cost 23 SECONDS total (measured: 1s, 7s, 11s, 4s). Minimising the
+  # number of WIRINGS and minimising the WORK are different objectives, and here
+  # they disagree; this picks the work.
+  ./scripts/r26_acceptance_gate.sh >/dev/null 2>&1 || fail "R26 acceptance gate"
+  ./scripts/r27_acceptance_gate.sh >/dev/null 2>&1 || fail "R27 acceptance gate"
+  ./scripts/r28_acceptance_gate.sh >/dev/null 2>&1 || fail "R28 acceptance gate"
+  ./scripts/r29_acceptance_gate.sh >/dev/null 2>&1 || fail "R29 acceptance gate"
+
   # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
   # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
   # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
