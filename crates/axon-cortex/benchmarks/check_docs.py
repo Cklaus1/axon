@@ -68,6 +68,14 @@ for d in art["call_depth_ablation"]:
     row = art["call_depth_ablation"][d]
     if isinstance(row, dict):
         sourced |= {str(row.get("top3")), str(row.get("truth_absent"))}
+# The top-k coverage curve, added explicitly rather than by walking the whole
+# artifact: a blanket walk would make EVERY number anywhere in the data count
+# as sourced, which is most of this checker's value given away.
+for v in (art.get("topk_curve", {}).get("pct_by_k") or {}).values():
+    sourced.add(str(v))
+    if isinstance(v, float):
+        sourced.add(f"{v:.1f}")
+
 sourced.add(str(round(100 * orc["verified"] / orc["trials"], 1)))
 g = art["guessing_generator"]
 oos = art["out_of_scope_defects"]
