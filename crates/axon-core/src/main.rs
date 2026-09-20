@@ -7258,18 +7258,32 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
 
     let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
 
-    // Collect top-level function items for the review report.
-    let fns: Vec<_> = program
-        .items
-        .iter()
-        .filter_map(|item| {
-            if let axon_core::ast::Item::FnDef(f) = item {
-                Some(f)
-            } else {
-                None
+    // Collect the functions for the review report.
+    //
+    // This filtered to `Item::FnDef` alone, so every method defined in an
+    // `impl` block was ABSENT from the report a human signs off on — and
+    // `axon ast approve` then binds a digest to that blind judgement. A method
+    // carries exactly the authority surface a free function does
+    // (`@[contained]`, an effect row, `@[verify]`), and `derive_risk_from_ast`
+    // already walked `ImplBlock` to build `axon deploy`'s risk level — so the
+    // two verbs disagreed about the same file, and the blind one was the one a
+    // human reads.
+    //
+    // Each entry carries its ORIGIN: `None` for a free function, `Some(type)`
+    // for a method, so a reviewer can see what is a method of what.
+    let mut fns: Vec<(Option<String>, &axon_core::ast::FnDef)> = Vec::new();
+    for item in &program.items {
+        match item {
+            axon_core::ast::Item::FnDef(f) => fns.push((None, f)),
+            axon_core::ast::Item::ImplBlock(b) => {
+                let owner = fmt_type(&b.for_type);
+                for m in &b.methods {
+                    fns.push((Some(owner.clone()), m));
+                }
             }
-        })
-        .collect();
+            _ => {}
+        }
+    }
 
     if json_flag {
         let errors_json = errors
@@ -7277,7 +7291,7 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
             .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(",");
-        let fns_json = fns.iter().map(|f| {
+        let fns_json = fns.iter().map(|(owner, f)| {
             let params: String = f.params.iter()
                 .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
                 .collect::<Vec<_>>()
@@ -7313,8 +7327,15 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
                 Some(c) => contained_json(c),
                 None => "null".to_string(),
             };
+            // `owner` is null for a free function and the implementing type
+            // for a method. Absent-vs-string, not ""-vs-string: "" would be a
+            // method of a type with no name.
+            let owner_json = match owner {
+                Some(t) => json_str(t),
+                None => "null".to_string(),
+            };
             format!(
-                "{{\"name\":{},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
+                "{{\"name\":{},\"owner\":{owner_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
                 json_str(&f.name),
                 f.name,
                 attrs.join(","),
@@ -7339,7 +7360,7 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
 
     println!("AST review: {}", file.display());
     println!("  {} function(s)", fns.len());
-    for f in &fns {
+    for (owner, f) in &fns {
         let params: String = f
             .params
             .iter()
@@ -7357,7 +7378,16 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
         } else {
             format!("  {}", attrs.join(" "))
         };
-        println!("  fn {}({}){}{}", f.name, params, ret, attr_str);
+        // The origin tag: a reviewer reading a flat list of names cannot
+        // otherwise tell a free function from a method of some type.
+        let owner_str = match owner {
+            Some(t) => format!("  [method of {t}]"),
+            None => String::new(),
+        };
+        println!(
+            "  fn {}({}){}{}{}",
+            f.name, params, ret, owner_str, attr_str
+        );
         if let Some(v) = &f.verify {
             println!("    @[verify]: {}", fmt_verify(v));
         }

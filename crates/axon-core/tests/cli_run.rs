@@ -22911,6 +22911,134 @@ fn ast_review_shows_the_capabilities_being_approved() {
     let _ = std::fs::remove_file(&f);
 }
 
+/// `axon ast review` collected ONLY `Item::FnDef`, so every method defined in
+/// an `impl` block was absent from the report a human signs off on — and
+/// `axon ast approve` then binds a digest to that blind judgement.
+///
+/// This is not a cosmetic omission. A method carries the same authority
+/// surface a free function does: `@[contained(...)]`, an effect row, and
+/// `@[verify]`. Measured before the fix, a file whose only network-touching
+/// code was an impl method rendered as:
+///
+///     AST review: agent.ax
+///       2 function(s)
+///       fn benign() -> i64
+///       fn main() -> i64
+///       no type errors
+///
+/// — a confident "no type errors" over a program that phones home. The same
+/// file makes `axon deploy --json` report `risk:"medium"`, derived from that
+/// method's `| {Net}` row (`derive_risk_from_ast` already walks `ImplBlock`).
+/// So two verbs disagreed about one file, and the blind one is the one a human
+/// reads.
+#[test]
+fn ast_review_shows_impl_methods_and_their_authority() {
+    let f = std::env::temp_dir().join(format!("axon_astrevimpl_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "trait Caller { fn phone_home(self) -> i64 }\n\
+         type Agent = { id: i64 }\n\
+         impl Caller for Agent {\n\
+         @[contained(net: [\"evil.example.com\"], exec: none)]\n\
+         @[verify(value >= 0)]\n\
+         fn phone_home(self: Agent) -> i64 | {Net} { self.id }\n\
+         }\n\
+         fn benign() -> i64 { 7 }\n\
+         fn main() -> i64 { let a = Agent { id: 3 }  benign() + a.phone_home() }\n",
+    )
+    .unwrap();
+
+    let out = axon()
+        .args(["ast", "review", f.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let j = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "ast review should exit 0: {j}");
+
+    // Depth-counted entry extraction (same reason as the capability test: a
+    // naive `find("}}")` matches nothing when `contained` is absent, silently
+    // returning the rest of the document).
+    let entry = |name: &str| -> String {
+        let key = format!("\"name\":\"{name}\"");
+        let start = j
+            .find(&key)
+            .unwrap_or_else(|| panic!("no entry for `{name}` — impl methods are invisible: {j}"));
+        let mut depth = 0i32;
+        let mut end = j.len();
+        for (i, c) in j[start..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        end = start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        j[start..end].to_string()
+    };
+
+    let m = entry("phone_home");
+
+    // The capability grant, which is the whole reason a human is asked to sign.
+    assert!(
+        m.contains("\"net\":[\"evil.example.com\"]"),
+        "method's @[contained] net allowlist must be shown: {j}"
+    );
+    assert!(
+        m.contains("\"exec\":false"),
+        "method's @[contained] exec must be shown: {j}"
+    );
+    // The effect row, by name — not a bare bool.
+    assert!(
+        m.contains("\"effect_set\":[\"Net\"]"),
+        "method's effect row must name Net: {j}"
+    );
+    assert!(m.contains("\"effects\":true"), "{j}");
+    // @[verify] surfaces for methods exactly as for free fns.
+    assert!(
+        m.contains("\"verified\":true"),
+        "method's @[verify] must be shown: {j}"
+    );
+    // ORIGIN: a reviewer must be able to tell what is a method of what.
+    assert!(
+        m.contains("\"owner\":\"Agent\""),
+        "method entry must name the type it belongs to: {j}"
+    );
+    // A free function is NOT owned — absent-vs-empty again.
+    assert!(
+        entry("benign").contains("\"owner\":null"),
+        "a free fn must report a null owner, not a string: {j}"
+    );
+
+    // The HUMAN view is what is actually read at sign-off.
+    let human = axon()
+        .args(["ast", "review", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let h = String::from_utf8_lossy(&human.stdout).to_string();
+    assert!(
+        h.contains("3 function(s)"),
+        "the count must include impl methods (was 2 of 3): {h}"
+    );
+    assert!(
+        h.contains("phone_home") && h.contains("[method of Agent]"),
+        "human view must list the method and name its owner: {h}"
+    );
+    assert!(
+        h.contains("net: [\"evil.example.com\"]"),
+        "human view must state the method's grant: {h}"
+    );
+    assert!(
+        h.contains("{Net}"),
+        "human view must state the method's effect row: {h}"
+    );
+    let _ = std::fs::remove_file(&f);
+}
+
 /// A High-risk `axon deploy` whose pipeline gate functions are not defined
 /// reported `status:"deployed", risk:"high", stages_run":[]` with exit 0 --
 /// byte-indistinguishable, to any JSON consumer, from a deploy whose gates

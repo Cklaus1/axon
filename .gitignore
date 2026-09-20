@@ -90,3 +90,9 @@ docs/*.zip
 __pycache__/
 *.pyc
 experiments/**/*.log
+
+# A worktree lane given CARGO_TARGET_DIR=<wt>/.target swept its whole
+# build directory into a commit, because only `/target` was ignored.
+# Thousands of artifacts in a branch is a merge hazard, not a nit.
+/.target/
+.target/
