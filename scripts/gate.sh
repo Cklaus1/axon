@@ -132,6 +132,17 @@ cargo clippy -p axon-cortex --all-targets --features ai -- -D warnings \
 cargo test -p axon-cortex --features ai \
   || fail "cortex ai-generator tests"
 
+# The benchmark prose against the data it cites, in BOTH directions. Twice in
+# one session a figure outlived its measurement — the binary's `--help` was
+# still advertising a top-1 accuracy the benchmark README had explicitly
+# withdrawn. Both times it was found by reading, which is not a method.
+#
+# Wired here because a checker nothing invokes is the same defect one layer
+# up: it existed, it worked, and it would have run only when someone
+# remembered it.
+python3 crates/axon-cortex/benchmarks/check_docs.py \
+  || fail "benchmark docs cite figures the data does not produce"
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 

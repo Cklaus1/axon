@@ -54,10 +54,11 @@
   "key_result": "the failures are EXACTLY the trials whose truth falls outside the top-3 ranking \u2014 the same set, not merely the same count. With a perfect generator the loop repairs precisely what localization finds and loses nothing of its own."
  },
  "adversarial_generator": {
-  "trials": 68,
+  "trials": 67,
   "exit_zero": 2,
   "false_successes": 0,
-  "note": "the two exit-zero rows are genuine repairs: the second mutation happened to land on correct code."
+  "note": "the exit-zero rows are genuine repairs: the second mutation happened to land on correct code. The unchanged count covers runs that COMPLETED; a run the harness killed on timeout cannot restore.",
+  "workspace_unchanged_on_failure": "64/64"
  },
  "guessing_generator": {
   "trials": 15,

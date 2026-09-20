@@ -94,8 +94,8 @@ model produces when it has misunderstood the defect.
 
 | | |
 |---|---|
-| false successes (exit 0, file still fails) | **0 / 68** |
-| workspace unchanged after a failed run | 65 / 65 completed runs |
+| false successes (exit 0, file still fails) | **0 / 67** |
+| workspace unchanged after a failed run | 64/64 completed runs |
 
 The one run that left the workspace altered was killed by the harness's own
 timeout before it could restore.
