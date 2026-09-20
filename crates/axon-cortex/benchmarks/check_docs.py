@@ -74,6 +74,93 @@ oos = art["out_of_scope_defects"]
 sourced.add(str(round(100 * g["repaired"] / g["trials"], 1)))
 orphans = sorted(n for n in set(re.findall(r"\b\d{1,3}\.\d\b", readme)) if n not in sourced)
 
+# ROW-KEYED CHECK — a figure must match the metric it is PRINTED AGAINST.
+#
+# Everything above joins on value membership in a flat set, which answers only
+# "does this number appear somewhere in the data". It cannot see a number that
+# has migrated to the wrong claim. Measured: swapping the operator row's top-1
+# and top-3 columns left this script exiting 0 on a table reading
+#
+#     | operator | 43 | 93.0% | 41.9% | 0.0% |
+#
+# i.e. top-1 GREATER than top-3, which is impossible by construction. The
+# value-set join is necessary (it catches a figure sourced from nowhere) and
+# not sufficient, so this runs beside it rather than replacing it.
+#
+# The key is the row LABEL, which is the metric's identity in these tables.
+def _num(cell):
+    c = cell.strip().strip("*").rstrip("%").strip("*")
+    try:
+        return float(c)
+    except ValueError:
+        return None
+
+
+def _rows(text, header_frag):
+    """Body rows of the first markdown table whose header contains a fragment."""
+    out, in_tbl = [], False
+    for line in text.splitlines():
+        if not in_tbl:
+            if line.startswith("|") and header_frag in line:
+                in_tbl = True
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [c for c in line.strip().strip("|").split("|")]
+        if all(set(c.strip()) <= set("- :") for c in cells):
+            continue          # the |---|---| separator
+        out.append(cells)
+    return out
+
+
+mismatch = []
+# --- per-class localization table ---
+LABEL = {"operator": "operator", "constant": "constant", "boolean": "boolean",
+         "argswap": "argswap", "drop-statement": "drop-stmt"}
+seen_rows = 0
+for cells in _rows(readme, "top-1 (sole candidate)"):
+    label = cells[0].strip().strip("*")
+    if label in LABEL:
+        row = loc["per_class"][LABEL[label]]
+        want = [("n", row["n"]), ("top-1", row["top1_sole"]), ("top-3", row["top3"])]
+    elif label == "all":
+        want = [("n", loc["trials"]), ("top-1", loc["top1_sole_candidate"]),
+                ("top-3", loc["top3"]), ("truth absent", loc["truth_absent"])]
+    else:
+        continue
+    seen_rows += 1
+    for i, (what, expect) in enumerate(want, start=1):
+        got = _num(cells[i])
+        if got is None or abs(got - float(expect)) > 1e-9:
+            mismatch.append(f"localization row `{label}` column {what}: "
+                            f"the doc says {cells[i].strip()}, the artifact says {expect}")
+
+# --- call-depth ablation table ---
+for cells in _rows(readme, "| depth |"):
+    label = cells[0].strip().strip("*")
+    m = re.match(r"(\d+)", label)
+    if not m:
+        continue
+    row = art["call_depth_ablation"].get(m.group(1))
+    if not isinstance(row, dict):
+        continue
+    seen_rows += 1
+    for i, (what, expect) in enumerate(
+            [("top-3", row.get("top3")), ("truth absent", row.get("truth_absent"))], start=1):
+        if expect is None:
+            continue
+        got = _num(cells[i])
+        if got is None or abs(got - float(expect)) > 1e-9:
+            mismatch.append(f"call-depth row `{label}` column {what}: "
+                            f"the doc says {cells[i].strip()}, the artifact says {expect}")
+
+# A row-keyed check that matched no rows would pass on anything — the same
+# vacuous-pass the coverage guards elsewhere in this repo exist to prevent.
+if seen_rows < 8:
+    broke(f"the row-keyed check matched only {seen_rows} table rows; the "
+          f"tables it joins on have moved or been renamed, so it is "
+          f"verifying almost nothing")
+
 # FRACTIONS TOO — "99 / 111", "16 / 16".
 #
 # The first version checked only decimals, so perturbing `16 / 16` to
@@ -175,10 +262,13 @@ for n in orphans:
     print(f"  UNSOURCED in the prose: {n} — no figure in {os.path.basename(art_path)} produces it")
 for f in bad_fractions:
     print(f"  UNSOURCED fraction in the prose: {f} — no pair in {os.path.basename(art_path)} produces it")
-if missing or orphans or bad_fractions or stale_elsewhere:
+for m in mismatch:
+    print(f"  WRONG METRIC: {m}")
+if missing or orphans or bad_fractions or stale_elsewhere or mismatch:
     print("\ndocs have drifted from the data they cite")
     sys.exit(1)
 print(
     f"docs match {os.path.basename(art_path)} in both directions "
-    f"({1 + len(elsewhere)} documents checked)"
+    f"({1 + len(elsewhere)} documents checked, {seen_rows} table rows "
+    f"joined by row label)"
 )
