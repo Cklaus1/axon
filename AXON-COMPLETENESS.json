@@ -46,7 +46,7 @@
         "scripts/exit_code_parity.sh",
         "scripts/checked_arith_parity.sh"
       ],
-      "gap": "52 harnesses green; coverage is by construct, not exhaustive"
+      "gap": "AUDITED, and softer than this row read. Nothing asserts the '52 harnesses' figure: there are 54 files and parity_all's floor is 40, so 4-9 harnesses can silently flip to SKIP and still pass. ~19 harnesses treat a per-case NATIVE BUILD FAILURE as a skip with stderr to /dev/null \u2014 so a codegen regression in the builtin under test reads as 'skipping'. dict_parity and arr_reduce_parity were fixed to FAIL on that; the fix was never propagated. Cores are strong; the classification of non-results is where green means less than it reads."
     },
     {
       "area": "compiler",
@@ -608,6 +608,31 @@
         "crates/axon-core/src/main.rs"
       ],
       "gap": "PROVEN at runtime with a control: cmd_ast_review filters Item::FnDef only, so an impl method carrying @[contained(net:[evil.example.com])] and | {Net} is ABSENT from the review a human signs off on \u2014 and the human view prints a confident '2 function(s) / no type errors'. Enforcement is fine (E1001 and E1310 both REFUTED as broken, with controls); the defect is in what is SHOWN. `axon deploy` derives risk:medium from the same method the review renders as effect_set:[]."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "harness skip classification",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "partial",
+      "evidence": [
+        "scripts/parity_all.sh",
+        "crates/axon-core/tests/cli_run.rs"
+      ],
+      "gap": "Two skip detectors disagree: parity_all judges by `tail -1`, cli_run's harness_skipped scans the last 3 lines. A harness whose skip marker is not last is SKIP to one and PASS to the other \u2014 handler_resume_parity and exit_code_parity's catch-all both exit 0 with build-error text last, so total codegen breakage classifies as PASS. Also: `cargo test <filter>` exits 0 when the filter matches NOTHING, which increments the very `ran` counter several harnesses use as their vacuity guard. browser_compute_parity has the correct pattern (require >=1 passed) and it was not generalised."
+    },
+    {
+      "area": "evidence",
+      "subsystem": "harnesses wired to something",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [
+        "scripts/kernel_enforce_test.sh"
+      ],
+      "gap": "16 harnesses are reachable from nothing. Two bite: kernel_enforce_test.sh is a rigorous two-case differential with a negative control and is the ONLY live end-to-end proof of the guest-kernel syscall gate \u2014 it runs nowhere; and CLAUDE.md's platform-verification claim cites a GPU leg (gfx_wgpu_render_gate.sh) and a browser-WebGPU leg that are wired to nothing. Several acceptance gates also assert properties by grepping SOURCE COMMENTS \u2014 r31 backs 'reordering produces a different digest' with the presence of an English phrase."
     }
   ]
 }

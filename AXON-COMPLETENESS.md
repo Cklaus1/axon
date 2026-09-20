@@ -12,7 +12,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 |---|---|---|---|---|---|
 | lexer / parser | ✓ | ✓ | ? | ✓ |  |
 | type inference / checker | ✓ | ✓ | ? | ✓ |  |
-| interp/codegen parity | ✓ | ✓ | ~ | ✓ | 52 harnesses green; coverage is by construct, not exhaustive |
+| interp/codegen parity | ✓ | ✓ | ~ | ✓ | AUDITED, and softer than this row read. Nothing asserts the '52 harnesses' figure: there are 54 files and parity_all's floor is 40, so 4-9 harnesses can silently flip to SKIP and still pass. ~19 harnesses treat a per-case NATIVE BUILD FAILURE as a skip with stderr to /dev/null — so a codegen regression in the builtin under test reads as 'skipping'. dict_parity and arr_reduce_parity were fixed to FAIL on that; the fix was never propagated. Cores are strong; the classification of non-results is where green means less than it reads. |
 | single-file diagnostics | ✓ | ✓ | ? | ✓ |  |
 | MULTI-FILE source identity | ✗ | ✗ | ✗ | ✗ | Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:14 reports as main.ax:6:112, in a 5-line file. scripts/diagnostic_location_gate.sh is RED on HEAD and NOT yet wired into gate.sh. Design landed: ~110 edits, and the HARM is removable first without touching Span, by making SourceMap::line_col refuse instead of clamp. |
 | import resolution determinism | ~ | ? | ✗ | ~ | load_use_decls searches AXON_PATH; the resolved path is not part of any digest, so the same source can mean different programs |
@@ -65,6 +65,8 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | crate axon-audit | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
 | crate axon-ledger | ? | ? | ? | ? | NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent — every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable. |
 | crate axon-web | ~ | ✗ | ? | ~ | AUDITED. The recurring shape is a correct computation whose QUALIFIER is dropped by its only reader: /api/safety/attest enters mock on FILE ABSENCE and returns attested:true with a literal digest, while safety_status drops `mode`; the UI then prints 'attested (live)' from its own `|| live` fallback. coalition_ok is a hardcoded literal true; killable means 'the runs dir is creatable'. The kill endpoint computes `armed` and a `note` saying armed:false is a PRE-ARM not a confirmed kill — and html.rs reads only `ok` and prints 'Kill latch tripped'. |
+| harness skip classification | ~ | ✗ | ✗ | ~ | Two skip detectors disagree: parity_all judges by `tail -1`, cli_run's harness_skipped scans the last 3 lines. A harness whose skip marker is not last is SKIP to one and PASS to the other — handler_resume_parity and exit_code_parity's catch-all both exit 0 with build-error text last, so total codegen breakage classifies as PASS. Also: `cargo test <filter>` exits 0 when the filter matches NOTHING, which increments the very `ran` counter several harnesses use as their vacuity guard. browser_compute_parity has the correct pattern (require >=1 passed) and it was not generalised. |
+| harnesses wired to something | ~ | ✗ | ✗ | ✗ | 16 harnesses are reachable from nothing. Two bite: kernel_enforce_test.sh is a rigorous two-case differential with a negative control and is the ONLY live end-to-end proof of the guest-kernel syscall gate — it runs nowhere; and CLAUDE.md's platform-verification claim cites a GPU leg (gfx_wgpu_render_gate.sh) and a browser-WebGPU leg that are wired to nothing. Several acceptance gates also assert properties by grepping SOURCE COMMENTS — r31 backs 'reordering produces a different digest' with the presence of an English phrase. |
 
 ## experimental
 
@@ -98,7 +100,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-21 of 21 crates are represented (0 explicitly excused). 15 of 50 subsystems have a production proof; 17 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+21 of 21 crates are represented (0 explicitly excused). 15 of 52 subsystems have a production proof; 17 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
