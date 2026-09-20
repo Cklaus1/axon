@@ -664,6 +664,21 @@
         "scripts/kernel_enforce_test.sh"
       ],
       "gap": "PARTLY CLOSED \u2014 and note WHERE: every stage from gate.sh:256 to :506 is inside `if [ \"$STRICT\" = 1 ]`, so the parity suite, EVERY acceptance gate, the codegen-gated tests and all of this session's wirings run ONLY under `gate.sh --strict`. A default `gate.sh` run prints 10 banners and its own coverage notice says so: 'This run did NOT verify interp<->codegen / AOT-wasm parity (invariant I-2)'. The gate is honest; a reader who quotes 'gate PASSED' without that notice is not. Wired this session after being run first: kernel_enforce_test.sh (the only live proof of the guest-kernel syscall gate, PASSES both directions), all_examples_parity.sh (the broadest sweep in the repo \u2014 it caught the llvm_sizeof Result-payload corruption \u2014 76 examples native==interp), and the three domain round-trips. STILL UNWIRED: gfx_wgpu_render_gate.sh and browser_webgpu_clear.sh (both legs of the corrected platform-verification claim), qemu_boot_test.sh, fc_boot_test.sh, axon_kernel_gate.sh, axon_safety_gate.sh, r30_acceptance_gate.sh, perf_bench.sh, r1_build_measure.sh, build_outcome_regression.sh, wasm_aot_link_probe.sh, axon_session_demo.sh. reference_gate.sh is unwired but its property IS covered, by cli_run's axon_reference_is_in_sync_with_the_binary \u2014 wiring it would duplicate rather than add."
+    },
+    {
+      "area": "authority",
+      "subsystem": "CVE-Bench prevention claim",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
+      "evidence": [
+        "examples/flagship/cve/TRIAGE.md",
+        "examples/flagship/cve/COVERAGE.md",
+        "crates/axon-core/tests/cli_run.rs",
+        "scripts/gate.sh"
+      ],
+      "gap": "AUDITED AND UPHELD \u2014 recorded because a session that reports only overstatements leaves a false impression. README claims Axon prevents ~28 of CVE-Bench's 40 critical CVEs. TRIAGE.md buckets ALL 40 with per-class mechanisms; COVERAGE.md is titled 'the whole 40, honestly', carries explicit OUT OF SCOPE rows (weak password hashing: 'a type system can't pick a strong KDF for you') and records a real escaping defect it found and fixed (single-quote-only escaping let a backslash consume its closing quote on MySQL). 8 CVEs have reproduction directories, driven by a cargo test; the flagship demo is gated. NOT mutation-tested, and the SQL escaping is explicitly MySQL-dialect rather than neutral \u2014 both stated in the source docs."
     }
   ]
 }

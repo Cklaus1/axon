@@ -38,6 +38,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | crate axon-os | ~ | ✗ | ✗ | ~ | AUDITED. verify_approval is an UNKEYED sha256 over public inputs, presented to the operator as 'someone signed this and the signature does not hold' — anyone who can write <job>.approval mints a valid token. `axon-os verify` prints 'intact' for a fully forged record (the chain is seeded from the record's OWN stored manifest_digest, never compared to the .axjob). The run record holds ONE event whose caps_used is the CEILING, advertised as N events of observed activity. The signed Budget line gates nothing: only `calls` is propagated and even that is debited by no ordinary builtin. scan_effects returns Label::Internal in BOTH branches, so the confidentiality denial states a fact about the program derived from a constant. |
 | crate axon-vm | ~ | ✗ | ✗ | ~ | AUDITED. `run --quorum` mints an unpredictable run_id with no --run-id flag, then filters votes by it — approvals are always 0, so the gate is unsatisfiable and reports it as 'insufficient approvals' rather than as unusable. Fail-closed, so not a safety hole. attest with no --verify-digest sets ok:true having compared nothing; key_source (operator vs ephemeral — 'the whole security story' per its own comment) is stderr-only and absent from the JSON. |
 | ast review covers impl methods | ✓ | ✓ | ✓ | ✓ | FIXED. cmd_ast_review walks Item::ImplBlock and each fn carries its origin (owner in JSON, [method of Agent] in the human line). Mutation-verified at integration: reverting main.rs alone turns the test red with 'no entry for phone_home — impl methods are invisible'. OPEN: the schema stayed /2 though the POPULATION of fns changed; and gates implemented as impl methods are still invisible to redteam/deploy. |
+| CVE-Bench prevention claim | ✓ | ✓ | ✗ | ✓ | AUDITED AND UPHELD — recorded because a session that reports only overstatements leaves a false impression. README claims Axon prevents ~28 of CVE-Bench's 40 critical CVEs. TRIAGE.md buckets ALL 40 with per-class mechanisms; COVERAGE.md is titled 'the whole 40, honestly', carries explicit OUT OF SCOPE rows (weak password hashing: 'a type system can't pick a strong KDF for you') and records a real escaping defect it found and fixed (single-quote-only escaping let a backslash consume its closing quote on MySQL). 8 CVEs have reproduction directories, driven by a cargo test; the flagship demo is gated. NOT mutation-tested, and the SQL escaping is explicitly MySQL-dialect rather than neutral — both stated in the source docs. |
 
 ## cortex
 
@@ -100,7 +101,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-21 of 21 crates are represented (0 explicitly excused). 28 of 52 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+21 of 21 crates are represented (0 explicitly excused). 29 of 53 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
