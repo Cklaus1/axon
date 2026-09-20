@@ -688,3 +688,125 @@ fn cli_repairs_a_file_that_compiles_with_warnings() {
         "the repair must actually be in the file: {after}"
     );
 }
+
+/// C20 — the operator's own program as the generator.
+///
+/// `cmd:PATH` writes the prompt to a program's stdin and reads the proposed
+/// body from its stdout. It exists so Cortex can be driven by whatever model
+/// the operator already has, with no credentials in this process and no
+/// provider baked into the crate.
+///
+/// It also makes one claim testable end to end for the first time: what the
+/// generator is SHOWN. Until now "the generator never sees the grader" was
+/// asserted against a struct field; here it is checked against the bytes a
+/// real external process received.
+#[test]
+fn cli_drives_an_external_generator_and_shows_it_no_grader() {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_cmd_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
+
+    let script = |name: &str, body: &str| -> std::path::PathBuf {
+        let p = ws.join(name);
+        std::fs::write(&p, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    };
+    let run = |gen: &str| -> (i32, String, String) {
+        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+            .args(["repair", "--workspace"])
+            .arg(&ws)
+            .args([
+                "--file",
+                "broken.ax",
+                "--check",
+                "hidden_completion",
+                "--axon",
+            ])
+            .arg(axon_bin())
+            .args(["--write-prefix", "broken.ax", "--generator", gen])
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // 1. A program that proposes the right body repairs the file, and the
+    //    prompt it received is captured for inspection.
+    let good = script(
+        "good.sh",
+        "#!/bin/sh\ncat > \"$(dirname \"$0\")/prompt.txt\"\nprintf '\\n    n * 2\\n'\n",
+    );
+    let (code, out, err) = run(&format!("cmd:{}", good.display()));
+    assert_eq!(
+        code, 0,
+        "an external generator must be able to repair: {err}{out}"
+    );
+    assert!(std::fs::read_to_string(ws.join("broken.ax"))
+        .unwrap()
+        .contains("n * 2"));
+
+    // WHAT IT WAS SHOWN. The prompt carries the body under repair and the
+    // observed facts — and nothing from the check that grades the result. A
+    // generator that could read the grader would be writing against it, and
+    // passing it would stop being evidence of anything.
+    let prompt = std::fs::read_to_string(ws.join("prompt.txt")).expect("the prompt reached it");
+    assert!(
+        prompt.contains("n + 2") && prompt.contains("double"),
+        "the generator must be shown the body it is replacing: {prompt}"
+    );
+    for leaked in ["hidden_completion", "double(7)", "double(0)", "14"] {
+        assert!(
+            !prompt.contains(leaked),
+            "the prompt leaked `{leaked}` from the adjudicating check:\n{prompt}"
+        );
+    }
+    // And the episode records WHICH program produced the patch.
+    assert!(
+        out.contains("repaired"),
+        "the run must name what it repaired: {out}"
+    );
+
+    // 2. A program that RAN and refused is Declined — the remedy is the task
+    //    or the prompt, not the installation.
+    std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
+    let refuses = script(
+        "no.sh",
+        "#!/bin/sh\ncat >/dev/null\necho 'not today' >&2\nexit 3\n",
+    );
+    let (code2, out2, err2) = run(&format!("cmd:{}", refuses.display()));
+    assert_eq!(code2, 24, "a refusing generator is missing CONTENT: {err2}");
+    let said2 = format!("{out2}{err2}");
+    assert!(
+        said2.contains("declined") && said2.contains("exited 3"),
+        "the refusal must carry the program's own exit status: {said2}"
+    );
+
+    // 3. A program that cannot be STARTED is Unavailable — an infrastructure
+    //    fact about the operator's setup, not a statement about the task. The
+    //    distinction is the same one a missing API key gets.
+    let (code3, out3, err3) = run("cmd:/nonexistent/generator");
+    assert_eq!(code3, 24, "{err3}");
+    let said3 = format!("{out3}{err3}");
+    assert!(
+        said3.contains("unavailable") && said3.contains("cannot run"),
+        "an unstartable generator must not read as a refusal: {said3}"
+    );
+
+    // 4. The file is untouched by either failure.
+    assert!(
+        std::fs::read_to_string(ws.join("broken.ax"))
+            .unwrap()
+            .contains("n + 2"),
+        "a failed generation must leave the workspace alone"
+    );
+}

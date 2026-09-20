@@ -58,7 +58,13 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          top-3 covers 90%; each attempt starts from the state
                          this run found, and the hidden check adjudicates every
                          one of them.
-  --generator SPEC       none (default) | ai:MODEL | literal:BODY
+  --generator SPEC       none (default) | ai:MODEL | cmd:PATH | literal:BODY
+                         cmd: runs YOUR program — the prompt on its stdin, the
+                         proposed body on its stdout. No credentials enter this
+                         process and no provider is baked in. A model still
+                         chooses nothing: you name the command here, before any
+                         model is involved, and what it returns is validated,
+                         authorized and adjudicated like any other proposal.
                          literal: applies a body you already know through the
                          same grant check and the same hidden check a model's
                          would face. Knowing the answer is a reason to skip the
@@ -165,6 +171,12 @@ fn main() {
             "none" => None,
             // `literal:BODY` applies a body the operator already knows,
             // through the full pipeline rather than around it.
+            // `cmd:PATH` — the operator's own program. Prompt on stdin, body
+            // on stdout. A model still chooses nothing: the command is named
+            // here, on the command line, before any model is involved.
+            spec if spec.starts_with("cmd:") => Some(Box::new(
+                axon_cortex::generate::CommandGenerator::new(&spec["cmd:".len()..]),
+            )),
             spec if spec.starts_with("literal:") => Some(Box::new(
                 axon_cortex::generate::LiteralGenerator::new(&spec["literal:".len()..]),
             )),

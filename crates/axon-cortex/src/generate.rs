@@ -16,7 +16,7 @@
 //! that the loop then has to accept on its own terms.
 
 use crate::action::SymbolRef;
-use crate::Observation;
+use crate::{Observation, Observed};
 
 /// What a proposal must respect. Passed to the generator so the constraints are
 /// stated rather than assumed, and checked by the caller afterwards regardless
@@ -178,6 +178,61 @@ pub fn validate(
     Ok(())
 }
 
+/// What a generator is asked. Built from the body and the observed facts and
+/// nothing else — in particular NOT from the hidden check, which decides
+/// whether the result is accepted and would stop being evidence the moment
+/// the thing under test could read it.
+pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints) -> String {
+    let mut facts = String::new();
+    for (k, v) in &obs.facts {
+        let rendered = match v {
+            Observed::Known { value } => value.clone(),
+            // An unknown fact is passed on AS unknown. Dropping it would
+            // present a partial observation as a complete one, which is
+            // the collapse `Observed` exists to prevent.
+            Observed::Unknown { reason } => format!("unknown ({reason})"),
+        };
+        facts.push_str(&format!("- {k}: {rendered}\n"));
+    }
+    // What has already failed, oldest first. A model told only the current
+    // state proposes the same thing again; the whole reason this list is
+    // threaded through the constraints is so a retry can be a different
+    // IDEA rather than the same one reworded.
+    let mut history = String::new();
+    for (i, r) in c.rejected.iter().enumerate() {
+        history.push_str(&format!(
+            "\nAttempt {} was REJECTED because {}:\n```\n{}\n```\n",
+            i + 1,
+            r.reason,
+            r.body
+        ));
+    }
+    if !history.is_empty() {
+        history = format!(
+            "\nAlready tried in this episode — do NOT propose any of these \
+             again, and prefer a materially different approach:\n{history}"
+        );
+    }
+    format!(
+        "You are repairing one function in an Axon program.\n\n\
+         File: {path}\n\
+         Function: {symbol}\n\n\
+         Its body is currently:\n\
+         ```\n{body}\n```\n\n\
+         What a checker observed about the file:\n{facts}\
+         {history}\n\
+         The function is believed to be semantically wrong. Return the \
+         REPLACEMENT BODY only — the text between the function's braces, \
+         with no braces, no signature, and no explanation. Keep it under \
+         {max} bytes. Preserve the existing indentation style.",
+        path = target.path,
+        symbol = target.symbol,
+        body = c.current_body,
+        history = history,
+        max = c.max_bytes,
+    )
+}
+
 /// Proposes one fixed body, supplied by the operator.
 ///
 /// Not a test double — it is reachable from the CLI as `--generator
@@ -215,6 +270,100 @@ impl PatchGenerator for LiteralGenerator {
     ) -> Result<ProposedPatch, GenerationFailure> {
         Ok(ProposedPatch {
             body: self.body.clone(),
+            generator_id: self.id(),
+        })
+    }
+}
+
+/// Asks a program the operator names.
+///
+/// The prompt goes to its stdin; the proposed body is its stdout. That is the
+/// whole protocol, and it exists so Cortex can be driven by whatever model the
+/// operator already has — a vendor CLI, a local server, a shell script — with
+/// no credentials inside this process and no provider baked into this crate.
+///
+/// ## Why this is not the thing this crate refuses to do
+///
+/// Cortex's central discipline is that a MODEL never chooses an action and
+/// never holds a tool. That is intact here. The command is named by the
+/// OPERATOR on the command line, under their own authority, before any model
+/// is involved; a model cannot select it, cannot change it, and cannot reach
+/// past it. What crosses the boundary in that direction is a prompt, and what
+/// comes back is text that re-enters the same typed pipeline as any other
+/// proposal — validated, authorized against the same grant, and adjudicated by
+/// the same hidden check.
+///
+/// The operator is trusting their own program, which they already run. They
+/// are not granting a model anything.
+pub struct CommandGenerator {
+    program: String,
+}
+
+impl CommandGenerator {
+    pub fn new(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+        }
+    }
+}
+
+impl PatchGenerator for CommandGenerator {
+    fn id(&self) -> String {
+        // The program as written, so the episode records WHICH generator ran.
+        // Not the resolved absolute path: what the operator typed is what they
+        // will recognise, and two different scripts with the same basename
+        // stay distinguishable.
+        format!("cmd:{}", self.program)
+    }
+
+    fn propose(
+        &self,
+        observation: &Observation,
+        target: &SymbolRef,
+        constraints: &PatchConstraints,
+    ) -> Result<ProposedPatch, GenerationFailure> {
+        use std::io::Write;
+        let prompt = build_prompt(observation, target, constraints);
+        let mut child = std::process::Command::new(&self.program)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            // Could not be STARTED: missing, not executable, wrong path. An
+            // infrastructure fact about the operator's setup, not a statement
+            // about the task — the same reason a missing API key is
+            // Unavailable rather than Declined.
+            .map_err(|e| {
+                GenerationFailure::Unavailable(format!("cannot run `{}`: {e}", self.program))
+            })?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(prompt.as_bytes());
+            // Dropped here, closing the pipe. A generator that reads stdin to
+            // EOF would otherwise wait forever for input that has already been
+            // written, and the loop would hang rather than fail.
+            drop(stdin);
+        }
+        let out = child.wait_with_output().map_err(|e| {
+            GenerationFailure::Unavailable(format!("`{}` could not be read: {e}", self.program))
+        })?;
+        if !out.status.success() {
+            // It RAN and refused. Declined, not Unavailable: the remedy is the
+            // prompt or the task, not the installation.
+            let why = String::from_utf8_lossy(&out.stderr);
+            let why = why.trim();
+            return Err(GenerationFailure::Declined(format!(
+                "`{}` exited {}{}",
+                self.program,
+                out.status.code().unwrap_or(-1),
+                if why.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", why.lines().next().unwrap_or(""))
+                }
+            )));
+        }
+        Ok(ProposedPatch {
+            body: String::from_utf8_lossy(&out.stdout).to_string(),
             generator_id: self.id(),
         })
     }

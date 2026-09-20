@@ -97,7 +97,16 @@ about whether to widen a grant, supply a generator, or fix a PATH.
 |---|---|
 | `none` | observe and adjudicate only; a needed patch reports exit 24 |
 | `ai:MODEL` | a language model (`--features ai`) |
+| `cmd:PATH` | your own program — prompt on its stdin, proposed body on its stdout |
 | `literal:BODY` | a body you already know, pushed through the same grant check and the same hidden check a model's would face |
+
+`cmd:` exists so Cortex can be driven by whatever model you already have — a
+vendor CLI, a local server, a shell script — with no credentials in this
+process and no provider baked into the crate. It does not weaken the
+discipline that a model never chooses an action: YOU name the command, on the
+command line, before any model is involved. A model cannot select it, change
+it, or reach past it; what comes back is text, validated and adjudicated like
+any other proposal.
 
 `literal:` is not a test double. Knowing the answer is a reason to skip the
 model, not a reason to skip the adjudication — and hand-editing the file runs
