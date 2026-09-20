@@ -2052,18 +2052,32 @@ fn fixture_provenance_manual_operator_names_the_dead_caller() {
         )
         .write(
             "scripts/r_other.sh",
-            "#!/usr/bin/env bash\n# leaf.sh is the thing this mirrors\necho hi\n",
+            // Names BOTH: the dead caller (so `why_dead` takes its mention-count
+            // branch, the one the real axon_safety_gate.sh takes with 9 mentions)
+            // and the leaf (so the grep-finds-it case is exercised).
+            "#!/usr/bin/env bash\n# leaf.sh mirrors scripts/umbrella.sh\necho hi\n",
         )
-        .write("scripts/leaf.sh", "#!/usr/bin/env bash\necho ok\n");
-    let why = f.facts().explain("leaf.sh").join("\n");
+        .write("scripts/leaf.sh", "#!/usr/bin/env bash\necho ok\n")
+        .write("scripts/nowhere.sh", "#!/usr/bin/env bash\necho ok\n");
+    let facts = f.facts();
+    let why = facts.explain("leaf.sh").join("\n");
     assert!(why.contains("shortest path from a root: NONE"), "{why}");
     assert!(
         why.contains("reachable only via scripts/umbrella.sh"),
         "{why}"
     );
     assert!(
-        why.contains("scripts/umbrella.sh — orphaned"),
-        "must explain the CALLER — {why}"
+        why.contains("scripts/umbrella.sh — orphaned: 1 mention(s), none a caller"),
+        "must explain the CALLER, including how many mentions misled a grep — {why}"
+    );
+    // The other branch: a script nothing mentions at all must say exactly that.
+    assert!(
+        facts
+            .explain("nowhere.sh")
+            .join("\n")
+            .contains("named nowhere under scripts/"),
+        "{:?}",
+        facts.explain("nowhere.sh")
     );
     // The comment mention elsewhere is still surfaced: a reviewer greps and
     // finds it, so the report must say it is not a caller.
