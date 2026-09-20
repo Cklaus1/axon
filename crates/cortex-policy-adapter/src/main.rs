@@ -24,6 +24,19 @@
 //! grant's snapshot is supplied separately from the request's, which is the point: when the
 //! workspace has moved on, they differ and Cortex refuses `StaleSnapshot` — authority does not
 //! survive the state it was granted over.
+//!
+//! **`--grant-snapshot` is required, and its absence is an infrastructure failure.** It used to
+//! default to the snapshot carried by the REQUEST. That made the grant's snapshot and the current
+//! snapshot equal by construction, so `StaleSnapshot` could never fire and the property this
+//! paragraph describes quietly did not hold. The doc above was already written; the code below
+//! disagreed with it.
+//!
+//! Note the asymmetry that made it easy to miss: an empty `--write-prefix` list DENIES everything,
+//! while an empty `--grant-snapshot` PERMITTED everything — opposite fail directions for two
+//! fields of one grant, decided a dozen lines apart. Both now fail closed.
+//!
+//! "No authority basis was supplied" is not "the authority is current". Synthesising the second
+//! from the first is what turns an authority check into decoration.
 
 use std::io::Read;
 
@@ -67,6 +80,21 @@ fn main() {
         }
     }
 
+    // Required. Absence is an infrastructure failure, NOT a permissive default: without it nobody
+    // has said which state this authority was issued over, and the only way to proceed would be to
+    // assume it is the current one — the assumption that made StaleSnapshot unreachable.
+    //
+    // `fail` exits non-zero with no decision on stdout, so the client records an infrastructure
+    // failure rather than an allow or a refuse. A refusal here would misreport a misconfigured
+    // adapter as a strict policy.
+    if grant_snapshot.trim().is_empty() {
+        fail(
+            "--grant-snapshot is required: the state the grant was issued over must be supplied \
+             independently of the request, or staleness cannot be evaluated. Refusing to infer it \
+             from the request's snapshot, which would make StaleSnapshot unreachable.",
+        );
+    }
+
     let mut body = String::new();
     if std::io::stdin().read_to_string(&mut body).is_err() {
         fail("could not read the request");
@@ -105,11 +133,9 @@ fn main() {
     let grant = EditGrant {
         grant_id: "policy-b".to_string(),
         principal: principal.clone(),
-        snapshot_id: if grant_snapshot.is_empty() {
-            snapshot_id.to_string()
-        } else {
-            grant_snapshot
-        },
+        // NEVER synthesised from the request. See the module docs: deriving the grant's basis from
+        // the thing it is supposed to be checked against is a tautology, not a default.
+        snapshot_id: grant_snapshot,
         write_prefixes,
     };
 
