@@ -337,6 +337,19 @@ if [ "$STRICT" = 1 ]; then
   # with four deliberately injected bugs, which both validators must find. It
   # proves the port detects bugs rather than proving two validators agree an
   # already-clean tree is clean.
+  # R32 — the formal-corrigibility proof artifacts (TLA+ model, TLC config, Coq
+  # proof). Measured here: PASS=20 FAIL=0 SKIPPED=0, "all checks ran, none
+  # skipped", including coqc_compile — the Coq proof genuinely compiles.
+  #
+  # Its completeness is HOST-DEPENDENT and its exit code does not say so. With
+  # TLC/coqc absent it reports each missing check as SKIPPED and still exits 0.
+  # The prose is honest ("SKIPPED is not a substitute for PASS: it is an honest
+  # report that the check did not run at all") but gate.sh reads exit codes, not
+  # prose — the same gap that made axon_safety_gate's verdict unreadable to a
+  # caller. So this is wired to RUN, not to certify: its evidence class is
+  # toolchain-conditional, and EVIDENCE_CLASSES.md types it rather than this
+  # line pretending it is continuous.
+  ./scripts/r32_acceptance_gate.sh >/dev/null 2>&1 || fail "R32 acceptance gate"
   ./scripts/r39_slice2_gate.sh >/dev/null 2>&1 || fail "R39 Slice 2 gate"
   ./scripts/r39_slice3_gate.sh >/dev/null 2>&1 || fail "R39 Slice 3 gate"
   ./scripts/r39_slice4_gate.sh >/dev/null 2>&1 || fail "R39 Slice 4 gate"
