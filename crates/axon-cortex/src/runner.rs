@@ -22,6 +22,7 @@
 //! * `G02-partial` — a broken fixture still yields a useful partial
 //!   observation, and the observer never fabricates.
 
+use crate::action::CortexAction;
 use crate::episode::{Episode, EpisodeEvent};
 use crate::{content_digest, Observation, Observed, WorkspaceSnapshot};
 use std::path::{Path, PathBuf};
@@ -264,6 +265,95 @@ impl Runner {
             omission_count: obs.omission_report.len(),
         });
         obs
+    }
+
+    /// Authorize a TYPED action. This is the real boundary; the `&str` form
+    /// below exists for the edge where a request arrives as JSON from another
+    /// process and must be parsed before it can be trusted.
+    ///
+    /// The authority a variant needs is a property of the variant, so the
+    /// nonsense combinations the string API could express are not decided here
+    /// — they cannot be built. `ClaimDone` carries no path, so no path check is
+    /// skipped for it; there is nothing to skip.
+    pub fn authorize_action(
+        &mut self,
+        action: &CortexAction,
+        grant: Option<&EditGrant>,
+        principal: &str,
+        current_snapshot: &WorkspaceSnapshot,
+    ) -> Result<(), Refusal> {
+        let r = self.check_typed_authority(action, grant, principal, current_snapshot);
+        if let Err(ref why) = r {
+            self.episode.push(EpisodeEvent::ActionDenied {
+                action: action.name().to_string(),
+                reason: why.to_string(),
+            });
+        }
+        r
+    }
+
+    /// Side-effect-free twin of [`Runner::authorize_action`], for a caller that
+    /// must decide without recording an episode event.
+    pub fn authorize_action_dry(
+        &self,
+        action: &CortexAction,
+        grant: Option<&EditGrant>,
+        principal: &str,
+        current: &WorkspaceSnapshot,
+    ) -> Result<(), Refusal> {
+        self.check_typed_authority(action, grant, principal, current)
+    }
+
+    fn check_typed_authority(
+        &self,
+        action: &CortexAction,
+        grant: Option<&EditGrant>,
+        principal: &str,
+        current: &WorkspaceSnapshot,
+    ) -> Result<(), Refusal> {
+        // No catalog membership test: the type IS the catalog. An action
+        // outside it cannot reach this function.
+        if !action.requires_write_authority() {
+            return Ok(());
+        }
+        // `Some` for exactly the variants that write. A non-writing action
+        // returning a path here would mean the type and the authority rule
+        // disagree, which is worth failing loudly rather than defaulting.
+        let target_path = action.write_target().ok_or_else(|| {
+            Refusal::NotInCatalog(format!(
+                "{} requires write authority but names no write target",
+                action.name()
+            ))
+        })?;
+        let g = grant.ok_or_else(|| Refusal::UnknownGrant("<none>".into()))?;
+        if g.principal != principal {
+            return Err(Refusal::WrongPrincipal {
+                expected: g.principal.clone(),
+                got: principal.to_string(),
+            });
+        }
+        if g.snapshot_id != current.snapshot_id {
+            return Err(Refusal::StaleSnapshot {
+                expected: g.snapshot_id.clone(),
+                got: current.snapshot_id.clone(),
+            });
+        }
+        if target_path.split('/').any(|s| s == "..") {
+            return Err(Refusal::PathTraversal(target_path.to_string()));
+        }
+        if POLICY_FILES.iter().any(|p| target_path.ends_with(p)) {
+            return Err(Refusal::PolicyFile(target_path.to_string()));
+        }
+        let covered = g.write_prefixes.iter().any(|p| {
+            p == "*"
+                || (!p.is_empty()
+                    && (target_path == p
+                        || target_path.starts_with(&format!("{}/", p.trim_end_matches('/')))))
+        });
+        if !covered {
+            return Err(Refusal::PathOutsideGrant(target_path.to_string()));
+        }
+        Ok(())
     }
 
     /// Validate an action against the catalog and the grant, BEFORE any write.

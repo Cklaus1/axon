@@ -24,6 +24,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod action;
 pub mod episode;
 pub mod runner;
 

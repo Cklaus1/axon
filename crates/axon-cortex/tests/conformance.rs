@@ -535,3 +535,115 @@ fn cxg_g03_a_hidden_check_that_matches_nothing_is_not_a_pass() {
         "the episode must record that the check did not run, and name it: {ev}"
     );
 }
+
+/// CX-03 typed — authority is a property of the action, not of a string.
+///
+/// The old API took `action: &str` plus a generic `target_path`, so every
+/// action could receive every parameter and the code decided which to ignore.
+/// Ignoring a field is a runtime decision to be gotten right at each call site;
+/// not having the field is a property of the type. Three nonsense states are
+/// now `compile_fail` doctests on `CortexAction` rather than assertions here —
+/// they do not compile, so there is nothing to test at runtime.
+///
+/// What remains testable is that the authority RULES still hold on the typed
+/// path, and that the non-writing variants are genuinely effect-free.
+#[test]
+fn cxg_c03_typed_actions_carry_their_own_authority() {
+    use axon_cortex::action::{CheckRef, CompletionClaim, CortexAction, SymbolRef};
+
+    let (_, ws) = stage("typed");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let snap = r.snapshot(&["broken.ax"]).expect("snapshot");
+
+    let grant = EditGrant {
+        grant_id: "g-typed".into(),
+        principal: "agent".into(),
+        snapshot_id: snap.snapshot_id.clone(),
+        write_prefixes: vec!["broken.ax".into()],
+    };
+
+    // 1. A valid patch inside the grant is authorizable.
+    let patch = CortexAction::PatchSymbolBody {
+        symbol: SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "add".into(),
+        },
+        proposed_body: "a + b".into(),
+    };
+    assert_eq!(
+        r.authorize_action(&patch, Some(&grant), "agent", &snap),
+        Ok(()),
+        "a well-formed patch inside the granted prefix must be allowed — a \
+         refusal-only test proves nothing about a system that can also say yes"
+    );
+
+    // 2. The same patch outside the grant is refused, and the refusal NAMES
+    //    the path rather than being a generic denial.
+    let outside = CortexAction::PatchSymbolBody {
+        symbol: SymbolRef {
+            path: "elsewhere.ax".into(),
+            symbol: "add".into(),
+        },
+        proposed_body: "a + b".into(),
+    };
+    match r.authorize_action(&outside, Some(&grant), "agent", &snap) {
+        Err(Refusal::PathOutsideGrant(p)) => assert_eq!(p, "elsewhere.ax"),
+        other => panic!("expected PathOutsideGrant, got {other:?}"),
+    }
+
+    // 3. ClaimDone cannot resolve to an effectful mechanism. There is no path
+    //    to check because the variant has no path to give — the rule has
+    //    nothing to apply to, rather than being skipped.
+    let claim = CortexAction::ClaimDone {
+        claim: CompletionClaim {
+            done: true,
+            rationale: "tests pass".into(),
+        },
+    };
+    assert_eq!(
+        claim.write_target(),
+        None,
+        "claiming done must not be able to name a file to touch"
+    );
+    assert!(!claim.requires_write_authority());
+    assert_eq!(
+        r.authorize_action(&claim, None, "agent", &snap),
+        Ok(()),
+        "a claim needs no grant; verify() adjudicates it independently"
+    );
+
+    // 4. Read-only actions need no grant either, and carry no write target.
+    let inspect = CortexAction::Inspect {
+        target: SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "add".into(),
+        },
+    };
+    let check = CortexAction::RunCheck {
+        check: CheckRef {
+            name: "visible_repro".into(),
+            path: "broken.ax".into(),
+        },
+    };
+    for a in [&inspect, &check] {
+        assert_eq!(a.write_target(), None, "{} must not write", a.name());
+        assert_eq!(
+            r.authorize_action(a, None, "agent", &snap),
+            Ok(()),
+            "{} is read-only and needs no grant",
+            a.name()
+        );
+    }
+
+    // 5. A stale grant still refuses on the typed path — authority does not
+    //    survive the state it was granted over, and the typing did not
+    //    accidentally drop that.
+    let stale = EditGrant {
+        snapshot_id: "axc1:stale".into(),
+        ..grant.clone()
+    };
+    assert!(matches!(
+        r.authorize_action(&patch, Some(&stale), "agent", &snap),
+        Err(Refusal::StaleSnapshot { .. })
+    ));
+}
