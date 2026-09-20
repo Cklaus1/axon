@@ -679,6 +679,19 @@
         "scripts/gate.sh"
       ],
       "gap": "AUDITED AND UPHELD \u2014 recorded because a session that reports only overstatements leaves a false impression. README claims Axon prevents ~28 of CVE-Bench's 40 critical CVEs. TRIAGE.md buckets ALL 40 with per-class mechanisms; COVERAGE.md is titled 'the whole 40, honestly', carries explicit OUT OF SCOPE rows (weak password hashing: 'a type system can't pick a strong KDF for you') and records a real escaping defect it found and fixed (single-quote-only escaping let a backslash consume its closing quote on MySQL). 8 CVEs have reproduction directories, driven by a cargo test; the flagship demo is gated. NOT mutation-tested, and the SQL escaping is explicitly MySQL-dialect rather than neutral \u2014 both stated in the source docs."
+    },
+    {
+      "area": "authority",
+      "subsystem": "ambient effect ceiling reaches native",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "partial",
+      "evidence": [
+        "governance/cortex-v015/DISCREPANCIES.md",
+        "crates/axon-core/src/interp.rs"
+      ],
+      "gap": "PROVEN END-TO-END. Same 3-line program, same AXON_ALLOWED_EFFECTS=Pure: `axon run` refuses with a sandbox violation (exit 8); `axon build` emits a binary WITHOUT refusing (exit 0); the binary prints and exits 0. Zero reads of AXON_ALLOWED_EFFECTS or AXON_BUDGET_TOKENS anywhere in codegen/. Sharpened by the VM path: axon-guest-init REFUSES TO BOOT without an MMDS policy, then exports both ceilings into a guest whose natively built payload ignores them \u2014 a policy attested as applied and then unenforced. The failure direction is inverted from intuition: the INTERPRETER is the stricter engine. Filed as D-002; the proposed remedy is for `axon build` to E0910-refuse when an ambient ceiling is set, which is this repo's own convention for 'interp has it, codegen cannot express it'."
     }
   ]
 }

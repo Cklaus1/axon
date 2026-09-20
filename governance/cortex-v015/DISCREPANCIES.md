@@ -101,11 +101,30 @@ Note the failure direction: the interpreter is the STRICTER engine here, so
 running interpreted is safe and running native is not — the opposite of the
 usual "native is the optimised path" intuition.
 
-**Status of this check.** Verified by grep over the live tree (zero reads in
-`codegen/`, the two `env::set_var` call sites in guest-init). NOT verified by
-building a native binary under a set ceiling and observing the violation — that
-end-to-end demonstration is the obvious next evidence step and is not claimed
-here.
+**Status of this check — UPGRADED to end-to-end execution.** Originally
+recorded as grep-only. Now demonstrated with the same program under the same
+ceiling, one engine each:
+
+```
+$ AXON_ALLOWED_EFFECTS=Pure axon run c.ax
+axon: sandbox violation: builtin `println` requires effect `IO` which is not in
+      the active sandbox's allowed set {"Pure"} (principal handle 0)
+exit 8
+
+$ AXON_ALLOWED_EFFECTS=Pure axon build c.ax -o cbin
+Compiling c.ax...
+Binary: cbin (1196ms)
+exit 0                       <-- no refusal; the binary is emitted
+
+$ AXON_ALLOWED_EFFECTS=Pure ./cbin
+IO HAPPENED
+exit 0                       <-- the ceiling is not enforced
+```
+
+The program is three lines and does nothing but `println`. The interpreter
+refuses it under the ceiling; the native binary performs the effect and exits
+clean. `axon build` does not refuse to emit a binary it knows cannot honour the
+ambient policy, which is the specific remedy this record proposes.
 
 **Proposed resolution.** Extend the EXISTING refusal path rather than
 implementing native enforcement now: `axon build` should REFUSE (E0910 is the

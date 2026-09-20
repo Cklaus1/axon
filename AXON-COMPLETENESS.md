@@ -39,6 +39,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | crate axon-vm | ~ | ✗ | ✗ | ~ | AUDITED. `run --quorum` mints an unpredictable run_id with no --run-id flag, then filters votes by it — approvals are always 0, so the gate is unsatisfiable and reports it as 'insufficient approvals' rather than as unusable. Fail-closed, so not a safety hole. attest with no --verify-digest sets ok:true having compared nothing; key_source (operator vs ephemeral — 'the whole security story' per its own comment) is stderr-only and absent from the JSON. |
 | ast review covers impl methods | ✓ | ✓ | ✓ | ✓ | FIXED. cmd_ast_review walks Item::ImplBlock and each fn carries its origin (owner in JSON, [method of Agent] in the human line). Mutation-verified at integration: reverting main.rs alone turns the test red with 'no entry for phone_home — impl methods are invisible'. OPEN: the schema stayed /2 though the POPULATION of fns changed; and gates implemented as impl methods are still invisible to redteam/deploy. |
 | CVE-Bench prevention claim | ✓ | ✓ | ✗ | ✓ | AUDITED AND UPHELD — recorded because a session that reports only overstatements leaves a false impression. README claims Axon prevents ~28 of CVE-Bench's 40 critical CVEs. TRIAGE.md buckets ALL 40 with per-class mechanisms; COVERAGE.md is titled 'the whole 40, honestly', carries explicit OUT OF SCOPE rows (weak password hashing: 'a type system can't pick a strong KDF for you') and records a real escaping defect it found and fixed (single-quote-only escaping let a backslash consume its closing quote on MySQL). 8 CVEs have reproduction directories, driven by a cargo test; the flagship demo is gated. NOT mutation-tested, and the SQL escaping is explicitly MySQL-dialect rather than neutral — both stated in the source docs. |
+| ambient effect ceiling reaches native | ✗ | ✗ | ✗ | ~ | PROVEN END-TO-END. Same 3-line program, same AXON_ALLOWED_EFFECTS=Pure: `axon run` refuses with a sandbox violation (exit 8); `axon build` emits a binary WITHOUT refusing (exit 0); the binary prints and exits 0. Zero reads of AXON_ALLOWED_EFFECTS or AXON_BUDGET_TOKENS anywhere in codegen/. Sharpened by the VM path: axon-guest-init REFUSES TO BOOT without an MMDS policy, then exports both ceilings into a guest whose natively built payload ignores them — a policy attested as applied and then unenforced. The failure direction is inverted from intuition: the INTERPRETER is the stricter engine. Filed as D-002; the proposed remedy is for `axon build` to E0910-refuse when an ambient ceiling is set, which is this repo's own convention for 'interp has it, codegen cannot express it'. |
 
 ## cortex
 
@@ -101,7 +102,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-21 of 21 crates are represented (0 explicitly excused). 29 of 53 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+21 of 21 crates are represented (0 explicitly excused). 29 of 54 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
