@@ -516,14 +516,14 @@
     {
       "area": "authority",
       "subsystem": "crate axon-os",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "partial",
+      "production_proof": "no",
       "mutation": "unknown",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
         "crates/axon-os"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "AUDITED. verify_approval is an UNKEYED sha256 over public inputs, presented to the operator as 'someone signed this and the signature does not hold' \u2014 anyone who can write <job>.approval mints a valid token. `axon-os verify` prints 'intact' for a fully forged record (the chain is seeded from the record's OWN stored manifest_digest, never compared to the .axjob). The run record holds ONE event whose caps_used is the CEILING, advertised as N events of observed activity. The signed Budget line gates nothing: only `calls` is propagated and even that is debited by no ordinary builtin. scan_effects returns Label::Internal in BOTH branches, so the confidentiality denial states a fact about the program derived from a constant."
     },
     {
       "area": "compiler",
@@ -564,14 +564,14 @@
     {
       "area": "authority",
       "subsystem": "crate axon-vm",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "partial",
+      "production_proof": "no",
       "mutation": "unknown",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
         "crates/axon-vm"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "AUDITED. `run --quorum` mints an unpredictable run_id with no --run-id flag, then filters votes by it \u2014 approvals are always 0, so the gate is unsatisfiable and reports it as 'insufficient approvals' rather than as unusable. Fail-closed, so not a safety hole. attest with no --verify-digest sets ok:true having compared nothing; key_source (operator vs ephemeral \u2014 'the whole security story' per its own comment) is stderr-only and absent from the JSON."
     },
     {
       "area": "platform",
@@ -588,14 +588,26 @@
     {
       "area": "evidence",
       "subsystem": "crate axon-web",
-      "implementation": "unknown",
-      "production_proof": "unknown",
+      "implementation": "partial",
+      "production_proof": "no",
       "mutation": "unknown",
-      "docs": "unknown",
+      "docs": "partial",
       "evidence": [
         "crates/axon-web"
       ],
-      "gap": "NOT YET ASSESSED. This row exists so the crate's absence from the manifest is visible rather than silent \u2014 every value here is a placeholder, not a finding. The manifest was hand-authored from one session's work and covered 3 of 21 crates; a crate-coverage check now makes that measurable."
+      "gap": "AUDITED. The recurring shape is a correct computation whose QUALIFIER is dropped by its only reader: /api/safety/attest enters mock on FILE ABSENCE and returns attested:true with a literal digest, while safety_status drops `mode`; the UI then prints 'attested (live)' from its own `|| live` fallback. coalition_ok is a hardcoded literal true; killable means 'the runs dir is creatable'. The kill endpoint computes `armed` and a `note` saying armed:false is a PRE-ARM not a confirmed kill \u2014 and html.rs reads only `ok` and prints 'Kill latch tripped'."
+    },
+    {
+      "area": "authority",
+      "subsystem": "ast review covers impl methods",
+      "implementation": "absent",
+      "production_proof": "no",
+      "mutation": "no",
+      "docs": "no",
+      "evidence": [
+        "crates/axon-core/src/main.rs"
+      ],
+      "gap": "PROVEN at runtime with a control: cmd_ast_review filters Item::FnDef only, so an impl method carrying @[contained(net:[evil.example.com])] and | {Net} is ABSENT from the review a human signs off on \u2014 and the human view prints a confident '2 function(s) / no type errors'. Enforcement is fine (E1001 and E1310 both REFUTED as broken, with controls); the defect is in what is SHOWN. `axon deploy` derives risk:medium from the same method the review renders as effect_set:[]."
     }
   ]
 }
