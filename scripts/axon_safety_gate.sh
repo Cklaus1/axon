@@ -38,6 +38,7 @@ SELF_TEST=0
 for arg in "$@"; do
     case "$arg" in
         --self-test) SELF_TEST=1 ;;
+        --strict) STRICT_COMPLETE=1 ;;  # a skipped stage becomes a FAILURE
         --skip-build) SKIP_BUILD=1 ;;   # also accept as a flag (mirrors env var)
         --help|-h)
             sed -n '2,20p' "$0" | sed 's/^# //' | sed 's/^#//'
@@ -133,7 +134,8 @@ print('  skipped stages:', [s['name'] for s in skipped], '| complete:', d.get('c
         OVERALL_OK=true; SKIPPED_STAGES=(BUILD R26); emit_verdict' "$0" 2>&1)"
     v_clean="$(bash -c '
         source <(sed -n "/^emit_verdict() {$/,/^}$/p" "$0")
-        OVERALL_OK=true; SKIPPED_STAGES=(); emit_verdict' "$0" 2>&1)"
+        OVERALL_OK=true; STRICT_COMPLETE=${STRICT_COMPLETE:-0}
+SKIPPED_STAGES=(); emit_verdict' "$0" 2>&1)"
     # An ARRAY cannot cross an env-var prefix: `SKIPPED_STAGES=(A B) cmd` passes
     # the single STRING "(A B)", so the count reads 1 and the test would pass
     # while measuring the wrong thing. Assert the count the block actually saw.
@@ -410,6 +412,16 @@ elif [[ ${#SKIPPED_STAGES[@]} -gt 0 ]]; then
     # the header) is "0 = all stages passed (or skipped)". Only the CLAIM changes.
     echo "⚠ INCOMPLETE — nothing that ran failed, but ${#SKIPPED_STAGES[@]} stage(s) did NOT run: ${SKIPPED_STAGES[*]}"
     echo "  This build was NOT fully validated. A skipped stage is not a passed stage."
+    # …unless --strict. The sentence above — "a skipped stage is not a passed
+    # stage" — was true and unenforced: the exit code said 0 either way, so any
+    # CALLER of this script could not tell a fully-validated run from one that
+    # silently skipped half its stages. Printing a warning and returning success
+    # leaves the decision to whoever reads the text, and gate.sh reads only the
+    # code. --strict makes the stated rule checkable.
+    if [[ ${STRICT_COMPLETE:-0} == 1 ]]; then
+        echo "  --strict: an incomplete run is a FAILURE for a caller that cannot read prose."
+        return 1
+    fi
     return 0
 else
     echo "✓ ALL STAGES PASSED — safe to deploy"
