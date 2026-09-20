@@ -225,6 +225,14 @@ pub struct Parser {
     tokens: Vec<Token>,
     /// Byte-offset spans parallel to `tokens` (from the lexer).
     spans: Vec<Span>,
+    /// Which FILE `spans` index into, carried over from the lexer's spans.
+    ///
+    /// The parser re-derives spans all over the place (`self.sp(start,
+    /// self.current_span().end)` and friends, ~17 sites), and every one of
+    /// those used to drop the file identity the lexer had already stamped —
+    /// producing a span that says where but not in what. Caching the id once
+    /// per parse lets `Parser::sp` restamp it for free.
+    source: crate::span::SourceId,
     /// `true` for token[i] when at least one `\n` preceded it in the source.
     newlines: Vec<bool>,
     pos: usize,
@@ -292,6 +300,7 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
+        let src_id = crate::span::SourceId::UNKNOWN;
         Self {
             tokens,
             spans: vec![Span::dummy(); len],
@@ -304,11 +313,13 @@ impl Parser {
             synthetic_refine_count: 0,
             surface_mode: false,
             handler_defs: std::collections::HashMap::new(),
+            source: src_id,
         }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
+        let src_id = Self::derive_source(&spans);
         Self {
             tokens,
             spans,
@@ -321,10 +332,12 @@ impl Parser {
             synthetic_refine_count: 0,
             surface_mode: false,
             handler_defs: std::collections::HashMap::new(),
+            source: src_id,
         }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
+        let src_id = Self::derive_source(&spans);
         Self {
             tokens,
             spans,
@@ -337,7 +350,27 @@ impl Parser {
             synthetic_refine_count: 0,
             surface_mode: false,
             handler_defs: std::collections::HashMap::new(),
+            source: src_id,
         }
+    }
+
+    /// The file identity the lexer stamped on this token stream, if any.
+    fn derive_source(spans: &[Span]) -> crate::span::SourceId {
+        spans
+            .iter()
+            .find(|s| !s.source.is_unknown())
+            .map(|s| s.source)
+            .unwrap_or(crate::span::SourceId::UNKNOWN)
+    }
+
+    /// Build a span over `[start, end)` IN THE FILE BEING PARSED.
+    ///
+    /// Use this instead of `Span::new` anywhere the offsets came from this
+    /// token stream: `Span::new` yields `SourceId::UNKNOWN`, which makes the
+    /// resulting diagnostic resolve against whatever file happens to be
+    /// ambient at render time — the entry file, even for an imported module.
+    fn sp(&self, start: usize, end: usize) -> Span {
+        Span::with_source(start, end, self.source)
     }
 
     fn current_span(&self) -> Span {
@@ -579,7 +612,7 @@ impl Parser {
                 let span_end = self.current_span().end;
                 verify_spec = Some(VerifySpec {
                     predicate: Box::new(predicate),
-                    span: Span::new(span_start, span_end),
+                    span: self.sp(span_start, span_end),
                 });
             } else {
                 attrs.push(self.parse_attr()?);
@@ -610,7 +643,7 @@ impl Parser {
                 let name = self.expect_ident()?;
                 self.expect(&Token::Eq)?;
                 let value = self.parse_expr()?;
-                let span = Span::new(start, self.current_span().end);
+                let span = self.sp(start, self.current_span().end);
                 Ok(Item::LetDef {
                     name,
                     value: Box::new(value),
@@ -689,7 +722,7 @@ impl Parser {
 
         if !self.at(&Token::LParen) {
             // No args — @[contained] with no clauses: allow nothing.
-            let span = crate::span::Span::new(span_start, self.current_span().end);
+            let span = self.sp(span_start, self.current_span().end);
             spec.span = span;
             return Ok(spec);
         }
@@ -797,7 +830,7 @@ impl Parser {
             self.eat(&Token::Comma);
         }
         self.expect(&Token::RParen)?;
-        let span = crate::span::Span::new(span_start, self.current_span().end);
+        let span = self.sp(span_start, self.current_span().end);
         spec.span = span;
         Ok(spec)
     }
@@ -950,7 +983,7 @@ impl Parser {
             contained: None,
             verify: None,
             effect_row,
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         })
     }
 
@@ -991,7 +1024,7 @@ impl Parser {
         Ok(crate::ast::EffectRow {
             effects,
             row_var,
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         })
     }
 
@@ -1133,7 +1166,7 @@ impl Parser {
                 params.push(Param {
                     name,
                     ty: AxonType::Named("Self".into()),
-                    span: Span::new(pspan.start, end),
+                    span: self.sp(pspan.start, end),
                 });
                 if !self.eat(&Token::Comma) {
                     break;
@@ -1148,7 +1181,7 @@ impl Parser {
             params.push(Param {
                 name,
                 ty,
-                span: Span::new(pspan.start, end),
+                span: self.sp(pspan.start, end),
             });
             if !self.eat(&Token::Comma) {
                 break;
@@ -1177,7 +1210,7 @@ impl Parser {
             base,
             predicate: Box::new(predicate),
             attrs: Vec::new(),
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         });
         Ok(AxonType::Named(name))
     }
@@ -1427,7 +1460,7 @@ impl Parser {
                         base,
                         predicate: Box::new(predicate),
                         attrs,
-                        span: Span::new(start, end),
+                        span: self.sp(start, end),
                     }));
                 }
             }
@@ -1451,7 +1484,7 @@ impl Parser {
                 name,
                 generic_params,
                 variants,
-                span: Span::new(start, end),
+                span: self.sp(start, end),
             }));
         }
 
@@ -1482,7 +1515,7 @@ impl Parser {
             fields,
             attrs,
             refinement,
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         }))
     }
 
@@ -1526,7 +1559,7 @@ impl Parser {
             name,
             generic_params,
             variants,
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         })
     }
 
@@ -1569,7 +1602,7 @@ impl Parser {
                     ps.push(Param {
                         name: pname,
                         ty: pty,
-                        span: Span::new(pspan.start, pend),
+                        span: self.sp(pspan.start, pend),
                     });
                 }
                 ps
@@ -1587,7 +1620,7 @@ impl Parser {
                 name: mname,
                 params,
                 return_type,
-                span: Span::new(mspan.start, mend),
+                span: self.sp(mspan.start, mend),
             });
             self.eat(&Token::Semi);
         }
@@ -1597,7 +1630,7 @@ impl Parser {
             name,
             generic_params,
             methods,
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         })
     }
 
@@ -1639,7 +1672,7 @@ impl Parser {
             methods,
             generic_params,
             generic_bounds,
-            span: Span::new(start, end),
+            span: self.sp(start, end),
         })
     }
 

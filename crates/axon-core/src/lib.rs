@@ -91,12 +91,25 @@ pub type TokenSpan = (token::Token, std::ops::Range<usize>);
 pub type NamedProgram = (String, ast::Program);
 
 pub fn parse_source(src: &str) -> Result<ast::Program, AxonError> {
+    parse_source_in(src, span::SourceId::UNKNOWN)
+}
+
+/// Parse `src`, stamping every span with `sid` — the identity of the file the
+/// bytes came from.
+///
+/// This is one of the three places in the compiler where a real span is BORN
+/// (the other two are `parse_source_located_in` and `parse_source_with_spans`);
+/// everywhere else a span is copied or re-derived from one of these. Stamping
+/// here is therefore enough to give the whole AST file identity, and is why
+/// `load_use_decls` can merge a module's items into the entry program without
+/// their offsets becoming unattributable.
+pub fn parse_source_in(src: &str, sid: span::SourceId) -> Result<ast::Program, AxonError> {
     let raw = Lexer::tokenize_with_newlines(src)?;
     let mut tokens = Vec::with_capacity(raw.len());
     let mut spans = Vec::with_capacity(raw.len());
     let mut newlines = Vec::with_capacity(raw.len());
     for (tok, range, nl) in raw {
-        spans.push(span::Span::new(range.start, range.end));
+        spans.push(span::Span::with_source(range.start, range.end, sid));
         tokens.push(tok);
         newlines.push(nl);
     }
@@ -119,6 +132,14 @@ fn lex_error_offset(msg: &str) -> Option<usize> {
 }
 
 pub fn parse_source_located(src: &str) -> Result<ast::Program, (String, usize)> {
+    parse_source_located_in(src, span::SourceId::UNKNOWN)
+}
+
+/// `parse_source_located`, stamping each span with the file it came from.
+pub fn parse_source_located_in(
+    src: &str,
+    sid: span::SourceId,
+) -> Result<ast::Program, (String, usize)> {
     // A lex error's offset used to be discarded (`0usize`), so every
     // lexer-tier diagnostic reported line 1 column 1 no matter where the bad
     // character was — the same "a hint that cannot say where is half a repair"
@@ -134,7 +155,7 @@ pub fn parse_source_located(src: &str) -> Result<ast::Program, (String, usize)> 
     let mut spans = Vec::with_capacity(raw.len());
     let mut newlines = Vec::with_capacity(raw.len());
     for (tok, range, nl) in raw {
-        spans.push(span::Span::new(range.start, range.end));
+        spans.push(span::Span::with_source(range.start, range.end, sid));
         tokens.push(tok);
         newlines.push(nl);
     }
