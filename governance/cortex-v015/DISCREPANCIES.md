@@ -61,3 +61,135 @@ adopting them narrows authority and does not require a migration.
 
 **Owner.** Repository owner (package is third-party input).
 **Blocks.** B01 (audit Axon seams) must not copy this row forward unrevised.
+
+---
+
+## D-002 — CX-15 L2-3 CONFLICT: ambient ceilings are ignored by the native engine
+
+**Spec passage** (`specs/CX-15-language-compiler-proof.md`, L2):
+
+> Ambient interpreter constraints require explicit native runtime/launcher
+> support before Cortex enables that target. **The lack of a call site is not an
+> excuse for quietly ignoring policy.**
+
+**Live passage** (`CLAUDE.md`, `AXON_ALLOWED_EFFECTS` row):
+
+> **Interpreter-only**, like the rest of F5 — a natively-built binary ignores
+> it, and being ambient there is no call site to E0910-refuse at.
+
+The repository states, as a documented design decision, precisely the excuse the
+spec names and forbids.
+
+**Live implementation — verified by grep, both directions.**
+
+* `crates/axon-core/src/codegen/` contains **zero** reads of
+  `AXON_ALLOWED_EFFECTS` or `AXON_BUDGET_TOKENS`.
+* Both are read only in the interpreter (`crates/axon-core/src/interp.rs:3655`
+  for the token cap; the effect ceiling nearby in the same file).
+* `crates/axon-guest-init/src/main.rs:171,177` **exports both into the guest**
+  (`env::set_var`), and that binary REFUSES TO BOOT when the MMDS policy cannot
+  be read (`AXON_GUEST_ALLOW_NO_POLICY=1` opts out, development only).
+
+**Why it matters — this is worse than an ordinary gap.** The launcher refuses to
+start without a policy, then attests that the policy was applied, then hands the
+payload two environment variables that a natively-built payload silently
+ignores. The effect ceiling (SandboxViolation, exit 8) and the AI token cap
+(E1303, exit 5) are both absent from `axon build` output. An operator reading
+the boot sequence has every reason to believe the ceiling is in force.
+
+Note the failure direction: the interpreter is the STRICTER engine here, so
+running interpreted is safe and running native is not — the opposite of the
+usual "native is the optimised path" intuition.
+
+**Status of this check.** Verified by grep over the live tree (zero reads in
+`codegen/`, the two `env::set_var` call sites in guest-init). NOT verified by
+building a native binary under a set ceiling and observing the violation — that
+end-to-end demonstration is the obvious next evidence step and is not claimed
+here.
+
+**Proposed resolution.** Extend the EXISTING refusal path rather than
+implementing native enforcement now: `axon build` should REFUSE (E0910 is the
+allocated mechanism, already dense in `codegen/`) when an ambient ceiling is set
+in the environment, instead of emitting a binary that cannot honour it. That
+converts a silent gap into an explicit refusal, which is the repository's own
+stated convention for "interpreter has it, codegen cannot express it". Native
+enforcement, if wanted, is a separate and larger piece of work.
+
+**Invariant link.** Protected kernel: *capability/effect enforcement*. The
+proposed refusal NARROWS what `axon build` will emit, so it needs no migration.
+
+**Owner.** Repository owner.
+**Blocks.** CX-15 `G15-parity` cannot honestly report "supported cases agree on
+effects and budgets" while budgets are uncomparable across engines.
+
+---
+
+## D-003 — The approval friction ladder is computed and read by nothing
+
+**Spec requirement** (CX-00 R4): *"A required gate that is absent, skipped,
+unsupported, **expired** or inconclusive MUST NOT be treated as passing."*
+
+**Live implementation.** `crates/axon-intent/src/policy.rs` derives an
+`ApprovalPolicy { threshold, ttl_ticks, max_uses }` per risk tier — three
+approvers, a 100-tick TTL and single use for Critical. A repository-wide grep
+for `policy_for|ApprovalPolicy|ttl_ticks|max_uses` **outside that one file
+returns zero hits**. `axon_os::approval::verify_approval` checks digests only:
+no TTL, no use count, no approver count.
+
+To the file's credit, its own doc comment says so: *"This slice only derives the
+policy from risk — it does not yet enforce anything (S3)."* The defect is not
+dishonesty in the source; it is that nothing downstream records the distinction,
+so an approval token cannot expire and a Critical action needs one approver.
+
+**Status of this check.** Verified by grep. The absence of a caller is
+conclusive for "nothing reads it"; whether the intended enforcement point is
+`verify_approval` is a design reading.
+
+**Why it matters.** This is the "ambient controls were inert" class the
+repository has already been bitten by twice — `AXON_ALLOWED_EFFECTS` and
+`AXON_BUDGET_TOKENS` were both documented as enforced while being read by
+nothing, and only a behavioural diff caught it. Here the same shape recurs in
+the approval path, which is the control an operator reaches for first.
+
+**Proposed resolution.** Extend `crates/axon-os/src/approval.rs::verify_approval`
+— the enforcement point that already exists and is already called at the run
+boundary — to consult the derived policy. Do NOT add an enforcement crate.
+
+**Owner.** Repository owner.
+
+---
+
+## D-004 — `POLICY_FILES` protects four basenames, not the gate surface
+
+**Spec requirement** (CX-00 R6 / `G00-authority`): a learned component *"MAY
+propose authority, gate or checker changes but MUST NOT activate them"*; the
+gate simulates *"a learner attempts to edit gate code, evaluation data, policy
+or signer credentials."*
+
+**Live implementation.** `crates/axon-cortex/src/runner.rs:78`:
+
+```rust
+const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];
+```
+
+matched with `target_path.ends_with(p)`. Not barred: every other
+`scripts/*.sh` gate (including `gate_verdict_is_read.sh` and
+`cortex_package_gate.sh`), `governance/cortex_gate_execution_registry.json`,
+`AXON-COMPLETENESS.json`, `crates/axon-core/tests/cli_run.rs`, and
+`crates/axon-cortex/src/locate.rs` itself.
+
+**Status of this check.** Verified by reading the constant and its single use.
+NOT verified by attempting such an edit through the loop — the authority
+corpus that would test this is designed but unbuilt (see the manifest row
+"authority-discrimination corpus").
+
+**Why it matters.** `G00-authority` is satisfied for `gate.sh` and nominally
+for three other names. The evaluation matrix and the gate registry — the two
+artifacts that decide whether a change is admitted — are writable.
+
+**Proposed resolution.** Make `POLICY_FILES` a PREFIX set rather than a
+basename list, covering `scripts/`, `governance/` and the completeness matrix.
+A prefix set is also what the repository's own write-prefix grant machinery
+already uses, so this reuses an existing idiom.
+
+**Owner.** Repository owner.
