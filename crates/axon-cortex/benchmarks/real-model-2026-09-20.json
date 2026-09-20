@@ -1,0 +1,72 @@
+{
+ "schema": "cortex-real-model/1",
+ "measured_on": "2026-09-20",
+ "model": "claude-haiku-4-5-20251001",
+ "cortex_commit": "578b96d28e86b9ec387c454de3cab0ae246cc6d8",
+ "driver_sha256_16": "14f975119008ca2e",
+ "candidates": 3,
+ "trials": 13,
+ "localization_coverage_pct": 76.9,
+ "repair_given_target_reached_generator": {
+  "n": 10,
+  "of": 10,
+  "pct": 100.0
+ },
+ "overall_verified_and_clean": {
+  "n": 10,
+  "of": 13,
+  "pct": 76.9
+ },
+ "false_successes": 0,
+ "workspace_dirty_on_failure": 0,
+ "spend_usd": 9.29,
+ "proposals_total": 105,
+ "ranking_waste_pct_of_spend": 91,
+ "mean_proposals_before_target": 7.15,
+ "mean_proposals_on_target": 0.92,
+ "mean_true_target_rank": 2.38,
+ "success_split": {
+  "first_shot": 9,
+  "recovered_after_feedback": 1,
+  "failed_after_feedback": 0,
+  "generator_unavailable": 1
+ },
+ "per_class_achieved": {
+  "argswap": 1,
+  "boolean": 2,
+  "constant": 5,
+  "drop-stmt": 1,
+  "operator": 4
+ },
+ "stratification_met": false,
+ "limitations": [
+  "STRATIFICATION NOT MET: asked for 5 per class, got 13 of 25. argswap and drop-stmt exhausted the corpus (the mutator could not apply). Per-class rates are NOT comparable; the conditional rate is unaffected because it conditions on trials that happened.",
+  "n=10 on the conditional. 100% is a ceiling observation, not a proven rate.",
+  "Transport quality UNMEASURED: this run predates the driver recording extraction status, so a strange model answer cannot be distinguished from a driver that mangled a conventional one.",
+  "Invalid-output cost UNMEASURED: the harness did not retain the episode, and patch_reverted is the only record of a proposal read correctly that still broke the build.",
+  "Candidate<->proposal ownership was inferred from ORDER, admitted only because segment count equalled candidate count on every trial. The next run carries candidate identity per proposal and needs no inference.",
+  "94% of all tokens are cache traffic \u2014 the harness's system prompt, not the repair."
+ ],
+ "failures_all_localization": [
+  {
+   "file": "world.ax",
+   "symbol": "predict",
+   "class": "operator",
+   "true_rank": 4
+  },
+  {
+   "file": "llm_gateway.ax",
+   "symbol": "new_llm",
+   "class": "constant",
+   "true_rank": 5
+  },
+  {
+   "file": "llm_gateway.ax",
+   "symbol": "new_llm",
+   "class": "boolean",
+   "true_rank": 5
+  }
+ ],
+ "finding_cost_usd": 8.5,
+ "fixing_cost_usd": 0.79
+}

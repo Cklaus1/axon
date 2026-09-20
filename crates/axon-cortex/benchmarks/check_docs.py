@@ -102,10 +102,41 @@ def _unverified(node, path="art"):
             _unverified(v, f"{path}[{i}]")
 
 
+# A SECOND ARTIFACT. The real-model run's figures live in their own file;
+# without this they would read as unsourced and the gate would fail for the
+# wrong reason — which gets a gate switched off.
+rm_path = os.path.join(HERE, "real-model-2026-09-20.json")
+if os.path.exists(rm_path):
+    rm = json.load(open(rm_path))
+
+    def _nums(node):
+        if isinstance(node, dict):
+            for v in node.values():
+                yield from _nums(v)
+        elif isinstance(node, list):
+            for v in node:
+                yield from _nums(v)
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            yield node
+
+    # Both spellings. `str(8.50)` is "8.5", but prose writes a money figure as
+    # "$8.50" — so a correctly-sourced number read as unsourced purely because
+    # of float formatting. A gate that fails for its own reasons gets switched
+    # off, which is worse than the drift it was meant to catch.
+    for v in _nums(rm):
+        sourced.add(str(v))
+        if isinstance(v, float):
+            sourced.add(f"{v:.2f}")
+            sourced.add(f"{v:.1f}")
+else:
+    rm = None
+    broke("real-model-2026-09-20.json is missing; the README section citing it "
+          "would go unsourced")
+
 _unverified(art)
 sourced |= {str(v) for _, v in unverified}
 
-orphans = sorted(n for n in set(re.findall(r"\b\d{1,3}\.\d\b", readme)) if n not in sourced)
+orphans = sorted(n for n in set(re.findall(r"\b\d{1,3}\.\d{1,2}\b", readme)) if n not in sourced)
 
 # ROW-KEYED CHECK — a figure must match the metric it is PRINTED AGAINST.
 #
@@ -313,6 +344,12 @@ def _walk(node):
 
 
 legit_fractions |= set(_walk(art))
+if rm is not None:
+    # The conditional rate is quoted as "10 of 10" in the prose.
+    g = rm["repair_given_target_reached_generator"]
+    legit_fractions |= {(g["n"], g["of"]),
+                        (rm["overall_verified_and_clean"]["n"],
+                         rm["overall_verified_and_clean"]["of"])}
 
 legit = {f"{a} / {b}" for a, b in legit_fractions} | {f"{a}/{b}" for a, b in legit_fractions}
 bad_fractions = sorted(

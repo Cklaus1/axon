@@ -241,3 +241,63 @@ ranking, and a candidate that is never listed cannot be tried.
   `cmd:` seam, with credentials that never entered this repository — and that
   run is reported separately; it is a different experiment and its figures do
   not belong in these tables.
+
+## Real model driving the loop (2026-09-20)
+
+Everything above uses a synthetic generator. This is the measurement that
+matters: a real model, reached through the `cmd:` seam, contributing the TEXT
+of a repair and nothing else. Artifact: `real-model-2026-09-20.json`.
+
+`claude-haiku-4-5-20251001` · cortex `578b96d` · driver `14f9751` ·
+candidates 3 · 13 trials · $9.29.
+
+Three rates, reported separately, because one number would average over the
+thing under test:
+
+| | |
+|---|---|
+| localization coverage (truth in top-3) | 76.9% |
+| **repair given the true target reached the generator** | **100%** (10 of 10) |
+| overall, verified AND file-clean | 76.9% |
+
+**Every failure was localization.** True ranks 4, 5 and 5 — never put to the
+generator at all. Not one generator failure.
+
+### The generator is not the bottleneck, and it is not close
+
+| | |
+|---|---|
+| mean proposals BEFORE reaching the target | 7.15 |
+| mean proposals ON the target | 0.92 |
+| ranking waste, as a share of inference spend | 91% |
+
+Under one proposal per repair, once the right function is in front of it.
+Ranking waste is $8.50 of $9.29. A localization miss is not merely a failed
+repair, it is the expensive kind: the loop spends a full proposal budget on
+each of three wrong candidates before running out.
+
+first-shot 9 · recovered-after-feedback 1 · failed-after-feedback 0 ·
+generator-unavailable 1. Recovery is 10% of verified repairs — it earns its
+complexity and it is a small term. Note the rank-2 trials are first-shot ON
+THE TRUE TARGET: their 7-8 proposals went to the wrong candidate first, which
+is why proposals are attributed per candidate rather than summed per run.
+
+Safety floor held: **0 false successes, 0 dirty workspaces on failure.**
+
+### What this run does NOT establish
+
+* **The stratification did not hold.** 5 per class was requested; the run
+  produced argswap 1, boolean 2, constant 5, drop-stmt 1, operator 4 — 13 of
+  an intended 25, because `argswap` and `drop-stmt` exhausted the corpus. The
+  per-class rates are not comparable with each other. The conditional rate is
+  unaffected: it conditions on trials that happened.
+* n=10 on the conditional. 100% is a ceiling observation, not a proven rate.
+* **Transport quality is unmeasured** — this run predates the driver recording
+  how a body was extracted, so a strange model answer cannot be told from a
+  driver that mangled a conventional one. That distinction voided an earlier
+  run and is the reason the field exists.
+* **Invalid-output cost is unmeasured** — the harness kept selected verdict
+  fields rather than the episode.
+* Candidate/proposal ownership was inferred from ORDER, admitted only because
+  segment count equalled candidate count on every trial. The next run carries
+  the candidate on each proposal and infers nothing.
