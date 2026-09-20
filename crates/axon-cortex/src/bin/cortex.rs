@@ -25,6 +25,7 @@
 //! | 24 | needs input | no usable proposal — supply or fix `--generator` |
 //! | 25 | no target | no candidate could be established, or the named symbol does not exist |
 //! | 26 | check cannot witness | `--check` already passes; it would accept the file unchanged |
+//! | 27 | adjudicated, not clean | the check passed and nothing regressed, but the file was already failing others — THE PATCH IS KEPT |
 //!
 //! Note what 0 means here: a hidden check the generator never saw accepted the
 //! result. It is not "the loop finished", and no other outcome is rounded up
@@ -53,11 +54,17 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          matching Cortex's convention where \"\" denies.
   --principal NAME       who is acting (default: agent)
   --budget N             maximum steps per candidate (default: 8)
-  --candidates N         how many ranked candidates to try (default: 3). Top-1
-                         is right 57.5% of the time on the real corpus and
-                         top-3 covers 90%; each attempt starts from the state
-                         this run found, and the hidden check adjudicates every
-                         one of them.
+  --candidates N         how many ranked candidates to try (default: 3). On
+                         the measured corpus the top candidate is the sole
+                         most-suspicious one about a third of the time, while
+                         the truth reaches rank 3 in roughly nine cases in ten
+                         — which is why the run walks rather than stops at one.
+                         Each attempt starts from the state this run found, and
+                         the hidden check adjudicates every one of them. See
+                         crates/axon-cortex/benchmarks/ for the current
+                         figures; they are not quoted here because a number
+                         embedded in --help outlives the measurement it came
+                         from.
   --generator SPEC       none (default) | ai:MODEL | cmd:PATH | literal:BODY
                          cmd: runs YOUR program — the prompt on its stdin, the
                          proposed body on its stdout. No credentials enter this
@@ -268,12 +275,18 @@ fn main() {
     // the operator may know something the failing checks do not show. Absent
     // one, the candidates come from the spectrum ranking.
     //
-    // Measured on the real corpus — a defect injected into each function of
-    // `examples/**.ax`, one at a time — the top-ranked candidate is right 57.5%
-    // of the time and the top THREE cover 90%. Stopping at the first throws
-    // away a third of the cases the evidence could already decide, so the run
-    // walks the list. The hidden check adjudicates every attempt, so walking
-    // further trades budget for coverage and never trades away correctness.
+    // Measured on the real corpus — one defect injected per function across
+    // `examples/**.ax`, five defect classes — the top-ranked candidate is the
+    // sole most-suspicious one far less often than the truth reaches the top
+    // THREE. Stopping at the first therefore throws away cases the evidence
+    // could already decide, so the run walks the list. The hidden check
+    // adjudicates every attempt, so walking further trades budget for coverage
+    // and never trades away correctness.
+    //
+    // The figures live in `benchmarks/` and are deliberately not repeated
+    // here: two earlier versions of this comment outlived the measurement they
+    // quoted, and one of them was still advertising a number the benchmark
+    // README had explicitly withdrawn.
     let targets: Vec<String> = if !symbol.is_empty() {
         vec![symbol.clone()]
     } else {
@@ -390,6 +403,20 @@ fn main() {
         EpisodeOutcome::Blocked { steps, reason } => (22, "blocked", reason.clone(), *steps),
         EpisodeOutcome::Refused { steps, reason } => (23, "refused", reason.clone(), *steps),
         EpisodeOutcome::NeedsInput { steps, what } => (24, "needs_input", what.clone(), *steps),
+        EpisodeOutcome::AdjudicatedNotClean {
+            steps,
+            still_failing,
+        } => (
+            27,
+            "adjudicated_not_clean",
+            format!(
+                "`{check}` passed and nothing regressed, but {} check(s) that were already \
+                 failing still fail: {}",
+                still_failing.len(),
+                still_failing.join(", ")
+            ),
+            *steps,
+        ),
         EpisodeOutcome::NoSuchSymbol {
             steps,
             symbol,
@@ -404,7 +431,10 @@ fn main() {
     // Nothing worked: the file is left exactly as it was found. A run that
     // reports failure while having rewritten a function is reporting on a
     // workspace nobody asked for.
-    if code != 0 {
+    // Exit 27 KEEPS its patch: the adjudicator accepted it and it broke
+    // nothing, so discarding it would throw away work that succeeded on the
+    // only question this run was asked.
+    if code != 0 && code != 27 {
         let _ = std::fs::write(workspace.join(&file), &original);
     }
     let repaired = (code == 0).then(|| attempted.last().cloned().unwrap_or_default());

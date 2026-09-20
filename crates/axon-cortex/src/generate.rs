@@ -275,6 +275,12 @@ impl PatchGenerator for LiteralGenerator {
     }
 }
 
+/// How much output is read from a generator before giving up on it.
+///
+/// Generous enough that no honest generator meets it, and bounded so a runaway
+/// one cannot exhaust memory and take the episode record with it.
+const MAX_GENERATOR_READ: usize = 1 << 20;
+
 /// Asks a program the operator names.
 ///
 /// The prompt goes to its stdin; the proposed body is its stdout. That is the
@@ -300,6 +306,29 @@ pub struct CommandGenerator {
 }
 
 impl CommandGenerator {
+    /// How long a generator gets to answer.
+    ///
+    /// `--budget` bounds STEPS, not wall time, and no budget applies to a
+    /// child process at all — so without a deadline one program that never
+    /// exits stops the loop forever.
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+    /// The deadline in force, honouring `AXON_CORTEX_GENERATOR_TIMEOUT_MS`.
+    ///
+    /// The override exists so the deadline can be TESTED. A 120-second wait is
+    /// not something a suite can afford, and an untested deadline is exactly
+    /// the class of check that turns out never to fire. A malformed value is
+    /// ignored in favour of the default rather than parsed to zero, which
+    /// would disable every generator.
+    fn timeout() -> std::time::Duration {
+        std::env::var("AXON_CORTEX_GENERATOR_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|ms| *ms > 0)
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(Self::TIMEOUT)
+    }
+
     pub fn new(program: impl Into<String>) -> Self {
         Self {
             program: program.into(),
@@ -311,8 +340,8 @@ impl PatchGenerator for CommandGenerator {
     fn id(&self) -> String {
         // The program as written, so the episode records WHICH generator ran.
         // Not the resolved absolute path: what the operator typed is what they
-        // will recognise, and two different scripts with the same basename
-        // stay distinguishable.
+        // will recognise, and two scripts sharing a basename stay
+        // distinguishable.
         format!("cmd:{}", self.program)
     }
 
@@ -322,7 +351,7 @@ impl PatchGenerator for CommandGenerator {
         target: &SymbolRef,
         constraints: &PatchConstraints,
     ) -> Result<ProposedPatch, GenerationFailure> {
-        use std::io::Write;
+        use std::io::{Read, Write};
         let prompt = build_prompt(observation, target, constraints);
         let mut child = std::process::Command::new(&self.program)
             .stdin(std::process::Stdio::piped())
@@ -331,30 +360,93 @@ impl PatchGenerator for CommandGenerator {
             .spawn()
             // Could not be STARTED: missing, not executable, wrong path. An
             // infrastructure fact about the operator's setup, not a statement
-            // about the task — the same reason a missing API key is
-            // Unavailable rather than Declined.
+            // about the task — the same class as a missing API key.
             .map_err(|e| {
                 GenerationFailure::Unavailable(format!("cannot run `{}`: {e}", self.program))
             })?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(prompt.as_bytes());
-            // Dropped here, closing the pipe. A generator that reads stdin to
-            // EOF would otherwise wait forever for input that has already been
-            // written, and the loop would hang rather than fail.
-            drop(stdin);
-        }
-        let out = child.wait_with_output().map_err(|e| {
-            GenerationFailure::Unavailable(format!("`{}` could not be read: {e}", self.program))
-        })?;
-        if !out.status.success() {
+
+        // ALL THREE PIPES ARE SERVICED CONCURRENTLY.
+        //
+        // Writing the prompt in full and only then reading deadlocks against
+        // any child that produces output before consuming its input: both
+        // sides block on a full pipe buffer (64 KiB on Linux). Polling for
+        // exit without draining stdout has the same failure — measured, a
+        // program emitting 200 KB before reading stdin sat until the deadline
+        // instead of answering.
+        let bytes = prompt.into_bytes();
+        let mut stdin = child.stdin.take();
+        let writer = std::thread::spawn(move || {
+            if let Some(mut w) = stdin.take() {
+                let _ = w.write_all(&bytes);
+                // Dropped here, closing the pipe: a generator reading to EOF
+                // would otherwise wait forever for input already written.
+            }
+        });
+        let drain = |pipe: Option<std::process::ChildStdout>| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                if let Some(p) = pipe {
+                    // CAPPED. `validate` applies `max_bytes` after the read
+                    // completes, so it bounds what is APPLIED and never what
+                    // is buffered; a child writing gigabytes would abort the
+                    // process on allocation failure and take the episode
+                    // record with it.
+                    let _ = p.take(MAX_GENERATOR_READ as u64).read_to_end(&mut buf);
+                }
+                buf
+            })
+        };
+        let out_t = drain(child.stdout.take());
+        let mut err_pipe = child.stderr.take();
+        let err_t = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(p) = err_pipe.take() {
+                let _ = p.take(MAX_GENERATOR_READ as u64).read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        // A DEADLINE. `--budget` bounds STEPS, not wall time, and no budget
+        // applies to a child process — so without this, one program that never
+        // exits stops the loop forever.
+        let limit = Self::timeout();
+        let deadline = std::time::Instant::now() + limit;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break st,
+                Err(e) => {
+                    return Err(GenerationFailure::Unavailable(format!(
+                        "`{}` could not be waited on: {e}",
+                        self.program
+                    )))
+                }
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(GenerationFailure::Unavailable(format!(
+                            "`{}` did not answer within {}ms",
+                            self.program,
+                            limit.as_millis()
+                        )));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+        };
+        let stdout = out_t.join().unwrap_or_default();
+        let stderr = err_t.join().unwrap_or_default();
+        let _ = writer.join();
+
+        if !status.success() {
             // It RAN and refused. Declined, not Unavailable: the remedy is the
             // prompt or the task, not the installation.
-            let why = String::from_utf8_lossy(&out.stderr);
+            let why = String::from_utf8_lossy(&stderr);
             let why = why.trim();
             return Err(GenerationFailure::Declined(format!(
                 "`{}` exited {}{}",
                 self.program,
-                out.status.code().unwrap_or(-1),
+                status.code().unwrap_or(-1),
                 if why.is_empty() {
                     String::new()
                 } else {
@@ -363,7 +455,7 @@ impl PatchGenerator for CommandGenerator {
             )));
         }
         Ok(ProposedPatch {
-            body: String::from_utf8_lossy(&out.stdout).to_string(),
+            body: String::from_utf8_lossy(&stdout).to_string(),
             generator_id: self.id(),
         })
     }

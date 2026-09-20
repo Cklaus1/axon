@@ -185,6 +185,17 @@ pub enum EpisodeOutcome {
     /// action. Continuing cannot help, so the loop stops and says so instead of
     /// spinning to the budget.
     NoProgress { steps: usize, action: String },
+    /// The adjudicating check passed and nothing regressed, but the file was
+    /// already failing other checks and still is.
+    ///
+    /// Its own outcome because the patch is KEPT: it did what it was asked,
+    /// and the remaining failures pre-date the episode. Reporting it as
+    /// success would claim a clean file that is not clean; reporting it as
+    /// futility blamed a generator that had succeeded, and discarded its work.
+    AdjudicatedNotClean {
+        steps: usize,
+        still_failing: Vec<String>,
+    },
     /// The target does not exist in the file.
     ///
     /// Its own variant because the remedies differ, and the two codes it used
@@ -585,10 +596,22 @@ impl Runner {
         // Captured once, at the start, because the question is whether THIS
         // episode broke something that worked, not whether the file was
         // perfect to begin with.
-        let baseline_passing: Vec<String> = self
-            .check_outcomes(&target.path, "")
-            .map(|(_, passing)| passing)
-            .unwrap_or_default();
+        //
+        // An error here empties the set, which would silently disable the
+        // "this episode BROKE X" attribution below. It is recorded rather than
+        // swallowed: a run that could not establish its baseline must not
+        // later imply it found no regressions.
+        let baseline_passing: Vec<String> = match self.check_outcomes(&target.path, "") {
+            Ok((_, passing)) => passing,
+            Err(e) => {
+                self.episode.push(EpisodeEvent::CheckRun {
+                    name: format!("baseline UNAVAILABLE: {e}"),
+                    exit_code: -1,
+                    passed: false,
+                });
+                Vec::new()
+            }
+        };
         let mut effective: Option<EditGrant> = grant.cloned();
         let mut rejected: Vec<crate::generate::RejectedAttempt> = Vec::new();
         let mut last_applied: Option<String> = None;
@@ -851,6 +874,30 @@ impl Runner {
                             body,
                             crate::generate::RejectionReason::CheckRefused,
                         );
+                        // UNDO it here too. This is the path a file compiling
+                        // with warnings takes, and it is the majority of real
+                        // files — so without this, patches accumulated exactly
+                        // as they did before the undo was introduced, and the
+                        // generator was shown its own rejected proposal as
+                        // "the body currently" while being told that same body
+                        // was rejected.
+                        if restore_base(&self.workspace.join(&target.path), &candidate_base)
+                            .is_err()
+                        {
+                            return EpisodeOutcome::Blocked {
+                                steps: step,
+                                reason: format!(
+                                    "a rejected patch could not be undone in {}",
+                                    target.path
+                                ),
+                            };
+                        }
+                        if let (Some(g), Some(pin)) = (effective.as_mut(), base_pin.as_ref()) {
+                            g.snapshot_id = pin.clone();
+                        }
+                        // The check described the patched file; the file is no
+                        // longer that file.
+                        ctx.last_check = VisibleCheck::NotRun;
                     }
                 }
             }
@@ -982,17 +1029,70 @@ impl Runner {
                     // means NO check in the file is failing. A file that still
                     // fails checks has not been repaired, whatever the
                     // adjudicator says about its own test.
-                    let still_failing: Vec<String> = self
-                        .check_outcomes(&target.path, "")
-                        .map(|(failing, _)| failing)
-                        .unwrap_or_default();
+                    // FAIL CLOSED. `unwrap_or_default()` sat here and turned
+                    // "the checks could not be run" into "nothing is failing"
+                    // — on the ONLY path that can return VerifiedDone. That is
+                    // the exact collapse `check_outcomes`' own doc forbids ten
+                    // lines from where it is written, and it made the
+                    // strictness fail OPEN: any second spawn that died (the
+                    // binary replaced mid-run, an OOM kill) produced exit 0 on
+                    // a file whose other checks all still failed.
+                    let still_failing: Vec<String> = match self.check_outcomes(&target.path, "") {
+                        Ok((failing, _)) => failing,
+                        Err(e) => {
+                            self.episode.push(EpisodeEvent::Verified {
+                                passed: false,
+                                detail: format!(
+                                    "claim_done=true: hidden check `{hidden_check}` passed, but \
+                                     the file could not be re-checked afterwards, so nothing was \
+                                     established about the rest of it: {e}"
+                                ),
+                            });
+                            return EpisodeOutcome::Blocked {
+                                steps: step,
+                                reason: format!("the file could not be re-checked: {e}"),
+                            };
+                        }
+                    };
                     if still_failing.is_empty() {
                         return EpisodeOutcome::VerifiedDone { steps: step };
                     }
-                    let regressed: Vec<&String> = still_failing
+                    let regressed: Vec<String> = still_failing
                         .iter()
                         .filter(|n| baseline_passing.contains(n))
+                        .cloned()
                         .collect();
+                    // NOTHING REGRESSED. The patch satisfied the adjudicator
+                    // and broke nothing; the remaining failures were already
+                    // there when the episode started, and this loop was never
+                    // asked about them.
+                    //
+                    // Undoing it here discarded a repair that had WORKED, then
+                    // recorded the correct body as `CheckRefused` — which the
+                    // prompt renders as "it compiled but did not fix the
+                    // problem" and adds to a do-not-propose list. The loop
+                    // steered a competent generator away from the right answer
+                    // and then reported exit 21, "the generator is not
+                    // helping", about a generator that had already succeeded.
+                    //
+                    // So this is a terminal outcome of its own: the patch is
+                    // KEPT, and the pre-existing failures are named.
+                    if regressed.is_empty() {
+                        self.episode.push(EpisodeEvent::Verified {
+                            passed: false,
+                            detail: format!(
+                                "claim_done=true: hidden check `{hidden_check}` passed and \
+                                 nothing regressed, but {} check(s) that were ALREADY failing \
+                                 still fail: {}",
+                                still_failing.len(),
+                                still_failing.join(", ")
+                            ),
+                        });
+                        return EpisodeOutcome::AdjudicatedNotClean {
+                            steps: step,
+                            still_failing,
+                        };
+                    }
                     self.episode.push(EpisodeEvent::Verified {
                         passed: false,
                         detail: format!(
@@ -1008,11 +1108,7 @@ impl Runner {
                                 // mistakes with different remedies.
                                 format!(
                                     " — and this episode BROKE {} that passed before it",
-                                    regressed
-                                        .iter()
-                                        .map(|s| s.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
+                                    regressed.join(", ")
                                 )
                             }
                         ),
@@ -1030,8 +1126,8 @@ impl Runner {
                 // generator editing back toward the original then re-created
                 // an earlier state and tripped the cycle detector on a cycle
                 // the loop had manufactured.
-                if let Some(bytes) = &candidate_base {
-                    if std::fs::write(self.workspace.join(&target.path), bytes).is_err() {
+                {
+                    if restore_base(&self.workspace.join(&target.path), &candidate_base).is_err() {
                         return EpisodeOutcome::Blocked {
                             steps: step,
                             reason: format!(
@@ -1374,6 +1470,23 @@ impl Runner {
             }
         }
         Ok(())
+    }
+}
+
+/// Put a file back to the bytes a candidate started from.
+///
+/// Extracted because the undo existed on ONE of the two paths that reject a
+/// patch — the claim-refused one — and not on the check-driven path that a
+/// file compiling with warnings actually takes. Patches accumulated exactly as
+/// before on the majority of real files, while the commit message said
+/// otherwise. One mechanism, both call sites.
+fn restore_base(path: &std::path::Path, base: &Option<String>) -> std::io::Result<()> {
+    match base {
+        Some(bytes) => std::fs::write(path, bytes),
+        // Unreadable at episode start. Nothing to restore TO, and inventing
+        // something would be worse than leaving it alone; the patch paths fail
+        // earlier in this case anyway.
+        None => Ok(()),
     }
 }
 

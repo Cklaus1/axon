@@ -38,6 +38,12 @@ fn axon_bin() -> PathBuf {
 
 /// A fresh workspace holding the broken fixture, named per-test so concurrent
 /// tests cannot edit one another's copy.
+/// A staged copy of `broken.ax`, in a directory named for the caller.
+///
+/// `name` must be UNIQUE across this file. Tests run in parallel and this
+/// removes the directory first, so two tests sharing a name delete each
+/// other's files — which is exactly what happened, and it presented as a
+/// generator that "did not exist".
 fn workspace(name: &str) -> PathBuf {
     let ws = std::env::temp_dir().join(format!("cortex_cli_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&ws);
@@ -392,9 +398,11 @@ fn cli_json_reports_the_outcome_and_the_evidence_behind_it() {
 
 /// C16 — the run walks the ranked candidates, and each attempt starts clean.
 ///
-/// Measured on the real corpus, the top-ranked candidate is right 57.5% of the
-/// time and the top three cover 90%. Stopping at the first discards a third of
-/// the cases the evidence could already decide.
+/// On the measured corpus the top candidate is the sole most-suspicious one
+/// far less often than the truth reaches the top three, so stopping at the
+/// first discards cases the evidence could already decide. Current figures
+/// live in benchmarks/; they are not quoted here because a number in a doc
+/// comment outlives the measurement it came from.
 ///
 /// `ambiguous.ax` is built so that stopping at one cannot pass: `alpha` and
 /// `beta` tie exactly, `beta` is the broken one, and it sorts second. The
@@ -921,4 +929,316 @@ fn cli_patches_the_selected_symbol_not_a_name_it_prefixes() {
         after.contains("fn scale(n: i64) -> i64 { n * 2 }"),
         "the selected symbol must be the one that changed:\n{after}"
     );
+}
+
+/// C22 — a misbehaving generator fails the loop cleanly instead of stopping it.
+///
+/// `cmd:` runs a program the operator supplies, so the loop has to survive
+/// every way a program can misbehave. Three of these hung or aborted before:
+/// one that never exits blocked forever (no budget applies to a child
+/// process, and `--budget` counts steps, not seconds); one that writes before
+/// reading its stdin deadlocked on a full pipe buffer; and one that writes
+/// without bound was read into memory entirely, because the size limit is
+/// applied to what gets APPLIED and never to what gets buffered.
+#[test]
+fn cli_survives_a_generator_that_misbehaves() {
+    // The name here must not collide with any `workspace(...)` name above.
+    // It did: the same directory was built by two tests, they run in parallel,
+    // and the other one's `remove_dir_all` deleted these scripts mid-run —
+    // which presented as a generator that "did not exist". Two actors, one
+    // directory.
+    let ws = std::env::temp_dir().join(format!("cortex_cli_misbehave_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+
+    let script = |name: &str, body: &str| -> std::path::PathBuf {
+        let p = ws.join(name);
+        std::fs::write(&p, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    };
+    let run = |gen: &std::path::PathBuf| -> (i32, String) {
+        std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+            .args(["repair", "--workspace"])
+            .arg(&ws)
+            .args([
+                "--file",
+                "broken.ax",
+                "--check",
+                "hidden_completion",
+                "--axon",
+            ])
+            .arg(axon_bin())
+            .args(["--write-prefix", "broken.ax", "--generator"])
+            .arg(format!("cmd:{}", gen.display()))
+            // Seconds are not something a suite can wait for, and an untested
+            // deadline is exactly the kind of check that turns out never to
+            // fire.
+            .env("AXON_CORTEX_GENERATOR_TIMEOUT_MS", "700")
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+
+    // 1. Never exits. Must hit the deadline, not block.
+    let began = std::time::Instant::now();
+    let (code, said) = run(&script("hang.sh", "#!/bin/sh\nsleep 600\n"));
+    assert_eq!(
+        code, 24,
+        "a generator that never answers is missing CONTENT: {said}"
+    );
+    assert!(said.contains("did not answer within"), "{said}");
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(30),
+        "the deadline must actually bound the wait, took {:?}",
+        began.elapsed()
+    );
+
+    // 2. Writes 200 KB BEFORE reading its stdin — more than a pipe buffer, so
+    //    a loop that writes the whole prompt before reading deadlocks. It must
+    //    be read and then rejected on its merits, not time out.
+    let began2 = std::time::Instant::now();
+    let (code2, said2) = run(&script(
+        "flood.sh",
+        "#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'x'\ncat >/dev/null\n",
+    ));
+    assert_eq!(code2, 24, "{said2}");
+    assert!(
+        said2.contains("bytes, limit is"),
+        "it must be rejected for its SIZE, not for timing out: {said2}"
+    );
+    assert!(
+        began2.elapsed() < std::time::Duration::from_secs(10),
+        "no deadlock: {:?}",
+        began2.elapsed()
+    );
+
+    // 3. Exits 0 having written nothing. An empty body would delete the
+    //    function while looking like a proposal.
+    let (code3, said3) = run(&script("silent.sh", "#!/bin/sh\ncat >/dev/null\n"));
+    assert_eq!(code3, 24, "{said3}");
+    assert!(said3.contains("empty body"), "{said3}");
+
+    // 4. Whatever happened, the workspace is as it was found.
+    assert!(
+        std::fs::read_to_string(ws.join("broken.ax"))
+            .unwrap()
+            .contains("n + 2"),
+        "a misbehaving generator must not leave the file altered"
+    );
+}
+
+/// C23 — the two guards that only a hostile environment exercises.
+///
+/// Both survived a mutation pass because nothing reached them. They are the
+/// kind of guard that matters precisely when something else has already gone
+/// wrong, so the test has to manufacture that wrongness.
+#[test]
+fn cli_fails_closed_when_the_recheck_cannot_run() {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_hostile_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
+
+    let exe = |name: &str, body: String| -> std::path::PathBuf {
+        let p = ws.join(name);
+        std::fs::write(&p, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    };
+
+    // 1. THE RE-CHECK FAILS, AND ONLY IT.
+    //
+    // After the adjudicator passes, the loop re-runs the WHOLE file to confirm
+    // nothing else fails — the only `axon test` call made without `--filter`.
+    // That asymmetry is what makes this testable: a wrapper that dies when no
+    // filter is given leaves every other call working.
+    //
+    // This guard replaced an `unwrap_or_default()`, which turned "the checks
+    // could not be run" into "nothing is failing" on the ONE path that can
+    // return success. It must fail CLOSED.
+    let fake_axon = exe(
+        "axon-wrapper.sh",
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"--filter\" ] && exec {real} \"$@\"; done\n\
+             case \"$1\" in test) exit 2 ;; esac\nexec {real} \"$@\"\n",
+            real = axon_bin().display()
+        ),
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "broken.ax",
+            "--symbol",
+            "double",
+            "--check",
+            "hidden_completion",
+        ])
+        .arg("--axon")
+        .arg(&fake_axon)
+        .args([
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    n * 2\n",
+        ])
+        .output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "a re-check that could not run must NEVER read as a clean file: {said}"
+    );
+    assert!(
+        said.contains("could not be re-checked") || said.contains("blocked"),
+        "and it must say what could not be established: {said}"
+    );
+
+    // 2. A GENERATOR THAT WRITES WITHOUT BOUND IS CUT OFF, not buffered.
+    //
+    // The size limit in `validate` applies to what gets APPLIED, never to what
+    // gets READ — so without a read bound a child writing gigabytes is
+    // buffered entirely and the process dies on allocation, taking the episode
+    // record with it.
+    //
+    // The observable: cut off, the child dies on a closed pipe and is reported
+    // by its EXIT STATUS. Read in full, it exits cleanly and is rejected for
+    // its size. So the absence of a size complaint is the evidence.
+    std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
+    let flood = exe(
+        "gush.sh",
+        "#!/bin/sh\ncat >/dev/null\nhead -c 3000000 /dev/zero | tr '\\0' 'y'\n".to_string(),
+    );
+    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args(["--write-prefix", "broken.ax", "--generator"])
+        .arg(format!("cmd:{}", flood.display()))
+        .output()
+        .unwrap();
+    let said2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert_eq!(out2.status.code(), Some(24), "{said2}");
+    assert!(
+        !said2.contains("limit is"),
+        "3MB must be CUT OFF at the read, not buffered and then measured: {said2}"
+    );
+}
+
+/// C24 — on the warned-file path too, every proposal replaces the SAME body.
+///
+/// A file that compiles with warnings takes a different route through
+/// selection: check → patch → check → patch, never reaching a completion
+/// claim. The undo lived on the claim path only, so on that route — the
+/// majority of real files — patches accumulated and the generator was shown
+/// its own rejected proposal as "the body currently" while simultaneously
+/// being told that body had been rejected.
+///
+/// The generator below refuses to answer unless it is shown the body it
+/// started from, which is the only way to observe the difference: with the
+/// undo it converges, without it the second call is handed the wrong body and
+/// declines.
+#[test]
+fn cli_shows_the_generator_the_same_body_on_the_warned_path() {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_samebody_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/warned_broken.ax");
+    std::fs::copy(&src, ws.join("warned_broken.ax")).unwrap();
+
+    // Proposes a wrong body first, so a SECOND call must happen; that second
+    // call is where the difference shows. It exits non-zero if the body it is
+    // shown is not the one it started from.
+    //
+    // Both proposals KEEP the `let n = n + 0` line. Without that the first
+    // patch removes the very thing that makes the file warn, the episode
+    // switches to the claim path, and the claim-path undo — a different
+    // mechanism — quietly does the work. An earlier version of this test did
+    // exactly that and passed with the undo under test deleted.
+    let gen = ws.join("picky.sh");
+    std::fs::write(
+        &gen,
+        "#!/bin/sh\n\
+         p=$(cat)\n\
+         case \"$p\" in *'n + 3'*) ;; *) echo 'not the body I started from' >&2; exit 1 ;; esac\n\
+         case \"$p\" in *'Already tried'*) printf '\\n    let n = n + 0\\n    n * 2\\n' ;; \
+                        *) printf '\\n    let n = n + 0\\n    n + 4\\n' ;; esac\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gen, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "warned_broken.ax",
+            "--check",
+            "hidden_scale",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args([
+            "--write-prefix",
+            "warned_broken.ax",
+            "--budget",
+            "12",
+            "--generator",
+        ])
+        .arg(format!("cmd:{}", gen.display()))
+        .output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the second proposal must be asked about the ORIGINAL body: {said}"
+    );
+    assert!(std::fs::read_to_string(ws.join("warned_broken.ax"))
+        .unwrap()
+        .contains("n * 2"));
 }
