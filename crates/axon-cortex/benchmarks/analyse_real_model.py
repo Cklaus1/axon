@@ -44,8 +44,23 @@ print(f"  true target among attempted candidates : {len(attempted)}/{n}  {pct(le
 #    experiment exists to estimate.
 solved = [t for t in trials if t["exit"] == 0 and t["file_clean"]]
 solved_attempted = [t for t in attempted if t["exit"] == 0 and t["file_clean"]]
-print(f"  generator success | target attempted   : {len(solved_attempted)}/{len(attempted)}"
+# `attempted` CONFLATES two states, and the conditional metric this
+# experiment exists to estimate depends on which one is meant:
+#
+#   candidate_selected  — the controller entered an episode for it
+#   generator_invoked   — the model was actually asked for a body
+#
+# They are not equivalent: `attempted.push()` runs BEFORE the episode, so a
+# selected candidate can terminate without ever reaching the generator (early
+# termination, authority refusal, budget). Conditioning generator CAPABILITY on
+# selection charges the generator for episodes it never saw.
+#
+# So report both. The first needs no candidate<->proposal join and is always
+# available; the second needs to know whether the TRUE target specifically
+# reached the generator, which is exactly the join that fails closed above.
+print(f"  P(repair | true target SELECTED)       : {len(solved_attempted)}/{len(attempted)}"
       f"  {pct(len(solved_attempted), len(attempted))}")
+print( "        combined controller + generator path; no attribution needed")
 
 def segments(t):
     """Proposals grouped by the candidate they were made for.
@@ -72,29 +87,82 @@ def split_on_target(t):
     the rejected bodies are candidate-local, so nothing a wrong candidate
     learned crosses over. Calling those "wasted" is the right reading for THIS
     design, and would stop being right if feedback ever crossed candidates.
+
+    Candidate identity is NOT recoverable from proposal ORDER.
+
+    `attempted.push()` happens BEFORE the episode runs, and several outcomes
+    let the walk continue, so a candidate can be attempted and contribute zero
+    proposals. Indexing blindly then reads a LATER candidate's proposals as an
+    earlier one's: measured on a fixture with one silent candidate, a
+    3-proposal on-target recovery was reported as 0 on-target proposals, the
+    recovery rate went to n/a, and the whole spend landed in ranking waste —
+    the finding-vs-fixing split exactly inverted.
+
+    An earlier attempt at this anchored from the END, on the reasoning that a
+    successful walk breaks on the true target so the target's segment must be
+    last. That is still positional inference, and it is WRONG in a case it
+    cannot detect: if the true target is itself silent and happens to be last,
+    the last segment belongs to an EARLIER wrong candidate and is reported as
+    on-target generator effort — a confident number with the sign flipped.
+
+    So this fails closed. Either segment count equals candidate count (nothing
+    was silent, and position carries identity because order is then the whole
+    story), or attribution is UNMEASURED. The fix is not a better heuristic;
+    it is for each proposal to CARRY its candidate, which is staged for the
+    next run.
     """
     segs = segments(t)
     if not t["target_attempted"] or t["symbol"] not in t["attempted"]:
         return [c for seg in segs for c in seg], []
+    if len(segs) != len(t["attempted"]):
+        t["_unattributable"] = True
+        return [], []
     i = t["attempted"].index(t["symbol"])
-    before = [c for seg in segs[:i] for c in seg]
-    on = segs[i] if i < len(segs) else []
-    return before, on
+    return [c for seg in segs[:i] for c in seg], segs[i]
 
 
 for t in trials:
     _b, _o = split_on_target(t)
     t["_before"], t["_on"] = _b, _o
     t["_final_proposals"] = len(_o) if _o else len(_b)
-    t["_cost_before"] = sum(c["cost_usd"] or 0 for c in _b)
-    t["_cost_on"] = sum(c["cost_usd"] or 0 for c in _o)
+    # None, not 0. A zero here would enter the spend split as a real
+    # measurement of "no ranking waste" — the absent-vs-passed collapse in
+    # its cheapest form.
+    un = t.get("_unattributable")
+    t["_cost_before"] = None if un else sum(c["cost_usd"] or 0 for c in _b)
+    t["_cost_on"] = None if un else sum(c["cost_usd"] or 0 for c in _o)
+    if un:
+        t["_final_proposals"] = None
 
+
+bad = [t for t in trials if t.get("_unattributable")]
+reached = [t for t in attempted if not t.get("_unattributable") and t["_on"]]
+if bad:
+    print( "  P(repair | true target REACHED GENERATOR): UNMEASURED")
+    print(f"        {len(bad)} trial(s) cannot prove the true target was asked")
+    print( "        for a body at all, so the clean generator-capability term")
+    print( "        is not available from this run.")
+else:
+    ok = [t for t in reached if t in solved_attempted]
+    print(f"  P(repair | true target REACHED GENERATOR): {len(ok)}/{len(reached)}"
+          f"  {pct(len(ok), len(reached))}")
+    print( "        generator capability proper")
+
+# A trial whose join failed must be SAID rather than folded into a rate.
+if bad:
+    print(f"  !! {len(bad)} trial(s) UNATTRIBUTABLE — a candidate was attempted")
+    print("     but produced no proposal, so which proposals belong to the true")
+    print("     target cannot be recovered. Excluded from the recovery rate and")
+    print("     the finding-vs-fixing split; still counted everywhere else.")
 
 # 3. RECOVERY — does the feedback loop earn its complexity?
-multi = [t for t in attempted if len(t["_on"]) > 1]
+multi = [t for t in attempted if not t.get("_unattributable") and len(t["_on"]) > 1]
 recovered = [t for t in multi if t["exit"] == 0 and t["file_clean"]]
-print(f"  recovery | first proposal rejected     : {len(recovered)}/{len(multi)}"
-      f"  {pct(len(recovered), len(multi))}\n")
+if bad:
+    print("  recovery on true target                : UNMEASURED\n")
+else:
+    print(f"  recovery | first proposal rejected     : {len(recovered)}/{len(multi)}"
+          f"  {pct(len(recovered), len(multi))}\n")
 
 # PROPOSALS ARE ATTRIBUTED TO CANDIDATES, not summed across the run.
 #
@@ -108,32 +176,46 @@ print(f"  recovery | first proposal rejected     : {len(recovered)}/{len(multi)}
 # The rejected-attempts list is per-episode, so `priors` returning to 0 marks
 # the start of a new candidate. The last segment is the candidate that was
 # live when the run ended — the one a verdict is about.
-first_shot = [t for t in solved_attempted if t["_final_proposals"] == 1]
-after_fb = [t for t in solved_attempted if t["_final_proposals"] > 1]
-failed_fb = [t for t in attempted if t not in solved_attempted and t["_final_proposals"] > 1]
+att = [t for t in trials if not t.get("_unattributable")]
+sa_att = [t for t in solved_attempted if not t.get("_unattributable")]
+first_shot = [t for t in sa_att if t["_final_proposals"] == 1]
+after_fb = [t for t in sa_att if t["_final_proposals"] > 1]
+failed_fb = [t for t in attempted if not t.get("_unattributable")
+             and t not in solved_attempted and t["_final_proposals"] > 1]
 gen_err = [t for t in trials if t["outcome"] == "needs_input"]
-print(f"    first-shot repair       : {len(first_shot)}")
-print(f"    recovered after feedback: {len(after_fb)}")
-print(f"    failed after feedback   : {len(failed_fb)}")
+# All four buckets need the join. Printing them as zeros when the join failed
+# would read as "no recoveries happened" rather than "we cannot say".
+if bad:
+    print("    first-shot / recovered / failed-after-feedback: UNMEASURED")
+else:
+    print(f"    first-shot repair       : {len(first_shot)}")
+    print(f"    recovered after feedback: {len(after_fb)}")
+    print(f"    failed after feedback   : {len(failed_fb)}")
 print(f"    generator unavailable   : {len(gen_err)}\n")
 
 # THE INCREMENTAL VALUE OF RECOVERY. If most verified repairs required a
 # rejected proposal first, the loop is not wrapping a model call — it is
 # converting a mediocre first attempt into a verified solution by structured
 # iteration, and that is the part worth its complexity.
-if solved_attempted:
+if bad:
+    print("  recovery's share of all verified repairs: UNMEASURED\n")
+elif solved_attempted:
     print(f"  recovery's share of all verified repairs: {len(after_fb)}/{len(solved_attempted)}"
           f"  {pct(len(after_fb), len(solved_attempted))}\n")
 
 # RANK x OUTCOME. Does a lower-ranked candidate merely cost more proposals, or
 # does it also make the generator likelier to fail? Cost and capability are
 # different problems with different fixes.
-print("  localization rank vs outcome:")
+# The matrix splits each rank into first-shot vs recovered, which is the join
+# again. Rank alone is sound; rank x OUTCOME is not.
+print("  localization rank vs outcome:"
+      + ("   UNMEASURED (candidate attribution failed)" if bad else ""))
 print(f"    {'rank':<8}{'first-shot':>11}{'recovered':>11}{'failed':>9}")
 for r in (1, 2, 3):
-    at_r = [t for t in attempted if t["localization_rank"] == r]
-    fs = sum(1 for t in at_r if t in solved_attempted and t["_final_proposals"] == 1)
-    rc = sum(1 for t in at_r if t in solved_attempted and t["_final_proposals"] > 1)
+    at_r = [t for t in attempted if not t.get("_unattributable")
+            and t["localization_rank"] == r]
+    fs = sum(1 for t in at_r if t in sa_att and t["_final_proposals"] == 1)
+    rc = sum(1 for t in at_r if t in sa_att and t["_final_proposals"] > 1)
     fl = len(at_r) - fs - rc
     if at_r:
         print(f"    {r:<8}{fs:>11}{rc:>11}{fl:>9}")
@@ -152,8 +234,12 @@ if solved:
     props = [t["proposals"] for t in solved]
     costs = [t["cost_usd"] for t in solved]
     walls = [t["wall_s"] for t in solved]
-    print(f"  median proposals / solve: {statistics.median(props):.0f} total, "
-          f"{statistics.median([len(t['_on']) for t in solved]):.0f} on the true target")
+    # TOTAL proposals is a count of model calls and needs no join. The
+    # on-target share does need one, so it is dropped rather than shown as 0.
+    on_target = ("" if bad else
+                 f", {statistics.median([len(t['_on']) for t in solved]):.0f} "
+                 f"on the true target")
+    print(f"  median proposals / solve: {statistics.median(props):.0f} total{on_target}")
     print(f"  median cost / solve     : ${statistics.median(costs):.3f}")
     print(f"  median wall / solve     : {statistics.median(walls):.0f}s")
 print(f"  total spend             : ${sum(t['cost_usd'] for t in trials):.2f}\n")
@@ -215,15 +301,27 @@ if ranks:
     print(f"    mean true-target rank   : {statistics.mean(ranks):.2f}")
     print(f"    median true-target rank : {statistics.median(ranks):.0f}")
     print(f"    MRR (over all trials)   : {mrr:.3f}")
-    print(f"    mean proposals BEFORE target: {statistics.mean([len(t['_before']) for t in trials]):.2f}")
-    print(f"    mean proposals ON target    : {statistics.mean([len(t['_on']) for t in trials]):.2f}")
-    print(f"    mean $ BEFORE target        : ${statistics.mean([t['_cost_before'] for t in trials]):.3f}")
-    print(f"    mean $ ON target            : ${statistics.mean([t['_cost_on'] for t in trials]):.3f}")
-    tot_b = sum(t["_cost_before"] for t in trials)
-    tot_o = sum(t["_cost_on"] for t in trials)
-    if tot_b + tot_o:
-        print(f"    ranking waste is {100*tot_b/(tot_b+tot_o):.0f}% of inference spend "
-              f"(${tot_b:.2f} finding vs ${tot_o:.2f} fixing)")
+    # Everything from here down joins proposals to a candidate. One failed
+    # join makes the SPLIT unmeasurable — not smaller, unmeasurable — so the
+    # whole block goes rather than reporting a partial split as a whole one.
+    if bad:
+        print(f"    proposals/cost before vs on target: UNMEASURED — candidate")
+        print(f"      attribution failed on {len(bad)} of {len(trials)} trial(s).")
+        print( "      A proposal does not carry the candidate it was made for,")
+        print( "      so ownership was inferred from ORDER; where a candidate")
+        print( "      produced no proposal that inference is wrong and cannot")
+        print( "      be detected per-trial. Fixed for the next run by having")
+        print( "      each proposal name its candidate.")
+    else:
+        print(f"    mean proposals BEFORE target: {statistics.mean([len(t['_before']) for t in trials]):.2f}")
+        print(f"    mean proposals ON target    : {statistics.mean([len(t['_on']) for t in trials]):.2f}")
+        print(f"    mean $ BEFORE target        : ${statistics.mean([t['_cost_before'] for t in trials]):.3f}")
+        print(f"    mean $ ON target            : ${statistics.mean([t['_cost_on'] for t in trials]):.3f}")
+        tot_b = sum(t["_cost_before"] for t in trials)
+        tot_o = sum(t["_cost_on"] for t in trials)
+        if tot_b + tot_o:
+            print(f"    ranking waste is {100*tot_b/(tot_b+tot_o):.0f}% of inference spend "
+                  f"(${tot_b:.2f} finding vs ${tot_o:.2f} fixing)")
     print()
 
 # WRAPPER TAX. Output tokens are the repair; cache traffic is the coding-agent

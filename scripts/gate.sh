@@ -143,6 +143,15 @@ cargo test -p axon-cortex --features ai \
 python3 crates/axon-cortex/benchmarks/check_docs.py \
   || fail "benchmark docs cite figures the data does not produce"
 
+# The analyser produces every headline number the real-model experiment
+# reports, and nothing in the Rust suite touches it. It shipped with a
+# load-bearing defect: proposal ownership inferred from ORDER, which is wrong
+# whenever a candidate is selected but never reaches the generator. Measured
+# with the guard removed, it reported "ranking waste is 100% of inference
+# spend" on a fixture where half the proposals went to the true target.
+python3 crates/axon-cortex/benchmarks/selftest_analyse.py \
+  || fail "analyser attributes proposals to candidates unsoundly"
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 
