@@ -2021,36 +2021,63 @@ pub extern "C" fn __axon_now_ms() -> i64 {
 /// run time — the build-time refusal used for `AXON_ALLOWED_EFFECTS` cannot
 /// apply. It is consistent with what this crate already does: it reads
 /// `AXON_CLOCK`, `AXON_AI_MOCK` and `AXON_MAX_DEPTH` at runtime today.
+///
+/// CORRECTION. The sentence above once read that the build-time refusal used
+/// for `AXON_ALLOWED_EFFECTS` "cannot apply" here because that variable is
+/// only ever set at build time. That was wrong, and it is the assumption that
+/// kept D-002 open after it was declared fixed: the ceiling is a RUN-time
+/// control, and a build-time refusal only stops you COMPILING while one
+/// happens to be set. Measured — a binary built with no ceiling and run under
+/// `AXON_ALLOWED_EFFECTS=Pure` printed "IO HAPPENED" and exited 0, where
+/// `axon run` on the same source exited 8. That is the production shape, since
+/// `axon-guest-init` reads the ceiling from MMDS and execs a payload built
+/// earlier. Both ceilings are therefore in the list below.
 #[no_mangle]
 pub extern "C" fn __axon_rt_refuse_interp_only_env() {
-    // One list, not three one-offs. Each of these is honoured by the
-    // interpreter and read nowhere in `codegen/` or this crate's host paths,
-    // so a native binary silently ignores it. Adding a row here is the whole
-    // cost of covering the next one.
-    for var in ["AXON_REPLAY", "AXON_RECORD", "AXON_AUDIT_LEDGER"] {
+    // A TABLE, not a `match` with a catch-all. The previous shape ended in
+    // `_ =>`, so any variable added to the list silently inherited the audit
+    // ledger's consequence text — a new control would have been refused with a
+    // sentence describing a different control. Pairing each name with its own
+    // consequence makes that unrepresentable rather than merely unlikely.
+    const REFUSED: &[(&str, &str)] = &[
+        (
+            "AXON_REPLAY",
+            "perform the effects for real while looking like a replay",
+        ),
+        (
+            "AXON_RECORD",
+            "record nothing, leaving an empty journal that reads as a run which \
+             touched nothing",
+        ),
+        // Measured: interp wrote 2 ledger entries for one `write_file`; the
+        // native binary did not create the ledger file at all.
+        (
+            "AXON_AUDIT_LEDGER",
+            "perform capability-bearing operations while writing NO audit \
+             entries — a ledger indistinguishable from a run that did nothing",
+        ),
+        // Measured: same 3-line program, same `AXON_ALLOWED_EFFECTS=Pure`.
+        // `axon run` refused with exit 8; a binary built earlier printed
+        // "IO HAPPENED" and exited 0.
+        (
+            "AXON_ALLOWED_EFFECTS",
+            "perform every effect the ceiling forbids, with no warning and \
+             exit 0 — a ceiling the interpreter enforces and this engine \
+             cannot",
+        ),
+        (
+            "AXON_BUDGET_TOKENS",
+            "spend AI tokens past a cap the operator set and the program \
+             cannot raise",
+        ),
+    ];
+    for (var, consequence) in REFUSED {
         if std::env::var_os(var).is_some() {
             eprintln!(
                 "axon: `{var}` is set, but this is a NATIVELY BUILT binary and \
-                 the host journal is honoured by the interpreter only.\n  \
-                 Refusing to run: continuing would {}.\n  \
-                 Run the program with `axon run`, which implements the journal.",
-                match var {
-                    "AXON_REPLAY" => {
-                        "perform the effects for real while looking like a replay"
-                    }
-                    "AXON_RECORD" => {
-                        "record nothing, leaving an empty journal that reads as a \
-                         run which touched nothing"
-                    }
-                    // Measured: interp wrote 2 ledger entries for one
-                    // `write_file`; the native binary did not create the ledger
-                    // file at all.
-                    _ => {
-                        "perform capability-bearing operations while writing NO \
-                         audit entries — a ledger indistinguishable from a run \
-                         that did nothing"
-                    }
-                }
+                 that control is honoured by the interpreter only.\n  \
+                 Refusing to run: continuing would {consequence}.\n  \
+                 Run the program with `axon run`, which implements it."
             );
             std::process::exit(2);
         }

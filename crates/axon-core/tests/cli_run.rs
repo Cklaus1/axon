@@ -31468,6 +31468,104 @@ fn a_native_build_cannot_silently_drop_an_ambient_effect_ceiling() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A ceiling set at RUN time must not be dropped by a binary built earlier.
+///
+/// The build-time refusal above is not enough, and believing it was is what
+/// kept D-002 open after it was declared fixed. `refuse_if_ambient_ceiling`
+/// keys on the environment during `axon build`; it says nothing about the case
+/// that actually occurs in production, where a binary is built once and run
+/// later under a policy that did not exist at build time. That is precisely
+/// the guest shape: `axon-guest-init` reads the ceiling from MMDS and execs a
+/// payload built earlier.
+///
+/// Measured before the fix:
+///
+/// ```text
+/// axon build c.ax -o cbin            # no ceiling set — emits happily
+/// AXON_ALLOWED_EFFECTS=Pure ./cbin   # "IO HAPPENED", exit 0
+/// AXON_ALLOWED_EFFECTS=Pure axon run # exit 8
+/// ```
+///
+/// This test builds with the ceiling explicitly REMOVED from the environment,
+/// so it cannot be satisfied by the build-time refusal — if that were the only
+/// mechanism, the build would succeed and the binary would print.
+#[test]
+fn a_ceiling_set_at_run_time_is_not_dropped_by_a_binary_built_earlier() {
+    let dir = std::env::temp_dir().join(format!("axon_rtceil_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("c.ax");
+    std::fs::write(
+        &src,
+        "fn main() -> i64 {\n    println(\"IO HAPPENED\")\n    0\n}\n",
+    )
+    .unwrap();
+
+    // PRECONDITION: the interpreter refuses. Without this the test could pass
+    // by comparing two permissive engines.
+    let run = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args(["run", src.to_str().unwrap()])
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .expect("axon run");
+    assert_eq!(
+        run.status.code(),
+        Some(8),
+        "precondition: interp must refuse `println` under a Pure ceiling. \
+         stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // Build with NO ceiling in the environment — the build-time refusal is
+    // deliberately given nothing to fire on.
+    let bin = dir.join("cbin");
+    let build = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+        .env_remove("AXON_ALLOWED_EFFECTS")
+        .env_remove("AXON_BUDGET_TOKENS")
+        .output()
+        .expect("axon build");
+    if !build.status.success() {
+        eprintln!(
+            "codegen unavailable (control build with NO ceiling failed) — \
+             run-time ceiling parity skipped. stderr: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    // CONTROL: unconstrained, the binary must still work. A refusal that fires
+    // unconditionally would pass the assertion below while breaking every
+    // native run.
+    let free = Command::new(&bin)
+        .env_remove("AXON_ALLOWED_EFFECTS")
+        .output()
+        .expect("run unconstrained");
+    assert!(
+        String::from_utf8_lossy(&free.stdout).contains("IO HAPPENED"),
+        "control: the binary must run normally with no ceiling set, else the \
+         refusal is firing unconditionally. exit {:?}",
+        free.status.code()
+    );
+
+    let ran = Command::new(&bin)
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .expect("run under a ceiling");
+    assert!(
+        !String::from_utf8_lossy(&ran.stdout).contains("IO HAPPENED"),
+        "ENGINE PARITY VIOLATION: the interpreter refused this program under \
+         AXON_ALLOWED_EFFECTS=Pure (exit 8), but a natively built binary \
+         performed the IO anyway and exited {:?}. The ceiling was set at RUN \
+         time, so the build-time refusal cannot help — a binary built before \
+         the policy existed must refuse, or enforce it.",
+        ran.status.code()
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `AXON_SEED` must reach the NATIVE engine, and native randomness must be
 /// random when it is unset.
 ///

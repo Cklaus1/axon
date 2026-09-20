@@ -711,7 +711,7 @@
         "governance/cortex-v015/DISCREPANCIES.md",
         "crates/axon-core/src/interp.rs"
       ],
-      "gap": "PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure \u2014 `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. CORRECTED AFTER AUDIT: the refusal keys on the BUILD-TIME environment only. A binary built with no ceiling and RUN under one performs every effect, exit 0 \u2014 and that is the production shape, since axon-guest-init sets the ceiling from MMDS and execs a payload built earlier. Native is therefore SILENTLY-IGNORING at run time, not refusing; the run-time refusal hook already exists in axon-rt and these two vars are simply not in its list. See the D-002 correction in governance/cortex-v015/DISCREPANCIES.md. Native does not ENFORCE the ceiling \u2014 the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED.",
+      "gap": "PROVEN END-TO-END, then CLOSED BY REFUSAL (branch fix/native-ceiling-parity). Before: same 3-line program, same AXON_ALLOWED_EFFECTS=Pure \u2014 `axon run` refused (exit 8), `axon build` emitted a binary (exit 0), the binary printed and exited 0. After: `axon build` refuses with E0910 naming the variable, and a cli_run test asserts the BOUNDARY (native must refuse OR the artifact must enforce) with the interpreter's refusal as a PRECONDITION, so it cannot pass by comparing two permissive engines. Mutation-verified: restoring the silent emission turns it red with 'ENGINE PARITY VIOLATION'. CORRECTED AFTER AUDIT: the refusal keys on the BUILD-TIME environment only. A binary built with no ceiling and RUN under one performs every effect, exit 0 \u2014 and that is the production shape, since axon-guest-init sets the ceiling from MMDS and execs a payload built earlier. CLOSED: both ceilings are now in axon-rt's run-time refusal table, so a binary built before the policy existed exits 2 rather than performing the effects. Mutation-verified (renaming the table entry restores the silent bypass and turns the test red) with an unconstrained-run control. See the D-002 correction in governance/cortex-v015/DISCREPANCIES.md. Native does not ENFORCE the ceiling \u2014 the safety boundary is now equivalent, the capability is not. wasm and guest engines UNASSESSED.",
       "engines": {
         "interpreter": "enforced",
         "native": "refused",
@@ -783,30 +783,30 @@
     {
       "name": "AXON_ALLOWED_EFFECTS",
       "category": "authorization/effect-ceiling",
-      "status": "open",
+      "status": "native-closed",
       "engines": {
         "interpreter": "enforced",
-        "native": "silently-ignored",
+        "native": "explicitly-refused",
         "wasm": "unknown",
         "guest": "unknown"
       },
-      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "evidence": "crates/axon-core/tests/cli_run.rs",
       "note": "PROVEN: interp refused a println under Pure (exit 8), native emitted a binary that printed, exit 0. Native now refuses EMISSION at every codegen entry point. Build-time only \u2014 the guest sets it at boot, which D-009 tracks.",
-      "open": "RESIDUAL, found by static audit: `refuse_if_ambient_ceiling` keys on the BUILD-time environment. A binary built with no ceiling and RUN under one performs every effect, exit 0, no warning. The run-time refusal hook already exists and fires for three sibling vars; these two are simply not in its list (axon-rt/src/lib.rs, __axon_rt_refuse_interp_only_env). Marking native `explicitly-refused` on the strength of the build-time path was my own absent-vs-passed collapse."
+      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED."
     },
     {
       "name": "AXON_BUDGET_TOKENS",
       "category": "resource-budget",
-      "status": "open",
+      "status": "native-closed",
       "engines": {
         "interpreter": "enforced",
-        "native": "silently-ignored",
+        "native": "explicitly-refused",
         "wasm": "unknown",
         "guest": "unknown"
       },
-      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "evidence": "crates/axon-core/tests/cli_run.rs",
       "note": "Same refusal path as the effect ceiling. Zero reads in codegen/ or axon-rt.",
-      "open": "RESIDUAL, found by static audit: `refuse_if_ambient_ceiling` keys on the BUILD-time environment. A binary built with no ceiling and RUN under one performs every effect, exit 0, no warning. The run-time refusal hook already exists and fires for three sibling vars; these two are simply not in its list (axon-rt/src/lib.rs, __axon_rt_refuse_interp_only_env). Marking native `explicitly-refused` on the strength of the build-time path was my own absent-vs-passed collapse."
+      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED."
     },
     {
       "name": "AXON_REPLAY",
