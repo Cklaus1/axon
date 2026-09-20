@@ -109,10 +109,12 @@ failing: the adjudicator is a witness, not the whole truth.
 
 `guess.py` proposes plausible single-token edits in a fixed order. It knows
 nothing about which defect was injected and must learn from the rejections the
-loop feeds back. It is not a model, and its numbers are not a model's — what it
-measures is whether the loop can be DRIVEN to a repair by something that
-guesses, which is the shape of the problem a model faces minus the
-understanding.
+loop feeds back. It is not a model and its numbers are not a model's. Read it
+as a SYNTHETIC RECOVERY CONTROL, not as a lower bound on model ability: a real
+model may do worse on some defect classes and far better on others, and calling
+this a floor would assume a relationship no measurement here establishes. What
+it shows is that the loop can be driven to a repair by something that merely
+guesses — the shape of the problem a model faces, minus the understanding.
 
 | | |
 |---|---|
@@ -234,5 +236,8 @@ ranking, and a candidate that is never listed cannot be tried.
   loop cannot tell which failures it was responsible for. Claiming success
   while a check fails is the defect that rule exists to prevent, so the
   conservative direction is deliberate.
-* **The numbers are not a model's.** Both generators here are deterministic.
-  No model has ever driven this loop: this environment has no credentials.
+* **The numbers above are not a model's.** Every generator in the five results
+  above is deterministic. A real model HAS since driven the loop — through the
+  `cmd:` seam, with credentials that never entered this repository — and that
+  run is reported separately; it is a different experiment and its figures do
+  not belong in these tables.
