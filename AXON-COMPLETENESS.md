@@ -60,7 +60,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 | subsystem | impl | production proof | mutation | docs | gap |
 |---|---|---|---|---|---|
-| SMT discharge | ~ | ? | ✗ | ✓ | CLAUDE.md says discharge is wired into the DEFAULT pipeline; that is not yet independently confirmed here, so the row says unknown rather than inheriting the claim. Also a possible name-collision: Discharged keys on BARE fn names and impl methods share that namespace. Investigation lane open. |
+| SMT discharge | ~ | ✗ | ✗ | ✓ | SETTLED: inert in the default build. `smt` is opt-in and the cfg(not(smt)) compute_discharged returns an EMPTY Discharged, so no check is elided unless built --features smt. The name-collision hazard (Discharged keys on BARE fn names; impl methods share that namespace, and only free fns are ever proven) is therefore LATENT, not live — and 0 collisions exist in the corpus today. Fails SAFE: the default build checks more. |
 
 ## self-improvement
 
@@ -70,7 +70,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-15 of 27 subsystems have a production proof; 4 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+15 of 27 subsystems have a production proof; 3 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 

@@ -313,14 +313,15 @@
       "area": "formal",
       "subsystem": "SMT discharge",
       "implementation": "partial",
-      "production_proof": "unknown",
+      "production_proof": "no",
       "mutation": "no",
       "docs": "yes",
       "evidence": [
         "crates/axon-core/src/smt.rs",
-        "crates/axon-core/src/verify.rs"
+        "crates/axon-core/src/main.rs",
+        "crates/axon-core/Cargo.toml"
       ],
-      "gap": "CLAUDE.md says discharge is wired into the DEFAULT pipeline; that is not yet independently confirmed here, so the row says unknown rather than inheriting the claim. Also a possible name-collision: Discharged keys on BARE fn names and impl methods share that namespace. Investigation lane open."
+      "gap": "SETTLED: inert in the default build. `smt` is opt-in and the cfg(not(smt)) compute_discharged returns an EMPTY Discharged, so no check is elided unless built --features smt. The name-collision hazard (Discharged keys on BARE fn names; impl methods share that namespace, and only free fns are ever proven) is therefore LATENT, not live \u2014 and 0 collisions exist in the corpus today. Fails SAFE: the default build checks more."
     },
     {
       "area": "self-improvement",
