@@ -545,7 +545,9 @@ fn test_safety_status_aggregate() {
         "coalition_ok must be null while nothing evaluates it, got: {v}"
     );
     assert!(
-        v["coalition_note"].as_str().is_some_and(|s| s.contains("not evaluated")),
+        v["coalition_note"]
+            .as_str()
+            .is_some_and(|s| s.contains("not evaluated")),
         "an unevaluated axis must carry a note saying so, got: {v}"
     );
     // The mode rides with the attestation, so a consumer of the AGGREGATE can

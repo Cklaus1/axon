@@ -418,7 +418,10 @@ pub fn safety_status() -> String {
     // attested:true with a literal digest. Dropping `mode` here left the
     // aggregate with no field at all that distinguishes a measured kernel from
     // a stubbed one, and the UI then printed "live" from its own fallback.
-    let attest_mode = attest_val["mode"].as_str().unwrap_or("unreported").to_string();
+    let attest_mode = attest_val["mode"]
+        .as_str()
+        .unwrap_or("unreported")
+        .to_string();
 
     let ledger_val: serde_json::Value =
         serde_json::from_str(&safety_ledger()).unwrap_or(serde_json::Value::Null);
