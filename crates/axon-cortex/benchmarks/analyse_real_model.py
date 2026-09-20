@@ -47,7 +47,12 @@ solved_attempted = [t for t in attempted if t["exit"] == 0 and t["file_clean"]]
 print(f"  generator success | target attempted   : {len(solved_attempted)}/{len(attempted)}"
       f"  {pct(len(solved_attempted), len(attempted))}")
 
-def last_segment(t):
+def segments(t):
+    """Proposals grouped by the candidate they were made for.
+
+    The rejected-attempts list is per-episode, so a `priors` count returning
+    to 0 marks a new candidate. Segment i corresponds to `attempted[i]`.
+    """
     segs, cur = [], []
     for c in t["per_proposal"]:
         if (c["priors"] or 0) == 0 and cur:
@@ -56,15 +61,37 @@ def last_segment(t):
         cur.append(c)
     if cur:
         segs.append(cur)
-    return segs[-1] if segs else []
+    return segs
+
+
+def split_on_target(t):
+    """(before, on) — proposals spent reaching the true target, and on it.
+
+    Everything before the target's own episode is LOCALIZATION-SEARCH cost,
+    not generator recovery: each candidate episode resets to its baseline and
+    the rejected bodies are candidate-local, so nothing a wrong candidate
+    learned crosses over. Calling those "wasted" is the right reading for THIS
+    design, and would stop being right if feedback ever crossed candidates.
+    """
+    segs = segments(t)
+    if not t["target_attempted"] or t["symbol"] not in t["attempted"]:
+        return [c for seg in segs for c in seg], []
+    i = t["attempted"].index(t["symbol"])
+    before = [c for seg in segs[:i] for c in seg]
+    on = segs[i] if i < len(segs) else []
+    return before, on
 
 
 for t in trials:
-    t["_final_proposals"] = len(last_segment(t))
+    _b, _o = split_on_target(t)
+    t["_before"], t["_on"] = _b, _o
+    t["_final_proposals"] = len(_o) if _o else len(_b)
+    t["_cost_before"] = sum(c["cost_usd"] or 0 for c in _b)
+    t["_cost_on"] = sum(c["cost_usd"] or 0 for c in _o)
 
 
 # 3. RECOVERY — does the feedback loop earn its complexity?
-multi = [t for t in attempted if len(last_segment(t)) > 1]
+multi = [t for t in attempted if len(t["_on"]) > 1]
 recovered = [t for t in multi if t["exit"] == 0 and t["file_clean"]]
 print(f"  recovery | first proposal rejected     : {len(recovered)}/{len(multi)}"
       f"  {pct(len(recovered), len(multi))}\n")
@@ -126,10 +153,34 @@ if solved:
     costs = [t["cost_usd"] for t in solved]
     walls = [t["wall_s"] for t in solved]
     print(f"  median proposals / solve: {statistics.median(props):.0f} total, "
-          f"{statistics.median([t['_final_proposals'] for t in solved]):.0f} on the candidate that worked")
+          f"{statistics.median([len(t['_on']) for t in solved]):.0f} on the true target")
     print(f"  median cost / solve     : ${statistics.median(costs):.3f}")
     print(f"  median wall / solve     : {statistics.median(walls):.0f}s")
 print(f"  total spend             : ${sum(t['cost_usd'] for t in trials):.2f}\n")
+
+# WHERE THE MONEY GOES: finding the function, or fixing it.
+#
+# Two different optimisations hide behind one "repair cost". Coverage
+# optimisation puts the truth somewhere in the top-k; RANKING optimisation
+# puts it earlier. Two systems with identical top-3 coverage can differ
+# enormously here, and only this split says which one you have.
+ranks = [t["localization_rank"] for t in trials if t["localization_rank"] > 0]
+if ranks:
+    mrr = sum(1 / r for r in ranks) / len(trials)
+    print("  localization economics:")
+    print(f"    mean true-target rank   : {statistics.mean(ranks):.2f}")
+    print(f"    median true-target rank : {statistics.median(ranks):.0f}")
+    print(f"    MRR (over all trials)   : {mrr:.3f}")
+    print(f"    mean proposals BEFORE target: {statistics.mean([len(t['_before']) for t in trials]):.2f}")
+    print(f"    mean proposals ON target    : {statistics.mean([len(t['_on']) for t in trials]):.2f}")
+    print(f"    mean $ BEFORE target        : ${statistics.mean([t['_cost_before'] for t in trials]):.3f}")
+    print(f"    mean $ ON target            : ${statistics.mean([t['_cost_on'] for t in trials]):.3f}")
+    tot_b = sum(t["_cost_before"] for t in trials)
+    tot_o = sum(t["_cost_on"] for t in trials)
+    if tot_b + tot_o:
+        print(f"    ranking waste is {100*tot_b/(tot_b+tot_o):.0f}% of inference spend "
+              f"(${tot_b:.2f} finding vs ${tot_o:.2f} fixing)")
+    print()
 
 # WRAPPER TAX. Output tokens are the repair; cache traffic is the coding-agent
 # system prompt the driver happens to sit behind. Reported apart so a later
