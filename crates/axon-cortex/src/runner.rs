@@ -397,9 +397,16 @@ impl Runner {
     /// is IGNORED for the verdict — it is recorded so a reviewer can see that a
     /// confident wrong claim was made and overruled.
     pub fn verify(&mut self, claimed_done: bool, hidden_check: &str, rel_path: &str) -> bool {
+        // `hidden_check` used to appear ONLY in the detail string: the command
+        // was `axon test <file>`, so every verification ran the whole file and
+        // then reported that a NAMED check had passed. The evidence asserted
+        // something the run never evaluated individually. Selecting it is what
+        // makes the name mean anything.
         let out = std::process::Command::new(&self.axon_bin)
             .arg("test")
             .arg(self.workspace.join(rel_path))
+            .arg("--filter")
+            .arg(hidden_check)
             .output();
         // Three outcomes, not two. A check that could not RUN is not a check
         // that failed, and neither is a pass — collapsing "unobserved" into
@@ -407,7 +414,53 @@ impl Runner {
         // The VERDICT is fail-closed for both non-pass cases; only the recorded
         // evidence distinguishes them, which is precisely who needs to know.
         let (hidden_passed, outcome) = match out {
-            Ok(o) if o.status.success() => (true, "passed".to_string()),
+            Ok(o) if o.status.success() => {
+                // Filtering introduces a hole that running the whole file did
+                // not have: `axon test --filter nope` matches nothing, runs
+                // zero tests and exits 0 — "test result: ok. 0 passed, 0
+                // failed". Taken at face value that is a hidden check reporting
+                // PASSED while never existing, which is worse than the
+                // mislabelling this change set out to fix.
+                //
+                // So a zero-test run is NOT a pass. It is the same
+                // "unobserved" outcome as a checker that could not start, and
+                // it is fail-closed for the same reason.
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                let ran = text
+                    .split("running ")
+                    .nth(1)
+                    .and_then(|r| r.split(' ').next())
+                    .and_then(|n| n.parse::<usize>().ok())
+                    // 0 is the FAIL-CLOSED default and the choice is
+                    // deliberate: if the count cannot be read, we have not
+                    // observed that the check ran, so it is treated as not
+                    // run. `unwrap_or(1)` would read an unparseable line as
+                    // "something ran" and let a pass through on output we did
+                    // not understand.
+                    //
+                    // A mutation to 1 SURVIVES the suite, and that is honest
+                    // rather than a gap: `axon test` always emits
+                    // "running N tests", so this default is unreachable today.
+                    // It is kept because the direction matters the moment that
+                    // output format changes — which is not a contract — and a
+                    // future reader must not "simplify" it to fail-open.
+                    .unwrap_or(0);
+                if ran == 0 {
+                    (
+                        false,
+                        format!(
+                            "DID NOT RUN: no test matched `{hidden_check}` in {rel_path} \
+                             (a filter that matches nothing exits 0 and is not a pass)"
+                        ),
+                    )
+                } else {
+                    (true, format!("passed ({ran} test(s) matched)"))
+                }
+            }
             Ok(o) => (false, format!("FAILED (exit {:?})", o.status.code())),
             Err(e) => (false, format!("DID NOT RUN: {e}")),
         };

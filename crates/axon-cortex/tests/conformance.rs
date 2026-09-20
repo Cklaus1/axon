@@ -482,3 +482,56 @@ fn cxg_g02_an_observation_distinguishes_clean_from_warned() {
         fact(&obs2, "warning_count")
     );
 }
+
+/// G03-done, sharpened — a hidden check that does not exist is NOT a pass.
+///
+/// `verify()` used to run `axon test <file>` and ignore `hidden_check`
+/// entirely: the name appeared only in the evidence string, so the episode
+/// recorded "hidden check `X` passed" after a run that never evaluated X on
+/// its own. Selecting it with `--filter` makes the record true.
+///
+/// That fix opens a hole the whole-file run did not have, and this test is the
+/// guard on it: `axon test --filter nope` matches nothing, runs zero tests and
+/// exits 0 — "test result: ok. 0 passed, 0 failed". Taken at face value, a
+/// hidden check reports PASSED while not existing, which is worse than the
+/// mislabelling the fix set out to remove.
+#[test]
+fn cxg_g03_a_hidden_check_that_matches_nothing_is_not_a_pass() {
+    let (_, ws) = stage("nomatch");
+    let mut r = Runner::new(axon_bin(), &ws);
+
+    // CONTROL: the fixture's real hidden check. `broken.ax` is broken by
+    // design, so this FAILS — and that is the point. It proves the filter
+    // selects a test that genuinely ran, so the negative case below cannot be
+    // explained by the filter silently matching nothing every time.
+    //
+    // (An earlier draft asserted this PASSES. It does not, and the control
+    // caught the wrong assumption before anything was concluded from it.)
+    assert!(
+        !r.verify(true, "hidden_completion", "broken.ax"),
+        "the unrepaired fixture's hidden check must FAIL"
+    );
+    let after_real = format!("{:?}", r.episode.events);
+    assert!(
+        after_real.contains("FAILED"),
+        "a check that ran and failed must be recorded as FAILED: {after_real}"
+    );
+
+    // The real assertion: a name matching no test is unobserved, not passed.
+    let verdict = r.verify(true, "no_such_hidden_check", "broken.ax");
+    assert!(
+        !verdict,
+        "a hidden check that matched no test reported PASSED — a filter that \
+         matches nothing exits 0, and treating that as a pass lets any DONE \
+         claim close a task by naming a check that does not exist"
+    );
+
+    // Both verdicts are false. The EVIDENCE is what has to tell them apart:
+    // one check ran and failed, the other never existed. Collapsing those is
+    // how an absent verification comes to read as a performed one.
+    let ev = format!("{:?}", r.episode.events);
+    assert!(
+        ev.contains("DID NOT RUN") && ev.contains("no_such_hidden_check"),
+        "the episode must record that the check did not run, and name it: {ev}"
+    );
+}
