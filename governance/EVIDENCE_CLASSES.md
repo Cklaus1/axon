@@ -70,10 +70,10 @@ cargo test -j 6 -p axon-core --no-default-features --test requirements_evidence 
 | provenance_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | r22_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
 | r23_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
-| r26_acceptance_gate.sh | manual_operator | `scripts/axon_safety_gate.sh` | called only by `axon_safety_gate.sh` (R30 unified gate), which nothing invokes. Transitively dead. |
-| r27_acceptance_gate.sh | manual_operator | `scripts/axon_safety_gate.sh` | called only by `axon_safety_gate.sh` / `r30_acceptance_gate.sh`, both of which nothing invokes. |
-| r28_acceptance_gate.sh | manual_operator | `scripts/axon_safety_gate.sh` | called only by `axon_safety_gate.sh` / `r30_acceptance_gate.sh`, both of which nothing invokes. |
-| r29_acceptance_gate.sh | manual_operator | `scripts/axon_safety_gate.sh` | called only by `axon_safety_gate.sh`, which nothing invokes. |
+| r26_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | wired directly 2026-09-19. Previously reachable only via `axon_safety_gate.sh`, which nothing invoked — the whole subtree hung off nothing. Wired directly rather than via its parent: the parent re-runs BUILD, the unit suite and a demo the gate has already done (~25 min); these four standalone cost 23s total. |
+| r27_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | wired directly 2026-09-19; see r26. Measured 7s standalone. |
+| r28_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | wired directly 2026-09-19; see r26. Measured 11s standalone. |
+| r29_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | wired directly 2026-09-19; see r26. Measured 4s standalone. |
 | r30_acceptance_gate.sh | orphaned | `-` | nothing invokes it, and it is the root of the dead R26-R29 subtree. |
 | r31_acceptance_gate.sh | orphaned | `-` | nothing invokes it; its only mention repo-wide is a COMMENT in `r33_acceptance_gate.sh`. |
 | r32_acceptance_gate.sh | manual_operator | `scripts/setup-environments.sh` | run only by `setup-environments.sh`, an operator-invoked provisioning script; nothing runs it per change. |
