@@ -31310,3 +31310,97 @@ fn a_diagnostic_in_an_imported_module_names_that_module_and_its_line() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// THE SAFETY BOUNDARY MUST BE EQUIVALENT ACROSS ENGINES.
+///
+/// For a program P and an active effect ceiling C:
+///
+///     interp(P, C) permits effect E   iff   native(P, C) permits effect E
+///
+/// Byte-identical behaviour is not required; an equivalent BOUNDARY is. This
+/// asserts the boundary, not the mechanism: the native side passes either by
+/// REFUSING TO BUILD or by emitting a binary that enforces the ceiling. Only
+/// "built fine and performed the effect anyway" fails.
+///
+/// Measured before the fix, on exactly this program:
+///
+///     AXON_ALLOWED_EFFECTS=Pure axon run  c.ax  -> sandbox violation, exit 8
+///     AXON_ALLOWED_EFFECTS=Pure axon build c.ax -> binary emitted, exit 0
+///     AXON_ALLOWED_EFFECTS=Pure ./cbin          -> "IO HAPPENED",   exit 0
+///
+/// The gap is reachable in production: `axon-guest-init` REFUSES TO BOOT
+/// without an MMDS policy, exports the ceiling into the guest, and a natively
+/// built payload ignores it — a policy attested as applied and then unenforced.
+/// Note the direction: the INTERPRETER is the stricter engine, so "build native
+/// for speed" silently removes a control.
+#[test]
+fn a_native_build_cannot_silently_drop_an_ambient_effect_ceiling() {
+    let dir = std::env::temp_dir().join(format!("axon_ceiling_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("c.ax");
+    std::fs::write(
+        &src,
+        "fn main() -> i64 {\n    println(\"IO HAPPENED\")\n    0\n}\n",
+    )
+    .unwrap();
+
+    // PRECONDITION: the interpreter must actually refuse, or this test proves
+    // nothing about parity — it would be comparing two permissive engines.
+    let run = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args(["run", src.to_str().unwrap()])
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .expect("axon run");
+    assert_eq!(
+        run.status.code(),
+        Some(8),
+        "precondition: the interpreter must refuse `println` under a Pure ceiling \
+         (exit 8). Got {:?}. stderr: {}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let bin = dir.join("cbin");
+    let build = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .expect("axon build");
+
+    if build.status.success() {
+        // The build chose to emit. Then the ARTIFACT must enforce the ceiling.
+        assert!(bin.exists(), "build reported success but emitted no binary");
+        let ran = Command::new(&bin)
+            .env("AXON_ALLOWED_EFFECTS", "Pure")
+            .output()
+            .expect("run the emitted binary");
+        let out = String::from_utf8_lossy(&ran.stdout);
+        assert!(
+            !out.contains("IO HAPPENED"),
+            "ENGINE PARITY VIOLATION: the interpreter refused this program under \
+             AXON_ALLOWED_EFFECTS=Pure (exit 8), but `axon build` emitted a binary \
+             that performed the IO anyway and exited {:?}. A native build must \
+             either refuse to emit, or emit an artifact that enforces the ceiling \
+             — it must not silently drop the policy.",
+            ran.status.code()
+        );
+    } else {
+        // The build refused. That is the other legitimate answer; check it
+        // refused for THIS reason and not incidentally (a missing linker, a
+        // parse error, an interp-only build would all exit non-zero too).
+        let err = String::from_utf8_lossy(&build.stderr);
+        assert!(
+            err.contains("AXON_ALLOWED_EFFECTS"),
+            "the build failed, but not because of the ceiling — a refusal for an \
+             unrelated reason does not establish parity. stderr: {err}"
+        );
+        assert!(
+            !bin.exists(),
+            "the build refused but left a binary behind at {}",
+            bin.display()
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

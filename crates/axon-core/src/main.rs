@@ -3137,6 +3137,52 @@ fn cmd_build(
         validate_ax_extension(f);
     }
 
+    // NATIVE EFFECT-CEILING PARITY: refuse to emit an artifact that would
+    // silently drop an active ambient ceiling.
+    //
+    // `AXON_ALLOWED_EFFECTS` and `AXON_BUDGET_TOKENS` are enforced by the
+    // interpreter's F5 hook and read NOWHERE in `codegen/`. Measured, on the
+    // same three-line program under the same ceiling:
+    //
+    //     AXON_ALLOWED_EFFECTS=Pure axon run  c.ax  -> sandbox violation, exit 8
+    //     AXON_ALLOWED_EFFECTS=Pure axon build c.ax -> binary emitted, exit 0
+    //     AXON_ALLOWED_EFFECTS=Pure ./cbin          -> "IO HAPPENED",   exit 0
+    //
+    // The safety boundary must be equivalent across engines: for a program P
+    // and ceiling C, interp(P,C) permits effect E iff native(P,C) permits E.
+    // Byte-identical behaviour is not required; an equivalent boundary is.
+    //
+    // Refusal, not runtime enforcement, is the fix that fits this compiler.
+    // E0910 already means "the interpreter supports this and codegen cannot
+    // faithfully express it", and is dense in `codegen/`. The dangerous state
+    // is an artifact that IMPLIES Axon policy semantics while dropping them —
+    // and it is reachable in production: `axon-guest-init` refuses to boot
+    // without an MMDS policy, exports both ceilings into the guest, and a
+    // natively built payload ignores them. A policy attested as applied, then
+    // unenforced.
+    //
+    // Note the direction: the INTERPRETER is the stricter engine here, so
+    // "build native for speed" silently removes a control.
+    for var in ["AXON_ALLOWED_EFFECTS", "AXON_BUDGET_TOKENS"] {
+        if let Ok(val) = std::env::var(var) {
+            eprintln!(
+                "error[E0910]: `{var}` is set ({}), but a natively built binary \
+                 cannot enforce it — the ceiling is honoured by the interpreter \
+                 only.\n  \
+                 Refusing to emit a binary that would silently drop the policy.\n  \
+                 Either run under the interpreter (`axon run`), which enforces \
+                 it, or unset `{var}` for the build if the ceiling was meant for \
+                 a different process.",
+                if val.is_empty() {
+                    "empty — deny all"
+                } else {
+                    val.as_str()
+                }
+            );
+            process::exit(2);
+        }
+    }
+
     // R14: `--host mobile` requires an Android `--target` on this (Linux) host.
     let mobile = matches!(host.as_deref(), Some("mobile"));
     if mobile {
