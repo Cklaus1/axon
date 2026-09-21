@@ -99,12 +99,13 @@ echo "── gate: VISION.md focus ───────────────
 echo "── gate: cargo fmt --all --check ──────────────────────────────────"
 cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --all)"
 
-echo "── gate: tests (--no-default-features) ─────────────────────────────"
-if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
-  cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
-else
-  cargo test -p axon-core --no-default-features || fail "tests"
-fi
+# Long-running jobs must own their result and their cleanup. This gate exists
+# because they did not: gate runs launched with `nohup ... &` reported the
+# LAUNCHER's exit 0 as the gate's verdict four separate times, and nine leaked
+# `axon test` processes plus dozens of orphaned CPU spinners ran for 15+ hours
+# because nothing owned them. Cheap (~10s) and placed early on purpose.
+echo "── gate: managed-run supervision (result ownership + cancellation scope) ──"
+bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 
 # The Cortex policy boundary. Its proofs existed but nothing ran them: every
 # `cargo test` in this gate targeted axon-core, so `axon-cortex`'s conformance
@@ -251,6 +252,26 @@ if [ -n "$_missing" ]; then
   fail "clippy coverage"
 fi
 echo "  ✓ all $(ls crates | wc -l) workspace crates are lint-gated or excused"
+
+# ORDERING IS DELIBERATE: the cheap checks above run BEFORE this one.
+#
+# This stage takes the better part of an hour — it drives the wasm parity
+# harnesses, which serialize on a shared flock. It used to run FIRST, with
+# clippy behind it. Measured consequence: one gate run spent ~80 minutes and
+# then failed on a `manual_contains` lint; the next spent ~80 minutes and
+# failed on an `unused_variable`. Both were one-line fixes detectable in
+# seconds, and both invalidated everything the expensive stage had just
+# established, because a gate result is only as good as the run that produced
+# it.
+#
+# Nothing here weakens the acceptance standard — every stage still runs and
+# still blocks. Only the order changed, so a cheap failure is reported cheaply.
+echo "── gate: tests (--no-default-features) ─────────────────────────────"
+if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
+  cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
+else
+  cargo test -p axon-core --no-default-features || fail "tests"
+fi
 
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"

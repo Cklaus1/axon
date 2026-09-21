@@ -102,3 +102,9 @@ experiments/**/*.log
 # Thousands of artifacts in a branch is a merge hazard, not a nit.
 /.target/
 .target/
+
+# Managed-run evidence: logs, status and scope for long-running jobs.
+# Retained in the project (not /tmp, which was cleared mid-run and destroyed
+# a gate log) but never committed.
+/.axon-runs
+/.axon-runs/
