@@ -321,3 +321,43 @@ grep -oE 'I-[0-9]+' governance/ARCHITECTURE_INVARIANTS.md | sort -u | wc -l
 grep -ro 'Expr::' crates/axon-core/src/ | wc -l      # R2a blast radius
 axon reference | head -8                             # verbs / builtins / attributes
 ```
+
+## Boundary doctrine — where Axon's defects actually live
+
+> **Success must carry evidence; failure may never synthesize success.**
+
+This is not a slogan; it is the generalization of what repeated adversarial
+review has found. Across the capability kernel, the effect ceiling, the repair
+loop, the gate, and the Reflex serving seam, the CORES have held up under
+attack. A concrete example: `axon-reflex`'s single shared authority core
+survived every attempt to break principal isolation, because there is exactly
+one copy of the check and no drift between modes is possible. Every defect
+found was in the layers AROUND it — transport framing, request/response
+correlation, attribution, exit-status propagation, observability, and
+completeness reporting.
+
+So the working presumption is: **core semantics are safer than adapters and
+transports.** Review effort, adversarial agents and mutation budget should be
+spent at boundaries, not re-proving cores.
+
+Every boundary must fail closed and independently establish four things, none
+of which it may infer from the caller:
+
+| property | the failure it prevents |
+|---|---|
+| **identity** | a response acquiring the caller's identity merely because the caller supplied it; a principal changed by duplicate-key parsing |
+| **correlation** | a reply for one request read as the answer to another; a stray frame shifting alignment permanently |
+| **evidence** | a decision that cannot say what it was computed over, or that echoes the request's own pins back as if they were resolved |
+| **status propagation** | an infrastructure failure — timeout, 5xx, EOF, malformed frame — arriving as a successful decision |
+
+The corollary is the FALSE GREEN, tracked as a first-class metric in
+`AXON-COMPLETENESS.json` and rendered in `AXON-COMPLETENESS.md`. A false green
+is a check that reported success while verifying nothing. It is strictly worse
+than an `unknown`, because an unknown advertises itself and invites work while
+a false green discourages the work and is believed. Driving the open false-green
+count to zero is a harder release criterion than driving unknowns to zero, and
+the two must never be traded: relabelling an unknown to improve its count
+manufactures a false green.
+
+The goal is not a greener matrix. The goal is that every green cell is
+expensive to fake.

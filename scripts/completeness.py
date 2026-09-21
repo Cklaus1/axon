@@ -199,6 +199,40 @@ for c in art.get("controls") or []:
     if ev and not os.path.exists(os.path.join(ROOT, ev.split("::")[0])):
         fails.append(f"control `{cn}`: cites `{ev}`, which does not exist")
 
+# ── FALSE GREENS ────────────────────────────────────────────────────────────
+# A false green is a check that REPORTED SUCCESS while not verifying what it
+# claims. It is strictly worse than an `unknown`: an unknown advertises itself,
+# a false green is believed. Every entry must be REPRODUCED — a suspicion does
+# not belong here, because a ledger padded with speculation stops being read.
+FG_STATUS = {"open", "fixed"}
+FG_SEVERITY = {"security", "correctness", "reporting"}
+_fg = art.get("false_greens") or []
+for f in _fg:
+    fid = f.get("id", "?")
+    for field in ("where", "claimed", "reality", "reproduced", "fix"):
+        if not f.get(field):
+            fails.append(f"false green `{fid}`: missing `{field}` — an entry "
+                         f"that cannot say what was claimed, what was true, and "
+                         f"how it was reproduced is itself an unsupported claim")
+    if f.get("status") not in FG_STATUS:
+        fails.append(f"false green `{fid}`: status {f.get('status')!r} not in "
+                     f"{sorted(FG_STATUS)}")
+    if f.get("severity") not in FG_SEVERITY:
+        fails.append(f"false green `{fid}`: severity {f.get('severity')!r} not "
+                     f"in {sorted(FG_SEVERITY)}")
+    if f.get("status") == "fixed" and not f.get("commit"):
+        fails.append(f"false green `{fid}`: marked fixed with no commit — "
+                     f"'fixed' without a citation is the same unsupported claim "
+                     f"this ledger exists to record")
+    w = (f.get("where") or "").split(" :: ")[0]
+    if w and not os.path.exists(os.path.join(ROOT, w)):
+        fails.append(f"false green `{fid}`: cites `{w}`, which does not exist")
+
+# THE RELEASE CRITERION. An OPEN false green blocks any claim of completeness —
+# harder than the unknown count, and deliberately so: unknowns shrink by doing
+# work, false greens shrink only by admitting the check was lying.
+_fg_open = [f for f in _fg if f.get("status") == "open"]
+
 # Every registry variable must have a control row. Without this the matrix
 # could look complete by simply omitting the awkward vars — the same omission
 # direction the env registry itself gates in both directions, and for the same
@@ -300,6 +334,34 @@ if _c:
         for c in _open:
             lines += [f"- **`{c['name']}`** — {c['open']}"]
 
+# ── Render the false-green ledger ───────────────────────────────────────────
+_fgl = art.get("false_greens") or []
+if _fgl:
+    _open = [f for f in _fgl if f.get("status") == "open"]
+    lines += ["", "## False greens", "",
+              "A false green is a check, test, or matrix cell that REPORTED "
+              "SUCCESS while the thing it claims to verify was not verified. It "
+              "is strictly worse than an `unknown`: an unknown advertises itself "
+              "and invites work; a false green discourages the work and is "
+              "believed. Every entry below was REPRODUCED.", "",
+              "The doctrine they all violate: **success must carry evidence; "
+              "failure may never synthesize success.**", "",
+              f"**{len(_open)} OPEN, {len(_fgl) - len(_open)} fixed.** An open "
+              "false green blocks any completeness claim — a harder criterion "
+              "than the unknown count, and deliberately so: unknowns shrink by "
+              "doing work, false greens shrink only by admitting a check was "
+              "lying. The two must never be traded against each other, because "
+              "relabelling an unknown to improve its count manufactures a false "
+              "green.", ""]
+    for f in sorted(_fgl, key=lambda f: (f.get("status") != "open", f.get("id", ""))):
+        mark = "**OPEN**" if f.get("status") == "open" else "fixed"
+        lines += [f"### {f.get('id')} — {f.get('where')} ({f.get('severity')}, {mark})", "",
+                  f"- **Claimed:** {f.get('claimed')}",
+                  f"- **Reality:** {f.get('reality')}",
+                  f"- **Reproduced:** {f.get('reproduced')}",
+                  f"- **Fix:** {f.get('fix')}"
+                  + (f" (`{f.get('commit')}`)" if f.get("commit") else ""), ""]
+
 open(OUT, "w").write("\n".join(lines) + "\n")
 # The control tally shares this headline on purpose. Reporting "0 unknown"
 # for rows while six controls carry an unknown engine is the same
@@ -314,3 +376,9 @@ print(f"AXON-COMPLETENESS.md generated: {tot} rows, {proven} with a production "
 print(f"controls: {len(_ctl)} tracked, {_ctl_unknown} engine states unknown or "
       f"silently-ignored"
       + ("" if not _ctl_unknown else " — NOT a clean bill"))
+# Reported BESIDE the unknown count, never traded against it: relabelling an
+# unknown as enforced to improve one number manufactures the other.
+_fgo = len([f for f in (art.get("false_greens") or []) if f.get("status") == "open"])
+_fgf = len(art.get("false_greens") or []) - _fgo
+print(f"false greens: {_fgo} OPEN, {_fgf} fixed"
+      + ("" if not _fgo else " — an open false green blocks any completeness claim"))

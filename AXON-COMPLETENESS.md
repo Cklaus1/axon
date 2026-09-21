@@ -188,3 +188,75 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_TEE_ENCLAVE`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`AXON_TEE_MEASUREMENT`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`reflex.principal-isolation`** — DEMOTED after adversarial review — the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing "principal":"alice"; (b) duplicate `principal` keys are accepted last-wins — the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly.
+
+## False greens
+
+A false green is a check, test, or matrix cell that REPORTED SUCCESS while the thing it claims to verify was not verified. It is strictly worse than an `unknown`: an unknown advertises itself and invites work; a false green discourages the work and is believed. Every entry below was REPRODUCED.
+
+The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
+
+**0 OPEN, 9 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+
+### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
+
+- **Claimed:** z3 is absent from the solver-free dependency closure (a TCB assertion)
+- **Reality:** `cargo tree 2>/dev/null | grep -qi z3` — any failure of cargo tree emits nothing, grep matches nothing, and the TCB is reported intact having examined nothing
+- **Reproduced:** a typo'd package name emits 0 lines and the check printed the clean ✓; the real invocation emits 29
+- **Fix:** require cargo tree to succeed AND to name the crate under test before concluding absence (`cdb7822`)
+
+### FG-002 — scripts/r26_acceptance_gate.sh (security, fixed)
+
+- **Claimed:** z3 is absent from axon-attest's closure
+- **Reality:** identical construct to FG-001
+- **Reproduced:** mutation makes cargo tree fail -> previously ✓, now 'closure NOT examined'
+- **Fix:** same; also reports the denominator (34 deps examined) (`cdb7822`)
+
+### FG-003 — scripts/r44_acceptance_gate.sh (correctness, fixed)
+
+- **Claimed:** the session regression suite is green
+- **Reality:** `cargo test | grep -q 'test result: ok'` — pipe discarded the exit status, a compile error printed no result line, and a filter matching ZERO tests printed 'ok. 0 passed' and satisfied the grep
+- **Reproduced:** filter changed to match nothing -> previously PASS, now 'the filter matched 0 tests'
+- **Fix:** capture output, keep cargo's exit code, assert the passed COUNT (`8471728`)
+
+### FG-004 — crates/axon-reflex/tests/principal_isolation.rs (security, fixed)
+
+- **Claimed:** a decision is attributed to the principal it was made under
+- **Reality:** the client stamped the caller's own scope over the server's answer, so the assertion compared a value to the literal that produced it — vacuous in all three modes, unfalsifiable by any mutation
+- **Reproduced:** a content-free frame yielded Ok(Decision{choice:'',principal:<caller>})
+- **Fix:** assert the server-computed `choice`; take principal from the response and require agreement (`4172ca0`)
+
+### FG-005 — AXON-COMPLETENESS.json :: reflex.principal-isolation (reporting, fixed)
+
+- **Claimed:** principal isolation `enforced` in local-sidecar and remote-service
+- **Reality:** the wire principal is an UNAUTHENTICATED caller-asserted string; mallory obtains alice's decision by typing it
+- **Reproduced:** shell transcript against the shipped sidecar binary
+- **Fix:** demoted both cells to `unknown` pending the identity architecture (`4172ca0`)
+
+### FG-006 — scripts/gate.sh :: 20 output-discarding stages (correctness, fixed)
+
+- **Claimed:** a failing stage reports why it failed
+- **Reality:** 20 stages ran `harness.sh >/dev/null 2>&1 || fail`, so a failure left no diagnostic at all
+- **Reproduced:** gate12 failed at the eBPF stage with nothing in the log; the harness then passed 6/6 by hand
+- **Fix:** run_quiet — quiet on success, prints output and the real exit code on failure (`f406777`)
+
+### FG-007 — scripts/gate.sh :: run_quiet (reporting, fixed)
+
+- **Claimed:** the failing stage's exit code
+- **Reality:** reported `(exit 0)` for a command that exited 3 — `$?` after `if ... fi` is the status of the IF CONSTRUCT
+- **Reproduced:** direct test of the helper
+- **Fix:** capture the status directly; self-check added (`f406777`)
+
+### FG-008 — crates/axon-reflex/tests/principal_isolation.rs (reporting, fixed)
+
+- **Claimed:** every deployment mode has an isolation test
+- **Reality:** the mode list was a hand-written literal, so a fourth Mode variant would leave the guard green
+- **Reproduced:** read; the guard cannot fail on a new variant
+- **Fix:** Mode::all() with an exhaustive match — a new variant fails to COMPILE (`4172ca0`)
+
+### FG-009 — crates/axon-reflex/tests/principal_isolation.rs (reporting, fixed)
+
+- **Claimed:** test name: a refusal does not become an oracle for another principal's state
+- **Reality:** the body asserted the oracle DOES exist; a grep of test names reported a property nobody had, and the lib.rs rationale behind it was wrong
+- **Reproduced:** read both; the ordering argument is false in either order
+- **Fix:** renamed to state what it proves; false rationale deleted (`4172ca0`)
+

@@ -8,7 +8,8 @@
     "docs": "yes | partial | no",
     "engines": "For SECURITY-SENSITIVE semantics only. Per-engine enforcement: enforced | not-enforced | refused (the engine refuses rather than pretending) | n/a | unknown. Added because a single row reading 'effect ceiling: implemented' is how one implementation gets mistaken for system-wide support \u2014 which is exactly the D-002 defect: the interpreter enforced the ambient ceiling and a natively built binary ignored it, proven by execution. The generator REFUSES a row whose engines disagree (one enforced, another not-enforced) unless its implementation is marked partial or absent.",
     "controls": "Per-engine support for a runtime/security CONTROL, as a closed state set: enforced | explicitly-refused | not-applicable | unknown | silently-ignored. `silently-ignored` is the defect state and is nameable on purpose \u2014 a control an engine neither honours nor refuses is the shape that produced every divergence found so far. A control may not be `status: resolved` while any engine is `unknown` or `silently-ignored`. Lives here rather than in a new file because this repository already carries four governance registries and D-007 records that as a problem, not a pattern to extend.",
-    "wasm_cell_rule": "The `wasm` cell summarises FOUR artifacts that do not agree: the wasip1 INTERPRETER bundle (axon-run.wasm), the wasip1 AOT artifact (<prog>.linked.wasm), and the two wasm32-unknown-unknown browser forms. Rule, chosen to fail closed: if ANY artifact silently-ignores a control the cell reads `silently-ignored`; a cell may never claim better than its worst artifact. wasm32-unknown-unknown has NO process environment \u2014 std::env::var returns NotPresent unconditionally and a getenv reference is a hard link error, since the only symbol allowed to stay undefined is axon_host_write \u2014 so every env-keyed control there is `not-applicable`, not `unknown`."
+    "wasm_cell_rule": "The `wasm` cell summarises FOUR artifacts that do not agree: the wasip1 INTERPRETER bundle (axon-run.wasm), the wasip1 AOT artifact (<prog>.linked.wasm), and the two wasm32-unknown-unknown browser forms. Rule, chosen to fail closed: if ANY artifact silently-ignores a control the cell reads `silently-ignored`; a cell may never claim better than its worst artifact. wasm32-unknown-unknown has NO process environment \u2014 std::env::var returns NotPresent unconditionally and a getenv reference is a hard link error, since the only symbol allowed to stay undefined is axon_host_write \u2014 so every env-keyed control there is `not-applicable`, not `unknown`.",
+    "false_greens": "A FALSE GREEN is a check, test, or matrix cell that REPORTED SUCCESS while the thing it claims to verify was not verified. It is strictly worse than an `unknown`: an unknown advertises itself and invites work, whereas a false green actively discourages the work and is believed. Every entry here was REPRODUCED, not suspected. The doctrine they all violate: **success must carry evidence; failure may never synthesize success.** Driving this count to zero is a harder and more valuable release criterion than driving the unknown count to zero, and the two must never be traded against each other \u2014 relabelling an unknown as enforced to improve a number MANUFACTURES a false green."
   },
   "rows": [
     {
@@ -1506,6 +1507,107 @@
       "evidence": "crates/axon-reflex/tests/principal_isolation.rs",
       "note": "CX-35 Phase 1. A decision is made under exactly one principal and no StateHandle is reachable across principals; cross-principal reuse is a REFUSAL, never a cache miss. Enforced identically in all three deployment modes, each with its OWN test \u2014 the combined version aborted at the first mode, leaving sidecar and remote unproven while appearing to cover them. Mutation-verified twice, per mode: removing the authority check fails all three, and collapsing the refusal into a cache miss fails all three. AXIS=MODE: this says nothing about whether any EXECUTION engine supports the control. || The single shared authority core survived every attack; the failures are all in the transport and reporting layers around it.",
       "open": "DEMOTED after adversarial review \u2014 the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing \"principal\":\"alice\"; (b) duplicate `principal` keys are accepted last-wins \u2014 the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly."
+    }
+  ],
+  "false_greens": [
+    {
+      "id": "FG-001",
+      "where": "scripts/r23_acceptance_gate.sh",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "z3 is absent from the solver-free dependency closure (a TCB assertion)",
+      "reality": "`cargo tree 2>/dev/null | grep -qi z3` \u2014 any failure of cargo tree emits nothing, grep matches nothing, and the TCB is reported intact having examined nothing",
+      "reproduced": "a typo'd package name emits 0 lines and the check printed the clean \u2713; the real invocation emits 29",
+      "fix": "require cargo tree to succeed AND to name the crate under test before concluding absence",
+      "commit": "cdb7822"
+    },
+    {
+      "id": "FG-002",
+      "where": "scripts/r26_acceptance_gate.sh",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "z3 is absent from axon-attest's closure",
+      "reality": "identical construct to FG-001",
+      "reproduced": "mutation makes cargo tree fail -> previously \u2713, now 'closure NOT examined'",
+      "fix": "same; also reports the denominator (34 deps examined)",
+      "commit": "cdb7822"
+    },
+    {
+      "id": "FG-003",
+      "where": "scripts/r44_acceptance_gate.sh",
+      "status": "fixed",
+      "severity": "correctness",
+      "claimed": "the session regression suite is green",
+      "reality": "`cargo test | grep -q 'test result: ok'` \u2014 pipe discarded the exit status, a compile error printed no result line, and a filter matching ZERO tests printed 'ok. 0 passed' and satisfied the grep",
+      "reproduced": "filter changed to match nothing -> previously PASS, now 'the filter matched 0 tests'",
+      "fix": "capture output, keep cargo's exit code, assert the passed COUNT",
+      "commit": "8471728"
+    },
+    {
+      "id": "FG-004",
+      "where": "crates/axon-reflex/tests/principal_isolation.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "a decision is attributed to the principal it was made under",
+      "reality": "the client stamped the caller's own scope over the server's answer, so the assertion compared a value to the literal that produced it \u2014 vacuous in all three modes, unfalsifiable by any mutation",
+      "reproduced": "a content-free frame yielded Ok(Decision{choice:'',principal:<caller>})",
+      "fix": "assert the server-computed `choice`; take principal from the response and require agreement",
+      "commit": "4172ca0"
+    },
+    {
+      "id": "FG-005",
+      "where": "AXON-COMPLETENESS.json :: reflex.principal-isolation",
+      "status": "fixed",
+      "severity": "reporting",
+      "claimed": "principal isolation `enforced` in local-sidecar and remote-service",
+      "reality": "the wire principal is an UNAUTHENTICATED caller-asserted string; mallory obtains alice's decision by typing it",
+      "reproduced": "shell transcript against the shipped sidecar binary",
+      "fix": "demoted both cells to `unknown` pending the identity architecture",
+      "commit": "4172ca0"
+    },
+    {
+      "id": "FG-006",
+      "where": "scripts/gate.sh :: 20 output-discarding stages",
+      "status": "fixed",
+      "severity": "correctness",
+      "claimed": "a failing stage reports why it failed",
+      "reality": "20 stages ran `harness.sh >/dev/null 2>&1 || fail`, so a failure left no diagnostic at all",
+      "reproduced": "gate12 failed at the eBPF stage with nothing in the log; the harness then passed 6/6 by hand",
+      "fix": "run_quiet \u2014 quiet on success, prints output and the real exit code on failure",
+      "commit": "f406777"
+    },
+    {
+      "id": "FG-007",
+      "where": "scripts/gate.sh :: run_quiet",
+      "status": "fixed",
+      "severity": "reporting",
+      "claimed": "the failing stage's exit code",
+      "reality": "reported `(exit 0)` for a command that exited 3 \u2014 `$?` after `if ... fi` is the status of the IF CONSTRUCT",
+      "reproduced": "direct test of the helper",
+      "fix": "capture the status directly; self-check added",
+      "commit": "f406777"
+    },
+    {
+      "id": "FG-008",
+      "where": "crates/axon-reflex/tests/principal_isolation.rs",
+      "status": "fixed",
+      "severity": "reporting",
+      "claimed": "every deployment mode has an isolation test",
+      "reality": "the mode list was a hand-written literal, so a fourth Mode variant would leave the guard green",
+      "reproduced": "read; the guard cannot fail on a new variant",
+      "fix": "Mode::all() with an exhaustive match \u2014 a new variant fails to COMPILE",
+      "commit": "4172ca0"
+    },
+    {
+      "id": "FG-009",
+      "where": "crates/axon-reflex/tests/principal_isolation.rs",
+      "status": "fixed",
+      "severity": "reporting",
+      "claimed": "test name: a refusal does not become an oracle for another principal's state",
+      "reality": "the body asserted the oracle DOES exist; a grep of test names reported a property nobody had, and the lib.rs rationale behind it was wrong",
+      "reproduced": "read both; the ordering argument is false in either order",
+      "fix": "renamed to state what it proves; false rationale deleted",
+      "commit": "4172ca0"
     }
   ]
 }
