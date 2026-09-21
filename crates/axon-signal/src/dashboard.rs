@@ -29,7 +29,12 @@ use crate::trends::compute_trends;
 use crate::weekly::generate_weekly;
 
 pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
-    let addr = format!("0.0.0.0:{port}");
+    // 127.0.0.1, not 0.0.0.0. This served every engineer's session goals and
+    // scores to any caller on the network with no identity of any kind, under
+    // `Access-Control-Allow-Origin: *`. `axon-web` binds loopback
+    // (crates/axon-web/src/main.rs), so the wildcard here was a divergence
+    // between two servers in one workspace rather than a house convention.
+    let addr = format!("127.0.0.1:{port}");
     let server = Server::http(&addr).map_err(|e| anyhow::anyhow!("Cannot bind {addr}: {e}"))?;
     eprintln!("[axon-signal] dashboard listening on http://localhost:{port}/");
 
@@ -87,7 +92,7 @@ pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
                     .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
             }),
             "/api/ab" => {
-                let body = match Store::open(ledger_dir)
+                let body = match Store::open_as(ledger_dir, axon_ledger::rbac::resolve_caller(None))
                     .map_err(anyhow::Error::from)
                     .and_then(|store| compute_ab_report(ledger_dir, &store))
                     .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
@@ -113,7 +118,7 @@ fn json_response<F>(ledger_dir: &Path, f: F) -> tiny_http::Response<std::io::Cur
 where
     F: FnOnce(Store) -> anyhow::Result<serde_json::Value>,
 {
-    let body = match Store::open(ledger_dir)
+    let body = match Store::open_as(ledger_dir, axon_ledger::rbac::resolve_caller(None))
         .map_err(anyhow::Error::from)
         .and_then(f)
     {

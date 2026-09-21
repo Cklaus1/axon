@@ -415,7 +415,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let dir = ledger_dir(cli.ledger_dir.as_ref());
     let dir_path = dir.clone();
-    let mut store = Store::open(&dir)?;
+    // The CLI's multi-purpose handle: it INGESTS (which must see and append
+    // to every record) and it queries. Its read paths apply
+    // `rbac.filter_owned` explicitly at each call site below — the canonical
+    // CLI behaviour the MCP path was missing entirely. Named
+    // `open_for_write` so the workspace guard in
+    // tests/authority_reachability.rs can tell this deliberate exception
+    // from a reader that simply forgot to authorize.
+    let mut store = Store::open_for_write(&dir)?;
     let rbac = RbacConfig::load(&dir_path)?;
     let caller = resolve_caller(cli.caller.as_deref());
 
@@ -1640,7 +1647,7 @@ fn main() -> Result<()> {
                 }
             }
 
-            let mut store_mut = Store::open(&dir_path)?;
+            let mut store_mut = Store::open_for_write(&dir_path)?;
             let (kept, pruned) = store_mut.prune(cutoff_ms)?;
             if json {
                 let out = serde_json::json!({ "kept": kept, "pruned": pruned, "ok": true });
@@ -1679,7 +1686,7 @@ fn main() -> Result<()> {
                 );
                 println!("(no changes made)");
             } else {
-                let mut store_mut = Store::open(&dir_path)?;
+                let mut store_mut = Store::open_for_write(&dir_path)?;
                 let (total, updated) = store_mut.rewrite_principals("agent:", &resolved)?;
                 println!("Engineer backfill complete: {updated}/{total} records → {resolved}");
             }
@@ -1766,7 +1773,7 @@ fn main() -> Result<()> {
                         .unwrap_or_default()
                         .subsec_nanos()
                 ));
-                let mut tmp_store = Store::open(&tmp_dir)?;
+                let mut tmp_store = Store::open_for_write(&tmp_dir)?;
                 match ingest_session(session_path, &mut tmp_store, &gate, None, None) {
                     Ok(Some(mut new_record)) => {
                         // Preserve the original record's id and principal (engineer identity must survive refresh)
@@ -1783,7 +1790,7 @@ fn main() -> Result<()> {
                                     .unwrap_or(0)
                             );
                         } else {
-                            let mut store_mut = Store::open(&dir_path)?;
+                            let mut store_mut = Store::open_for_write(&dir_path)?;
                             store_mut.replace_record(old_id, &new_record)?;
                         }
                         refreshed += 1;
@@ -1885,7 +1892,7 @@ fn main() -> Result<()> {
             let repo_path = repo.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
             // Step 1: ingest git commits
-            let mut store_mut = Store::open(&dir_path)?;
+            let mut store_mut = Store::open_for_write(&dir_path)?;
             let commits = ingest_git(&repo_path, &mut store_mut, since.as_deref(), None)
                 .unwrap_or_else(|e| {
                     eprintln!("[refresh] git ingest: {e}");

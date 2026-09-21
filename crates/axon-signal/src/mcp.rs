@@ -224,7 +224,9 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
     let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    let store = match Store::open(ledger_dir).map_err(anyhow::Error::from) {
+    let store = match Store::open_as(ledger_dir, axon_ledger::rbac::resolve_caller(None))
+        .map_err(anyhow::Error::from)
+    {
         Ok(s) => s,
         Err(e) => return json_error(id.as_ref(), -32000, &format!("Could not open ledger: {e}")),
     };

@@ -203,7 +203,7 @@ fn week_ago_ms() -> u64 {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let ledger_dir = cli.ledger_dir.unwrap_or_else(default_ledger_dir);
-    let store = Store::open(&ledger_dir)?;
+    let store = Store::open_as(&ledger_dir, axon_ledger::rbac::resolve_caller(None))?;
 
     match cli.command {
         Commands::Score {
@@ -246,7 +246,7 @@ fn main() -> Result<()> {
             if ingest {
                 use axon_ledger::hash::record_id;
                 use axon_ledger::model::{Effect, LedgerRecord};
-                let mut store_mut = Store::open(&ledger_dir)?;
+                let mut store_mut = Store::open_for_write(&ledger_dir)?;
                 let mut written = 0usize;
                 for s in &scores {
                     let payload = serde_json::json!({

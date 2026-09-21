@@ -27,7 +27,9 @@ pub fn watch_sessions(
 ) -> Result<()> {
     // Track files we've already attempted this run (suppresses re-logging skips)
     let mut seen: HashSet<PathBuf> = HashSet::new();
-    let mut store = Store::open(ledger_dir)?;
+    // The watcher INGESTS new session files; it must see and append to every
+    // record. Named so the workspace guard can tell it from a reader.
+    let mut store = Store::open_for_write(ledger_dir)?;
 
     // Seed seen with files already present so we only react to new arrivals
     for entry in fs::read_dir(watch_dir)? {
