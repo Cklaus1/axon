@@ -31,10 +31,27 @@ use crate::weekly::generate_weekly;
 pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
     // 127.0.0.1, not 0.0.0.0. This served every engineer's session goals and
     // scores to any caller on the network with no identity of any kind, under
-    // `Access-Control-Allow-Origin: *`. `axon-web` binds loopback
     // (crates/axon-web/src/main.rs), so the wildcard here was a divergence
     // between two servers in one workspace rather than a house convention.
     let addr = format!("127.0.0.1:{port}");
+    // NO `Access-Control-Allow-Origin: *`. All three JSON responses carried it,
+    // and on a LOOPBACK server that is the worse half of the exposure rather
+    // than a harmless leftover: binding to 127.0.0.1 stops the NETWORK reaching
+    // it, while a wildcard CORS header hands it to every page the operator's
+    // own browser visits. Any site could fetch
+    // http://127.0.0.1:<port>/api/score cross-origin and read every engineer's
+    // session goals and scores.
+    //
+    // The dashboard serves its own HTML from this same origin, so it needs no
+    // CORS header at all. A cross-origin consumer would need a deliberate,
+    // narrow allowlist — never `*`.
+    //
+    // STILL UNRESOLVED, and deliberately not papered over: `resolve_caller`
+    // reads the SERVER's AXON_PRINCIPAL, not the request's. RBAC filtering here
+    // is therefore by OPERATOR identity, and every HTTP caller sees the
+    // operator's view. Filtering reads is not authenticating an endpoint, and
+    // this endpoint has no caller identity to authenticate. Tracked as an open
+    // gap rather than claimed fixed.
     let server = Server::http(&addr).map_err(|e| anyhow::anyhow!("Cannot bind {addr}: {e}"))?;
     eprintln!("[axon-signal] dashboard listening on http://localhost:{port}/");
 
@@ -102,7 +119,6 @@ pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
                 };
                 Response::from_string(body)
                     .with_header("Content-Type: application/json".parse::<Header>().unwrap())
-                    .with_header("Access-Control-Allow-Origin: *".parse::<Header>().unwrap())
             }
             _ => Response::from_string(r#"{"error":"not found"}"#)
                 .with_status_code(404)
@@ -127,7 +143,6 @@ where
     };
     Response::from_string(body)
         .with_header("Content-Type: application/json".parse::<Header>().unwrap())
-        .with_header("Access-Control-Allow-Origin: *".parse::<Header>().unwrap())
 }
 
 fn now_ms() -> u64 {

@@ -1507,6 +1507,19 @@
       "evidence": "crates/axon-reflex/tests/principal_isolation.rs",
       "note": "CX-35 Phase 1. A decision is made under exactly one principal and no StateHandle is reachable across principals; cross-principal reuse is a REFUSAL, never a cache miss. Enforced identically in all three deployment modes, each with its OWN test \u2014 the combined version aborted at the first mode, leaving sidecar and remote unproven while appearing to cover them. Mutation-verified twice, per mode: removing the authority check fails all three, and collapsing the refusal into a cache miss fails all three. AXIS=MODE: this says nothing about whether any EXECUTION engine supports the control. || The single shared authority core survived every attack; the failures are all in the transport and reporting layers around it.",
       "open": "DEMOTED after adversarial review \u2014 the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing \"principal\":\"alice\"; (b) duplicate `principal` keys are accepted last-wins \u2014 the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly."
+    },
+    {
+      "name": "axon-signal.http-caller-identity",
+      "category": "serving/authority",
+      "status": "open",
+      "axis": "mode",
+      "engines": {
+        "embedded": "not-applicable",
+        "local-sidecar": "not-applicable",
+        "remote-service": "silently-ignored"
+      },
+      "evidence": "crates/axon-signal/tests/exposure_boundary.rs",
+      "open": "The dashboard's RBAC filter calls resolve_caller(None), which reads the SERVER's AXON_PRINCIPAL \u2014 not the request's. Every HTTP caller therefore sees the OPERATOR's view. Filtering reads is not authenticating an endpoint, and this endpoint has no caller identity to authenticate. Network exposure is closed (loopback, no wildcard CORS); per-caller authorization is NOT."
     }
   ],
   "false_greens": [
@@ -1740,6 +1753,17 @@
       "reproduced": "the pattern with rustup absent concluded 'target not installed' though rustup never ran",
       "fix": "rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip \u2014 a skip must prove its own reason",
       "commit": "9519d5b"
+    },
+    {
+      "id": "FG-022",
+      "where": "crates/axon-signal/src/dashboard.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "ledger data is access-controlled",
+      "reality": "the dashboard bound 0.0.0.0 with Access-Control-Allow-Origin: * on all three JSON responses and served every engineer's session goals and scores to a caller supplying no identity at all. Binding loopback closes the network half; the wildcard CORS header is the worse half ON loopback, because it hands the endpoint to every page the operator's own browser visits",
+      "reproduced": "curl against /api/score with no identity returned both engineers' records",
+      "fix": "bound to 127.0.0.1 (matching axon-web), all three CORS wildcards removed; the dashboard serves its own HTML from this origin and needs none",
+      "commit": "PENDING"
     }
   ]
 }
