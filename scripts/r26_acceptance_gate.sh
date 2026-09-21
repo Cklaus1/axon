@@ -83,13 +83,29 @@ else
   echo "  ✓ no z3 or hw-attest feature-gates in verifier non-comment code"
 fi
 
-# Confirm z3 is not in the crate's dependency closure
-if cargo tree -p axon-attest 2>/dev/null | grep -qi '\bz3\b'; then
+# Confirm z3 is not in the crate's dependency closure.
+#
+# The closure must be EXAMINED before absence can be concluded — see the same
+# fix in r23_acceptance_gate.sh. `cargo tree 2>/dev/null | grep -q` reports a
+# TCB breach as absent whenever cargo tree fails, because a failed command and
+# a clean closure both produce no matching line.
+_tree_out="$(mktemp)"; _tree_rc=0
+cargo tree -p axon-attest >"$_tree_out" 2>&1 || _tree_rc=$?
+if [ "$_tree_rc" -ne 0 ]; then
+  echo "  FAIL: cargo tree failed (exit $_tree_rc) — closure NOT examined, so"
+  echo "        absence of z3 cannot be concluded. tail: $(tail -2 "$_tree_out" | tr '\n' ' ')"
+  fail=1
+elif ! grep -q 'axon-attest' "$_tree_out"; then
+  echo "  FAIL: cargo tree named no axon-attest closure — refusing to read an"
+  echo "        empty result as proof of absence."
+  fail=1
+elif grep -qi '\bz3\b' "$_tree_out"; then
   echo "  FAIL: z3 IS in axon-attest dependency closure (TCB breach)"
   fail=1
 else
-  echo "  ✓ z3 is not in axon-attest dependency closure"
+  echo "  ✓ z3 is not in axon-attest dependency closure ($(wc -l < "$_tree_out") deps examined)"
 fi
+rm -f "$_tree_out"
 
 # ─ (4) Honesty check ──────────────────────────────────────────────────────────
 # The stand-in path must print the "no memory encryption — use sev-snp/tdx" caveat

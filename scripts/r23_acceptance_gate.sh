@@ -68,9 +68,30 @@ if ! "$CERTCHECK" check examples/proofs/mint_o2.obl examples/proofs/mint_o2.cert
   echo "  solver-free check of the example obligation FAILED"; exit 1
 fi
 # Assert z3 is NOT in the checker's dependency closure.
-if cargo tree -p axon-certcheck --no-default-features 2>/dev/null | grep -qi 'z3'; then
-  echo "  z3 IS in the solver-free dependency closure (TCB breach)"; exit 1
+#
+# The closure must be EXAMINED before absence can be concluded. Written as
+# `cargo tree ... 2>/dev/null | grep -qi z3`, any failure of cargo tree — a bad
+# package name, a manifest error, lock contention — produces zero lines with
+# stderr discarded, grep matches nothing, and this prints "no z3 in the
+# closure". A TCB assertion would pass having inspected nothing at all.
+# Measured: `cargo tree -p axon-certcheck-TYPO` emits 0 lines and the old form
+# reported the TCB intact; the real invocation emits 29.
+_tree_out="$(mktemp)"; _tree_rc=0
+cargo tree -p axon-certcheck --no-default-features >"$_tree_out" 2>&1 || _tree_rc=$?
+if [ "$_tree_rc" -ne 0 ]; then
+  echo "  cargo tree failed (exit $_tree_rc) — the dependency closure was NOT examined,"
+  echo "  so absence of z3 cannot be concluded. tail:"; tail -3 "$_tree_out"
+  rm -f "$_tree_out"; exit 1
 fi
+if ! grep -q 'axon-certcheck' "$_tree_out"; then
+  echo "  cargo tree produced no closure naming axon-certcheck — refusing to read"
+  echo "  an empty result as proof of absence."; rm -f "$_tree_out"; exit 1
+fi
+if grep -qi 'z3' "$_tree_out"; then
+  echo "  z3 IS in the solver-free dependency closure (TCB breach)"
+  rm -f "$_tree_out"; exit 1
+fi
+rm -f "$_tree_out"
 echo "  ✓ checker validates the example with NO z3 in its closure"
 
 echo "r23_acceptance_gate: (4) full suite (default, solver-free)…"
