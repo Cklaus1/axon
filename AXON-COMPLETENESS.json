@@ -1706,7 +1706,7 @@
       "reality": "the approval gate lived in cmd_run, so `axon-os replay` reached supervisor::run by a different route and performed no approval check at all; the public axon_os::supervise re-export was a third route with no gate whatsoever. RunRecord also carried no approval field, so an authorized and an unauthorized execution archived identically",
       "reproduced": "same manifest: `run` refused with exit 8 and no side effect; `replay` exited 0 and the side-effect file's mtime advanced",
       "fix": "authorization moved INTO supervisor::run \u2014 the point every execution path converges on, which already hosted the one check no caller could skip \u2014 and the decision is stamped on every record exit path; an older record reads `unknown`, never approved",
-      "commit": "PENDING"
+      "commit": "afeaa46"
     }
   ]
 }
