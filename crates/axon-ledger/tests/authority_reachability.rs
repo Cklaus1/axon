@@ -23,6 +23,21 @@ use std::path::Path;
 /// That is the exact failure the fix claimed to prevent. The comment said "a
 /// handler added later cannot forget"; a whole different CRATE could, and had.
 /// A guard scoped to one file proves a property about one file.
+///
+/// WHAT THIS TEST DOES NOT PROVE. It asks whether `Store::open(` is SPELLED
+/// anywhere outside store.rs. That is a naming property, not an authorization
+/// one, and the difference is not academic: `open_for_write` — deliberately
+/// unfiltered, and invisible to this grep — was used on five of the CLI's
+/// eight read paths, so `--as bob diff --json` returned another principal's
+/// payload while this test reported 2 passed. A guard that cannot fail on the
+/// live bug it is named for is worse than no guard, because it is counted.
+///
+/// The behavioural counterpart is `read_commands_filter.rs`, which runs every
+/// read command as a member against two ledgers and requires the outputs to
+/// be identical. Keep BOTH: this one is a cheap structural tripwire for a new
+/// crate reaching for a raw handle; that one decides whether reads are
+/// actually filtered. Mutation-verified at 10/10 read sites; this grep caught
+/// 0 of those 10.
 #[test]
 fn no_crate_in_the_workspace_opens_an_unfiltered_ledger_store() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))

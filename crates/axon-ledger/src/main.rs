@@ -426,6 +426,22 @@ fn main() -> Result<()> {
     let rbac = RbacConfig::load(&dir_path)?;
     let caller = resolve_caller(cli.caller.as_deref());
 
+    // A SECOND, FILTERED handle for reads.
+    //
+    // The comment above claimed the read paths "apply `rbac.filter_owned`
+    // explicitly at each call site below". Only 3 of 8 did. REPRODUCED on a
+    // two-principal ledger with RBAC active: `--as bob stats` reported 1
+    // record while `--as bob diff --json` returned 2 and leaked alice's
+    // payload. `why`, `search`, `as-of`, `history` and `pre-deploy` leaked the
+    // same way.
+    //
+    // Fixed with a handle rather than five more explicit filter calls, because
+    // "remember to filter at each call site" is the arrangement that produced
+    // this — three people remembered and five did not. `Store::all` is the
+    // sole reader and applies the view, so every query reached through
+    // `store_ro` is filtered whether or not its author thought about it.
+    let store_ro = Store::open_as(&dir, caller.clone())?;
+
     match cli.command {
         Commands::Ingest { source } => match source {
             IngestSource::Git {
@@ -591,7 +607,7 @@ fn main() -> Result<()> {
         },
 
         Commands::Why { sha, repo, json } => {
-            let result = why(&sha, &store)?;
+            let result = why(&sha, &store_ro)?;
             if let Some(ref r) = repo {
                 if result.commit.repo.as_deref() != Some(r.as_str()) {
                     anyhow::bail!(
@@ -742,7 +758,7 @@ fn main() -> Result<()> {
         Commands::Diff { from, to, json } => {
             let t1 = parse_iso_cli(&from)?;
             let t2 = parse_iso_cli(&to)?;
-            let records = diff(t1, t2, &store)?;
+            let records = diff(t1, t2, &store_ro)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&records)?);
             } else {
@@ -755,7 +771,7 @@ fn main() -> Result<()> {
 
         Commands::Stats { json } => {
             use axon_ledger::model::Effect;
-            let all = rbac.filter_owned(store.all()?, caller.as_deref());
+            let all = store_ro.all()?;
             let git_count = all.iter().filter(|r| r.effect == Effect::GitCommit).count();
             let session_count = all
                 .iter()
@@ -817,7 +833,7 @@ fn main() -> Result<()> {
             json,
         } => {
             let query = terms.join(" ");
-            let mut hits = search(&query, &store, limit)?;
+            let mut hits = search(&query, &store_ro, limit)?;
             if let Some(ref r) = repo {
                 hits.retain(|h| h.record.repo.as_deref() == Some(r.as_str()));
             }
@@ -912,7 +928,7 @@ fn main() -> Result<()> {
 
         Commands::AsOf { timestamp, json } => {
             let ts_ms = parse_iso_cli(&timestamp)?;
-            let result = as_of(ts_ms, &store)?;
+            let result = as_of(ts_ms, &store_ro)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -969,7 +985,7 @@ fn main() -> Result<()> {
         }
 
         Commands::History { file, repo, json } => {
-            let mut result = history(&file, &store)?;
+            let mut result = history(&file, &store_ro)?;
             if let Some(ref r) = repo {
                 result
                     .chapters
@@ -1091,7 +1107,7 @@ fn main() -> Result<()> {
                     .collect();
 
             // Build set of explained SHAs (appear in at least one edge)
-            let all = store.all()?;
+            let all = store_ro.all()?;
             use axon_ledger::model::Effect;
             let explained_shas: std::collections::HashSet<String> = all
                 .iter()
@@ -1278,7 +1294,10 @@ fn main() -> Result<()> {
             let from_ms = if let Some(f) = explicit_from {
                 f
             } else {
-                let all_raw_check = store.all().unwrap_or_default();
+                // Filtered too: this counts sessions to pick a window, and
+                // counting other principals' sessions would let a member infer
+                // team activity they cannot read.
+                let all_raw_check = store_ro.all().unwrap_or_default();
                 let sessions_7d = all_raw_check
                     .iter()
                     .filter(|r| r.effect == Effect::AgentSession)
@@ -1291,8 +1310,7 @@ fn main() -> Result<()> {
                 }
             };
 
-            let all_raw = store.all()?;
-            let all = rbac.filter_owned(all_raw, caller.as_deref());
+            let all = store_ro.all()?;
             let in_window: Vec<_> = all
                 .iter()
                 .filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms)
@@ -1428,8 +1446,7 @@ fn main() -> Result<()> {
             let since_ms = since.as_deref().and_then(parse_iso_to_ms).unwrap_or(0);
             let module_lower = module.to_lowercase();
 
-            let all_raw = store.all()?;
-            let all = rbac.filter_owned(all_raw, caller.as_deref());
+            let all = store_ro.all()?;
             let in_window: Vec<_> = all
                 .iter()
                 .filter(|r| r.ts_ms >= since_ms)
