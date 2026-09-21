@@ -44,6 +44,20 @@ for _ in $(seq 1 50); do [ "$(cat "$D/status")" != running ] && break; sleep 0.1
 [ "$(cat "$D/status")" = "exited:7" ] \
   || fail "expected exited:7, got '$(cat "$D/status")' — a launcher's success must never stand in for the job's result"
 
+# ── 1b. a live run reports `running`, not `unknown` ────────────────────────
+# A false `unknown` costs as much as a false success. Measured: a healthy gate
+# run — supervisor up, cgroup populated, log growing — reported
+# "unknown (supervisor gone, scope empty)" because liveness was derived only
+# from cgroup population, which is briefly empty while the supervisor is still
+# starting. A status that cries unknown on healthy runs is one people learn to
+# ignore, and then a REAL unrecorded completion slips past.
+D1B=$("$RM" start gate_selftest_live -- bash -c 'sleep 30') || fail "start failed"
+ST=$("$RM" status "$D1B")
+[ "$ST" = "running" ] \
+  || fail "a job that is demonstrably alive reported '$ST' — a false unknown trains the reader to ignore the field"
+"$RM" cancel "$D1B" >/dev/null || fail "cancel failed"
+rm -rf "$D1B"
+
 # ── 2. cancellation reaches a GRANDCHILD ────────────────────────────────────
 # The job forks a child that outlives its parent shell. Killing only the pid
 # the supervisor spawned would leave this running.

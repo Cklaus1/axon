@@ -38,7 +38,18 @@ cgroup_usable() {
   return $ok
 }
 
+# Is this run still live? A run is live if its SUPERVISOR is alive OR its scope
+# still holds processes. Both, because each alone gives a wrong answer at one
+# end: the cgroup is briefly empty while the supervisor is still starting up
+# (which reported a perfectly healthy gate run as `unknown`), and the
+# supervisor is gone once the job has legitimately finished.
+#
+# A false `unknown` costs as much as a false success. A field that cries
+# unknown on healthy runs is one people learn to ignore, and then a real
+# unrecorded completion slips past — the failure this wrapper exists to stop.
 scope_alive() {
+  local sp; sp="$(cat "$1/supervisor_pid" 2>/dev/null || echo)"
+  if [ -n "$sp" ] && kill -0 "$sp" 2>/dev/null; then return 0; fi
   local scope; scope="$(cat "$1/scope" 2>/dev/null || echo)"
   case "$scope" in
     cgroup:*)
@@ -115,6 +126,12 @@ cmd_cancel() {
   local dir="$1"
   [ -d "$dir" ] || die "no such run: $dir"
   echo cancelled > "$dir/status"
+  # Stop the supervisor FIRST. It is outside the job's scope by construction
+  # (own session, and it joins the cgroup only to place the child), so a
+  # scope kill does not reach it — and a surviving supervisor would observe
+  # its child die and overwrite `cancelled` with an exit code.
+  local sp; sp="$(cat "$dir/supervisor_pid" 2>/dev/null || echo)"
+  [ -n "$sp" ] && kill -9 "$sp" 2>/dev/null || true
   local scope; scope="$(cat "$dir/scope" 2>/dev/null || echo)"
   case "$scope" in
     cgroup:*)
@@ -145,6 +162,10 @@ cmd_cancel() {
 cmd_supervise() {
   local dir="$1"; shift
   [ "${1:-}" = "--" ] && shift
+  # First act: record own pid. This is the DIRECT liveness signal. Deriving
+  # liveness only from cgroup population raced the supervisor's own startup and
+  # reported a healthy run as `unknown` — see scope_alive.
+  echo $BASHPID > "$dir/supervisor_pid"
   local scope; scope="$(cat "$dir/scope")"
   if [ "${scope#cgroup:}" != "$scope" ]; then
     # Join the cgroup BEFORE spawning, so the child and every descendant it
