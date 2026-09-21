@@ -272,19 +272,19 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Claimed:** ledger RBAC restricts a member to their own records
 - **Reality:** the MCP server — the interface an agent actually talks to — opened a raw Store and handed it to nine tool handlers, NONE of which mentioned rbac. Zero rbac references in the file
 - **Reproduced:** one ledger, RBAC active, identity bob@example.com: CLI `stats` reported 1 record, `tools/call ledger_stats` reported 2
-- **Fix:** Store::open_as filters inside Store::all, the sole reader, so a handler added later cannot forget; write paths use an explicitly named open_for_write so the exception is auditable (`pending`)
+- **Fix:** Store::open_as filters inside Store::all, the sole reader, so a handler added later cannot forget; write paths use an explicitly named open_for_write so the exception is auditable (`0c428c8`)
 
 ### FG-012 — crates/axon-ledger/src/rbac.rs (security, fixed)
 
 - **Claimed:** a member sees only records they own
 - **Reality:** ownership was `principal.ends_with(caller)`, a suffix test with no delimiter. Two holes: a caller whose name is a suffix of another principal owns their records, and `str::ends_with("")` is true for EVERY string so an empty caller owned the whole ledger
 - **Reproduced:** caller `ob@example.com` saw bob's record; caller `""` saw 2 of 2 where the legitimate member saw 1
-- **Fix:** namespace-stripped exact match (split on first colon), empty caller owns nothing; the legitimate git:/agent:/bare forms still resolve (`pending`)
+- **Fix:** namespace-stripped exact match (split on first colon), empty caller owns nothing; the legitimate git:/agent:/bare forms still resolve (`0c428c8`)
 
 ### FG-013 — crates/axon-cortex/src/episode.rs (correctness, fixed)
 
 - **Claimed:** an episode reports itself verified only if verification passed
 - **Reality:** `.any()` over all Verified events found an EARLIER superseded positive. Runner::verify asks about one hidden check; the ClaimDone branch re-asks over the whole file and is documented as authoritative over it
 - **Reproduced:** fixtures/pre_existing_failure.ax: outcome AdjudicatedNotClean (exit 27) with verified_ok() == true, event trace false/true/false
-- **Fix:** last Verified event wins, absent -> false. NOT .all(): an early failure then a later pass is genuinely verified. cxg_c28 built this state and never asserted the claim; it now does (`pending`)
+- **Fix:** last Verified event wins, absent -> false. NOT .all(): an early failure then a later pass is genuinely verified. cxg_c28 built this state and never asserted the claim; it now does (`0c428c8`)
 

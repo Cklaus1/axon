@@ -220,7 +220,13 @@ for f in _fg:
     if f.get("severity") not in FG_SEVERITY:
         fails.append(f"false green `{fid}`: severity {f.get('severity')!r} not "
                      f"in {sorted(FG_SEVERITY)}")
-    if f.get("status") == "fixed" and not f.get("commit"):
+    _c = f.get("commit", "")
+    # A placeholder is not a citation. "pending" is truthy, so a bare
+    # presence check accepted it — the same absent-vs-verified shape this
+    # ledger exists to record, in the ledger's own gate.
+    if f.get("status") == "fixed" and (
+        not _c or not all(ch in "0123456789abcdef" for ch in _c) or len(_c) < 7
+    ):
         fails.append(f"false green `{fid}`: marked fixed with no commit — "
                      f"'fixed' without a citation is the same unsupported claim "
                      f"this ledger exists to record")
