@@ -161,6 +161,14 @@ cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --al
 # ships. `crates/axon-ledger/axon-ledger/` was a PRE-RBAC duplicate of the
 # ledger crate inside itself — the shape a contributor or agent revives later,
 # carrying the bug just fixed in the real one. Cheap, so it runs early.
+# A loopback HTTP server with a wildcard CORS header is reachable cross-origin
+# from every page the operator's browser visits. `axon-web`'s /api/deploy
+# executes caller-supplied code, so this was remote code execution through any
+# visited site. Workspace-wide because the per-crate version of this fix cited
+# the offending crate as its own correct model.
+echo "── gate: no wildcard CORS ────────────────────────────────────────"
+run_quiet "no wildcard CORS" bash scripts/no_wildcard_cors.sh
+
 echo "── gate: no nested package roots ─────────────────────────────────"
 run_quiet "no nested package roots" bash scripts/no_nested_crates.sh
 

@@ -1789,6 +1789,17 @@
       "reproduced": "parse-level: `{}`, an all-null body and an unknown-fields-only body all deserialize to Some(all None)",
       "fix": "have_policy is derived from CONTENT \u2014 at least one of the three ENFORCED fields must be present; labels (principal/run_id/source_hash) cannot rescue an empty policy; per-mechanism warnings when an active policy omits one; malformed JSON reported as malformed rather than unavailable",
       "commit": "8877cb3"
+    },
+    {
+      "id": "FG-024",
+      "where": "crates/axon-web/src/server.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "axon-web is safe because it binds loopback \u2014 cited as the correct model in FG-022's own fix note",
+      "reality": "it stamped Access-Control-Allow-Origin: * on EVERY response, including POST /api/deploy, which writes caller-supplied content to a temp .ax and EXECUTES it. A cross-origin POST with Content-Type: text/plain is a CORS simple request, so no preflight intervenes, and the wildcard let the calling page read the result. Any site the operator visited could run arbitrary Axon code",
+      "reproduced": "a cross-origin POST to /api/deploy from Origin: https://evil.example returned 200 with the wildcard header and created the file the payload wrote",
+      "fix": "wildcard removed (the UI is same-origin and needs none) plus a WORKSPACE-WIDE guard, since the per-crate fix cited this crate as its model while never checking its CORS header",
+      "commit": "PENDING"
     }
   ]
 }

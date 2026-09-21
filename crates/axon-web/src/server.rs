@@ -67,12 +67,30 @@ pub fn handle(mut req: Request, axon_bin: &str) {
     };
 
     let ct_hdr = Header::from_bytes(b"Content-Type", ct.as_bytes()).expect("valid header");
-    let cors_hdr = Header::from_bytes(b"Access-Control-Allow-Origin", b"*").expect("valid header");
 
+    // NO `Access-Control-Allow-Origin: *`. This server binds loopback, which
+    // stops the NETWORK reaching it — and a wildcard CORS header handed it to
+    // every page the operator's own browser visits.
+    //
+    // That is far worse here than on a read-only dashboard. `POST /api/deploy`
+    // writes the CALLER-SUPPLIED `content` to a temp .ax and executes it
+    // (`api.rs`), and `/api/ast/approve`, `/api/redteam` and the safety
+    // endpoints are equally reachable. A cross-origin POST with
+    // `Content-Type: text/plain` is a CORS *simple request* — no preflight —
+    // so any site could fire it, and the wildcard let that site read the
+    // result.
+    //
+    // REPRODUCED against a live server: a cross-origin POST to /api/deploy
+    // carrying a program that calls write_file returned 200 with
+    // `Access-Control-Allow-Origin: *` and the file was created.
+    //
+    // The UI is served from THIS origin (`GET /` returns the HTML), so it is a
+    // same-origin caller and needs no CORS header at all. A genuine
+    // cross-origin consumer would need a deliberate, narrow allowlist — never
+    // `*`, and never on endpoints that execute code.
     let resp = Response::from_string(body)
         .with_status_code(status)
-        .with_header(ct_hdr)
-        .with_header(cors_hdr);
+        .with_header(ct_hdr);
 
     req.respond(resp).ok();
 }
