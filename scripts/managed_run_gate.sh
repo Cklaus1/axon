@@ -17,6 +17,7 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 RM=scripts/run_managed.sh
+RUNS=.axon-runs
 fail() { echo "managed_run_gate: FAIL — $*" >&2; exit 1; }
 
 # Distinct, improbable durations so each process is identifiable without
@@ -97,6 +98,64 @@ rm -rf "$D3"
 # ── 3. the bystander is untouched ───────────────────────────────────────────
 [ "$(count_sleep $CONTROL_SLEEP)" -eq 1 ] \
   || fail "cancellation killed an UNRELATED process of the same shape — scope, not substring"
+
+# ── 3b. READY removes startup inference ────────────────────────────────────
+# `start` must return only once the run is INTERPRETABLE, so the first status
+# read is never a guess. Two misleading `unknown` reports came from inferring
+# readiness from an observable side effect (an empty cgroup, which legitimately
+# means both "starting" and "gone"). The second time, the cause turned out to
+# be that the wait had been deleted outright by an earlier edit — an inference
+# that is not even performed is the weakest kind.
+D3B=$("$RM" start gate_selftest_ready -- bash -c 'sleep 20') || fail "start failed"
+[ -f "$D3B/ready" ] || fail "start returned before the READY record existed"
+ST=$("$RM" status "$D3B")
+[ "$ST" = "running" ] || fail "first status read after start was '$ST', not running"
+
+"$RM" cancel "$D3B" >/dev/null 2>&1 || true
+rm -rf "$D3B"
+
+# PID REUSE, with a premise that actually isolates it.
+#
+# The first version of this check wrote a bogus start time onto a run whose
+# cgroup was genuinely populated — so `running` was the CORRECT answer and the
+# guard was never consulted. The failing scenario is the opposite: a STALE run
+# directory whose scope is long gone, but whose recorded pid has since been
+# recycled by an unrelated process. Without binding the pid to its /proc start
+# time, that stale directory reports `running` off a stranger's life.
+STALE="$RUNS/gate_selftest_pidreuse"
+mkdir -p "$STALE"
+setsid sleep "$CONTROL_SLEEP" >/dev/null 2>&1 &
+INNOCENT=$!
+echo running > "$STALE/status"
+echo "pgid:2"  > "$STALE/scope"          # pid 2 is kthreadd: not our process group
+echo "$INNOCENT" > "$STALE/supervisor_pid"
+echo 1 > "$STALE/supervisor_start"        # deliberately NOT this process's start time
+: > "$STALE/ready"
+ST=$("$RM" status "$STALE")
+case "$ST" in
+  lost*) ;;
+  *) fail "a recycled pid was read as a live run ('$ST') — liveness must bind the pid to its /proc start time" ;;
+esac
+# CONTROL: with the correct start time the same directory must read as running,
+# or the check would be passing for the wrong reason (e.g. always reporting lost).
+awk '{print $22}' "/proc/$INNOCENT/stat" > "$STALE/supervisor_start"
+[ "$("$RM" status "$STALE")" = "running" ] \
+  || fail "with a MATCHING start time the run must read as running; the pid-reuse check is rejecting everything"
+kill -9 "$INNOCENT" 2>/dev/null || true
+rm -rf "$STALE"
+
+# ── 3c. terminal state is monotonic ────────────────────────────────────────
+# Once a terminal result is durably recorded, `status` must never go back to
+# `running` — not even while a descendant is briefly still alive. A lingering
+# grandchild does not un-finish a job.
+D3C=$("$RM" start gate_selftest_monotonic -- bash -c "setsid sleep $VICTIM_SLEEP >/dev/null 2>&1 & exit 3") \
+  || fail "start failed"
+for _ in $(seq 1 100); do [ "$(cat "$D3C/status")" != running ] && break; sleep 0.1; done
+[ "$(cat "$D3C/status")" = "exited:3" ] || fail "expected exited:3, got '$(cat "$D3C/status")'"
+[ "$("$RM" status "$D3C")" = "exited:3" ] \
+  || fail "a terminal result was overridden by live-process observation — terminal state must be monotonic"
+for p in $(ps -eo pid,comm,args | awk -v d="$VICTIM_SLEEP" '$2=="sleep" && $4==d {print $1}'); do kill -9 "$p" 2>/dev/null; done
+rm -rf "$D3C"
 
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has

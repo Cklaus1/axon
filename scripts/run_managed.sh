@@ -49,7 +49,15 @@ cgroup_usable() {
 # unrecorded completion slips past — the failure this wrapper exists to stop.
 scope_alive() {
   local sp; sp="$(cat "$1/supervisor_pid" 2>/dev/null || echo)"
-  if [ -n "$sp" ] && kill -0 "$sp" 2>/dev/null; then return 0; fi
+  if [ -n "$sp" ] && kill -0 "$sp" 2>/dev/null; then
+    # Guard against PID REUSE. The recorded start time must match the process
+    # currently holding that pid; otherwise this is a different process that
+    # merely inherited the number, and reporting `running` off it would be a
+    # stale run directory claiming a stranger's life as its own.
+    local want; want="$(cat "$1/supervisor_start" 2>/dev/null || echo)"
+    local have; have="$(awk '{print $22}' "/proc/$sp/stat" 2>/dev/null || echo)"
+    if [ -z "$want" ] || [ "$want" = "$have" ]; then return 0; fi
+  fi
   local scope; scope="$(cat "$1/scope" 2>/dev/null || echo)"
   case "$scope" in
     cgroup:*)
@@ -106,6 +114,16 @@ cmd_start() {
   # unreadable and a quoting bug waiting to happen.
   setsid "$0" __supervise "$dir" -- "$@" >/dev/null 2>&1 &
 
+  # Block on the READY record, not on an inferred side effect. This is the
+  # whole point of READY: `start` returns only when the run is interpretable.
+  for _ in $(seq 1 400); do
+    [ -f "$dir/ready" ] && break
+    [ "$(cat "$dir/status")" != running ] && break   # a very short job already finished
+    scope_alive "$dir" || { [ -f "$dir/supervisor_pid" ] || sleep 0.05; }
+    [ -f "$dir/ready" ] && break
+    sleep 0.05
+  done
+
   echo "$dir"
 }
 
@@ -113,11 +131,24 @@ cmd_status() {
   local dir="$1"
   [ -d "$dir" ] || die "no such run: $dir"
   local st; st="$(cat "$dir/status" 2>/dev/null || echo unknown)"
+  # TERMINAL STATE IS MONOTONIC. Once a terminal result is durably recorded it
+  # always wins, even if some descendant is briefly still alive — a lingering
+  # grandchild does not un-finish a job. And the converse, learned the hard
+  # way: process disappearance is NOT successful completion.
+  case "$st" in
+    exited:*|cancelled|timed_out|lost) echo "$st"; return ;;
+  esac
+  # Not terminal. Distinguish STARTING from RUNNING from LOST, rather than
+  # folding the first into either of the others.
+  if [ ! -f "$dir/ready" ]; then
+    if scope_alive "$dir"; then echo "starting"; return; fi
+    echo "lost (never became ready — supervisor died during startup)"; return
+  fi
   # `running` is a CLAIM. Check the scope before repeating it: a supervisor
   # killed mid-wait leaves `running` forever, and reporting that as a live run
   # is the "unknown completion read as success" failure in the other direction.
   if [ "$st" = "running" ] && ! scope_alive "$dir"; then
-    st="unknown (supervisor gone, scope empty — completion never recorded)"
+    st="lost (supervisor gone, scope empty — completion never recorded)"
   fi
   echo "$st"
 }
@@ -162,10 +193,20 @@ cmd_cancel() {
 cmd_supervise() {
   local dir="$1"; shift
   [ "${1:-}" = "--" ] && shift
-  # First act: record own pid. This is the DIRECT liveness signal. Deriving
-  # liveness only from cgroup population raced the supervisor's own startup and
-  # reported a healthy run as `unknown` — see scope_alive.
-  echo $BASHPID > "$dir/supervisor_pid"
+  # First act: record own identity. Written to a temp file and RENAMED, so a
+  # reader never observes a half-written record — rename is atomic within a
+  # filesystem, a partial `echo >` is not.
+  #
+  # The identity is more than an integer pid. A pid alone is reusable: a
+  # sufficiently old run directory could observe an unrelated process that
+  # inherited the number and report `running` forever. Binding the pid to its
+  # /proc start time (field 22 of /proc/<pid>/stat, in clock ticks since boot)
+  # makes the pair unique for the life of the boot — a recycled pid has a
+  # different start time and fails the comparison.
+  echo $BASHPID > "$dir/.supervisor_pid.tmp"
+  mv -f "$dir/.supervisor_pid.tmp" "$dir/supervisor_pid"
+  awk '{print $22}' "/proc/$BASHPID/stat" 2>/dev/null > "$dir/.supervisor_start.tmp" || true
+  mv -f "$dir/.supervisor_start.tmp" "$dir/supervisor_start" 2>/dev/null || true
   local scope; scope="$(cat "$dir/scope")"
   if [ "${scope#cgroup:}" != "$scope" ]; then
     # Join the cgroup BEFORE spawning, so the child and every descendant it
@@ -179,6 +220,13 @@ cmd_supervise() {
   # A setsid child leads its own process group, so pgid == pid. That is the
   # fallback kill scope when cgroups are unavailable.
   [ "$scope" = "pgid:pending" ] && echo "pgid:$child" > "$dir/scope"
+  # READY: identity established, scope final, child launched. Everything a
+  # reader needs to interpret this run now exists on disk. `start` blocks on
+  # this file rather than inferring readiness from an observable side effect,
+  # which is what produced two misleading `unknown` reports: the cgroup is
+  # legitimately empty while the supervisor is still starting, so "empty" had
+  # to mean both "starting" and "gone".
+  : > "$dir/.ready.tmp"; mv -f "$dir/.ready.tmp" "$dir/ready"
   wait "$child"
   local code=$?
   date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/finished_at"
