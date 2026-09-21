@@ -1684,7 +1684,7 @@
       "reality": "the axon-run binary went straight from parse_source to interp::run_program: no type check, no capability check, no record/replay, no audit ledger. AXON_ALLOWED_EFFECTS *was* honoured (it is read inside the interpreter), which is what made the silence read as enforcement. It was also the interpreter side of six parity harnesses, so those compared codegen against an interpreter that enforced nothing",
       "reproduced": "a @[contained(fs: [read(\"./out/\")])] program reading /etc/passwd: `axon run` -> E1001 exit 2; `axon-run` -> LEAKED 1657 bytes exit 0. AXON_RECORD produced no journal FILE AT ALL; AXON_REPLAY performed the write for real",
       "fix": "one shared axon_core::preflight::prepare() reached by every runner, plus a workspace guard that fails if a binary reaches interp::run_program without it",
-      "commit": "PENDING"
+      "commit": "0ee8dd6"
     }
   ]
 }
