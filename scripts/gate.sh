@@ -60,6 +60,59 @@ fi
 
 fail() { echo ""; echo "❌ gate FAILED at: $1"; exit 1; }
 
+# Run a harness quietly, but SHOW ITS OUTPUT WHEN IT FAILS.
+#
+# 21 stages were written `./harness.sh >/dev/null 2>&1 || fail "..."`. The
+# quiet part is deliberate and worth keeping — a gate log carrying 21
+# harnesses' full chatter is unreadable. Discarding the output on FAILURE is
+# not: gate12 failed at the eBPF verifier harness and left no diagnostic at
+# all, so the only way to learn anything was to re-run the harness by hand,
+# where it then passed six times out of six. A failure you cannot see is a
+# failure you cannot fix, and a transient one you cannot see is indistinguishable
+# from a real one.
+run_quiet() {
+  local label="$1"; shift
+  local out; out="$(mktemp)"
+  local code=0
+  # Capture the command's status DIRECTLY. Writing `if "$@"; then ... fi` and
+  # then reading `$?` reports the status of the `if` CONSTRUCT — which is 0
+  # when the condition is false and there is no else — so a harness that
+  # exited 3 was reported as "(exit 0)". A diagnostic that misstates the
+  # result is the defect it exists to prevent.
+  "$@" >"$out" 2>&1 || code=$?
+  if [ "$code" -eq 0 ]; then
+    rm -f "$out"
+    return 0
+  fi
+  echo "── output of failing stage: $label (exit $code) ──"
+  tail -n 40 "$out"
+  echo "── end output ──"
+  rm -f "$out"
+  fail "$label"
+}
+
+# SELF-CHECK. run_quiet's entire value is in a branch that almost never runs,
+# so nothing would notice it rotting. A subshell, because the failure path
+# calls fail(), which exits.
+_rq=$( ( run_quiet "selftest" bash -c 'echo DIAGNOSTIC_MARKER; exit 3' ) 2>&1 )
+# Both substrings must be present; ORDER IS NOT ASSUMED. The first version of
+# this pattern required DIAGNOSTIC_MARKER before "exit 3", but run_quiet prints
+# the header (carrying the exit code) BEFORE the captured output. The check
+# therefore never matched, fell to the default branch, and printed its own
+# diagnostic into the gate log on every healthy run — a self-check that fails
+# open is worse than none.
+case "$_rq" in
+  *"exit 3"*) case "$_rq" in *DIAGNOSTIC_MARKER*) ;; *) _rq_bad=1 ;; esac ;;
+  *) _rq_bad=1 ;;
+esac
+case "${_rq_bad:-0}" in
+  0) ;;
+  *) echo "$_rq"; fail "run_quiet self-check: a failing stage must print its output and its real exit code" ;;
+esac
+_rq=$( ( run_quiet "selftest" bash -c 'echo SHOULD_NOT_APPEAR; exit 0' ) 2>&1 )
+[ -z "$_rq" ] || { echo "$_rq"; fail "run_quiet self-check: a passing stage must stay quiet"; }
+unset _rq
+
 # The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
 # at the end of this script would otherwise report skips from previous runs as if
 # they had happened now. Truncate it so the notice describes THIS run only.
@@ -357,8 +410,8 @@ stage order means it should have had one here" ;;
   # never run the parity suite, and as the 14 fixtures reachable from no test.
   # A gate nobody invokes reports nothing, including when it would have failed.
   echo "── gate: per-requirement acceptance gates (R22, R44) ────────────"
-  ./scripts/r22_acceptance_gate.sh >/dev/null 2>&1 || fail "R22 acceptance gate"
-  ./scripts/r44_acceptance_gate.sh >/dev/null 2>&1 || fail "R44 acceptance gate"
+  run_quiet "R22 acceptance gate" ./scripts/r22_acceptance_gate.sh
+  run_quiet "R44 acceptance gate" ./scripts/r44_acceptance_gate.sh
 
   # Two more harnesses that NOTHING invoked — found by the coverage-metric
   # audit, which measured execution instead of counting mentions. Between them
@@ -371,8 +424,8 @@ stage order means it should have had one here" ;;
   # (no llvm-objdump, not root, no gramine) rather than reporting success.
   # A harness nobody invokes reports nothing, including when it would fail.
   echo "── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──"
-  ./scripts/ebpf_verify.sh >/dev/null 2>&1 || fail "eBPF verifier harness"
-  ./scripts/tee_sim_run.sh >/dev/null 2>&1 || fail "TEE simulation harness"
+  run_quiet "eBPF verifier harness" ./scripts/ebpf_verify.sh
+  run_quiet "TEE simulation harness" ./scripts/tee_sim_run.sh
 
   # THE THREE DOMAIN ROUND-TRIPS. `governance/specs/R22-domain-modules.md`
   # ticks all three as done; nothing ran them. They are the only end-to-end
@@ -383,7 +436,7 @@ stage order means it should have had one here" ;;
   # claims: all three PASS on this host, in seconds.
   echo "── gate: domain round-trips (FIX, FHIR, Modbus — previously unwired) ──"
   for dh in fix_codec fhir_roundtrip modbus_roundtrip; do
-    ./scripts/$dh.sh >/dev/null 2>&1 || fail "$dh round-trip"
+    run_quiet "$dh round-trip" ./scripts/$dh.sh
   done
 
   # Three MORE acceptance gates nothing invoked, found by re-running the same
@@ -393,16 +446,16 @@ stage order means it should have had one here" ;;
   # BROKEN chain through the real CLI; that evidence was being produced and
   # discarded on every run that never happened.
   echo "── gate: acceptance gates R33, R34, R39 (previously unwired) ────"
-  ./scripts/r33_acceptance_gate.sh >/dev/null 2>&1 || fail "R33 acceptance gate"
-  ./scripts/r34_acceptance_gate.sh >/dev/null 2>&1 || fail "R34 acceptance gate"
-  ./scripts/r39_slice1_gate.sh    >/dev/null 2>&1 || fail "R39 Slice 1 gate"
+  run_quiet "R33 acceptance gate" ./scripts/r33_acceptance_gate.sh
+  run_quiet "R34 acceptance gate" ./scripts/r34_acceptance_gate.sh
+  run_quiet "R39 Slice 1 gate" ./scripts/r39_slice1_gate.sh
 
   # R23 is the one REQUIREMENTS.md cites as the evidence for "Landed 100%",
   # and nothing invoked it. It passes — verified by running it — and it is the
   # only caller of `cargo test -p axon-certcheck --features smt`, so R23's own
   # A5 check (certificate emission byte-identical) ran nowhere either: the
   # gate's smt stage is -p axon-core only.
-  ./scripts/r23_acceptance_gate.sh >/dev/null 2>&1 || fail "R23 acceptance gate"
+  run_quiet "R23 acceptance gate" ./scripts/r23_acceptance_gate.sh
 
   # R26/R27/R28/R29 — cited by REQUIREMENTS.md as the evidence those landed,
   # and reachable from no execution root. They ARE run by axon_safety_gate.sh,
@@ -444,10 +497,10 @@ stage order means it should have had one here" ;;
     echo "$out"; fail "kernel_enforce_test (guest-kernel syscall enforcement)"
   fi
 
-  ./scripts/r26_acceptance_gate.sh >/dev/null 2>&1 || fail "R26 acceptance gate"
-  ./scripts/r27_acceptance_gate.sh >/dev/null 2>&1 || fail "R27 acceptance gate"
-  ./scripts/r28_acceptance_gate.sh >/dev/null 2>&1 || fail "R28 acceptance gate"
-  ./scripts/r29_acceptance_gate.sh >/dev/null 2>&1 || fail "R29 acceptance gate"
+  run_quiet "R26 acceptance gate" ./scripts/r26_acceptance_gate.sh
+  run_quiet "R27 acceptance gate" ./scripts/r27_acceptance_gate.sh
+  run_quiet "R28 acceptance gate" ./scripts/r28_acceptance_gate.sh
+  run_quiet "R29 acceptance gate" ./scripts/r29_acceptance_gate.sh
 
   # R31 — its own header has said, since it was written:
   #   "Wire into gate.sh --strict once R28/R29 reach stable artifact paths."
@@ -457,7 +510,7 @@ stage order means it should have had one here" ;;
   # report `... ok`, because a name-grep cannot distinguish a passing test from
   # an #[ignore]d one or from a name that survives only in a comment. Measured:
   # exit 0, "ALL CHECKS PASSED".
-  ./scripts/r31_acceptance_gate.sh >/dev/null 2>&1 || fail "R31 acceptance gate"
+  run_quiet "R31 acceptance gate" ./scripts/r31_acceptance_gate.sh
 
   # R39 slices 3, 4 and 5. REQUIREMENTS.md cites all three as the evidence R39
   # landed, all three pass, and nothing invoked any of them.
@@ -502,12 +555,12 @@ stage order means it should have had one here" ;;
   # That is the external_hardware class: excused from being EFFECTIVE without
   # the toolchain, never from being wired — unwired it would not run on the host
   # that HAS the hardware either.
-  ./scripts/zephyr_qemu_gate.sh >/dev/null 2>&1 || fail "R25 Zephyr/Cortex-M gate"
-  ./scripts/r32_acceptance_gate.sh >/dev/null 2>&1 || fail "R32 acceptance gate"
-  ./scripts/r39_slice2_gate.sh >/dev/null 2>&1 || fail "R39 Slice 2 gate"
-  ./scripts/r39_slice3_gate.sh >/dev/null 2>&1 || fail "R39 Slice 3 gate"
-  ./scripts/r39_slice4_gate.sh >/dev/null 2>&1 || fail "R39 Slice 4 gate"
-  ./scripts/r39_slice5_gate.sh >/dev/null 2>&1 || fail "R39 Slice 5 gate"
+  run_quiet "R25 Zephyr/Cortex-M gate" ./scripts/zephyr_qemu_gate.sh
+  run_quiet "R32 acceptance gate" ./scripts/r32_acceptance_gate.sh
+  run_quiet "R39 Slice 2 gate" ./scripts/r39_slice2_gate.sh
+  run_quiet "R39 Slice 3 gate" ./scripts/r39_slice3_gate.sh
+  run_quiet "R39 Slice 4 gate" ./scripts/r39_slice4_gate.sh
+  run_quiet "R39 Slice 5 gate" ./scripts/r39_slice5_gate.sh
 
   # A reported diagnostic location must EXIST in the file the diagnostic names.
   # Written RED and left unwired; it stayed red for as long as `Span` was
