@@ -1763,7 +1763,7 @@
       "reality": "the dashboard bound 0.0.0.0 with Access-Control-Allow-Origin: * on all three JSON responses and served every engineer's session goals and scores to a caller supplying no identity at all. Binding loopback closes the network half; the wildcard CORS header is the worse half ON loopback, because it hands the endpoint to every page the operator's own browser visits",
       "reproduced": "curl against /api/score with no identity returned both engineers' records",
       "fix": "bound to 127.0.0.1 (matching axon-web), all three CORS wildcards removed; the dashboard serves its own HTML from this origin and needs none",
-      "commit": "PENDING"
+      "commit": "12a0e52"
     }
   ]
 }

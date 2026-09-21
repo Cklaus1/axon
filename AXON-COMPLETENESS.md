@@ -115,7 +115,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**54 controls tracked; 21 engine states unknown or silently-ignored.**
+**55 controls tracked; 22 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -131,6 +131,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_RECORD` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_REPLAY` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_SEED` | determinism | ✓ | ✓ | **IGNORED** | ✓ | native-closed |
+| `axon-signal.http-caller-identity` | serving/authority | **?** | **?** | **?** | **?** | open |
 | `reflex.principal-isolation` | serving/authority | **?** | **?** | **?** | **?** | open |
 | `AXON_AI_MODEL_CHEAP` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
 | `AXON_AI_MODEL_STRONG` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
@@ -188,6 +189,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_TEE_ENCLAVE`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`AXON_TEE_MEASUREMENT`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`reflex.principal-isolation`** — DEMOTED after adversarial review — the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing "principal":"alice"; (b) duplicate `principal` keys are accepted last-wins — the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly.
+- **`axon-signal.http-caller-identity`** — The dashboard's RBAC filter calls resolve_caller(None), which reads the SERVER's AXON_PRINCIPAL — not the request's. Every HTTP caller therefore sees the OPERATOR's view. Filtering reads is not authenticating an endpoint, and this endpoint has no caller identity to authenticate. Network exposure is closed (loopback, no wildcard CORS); per-caller authorization is NOT.
 
 ## False greens
 
@@ -195,7 +197,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 21 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 22 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -343,4 +345,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** `rustup target list 2>/dev/null | grep -q <target>` discards rustup's exit status and stderr, so a MISSING or broken rustup concluded 'target not installed' — reporting a specific fact it never established, and turning a misconfigured toolchain into 15 silent skips that read like deliberate environment coverage
 - **Reproduced:** the pattern with rustup absent concluded 'target not installed' though rustup never ran
 - **Fix:** rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip — a skip must prove its own reason (`9519d5b`)
+
+### FG-022 — crates/axon-signal/src/dashboard.rs (security, fixed)
+
+- **Claimed:** ledger data is access-controlled
+- **Reality:** the dashboard bound 0.0.0.0 with Access-Control-Allow-Origin: * on all three JSON responses and served every engineer's session goals and scores to a caller supplying no identity at all. Binding loopback closes the network half; the wildcard CORS header is the worse half ON loopback, because it hands the endpoint to every page the operator's own browser visits
+- **Reproduced:** curl against /api/score with no identity returned both engineers' records
+- **Fix:** bound to 127.0.0.1 (matching axon-web), all three CORS wildcards removed; the dashboard serves its own HTML from this origin and needs none (`12a0e52`)
 
