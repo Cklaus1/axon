@@ -170,6 +170,32 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     }
     let intent = intent.unwrap_or_default();
     let seed = seed.unwrap_or(42);
+    // A named profile and an explicit `reproducible = false` can contradict
+    // each other, and the contradiction was resolved SILENTLY in favour of the
+    // weaker one: `profile = "hermetic"` with `reproducible = false` parsed,
+    // explained and ran as non-reproducible, so a job labelled with the one
+    // profile whose entire purpose is reproducibility was not reproducible and
+    // nothing said so.
+    //
+    // Only the WEAKENING direction is refused. `reproducible = true` under a
+    // non-reproducible profile is a strengthening, and coherent with
+    // `Grant::intersect`, which ORs the bit precisely so that either side may
+    // demand reproducibility.
+    //
+    // This cannot break the archive round-trip: `to_axjob` writes
+    // `grant.reproducible` and no `profile` line, so the two never co-occur in
+    // a generated manifest.
+    if let (Some(pf), Some(false)) = (profile, reproducible_override) {
+        if pf.is_reproducible() {
+            return Err(bad(format!(
+                "profile `{}` is reproducible, but `reproducible = false` was \
+                 also given — these contradict. Remove one: drop the \
+                 `reproducible` line to keep the profile's guarantee, or name a \
+                 profile that does not promise it.",
+                pf.name()
+            )));
+        }
+    }
     let profile = profile.unwrap_or_default();
     let exec = exec.unwrap_or_else(|| profile.default_exec());
     let max_label = max_label.ok_or_else(|| bad("missing `grant.max_label`"))?;

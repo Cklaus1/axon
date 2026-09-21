@@ -86,13 +86,22 @@ fn legible_grant(g: &Grant) -> String {
         not.push("spawn processes".to_string());
     }
     format!(
-        "  This program MAY: {}\n  It may NOT: {}\n  Budget: \u{2264} {} calls / {} tokens / {} \u{b5}$\n  Confidentiality ceiling: {}",
+        "  This program MAY: {}\n  It may NOT: {}\n  Budget: \u{2264} {} calls / {} tokens / {} \u{b5}$\n  Confidentiality ceiling: {}\n  Reproducible: {}",
         if may.is_empty() { "(nothing)".into() } else { may.join("; ") },
         if not.is_empty() { "(no restrictions)".into() } else { not.join(", ") },
         g.budget.calls,
         g.budget.tokens,
         g.budget.cost_micro,
         g.max_label.as_str(),
+        // `explain` is the operator-facing account of what a job is
+        // authorized to do, and it omitted this entirely — so the one
+        // property that distinguishes `hermetic` from `restricted` was
+        // invisible in the output whose job is to explain the difference.
+        if g.reproducible {
+            "yes (no ambient AXON_* vars, seeded clock, fixed RNG seed)"
+        } else {
+            "no (the run may depend on the ambient environment)"
+        },
     )
 }
 

@@ -146,3 +146,74 @@ fn the_canonicalizers_bind_every_field_exhaustively() {
         );
     }
 }
+
+// ── A profile and an explicit `reproducible` must not contradict silently ────
+
+fn manifest_src_with(profile: Option<&str>, reproducible: Option<bool>) -> String {
+    let p = profile
+        .map(|p| format!("profile = \"{p}\"\n"))
+        .unwrap_or_default();
+    let r = reproducible
+        .map(|r| format!("reproducible = {r}\n"))
+        .unwrap_or_default();
+    format!(
+        "program = \"p.ax\"\nintent = \"t\"\nseed = 1\n{p}\
+         [grant]\nfs_read = []\nfs_write = []\nnet = []\nexec = \"none\"\n\
+         max_label = \"internal\"\n{r}\
+         [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n"
+    )
+}
+
+/// `profile = "hermetic"` with `reproducible = false` parsed, explained and
+/// ran, silently resolved in favour of the weaker value — so a job carrying
+/// the one profile whose entire purpose is reproducibility was not
+/// reproducible, and nothing in the output said so.
+#[test]
+fn a_reproducible_profile_cannot_be_silently_disclaimed() {
+    let err = axon_os::manifest::parse(
+        &manifest_src_with(Some("hermetic"), Some(false)),
+        std::path::Path::new("."),
+    )
+    .expect_err("hermetic + reproducible = false must not parse");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("contradict"),
+        "the refusal must say what is wrong: {msg}"
+    );
+}
+
+/// Only the WEAKENING direction is refused. Asking for reproducibility under a
+/// profile that does not promise it is coherent — `Grant::intersect` ORs the
+/// bit precisely so either side may demand it — and refusing it would make
+/// this a papercut rather than a safety property.
+#[test]
+fn asking_for_more_reproducibility_than_the_profile_promises_is_allowed() {
+    let m = axon_os::manifest::parse(
+        &manifest_src_with(Some("developer"), Some(true)),
+        std::path::Path::new("."),
+    )
+    .expect("developer + reproducible = true is a strengthening, not a conflict");
+    assert!(m.grant.reproducible);
+}
+
+/// The archive round-trip must survive the new check: `to_axjob` writes
+/// `grant.reproducible` and NO profile line, so the two never co-occur in a
+/// generated manifest. If that ever changes, every archived hermetic job
+/// stops parsing — which is exactly the kind of coupling worth pinning.
+#[test]
+fn the_archived_form_of_a_hermetic_job_still_parses() {
+    let m = axon_os::manifest::parse(
+        &manifest_src_with(Some("hermetic"), None),
+        std::path::Path::new("."),
+    )
+    .expect("hermetic parses");
+    assert!(m.grant.reproducible, "premise: hermetic is reproducible");
+    let archived = axon_os::manifest::to_axjob(&m);
+    let back = axon_os::manifest::parse(&archived, std::path::Path::new("."))
+        .expect("the archived form must parse");
+    assert!(
+        back.grant.reproducible,
+        "the round-trip lost reproducibility, so a replayed hermetic job would \
+         run under the developer profile"
+    );
+}
