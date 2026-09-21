@@ -272,7 +272,12 @@ fn cap_to_effect_row(cap: &str) -> &'static str {
 /// `goal_run`, ...) fall back to `builtin_effect_row`, picking its first
 /// recognized tag.
 fn audit_effect_kind(name: &str) -> Option<axon_audit::EffectKind> {
-    if let Some(cap) = crate::capabilities::capability_of_builtin(name) {
+    // Via the PER-ARGUMENT table: `capability_of_builtin` has no arm for
+    // `file_copy`/`file_rename`, so those two audited as the coarse `IO` from
+    // their effect row rather than as `FS`. A reviewer filtering the ledger
+    // for filesystem activity did not see the one builtin that reads one path
+    // and writes another.
+    if let Some(cap) = crate::capabilities::capability_of_builtin_multi(name) {
         match cap {
             "fs:read" | "fs:write" => return Some(axon_audit::EffectKind::FS),
             "net" => return Some(axon_audit::EffectKind::Net),

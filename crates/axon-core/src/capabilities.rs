@@ -56,7 +56,7 @@ impl CapabilityError {
 // ── I/O call classification ───────────────────────────────────────────────────
 
 /// The kind of I/O operation a builtin call represents.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum IoKind {
     FsRead,
     FsWrite,
@@ -718,6 +718,24 @@ pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
     classify_call(name).map(|k| cap_label(&k))
 }
 
+/// Like [`capability_of_builtin`], but resolves a builtin whose arguments
+/// carry DIFFERENT capabilities (`file_copy`: read then write) to the
+/// strongest single label, for consumers that need one answer per call.
+///
+/// `capability_of_builtin` returns `None` for those, which is why
+/// `file_copy`/`file_rename` audited as the coarse `IO` of their effect row
+/// rather than as `FS`.
+pub fn capability_of_builtin_multi(name: &str) -> Option<&'static str> {
+    let kinds = classify_call_paths(name)?;
+    // Write outranks read: a call that does both is a write for any consumer
+    // choosing one label, and under-reporting authority is the unsafe
+    // direction.
+    if kinds.iter().any(|(k, _)| *k == IoKind::FsWrite) {
+        return Some(cap_label(&IoKind::FsWrite));
+    }
+    kinds.first().map(|(k, _)| cap_label(k))
+}
+
 /// A capability-bearing builtin (`read_file`, `ai_complete`, `exec`, …) used as a
 /// VALUE rather than called directly — e.g. `let f = read_file; f(p)`. There is no
 /// call site to path/host-check, so a bare reference is the capability itself; it is
@@ -731,18 +749,45 @@ pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
 /// over-approximated (may over-report) — consistent with the method-dispatch and
 /// helper-follow checks, and sound (no false negative).
 fn check_builtin_value_ref(name: &str, spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
-    let cap = match capability_of_builtin(name) {
-        Some(c) => c,
+    // Ask the PER-ARGUMENT table, not `capability_of_builtin`. That function
+    // yields one kind for the whole call and has no arm for `file_copy` /
+    // `file_rename`, so this returned early for them: aliasing `write_file`
+    // inside `@[contained(fs: [])]` was E1001 while `let f = file_copy` passed
+    // with exit 0 — precisely the laundering route this check exists to close.
+    //
+    // A multi-kind builtin needs EVERY kind granted. `file_copy` confers a
+    // read and a write once aliased, and there is no call site left at which
+    // to check either path.
+    let kinds: Vec<IoKind> = match classify_call_paths(name) {
+        Some(pairs) => {
+            let mut ks: Vec<IoKind> = pairs.into_iter().map(|(k, _)| k).collect();
+            ks.dedup();
+            ks
+        }
         None => return, // pure builtin, or not a builtin — fine as a value
     };
-    let forbidden = match cap {
-        "fs:read" => spec.fs_read.is_empty(),
-        "fs:write" => spec.fs_write.is_empty(),
-        "net" => spec.net_allow.is_empty(),
-        "exec" => !spec.exec_allowed,
-        _ => false,
-    };
-    if forbidden {
+
+    for kind in kinds {
+        // Matched on the KIND, exhaustively, rather than on `cap_label`'s
+        // string with a `_ => false` arm. That arm silently permitted every
+        // label it did not name: `env_var` — whose DIRECT call is an
+        // unconditional E1001 because the environment is an ungrantable
+        // ambient secret channel — could be aliased and called, and so could
+        // the durable store. A new IoKind must now be decided about here
+        // rather than defaulting to allowed.
+        let forbidden = match kind {
+            IoKind::FsRead => spec.fs_read.is_empty(),
+            IoKind::FsWrite => spec.fs_write.is_empty(),
+            IoKind::Net => spec.net_allow.is_empty(),
+            IoKind::Exec => !spec.exec_allowed,
+            // No clause can grant either, so an alias of one is always
+            // forbidden — the same answer their direct call sites give.
+            IoKind::Env | IoKind::DurableStore => true,
+        };
+        if !forbidden {
+            continue;
+        }
+        let cap = cap_label(&kind);
         errors.push(CapabilityError::new(
             E1001,
             format!(
