@@ -136,7 +136,7 @@ cmd_observe() {
   # MUST be run from a shell that did not launch them.
   printf '%-3s %-8s %-8s %-8s %-8s %-9s %-7s %s\n' \
     PROBE PID ALIVE PGID SID STARTTIME TICKS CGROUP
-  for n in A B C D; do
+  for n in A B C D E F G H; do
     local m="$DIR/$n.meta"
     [ -f "$m" ] || { printf '%-3s (not launched)\n' "$n"; continue; }
     if grep -q '^UNAVAILABLE=' "$m"; then
@@ -161,7 +161,7 @@ cmd_snapshot() {
   # The observation to make BEFORE interrupting anything: is the "detached"
   # supervisor merely in a different session/PGID while still sitting inside an
   # execution scope the harness owns?
-  for n in A B C D; do
+  for n in A B C D E F G H; do
     local m="$DIR/$n.meta"; [ -f "$m" ] || continue
     grep -q '^UNAVAILABLE=' "$m" && { echo "== $n: $(sed -n 's/^UNAVAILABLE=//p' "$m")"; continue; }
     local p; p=$(sed -n 's/^pid=//p' "$m")
@@ -174,7 +174,7 @@ cmd_snapshot() {
 }
 
 cmd_stop() {
-  for n in A B C D; do
+  for n in A B C D E F G H; do
     local m="$DIR/$n.meta"; [ -f "$m" ] || continue
     local p; p=$(sed -n 's/^pid=//p' "$m"); [ -n "$p" ] && kill -9 "$p" 2>/dev/null
   done
@@ -184,8 +184,42 @@ cmd_stop() {
   echo stopped
 }
 
+# Spawn ONE probe by mechanism, for the 2x2 interruption experiment. A/B/C/D
+# were created by tool invocations that completed NORMALLY; E/F/G/H are created
+# inside the invocation that will be interrupted. If the harness tracks
+# ownership per tool invocation rather than per session, the old set survives
+# while the new set dies — a distinction invisible to a single-cohort test.
+cmd_spawn() {
+  local n="${1:-}" mech="${2:-}"
+  local self; self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  local p=""
+  case "$mech" in
+    managed)
+      local d; d=$(bash scripts/run_managed.sh start "lifecycle_$n" -- bash "$self" __beat "$n")
+      echo "$d" > "$DIR/$n.rundir"; sleep 1; p=$(cat "$d/pid" 2>/dev/null) ;;
+    setsid)
+      setsid bash "$self" __beat "$n" >/dev/null 2>&1 &
+      sleep 1; p=$(pgrep -f "$self __beat $n" | head -1) ;;
+    nohup)
+      setsid nohup bash "$self" __beat "$n" </dev/null >"$DIR/$n.out" 2>&1 &
+      sleep 1; p=$(pgrep -f "$self __beat $n" | head -1) ;;
+    systemd)
+      systemctl stop "axon-lifecycle-$n" >/dev/null 2>&1
+      systemd-run --unit="axon-lifecycle-$n" --collect --quiet         --setenv=LIFECYCLE_DIR="$DIR" bash "$self" __beat "$n" >/dev/null 2>&1
+      for _ in $(seq 1 40); do
+        p=$(systemctl show -p MainPID --value "axon-lifecycle-$n" 2>/dev/null)
+        [ -n "$p" ] && [ "$p" != "0" ] && break; p=""; sleep 0.25
+      done ;;
+    *) echo "unknown mechanism: $mech" >&2; return 2 ;;
+  esac
+  record_meta "$n" "$p"
+  printf 'mechanism=%s\n' "$mech" >> "$DIR/$n.meta"
+  echo "$n ($mech) pid=${p:-NONE}"
+}
+
 case "${1:-}" in
   __beat)   heartbeat "$2" ;;
+  spawn)    shift; cmd_spawn "$@" ;;
   launch)   cmd_launch ;;
   observe)  cmd_observe ;;
   snapshot) cmd_snapshot ;;
