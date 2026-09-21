@@ -3,3 +3,12 @@
 #
 # An entry naming a file that is no longer tracked FAILS the gate — a stale
 # exemption is how an allowlist becomes a blanket one.
+
+# A capability-sandbox fixture, not an editing artifact. The filename heuristic
+# matches "copy" because `file (copy).ax` is the shape it hunts for; here
+# `copy` names the BUILTIN under test — `file_copy`, whose read and write
+# arguments both escaped a scoped sandbox (7a7c690). Renaming the fixture to
+# dodge the heuristic would make it harder to find than the exemption is to
+# read.
+crates/axon-core/tests/fixtures/sandbox_scope_copy.ax
+crates/axon-core/tests/fixtures/sandbox_scope_copy_read.ax
