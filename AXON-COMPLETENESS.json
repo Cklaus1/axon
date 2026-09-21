@@ -1608,6 +1608,50 @@
       "reproduced": "read both; the ordering argument is false in either order",
       "fix": "renamed to state what it proves; false rationale deleted",
       "commit": "4172ca0"
+    },
+    {
+      "id": "FG-010",
+      "where": "crates/axon-core/src/interp/builtins.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "a scoped sandbox confines file access to its fs_read/fs_write prefixes",
+      "reality": "the RUNTIME asked single-kind `classify_call`, which has no arm for file_copy/file_rename; unclassified fell to `_ => None` meaning no restriction. The per-argument table the STATIC @[contained] checker uses always knew arg0 is a READ and arg1 a WRITE",
+      "reproduced": "one sandbox scoped to ./out/: write_file outside it -> exit 8; file_copy('./secret.txt','./exfil.txt') -> Ok, exit 0, exfil.txt contained TOP SECRET CREDENTIALS. No audit record either, since audit keys off the same classification",
+      "fix": "runtime iterates the same per-argument table; in-scope copy still permitted (control)",
+      "commit": "7a7c690"
+    },
+    {
+      "id": "FG-011",
+      "where": "crates/axon-ledger/src/mcp.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "ledger RBAC restricts a member to their own records",
+      "reality": "the MCP server \u2014 the interface an agent actually talks to \u2014 opened a raw Store and handed it to nine tool handlers, NONE of which mentioned rbac. Zero rbac references in the file",
+      "reproduced": "one ledger, RBAC active, identity bob@example.com: CLI `stats` reported 1 record, `tools/call ledger_stats` reported 2",
+      "fix": "Store::open_as filters inside Store::all, the sole reader, so a handler added later cannot forget; write paths use an explicitly named open_for_write so the exception is auditable",
+      "commit": "pending"
+    },
+    {
+      "id": "FG-012",
+      "where": "crates/axon-ledger/src/rbac.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "a member sees only records they own",
+      "reality": "ownership was `principal.ends_with(caller)`, a suffix test with no delimiter. Two holes: a caller whose name is a suffix of another principal owns their records, and `str::ends_with(\"\")` is true for EVERY string so an empty caller owned the whole ledger",
+      "reproduced": "caller `ob@example.com` saw bob's record; caller `\"\"` saw 2 of 2 where the legitimate member saw 1",
+      "fix": "namespace-stripped exact match (split on first colon), empty caller owns nothing; the legitimate git:/agent:/bare forms still resolve",
+      "commit": "pending"
+    },
+    {
+      "id": "FG-013",
+      "where": "crates/axon-cortex/src/episode.rs",
+      "status": "fixed",
+      "severity": "correctness",
+      "claimed": "an episode reports itself verified only if verification passed",
+      "reality": "`.any()` over all Verified events found an EARLIER superseded positive. Runner::verify asks about one hidden check; the ClaimDone branch re-asks over the whole file and is documented as authoritative over it",
+      "reproduced": "fixtures/pre_existing_failure.ax: outcome AdjudicatedNotClean (exit 27) with verified_ok() == true, event trace false/true/false",
+      "fix": "last Verified event wins, absent -> false. NOT .all(): an early failure then a later pass is genuinely verified. cxg_c28 built this state and never asserted the claim; it now does",
+      "commit": "pending"
     }
   ]
 }

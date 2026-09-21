@@ -18,6 +18,21 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 
 pub struct Store {
     events_path: PathBuf,
+    /// When set, EVERY read through this handle is filtered to what `caller`
+    /// may see. The choke point for authority-bearing reads.
+    ///
+    /// This lives in `Store` rather than at each call site because the MCP
+    /// server bypassed RBAC entirely: `crates/axon-ledger/src/mcp.rs` opened a
+    /// raw `Store` and handed it to nine tool handlers, none of which mentioned
+    /// rbac. REPRODUCED on one ledger with RBAC active — `--as bob@example.com`
+    /// via the CLI reported 1 record, the same identity via
+    /// `tools/call ledger_stats` reported 2.
+    ///
+    /// Adding an RBAC call to each of the nine handlers would have fixed those
+    /// nine and left the tenth to be written without one. Filtering in the
+    /// reader means a new handler cannot forget: there is no unfiltered read to
+    /// reach through this handle.
+    view: Option<(crate::rbac::RbacConfig, Option<String>)>,
 }
 
 impl Store {
@@ -27,7 +42,45 @@ impl Store {
         if !events_path.exists() {
             File::create(&events_path)?;
         }
-        Ok(Store { events_path })
+        Ok(Store {
+            events_path,
+            view: None,
+        })
+    }
+
+    /// Open an UNFILTERED store for a write/maintenance path.
+    ///
+    /// Named rather than reusing `open` so the exception is auditable: a
+    /// reviewer, and the choke-point guard in
+    /// `tests/authority_reachability.rs`, can tell "this path deliberately
+    /// needs every record" from "this path forgot to authorize". Ingest, prune
+    /// and refresh must see the whole ledger — silently narrowing what a prune
+    /// sees would corrupt it rather than protect it.
+    ///
+    /// Use `open_as` for anything that RETURNS records to a caller.
+    pub fn open_for_write(path: &Path) -> Result<Store> {
+        Store::open(path)
+    }
+
+    /// Open a store whose reads are RBAC-filtered for `caller`.
+    ///
+    /// Write and maintenance paths (`append`, `prune`, `replace_record`,
+    /// `rewrite_principals`) are deliberately NOT filtered: they are ingest and
+    /// operator operations, and silently narrowing what a prune sees would
+    /// corrupt the ledger rather than protect it.
+    pub fn open_as(path: &Path, caller: Option<String>) -> Result<Store> {
+        let mut st = Store::open(path)?;
+        let rbac = crate::rbac::RbacConfig::load(path).unwrap_or_default();
+        st.view = Some((rbac, caller));
+        Ok(st)
+    }
+
+    /// Apply the view, if this handle has one.
+    fn visible(&self, records: Vec<LedgerRecord>) -> Vec<LedgerRecord> {
+        match &self.view {
+            Some((rbac, caller)) => rbac.filter_owned(records, caller.as_deref()),
+            None => records,
+        }
     }
 
     pub fn append(&mut self, record: &LedgerRecord) -> Result<()> {
@@ -53,7 +106,7 @@ impl Store {
             let record: LedgerRecord = serde_json::from_str(trimmed)?;
             records.push(record);
         }
-        Ok(records)
+        Ok(self.visible(records))
     }
 
     pub fn find_by_id(&self, id: &str) -> Result<Option<LedgerRecord>> {

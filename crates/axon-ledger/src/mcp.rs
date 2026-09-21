@@ -211,7 +211,19 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
     let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    let store = match Store::open(ledger_dir).map_err(anyhow::Error::from) {
+    // RBAC-FILTERED HANDLE. This opened a raw `Store` and handed it to every
+    // tool handler, none of which mentioned rbac — so the MCP surface, which is
+    // the interface an agent actually talks to, returned every principal's
+    // records to any caller. REPRODUCED on one ledger with RBAC active:
+    // `--as bob@example.com` through the CLI reported 1 record; the same
+    // identity through `tools/call ledger_stats` reported 2.
+    //
+    // `open_as` filters inside `Store::all`, which is the only reader — so a
+    // handler added later cannot forget the check, because no unfiltered read
+    // is reachable through this handle. Patching the nine existing handlers
+    // would have fixed nine and left the tenth to be written without one.
+    let caller = crate::rbac::resolve_caller(None);
+    let store = match Store::open_as(ledger_dir, caller).map_err(anyhow::Error::from) {
         Ok(s) => s,
         Err(e) => return json_error(id.as_ref(), -32000, &format!("Could not open ledger: {e}")),
     };
@@ -548,7 +560,11 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
                         .filter(|s| !s.is_empty())
                 });
 
-            let mut store_mut = match Store::open(ledger_dir) {
+            // Refresh INGESTS; it must see the whole ledger. Named
+            // explicitly so this exception is distinguishable from a handler
+            // that simply forgot to authorize — see the guard in
+            // tests/authority_reachability.rs.
+            let mut store_mut = match Store::open_for_write(ledger_dir) {
                 Ok(s) => s,
                 Err(e) => {
                     return json_error(id.as_ref(), -32000, &format!("Could not open ledger: {e}"))

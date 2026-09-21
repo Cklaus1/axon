@@ -7,6 +7,8 @@
 #
 # Requires: rustup target wasm32-unknown-unknown + node. Skips (exit 0) if absent.
 set -u
+# shellcheck source=lib/harness_skip.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 
 # AUDIT O004: take the SHARED wasm build lock. Several of these harnesses build
 # for wasm32 concurrently under cargo's parallel test threads and clobber each
@@ -19,7 +21,15 @@ if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_pari
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if ! rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
+# A skip must prove its own reason. The previous probe piped rustup
+# into grep, discarding rustup's exit status and stderr, so a MISSING
+# rustup concluded "target not installed" — reporting a fact it never
+# established. rust_target_installed separates the three outcomes.
+rust_target_installed wasm32-unknown-unknown; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  echo "wasm_browser_host_await: cannot determine whether wasm32-unknown-unknown is installed — refusing to call that a skip" >&2
+  exit 1
+elif [ "$_rt" -ne 0 ]; then
   echo "wasm_browser_host_await: wasm32-unknown-unknown not installed — skipping"; exit 0
 fi
 command -v node >/dev/null 2>&1 || { echo "wasm_browser_host_await: node not found — skipping"; exit 0; }

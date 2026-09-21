@@ -117,3 +117,37 @@ cargo_test_must_run() {
   fi
   return 0
 }
+
+#   3. `rust_target_installed <target>` — distinguish "rustup says this target
+#      is not installed" (a legitimate SKIP) from "the probe itself failed"
+#      (a FAIL). Fifteen wasm harnesses used the shape
+#
+#          if ! rustup target list --installed 2>/dev/null | grep -q <target>; then
+#            echo "... target not installed — skipping"; exit 0
+#          fi
+#
+#      where the pipe discards rustup's exit status and stderr is thrown away.
+#      REPRODUCED: with rustup absent entirely, that expression concludes
+#      "target not installed" — rustup never ran, so the probe reported a
+#      specific fact it never established. A misconfigured toolchain then skips
+#      silently instead of failing loudly, and fifteen harnesses report
+#      NON-RESULTS that read like deliberate environment coverage.
+#
+#      Same rule as the other two: a skip must prove its own reason.
+#
+#      Exit codes: 0 = installed, 1 = rustup ran and the target is absent,
+#      2 = the probe could not be performed (caller must FAIL, not skip).
+rust_target_installed() {
+  local target="$1" out rc=0
+  command -v rustup >/dev/null 2>&1 || { echo "rustup not found on PATH" >&2; return 2; }
+  out="$(rustup target list --installed 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "rustup target list failed (exit $rc): $(printf '%s' "$out" | head -2 | tr '\n' ' ')" >&2
+    return 2
+  fi
+  # An EMPTY list is also a failed probe, not an empty toolchain: rustup always
+  # reports at least the host target when it is working.
+  [ -n "$out" ] || { echo "rustup target list produced no output" >&2; return 2; }
+  printf '%s\n' "$out" | grep -qx -- "$target" && return 0
+  return 1
+}

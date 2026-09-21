@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 9 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 13 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -259,4 +259,32 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** the body asserted the oracle DOES exist; a grep of test names reported a property nobody had, and the lib.rs rationale behind it was wrong
 - **Reproduced:** read both; the ordering argument is false in either order
 - **Fix:** renamed to state what it proves; false rationale deleted (`4172ca0`)
+
+### FG-010 — crates/axon-core/src/interp/builtins.rs (security, fixed)
+
+- **Claimed:** a scoped sandbox confines file access to its fs_read/fs_write prefixes
+- **Reality:** the RUNTIME asked single-kind `classify_call`, which has no arm for file_copy/file_rename; unclassified fell to `_ => None` meaning no restriction. The per-argument table the STATIC @[contained] checker uses always knew arg0 is a READ and arg1 a WRITE
+- **Reproduced:** one sandbox scoped to ./out/: write_file outside it -> exit 8; file_copy('./secret.txt','./exfil.txt') -> Ok, exit 0, exfil.txt contained TOP SECRET CREDENTIALS. No audit record either, since audit keys off the same classification
+- **Fix:** runtime iterates the same per-argument table; in-scope copy still permitted (control) (`7a7c690`)
+
+### FG-011 — crates/axon-ledger/src/mcp.rs (security, fixed)
+
+- **Claimed:** ledger RBAC restricts a member to their own records
+- **Reality:** the MCP server — the interface an agent actually talks to — opened a raw Store and handed it to nine tool handlers, NONE of which mentioned rbac. Zero rbac references in the file
+- **Reproduced:** one ledger, RBAC active, identity bob@example.com: CLI `stats` reported 1 record, `tools/call ledger_stats` reported 2
+- **Fix:** Store::open_as filters inside Store::all, the sole reader, so a handler added later cannot forget; write paths use an explicitly named open_for_write so the exception is auditable (`pending`)
+
+### FG-012 — crates/axon-ledger/src/rbac.rs (security, fixed)
+
+- **Claimed:** a member sees only records they own
+- **Reality:** ownership was `principal.ends_with(caller)`, a suffix test with no delimiter. Two holes: a caller whose name is a suffix of another principal owns their records, and `str::ends_with("")` is true for EVERY string so an empty caller owned the whole ledger
+- **Reproduced:** caller `ob@example.com` saw bob's record; caller `""` saw 2 of 2 where the legitimate member saw 1
+- **Fix:** namespace-stripped exact match (split on first colon), empty caller owns nothing; the legitimate git:/agent:/bare forms still resolve (`pending`)
+
+### FG-013 — crates/axon-cortex/src/episode.rs (correctness, fixed)
+
+- **Claimed:** an episode reports itself verified only if verification passed
+- **Reality:** `.any()` over all Verified events found an EARLIER superseded positive. Runner::verify asks about one hidden check; the ClaimDone branch re-asks over the whole file and is documented as authoritative over it
+- **Reproduced:** fixtures/pre_existing_failure.ax: outcome AdjudicatedNotClean (exit 27) with verified_ok() == true, event trace false/true/false
+- **Fix:** last Verified event wins, absent -> false. NOT .all(): an early failure then a later pass is genuinely verified. cxg_c28 built this state and never asserted the claim; it now does (`pending`)
 

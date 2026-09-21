@@ -61,12 +61,48 @@ impl RbacConfig {
         self.admins.iter().any(|a| a == email)
     }
 
+    /// Does `principal` belong to `caller`?
+    ///
+    /// ONE predicate, used by both filters. They were duplicated, so the same
+    /// defect had to be fixed twice and could be fixed once.
+    ///
+    /// The rule is namespace-stripped EXACT match, not a suffix test. Records
+    /// genuinely carry an optional `<namespace>:` prefix — `git:alice@…` from
+    /// git ingest, `agent:alice@…` from a session with `--engineer`, and bare
+    /// emails after `rewrite_principals` — so plain equality would break real
+    /// members. But `ends_with(caller)` compares no delimiter, and two ways:
+    ///
+    ///   REPRODUCED: caller `ob@example.com` sees `agent:bob@example.com`,
+    ///   because "…bob@example.com".ends_with("ob@example.com") is true.
+    ///
+    ///   REPRODUCED, worse: caller `""` sees EVERY record, because
+    ///   `str::ends_with("")` is true for every string. An empty `--as` or
+    ///   `AXON_PRINCIPAL=` granted a non-admin the whole ledger — 2 of 2
+    ///   records where the legitimate member saw 1.
+    ///
+    /// Splitting on the FIRST colon matches the grammar the rest of the crate
+    /// already assumes when it strips prefixes for display, and it keeps
+    /// `signal:session:…` intact as one identifier rather than re-splitting it.
+    fn owns(principal: &str, caller: &str) -> bool {
+        // An empty caller is not an identity. Handled here rather than at the
+        // call sites so no future caller can reintroduce the hole.
+        if caller.trim().is_empty() {
+            return false;
+        }
+        if principal == caller {
+            return true;
+        }
+        match principal.split_once(':') {
+            Some((_ns, ident)) => ident == caller,
+            None => false,
+        }
+    }
+
     /// Filter `records` by what `caller` is allowed to see.
     ///
     /// - If RBAC is disabled (no admins configured): all records visible.
     /// - If caller is an admin: all records visible.
-    /// - Otherwise: only records whose `principal` ends with the caller email
-    ///   (e.g. "agent:alice@example.com" or "git:alice@example.com").
+    /// - Otherwise: only records the caller owns, per [`RbacConfig::owns`].
     pub fn filter_visible<'a>(
         &self,
         records: Vec<&'a LedgerRecord>,
@@ -89,7 +125,7 @@ impl RbacConfig {
         // Member: filter to their own records
         records
             .into_iter()
-            .filter(|r| r.principal.ends_with(caller) || r.principal == caller)
+            .filter(|r| Self::owns(&r.principal, caller))
             .collect()
     }
 
@@ -113,7 +149,7 @@ impl RbacConfig {
         }
         records
             .into_iter()
-            .filter(|r| r.principal.ends_with(caller) || r.principal == caller)
+            .filter(|r| Self::owns(&r.principal, caller))
             .collect()
     }
 }
@@ -205,5 +241,106 @@ mod tests {
         let dir = tempdir().unwrap();
         let config = RbacConfig::load(dir.path()).unwrap();
         assert!(config.admins.is_empty());
+    }
+}
+#[cfg(test)]
+mod identity_boundary_tests {
+    use super::*;
+    use crate::model::{Effect, LedgerRecord};
+
+    fn rec(principal: &str) -> LedgerRecord {
+        LedgerRecord {
+            id: format!("r-{principal}"),
+            principal: principal.to_string(),
+            effect: Effect::GitCommit,
+            causal_parent: None,
+            ts_ms: 1,
+            payload: serde_json::json!({}),
+            repo: None,
+        }
+    }
+
+    fn active() -> RbacConfig {
+        // RBAC is INERT with no admins configured, so every test here must
+        // configure one or it would pass vacuously against any predicate.
+        let mut c = RbacConfig::default();
+        c.add_admin("admin@example.com");
+        c
+    }
+
+    /// REPRODUCED before the fix: "agent:bob@example.com".ends_with(
+    /// "ob@example.com") is true, so a caller named `ob@example.com` read
+    /// bob's records. Verified against the CLI: `--as ob@example.com stats`
+    /// reported 1 record.
+    #[test]
+    fn a_suffix_collision_is_not_ownership() {
+        let c = active();
+        let recs = vec![rec("agent:bob@example.com")];
+        let seen = c.filter_owned(recs, Some("ob@example.com"));
+        assert!(
+            seen.is_empty(),
+            "a caller whose name is a SUFFIX of another principal must own nothing"
+        );
+    }
+
+    /// REPRODUCED before the fix, and worse than the suffix case:
+    /// `str::ends_with("")` is true for EVERY string, so an empty `--as` or
+    /// `AXON_PRINCIPAL=` granted a non-admin the entire ledger. Verified
+    /// against the CLI: `--as ""` reported 2 of 2 records where the legitimate
+    /// member saw 1.
+    #[test]
+    fn an_empty_caller_owns_nothing_rather_than_everything() {
+        let c = active();
+        for caller in ["", "   ", "\t"] {
+            let recs = vec![rec("agent:alice@example.com"), rec("git:bob@example.com")];
+            let seen = c.filter_owned(recs, Some(caller));
+            assert!(
+                seen.is_empty(),
+                "caller {caller:?} must own nothing; an empty identity is not an identity"
+            );
+        }
+    }
+
+    /// The legitimate case the suffix match existed to serve. A strict
+    /// whole-string equality fix would have broken this, which is why the rule
+    /// is namespace-stripped equality rather than plain `==`.
+    #[test]
+    fn a_member_owns_every_namespace_form_of_their_own_identity() {
+        let c = active();
+        let recs = vec![
+            rec("agent:bob@example.com"),
+            rec("git:bob@example.com"),
+            rec("bob@example.com"),
+            rec("agent:alice@example.com"),
+        ];
+        let seen = c.filter_owned(recs, Some("bob@example.com"));
+        assert_eq!(
+            seen.len(),
+            3,
+            "bob must own his agent:, git: and bare records, and only those: {:?}",
+            seen.iter().map(|r| &r.principal).collect::<Vec<_>>()
+        );
+    }
+
+    /// The mirror of the suffix hole: a fix that special-cased suffixes while
+    /// still matching substrings would pass the test above and fail this one.
+    #[test]
+    fn a_prefix_collision_is_not_ownership() {
+        let c = active();
+        let recs = vec![rec("agent:bob@example.com.evil.test")];
+        let seen = c.filter_owned(recs, Some("bob@example.com"));
+        assert!(
+            seen.is_empty(),
+            "a principal merely CONTAINING the caller must not be owned by them"
+        );
+    }
+
+    /// Control: the fix must not be "nobody owns anything".
+    #[test]
+    fn an_admin_still_sees_everything_and_a_member_still_sees_their_own() {
+        let c = active();
+        let all = || vec![rec("agent:alice@example.com"), rec("git:bob@example.com")];
+        assert_eq!(c.filter_owned(all(), Some("admin@example.com")).len(), 2);
+        assert_eq!(c.filter_owned(all(), Some("bob@example.com")).len(), 1);
     }
 }

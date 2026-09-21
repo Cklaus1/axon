@@ -12,6 +12,8 @@
 # object-only but doesn't fail; a linked example whose output DIFFERS fails, and a
 # FLOOR guard catches a mass-skip regression. Skips (exit 0) without node/toolchain.
 set -u
+# shellcheck source=lib/harness_skip.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
@@ -37,7 +39,13 @@ fi
 # (4a600f2) took all 8 wasm_* harnesses dark for a day while parity_all printed
 # "SKIP (toolchain absent)" -- both wasm32 targets were installed the whole time.
 # A skip must be honest about WHY, or it is a silent loss of coverage.
-if ! rustup target list --installed 2>/dev/null | grep -qx "wasm32-unknown-unknown"; then
+# A skip must prove its own reason: the previous probe discarded
+# rustup's exit status, so a missing rustup concluded "not installed".
+rust_target_installed wasm32-unknown-unknown; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  echo "wasm_browser_examples_parity: cannot determine whether wasm32-unknown-unknown is installed — refusing to call that a skip" >&2
+  exit 1
+elif [ "$_rt" -ne 0 ]; then
   echo "wasm_browser_examples_parity: wasm32-unknown-unknown target not installed - skipping"; exit 0
 fi
 if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>&1)"; then

@@ -15,6 +15,8 @@
 #
 # Skips (exit 0) when codegen / the wasm toolchain is absent.
 set -u
+# shellcheck source=lib/harness_skip.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
@@ -43,7 +45,13 @@ fi
 # (4a600f2) took all 8 wasm_* harnesses dark for a day while parity_all printed
 # "SKIP (toolchain absent)" -- both wasm32 targets were installed the whole time.
 # A skip must be honest about WHY, or it is a silent loss of coverage.
-if ! rustup target list --installed 2>/dev/null | grep -qx "wasm32-wasip1"; then
+# A skip must prove its own reason: the previous probe discarded
+# rustup's exit status, so a missing rustup concluded "not installed".
+rust_target_installed wasm32-wasip1; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  echo "wasm_aot_stdout_parity: cannot determine whether wasm32-wasip1 is installed — refusing to call that a skip" >&2
+  exit 1
+elif [ "$_rt" -ne 0 ]; then
   echo "wasm_aot_stdout_parity: wasm32-wasip1 target not installed - skipping"; exit 0
 fi
 if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-wasip1 2>&1)"; then

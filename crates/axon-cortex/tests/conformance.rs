@@ -2354,6 +2354,20 @@ fn cxg_c28_a_repair_that_leaves_the_file_failing_is_not_verified() {
     }
     // NOT verified.
     assert!(!matches!(out, EpisodeOutcome::VerifiedDone { .. }));
+    // AND the episode's OWN verdict must agree. This test built exactly the
+    // state where the two could disagree and never asserted it, so a defect
+    // that made `verified_ok()` report TRUE for this AdjudicatedNotClean run
+    // sat under a passing test: the scenario was covered, the claim was not.
+    //
+    // The contract is stated by `cli_ships_evidence_a_reader_can_verify` —
+    // "its own verdict agrees with the exit code; two independent readers of
+    // the same run must not be able to disagree." A script reading exit 27 and
+    // an auditor reading the record must reach the same conclusion.
+    assert!(
+        !r.episode.verified_ok(),
+        "an episode that exits 27 must not report itself verified — the record \
+         and the exit code are read by different people"
+    );
     // And the repair is KEPT: it did what it was asked, and discarding it
     // would throw away work that succeeded on the only question posed.
     let after = std::fs::read_to_string(ws.join("pre_existing_failure.ax")).unwrap();

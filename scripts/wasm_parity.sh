@@ -15,6 +15,8 @@
 #
 # Usage:  scripts/wasm_parity.sh
 set -u
+# shellcheck source=lib/harness_skip.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 
 # AUDIT O004: take the SHARED wasm build lock. Several of these harnesses build
 # for wasm32 concurrently under cargo's parallel test threads and clobber each
@@ -36,7 +38,15 @@ if [ -z "$WASMRT" ]; then
   echo "wasm_parity: no wasm runtime (wasmtime) found — skipping (install: curl https://wasmtime.dev/install.sh | bash)"
   exit 0
 fi
-if ! rustup target list --installed 2>/dev/null | grep -q wasm32-wasip1; then
+# A skip must prove its own reason. The previous probe piped rustup
+# into grep, discarding rustup's exit status and stderr, so a MISSING
+# rustup concluded "target not installed" — reporting a fact it never
+# established. rust_target_installed separates the three outcomes.
+rust_target_installed wasm32-wasip1; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  echo "wasm_parity: cannot determine whether wasm32-wasip1 is installed — refusing to call that a skip" >&2
+  exit 1
+elif [ "$_rt" -ne 0 ]; then
   echo "wasm_parity: wasm32-wasip1 target not installed — skipping (rustup target add wasm32-wasip1)"
   exit 0
 fi

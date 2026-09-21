@@ -131,13 +131,50 @@ impl Episode {
 
     /// Did an independent verifier pass this episode?
     ///
-    /// Absent verification is NOT success. An episode with no `Verified` event
-    /// returns `false` — the same absent-vs-passed rule the contracts enforce
-    /// for observations.
+    /// THE LAST `Verified` event is the verdict. Absent verification is NOT
+    /// success — an episode with no `Verified` event returns `false`, the same
+    /// absent-vs-passed rule the contracts enforce for observations.
+    ///
+    /// This used to be `.any(|e| matches!(e, Verified { passed: true, .. }))`,
+    /// which reported an episode verified when an EARLIER, SUPERSEDED check had
+    /// passed. REPRODUCED against `fixtures/pre_existing_failure.ax`:
+    ///
+    /// ```text
+    /// outcome      = AdjudicatedNotClean { still_failing: ["visible_other"] }
+    /// verified_ok  = true                       <-- exit 27, reported verified
+    ///   Verified { passed: false, "hidden check FAILED" }
+    ///   Verified { passed: true,  "hidden check passed" }
+    ///   Verified { passed: false, "...1 check(s) ALREADY failing still fail" }
+    /// ```
+    ///
+    /// The two positives are not independent verdicts that happen to share a
+    /// variant. `Runner::verify` asks about ONE hidden check; the `ClaimDone`
+    /// branch then re-asks over the WHOLE file and is documented as
+    /// authoritative over it — "a file that still fails checks has not been
+    /// repaired, whatever the adjudicator says about its own test". `.any()`
+    /// picked the superseded narrower positive over the authoritative later
+    /// negative.
+    ///
+    /// NOT `.all()`. An early exploratory failure followed by a later pass — a
+    /// claim refused once and then correctly re-claimed — is a genuinely
+    /// verified episode, and `.all()` would reject it. The rule is ordering,
+    /// not conjunction, which is consistent with `digest()`'s own statement
+    /// that EVENT ORDER IS PART OF EPISODE IDENTITY: "checked then patched" and
+    /// "patched then checked" are different claims.
+    ///
+    /// The contract this restores is stated by the crate's own test
+    /// `cli_ships_evidence_a_reader_can_verify`: "its own verdict agrees with
+    /// the exit code — two independent readers of the same run must not be able
+    /// to disagree."
     pub fn verified_ok(&self) -> bool {
         self.events
             .iter()
-            .any(|e| matches!(e, EpisodeEvent::Verified { passed: true, .. }))
+            .rev()
+            .find_map(|e| match e {
+                EpisodeEvent::Verified { passed, .. } => Some(*passed),
+                _ => None,
+            })
+            .unwrap_or(false)
     }
 
     /// Every action the catalog refused. Reviewers read this first.

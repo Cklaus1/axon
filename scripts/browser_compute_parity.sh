@@ -19,6 +19,8 @@
 # assertions are real. To force-fail instead of skip when a dep is missing, set
 # BROWSER_PARITY_REQUIRE=1.
 set -u
+# shellcheck source=lib/harness_skip.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 
 # AUDIT O004: take the SHARED wasm build lock. Several of these harnesses build
 # for wasm32 concurrently under cargo's parallel test threads and clobber each
@@ -50,7 +52,15 @@ require_or_skip() {
 }
 
 # ── Dependency probes ────────────────────────────────────────────────────────
-if ! rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
+# A skip must prove its own reason. The previous probe piped rustup
+# into grep, discarding rustup's exit status and stderr, so a MISSING
+# rustup concluded "target not installed" — reporting a fact it never
+# established. rust_target_installed separates the three outcomes.
+rust_target_installed wasm32-unknown-unknown; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  echo "browser_compute_parity: cannot determine whether wasm32-unknown-unknown is installed — refusing to call that a skip" >&2
+  exit 1
+elif [ "$_rt" -ne 0 ]; then
   require_or_skip "wasm32-unknown-unknown target not installed (rustup target add wasm32-unknown-unknown)"
 fi
 
