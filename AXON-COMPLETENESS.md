@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 19 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 21 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -329,4 +329,18 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** eval_native_call passed scope_args: None with a comment asserting native arguments carry no host — false for modbus_connect(host, port) and fhir_connect(base_url). And scope_violation's net branch keyed on capability_of_builtin(name)==Some("net"), which is None for a module whose capability label is "modbus". So the allowlist did not apply to native dials at all
 - **Reproduced:** one sandbox scoped to api.trusted.io: http_get to 127.0.0.1 refused exit 8, while native::modbus::modbus_connect("127.0.0.1", 15502) reached the OS and panicked with Connection refused (os error 111) — the OS answering proves the dial happened
 - **Fix:** native_net_host_arg is now a shared pub(crate) predicate consumed by BOTH the static checker and the runtime; a non-literal host fails closed (`f91d249`)
+
+### FG-020 — scripts/r27_acceptance_gate.sh (correctness, fixed)
+
+- **Claimed:** the axon-os test suite passed
+- **Reality:** `cargo test | tee || true` discarded the exit status, and a compile error prints NO `test result` line — so `grep -q FAILED` found nothing, the else branch ran, and the gate reported a PASS having executed zero tests
+- **Reproduced:** the verbatim logic against a compile-error log printed 'OK cargo test -p axon-os (0 test suites passed)'
+- **Fix:** keep the producer's status via PIPESTATUS and assert a NON-ZERO suite count; the three outcomes now distinguish (`9519d5b`)
+
+### FG-021 — scripts/lib/harness_skip.sh (correctness, fixed)
+
+- **Claimed:** the wasm32 target is not installed (reported by 15 harnesses as a SKIP)
+- **Reality:** `rustup target list 2>/dev/null | grep -q <target>` discards rustup's exit status and stderr, so a MISSING or broken rustup concluded 'target not installed' — reporting a specific fact it never established, and turning a misconfigured toolchain into 15 silent skips that read like deliberate environment coverage
+- **Reproduced:** the pattern with rustup absent concluded 'target not installed' though rustup never ran
+- **Fix:** rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip — a skip must prove its own reason (`9519d5b`)
 
