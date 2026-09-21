@@ -23,17 +23,58 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 /// The canonical, semantic encoding of a grant (fixed field order; formatting
 /// cannot change the digest). The one definition both axon-os and axon-intent use.
+///
+/// EXHAUSTIVE DESTRUCTURING IS THE POINT. A struct pattern without `..` must
+/// bind every field, so adding a field to `Grant` is a COMPILE ERROR here until
+/// it is encoded or explicitly bound with a stated reason. `..` must never be
+/// introduced; that is the whole guarantee.
+///
+/// It was previously a `format!` over named fields, which encoded 6 of 7 and
+/// silently omitted `reproducible`. REPRODUCED: two manifests differing ONLY by
+/// `profile = "hermetic"` vs `"restricted"`, one hand-minted token copied
+/// byte-identically to both, and BOTH printed "Approval: required and verified
+/// (program + grant unedited since sign-off)". The restricted run then loaded
+/// and executed operator-ambient code through `AXON_PATH` — a module search
+/// path, i.e. a code-injection channel — which `runtime.rs` strips under the
+/// hermetic posture along with AXON_AUDIT_LEDGER, AXON_AI_REPLAY and
+/// AXON_AI_MOCK.
+///
+/// The omission was justified in `grant.rs` as "it constrains HOW a run
+/// executes, not WHAT it may touch". That is contradicted by `Grant::intersect`
+/// in the same file, which ORs `reproducible` precisely because taking the AND
+/// "would let a broad supervisor grant relax a hermetic job, which is the
+/// direction an intersection must never go". A field an intersection treats as
+/// authority is authority, and the AXON_PATH channel settles it: it governs
+/// what code the job may LOAD.
+///
+/// SCHEMA BUMP, deliberately breaking. Including the field changes every
+/// existing `grant_digest`, so tokens in flight stop verifying. A stable digest
+/// over an incomplete statement is worth less than a breaking change, and
+/// accepting `axon-approval/1` as legacy would leave the hole reachable by
+/// downgrade — the same reasoning that makes the intersection OR rather than
+/// AND.
 pub fn canonical_grant(g: &Grant) -> String {
+    let Grant {
+        fs_read,
+        fs_write,
+        net,
+        exec,
+        max_label,
+        budget,
+        reproducible,
+    } = g;
     format!(
-        "fs_read={}{UNIT}fs_write={}{UNIT}net={}{UNIT}exec={}{UNIT}max_label={}{UNIT}budget={},{},{}",
-        g.fs_read.join(","),
-        g.fs_write.join(","),
-        g.net.join(","),
-        g.exec.as_str(),
-        g.max_label.as_str(),
-        g.budget.calls,
-        g.budget.tokens,
-        g.budget.cost_micro,
+        "fs_read={}{UNIT}fs_write={}{UNIT}net={}{UNIT}exec={}{UNIT}max_label={}{UNIT}\
+         budget={},{},{}{UNIT}reproducible={}",
+        fs_read.join(","),
+        fs_write.join(","),
+        net.join(","),
+        exec.as_str(),
+        max_label.as_str(),
+        budget.calls,
+        budget.tokens,
+        budget.cost_micro,
+        reproducible,
     )
 }
 

@@ -1685,6 +1685,17 @@
       "reproduced": "a @[contained(fs: [read(\"./out/\")])] program reading /etc/passwd: `axon run` -> E1001 exit 2; `axon-run` -> LEAKED 1657 bytes exit 0. AXON_RECORD produced no journal FILE AT ALL; AXON_REPLAY performed the write for real",
       "fix": "one shared axon_core::preflight::prepare() reached by every runner, plus a workspace guard that fails if a binary reaches interp::run_program without it",
       "commit": "0ee8dd6"
+    },
+    {
+      "id": "FG-017",
+      "where": "crates/axon-os/src/approval.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "Approval: required and verified (program + grant unedited since sign-off)",
+      "reality": "canonical_grant encoded 6 of Grant's 7 fields, omitting `reproducible`; canonical_manifest and to_axjob each re-listed the fields by hand and dropped `reproducible` AND `require_approval`. Three hand-written field lists over one struct, and they disagreed",
+      "reproduced": "two manifests differing only by profile hermetic vs restricted, one token copied byte-identically to both, BOTH verified. The restricted run then loaded operator-ambient code via AXON_PATH. Separately, flipping require_approval produced an IDENTICAL manifest_digest, and archiving dropped the profile so a replayed hermetic job ran under the ambient environment",
+      "fix": "one authority serialization, bound by EXHAUSTIVE DESTRUCTURING so a new field is a compile error; canonical_manifest delegates to it; to_axjob round-trips every field; parser accepts an explicit `reproducible`",
+      "commit": "PENDING"
     }
   ]
 }

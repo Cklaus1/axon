@@ -93,19 +93,37 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// The canonical, semantic encoding of a manifest (NOT its raw file bytes — so
 /// formatting/whitespace can't change the digest). Fixed field order.
 pub fn canonical_manifest(m: &JobManifest) -> String {
-    let g = &m.grant;
+    // EXHAUSTIVE: a new JobManifest field is a COMPILE ERROR here until it is
+    // sealed or explicitly bound with a reason. `..` must never be introduced.
+    //
+    // This re-listed the grant's fields by hand and dropped TWO that alter
+    // effective authority. REPRODUCED: a manifest differing only by
+    // `require_approval = true` vs `false` produced the IDENTICAL
+    // manifest_digest, so the record — and the whole hash chain and
+    // record_digest built on it — could not distinguish a job that demands
+    // sign-off from one that disarms the gate. `reproducible` was dropped the
+    // same way, so a hermetic and a restricted run sealed identically.
+    //
+    // The grant is now encoded by `approval::canonical_grant`, the single
+    // authority serialization, rather than re-spelled here. Three hand-written
+    // field lists over one struct is three chances to disagree, and they did.
+    let JobManifest {
+        program,
+        intent,
+        seed,
+        grant,
+        require_approval,
+    } = m;
+    // `intent` is deliberately unsealed: it is human prose with no bearing on
+    // what the job may do, and sealing it would make an editorial fix look like
+    // tampering.
+    let _ = intent;
     format!(
-        "program={}{UNIT}seed={}{UNIT}fs_read={}{UNIT}fs_write={}{UNIT}net={}{UNIT}exec={}{UNIT}max_label={}{UNIT}budget={},{},{}",
-        m.program.display(),
-        m.seed,
-        g.fs_read.join(","),
-        g.fs_write.join(","),
-        g.net.join(","),
-        g.exec.as_str(),
-        g.max_label.as_str(),
-        g.budget.calls,
-        g.budget.tokens,
-        g.budget.cost_micro,
+        "program={}{UNIT}seed={}{UNIT}require_approval={}{UNIT}{}",
+        program.display(),
+        seed,
+        require_approval,
+        crate::approval::canonical_grant(grant),
     )
 }
 

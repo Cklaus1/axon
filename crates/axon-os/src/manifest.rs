@@ -51,6 +51,7 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     let mut net: Option<Vec<String>> = None;
     let mut profile: Option<crate::profile::Profile> = None;
     let mut require_approval: Option<bool> = None;
+    let mut reproducible_override: Option<bool> = None;
     let mut exec: Option<ExecPolicy> = None;
     let mut max_label: Option<Label> = None;
     let mut calls: Option<i64> = None;
@@ -88,6 +89,26 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
             // Accepted at top level or under [grant]: operators reasonably
             // reach for either, and refusing one of them would be a papercut
             // whose only function is to be surprising.
+            // An explicit `reproducible` overrides the profile's default.
+            // Needed so `to_axjob` can ROUND-TRIP the bit: the manifest stores
+            // `grant.reproducible`, not a profile name, and inferring
+            // `profile = "hermetic"` from a bool would conflate a posture with
+            // the one profile that happens to imply it. Archiving dropped this
+            // entirely, so a replayed hermetic job ran under `developer` and
+            // inherited the ambient environment — the replay of the one profile
+            // whose entire purpose is reproducibility was not reproducible.
+            ("", "reproducible") | ("grant", "reproducible") => {
+                reproducible_override = Some(match val.trim() {
+                    "true" => true,
+                    "false" => false,
+                    other => {
+                        return Err(bad(format!(
+                            "{}: reproducible must be true or false, got `{other}`",
+                            where_()
+                        )))
+                    }
+                });
+            }
             ("", "require_approval") | ("grant", "require_approval") => {
                 require_approval = Some(match val.trim() {
                     "true" => true,
@@ -188,7 +209,7 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
         intent,
         seed,
         grant: Grant {
-            reproducible: profile.is_reproducible(),
+            reproducible: reproducible_override.unwrap_or_else(|| profile.is_reproducible()),
             fs_read,
             fs_write,
             net,
@@ -204,7 +225,24 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
 /// regardless of the directory it is later read from (deterministic replay).
 /// Lossy on `intent` only (quotes → apostrophes); intent is not hashed.
 pub fn to_axjob(m: &JobManifest) -> String {
-    let g = &m.grant;
+    // EXHAUSTIVE: a new JobManifest field is a COMPILE ERROR here until it is
+    // archived or explicitly bound with a reason. `..` must never be added.
+    //
+    // This dropped `require_approval` and `reproducible`, and the archived file
+    // is what `axon-os replay` reloads. So a replayed job never re-checked
+    // sign-off, and a hermetic job replayed as `developer`: REPRODUCED, the
+    // replay resolved an operator-ambient module through AXON_PATH that the
+    // recorded hermetic run could not see, and diverged. That divergence was
+    // luck — for a job whose output does not depend on the injected module,
+    // the replay would have passed while running unsealed.
+    let JobManifest {
+        program,
+        intent,
+        seed,
+        grant,
+        require_approval,
+    } = m;
+    let g = grant;
     let list = |xs: &[String]| {
         xs.iter()
             .map(|s| format!("\"{s}\""))
@@ -212,10 +250,15 @@ pub fn to_axjob(m: &JobManifest) -> String {
             .join(", ")
     };
     format!(
-        "program = \"{}\"\nintent = \"{}\"\nseed = {}\n[grant]\nfs_read = [{}]\nfs_write = [{}]\nnet = [{}]\nexec = \"{}\"\nmax_label = \"{}\"\n[grant.budget]\ncalls = {}\ntokens = {}\ncost_micro = {}\n",
-        m.program.display(),
-        m.intent.replace('"', "'"),
-        m.seed,
+        "program = \"{}\"\nintent = \"{}\"\nseed = {}\nrequire_approval = {}\n\
+         [grant]\nreproducible = {}\nfs_read = [{}]\nfs_write = [{}]\nnet = [{}]\n\
+         exec = \"{}\"\nmax_label = \"{}\"\n[grant.budget]\ncalls = {}\ntokens = {}\n\
+         cost_micro = {}\n",
+        program.display(),
+        intent.replace('"', "'"),
+        seed,
+        require_approval,
+        g.reproducible,
         list(&g.fs_read),
         list(&g.fs_write),
         list(&g.net),
