@@ -119,7 +119,7 @@ bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 # staleness refusal: the suite that should have caught it was not part of any
 # gate, and five of its six boundary cases were passing vacuously besides.
 echo "── gate: cortex policy boundary tests ─────────────────────────────"
-cargo test -p axon-cortex -p cortex-policy-adapter \
+cargo test -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
 
 # The same crate again with `ai` on, because that feature gates the only
@@ -214,6 +214,7 @@ cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock 
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
   -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \
+  -p axon-reflex \
   --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 

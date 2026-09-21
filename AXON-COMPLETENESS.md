@@ -53,6 +53,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 | workspace restoration on failure | ✓ | ✓ | ✓ | ✓ | 64/64 completed adversarial runs restored; 16/16 out-of-scope unchanged |
 | candidate / proposal identity | staged | ✗ | ✓ | ✓ | driver patch verified on a copy but NOT APPLIED — held until the real-model run ends. Analyser fails closed meanwhile. |
 | repair action vocabulary | ~ | ✓ | ✗ | ✓ | 4 actions; only whole-symbol-body replacement can edit. No finer-grained or multi-site repair. |
+| axon-reflex serving boundary (CX-35 Phase 1) | ~ | ✗ | ✓ | ✓ | PHASE 1 ONLY, and the honest scope is narrow. What exists: one backend-neutral trait over three deployment modes (Embedded, LocalSidecar over stdin/stdout, RemoteService over HTTP/1.1), sharing ONE authority core so the principal check cannot drift between modes — three copies of a check is three places for it to diverge, which is exactly what the engine-parity work spent a day undoing. One invariant is enforced and mutation-verified per mode: cross-principal state reuse is a refusal, never a cache miss. What does NOT exist: any real inference backend (the decision function is a fixed string), model lifecycle, calibration, abstention, batching, placement, hot-swap, cancellation, and every other control CX-35 names. production_proof is `no` because nothing in the product calls this yet — it is a seam with a proven invariant, not a serving system. |
 
 ## evidence
 
@@ -105,7 +106,7 @@ A `?` is an honest answer and is more useful than a guess: it marks work whose s
 
 ## Where the gaps are
 
-21 of 21 crates are represented (0 explicitly excused). 31 of 57 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
+22 of 22 crates are represented (0 explicitly excused). 31 of 58 subsystems have a production proof; 0 are UNKNOWN — not failing, unestablished, which is the state most worth acting on.
 
 Deliberately NOT summarised as a single percentage. One number averages over the axis that matters: a parser at 100% and import-graph approval at 0% do not combine into anything a reader can act on.
 
@@ -114,7 +115,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**53 controls tracked; 36 engine states unknown or silently-ignored.**
+**54 controls tracked; 36 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -171,6 +172,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_VM_TIMEOUT_SECS` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
 | `AXON_VM_VSOCK_PORT` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
 | `AXON_WASM_RT` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `reflex.principal-isolation` | serving/authority | **?** | **?** | **?** | **?** | resolved |
 
 ### Open control divergences
 

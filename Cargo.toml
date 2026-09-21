@@ -4,6 +4,7 @@ members = [
   "crates/axon-audit",
   "crates/axon-cortex",
   "crates/cortex-policy-adapter",
+  "crates/axon-reflex",
   "crates/axon-rt",
   "crates/axon-ai",
   "crates/axon-surface",

@@ -777,6 +777,19 @@
         "guest": "unknown"
       },
       "gap": "PROVEN, then CLOSED BY REFUSAL \u2014 three controls, one list. AXON_REPLAY: interp replay created no file while native printed the replayed output AND performed the write, exit 0. AXON_RECORD: native records nothing, leaving an empty journal. AXON_AUDIT_LEDGER: interp wrote 2 entries for one write_file, native did not create the ledger file at all. All three now REFUSE natively (exit 2) via one list in __axon_rt_refuse_interp_only_env \u2014 adding a row is the whole cost of covering the next one. Mutation-verified on the SIDE EFFECT, with a control proving ordinary native runs still work. STILL OPEN: native does not IMPLEMENT any of the three. wasm and guest UNASSESSED."
+    },
+    {
+      "area": "cortex",
+      "subsystem": "axon-reflex serving boundary (CX-35 Phase 1)",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-reflex/tests/principal_isolation.rs",
+        "governance/cortex-v015/CX-35-reflex-serving.md"
+      ],
+      "gap": "PHASE 1 ONLY, and the honest scope is narrow. What exists: one backend-neutral trait over three deployment modes (Embedded, LocalSidecar over stdin/stdout, RemoteService over HTTP/1.1), sharing ONE authority core so the principal check cannot drift between modes \u2014 three copies of a check is three places for it to diverge, which is exactly what the engine-parity work spent a day undoing. One invariant is enforced and mutation-verified per mode: cross-principal state reuse is a refusal, never a cache miss. What does NOT exist: any real inference backend (the decision function is a fixed string), model lifecycle, calibration, abstention, batching, placement, hot-swap, cancellation, and every other control CX-35 names. production_proof is `no` because nothing in the product calls this yet \u2014 it is a seam with a proven invariant, not a serving system."
     }
   ],
   "controls": [
@@ -1475,6 +1488,19 @@
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "(test fixture) exercises the host seam's env_var path. Surfaced by extending vars_read() to the host-seam form."
+    },
+    {
+      "name": "reflex.principal-isolation",
+      "category": "serving/authority",
+      "status": "resolved",
+      "axis": "mode",
+      "engines": {
+        "embedded": "enforced",
+        "local-sidecar": "enforced",
+        "remote-service": "enforced"
+      },
+      "evidence": "crates/axon-reflex/tests/principal_isolation.rs",
+      "note": "CX-35 Phase 1. A decision is made under exactly one principal and no StateHandle is reachable across principals; cross-principal reuse is a REFUSAL, never a cache miss. Enforced identically in all three deployment modes, each with its OWN test \u2014 the combined version aborted at the first mode, leaving sidecar and remote unproven while appearing to cover them. Mutation-verified twice, per mode: removing the authority check fails all three, and collapsing the refusal into a cache miss fails all three. AXIS=MODE: this says nothing about whether any EXECUTION engine supports the control."
     }
   ]
 }

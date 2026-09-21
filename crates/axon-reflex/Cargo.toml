@@ -1,0 +1,27 @@
+[package]
+name = "axon-reflex"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# CX-35 Phase 1: the Reflex serving boundary.
+#
+# The point of this crate is that a consumer holds a CLIENT and a protocol
+# version, never a backend name and never a dependency on any particular
+# inference vendor. Swapping Embedded for LocalSidecar for RemoteService must
+# not change what the caller writes.
+#
+# serde_json WITHOUT derives, matching cortex-policy-adapter: `Value` + `json!`
+# only. axon-core's serde derives on its recursive AST collide with codegen
+# monomorphization (BUILD_RESOLVED.md); nothing here touches those types, and
+# using the untyped API keeps it that way by construction.
+[dependencies]
+serde_json = "1"
+
+[lib]
+name = "axon_reflex"
+path = "src/lib.rs"
+
+[[bin]]
+name = "axon-reflex-sidecar"
+path = "src/bin/sidecar.rs"
