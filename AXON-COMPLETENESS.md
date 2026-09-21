@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 18 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 19 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -322,4 +322,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** the approval gate lived in cmd_run, so `axon-os replay` reached supervisor::run by a different route and performed no approval check at all; the public axon_os::supervise re-export was a third route with no gate whatsoever. RunRecord also carried no approval field, so an authorized and an unauthorized execution archived identically
 - **Reproduced:** same manifest: `run` refused with exit 8 and no side effect; `replay` exited 0 and the side-effect file's mtime advanced
 - **Fix:** authorization moved INTO supervisor::run — the point every execution path converges on, which already hosted the one check no caller could skip — and the decision is stamped on every record exit path; an older record reads `unknown`, never approved (`afeaa46`)
+
+### FG-019 — crates/axon-core/src/interp/eval.rs (security, fixed)
+
+- **Claimed:** a scoped sandbox confines network access to its net allowlist
+- **Reality:** eval_native_call passed scope_args: None with a comment asserting native arguments carry no host — false for modbus_connect(host, port) and fhir_connect(base_url). And scope_violation's net branch keyed on capability_of_builtin(name)==Some("net"), which is None for a module whose capability label is "modbus". So the allowlist did not apply to native dials at all
+- **Reproduced:** one sandbox scoped to api.trusted.io: http_get to 127.0.0.1 refused exit 8, while native::modbus::modbus_connect("127.0.0.1", 15502) reached the OS and panicked with Connection refused (os error 111) — the OS answering proves the dial happened
+- **Fix:** native_net_host_arg is now a shared pub(crate) predicate consumed by BOTH the static checker and the runtime; a non-literal host fails closed (`f91d249`)
 

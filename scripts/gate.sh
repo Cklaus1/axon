@@ -157,6 +157,13 @@ cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --al
 # LAUNCHER's exit 0 as the gate's verdict four separate times, and nine leaked
 # `axon test` processes plus dozens of orphaned CPU spinners ran for 15+ hours
 # because nothing owned them. Cheap (~10s) and placed early on purpose.
+# A package nested inside another package's directory is dead code that still
+# ships. `crates/axon-ledger/axon-ledger/` was a PRE-RBAC duplicate of the
+# ledger crate inside itself — the shape a contributor or agent revives later,
+# carrying the bug just fixed in the real one. Cheap, so it runs early.
+echo "── gate: no nested package roots ─────────────────────────────────"
+run_quiet "no nested package roots" bash scripts/no_nested_crates.sh
+
 echo "── gate: managed-run supervision (result ownership + cancellation scope) ──"
 bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 
