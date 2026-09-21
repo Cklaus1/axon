@@ -12,6 +12,7 @@
 use crate::grant::Grant;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::path::Path;
 
 const UNIT: char = '\u{1f}';
 
@@ -182,5 +183,68 @@ mod tests {
     fn rejected_decision_is_refused() {
         let tok = token_for("fn main() { 0 }", &grant()).replace("approved", "rejected");
         assert!(verify_approval(&tok, "fn main() { 0 }", &grant()).is_err());
+    }
+}
+
+/// The three authorization outcomes, recorded so a reader can tell them apart
+/// afterward. `RunRecord` previously carried no approval field at all, so an
+/// unapproved execution and an approved one archived identically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalStatus {
+    /// The job does not require sign-off and no token was present.
+    NotRequired,
+    /// A valid token was present; the job required it.
+    VerifiedRequired,
+    /// A valid token was present; the job did not require it.
+    VerifiedNotRequired,
+}
+
+impl ApprovalStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ApprovalStatus::NotRequired => "not_required",
+            ApprovalStatus::VerifiedRequired => "verified_required",
+            ApprovalStatus::VerifiedNotRequired => "verified_not_required",
+        }
+    }
+}
+
+/// Authorize a job for execution, from the job file's own `.approval` sibling.
+///
+/// THE SINGLE AUTHORIZATION SITE. This logic lived in `cmd_run`, so `axon-os
+/// replay` — which reaches `supervisor::run` by a different route — executed
+/// without it. REPRODUCED: a stored job marked `require_approval = true` with
+/// no token anywhere was refused by `run` with exit 8 and no side effect, and
+/// re-executed by `replay` with exit 0, the side-effect file's mtime advancing.
+/// The public `axon_os::supervise` re-export was a third route with no gate at
+/// all.
+///
+/// It is called from inside `supervisor::run` — the point every execution path
+/// converges on, and which already hosts the one check (`gate::admit`) that no
+/// caller can skip. A check in a CALLER is opt-in per call site; a check here
+/// is not.
+pub fn authorize(
+    job_path: &Path,
+    manifest: &crate::manifest::JobManifest,
+) -> Result<ApprovalStatus, String> {
+    let approval_path = job_path.with_extension("approval");
+    if approval_path.exists() {
+        let token = std::fs::read_to_string(&approval_path).unwrap_or_default();
+        let program_src = std::fs::read_to_string(&manifest.program).unwrap_or_default();
+        // An INVALID token is a failure whether or not policy required one.
+        verify_approval(&token, &program_src, &manifest.grant)?;
+        Ok(if manifest.require_approval {
+            ApprovalStatus::VerifiedRequired
+        } else {
+            ApprovalStatus::VerifiedNotRequired
+        })
+    } else if manifest.require_approval {
+        Err(format!(
+            "approval required but missing — this job sets `require_approval = true` \
+             and there is no token at {}",
+            approval_path.display()
+        ))
+    } else {
+        Ok(ApprovalStatus::NotRequired)
     }
 }

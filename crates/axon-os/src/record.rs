@@ -57,7 +57,21 @@ pub struct RunRecord {
     pub seed: u64,
     pub events: Vec<AuditEvent>,
     pub verdict: Verdict,
+    /// What the authorization boundary decided for this run.
+    ///
+    /// The record previously carried NO approval field, so an unapproved
+    /// execution and an approved one archived identically — a reviewer reading
+    /// the record could not tell "signed off" from "nobody checked". Defaults
+    /// on deserialization so records written before this field keep loading,
+    /// and an older record reads as `unknown` rather than as approved: an
+    /// ABSENT statement is not a positive one.
+    #[serde(default = "unknown_approval")]
+    pub approval: String,
     pub record_digest: String,
+}
+
+fn unknown_approval() -> String {
+    "unknown".to_string()
 }
 
 /// Why a record failed integrity verification.
@@ -225,6 +239,10 @@ pub fn build(
         seed,
         events,
         verdict,
+        // Overwritten by `supervisor::run` with the authorization boundary's
+        // actual decision. `unknown` is the honest default for any record
+        // built outside that path — an absent statement is not a positive one.
+        approval: unknown_approval(),
         record_digest,
     }
 }

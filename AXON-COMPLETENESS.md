@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 15 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 17 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -301,4 +301,18 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** the guard read exactly ONE file, axon-ledger/src/mcp.rs, so it could not see another crate — and Store::open stayed pub and unfiltered. axon-signal read the same ledger through it on every path: CLI, its OWN MCP server, and an HTTP dashboard bound to 0.0.0.0 with Access-Control-Allow-Origin: * serving every engineer's data to an unauthenticated caller
 - **Reproduced:** axon-signal score returned both engineers' sessions for a member identity; curl against the dashboard with no identity returned both
 - **Fix:** guard widened to scan every .rs file in the workspace; axon-signal routed through open_as; dashboard bound to 127.0.0.1; all ingest/maintenance handles named open_for_write so the exception is auditable (`e04fe2c`)
+
+### FG-016 — crates/axon-core/src/bin/axon-run.rs (security, fixed)
+
+- **Claimed:** Axon enforces @[contained] capability policy, and honours AXON_RECORD/AXON_REPLAY/AXON_AUDIT_LEDGER
+- **Reality:** the axon-run binary went straight from parse_source to interp::run_program: no type check, no capability check, no record/replay, no audit ledger. AXON_ALLOWED_EFFECTS *was* honoured (it is read inside the interpreter), which is what made the silence read as enforcement. It was also the interpreter side of six parity harnesses, so those compared codegen against an interpreter that enforced nothing
+- **Reproduced:** a @[contained(fs: [read("./out/")])] program reading /etc/passwd: `axon run` -> E1001 exit 2; `axon-run` -> LEAKED 1657 bytes exit 0. AXON_RECORD produced no journal FILE AT ALL; AXON_REPLAY performed the write for real
+- **Fix:** one shared axon_core::preflight::prepare() reached by every runner, plus a workspace guard that fails if a binary reaches interp::run_program without it (`0ee8dd6`)
+
+### FG-017 — crates/axon-os/src/approval.rs (security, fixed)
+
+- **Claimed:** Approval: required and verified (program + grant unedited since sign-off)
+- **Reality:** canonical_grant encoded 6 of Grant's 7 fields, omitting `reproducible`; canonical_manifest and to_axjob each re-listed the fields by hand and dropped `reproducible` AND `require_approval`. Three hand-written field lists over one struct, and they disagreed
+- **Reproduced:** two manifests differing only by profile hermetic vs restricted, one token copied byte-identically to both, BOTH verified. The restricted run then loaded operator-ambient code via AXON_PATH. Separately, flipping require_approval produced an IDENTICAL manifest_digest, and archiving dropped the profile so a replayed hermetic job ran under the ambient environment
+- **Fix:** one authority serialization, bound by EXHAUSTIVE DESTRUCTURING so a new field is a compile error; canonical_manifest delegates to it; to_axjob round-trips every field; parser accepts an explicit `reproducible` (`f5bb61d`)
 

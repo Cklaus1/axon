@@ -21,6 +21,7 @@ use crate::supervisor;
 pub fn replay(
     stored: &RunRecord,
     manifest: &JobManifest,
+    job_path: &std::path::Path,
     supervisor_grant: &crate::grant::Grant,
     rt: &impl Runtime,
 ) -> Result<RunRecord, VerifyMismatch> {
@@ -29,7 +30,10 @@ pub fn replay(
 
     // 2. Re-execute with the recorded seed (the manifest carries it) under the
     //    stored run-id, then compare byte-for-byte.
-    let fresh = supervisor::run(manifest, supervisor_grant, &stored.run_id, rt);
+    // The job path is threaded through so the authorization boundary inside
+    // `supervisor::run` can find this job's `.approval` sibling. Replay
+    // previously reached execution without any approval check at all.
+    let fresh = supervisor::run(manifest, job_path, supervisor_grant, &stored.run_id, rt);
     if to_json(&fresh) == to_json(stored) {
         Ok(fresh)
     } else {
@@ -42,6 +46,16 @@ pub fn replay(
 
 #[cfg(test)]
 mod tests {
+
+    /// A job path with no `.approval` sibling.
+    ///
+    /// These tests exercise admission and determinism, not sign-off; a manifest
+    /// that does not set `require_approval` authorizes as `NotRequired`. Named
+    /// rather than inlined so the intent is legible: the tests are not bypassing
+    /// the gate, they are exercising the case where the gate permits.
+    fn no_approval_path() -> &'static std::path::Path {
+        std::path::Path::new("/nonexistent/axon-os-test-job.axjob")
+    }
     use super::*;
     use crate::gate::DeclaredEffects;
     use crate::grant::{Budget, EffectSet, ExecPolicy, Grant, Label};
@@ -104,17 +118,17 @@ mod tests {
 
     #[test]
     fn replay_reproduces_and_verifies() {
-        let stored = supervisor::run(&manifest(), &grant(), "demo", &rt());
+        let stored = supervisor::run(&manifest(), no_approval_path(), &grant(), "demo", &rt());
         // A faithful (same MockRuntime) replay reproduces byte-identically.
-        let out = replay(&stored, &manifest(), &grant(), &rt());
+        let out = replay(&stored, &manifest(), no_approval_path(), &grant(), &rt());
         assert!(out.is_ok(), "deterministic replay must match");
     }
 
     #[test]
     fn replay_rejects_a_tampered_record() {
-        let mut stored = supervisor::run(&manifest(), &grant(), "demo", &rt());
+        let mut stored = supervisor::run(&manifest(), no_approval_path(), &grant(), "demo", &rt());
         stored.events[0].target = "./out/EVIL".into(); // tamper
-        let out = replay(&stored, &manifest(), &grant(), &rt());
+        let out = replay(&stored, &manifest(), no_approval_path(), &grant(), &rt());
         assert!(out.is_err(), "a tampered record must fail before re-run");
     }
 
@@ -122,7 +136,7 @@ mod tests {
     fn replay_detects_divergence() {
         // Store under one runtime, replay under a DIFFERENT one (different
         // verdict) → byte mismatch → VerifyMismatch.
-        let stored = supervisor::run(&manifest(), &grant(), "demo", &rt());
+        let stored = supervisor::run(&manifest(), no_approval_path(), &grant(), "demo", &rt());
         let divergent = MockRuntime::new(
             DeclaredEffects {
                 row: EffectSet {
@@ -138,7 +152,13 @@ mod tests {
                 verdict: Verdict::Completed { value: 999 }, // different
             },
         );
-        let out = replay(&stored, &manifest(), &grant(), &divergent);
+        let out = replay(
+            &stored,
+            &manifest(),
+            no_approval_path(),
+            &grant(),
+            &divergent,
+        );
         assert!(out.is_err(), "divergent replay must be caught");
     }
 }

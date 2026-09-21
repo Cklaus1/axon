@@ -17,10 +17,44 @@ use crate::verdict::Verdict;
 /// verdict). Always returns a tamper-evident record.
 pub fn run(
     manifest: &JobManifest,
+    job_path: &std::path::Path,
     supervisor_grant: &crate::grant::Grant,
     run_id: &str,
     rt: &impl Runtime,
 ) -> RunRecord {
+    // 0. AUTHORIZATION — before anything else, at the point every execution
+    //    path converges on.
+    //
+    //    This check lived in `cmd_run`, so `axon-os replay` reached execution
+    //    by a different route and never performed it. REPRODUCED: a stored job
+    //    marked `require_approval = true` with no token anywhere was refused by
+    //    `run` with exit 8 and no side effect, then re-executed by `replay`
+    //    with exit 0 and the side-effect file's mtime advancing. The public
+    //    `axon_os::supervise` re-export was a third route with no gate at all.
+    //
+    //    Step 3 below already demonstrates the pattern: `admit` sits here and
+    //    every caller gets it whether or not they remember. A check in a CALLER
+    //    is opt-in per call site.
+    let approval = match crate::approval::authorize(job_path, manifest) {
+        Ok(a) => a,
+        Err(reason) => {
+            let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");
+            let mut rec = build(
+                run_id,
+                manifest,
+                manifest.seed,
+                std::slice::from_ref(&denial),
+                Verdict::Denied {
+                    reason,
+                    axis: "approval".to_string(),
+                },
+            );
+            rec.approval = crate::approval::ApprovalStatus::NotRequired
+                .as_str()
+                .to_string();
+            return rec;
+        }
+    };
     // 1. What does the program declare it may do? (deny-by-default via the runtime)
     let declared = rt.declared_effects(&manifest.program);
 
@@ -28,15 +62,24 @@ pub fn run(
     let eff = manifest.grant.intersect(supervisor_grant);
 
     // 3. Static admission — fail closed BEFORE any execution.
+    // The authorization decision travels with the record, so a reader can tell
+    // afterward whether the run was authorized. Stamped on EVERY exit path —
+    // the first version computed it and used it on none, and the compiler said
+    // so in a warning I walked past. A record field that is always `unknown` is
+    // exactly the absent-vs-verified collapse this field exists to close.
+    let approval_str = approval.as_str().to_string();
+
     if let Admission::Deny { reason, axis } = admit(&declared, &eff) {
         let denial = RawEvent::new("denied", &axis, EffectSet::default(), "");
-        return build(
+        let mut rec = build(
             run_id,
             manifest,
             manifest.seed,
             std::slice::from_ref(&denial),
             Verdict::Denied { reason, axis },
         );
+        rec.approval = approval_str;
+        return rec;
     }
 
     // 4. Mint a Principal holding exactly the effective grant.
@@ -52,17 +95,29 @@ pub fn run(
     );
 
     // 6. Seal a tamper-evident record from the observed events + verdict.
-    build(
+    let mut rec = build(
         run_id,
         manifest,
         manifest.seed,
         &outcome.events,
         outcome.verdict,
-    )
+    );
+    rec.approval = approval_str;
+    rec
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// A job path with no `.approval` sibling.
+    ///
+    /// These tests exercise admission and determinism, not sign-off; a manifest
+    /// that does not set `require_approval` authorizes as `NotRequired`. Named
+    /// rather than inlined so the intent is legible: the tests are not bypassing
+    /// the gate, they are exercising the case where the gate permits.
+    fn no_approval_path() -> &'static std::path::Path {
+        std::path::Path::new("/nonexistent/axon-os-test-job.axjob")
+    }
     use super::*;
     use crate::gate::DeclaredEffects;
     use crate::grant::{Budget, ExecPolicy, Grant, Label};
@@ -126,7 +181,13 @@ mod tests {
                 verdict: Verdict::Completed { value: 7 },
             },
         );
-        let rec = run(&manifest(true), &grant(true), "demo", &rt);
+        let rec = run(
+            &manifest(true),
+            no_approval_path(),
+            &grant(true),
+            "demo",
+            &rt,
+        );
         assert_eq!(rec.verdict, Verdict::Completed { value: 7 });
         assert_eq!(rec.events.len(), 1);
         assert!(verify(&rec).is_ok());
@@ -155,7 +216,13 @@ mod tests {
                 },
             },
         );
-        let rec = run(&manifest(true), &grant(true), "demo", &rt);
+        let rec = run(
+            &manifest(true),
+            no_approval_path(),
+            &grant(true),
+            "demo",
+            &rt,
+        );
         assert!(matches!(rec.verdict, Verdict::Denied { .. }));
         assert_eq!(rec.verdict.exit_code(), 8);
         assert!(verify(&rec).is_ok());
@@ -172,7 +239,13 @@ mod tests {
                 verdict: Verdict::Completed { value: 0 },
             },
         );
-        let rec = run(&manifest(false), &grant(false), "demo", &rt);
+        let rec = run(
+            &manifest(false),
+            no_approval_path(),
+            &grant(false),
+            "demo",
+            &rt,
+        );
         match &rec.verdict {
             Verdict::Denied { axis, .. } => assert_eq!(axis, "net"),
             other => panic!("expected Denied, got {other:?}"),
@@ -194,8 +267,68 @@ mod tests {
             },
         );
         // manifest grants net, supervisor does NOT.
-        let rec = run(&manifest(true), &grant(false), "demo", &rt);
+        let rec = run(
+            &manifest(true),
+            no_approval_path(),
+            &grant(false),
+            "demo",
+            &rt,
+        );
         assert!(matches!(rec.verdict, Verdict::Denied { .. }));
         assert_eq!(rt.run_calls.get(), 0);
+    }
+
+    /// The gate must fire from INSIDE `supervisor::run`, not from a caller.
+    ///
+    /// `cmd_run` had its own approval check, so a test that only exercises the
+    /// CLI proves nothing about `replay` or the public `supervise` re-export —
+    /// the two routes that reached execution without one. This drives the
+    /// supervisor directly.
+    #[test]
+    fn supervisor_refuses_a_job_that_requires_approval_without_a_token() {
+        let rt = MockRuntime::new(
+            declares(false),
+            RunOutcome {
+                events: vec![],
+                verdict: Verdict::Completed { value: 0 },
+            },
+        );
+        let mut m = manifest(false);
+        m.require_approval = true;
+        let rec = run(&m, no_approval_path(), &grant(false), "demo", &rt);
+        match &rec.verdict {
+            Verdict::Denied { axis, reason } => {
+                assert_eq!(axis, "approval", "denied on the wrong axis: {reason}");
+                assert!(
+                    reason.contains("approval required but missing"),
+                    "the refusal must say why: {reason}"
+                );
+            }
+            other => panic!("a job requiring approval with no token reached execution: {other:?}"),
+        }
+    }
+
+    /// Control: the supervisor must not refuse everything.
+    #[test]
+    fn supervisor_runs_a_job_that_does_not_require_approval() {
+        let rt = MockRuntime::new(
+            declares(false),
+            RunOutcome {
+                events: vec![],
+                verdict: Verdict::Completed { value: 0 },
+            },
+        );
+        let rec = run(
+            &manifest(false),
+            no_approval_path(),
+            &grant(false),
+            "demo",
+            &rt,
+        );
+        assert!(
+            !matches!(&rec.verdict, Verdict::Denied { axis, .. } if axis == "approval"),
+            "a job that does not require approval must not be denied on that axis"
+        );
+        assert_eq!(rec.approval, "not_required");
     }
 }

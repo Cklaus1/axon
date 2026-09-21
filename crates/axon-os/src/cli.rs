@@ -421,7 +421,7 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // ── Run the job (blocks until completion or monitor/kill-switch kill) ─────
     let rt = AxonCoreRuntime::from_env();
     let sup = broad_supervisor_grant();
-    let rec = supervisor::run(&manifest, &sup, &run_id, &rt);
+    let rec = supervisor::run(&manifest, job_path, &sup, &run_id, &rt);
 
     // ── R27: clean up the kill file env var after the run ────────────────────
     if kill_file_path.is_some() {
@@ -556,7 +556,16 @@ fn cmd_replay(rest: &[&str]) -> ExitCode {
         }
     };
     let rt = AxonCoreRuntime::from_env();
-    match replay::replay(&stored, &manifest, &broad_supervisor_grant(), &rt) {
+    // `man_path` is the ARCHIVED job in the store, so the authorization
+    // boundary looks for `<run_id>.approval` beside it — the token must travel
+    // with the archived job, not be re-read from wherever the original lived.
+    match replay::replay(
+        &stored,
+        &manifest,
+        &man_path,
+        &broad_supervisor_grant(),
+        &rt,
+    ) {
         Ok(_) => {
             println!("\u{2713} replay identical (deterministic; record verified)");
             ExitCode::from(0)
