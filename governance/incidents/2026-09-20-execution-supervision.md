@@ -122,3 +122,51 @@ What remains deliberately open, and must not be closed by relabelling:
 `AXON-COMPLETENESS.json`. An unassessed state needs investigation; a
 demonstrated ignored safety control needs enforcement or refusal. They
 are not interchangeable and neither disappears inside a green gate.
+
+---
+
+## Correction: the "WSL VM loss" premise is not supported
+
+The investigation of the three lost gate runs proceeded on the premise that the
+WSL VM disappeared or restarted, and that premise came from me. It does not
+survive checking the timestamps.
+
+| run | died (EDT) | nearest observed boot (EDT) | gap |
+|---|---|---|---|
+| gate8 | 00:29:19 | — | — |
+| gate13 | 02:17:55 | 10:42 | **+8h24m** |
+| gate14 | 11:49:32 | 13:11 | **+1h22m** |
+
+The reboots happened long AFTER the processes died. They cannot have caused the
+losses. Windows-side evidence agrees and adds nothing:
+
+* no WSL, Lxss or WslService event logs exist on this host at all;
+* no Hyper-V VM lifecycle events, no unexpected-shutdown entries, no service
+  crashes in the System log in any of the three windows;
+* the only event near a loss was Service Control Manager 7040 — the Background
+  Intelligent Transfer Service changing start type, routine maintenance;
+* `Hyper-V-VmSwitch-Operational` events CONTINUE PAST every loss time, including
+  a steady ~80-second cadence spanning gate14's 11:49:32. A destroyed VM does
+  not keep servicing its switch;
+* `dmesg` is readable and contains NO OOM kills.
+
+Run durations rule out a timeout. The three deaths took 24m09s, 22m35s and
+21m12s; successful runs took 22m30s, 23m23s and 24m49s. The distributions
+overlap completely.
+
+What the three deaths DO share is that each coincided with this session being
+interrupted. That makes harness-side teardown of descendant processes the
+leading hypothesis — `setsid` places the supervisor in its own session, which
+defeats SIGHUP but not a killer that enumerates descendants or kills a cgroup.
+
+A workload-free probe is running to separate the two: a managed job that only
+sleeps and logs for 60 minutes. If it dies across an interruption, the gate
+workload is exonerated entirely and the managed runner's survival model is the
+thing to fix. If it survives while gates die, the workload returns as a
+suspect.
+
+No cause is claimed. What is established is narrower and worth stating plainly:
+**the VM did not disappear, nothing ran out of memory, and the reboots were
+separate later events.** Three of my own explanations have now been refuted by
+evidence — stage-17 intrinsic load, cargo feature thrashing, and the VM-loss
+premise itself.
