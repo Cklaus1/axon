@@ -36,14 +36,37 @@ fn main() {
         }
     };
 
-    let program = match axon_core::parse_source(&src) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("axon-run: parse error in {}:\n{e}", path.display());
-            exit(1);
-        }
+    // THE SHARED PREFLIGHT. This binary previously went straight from
+    // `parse_source` to `run_program`, performing NO type check, NO capability
+    // check, and NO record/replay/audit installation — so a program annotated
+    // `@[contained(fs: [read("./out/")])]` that reads /etc/passwd, which
+    // `axon run` refuses with E1001 and exit 2, executed here and leaked 1657
+    // bytes with exit 0.
+    //
+    // The checks are NOT re-implemented here. There is one preflight and every
+    // runner calls it; `tests/preflight_reachability.rs` fails if a binary
+    // reaches `interp::run_program` without it.
+    let ready = match axon_core::preflight::prepare(&src, &path.display().to_string()) {
+        Ok(r) => r,
+        Err(code) => exit(code),
     };
 
-    let code = axon_core::interp::run_program(&program);
+    let code = axon_core::interp::run_program(&ready.program);
+
+    // A diverged replay exits 11 regardless of what the program returned, so a
+    // diverged run cannot be made to look clean — the same guard `axon run`
+    // applies, decided from state the program cannot reach.
+    if let Some(d) = axon_core::replay::finish() {
+        if !d.already_reported {
+            eprintln!("axon-run: replay divergence: {}", d.report);
+        }
+        exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+    }
+    if ready.replay_mode == axon_core::replay::Mode::Recording {
+        eprintln!(
+            "axon-run: recorded host journal to {}",
+            std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
+        );
+    }
     exit(code);
 }

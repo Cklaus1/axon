@@ -37,6 +37,7 @@ pub mod mobile;
 pub mod native;
 pub mod parse_help;
 pub mod parser;
+pub mod preflight;
 pub mod replay;
 pub mod resolver;
 /// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
