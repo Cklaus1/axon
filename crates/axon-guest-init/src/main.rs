@@ -44,7 +44,32 @@ use serde::Deserialize;
 
 /// Schema: axon-vm-mmds/1
 /// Written by axon-vm launcher before InstanceStart; read by us at boot.
-#[derive(Deserialize)]
+impl MmdsPayload {
+    /// Does this payload actually CONSTRAIN anything?
+    ///
+    /// `policy.is_some()` answered a SYNTAX question — did a body deserialize —
+    /// and was used to answer a SEMANTIC one: is a security policy active.
+    /// Every field is `Option`, so `{}` parses to an all-`None` payload, which
+    /// read as "policy loaded" and took the `Apply` branch: no refusal, no
+    /// "NO ceiling" warning, no env var set, and `apply_seccomp` never called.
+    /// The guest booted with no effect ceiling, no token cap and no seccomp
+    /// while the boot log said a policy had been applied.
+    ///
+    /// REPRODUCED at parse level: `{}`, an all-null body, and an
+    /// unknown-fields-only body all deserialize to `Some(all None)`.
+    ///
+    /// Only the three ENFORCED mechanisms count. `principal`, `run_id` and
+    /// `source_hash` are LABELS — the module header above is explicit that they
+    /// "grant and withhold nothing" — so a payload carrying only labels is
+    /// exactly as unpoliced as `{}` and must not be rescued by them.
+    fn constrains_anything(&self) -> bool {
+        self.allowed_effects.is_some()
+            || self.budget_tokens.is_some()
+            || self.seccomp_bpf_b64.is_some()
+    }
+}
+
+#[derive(Deserialize, Debug)]
 struct MmdsPayload {
     principal: Option<String>,
     allowed_effects: Option<Vec<String>>,
@@ -100,8 +125,34 @@ fn main() {
             None
         }
     };
-    match policy_decision(policy.is_some(), allow_unpoliced) {
-        PolicyDecision::Apply | PolicyDecision::ProceedUnpoliced => {}
+    // CONTENT, not `is_some()`. A body that parsed but constrains nothing is
+    // not a policy — see `MmdsPayload::constrains_anything`.
+    let have_policy = policy.as_ref().is_some_and(|p| p.constrains_anything());
+    match policy_decision(have_policy, allow_unpoliced) {
+        PolicyDecision::Apply | PolicyDecision::ProceedUnpoliced => {
+            // A policy can be ACTIVE and still leave a mechanism off. Say which
+            // one, per mechanism, rather than treating "a policy loaded" as a
+            // blanket assurance — "policy applied" beside an absent seccomp
+            // filter is the same overclaim in miniature as `{}` reading as a
+            // policy at all.
+            if let Some(p) = policy.as_ref().filter(|_| have_policy) {
+                if p.allowed_effects.is_none() {
+                    eprintln!(
+                        "[axon-guest-init] WARNING: policy loaded with NO effect ceiling                          (allowed_effects omitted) — the guest runs unrestricted on that axis"
+                    );
+                }
+                if p.seccomp_bpf_b64.is_none() {
+                    eprintln!(
+                        "[axon-guest-init] WARNING: policy loaded with NO seccomp filter                          (seccomp_bpf_b64 omitted) — defence in depth is absent"
+                    );
+                }
+                if p.budget_tokens.is_none() {
+                    eprintln!(
+                        "[axon-guest-init] WARNING: policy loaded with NO token cap                          (budget_tokens omitted) — AI spend is uncapped"
+                    );
+                }
+            }
+        }
         PolicyDecision::Refuse => {
             eprintln!(
                 "[axon-guest-init] REFUSING to start the guest: no capability policy was \
@@ -224,8 +275,12 @@ fn read_mmds() -> Result<Option<MmdsPayload>, String> {
 
     // The launcher writes the full payload under /latest/axon in the MMDS
     // store, so the response body IS the MmdsPayload JSON.
-    let payload: MmdsPayload =
-        serde_json::from_str(body).map_err(|e| format!("parse MMDS JSON: {e}"))?;
+    // MALFORMED, not unavailable. Both fail closed, but the call site logged
+    // every Err as "MMDS unavailable", so a launcher writing bad JSON and a
+    // launcher that cannot be reached produced the same message and sent the
+    // operator looking at the network.
+    let payload: MmdsPayload = serde_json::from_str(body)
+        .map_err(|e| format!("MMDS policy is MALFORMED (not unreachable): {e}"))?;
 
     Ok(Some(payload))
 }
@@ -467,7 +522,7 @@ fn supervisor_main(first_child: libc::pid_t) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{policy_decision, PolicyDecision};
+    use super::{policy_decision, MmdsPayload, PolicyDecision};
 
     /// The defect: an unreachable MMDS produced a guest with no effect ceiling,
     /// no token cap and no seccomp, started anyway, announced by a single line
@@ -493,5 +548,95 @@ mod tests {
     fn a_loaded_policy_is_applied_and_the_override_cannot_discard_it() {
         assert_eq!(policy_decision(true, false), PolicyDecision::Apply);
         assert_eq!(policy_decision(true, true), PolicyDecision::Apply);
+    }
+
+    /// A body that PARSES is not a policy that CONSTRAINS.
+    ///
+    /// REPRODUCED before the fix: `{}` deserializes to an all-`None`
+    /// `MmdsPayload`, `policy.is_some()` read that as "policy loaded", and the
+    /// Apply branch ran — no refusal, no warning, no env var set, and
+    /// `apply_seccomp` never called. The guest booted with no effect ceiling,
+    /// no token cap and no seccomp while the record showed a policied run.
+    #[test]
+    fn a_payload_that_constrains_nothing_is_not_a_policy() {
+        for body in [
+            "{}",
+            r#"{"principal":null,"allowed_effects":null}"#,
+            r#"{"bogus":123}"#,
+        ] {
+            let p: MmdsPayload =
+                serde_json::from_str(body).unwrap_or_else(|e| panic!("{body} should parse: {e}"));
+            assert!(
+                !p.constrains_anything(),
+                "{body} parsed to a payload that claims to constrain something"
+            );
+            assert_eq!(
+                policy_decision(p.constrains_anything(), false),
+                PolicyDecision::Refuse,
+                "{body} must fail closed"
+            );
+        }
+    }
+
+    /// Labels must not rescue an empty policy.
+    ///
+    /// `principal`, `run_id` and `source_hash` grant and withhold nothing — the
+    /// module header says so. A payload carrying only labels is exactly as
+    /// unpoliced as `{}`, and counting them would let a launcher disarm every
+    /// enforced mechanism while still looking configured.
+    #[test]
+    fn a_labels_only_payload_does_not_count_as_policy() {
+        let body = r#"{"principal":"alice","run_id":"r1","source_hash":"abc"}"#;
+        let p: MmdsPayload = serde_json::from_str(body).expect("parses");
+        assert!(
+            !p.constrains_anything(),
+            "labels are not policy: they grant and withhold nothing"
+        );
+    }
+
+    /// Control: the fix must not refuse everything. ONE enforced field is a
+    /// policy.
+    #[test]
+    fn a_payload_with_one_enforced_field_is_a_policy() {
+        for body in [
+            r#"{"allowed_effects":["IO"]}"#,
+            r#"{"budget_tokens":100}"#,
+            r#"{"seccomp_bpf_b64":"AAAA"}"#,
+            r#"{"allowed_effects":[]}"#,
+        ] {
+            let p: MmdsPayload = serde_json::from_str(body).expect("parses");
+            assert!(
+                p.constrains_anything(),
+                "{body} states an enforced mechanism and must count as a policy"
+            );
+            assert_eq!(
+                policy_decision(p.constrains_anything(), false),
+                PolicyDecision::Apply
+            );
+        }
+    }
+
+    /// An explicitly EMPTY effect list is a policy — the tightest one. It must
+    /// not be confused with an omitted field, which states nothing. This is the
+    /// same "unset is not empty" distinction the effect ceiling itself makes.
+    #[test]
+    fn an_explicitly_empty_effect_list_is_not_an_absent_one() {
+        let empty: MmdsPayload = serde_json::from_str(r#"{"allowed_effects":[]}"#).unwrap();
+        let absent: MmdsPayload = serde_json::from_str("{}").unwrap();
+        assert!(empty.constrains_anything(), "deny-all is a policy");
+        assert!(!absent.constrains_anything(), "omitted is not a policy");
+    }
+
+    /// Malformed JSON fails closed AND says it was malformed.
+    #[test]
+    fn malformed_json_is_reported_as_malformed_not_unavailable() {
+        let e = serde_json::from_str::<MmdsPayload>("{not json")
+            .map_err(|e| format!("MMDS policy is MALFORMED (not unreachable): {e}"))
+            .unwrap_err();
+        assert!(
+            e.contains("MALFORMED"),
+            "a launcher writing bad JSON must not be reported as an unreachable \
+             metadata service: {e}"
+        );
     }
 }

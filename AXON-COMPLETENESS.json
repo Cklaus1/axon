@@ -1520,6 +1520,20 @@
       },
       "evidence": "crates/axon-signal/tests/exposure_boundary.rs",
       "open": "The dashboard's RBAC filter calls resolve_caller(None), which reads the SERVER's AXON_PRINCIPAL \u2014 not the request's. Every HTTP caller therefore sees the OPERATOR's view. Filtering reads is not authenticating an endpoint, and this endpoint has no caller identity to authenticate. Network exposure is closed (loopback, no wildcard CORS); per-caller authorization is NOT."
+    },
+    {
+      "name": "guest.policy-delivery-default-backend",
+      "category": "authorization/effect-ceiling",
+      "status": "open",
+      "axis": "engine",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "unknown"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "open": "axon-guest-init is compiled into the guest image ONLY for AXON_KERNEL_BACKEND=linux. The DEFAULT backend (axon-guest-kernel) writes a stub /init that execs `axon run` directly and never invokes guest-init at all, delivering policy by kernel cmdline (axon.policy=<base64>) and enforcing it in-kernel instead. So FG-023 hardens the non-default path only. The kernel parser appears to fail closed on every failure mode it handles (set_closed_policy, EffectSet(0) default), but whether a syntactically-valid-but-EMPTY axon.policy={} reaches the same conclusion is UNTRACED \u2014 the analogous defect in the analogous parser."
     }
   ],
   "false_greens": [
@@ -1764,6 +1778,17 @@
       "reproduced": "curl against /api/score with no identity returned both engineers' records",
       "fix": "bound to 127.0.0.1 (matching axon-web), all three CORS wildcards removed; the dashboard serves its own HTML from this origin and needs none",
       "commit": "12a0e52"
+    },
+    {
+      "id": "FG-023",
+      "where": "crates/axon-guest-init/src/main.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "a capability policy was loaded and applied to the guest",
+      "reality": "`policy.is_some()` answered a SYNTAX question (did a body deserialize) and was used to answer a SEMANTIC one (is a policy active). Every MmdsPayload field is Option, so `{}` parsed to an all-None payload, took the Apply branch, set NO env var and never called apply_seccomp \u2014 the guest booted with no effect ceiling, no token cap and no seccomp while the boot log said a policy had been applied",
+      "reproduced": "parse-level: `{}`, an all-null body and an unknown-fields-only body all deserialize to Some(all None)",
+      "fix": "have_policy is derived from CONTENT \u2014 at least one of the three ENFORCED fields must be present; labels (principal/run_id/source_hash) cannot rescue an empty policy; per-mechanism warnings when an active policy omits one; malformed JSON reported as malformed rather than unavailable",
+      "commit": "PENDING"
     }
   ]
 }
