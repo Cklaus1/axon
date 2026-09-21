@@ -1,0 +1,33 @@
+// SECURITY. The RUNTIME sandbox check asked `capability_of_builtin`, which
+// folds through single-kind `classify_call` and has NO arm for `file_copy` or
+// `file_rename`. Unclassified fell to `_ => None`, meaning "no restriction".
+//
+// The per-argument table `classify_call_paths` has always known that
+// file_copy's arg 0 is a READ and arg 1 is a WRITE — but only the STATIC
+// @[contained] checker consulted it. So the comment in capabilities.rs
+// described an attack the static checker prevented and the runtime allowed.
+//
+// Reproduced before the fix, in this exact sandbox:
+//   write_file outside ./out/          -> SandboxViolation, exit 8
+//   file_copy("./secret.txt", "./exfil.txt") -> Ok, exit 0, secret exfiltrated
+// Both halves escaped: a read outside fs_read and a write outside fs_write,
+// with no audit record either, since the audit keys off the same None.
+//
+// Expected now: the in-scope copy succeeds, the escape is exit 8.
+fn job(x: i64) -> i64 {
+    match file_copy("./out/copy_src.txt", "./out/copy_dst.txt") {
+        Ok(_) => println("copied allowed path")
+        Err(e) => println("in-scope copy err {e}")
+    }
+    match file_copy("./out/copy_src.txt", "./sandbox_copy_escape.txt") {
+        Ok(_) => println("ESCAPED: copied outside the write prefix")
+        Err(e) => println("err {e}")
+    }
+    0
+}
+fn main() {
+    let p = principal_root("p", true, true, false, 100)
+    let sb = sandbox_create_scoped(p, "IO", "./out/", "./out/", "")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}

@@ -57,7 +57,7 @@ impl CapabilityError {
 
 /// The kind of I/O operation a builtin call represents.
 #[derive(Debug)]
-enum IoKind {
+pub(crate) enum IoKind {
     FsRead,
     FsWrite,
     Net,
@@ -88,7 +88,22 @@ enum IoKind {
 /// Today every builtin maps to `[(kind, 0)]` — the single-path shape — so this
 /// is behaviour-preserving. Multi-path arms land WITH the builtins that need
 /// them; adding them ahead of time would be a match arm no code can reach.
-fn classify_call_paths(name: &str) -> Option<Vec<(IoKind, usize)>> {
+/// Per-ARGUMENT capability classification.
+///
+/// `pub(crate)` so the RUNTIME sandbox check uses the same table as the static
+/// `@[contained]` checker. It was private, and the runtime consulted
+/// `capability_of_builtin` — which folds through single-kind `classify_call`
+/// and has no `file_copy`/`file_rename` arm at all. Unclassified fell to
+/// `_ => None` meaning "no restriction", so the comment below described an
+/// attack the static checker prevented and the runtime allowed.
+///
+/// REPRODUCED before the fix, in one scoped sandbox:
+///   write_file("./escaped.txt")            -> SandboxViolation, exit 8
+///   file_copy("./secret.txt","./exfil.txt") -> Ok, exit 0, secret exfiltrated
+/// Both halves escaped: a read outside `fs_read` and a write outside
+/// `fs_write`, with no audit record either, since the audit keys off the same
+/// `None`.
+pub(crate) fn classify_call_paths(name: &str) -> Option<Vec<(IoKind, usize)>> {
     match name {
         // R42 Slice 4. `file_copy` is the reason this function exists: arg 0 is
         // READ, arg 1 is WRITE. Classifying it as a single kind — or as a kind

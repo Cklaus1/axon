@@ -178,18 +178,36 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
     }
     // FS: read and write are scoped independently — a read grant must not
     // authorise a write to the same prefix.
-    let fs_list = match caps::capability_of_builtin(name) {
-        Some("fs:read") => sb.scope.fs_read.as_deref().map(|l| ("read path", l)),
-        Some("fs:write") => sb.scope.fs_write.as_deref().map(|l| ("write path", l)),
-        _ => None,
-    };
-    if let Some((what, allow)) = fs_list {
-        let path = match args.first() {
-            Some(Value::Str(s)) => s.clone(),
-            _ => String::from("<dynamic>"),
-        };
-        if !allow.iter().any(|p| caps::path_is_under(&path, p)) {
-            return deny(what, &path, allow);
+    // PER-ARGUMENT, from the same table the static `@[contained]` checker uses.
+    //
+    // This previously asked `capability_of_builtin`, which yields ONE kind for
+    // the whole call and has no arm for `file_copy`/`file_rename`. Unclassified
+    // fell through `_ => None` to "no restriction", so a sandbox scoped to
+    // ./out/ refused `write_file` with exit 8 and allowed
+    // `file_copy("./secret.txt", "./exfil.txt")` to read a scope-denied file
+    // and write outside the scope, exit 0 — reproduced end to end.
+    //
+    // `file_copy` is precisely why the per-argument table exists: arg 0 is a
+    // READ and arg 1 is a WRITE, and checking one path against both kinds
+    // leaves the other checked against nothing.
+    if let Some(pairs) = caps::classify_call_paths(name) {
+        for (kind, idx) in pairs {
+            let allow = match kind {
+                caps::IoKind::FsRead => sb.scope.fs_read.as_deref().map(|l| ("read path", l)),
+                caps::IoKind::FsWrite => sb.scope.fs_write.as_deref().map(|l| ("write path", l)),
+                _ => None,
+            };
+            let Some((what, allow)) = allow else { continue };
+            // An argument we cannot read is refused, not waved through — the
+            // same rule the net check above already applies. A dynamic path is
+            // exactly the case a scope exists to stop.
+            let path = match args.get(idx) {
+                Some(Value::Str(s)) => s.clone(),
+                _ => String::from("<dynamic>"),
+            };
+            if !allow.iter().any(|p| caps::path_is_under(&path, p)) {
+                return deny(what, &path, allow);
+            }
         }
     }
     None

@@ -3041,10 +3041,28 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
     // a missing directory rather than a denied capability, and a scope that
     // denied EVERYTHING would still pass the refusal assertions.
     let _ = std::fs::create_dir_all("./out");
+    // Sources for the file_copy fixtures. The in-scope copy must have a real
+    // source, or its positive assertion would fail for a missing file rather
+    // than prove the scope permits it — and a scope denying EVERYTHING would
+    // then still pass every refusal assertion.
+    let _ = std::fs::write("./out/copy_src.txt", "in-scope source");
+    let _ = std::fs::write("./sandbox_copy_secret.txt", "TOP SECRET");
+    // Clear the escape artifact BEFORE running, not only after. A run that
+    // genuinely escaped — or a mutation check — leaves the file behind, and the
+    // "must not exist" assertion below would then fail on CORRECT code because
+    // of a prior run's residue. A test whose verdict depends on what an earlier
+    // run leaked is not measuring this run.
+    let _ = std::fs::remove_file("./sandbox_copy_escape.txt");
     for (label, fixture_name) in [
         ("fs prefix", "sandbox_scope_fs.ax"),
         ("path traversal", "sandbox_scope_traversal.ax"),
         ("net host", "sandbox_scope_net.ax"),
+        // file_copy: arg 1 is a WRITE. The runtime classified the whole call
+        // as one kind and had no arm for file_copy at all, so both its read
+        // and its write escaped a scoped sandbox.
+        ("copy write side", "sandbox_scope_copy.ax"),
+        // file_copy: arg 0 is a READ, checked against fs_read independently.
+        ("copy read side", "sandbox_scope_copy_read.ax"),
     ] {
         let out = axon()
             .args(["run", &fixture(fixture_name)])
@@ -3076,6 +3094,21 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
         msg.contains("wrote allowed path"),
         "an in-scope write must still be permitted: {msg}"
     );
+    // Same control for the copy path: the fix must not be "refuse every copy".
+    let okc = axon()
+        .args(["run", &fixture("sandbox_scope_copy.ax")])
+        .output()
+        .unwrap();
+    let msgc = String::from_utf8_lossy(&okc.stdout).to_string();
+    assert!(
+        msgc.contains("copied allowed path"),
+        "an in-scope file_copy must still be permitted: {msgc}"
+    );
+    assert!(
+        !std::path::Path::new("./sandbox_copy_escape.txt").exists(),
+        "the out-of-scope copy destination must not exist"
+    );
+    let _ = std::fs::remove_file("./sandbox_copy_secret.txt");
 }
 
 #[test]

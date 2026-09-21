@@ -1,0 +1,15 @@
+// The READ half of the same defect: file_copy's arg 0 must be checked against
+// fs_read. Before the fix this copied a scope-denied secret out, exit 0.
+fn job(x: i64) -> i64 {
+    match file_copy("./sandbox_copy_secret.txt", "./out/stolen.txt") {
+        Ok(_) => println("ESCAPED: read a file outside the read prefix")
+        Err(e) => println("err {e}")
+    }
+    0
+}
+fn main() {
+    let p = principal_root("p", true, true, false, 100)
+    let sb = sandbox_create_scoped(p, "IO", "./out/", "./out/", "")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}
