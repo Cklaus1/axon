@@ -197,6 +197,11 @@ pub enum ApprovalStatus {
     VerifiedRequired,
     /// A valid token was present; the job did not require it.
     VerifiedNotRequired,
+    /// Authorization FAILED — the token was missing when required, or present
+    /// and invalid. Distinct from `NotRequired`, which the denial branch used
+    /// to stamp: the record of a run refused for want of sign-off then said
+    /// the job did not need sign-off, contradicting the verdict beside it.
+    Denied,
 }
 
 impl ApprovalStatus {
@@ -205,6 +210,7 @@ impl ApprovalStatus {
             ApprovalStatus::NotRequired => "not_required",
             ApprovalStatus::VerifiedRequired => "verified_required",
             ApprovalStatus::VerifiedNotRequired => "verified_not_required",
+            ApprovalStatus::Denied => "denied",
         }
     }
 }

@@ -463,6 +463,25 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         out.join(format!("{run_id}.axjob")),
         crate::manifest::to_axjob(&manifest),
     );
+    // The token that authorized this run travels WITH the archived job.
+    // `cmd_replay` looks for `<run_id>.approval` beside the archived manifest
+    // — a comment there says so explicitly — and nothing ever put it there, so
+    // every approval-required job was unreplayable. Worse, it failed as the
+    // wrong thing: authorization reported "approval required but missing", and
+    // `cmd_replay` maps that denial to exit 11, TAMPER. A reviewer saw
+    // "this record was altered" when the truth was "the archive is missing a
+    // file the archiver never wrote".
+    if approval_path.exists() {
+        if let Err(e) = std::fs::copy(&approval_path, out.join(format!("{run_id}.approval"))) {
+            // Not silent: an archive missing its token is exactly the state
+            // that produced a false tamper report.
+            eprintln!(
+                "axon-os run: WARNING could not archive the approval token \
+                 ({e}) — `axon-os replay {run_id}` will report this job as \
+                 unapproved, not as tampered"
+            );
+        }
+    }
     println!(
         "{}  (run-id: {run_id}, record: {})",
         rec.verdict.legible(),

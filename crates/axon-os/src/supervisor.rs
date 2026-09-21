@@ -49,9 +49,7 @@ pub fn run(
                     axis: "approval".to_string(),
                 },
             );
-            rec.approval = crate::approval::ApprovalStatus::NotRequired
-                .as_str()
-                .to_string();
+            rec.approval = crate::approval::ApprovalStatus::Denied.as_str().to_string();
             return rec;
         }
     };
