@@ -166,3 +166,67 @@ fn an_oversized_frame_is_refused() {
     // than an unbounded echo of the payload.
     assert!(r.len() < MAX_FRAME, "the reply echoed an unbounded payload");
 }
+
+/// Possession of a `StateHandle.id` conveys NO authority.
+///
+/// The ids are a sequential counter (`st-1`, `st-2`, …), which is the shape of
+/// a kernel bug this repository already fixed once: `PrincipalRegistry` handles
+/// were indices until `child - 1` reached root, and they became unguessable
+/// tokens drawn from a private RNG.
+///
+/// That fix was necessary THERE because the handle WAS the authority — holding
+/// it was the proof. Here it is not: every operation independently binds the id
+/// to the caller's principal through `authorize`, so guessing an id yields a
+/// refusal naming the owner, never a decision. Predictable ids are therefore an
+/// information leak (which `a_cross_principal_refusal_names_the_owner...`
+/// already records as a deliberate trade-off), NOT a capability-confusion
+/// primitive.
+///
+/// This test pins the distinction, because it is the thing that would make
+/// sequential ids unacceptable if it ever stopped holding: if a future
+/// operation looked up state by id WITHOUT re-checking the principal, guessing
+/// `st-N` would become a working attack.
+#[test]
+fn guessing_a_handle_id_conveys_no_authority_on_any_operation() {
+    let mut b = EmbeddedBackend::new();
+    let alice = PrincipalScope::new("alice");
+    let mallory = PrincipalScope::new("mallory");
+
+    // Alice mints state. Its id is predictable by construction.
+    let h = b.encode_state("alice's private state", &alice).unwrap();
+    assert_eq!(
+        h.id, "st-1",
+        "ids are sequential — that is the premise under test"
+    );
+
+    // Mallory guesses the id AND forges the owner field to claim it is
+    // ALICE'S — `StateHandle`'s fields are public, so a caller builds one
+    // freely.
+    //
+    // Forging it as "mallory" would be the honest-but-wrong case and would
+    // still refuse under a broken implementation, so it proves nothing. The
+    // attack is a handle that ASSERTS the owner it wants: an operation trusting
+    // `handle.principal` instead of the caller's scope would then authorize.
+    // Measured — with the weaker fixture, mutating `decide` to trust the
+    // handle's own field left the test GREEN.
+    let forged = StateHandle {
+        id: h.id.clone(),
+        principal: "alice".into(),
+    };
+
+    // EVERY operation must refuse. A new operation that looks state up by id
+    // without re-checking the principal would turn a guessable id into a
+    // working attack, which is what this asserts against.
+    match b.decide(&forged, "q", &mallory) {
+        Err(Refusal::CrossPrincipal { owner, .. }) => assert_eq!(owner, "alice"),
+        other => panic!("decide honoured a guessed+forged handle: {other:?}"),
+    }
+    match b.release_state(&forged, &mallory) {
+        Err(Refusal::CrossPrincipal { owner, .. }) => assert_eq!(owner, "alice"),
+        other => panic!("release honoured a guessed+forged handle: {other:?}"),
+    }
+
+    // And alice's state is intact — a refused request must not also destroy it.
+    b.decide(&h, "q", &alice)
+        .expect("the owner's state must survive a refused foreign request");
+}
