@@ -199,7 +199,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 23 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 25 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -361,4 +361,18 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** `policy.is_some()` answered a SYNTAX question (did a body deserialize) and was used to answer a SEMANTIC one (is a policy active). Every MmdsPayload field is Option, so `{}` parsed to an all-None payload, took the Apply branch, set NO env var and never called apply_seccomp — the guest booted with no effect ceiling, no token cap and no seccomp while the boot log said a policy had been applied
 - **Reproduced:** parse-level: `{}`, an all-null body and an unknown-fields-only body all deserialize to Some(all None)
 - **Fix:** have_policy is derived from CONTENT — at least one of the three ENFORCED fields must be present; labels (principal/run_id/source_hash) cannot rescue an empty policy; per-mechanism warnings when an active policy omits one; malformed JSON reported as malformed rather than unavailable (`8877cb3`)
+
+### FG-024 — crates/axon-web/src/server.rs (security, fixed)
+
+- **Claimed:** axon-web is safe because it binds loopback — cited as the correct model in FG-022's own fix note
+- **Reality:** it stamped Access-Control-Allow-Origin: * on EVERY response, including POST /api/deploy, which writes caller-supplied content to a temp .ax and EXECUTES it. A cross-origin POST with Content-Type: text/plain is a CORS simple request, so no preflight intervenes, and the wildcard let the calling page read the result. Any site the operator visited could run arbitrary Axon code
+- **Reproduced:** a cross-origin POST to /api/deploy from Origin: https://evil.example returned 200 with the wildcard header and created the file the payload wrote
+- **Fix:** wildcard removed (the UI is same-origin and needs none) plus a WORKSPACE-WIDE guard, since the per-crate fix cited this crate as its model while never checking its CORS header (`499d08d`)
+
+### FG-025 — crates/axon-ledger/tests/authority_reachability.rs (security, fixed)
+
+- **Claimed:** The workspace grep for `Store::open(` in this file claimed every authority-bearing ledger read reaches RBAC; it reported 2 passed.
+- **Reality:** The guard asks whether a NAME is spelled, not whether a read is filtered. `Store::open_for_write` is unfiltered by design and invisible to it, and was used on 5 of the CLI's 8 read paths. `--as bob diff --json` returned another principal's records while the guard was green.
+- **Reproduced:** Two-principal ledger, rbac.json admins=[alice]: `--as bob stats` -> 1 record (filtered), `--as bob diff --json` -> 2 records incl. ALICE-SECRET payload.
+- **Fix:** All 10 CLI read sites routed through a single filtered handle (Store::open_as), replacing 3 remembered-to-filter call sites and 5 that did not; added read_commands_filter.rs, an equivalence oracle (a member's output on a 2-principal ledger must equal their output on a ledger holding only their own records), mutation-verified 10/10. The naming grep is retained as a structural tripwire with its true scope documented: it caught 0 of those 10. (`27d0980`)
 

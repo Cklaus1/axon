@@ -1803,14 +1803,14 @@
     },
     {
       "id": "FG-025",
-      "where": "crates/axon-ledger/tests/authority_reachability.rs \u2014 the workspace grep for `Store::open(`",
-      "claimed": "Every authority-bearing ledger read reaches RBAC; the guard reported 2 passed.",
+      "where": "crates/axon-ledger/tests/authority_reachability.rs",
+      "claimed": "The workspace grep for `Store::open(` in this file claimed every authority-bearing ledger read reaches RBAC; it reported 2 passed.",
       "reality": "The guard asks whether a NAME is spelled, not whether a read is filtered. `Store::open_for_write` is unfiltered by design and invisible to it, and was used on 5 of the CLI's 8 read paths. `--as bob diff --json` returned another principal's records while the guard was green.",
       "reproduced": "Two-principal ledger, rbac.json admins=[alice]: `--as bob stats` -> 1 record (filtered), `--as bob diff --json` -> 2 records incl. ALICE-SECRET payload.",
       "fix": "All 10 CLI read sites routed through a single filtered handle (Store::open_as), replacing 3 remembered-to-filter call sites and 5 that did not; added read_commands_filter.rs, an equivalence oracle (a member's output on a 2-principal ledger must equal their output on a ledger holding only their own records), mutation-verified 10/10. The naming grep is retained as a structural tripwire with its true scope documented: it caught 0 of those 10.",
       "status": "fixed",
-      "severity": "high",
-      "commit": "pending"
+      "severity": "security",
+      "commit": "27d0980"
     }
   ]
 }
