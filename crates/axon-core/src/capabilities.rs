@@ -60,6 +60,15 @@ impl CapabilityError {
 pub(crate) enum IoKind {
     FsRead,
     FsWrite,
+    /// The durable store (`dstore_open`/`dstore_apply`/`dstore_clear`), which
+    /// reads, appends to and deletes a log under the cache dir.
+    ///
+    /// Not FsRead/FsWrite, because the argument is a store KEY, not a path:
+    /// classifying it as a path would make `fs: [read("k")]` grant access to
+    /// `$XDG_CACHE_HOME/axon/stores/k.ndjson` — a grant that names one thing
+    /// and permits another. No clause can express the real target, so like
+    /// `Env` this is denied unconditionally inside `@[contained]`.
+    DurableStore,
     Net,
     // Part of the @[contained] effect taxonomy used by the codegen path; not yet
     // produced by `classify_call` here, but kept so the enum stays exhaustive.
@@ -134,6 +143,11 @@ fn classify_call(name: &str) -> Option<IoKind> {
         // Strictly MORE leakage than a file read — it discloses names the caller
         // did not already know.
         "dir_list" => Some(IoKind::FsRead),
+        // The durable store is a FILE under the cache dir. `dstore_open`
+        // replays that log (read); `dstore_apply` appends to it and
+        // `dstore_clear` removes it (write). Unclassified, they defeated
+        // `@[contained]`, the scoped sandbox and the ambient ceiling at once.
+        "dstore_open" | "dstore_apply" | "dstore_clear" => Some(IoKind::DurableStore),
         "exec" => Some(IoKind::Exec),
         // Reading the process environment is an ungrantable ambient channel; a
         // @[contained] fn must not read host secrets it wasn't given.
@@ -845,6 +859,7 @@ fn cap_label(kind: &IoKind) -> &'static str {
         IoKind::Net => "net",
         IoKind::Exec => "exec",
         IoKind::Env => "env",
+        IoKind::DurableStore => "dstore",
     }
 }
 
@@ -1655,6 +1670,26 @@ fn check_call(
                         site,
                     ));
                 }
+            }
+
+            IoKind::DurableStore => {
+                // The durable store writes a file under the cache dir whose
+                // path is derived from a store KEY, so no `fs: [...]` clause
+                // can name it. Unclassified, these three builtins were treated
+                // as PURE: `@[contained(fs: [], net: [], exec: none)]` passed
+                // `axon check` and the run wrote to disk anyway.
+                errors.push(CapabilityError::new(
+                    E1001,
+                    format!(
+                        "`{name}(...)` is not permitted inside @[contained]: the durable store \
+                         reads and writes a log under the process cache directory, and its \
+                         argument is a store key rather than a path, so no `fs: [...]` clause \
+                         can grant exactly it\n  \
+                         help: use the durable store OUTSIDE the contained boundary and pass the \
+                         value in, or use `read_file`/`write_file` with a literal path you can grant"
+                    ),
+                    site,
+                ));
             }
 
             IoKind::Env => {

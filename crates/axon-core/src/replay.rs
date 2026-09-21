@@ -1060,6 +1060,24 @@ static ACTIVE_REPLAY: Mutex<Option<std::sync::Arc<ReplayHost>>> = Mutex::new(Non
 /// pattern `clock.rs` uses): a bad journal path must fail the run up front, not
 /// halfway through, and a lazily-installed recorder would miss every call made
 /// before the first one that happened to trigger it.
+/// The mode this run installed, readable by a builtin that cannot honour it.
+///
+/// A builtin that bypasses the `AxonHost` seam is invisible to the journal, so
+/// under `AXON_RECORD` it produces no entry and under `AXON_REPLAY` it reads
+/// LIVE state while the rest of the run is served from the journal. Neither
+/// may look like success, so those builtins ask here and say so.
+static INSTALLED_MODE: Mutex<Mode> = Mutex::new(Mode::Off);
+
+/// The recording/replaying mode in force, or `Off`.
+pub fn mode() -> Mode {
+    *INSTALLED_MODE.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Reset for tests — the mode is process-global, like the host itself.
+pub fn reset_mode_for_tests() {
+    *INSTALLED_MODE.lock().unwrap_or_else(|p| p.into_inner()) = Mode::Off;
+}
+
 pub fn install_from_env() -> Result<Mode, String> {
     let rec = std::env::var(RECORD_ENV_VAR).ok().filter(|s| !s.is_empty());
     let rep = std::env::var(REPLAY_ENV_VAR).ok().filter(|s| !s.is_empty());
@@ -1071,12 +1089,14 @@ pub fn install_from_env() -> Result<Mode, String> {
         (Some(path), None) => {
             let host = RecordingHost::new(crate::host::current_host(), &path)?;
             crate::host::set_host(std::sync::Arc::new(host));
+            *INSTALLED_MODE.lock().unwrap_or_else(|p| p.into_inner()) = Mode::Recording;
             Ok(Mode::Recording)
         }
         (None, Some(path)) => {
             let host = std::sync::Arc::new(ReplayHost::from_path(std::path::Path::new(&path))?);
             *ACTIVE_REPLAY.lock().unwrap_or_else(|p| p.into_inner()) = Some(host.clone());
             crate::host::set_host(host);
+            *INSTALLED_MODE.lock().unwrap_or_else(|p| p.into_inner()) = Mode::Replaying;
             Ok(Mode::Replaying)
         }
         (None, None) => Ok(Mode::Off),
@@ -1412,6 +1432,14 @@ mod tests {
         // environment: `dstore_open` replays a log written by a PREVIOUS run, so a
         // replayed run sees whatever the store holds now, which is exactly the
         // "replay quietly consults live state" hazard.
+        //
+        // STATUS: the seam bypass itself is still exempt, but it is no longer
+        // SILENT. `dstore_journal_guard` refuses these builtins under
+        // AXON_REPLAY (they would read live state while the rest of the run is
+        // served from the journal) and warns once under AXON_RECORD that the
+        // journal is incomplete. Before that, a recorded run wrote a file and
+        // produced a 0-line journal, which is indistinguishable from a run that
+        // touched nothing. Pinned by tests/dstore_capability.rs.
         //
         // It is exempted rather than fixed because closing it needs a
         // `file_remove` on `AxonHost` (`dstore_clear` deletes the log), and that

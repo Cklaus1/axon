@@ -201,6 +201,31 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
     // `file_copy` is precisely why the per-argument table exists: arg 0 is a
     // READ and arg 1 is a WRITE, and checking one path against both kinds
     // leaves the other checked against nothing.
+    // The durable store carries NO path argument, so the per-argument loop
+    // below sees nothing to check and the call fell through to "no
+    // restriction". Measured: a sandbox scoped with fs_write deny-all ("")
+    // ran `dstore_apply` and wrote the log, exit 0 — a grant that says "no
+    // filesystem writes" permitting a filesystem write.
+    //
+    // The real target IS knowable here, unlike at check time, so the scope is
+    // asked about the actual directory the log lives in.
+    if matches!(caps::capability_of_builtin(name), Some("dstore")) {
+        let dir = store_dir_path()
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_else(|| String::from("<no cache dir>"));
+        // `dstore_open` replays the log (read) and the other two mutate it;
+        // every one of the three is checked against BOTH scopes, because a
+        // handle-taking call cannot be told apart by its arguments.
+        for (what, allow) in [
+            ("read path", sb.scope.fs_read.as_deref()),
+            ("write path", sb.scope.fs_write.as_deref()),
+        ] {
+            let Some(allow) = allow else { continue };
+            if !allow.iter().any(|p| caps::path_is_under(&dir, p)) {
+                return deny(what, &dir, allow);
+            }
+        }
+    }
     if let Some(pairs) = caps::classify_call_paths(name) {
         for (kind, idx) in pairs {
             let allow = match kind {
@@ -273,6 +298,56 @@ fn audit_effect_kind(name: &str) -> Option<axon_audit::EffectKind> {
 /// of the provenance log dir, so it reuses the same cache-root discovery. The key
 /// is sanitized to a safe filename (non-alnum → `_`) so a store name can't escape
 /// the stores dir. Returns None if no cache root is discoverable.
+/// The directory every durable-store log lives in.
+///
+/// A sandbox scope is checked against THIS, not against the store key: the key
+/// is not a path, so scoping on it would let `fs_write = ["k"]` authorise a
+/// write to `$XDG_CACHE_HOME/axon/stores/k.ndjson`. `dstore_apply`'s first
+/// argument is a handle anyway, so the key is not even available at the check.
+/// The durable store bypasses the `AxonHost` seam, so the journal cannot see
+/// it. Under `AXON_RECORD` that produced an EMPTY journal and exit 0 — a run
+/// that wrote a file looking exactly like a run that touched nothing. Under
+/// `AXON_REPLAY` it is worse: the rest of the run is served from the journal
+/// while these calls read and write LIVE state, which is the precise hazard
+/// replay exists to remove.
+///
+/// Closing it properly needs `file_remove` on `AxonHost` (`dstore_clear`
+/// deletes the log), and that method is deliberately absent pending a TCB
+/// decision reserved for a person (R42 §9 Q3). That decision is not made here.
+/// What IS fixed is the silence: an operation the journal cannot represent
+/// must not be reported as recorded.
+fn dstore_journal_guard(name: &str) -> Option<String> {
+    match crate::replay::mode() {
+        crate::replay::Mode::Replaying => Some(format!(
+            "[E1603] `{name}` cannot run under AXON_REPLAY: the durable store does \
+             not go through the host journal, so this call would read and write \
+             LIVE state while the rest of the run is served from the journal. \
+             Replay the program without the durable store, or run it for real."
+        )),
+        crate::replay::Mode::Recording => {
+            // Not fatal: recording is observation, and refusing would stop
+            // runs that record fine apart from this. But the journal is
+            // INCOMPLETE and must say so, once per run.
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "axon: warning: `{name}` bypasses the host journal, so this \
+                     recording is INCOMPLETE — the durable store's reads and writes \
+                     are absent from it and a replay of this journal will not \
+                     reproduce them"
+                );
+            }
+            None
+        }
+        crate::replay::Mode::Off => None,
+    }
+}
+
+fn store_dir_path() -> Option<std::path::PathBuf> {
+    store_log_path("_").map(|p| p.parent().map(|d| d.to_path_buf()).unwrap_or(p))
+}
+
 fn store_log_path(key: &str) -> Option<std::path::PathBuf> {
     let base = std::env::var("XDG_CACHE_HOME")
         .ok()
@@ -4505,6 +4580,9 @@ impl<'p> Interp<'p> {
             // `dstore_open(key, consistency) -> i64` — open (and replay) the durable
             // store `key` (0=at_least_once, 1=linearizable); returns its handle.
             "dstore_open" => {
+                if let Some(e) = dstore_journal_guard(name) {
+                    return panic(e);
+                }
                 want(2)?;
                 let key = as_str(&args[0])?.to_string();
                 let consistency = as_int(&args[1])?;
@@ -4545,6 +4623,9 @@ impl<'p> Interp<'p> {
             // NOT re-logged; under at_least_once it re-applies. An actually-applied
             // op is appended to the durable log so it survives a process restart.
             "dstore_apply" => {
+                if let Some(e) = dstore_journal_guard(name) {
+                    return panic(e);
+                }
                 want(3)?;
                 let h = as_int(&args[0])?;
                 let op_id = as_int(&args[1])?;
@@ -4617,6 +4698,9 @@ impl<'p> Interp<'p> {
             // Lets a test start from a clean slate; not part of the consistency
             // model itself.
             "dstore_clear" => {
+                if let Some(e) = dstore_journal_guard(name) {
+                    return panic(e);
+                }
                 want(1)?;
                 let key = as_str(&args[0])?.to_string();
                 let removed = store_log_path(&key)

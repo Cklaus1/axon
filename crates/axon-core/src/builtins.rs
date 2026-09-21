@@ -2533,6 +2533,12 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
             // environment / process control
             | "env_var" | "exit"
+            // durable store — reads, appends to and deletes a log file. Absent
+            // here, `@[pure]` accepted a fn that wrote to disk: measured,
+            // `axon check` exit 0 and the run produced the .ndjson. The same
+            // table gates refinement-predicate purity, so a `where` clause
+            // could call it too.
+            | "dstore_open" | "dstore_apply" | "dstore_clear"
             // online optimization / channels / concurrency. ALL goal_* touch the
             // non-deterministic in-memory provenance store (the run-variants mutate
             // it + call the @[adaptive] metric, the queries read it), so none is
@@ -2669,6 +2675,14 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         | "goal_history"
         | "goal_clear"
         | "goal_count" => &["IO"],
+
+        // Durable store — `dstore_open` READS a log file and `dstore_apply` /
+        // `dstore_clear` WRITE and DELETE one under the cache dir. These were
+        // in neither this table nor `classify_call`, so they were treated as
+        // PURE: a fn annotated `@[contained(fs: [], net: [], exec: none)]`
+        // passed `axon check` and wrote to disk, and a run under
+        // `AXON_ALLOWED_EFFECTS=Pure` exited 0 having done the same.
+        "dstore_open" | "dstore_apply" | "dstore_clear" => &["IO"],
 
         // Channels / concurrency.
         "chan_new" | "chan_send" | "chan_recv" => &["Chan"],
