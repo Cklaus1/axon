@@ -1822,6 +1822,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "64765cf"
+    },
+    {
+      "id": "FG-027",
+      "where": "crates/axon-core/src/capabilities.rs",
+      "claimed": "`check_builtin_value_ref` closes the builtin-aliasing laundering route (THREAT_MODEL Section 8): a capability-bearing builtin used as a VALUE has no call site to path-check, so it is refused unless the whole capability is granted. `axon check` reported clean.",
+      "reality": "It asked `capability_of_builtin`, which yields ONE kind per call and has no arm for file_copy/file_rename, so it returned early for both; and its match on the capability LABEL ended in `_ => false`, silently permitting every label it did not name \u2014 including `env_var`, whose DIRECT call is an unconditional E1001 because the environment is an ungrantable ambient secret channel, and the durable store.",
+      "reproduced": "Inside @[contained(fs: [], net: [], exec: none)]: `let f = write_file` -> E1001 exit 2 (correct), while `let f = file_copy`, `let f = file_rename`, `let f = env_var` and `let f = dstore_open` all passed with exit 0. The env_var case fully reverses a containment fix whose direct-call path is E1001.",
+      "fix": "The guard now reads the per-argument table (so a multi-kind builtin needs EVERY kind granted) and matches on IoKind exhaustively, so a new kind must be decided about rather than defaulting to allowed. Ungrantable kinds (Env, DurableStore) are always refused, matching their direct call sites. Separately, `audit_effect_kind` now resolves file_copy/file_rename to FS instead of the coarse IO of their effect row, so a reviewer filtering the ledger for filesystem activity sees the one builtin that reads one path and writes another. 4 regression tests incl. a half-grant control (a read-only grant must still refuse an aliased copy, naming the missing fs:write); 3 mutations caught.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "c0e425a"
     }
   ]
 }
