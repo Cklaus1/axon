@@ -12,6 +12,13 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    /// A whole-ledger rewrite was attempted through a filtered handle.
+    #[error(
+        "`{op}` rewrites the whole ledger but this handle is filtered to one \
+         principal's view, so it would delete every record the caller cannot \
+         see. Use `Store::open_for_write`."
+    )]
+    FilteredHandleCannotRewrite { op: &'static str },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -149,12 +156,35 @@ impl Store {
             .collect())
     }
 
+    /// Refuse a whole-ledger rewrite on a handle that can only SEE part of it.
+    ///
+    /// `prune`, `replace_record` and `rewrite_principals` each start from
+    /// `self.all()`, which applies the handle's view, and then write the
+    /// result back as the ENTIRE ledger. On a filtered handle that silently
+    /// deletes every record the caller could not see — a read restriction
+    /// turning into data destruction.
+    ///
+    /// No caller does this today: all three are reached through
+    /// `open_for_write`, which carries no view. That is the argument for
+    /// adding this rather than against it — the property currently holds by
+    /// the habits of three call sites, and the same arrangement on the read
+    /// path is what leaked every principal's records. A later
+    /// `ReadStore`/`MaintenanceStore` split would make it unrepresentable;
+    /// until then it fails closed and says why.
+    fn require_unfiltered(&self, op: &'static str) -> Result<()> {
+        if self.view.is_some() {
+            return Err(StoreError::FilteredHandleCannotRewrite { op });
+        }
+        Ok(())
+    }
+
     /// Delete all records older than `cutoff_ms` (Unix epoch milliseconds).
     /// Records whose `causal_parent` points to a surviving record are kept
     /// even if they are older — orphaning a causal chain would corrupt the graph.
     ///
     /// Returns `(kept, pruned)` counts.
     pub fn prune(&mut self, cutoff_ms: u64) -> Result<(usize, usize)> {
+        self.require_unfiltered("prune")?;
         let all = self.all()?;
 
         // IDs of records recent enough to keep.
@@ -198,6 +228,7 @@ impl Store {
     /// Replace a single record by id. Returns `true` if a record was replaced.
     /// Writes atomically via a `.tmp` rename.
     pub fn replace_record(&mut self, old_id: &str, new_record: &LedgerRecord) -> Result<bool> {
+        self.require_unfiltered("replace_record")?;
         let all = self.all()?;
         let mut replaced = false;
         let rewritten: Vec<LedgerRecord> = all
@@ -236,6 +267,7 @@ impl Store {
         old_prefix: &str,
         new_principal: &str,
     ) -> Result<(usize, usize)> {
+        self.require_unfiltered("rewrite_principals")?;
         let all = self.all()?;
         let total = all.len();
         let mut updated = 0usize;

@@ -305,3 +305,56 @@ fn the_tested_read_verbs_match_the_cli_surface() {
         "update this test when the read surface changes"
     );
 }
+
+// ── A filtered handle must not be able to rewrite the whole ledger ──────────
+
+/// `prune`, `replace_record` and `rewrite_principals` each start from
+/// `self.all()` — which applies the handle's view — and write the result back
+/// as the ENTIRE ledger. On a filtered handle that deletes every record the
+/// caller could not see: a read restriction turning into data destruction.
+///
+/// No caller does this today; all three go through `open_for_write`. That is
+/// the reason to pin it rather than the reason not to. The read path held the
+/// same way — "every call site remembers" — right up until five of eight
+/// didn't.
+#[test]
+fn a_filtered_handle_cannot_rewrite_the_whole_ledger() {
+    use axon_ledger::store::Store;
+
+    let dir = std::env::temp_dir().join(format!("axon_ledger_mx_{}", std::process::id()));
+    let t = now_ms();
+    let mut recs = records_for("git:alice@example.com", "alice", t, "aaa");
+    recs.extend(records_for("git:bob@example.com", "bob", t, "bbb"));
+    seed(&dir, &recs);
+    let before = std::fs::read_to_string(dir.join("events.ndjson")).unwrap();
+
+    let mut filtered = Store::open_as(&dir, Some("bob@example.com".into())).unwrap();
+    // Premise: this handle really is filtered, or the refusals below prove
+    // nothing about filtered handles.
+    assert!(
+        filtered.all().unwrap().len() < recs.len(),
+        "premise: bob's handle must see fewer records than the ledger holds"
+    );
+
+    assert!(filtered.prune(t + 1).is_err(), "prune was allowed");
+    assert!(
+        filtered.rewrite_principals("git:", "x:").is_err(),
+        "rewrite_principals was allowed"
+    );
+
+    let after = std::fs::read_to_string(dir.join("events.ndjson")).unwrap();
+    assert_eq!(
+        before, after,
+        "the ledger was modified by a refused maintenance call"
+    );
+
+    // CONTROL: an unfiltered handle must still be able to do the work, or
+    // this is a refusal rather than a guard.
+    let mut open = Store::open_for_write(&dir).unwrap();
+    assert!(
+        open.prune(t + 1).is_ok(),
+        "maintenance must still work on an unfiltered handle"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
