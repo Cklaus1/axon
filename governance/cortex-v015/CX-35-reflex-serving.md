@@ -812,6 +812,26 @@ running a metered call.
 
 ### X-004 — the HTTP transport is uncompiled in every gated build
 
+> **Verified against resolved Cargo features, not just the feature name.**
+> A grep showing `asi-runtime` absent from `scripts/` and `.github/workflows/`
+> does not prove the feature is off: Cargo features arrive through defaults and
+> dependency edges as well as command lines. Checked properly:
+> `axon-core`'s `default = ["codegen"]` does not include `asi-runtime`; no
+> workspace crate requests it (the only dependant, `axon-wasm`, takes
+> `default-features = false`); and `cargo tree -p axon-core -e features`
+> resolves **zero** occurrences of `asi-runtime`. So the conclusion holds — the
+> `#[cfg(feature = "asi-runtime")]` HTTP paths are not compiled by any gated
+> build.
+>
+> One correction that changes Phase 1's options for the better: `reqwest` IS
+> compiled into the default build, arriving via `axon-domain`'s default
+> features (`cargo tree -i reqwest` shows the edge). So "no HTTP client is
+> available" would have been wrong. The client is present; only axon-core's
+> `asi-runtime` code paths are absent. This also settles the open question of
+> whether a usable HTTP client exists for a Phase 1 adapter: it does, without
+> enabling a new feature.
+
+
 **Live implementation.** `crates/axon-core/src/host.rs:94-110` (denied by
 default), `:269,292` (`#[cfg(feature = "asi-runtime")]`). Zero occurrences of
 `asi-runtime` under `scripts/` or `.github/workflows/`.

@@ -154,23 +154,46 @@ for c in excused:
 CONTROL_STATES = {"enforced", "explicitly-refused", "not-applicable",
                   "unknown", "silently-ignored"}
 ENGINES = {"interpreter", "native", "wasm", "guest"}
+# A control row may be keyed by EXECUTION ENGINE or by SERVING MODE, declared
+# per row. The two are not the same question and must not be conflated:
+# Embedded / LocalSidecar / RemoteService are deployment topologies for a
+# Reflex backend (CX-35), not additional compiler engines. Keeping one closed
+# state set but two key sets lets the serving matrix live here — the only
+# acceptable home, since D-007 records that this repository already carries
+# four governance registries — without implying that a mode row says anything
+# about whether the interpreter, native, wasm or guest engine supports a
+# control. A passing mode row is NOT engine support; engine rows keep their own
+# keys, their own validation, and their own evidence.
+MODES = {"embedded", "local-sidecar", "remote-service"}
+AXES = {"engine": ENGINES, "mode": MODES}
 for c in art.get("controls") or []:
     cn = c.get("name", "?")
+    axis = c.get("axis", "engine")
+    if axis not in AXES:
+        fails.append(f"control `{cn}`: axis {axis!r} is not one of "
+                     f"{sorted(AXES)}")
+        continue
+    keys = AXES[axis]
     eng = c.get("engines") or {}
-    missing = ENGINES - set(eng)
+    missing = keys - set(eng)
     if missing:
         fails.append(f"control `{cn}`: no state for {sorted(missing)} — a "
-                     f"control must say what EVERY engine does with it")
+                     f"control must say what EVERY {axis} does with it")
+    extra = set(eng) - keys
+    if extra:
+        fails.append(f"control `{cn}`: axis={axis} but carries "
+                     f"{sorted(extra)}, which belong to a different axis — "
+                     f"a mode row must not assert engine support, or vice versa")
     for k, v in eng.items():
         if v not in CONTROL_STATES:
-            fails.append(f"control `{cn}`: engine `{k}` = {v!r}, not in "
+            fails.append(f"control `{cn}`: {axis} `{k}` = {v!r}, not in "
                          f"{sorted(CONTROL_STATES)}")
     if c.get("status") == "resolved":
         bad = {k: v for k, v in eng.items()
                if v in ("unknown", "silently-ignored")}
         if bad:
             fails.append(f"control `{cn}`: status=resolved while {bad} — a "
-                         f"control is not resolved while an engine is unknown "
+                         f"control is not resolved while a {axis} is unknown "
                          f"or silently ignoring it")
     ev = c.get("evidence")
     if ev and not os.path.exists(os.path.join(ROOT, ev.split("::")[0])):

@@ -60,6 +60,26 @@ for _ in $(seq 1 100); do [ "$(count_sleep $VICTIM_SLEEP)" -ge 1 ] && break; sle
 [ "$(cat "$D2/status")" = "cancelled" ] \
   || fail "status is '$(cat "$D2/status")', not cancelled — a cancelled run must not read as a clean exit"
 
+# ── 2b. the supervisor outlives the shell that launched it ─────────────────
+# A real gate run died as `unknown (supervisor gone)` with 17 stages done and
+# zero failures: the supervisor was an ordinary background subshell, so when
+# the launching shell tore down it took SIGHUP mid-wait and never recorded the
+# completion. The earlier version of THIS FILE could not catch that, because it
+# only ever launched from a shell that stayed alive — the failure needs the
+# launcher to die, so the test has to kill it.
+LAUNCHER_OUT=$(mktemp)
+setsid bash -c "cd '$PWD' && $RM start gate_selftest_orphan -- bash -c 'sleep 4; exit 5' > '$LAUNCHER_OUT'" &
+LAUNCHER=$!
+for _ in $(seq 1 100); do [ -s "$LAUNCHER_OUT" ] && break; sleep 0.1; done
+D3=$(cat "$LAUNCHER_OUT"); rm -f "$LAUNCHER_OUT"
+[ -n "$D3" ] || fail "launcher produced no run dir"
+# Kill the launcher's whole session while the job is still running.
+kill -9 -- -"$LAUNCHER" 2>/dev/null || kill -9 "$LAUNCHER" 2>/dev/null || true
+for _ in $(seq 1 150); do [ "$(cat "$D3/status")" != running ] && break; sleep 0.1; done
+[ "$(cat "$D3/status")" = "exited:5" ] \
+  || fail "launcher died and the result was lost: status '$(cat "$D3/status")' — a supervisor that dies with its launcher cannot own a long job"
+rm -rf "$D3"
+
 # ── 3. the bystander is untouched ───────────────────────────────────────────
 [ "$(count_sleep $CONTROL_SLEEP)" -eq 1 ] \
   || fail "cancellation killed an UNRELATED process of the same shape — scope, not substring"

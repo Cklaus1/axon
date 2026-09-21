@@ -169,3 +169,23 @@ by reading two call sites, not by spawning a grandchild.
 
 The package says the same about itself, and that agreement should not be
 mistaken for independent confirmation.
+
+## CX numbering spans two locations
+
+`CX-00` … `CX-34` are **vendored** inside the v0.15 package and pinned by
+`SHA256SUMS_v0_15.json`. `cortex_package_gate.sh` verifies that manifest in
+BOTH directions, so a file added under the package root without a digest entry
+fails the gate, and editing `INDEX.md` or `spec_manifest.json` to register one
+changes the digest of a pinned file. Either way, a new spec cannot be added to
+the package without breaking its integrity check.
+
+`CX-35`+ therefore live **beside** the package, in `governance/cortex-v015/`,
+outside the SHA-pinned set. Verified rather than assumed: the package gate
+passes with `CX-35-reflex-serving.md` present.
+
+Consequence for readers: the CX series is no longer a single directory listing.
+Vendored specs are the frozen v0.15 record; live specs are the ones this
+repository is currently authoring and may revise. `implementation_evidence`
+stays empty for live specs until something executes, and their gates get rows
+in `governance/cortex_gate_execution_registry.json`, never in the vendored
+manifest.
