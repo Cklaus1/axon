@@ -86,11 +86,26 @@ fi
 
 # ── §-Gate step 3: run cargo test -p axon-os ─────────────────────────────────
 echo "--- cargo test -p axon-os ---"
-cargo test -p axon-os 2>&1 | tee /tmp/axon-os-test.log || true
-if grep -q "^test result: FAILED" /tmp/axon-os-test.log; then
+# PRESERVE cargo's exit status. `| tee ... || true` discards it, and a compile
+# error prints NO "test result" line at all — so `grep -q FAILED` found nothing,
+# the else branch ran, and the gate reported "0 test suites passed" as a PASS.
+# REPRODUCED against a compile-error log: the verbatim logic printed
+# "OK cargo test -p axon-os (0 test suites passed)".
+#
+# Same defect class as r44's `cargo test | grep -q`, and the fix is the same
+# shape: keep the producer's status, and assert a NON-ZERO denominator rather
+# than the absence of a failure string.
+_r27_code=0
+cargo test -p axon-os 2>&1 | tee /tmp/axon-os-test.log
+_r27_code=${PIPESTATUS[0]}
+R27_COUNT=$(grep -c "^test result:" /tmp/axon-os-test.log || true)
+if [ "$_r27_code" -ne 0 ]; then
+  fail "cargo test -p axon-os exited $_r27_code (build or test failure; see /tmp/axon-os-test.log)"
+elif grep -q "^test result: FAILED" /tmp/axon-os-test.log; then
   fail "cargo test -p axon-os (see /tmp/axon-os-test.log)"
+elif [ "$R27_COUNT" -lt 1 ]; then
+  fail "cargo test -p axon-os reported NO test suites — a run that executes nothing is not a pass"
 else
-  R27_COUNT=$(grep -c "^test result:" /tmp/axon-os-test.log || true)
   ok "cargo test -p axon-os ($R27_COUNT test suites passed)"
 fi
 

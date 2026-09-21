@@ -1718,6 +1718,28 @@
       "reproduced": "one sandbox scoped to api.trusted.io: http_get to 127.0.0.1 refused exit 8, while native::modbus::modbus_connect(\"127.0.0.1\", 15502) reached the OS and panicked with Connection refused (os error 111) \u2014 the OS answering proves the dial happened",
       "fix": "native_net_host_arg is now a shared pub(crate) predicate consumed by BOTH the static checker and the runtime; a non-literal host fails closed",
       "commit": "f91d249"
+    },
+    {
+      "id": "FG-020",
+      "where": "scripts/r27_acceptance_gate.sh",
+      "status": "fixed",
+      "severity": "correctness",
+      "claimed": "the axon-os test suite passed",
+      "reality": "`cargo test | tee || true` discarded the exit status, and a compile error prints NO `test result` line \u2014 so `grep -q FAILED` found nothing, the else branch ran, and the gate reported a PASS having executed zero tests",
+      "reproduced": "the verbatim logic against a compile-error log printed 'OK cargo test -p axon-os (0 test suites passed)'",
+      "fix": "keep the producer's status via PIPESTATUS and assert a NON-ZERO suite count; the three outcomes now distinguish",
+      "commit": "PENDING"
+    },
+    {
+      "id": "FG-021",
+      "where": "scripts/lib/harness_skip.sh",
+      "status": "fixed",
+      "severity": "correctness",
+      "claimed": "the wasm32 target is not installed (reported by 15 harnesses as a SKIP)",
+      "reality": "`rustup target list 2>/dev/null | grep -q <target>` discards rustup's exit status and stderr, so a MISSING or broken rustup concluded 'target not installed' \u2014 reporting a specific fact it never established, and turning a misconfigured toolchain into 15 silent skips that read like deliberate environment coverage",
+      "reproduced": "the pattern with rustup absent concluded 'target not installed' though rustup never ran",
+      "fix": "rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip \u2014 a skip must prove its own reason",
+      "commit": "PENDING"
     }
   ]
 }
