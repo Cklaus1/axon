@@ -3111,6 +3111,53 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
     let _ = std::fs::remove_file("./sandbox_copy_secret.txt");
 }
 
+/// A REFUSED capability attempt must appear in the audit ledger.
+///
+/// The ledger append sat BELOW both `return Err(SandboxViolation)` paths while
+/// its own comment claimed it "records the attempt even if the call itself
+/// later errors". So the ledger recorded what was ALLOWED and silently dropped
+/// what was BLOCKED — the inverse of what a security review opens it for, and
+/// it meant an attacker's denied probes were the one class of event guaranteed
+/// to leave no trace.
+///
+/// REPRODUCED before the fix: sandbox_scope_net.ax under AXON_AUDIT_LEDGER
+/// produced exactly one row, `sandbox_run`. The refused `http_get` produced
+/// none.
+#[test]
+fn a_refused_capability_attempt_is_recorded_in_the_audit_ledger() {
+    let dir = std::env::temp_dir().join(format!("axon_auditdeny_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ledger = dir.join("l.ndjson");
+
+    let out = axon()
+        .args(["run", &fixture("sandbox_scope_net.ax")])
+        .env("AXON_AUDIT_LEDGER", &ledger)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(8),
+        "precondition: the out-of-scope host must still be refused"
+    );
+    let body = std::fs::read_to_string(&ledger).unwrap_or_default();
+    assert!(
+        body.contains("denied:http_get"),
+        "the REFUSED attempt must be in the ledger; a security review reads it \
+         for exactly the events that were blocked.\n{body}"
+    );
+    // Control: permitted calls must still be recorded, and recorded WITHOUT the
+    // denial marker — a fix that logged everything as denied, or that stopped
+    // logging permitted calls, would satisfy the assertion above while
+    // destroying the ledger's meaning.
+    assert!(
+        body.contains("\"operation\":\"sandbox_run\""),
+        "permitted operations must still be recorded unmarked:\n{body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn contained_is_not_launderable_through_string_named_dispatch() {
     // SECURITY (audit T2, findings F153 / P7-SEC-02). Several builtins dispatch

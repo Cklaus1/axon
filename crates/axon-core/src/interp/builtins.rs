@@ -402,6 +402,22 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // One writer for both verdicts, so a denial cannot be dropped by a
+        // path that simply returns earlier than the logger.
+        let audit = |slf: &Self, denied: bool| {
+            if op_name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
+                if let Some(kind) = ledger_kind {
+                    let principal = slf.current_principal_name();
+                    let op = if denied {
+                        format!("denied:{op_name}")
+                    } else {
+                        op_name.to_string()
+                    };
+                    let _ = axon_audit::append_global(&principal, kind, &op);
+                }
+            }
+        };
+
         // F5 (Phase 9): runtime sandbox enforcement. If there is an active
         // sandbox AND this operation has a non-empty effect row, check that every
         // effect it requires is in the sandbox's allowed set. Any effect outside
@@ -422,12 +438,34 @@ impl<'p> Interp<'p> {
                 // `Exec` kind — only enforcement was coarse. Require an explicit
                 // `Exec` grant, so `IO` never implies spawn.
                 let requires_exec = cap == Some("exec");
+                // R28: append one capability-audit-ledger entry for this call when
+                // AXON_AUDIT_LEDGER is set and the operation exercises a ledger
+                // capability class. `ai_complete` is excluded: it already logs a richer
+                // entry (with the prompt's SHA-256) via `append_ai_call` at its own
+                // call site further below — this generic hook would otherwise
+                // double-log it.
+                //
+                // MOVED ABOVE THE SANDBOX BLOCK. The comment here used to say "logged
+                // before dispatch ... so it records the attempt even if the call itself
+                // later errors", and it sat BELOW two `return Err(SandboxViolation)`
+                // paths — so a DENIED call returned before ever reaching it.
+                //
+                // REPRODUCED with sandbox_scope_net.ax under AXON_AUDIT_LEDGER: the
+                // permitted `sandbox_run` produced a row and the refused `http_get`
+                // produced none. The ledger recorded what was ALLOWED and dropped what
+                // was BLOCKED — the inverse of what a security review opens it for, and
+                // an attacker's denied probes were the only events guaranteed absent.
+                //
+                // The verdict is carried in the operation field rather than a new
+                // column so the on-disk format and its hash chain are unchanged; a
+                // reader greps `denied:` and an existing reader is unaffected.
                 let extra: &[&str] = if requires_exec { &["Exec"] } else { &[] };
                 if !effects.is_empty() || requires_exec {
                     let sbs = self.sandboxes.borrow();
                     if let Some(sb) = sbs.get(sb_handle as usize) {
                         for &eff in effects.iter().chain(extra) {
                             if !sb.allowed.contains(eff) {
+                                audit(self, true);
                                 return Err(crate::interp::Flow::SandboxViolation(format!(
                                     "builtin `{op_name}` requires effect `{eff}` which is not \
                                      in the active sandbox's allowed set {:?} \
@@ -441,6 +479,7 @@ impl<'p> Interp<'p> {
                         // "may write ./out/", not "may write somewhere".
                         if let Some(args) = scope_args {
                             if let Some(v) = scope_violation(op_name, args, sb) {
+                                audit(self, true);
                                 return Err(crate::interp::Flow::SandboxViolation(v));
                             }
                         }
@@ -449,20 +488,7 @@ impl<'p> Interp<'p> {
             }
         }
 
-        // R28: append one capability-audit-ledger entry for this call when
-        // AXON_AUDIT_LEDGER is set and the operation exercises a ledger
-        // capability class. Logged before dispatch (same precedent as the F3
-        // agent-action log above) so it records the attempt even if the call
-        // itself later errors. `ai_complete` is excluded: it already logs a
-        // richer entry (with the prompt's SHA-256) via `append_ai_call` at its
-        // own call site further below — this generic hook would otherwise
-        // double-log it.
-        if op_name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
-            if let Some(kind) = ledger_kind {
-                let principal = self.current_principal_name();
-                let _ = axon_audit::append_global(&principal, kind, op_name);
-            }
-        }
+        audit(self, false);
 
         Ok(())
     }
