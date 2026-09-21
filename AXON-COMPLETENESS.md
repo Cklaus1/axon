@@ -199,7 +199,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 25 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 26 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -375,4 +375,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The guard asks whether a NAME is spelled, not whether a read is filtered. `Store::open_for_write` is unfiltered by design and invisible to it, and was used on 5 of the CLI's 8 read paths. `--as bob diff --json` returned another principal's records while the guard was green.
 - **Reproduced:** Two-principal ledger, rbac.json admins=[alice]: `--as bob stats` -> 1 record (filtered), `--as bob diff --json` -> 2 records incl. ALICE-SECRET payload.
 - **Fix:** All 10 CLI read sites routed through a single filtered handle (Store::open_as), replacing 3 remembered-to-filter call sites and 5 that did not; added read_commands_filter.rs, an equivalence oracle (a member's output on a 2-principal ledger must equal their output on a ledger holding only their own records), mutation-verified 10/10. The naming grep is retained as a structural tripwire with its true scope documented: it caught 0 of those 10. (`27d0980`)
+
+### FG-026 — crates/axon-core/src/capabilities.rs (security, fixed)
+
+- **Claimed:** `@[contained]`, the scoped sandbox, the ambient effect ceiling, `@[pure]` and the host journal each report on what a call costs, and all reported the durable store as costing nothing.
+- **Reality:** `dstore_open`/`dstore_apply`/`dstore_clear` call `std::fs` directly and appeared in NEITHER `classify_call` NOR `builtin_effect_row`, so every mechanism was told they were pure. The two existing cross-table guards ask table-vs-table questions ('a Net/Exec row gets classified', 'a classified builtin declares a row') and are both blind to a builtin missing from both.
+- **Reproduced:** FIVE bypasses, each measured: (1) @[contained(fs: [], net: [], exec: none)] -> axon check exit 0 and the run wrote $XDG_CACHE_HOME/axon/stores/pwned.ndjson; (2) AXON_ALLOWED_EFFECTS=Pure -> exit 0, file written; (3) sandbox_create_scoped(p,"IO","","","") with fs_write deny-all -> exit 0, file written; (4) AXON_RECORD -> 0-line journal, a run that wrote a file indistinguishable from one that touched nothing; (5) @[pure] -> check exit 0, file written (found by the existing builtin_effect_row_agrees_with_impurity test, not by me).
+- **Fix:** Added IoKind::DurableStore (not FsRead/FsWrite: the argument is a store key, so `fs: [read("k")]` would name one thing and permit a write to stores/k.ndjson) with an honest E1001; classified in builtin_effect_row and is_impure_builtin; the runtime scope check now asks the scope about the REAL store directory, which is knowable at run time though not at check time; the journal bypass stays exempt (it needs `file_remove` on AxonHost, a TCB decision reserved for a person, R42 Section 9 Q3) but is no longer SILENT — refused under AXON_REPLAY, warned once under AXON_RECORD. Guard: tests/builtin_impl_matches_classification.rs derives the premise from the INTERPRETER SOURCE rather than a table, requiring any builtin whose match arm reaches std::fs/std::process/stdin to be classified; verified to fail, naming all three, when the classification is removed. 5 regression tests, 3 mutations caught. (`64765cf`)
 
