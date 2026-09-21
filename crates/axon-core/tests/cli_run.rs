@@ -3063,6 +3063,10 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
         ("copy write side", "sandbox_scope_copy.ax"),
         // file_copy: arg 0 is a READ, checked against fs_read independently.
         ("copy read side", "sandbox_scope_copy_read.ax"),
+        // A native module's connect carries its host in an argument. The
+        // runtime passed no scope args at all for native calls, so the net
+        // allowlist did not apply to them.
+        ("native net host", "sandbox_scope_native_net.ax"),
     ] {
         let out = axon()
             .args(["run", &fixture(fixture_name)])

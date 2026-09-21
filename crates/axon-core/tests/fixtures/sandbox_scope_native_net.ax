@@ -1,0 +1,32 @@
+// SECURITY. A `native::` module escaped the runtime sandbox's net allowlist.
+//
+// The STATIC @[contained] checker knew `modbus_connect`'s first argument is the
+// host (`native_net_host`). The RUNTIME passed `scope_args: None` to
+// `pre_effect_gate`, with a comment asserting "native arguments are handles and
+// scalars, with no path or host" — false for `modbus_connect(host, port)` and
+// `fhir_connect(base_url)`. And `scope_violation`'s net branch keyed on
+// `capability_of_builtin(name) == Some("net")`, which returns None for a native
+// module whose capability label is "modbus".
+//
+// Reproduced before the fix: `http_get` to an out-of-scope host was refused
+// exit 8, while modbus_connect to the same host reached the OS and panicked
+// with "Connection refused (os error 111)" — the OS answering proves the dial
+// happened.
+//
+// Same shape as the file_copy escape: the correct table existed and one entry
+// point consulted a weaker one.
+//
+// Expected: exit 8, naming the host.
+use native::modbus
+@[contained(modbus: any, net: ["127.0.0.1"])]
+fn job(x: i64) -> i64 {
+    let _h = modbus::modbus_connect("127.0.0.1", 15502)
+    println("ESCAPED: reached a host outside the runtime net scope")
+    0
+}
+fn main() {
+    let p = principal_root("p", true, false, false, 100)
+    let sb = sandbox_create_scoped(p, "Net", "", "", "api.trusted.io")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}

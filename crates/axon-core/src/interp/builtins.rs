@@ -159,6 +159,11 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
     // Net: either the first arg IS the host/URL (http_*), or the host is
     // implicit and fixed (the AI builtins reach the Anthropic endpoint).
     if let Some(allow) = sb.scope.net.as_deref() {
+        // A native-module connect carries its host in an argument too. This
+        // branch keyed ONLY on `capability_of_builtin(name) == Some("net")`,
+        // which returns None for `modbus_connect` — the module's capability
+        // label is "modbus", not "net" — so the native dial was never checked.
+        let native_idx = caps::native_net_host_arg(name);
         let host = match caps::ai_builtin_host(name) {
             Some(h) => Some(h.to_string()),
             None if caps::capability_of_builtin(name) == Some("net") => match args.first() {
@@ -168,7 +173,13 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
                 // exists to stop.
                 _ => Some(String::from("<dynamic>")),
             },
-            None => None,
+            None => match native_idx {
+                Some(i) => match args.get(i) {
+                    Some(Value::Str(s)) => Some(caps::host_of(s)),
+                    _ => Some(String::from("<dynamic>")),
+                },
+                None => None,
+            },
         };
         if let Some(h) = host {
             if !allow.iter().any(|g| caps::host_matches_glob(&h, g)) {

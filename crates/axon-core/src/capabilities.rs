@@ -1292,16 +1292,43 @@ fn check_net_host(
 /// against the `net` allowlist — reusing the existing host-pinning mechanism.
 /// Returns the host string for such a call (the first str arg, with any
 /// `scheme://` and `:port/path` stripped for a base-URL form), else `None`.
-fn native_net_host(name: &str, args: &[Expr]) -> Option<String> {
+/// Which argument of a native call carries a constrainable HOST, if any.
+///
+/// `pub(crate)` so the RUNTIME sandbox and the static `@[contained]` checker
+/// consult the SAME knowledge. They did not: the static side had this rule and
+/// the runtime passed `scope_args: None` with a comment asserting "native
+/// arguments are handles and scalars, with no path or host" — false for
+/// `modbus_connect(host, port)` and `fhir_connect(base_url)`, whose first
+/// parameter is exactly that.
+///
+/// REPRODUCED under `sandbox_create_scoped(p, "Net", "", "", "api.trusted.io")`:
+/// `http_get` to an out-of-scope host was refused with exit 8, while
+/// `native::modbus::modbus_connect("127.0.0.1", 15502)` reached the OS and
+/// panicked with "Connection refused (os error 111)" — the OS answering proves
+/// the dial happened.
+///
+/// Same shape as the `file_copy` escape (7a7c690): the correct table existed
+/// and one entry point consulted a weaker one. This is the shared table.
+pub(crate) fn native_net_host_arg(name: &str) -> Option<usize> {
     let (module, _nf) = crate::native::resolve_call(name)?;
     if !module.effects.contains(&"Net") {
         return None;
     }
-    // The host is the first `str` literal arg of a *connect* fn.
+    // The host is the first argument of a *connect* fn. `fhir_read`/
+    // `fhir_search` reach the host stored at connect time, so they are
+    // constrained transitively by the connect call — the same contract the
+    // static checker already uses, stated here rather than left implicit.
     if !name.ends_with("_connect") {
         return None;
     }
-    let lit = match args.first()? {
+    Some(0)
+}
+
+fn native_net_host(name: &str, args: &[Expr]) -> Option<String> {
+    let idx = native_net_host_arg(name)?;
+    let lit_arg = args.get(idx)?;
+    let _ = lit_arg;
+    let lit = match args.get(idx)? {
         Expr::Literal(crate::ast::Literal::Str(s)) => s.as_str(),
         // A dynamically-built host can't be statically verified → fail closed.
         _ => return Some(String::from("\u{0}dynamic")),

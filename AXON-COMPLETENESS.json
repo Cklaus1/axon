@@ -1707,6 +1707,17 @@
       "reproduced": "same manifest: `run` refused with exit 8 and no side effect; `replay` exited 0 and the side-effect file's mtime advanced",
       "fix": "authorization moved INTO supervisor::run \u2014 the point every execution path converges on, which already hosted the one check no caller could skip \u2014 and the decision is stamped on every record exit path; an older record reads `unknown`, never approved",
       "commit": "afeaa46"
+    },
+    {
+      "id": "FG-019",
+      "where": "crates/axon-core/src/interp/eval.rs",
+      "status": "fixed",
+      "severity": "security",
+      "claimed": "a scoped sandbox confines network access to its net allowlist",
+      "reality": "eval_native_call passed scope_args: None with a comment asserting native arguments carry no host \u2014 false for modbus_connect(host, port) and fhir_connect(base_url). And scope_violation's net branch keyed on capability_of_builtin(name)==Some(\"net\"), which is None for a module whose capability label is \"modbus\". So the allowlist did not apply to native dials at all",
+      "reproduced": "one sandbox scoped to api.trusted.io: http_get to 127.0.0.1 refused exit 8, while native::modbus::modbus_connect(\"127.0.0.1\", 15502) reached the OS and panicked with Connection refused (os error 111) \u2014 the OS answering proves the dial happened",
+      "fix": "native_net_host_arg is now a shared pub(crate) predicate consumed by BOTH the static checker and the runtime; a non-literal host fails closed",
+      "commit": "PENDING"
     }
   ]
 }

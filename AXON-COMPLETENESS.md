@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 17 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 18 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -315,4 +315,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** canonical_grant encoded 6 of Grant's 7 fields, omitting `reproducible`; canonical_manifest and to_axjob each re-listed the fields by hand and dropped `reproducible` AND `require_approval`. Three hand-written field lists over one struct, and they disagreed
 - **Reproduced:** two manifests differing only by profile hermetic vs restricted, one token copied byte-identically to both, BOTH verified. The restricted run then loaded operator-ambient code via AXON_PATH. Separately, flipping require_approval produced an IDENTICAL manifest_digest, and archiving dropped the profile so a replayed hermetic job ran under the ambient environment
 - **Fix:** one authority serialization, bound by EXHAUSTIVE DESTRUCTURING so a new field is a compile error; canonical_manifest delegates to it; to_axjob round-trips every field; parser accepts an explicit `reproducible` (`f5bb61d`)
+
+### FG-018 — crates/axon-os/src/supervisor.rs (security, fixed)
+
+- **Claimed:** a job that sets require_approval = true cannot run without a valid sign-off token
+- **Reality:** the approval gate lived in cmd_run, so `axon-os replay` reached supervisor::run by a different route and performed no approval check at all; the public axon_os::supervise re-export was a third route with no gate whatsoever. RunRecord also carried no approval field, so an authorized and an unauthorized execution archived identically
+- **Reproduced:** same manifest: `run` refused with exit 8 and no side effect; `replay` exited 0 and the side-effect file's mtime advanced
+- **Fix:** authorization moved INTO supervisor::run — the point every execution path converges on, which already hosted the one check no caller could skip — and the decision is stamped on every record exit path; an older record reads `unknown`, never approved (`afeaa46`)
 

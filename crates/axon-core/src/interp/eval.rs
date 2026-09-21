@@ -723,14 +723,33 @@ impl<'p> Interp<'p> {
         // (`effects: &["Net"]`) are gated by the same call — a second gate at a
         // second site is how this class recurs.
         //
-        // `scope_args: None`: native arguments are handles and scalars, with no
-        // path or host for the T3 scope check to constrain.
+        // The evaluated arguments ARE passed, because the comment that used to
+        // sit here — "native arguments are handles and scalars, with no path or
+        // host" — was false. `modbus_connect(host, port)` and
+        // `fhir_connect(base_url)` take the target as their first parameter,
+        // and passing `None` meant `scope_violation` was never consulted, so a
+        // sandbox's `net` allowlist did not apply to native dials at all.
+        // Build the scope argument from the host LITERAL. The gate runs before
+        // argument evaluation on purpose — evaluating them first would let an
+        // argument's side effects happen before the check — so a dynamically
+        // computed host cannot be read here. That case passes a marker the
+        // scope check cannot match, which FAILS CLOSED, mirroring the static
+        // checker's own treatment of a non-literal host.
+        let scope_host: Option<Vec<Value>> = crate::capabilities::native_net_host_arg(qualified)
+            .map(|idx| {
+                let mut v = vec![Value::Unit; idx + 1];
+                v[idx] = match args.get(idx) {
+                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(sl.clone()),
+                    _ => Value::Str(String::from("<dynamic>")),
+                };
+                v
+            });
         self.pre_effect_gate(
             qualified,
             module.effects,
             Some(module.capability),
             native_ledger_kind(module.effects),
-            None,
+            scope_host.as_deref(),
         )?;
         // R22: the domain-interop modules (`modbus`/`fhir`/`fix`) marshal through
         // a richer DomainArg/DomainValue layer (str + [i64] returns), so they
