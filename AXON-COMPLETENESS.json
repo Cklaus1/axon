@@ -1788,7 +1788,7 @@
       "reality": "`policy.is_some()` answered a SYNTAX question (did a body deserialize) and was used to answer a SEMANTIC one (is a policy active). Every MmdsPayload field is Option, so `{}` parsed to an all-None payload, took the Apply branch, set NO env var and never called apply_seccomp \u2014 the guest booted with no effect ceiling, no token cap and no seccomp while the boot log said a policy had been applied",
       "reproduced": "parse-level: `{}`, an all-null body and an unknown-fields-only body all deserialize to Some(all None)",
       "fix": "have_policy is derived from CONTENT \u2014 at least one of the three ENFORCED fields must be present; labels (principal/run_id/source_hash) cannot rescue an empty policy; per-mechanism warnings when an active policy omits one; malformed JSON reported as malformed rather than unavailable",
-      "commit": "PENDING"
+      "commit": "8877cb3"
     }
   ]
 }

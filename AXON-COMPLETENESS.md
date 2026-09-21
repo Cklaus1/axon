@@ -115,7 +115,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**55 controls tracked; 22 engine states unknown or silently-ignored.**
+**56 controls tracked; 23 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -132,6 +132,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_REPLAY` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_SEED` | determinism | ✓ | ✓ | **IGNORED** | ✓ | native-closed |
 | `axon-signal.http-caller-identity` | serving/authority | **?** | **?** | **?** | **?** | open |
+| `guest.policy-delivery-default-backend` | authorization/effect-ceiling | n/a | n/a | n/a | **?** | open |
 | `reflex.principal-isolation` | serving/authority | **?** | **?** | **?** | **?** | open |
 | `AXON_AI_MODEL_CHEAP` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
 | `AXON_AI_MODEL_STRONG` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
@@ -190,6 +191,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_TEE_MEASUREMENT`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`reflex.principal-isolation`** — DEMOTED after adversarial review — the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing "principal":"alice"; (b) duplicate `principal` keys are accepted last-wins — the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly.
 - **`axon-signal.http-caller-identity`** — The dashboard's RBAC filter calls resolve_caller(None), which reads the SERVER's AXON_PRINCIPAL — not the request's. Every HTTP caller therefore sees the OPERATOR's view. Filtering reads is not authenticating an endpoint, and this endpoint has no caller identity to authenticate. Network exposure is closed (loopback, no wildcard CORS); per-caller authorization is NOT.
+- **`guest.policy-delivery-default-backend`** — axon-guest-init is compiled into the guest image ONLY for AXON_KERNEL_BACKEND=linux. The DEFAULT backend (axon-guest-kernel) writes a stub /init that execs `axon run` directly and never invokes guest-init at all, delivering policy by kernel cmdline (axon.policy=<base64>) and enforcing it in-kernel instead. So FG-023 hardens the non-default path only. The kernel parser appears to fail closed on every failure mode it handles (set_closed_policy, EffectSet(0) default), but whether a syntactically-valid-but-EMPTY axon.policy={} reaches the same conclusion is UNTRACED — the analogous defect in the analogous parser.
 
 ## False greens
 
@@ -197,7 +199,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 22 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 23 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -352,4 +354,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** the dashboard bound 0.0.0.0 with Access-Control-Allow-Origin: * on all three JSON responses and served every engineer's session goals and scores to a caller supplying no identity at all. Binding loopback closes the network half; the wildcard CORS header is the worse half ON loopback, because it hands the endpoint to every page the operator's own browser visits
 - **Reproduced:** curl against /api/score with no identity returned both engineers' records
 - **Fix:** bound to 127.0.0.1 (matching axon-web), all three CORS wildcards removed; the dashboard serves its own HTML from this origin and needs none (`12a0e52`)
+
+### FG-023 — crates/axon-guest-init/src/main.rs (security, fixed)
+
+- **Claimed:** a capability policy was loaded and applied to the guest
+- **Reality:** `policy.is_some()` answered a SYNTAX question (did a body deserialize) and was used to answer a SEMANTIC one (is a policy active). Every MmdsPayload field is Option, so `{}` parsed to an all-None payload, took the Apply branch, set NO env var and never called apply_seccomp — the guest booted with no effect ceiling, no token cap and no seccomp while the boot log said a policy had been applied
+- **Reproduced:** parse-level: `{}`, an all-null body and an unknown-fields-only body all deserialize to Some(all None)
+- **Fix:** have_policy is derived from CONTENT — at least one of the three ENFORCED fields must be present; labels (principal/run_id/source_hash) cannot rescue an empty policy; per-mechanism warnings when an active policy omits one; malformed JSON reported as malformed rather than unavailable (`8877cb3`)
 
