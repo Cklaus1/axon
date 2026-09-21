@@ -86,9 +86,20 @@ fn assert_invariant(b: &mut dyn ReflexBackend) -> &'static str {
     let ok = b
         .decide(&h, "q", &alice)
         .unwrap_or_else(|e| panic!("[{mode}] the owning principal must be served, got {e}"));
+    // The previous assertion here compared `ok.principal` to "alice" — the
+    // literal that produced it — and was VACUOUS in all three modes: the client
+    // stamped the caller's own scope onto the result, so no mutation of the
+    // authority core, the wire, or the server could make it fail. Assert the
+    // SERVER-DERIVED content instead: `choice` is computed by the core and
+    // cannot be manufactured from the request.
+    assert_eq!(
+        ok.choice, "decided(q)",
+        "[{mode}] the decision must carry the backend's computed choice, not a \
+         value the client manufactured from its own request"
+    );
     assert_eq!(
         ok.principal, "alice",
-        "[{mode}] the decision must be attributed to the principal it was made under"
+        "[{mode}] attribution must match the principal the backend stated"
     );
 
     // THE INVARIANT: another principal presenting the same handle.
@@ -159,21 +170,21 @@ fn principal_isolation_holds_in_remote_service_mode() {
 /// absent-vs-verified collapse the per-mode split exists to prevent.
 #[test]
 fn every_deployment_mode_has_an_isolation_test() {
-    let tested = ["embedded", "local-sidecar", "remote-service"];
-    let declared = [Mode::Embedded, Mode::LocalSidecar, Mode::RemoteService];
-    for m in declared {
-        assert!(
-            tested.contains(&m.name()),
-            "mode `{}` is declared but has no principal-isolation test",
-            m.name()
-        );
-    }
+    // Derived from `Mode::all()`, which is an exhaustive `match` — adding a
+    // variant fails to COMPILE rather than silently leaving a mode untested.
+    // The previous version listed the modes as a hand-written literal beside a
+    // doc comment promising that a fourth mode could not slip through, which is
+    // exactly what it could not prevent.
     let src = include_str!("principal_isolation.rs");
-    for t in tested {
-        let fn_name = format!("principal_isolation_holds_in_{}_mode", t.replace('-', "_"));
+    for m in Mode::all() {
+        let fn_name = format!(
+            "fn principal_isolation_holds_in_{}_mode",
+            m.name().replace('-', "_")
+        );
         assert!(
             src.contains(&fn_name),
-            "no test named `{fn_name}` — a mode listed as covered must have a test that runs it"
+            "mode `{}` is declared by the enum but has no test named `{fn_name}`",
+            m.name()
         );
     }
 }
@@ -194,14 +205,20 @@ fn an_unknown_handle_is_a_miss_and_not_an_authority_violation() {
     }
 }
 
-/// The refusal must not leak whether a handle exists at all.
+/// The two refusals ARE distinguishable, and that is a deliberate trade-off.
 ///
-/// Ownership is checked AFTER existence on purpose: if ownership were checked
-/// first, `CrossPrincipal` versus `UnknownState` would tell a caller whether
-/// another principal holds a given id, turning the refusal into an oracle for
-/// other principals' state.
+/// This test was previously named "a refusal does not become an oracle" while
+/// its body asserted that the oracle exists — a name a grep would report as a
+/// property nobody has. Both orderings of the existence and ownership checks
+/// yield two distinguishable refusals, so the ordering rationale that used to
+/// sit in `lib.rs` was simply wrong and has been removed.
+///
+/// What is true: ids are sequential and global across principals, so a caller
+/// can enumerate them and learn which exist and who owns each, because the
+/// refusal carries `owner`. That is the price of an auditable refusal, and it
+/// is stated here rather than denied.
 #[test]
-fn a_refusal_does_not_become_an_oracle_for_another_principals_state() {
+fn a_cross_principal_refusal_names_the_owner_and_is_therefore_an_existence_oracle() {
     let mut b = EmbeddedBackend::new();
     let alice = PrincipalScope::new("alice");
     let mallory = PrincipalScope::new("mallory");

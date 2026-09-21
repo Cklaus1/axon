@@ -17,6 +17,12 @@ publish = false
 # using the untyped API keeps it that way by construction.
 [dependencies]
 serde_json = "1"
+# `parse_strict` refuses DUPLICATE KEYS. Reusing it rather than re-deriving it:
+# this crate shipped with plain `serde_json::from_str`, and an adversarial review
+# reproduced the exact attack axon-cortex was hardened against —
+# {"principal":"mallory","principal":"alice"} served as alice, while a reviewer
+# reading the line left-to-right sees mallory.
+axon-cortex = { path = "../axon-cortex" }
 
 [lib]
 name = "axon_reflex"

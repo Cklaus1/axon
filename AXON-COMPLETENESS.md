@@ -115,7 +115,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**54 controls tracked; 36 engine states unknown or silently-ignored.**
+**54 controls tracked; 21 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -124,25 +124,24 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_AI_MOCK` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_AI_MODEL_BALANCED` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_AI_PROVIDER` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
-| `AXON_AI_REPLAY` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
-| `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | refused | **?** | **?** | native-closed |
-| `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
-| `AXON_BUDGET_TOKENS` | resource-budget | ✓ | refused | **?** | **?** | native-closed |
-| `AXON_CLOCK` | determinism | ✓ | ✓ | **?** | **?** | native-closed |
+| `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | refused | **IGNORED** | ✓ | native-closed |
+| `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_NATIVE_TRACE` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_PRINCIPAL` | replay/record/audit | ✓ | **IGNORED** | **?** | n/a | open |
-| `AXON_RECORD` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
-| `AXON_REPLAY` | replay/record/audit | ✓ | refused | **?** | **?** | native-closed |
-| `AXON_SEED` | determinism | ✓ | ✓ | **?** | **?** | native-closed |
-| `AXON_TEE_ENCLAVE` | approval/attestation | ✓ | **?** | **?** | **?** | open |
-| `AXON_TEE_MEASUREMENT` | approval/attestation | ✓ | **?** | **?** | **?** | open |
+| `AXON_RECORD` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
+| `AXON_REPLAY` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
+| `AXON_SEED` | determinism | ✓ | ✓ | **IGNORED** | ✓ | native-closed |
+| `reflex.principal-isolation` | serving/authority | **?** | **?** | **?** | **?** | open |
 | `AXON_AI_MODEL_CHEAP` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
 | `AXON_AI_MODEL_STRONG` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
+| `AXON_AI_REPLAY` | replay/record/audit | ✓ | refused | ✓ | ✓ | native-closed |
 | `AXON_ANDROID_API` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_ATTEST_KEY` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_AUDIT_DETERMINISTIC` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
 | `AXON_BIN` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_BUDGET_TOKENS` | resource-budget | ✓ | refused | ✓ | ✓ | native-closed |
 | `AXON_CI_NO_KVM` | launcher-side | n/a | n/a | n/a | n/a | resolved |
+| `AXON_CLOCK` | determinism | ✓ | ✓ | ✓ | ✓ | native-closed |
 | `AXON_CONFIG_DIR` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_CORTEX_GENERATOR_TIMEOUT_MS` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_DOTENV` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
@@ -163,6 +162,8 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_PROOF_TIMEOUT_MS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_REQUIRE_CERTS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_STRICT` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_TEE_ENCLAVE` | approval/attestation | ✓ | refused | ✓ | ✓ | open |
+| `AXON_TEE_MEASUREMENT` | approval/attestation | ✓ | refused | ✓ | ✓ | open |
 | `AXON_TEST_DOTENV_NEW` | test-fixture | n/a | n/a | n/a | n/a | resolved |
 | `AXON_TEST_DOTENV_VAR` | test-fixture | n/a | n/a | n/a | n/a | resolved |
 | `AXON_VM_ALLOWED_EFFECTS` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
@@ -172,7 +173,6 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_VM_TIMEOUT_SECS` | launcher-side | n/a | n/a | n/a | ✓ | resolved |
 | `AXON_VM_VSOCK_PORT` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
 | `AXON_WASM_RT` | launcher-side | n/a | n/a | n/a | n/a | resolved |
-| `reflex.principal-isolation` | serving/authority | **?** | **?** | **?** | **?** | resolved |
 
 ### Open control divergences
 
@@ -187,3 +187,4 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_PRINCIPAL`** — Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine.
 - **`AXON_TEE_ENCLAVE`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`AXON_TEE_MEASUREMENT`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
+- **`reflex.principal-isolation`** — DEMOTED after adversarial review — the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing "principal":"alice"; (b) duplicate `principal` keys are accepted last-wins — the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly.

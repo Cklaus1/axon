@@ -38,10 +38,24 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::ToSocketAddrs;
 
 /// Wire/protocol version. A client and a backend that disagree must refuse
 /// rather than guess at a shape.
 pub const PROTOCOL: &str = "axon-reflex/1";
+
+/// Maximum bytes in one request or response frame.
+///
+/// Matches `cortex-policy-adapter`'s `MAX_REQUEST`. Nothing bounded a payload
+/// before: the sidecar's line reader and the HTTP body reader both grew without
+/// limit, and `ReflexCore.states` never evicts while `encode` needs no
+/// authority at all.
+pub const MAX_FRAME: usize = 1 << 20;
+
+/// Wall-clock bound on a remote exchange. An unbounded blocking read turns a
+/// hung backend into a hung caller — in a test suite, an infinite hang rather
+/// than a failure.
+pub const REMOTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Deployment topology. NOT an execution engine — `interpreter` / `native` /
 /// `wasm` / `guest` are engines; these are places a backend runs. Conflating
@@ -55,6 +69,18 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// Every declared mode. The `match` is exhaustive on purpose: adding a
+    /// variant forces a compile error here, so a coverage guard built on this
+    /// cannot silently stop covering a mode. A hand-written list in the test
+    /// could not do that.
+    pub fn all() -> &'static [Mode] {
+        // Exhaustiveness is enforced by this match, not by the slice below.
+        const _: fn(Mode) = |m| match m {
+            Mode::Embedded | Mode::LocalSidecar | Mode::RemoteService => {}
+        };
+        &[Mode::Embedded, Mode::LocalSidecar, Mode::RemoteService]
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Mode::Embedded => "embedded",
@@ -188,10 +214,11 @@ impl ReflexCore {
 
     /// The invariant, in one place.
     ///
-    /// Note the ORDER: existence first, then ownership. Checking ownership
-    /// first would let a caller probe for handles belonging to others by
-    /// distinguishing the two refusals — the refusal must not become an oracle
-    /// for another principal's state.
+    /// Existence is checked before ownership. An earlier comment here claimed
+    /// this ordering prevented a probing oracle; it does not — both orders
+    /// yield two distinguishable refusals, and the refusal deliberately carries
+    /// `owner` so it is auditable. The trade-off is stated in the test rather
+    /// than denied here.
     fn authorize(&self, id: &str, caller: &str) -> Result<(), Refusal> {
         match self.states.get(id) {
             None => Err(Refusal::UnknownState { id: id.to_string() }),
@@ -278,13 +305,14 @@ impl ReflexBackend for EmbeddedBackend {
 
 // ── wire encoding, shared by sidecar and remote ─────────────────────────────
 
-pub fn encode_request(op: &str, id: &str, input: &str, principal: &str) -> String {
+pub fn encode_request(op: &str, id: &str, input: &str, principal: &str, req_id: u64) -> String {
     serde_json::json!({
         "protocol": PROTOCOL,
         "op": op,
         "id": id,
         "input": input,
         "principal": principal,
+        "req_id": req_id,
     })
     .to_string()
 }
@@ -295,7 +323,7 @@ pub fn encode_request(op: &str, id: &str, input: &str, principal: &str) -> Strin
 /// `CrossPrincipal` into a generic error, the sidecar and remote modes would
 /// report an authority violation as an infrastructure failure, and the
 /// invariant would hold only in the mode that needs it least.
-pub fn decode_response(line: &str) -> Result<serde_json::Value, Refusal> {
+pub fn decode_response(line: &str, expect_req_id: u64) -> Result<serde_json::Value, Refusal> {
     let v: serde_json::Value = serde_json::from_str(line.trim())
         .map_err(|e| Refusal::Protocol(format!("unparseable response: {e}")))?;
     match v.get("protocol").and_then(|p| p.as_str()) {
@@ -306,40 +334,58 @@ pub fn decode_response(line: &str) -> Result<serde_json::Value, Refusal> {
             )))
         }
     }
+    // CORRELATION. Without it `roundtrip` returns whatever line comes next, so
+    // one stray frame shifts every reply by one, permanently. Reproduced
+    // against an HONEST backend: the server refused, and the client reported
+    // Ok — mallory received a decision on alice's handle.
+    let got = v.get("req_id").and_then(|r| r.as_u64()).unwrap_or(0);
+    if got != expect_req_id {
+        return Err(Refusal::Transport(format!(
+            "response correlation mismatch: asked {expect_req_id}, got {got} — \
+             refusing to read another request's answer as this one's"
+        )));
+    }
     if let Some(r) = v.get("refusal") {
         let kind = r.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        let field = |n: &str| {
+            r.get(n)
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
         return Err(match kind {
             "cross_principal" => Refusal::CrossPrincipal {
-                owner: r
-                    .get("owner")
-                    .and_then(|o| o.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                caller: r
-                    .get("caller")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+                owner: field("owner"),
+                caller: field("caller"),
             },
-            "unknown_state" => Refusal::UnknownState {
-                id: r
-                    .get("id")
-                    .and_then(|i| i.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+            "unknown_state" => Refusal::UnknownState { id: field("id") },
+            // Preserved rather than collapsed — see encode_response_for.
+            "unsupported" => Refusal::Unsupported {
+                control: field("control"),
+                mode: "remote",
             },
+            "transport" => Refusal::Transport(field("detail")),
+            "protocol" => Refusal::Protocol(field("detail")),
             other => Refusal::Protocol(format!("unknown refusal kind `{other}`")),
         });
     }
     Ok(v)
 }
 
-/// Serialize a `Result` from the core into a response frame.
-pub fn encode_response(r: &Result<serde_json::Value, Refusal>) -> String {
+/// Serialize a `Result` into a response frame, echoing the correlation id.
+///
+/// EVERY `Refusal` variant gets an explicit arm. The previous catch-all emitted
+/// `{"kind":"other"}`, which the decoder's own catch-all turned into
+/// `Refusal::Protocol` — so `Unsupported` and `Transport` arrived as protocol
+/// errors. A transport failure reaching a client as a protocol error is the
+/// infra-versus-decision mislabelling this crate claims to guard against, and a
+/// supervisor retries protocol errors.
+pub fn encode_response_for(req_id: u64, r: &Result<serde_json::Value, Refusal>) -> String {
     match r {
         Ok(v) => {
             let mut out = v.clone();
             out["protocol"] = serde_json::json!(PROTOCOL);
+            out["req_id"] = serde_json::json!(req_id);
             out.to_string()
         }
         Err(e) => {
@@ -350,45 +396,129 @@ pub fn encode_response(r: &Result<serde_json::Value, Refusal>) -> String {
                 Refusal::UnknownState { id } => {
                     serde_json::json!({ "kind": "unknown_state", "id": id })
                 }
-                other => serde_json::json!({ "kind": "other", "detail": other.to_string() }),
+                Refusal::Unsupported { control, mode } => serde_json::json!({
+                    "kind": "unsupported", "control": control, "mode": mode,
+                }),
+                Refusal::Transport(d) => {
+                    serde_json::json!({ "kind": "transport", "detail": d })
+                }
+                Refusal::Protocol(d) => {
+                    serde_json::json!({ "kind": "protocol", "detail": d })
+                }
             };
-            serde_json::json!({ "protocol": PROTOCOL, "refusal": refusal }).to_string()
+            serde_json::json!({
+                "protocol": PROTOCOL, "req_id": req_id, "refusal": refusal
+            })
+            .to_string()
         }
     }
+}
+
+/// Back-compat shim for callers with no correlation id.
+pub fn encode_response(r: &Result<serde_json::Value, Refusal>) -> String {
+    encode_response_for(0, r)
 }
 
 /// Run one request against a core. Shared by the sidecar binary and the
 /// remote test server so the authority check cannot differ between them.
 pub fn serve_one(core: &mut ReflexCore, line: &str) -> String {
-    let req: serde_json::Value = match serde_json::from_str(line.trim()) {
+    // STRICT parse. Plain `serde_json::from_str` accepts DUPLICATE KEYS and
+    // takes the last — reproduced against this very binary:
+    //   {"op":"decide","id":"st-1","principal":"mallory","principal":"alice"}
+    // was served as alice, while a reviewer reading left-to-right sees mallory.
+    // `axon-cortex` was hardened against exactly this and this crate
+    // re-introduced it by parsing loosely.
+    let req: serde_json::Value = match axon_cortex::parse_strict(line.trim()) {
         Ok(v) => v,
         Err(e) => {
-            return encode_response(&Err(Refusal::Protocol(format!("bad request: {e}"))));
+            return encode_response_for(0, &Err(Refusal::Protocol(format!("bad request: {e:?}"))))
         }
     };
+    // The correlation id is echoed on EVERY reply including refusals, so a
+    // client can tell whose answer it is holding.
+    let req_id = req.get("req_id").and_then(|r| r.as_u64()).unwrap_or(0);
+    // The request's protocol tag is CHECKED. It was validated on responses only,
+    // so a client speaking a future dialect was served by an old backend that
+    // silently guessed at the shape — the one direction the doc promised.
+    match req.get("protocol").and_then(|p| p.as_str()) {
+        Some(PROTOCOL) => {}
+        other => {
+            return encode_response_for(
+                req_id,
+                &Err(Refusal::Protocol(format!(
+                    "request declares protocol {other:?}, this backend speaks {PROTOCOL}"
+                ))),
+            )
+        }
+    }
     let op = req.get("op").and_then(|o| o.as_str()).unwrap_or("");
     let id = req.get("id").and_then(|i| i.as_str()).unwrap_or("");
     let input = req.get("input").and_then(|i| i.as_str()).unwrap_or("");
-    let principal = req
-        .get("principal")
-        .and_then(|p| p.as_str())
-        .unwrap_or("")
-        .to_string();
-    let scope = PrincipalScope::new(principal);
+    // A request that names NO principal is refused, not served under "".
+    // Reproduced: `null`, `42`, an object and an omitted field all collapsed to
+    // the empty principal, which is a SHARED namespace — four different
+    // malformed callers decided as one another and could read each other's
+    // handles with no refusal.
+    let principal = match req.get("principal").and_then(|p| p.as_str()) {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => {
+            return encode_response_for(
+                req_id,
+                &Err(Refusal::Protocol(
+                    "request names no principal; refusing to serve it under the \
+                 anonymous principal, which is a shared namespace"
+                        .into(),
+                )),
+            )
+        }
+    };
+    let scope = PrincipalScope::new(principal.clone());
     let out = match op {
         "encode" => {
             let h = core.encode_state(input, &scope);
             Ok(serde_json::json!({ "id": h.id, "principal": h.principal }))
         }
+        // The server states the principal it decided under. The client no longer
+        // stamps its own (see SidecarBackend::decide).
         "decide" => core
             .decide(id, input, &scope)
             .map(|d| serde_json::json!({ "choice": d.choice, "principal": d.principal })),
         "release" => core
             .release_state(id, &scope)
-            .map(|_| serde_json::json!({ "released": true })),
+            .map(|_| serde_json::json!({ "released": true, "principal": principal })),
         other => Err(Refusal::Protocol(format!("unknown op `{other}`"))),
     };
-    encode_response(&out)
+    encode_response_for(req_id, &out)
+}
+
+/// Read a field the BACKEND stated, refusing when it is absent.
+///
+/// The previous code used `unwrap_or_default()` and then stamped the caller's
+/// own scope over the result, so a content-free frame `{"protocol":"…"}` became
+/// `Ok(Decision { choice: "", principal: "alice" })` — a successful decision
+/// manufactured from a reply that decided nothing. An audit reading that
+/// response learns only what the caller asserted.
+fn stated(v: &serde_json::Value, field: &str) -> Result<String, Refusal> {
+    match v.get(field).and_then(|x| x.as_str()) {
+        Some(s) if !s.is_empty() => Ok(s.to_string()),
+        _ => Err(Refusal::Protocol(format!(
+            "backend reply states no `{field}`; refusing to manufacture one \
+             from the request"
+        ))),
+    }
+}
+
+/// The backend must agree about who it decided for.
+fn agree_principal(stated_p: &str, scope: &PrincipalScope) -> Result<(), Refusal> {
+    if stated_p == scope.principal {
+        Ok(())
+    } else {
+        Err(Refusal::Protocol(format!(
+            "backend decided for `{stated_p}` but the request was made under \
+             `{}` — refusing to attribute it to the caller",
+            scope.principal
+        )))
+    }
 }
 
 // ── LocalSidecar ────────────────────────────────────────────────────────────
@@ -400,6 +530,9 @@ pub struct SidecarBackend {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
     stdout: BufReader<std::process::ChildStdout>,
+    /// Monotonic correlation id. Frames without one let a single stray line
+    /// shift every subsequent reply by one, permanently.
+    next_req: u64,
 }
 
 impl SidecarBackend {
@@ -424,22 +557,36 @@ impl SidecarBackend {
             child,
             stdin,
             stdout,
+            next_req: 0,
         })
     }
 
-    fn roundtrip(&mut self, req: &str) -> Result<serde_json::Value, Refusal> {
+    fn roundtrip(&mut self, build: impl Fn(u64) -> String) -> Result<serde_json::Value, Refusal> {
+        self.next_req += 1;
+        let id = self.next_req;
+        let req = build(id);
+        if req.len() > MAX_FRAME {
+            return Err(Refusal::Protocol(format!(
+                "request of {} bytes exceeds the {MAX_FRAME}-byte frame bound",
+                req.len()
+            )));
+        }
         writeln!(self.stdin, "{req}").map_err(|e| Refusal::Transport(e.to_string()))?;
         self.stdin
             .flush()
             .map_err(|e| Refusal::Transport(e.to_string()))?;
+        // BOUNDED read. `read_line` is unbounded and blocking: a backend that
+        // accepts a request and then hangs blocks the caller forever, which in
+        // a test suite is an infinite hang rather than a failure.
         let mut line = String::new();
-        self.stdout
+        (&mut self.stdout)
+            .take(MAX_FRAME as u64)
             .read_line(&mut line)
             .map_err(|e| Refusal::Transport(e.to_string()))?;
         if line.is_empty() {
             return Err(Refusal::Transport("sidecar closed the stream".into()));
         }
-        decode_response(&line)
+        decode_response(&line, id)
     }
 }
 
@@ -459,14 +606,14 @@ impl ReflexBackend for SidecarBackend {
         input: &str,
         scope: &PrincipalScope,
     ) -> Result<StateHandle, Refusal> {
-        let v = self.roundtrip(&encode_request("encode", "", input, &scope.principal))?;
+        let p = scope.principal.clone();
+        let inp = input.to_string();
+        let v = self.roundtrip(move |rid| encode_request("encode", "", &inp, &p, rid))?;
+        let owner = stated(&v, "principal")?;
+        agree_principal(&owner, scope)?;
         Ok(StateHandle {
-            id: v
-                .get("id")
-                .and_then(|i| i.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            principal: scope.principal.clone(),
+            id: stated(&v, "id")?,
+            principal: owner,
         })
     }
     fn decide(
@@ -475,19 +622,15 @@ impl ReflexBackend for SidecarBackend {
         question: &str,
         scope: &PrincipalScope,
     ) -> Result<Decision, Refusal> {
-        let v = self.roundtrip(&encode_request(
-            "decide",
-            &handle.id,
-            question,
-            &scope.principal,
-        ))?;
+        let p = scope.principal.clone();
+        let q = question.to_string();
+        let hid = handle.id.clone();
+        let v = self.roundtrip(move |rid| encode_request("decide", &hid, &q, &p, rid))?;
+        let principal = stated(&v, "principal")?;
+        agree_principal(&principal, scope)?;
         Ok(Decision {
-            choice: v
-                .get("choice")
-                .and_then(|c| c.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            principal: scope.principal.clone(),
+            choice: stated(&v, "choice")?,
+            principal,
         })
     }
     fn release_state(
@@ -495,12 +638,22 @@ impl ReflexBackend for SidecarBackend {
         handle: &StateHandle,
         scope: &PrincipalScope,
     ) -> Result<(), Refusal> {
-        self.roundtrip(&encode_request("release", &handle.id, "", &scope.principal))?;
+        let p = scope.principal.clone();
+        let hid = handle.id.clone();
+        // The reply was previously discarded and `Ok(())` returned for ANY
+        // non-refusal frame. Release is authority-bearing, so a backend that
+        // released nothing reported success.
+        let v = self.roundtrip(move |rid| encode_request("release", &hid, "", &p, rid))?;
+        if v.get("released").and_then(|r| r.as_bool()) != Some(true) {
+            return Err(Refusal::Protocol(
+                "backend did not confirm the release; refusing to report success".into(),
+            ));
+        }
         Ok(())
     }
 }
 
-// ── RemoteService ───────────────────────────────────────────────────────────
+// ── RemoteService ──// ── RemoteService ───────────────────────────────────────────────────────────
 
 /// A hosted service over HTTP/1.1.
 ///
@@ -513,17 +666,41 @@ impl ReflexBackend for SidecarBackend {
 /// is a dozen lines with no ambiguity about what is on the wire.
 pub struct RemoteBackend {
     addr: String,
+    next_req: u64,
 }
 
 impl RemoteBackend {
     pub fn new(addr: impl Into<String>) -> Self {
-        Self { addr: addr.into() }
+        Self {
+            addr: addr.into(),
+            next_req: 0,
+        }
     }
 
-    fn roundtrip(&mut self, req: &str) -> Result<serde_json::Value, Refusal> {
+    fn roundtrip(&mut self, build: impl Fn(u64) -> String) -> Result<serde_json::Value, Refusal> {
         use std::net::TcpStream;
-        let mut s =
-            TcpStream::connect(&self.addr).map_err(|e| Refusal::Transport(e.to_string()))?;
+        self.next_req += 1;
+        let id = self.next_req;
+        let req = build(id);
+        if req.len() > MAX_FRAME {
+            return Err(Refusal::Protocol(format!(
+                "request of {} bytes exceeds the {MAX_FRAME}-byte frame bound",
+                req.len()
+            )));
+        }
+        let addrs: Vec<std::net::SocketAddr> = self
+            .addr
+            .to_socket_addrs()
+            .map_err(|e| Refusal::Transport(e.to_string()))?
+            .collect();
+        let sa = addrs
+            .first()
+            .ok_or_else(|| Refusal::Transport(format!("no address for {}", self.addr)))?;
+        let mut s = TcpStream::connect_timeout(sa, REMOTE_TIMEOUT)
+            .map_err(|e| Refusal::Transport(e.to_string()))?;
+        s.set_read_timeout(Some(REMOTE_TIMEOUT))
+            .and_then(|_| s.set_write_timeout(Some(REMOTE_TIMEOUT)))
+            .map_err(|e| Refusal::Transport(e.to_string()))?;
         let http = format!(
             "POST /reflex HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
              Content-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -534,13 +711,25 @@ impl RemoteBackend {
         s.write_all(http.as_bytes())
             .map_err(|e| Refusal::Transport(e.to_string()))?;
         let mut raw = String::new();
-        s.read_to_string(&mut raw)
+        s.take(MAX_FRAME as u64)
+            .read_to_string(&mut raw)
             .map_err(|e| Refusal::Transport(e.to_string()))?;
+        // THE STATUS LINE IS READ. It was ignored entirely, so a
+        // `500 Internal Server Error` whose body happened to parse became a
+        // decision — reproduced. An infrastructure failure is not a decision.
+        let status_line = raw.lines().next().unwrap_or_default().to_string();
+        let code = status_line.split_whitespace().nth(1).unwrap_or("");
+        if code != "200" {
+            return Err(Refusal::Transport(format!(
+                "backend returned `{status_line}`; an HTTP failure is an \
+                 infrastructure failure, not a decision"
+            )));
+        }
         let body = raw
             .split_once("\r\n\r\n")
             .map(|(_, b)| b)
             .ok_or_else(|| Refusal::Transport("malformed HTTP response".into()))?;
-        decode_response(body)
+        decode_response(body, id)
     }
 }
 
@@ -553,14 +742,14 @@ impl ReflexBackend for RemoteBackend {
         input: &str,
         scope: &PrincipalScope,
     ) -> Result<StateHandle, Refusal> {
-        let v = self.roundtrip(&encode_request("encode", "", input, &scope.principal))?;
+        let p = scope.principal.clone();
+        let inp = input.to_string();
+        let v = self.roundtrip(move |rid| encode_request("encode", "", &inp, &p, rid))?;
+        let owner = stated(&v, "principal")?;
+        agree_principal(&owner, scope)?;
         Ok(StateHandle {
-            id: v
-                .get("id")
-                .and_then(|i| i.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            principal: scope.principal.clone(),
+            id: stated(&v, "id")?,
+            principal: owner,
         })
     }
     fn decide(
@@ -569,19 +758,15 @@ impl ReflexBackend for RemoteBackend {
         question: &str,
         scope: &PrincipalScope,
     ) -> Result<Decision, Refusal> {
-        let v = self.roundtrip(&encode_request(
-            "decide",
-            &handle.id,
-            question,
-            &scope.principal,
-        ))?;
+        let p = scope.principal.clone();
+        let q = question.to_string();
+        let hid = handle.id.clone();
+        let v = self.roundtrip(move |rid| encode_request("decide", &hid, &q, &p, rid))?;
+        let principal = stated(&v, "principal")?;
+        agree_principal(&principal, scope)?;
         Ok(Decision {
-            choice: v
-                .get("choice")
-                .and_then(|c| c.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            principal: scope.principal.clone(),
+            choice: stated(&v, "choice")?,
+            principal,
         })
     }
     fn release_state(
@@ -589,7 +774,14 @@ impl ReflexBackend for RemoteBackend {
         handle: &StateHandle,
         scope: &PrincipalScope,
     ) -> Result<(), Refusal> {
-        self.roundtrip(&encode_request("release", &handle.id, "", &scope.principal))?;
+        let p = scope.principal.clone();
+        let hid = handle.id.clone();
+        let v = self.roundtrip(move |rid| encode_request("release", &hid, "", &p, rid))?;
+        if v.get("released").and_then(|r| r.as_bool()) != Some(true) {
+            return Err(Refusal::Protocol(
+                "backend did not confirm the release; refusing to report success".into(),
+            ));
+        }
         Ok(())
     }
 }
