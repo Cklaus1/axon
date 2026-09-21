@@ -226,6 +226,7 @@ python3 scripts/completeness.py \
 bash scripts/gate_verdict_is_read.sh \
   || fail "a safety gate with no readable verdict is being scored as passed"
 
+
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build -p axon-core || fail "native build"
 
@@ -314,25 +315,38 @@ if [ -n "$_missing" ]; then
 fi
 echo "  ✓ all $(ls crates | wc -l) workspace crates are lint-gated or excused"
 
-# ORDERING IS DELIBERATE: the cheap checks above run BEFORE this one.
+# ORDERING, twice revised, and both revisions were driven by measurement.
 #
-# This stage takes the better part of an hour — it drives the wasm parity
-# harnesses, which serialize on a shared flock. It used to run FIRST, with
-# clippy behind it. Measured consequence: one gate run spent ~80 minutes and
-# then failed on a `manual_contains` lint; the next spent ~80 minutes and
-# failed on an `unused_variable`. Both were one-line fixes detectable in
-# seconds, and both invalidated everything the expensive stage had just
-# established, because a gate result is only as good as the run that produced
-# it.
+# This stage takes the better part of an hour, so it was moved BELOW the cheap
+# lint/boundary checks: two gate runs had spent ~80 minutes and then failed on
+# a one-line lint, invalidating everything the expensive stage established.
 #
-# Nothing here weakens the acceptance standard — every stage still runs and
-# still blocks. Only the order changed, so a cheap failure is reported cheaply.
+# But moving it below the NATIVE CODEGEN BUILD broke the parity stages, because
+# `cargo test -p axon-core --no-default-features` rebuilds `target/debug/axon`
+# WITHOUT codegen, overwriting the codegen-capable binary the later harnesses
+# need. Measured: `wasm_browser_io_parity: FAIL — $AXON has no codegen backend
+# (E0907)`. The harness refused to call that a skip, which is why it was
+# visible at all.
+#
+# So it sits here: after the cheap checks, before the codegen build that
+# restores the binary the parity stages consume. Nothing is weakened — every
+# stage still runs and still blocks; only the order changed.
 echo "── gate: tests (--no-default-features) ─────────────────────────────"
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
   cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
 else
   cargo test -p axon-core --no-default-features || fail "tests"
 fi
+
+# REBUILD the codegen binary. The stage above rebuilt `target/debug/axon`
+# WITHOUT codegen, and every parity harness below consumes that path. Measured
+# when this rebuild was absent: `wasm_browser_io_parity: FAIL — $AXON has no
+# codegen backend (E0907)`. The harness refused to call it a skip, which is the
+# only reason it was visible rather than a silent 14-harness gap.
+echo "── gate: restore the codegen binary after the no-default test stage ──"
+cargo build -q -p axon-core --bin axon || fail "codegen rebuild after tests"
+
+
 
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"
