@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 13 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 14 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -287,4 +287,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** `.any()` over all Verified events found an EARLIER superseded positive. Runner::verify asks about one hidden check; the ClaimDone branch re-asks over the whole file and is documented as authoritative over it
 - **Reproduced:** fixtures/pre_existing_failure.ax: outcome AdjudicatedNotClean (exit 27) with verified_ok() == true, event trace false/true/false
 - **Fix:** last Verified event wins, absent -> false. NOT .all(): an early failure then a later pass is genuinely verified. cxg_c28 built this state and never asserted the claim; it now does (`0c428c8`)
+
+### FG-014 — crates/axon-core/src/interp/builtins.rs (security, fixed)
+
+- **Claimed:** the capability audit ledger records the attempt even if the call later errors (its own comment)
+- **Reality:** the append sat BELOW both `return Err(SandboxViolation)` paths, so a DENIED call returned before reaching it. The ledger recorded what was ALLOWED and dropped what was BLOCKED — the inverse of what a security review opens it for, making an attacker's refused probes the one class of event guaranteed to leave no trace
+- **Reproduced:** sandbox_scope_net.ax under AXON_AUDIT_LEDGER produced exactly one row, `sandbox_run`; the refused `http_get` produced none
+- **Fix:** one writer used by both verdicts, hoisted above the sandbox block; denials recorded as `denied:<op>` so the on-disk format and hash chain are unchanged (`9ba7d07`)
 

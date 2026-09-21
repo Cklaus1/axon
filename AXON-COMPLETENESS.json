@@ -1662,7 +1662,7 @@
       "reality": "the append sat BELOW both `return Err(SandboxViolation)` paths, so a DENIED call returned before reaching it. The ledger recorded what was ALLOWED and dropped what was BLOCKED \u2014 the inverse of what a security review opens it for, making an attacker's refused probes the one class of event guaranteed to leave no trace",
       "reproduced": "sandbox_scope_net.ax under AXON_AUDIT_LEDGER produced exactly one row, `sandbox_run`; the refused `http_get` produced none",
       "fix": "one writer used by both verdicts, hoisted above the sandbox block; denials recorded as `denied:<op>` so the on-disk format and hash chain are unchanged",
-      "commit": "PENDING"
+      "commit": "9ba7d07"
     }
   ]
 }
