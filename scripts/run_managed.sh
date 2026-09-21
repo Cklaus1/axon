@@ -233,6 +233,26 @@ cmd_supervise() {
   # Never overwrite an explicit `cancelled`: the canceller's verdict is the
   # true one, and `wait` would otherwise report the signal as a plain exit.
   [ "$(cat "$dir/status")" = "cancelled" ] || echo "exited:$code" > "$dir/status"
+  # Release the containment scope. Only `cancel` used to do this, so every
+  # NORMALLY COMPLETING run leaked its cgroup — measured at 71 leaked
+  # directories, 71 of the 74 cgroups on the host, accumulating across
+  # sessions. The run directory on disk is the durable record; the cgroup is
+  # runtime scaffolding and has no reason to outlive the job.
+  #
+  # Ordering matters: the status file is written FIRST. If removal fails the
+  # result is already durable, and a leaked cgroup is a cleanup problem rather
+  # than a lost verdict.
+  case "$scope" in
+    cgroup:*)
+      # LEAVE the cgroup before removing it. The supervisor placed ITSELF
+      # inside it (so the child would be in it from birth), and a cgroup with
+      # live processes cannot be removed — the first version of this cleanup
+      # called rmdir while still a member and silently did nothing, leaving the
+      # leak exactly as it was. Moving back to the root cgroup empties it.
+      echo $BASHPID > /sys/fs/cgroup/cgroup.procs 2>/dev/null || true
+      rmdir "${scope#cgroup:}" 2>/dev/null || true
+      ;;
+  esac
 }
 
 case "${1:-}" in

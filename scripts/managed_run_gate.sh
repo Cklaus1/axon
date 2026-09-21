@@ -157,6 +157,27 @@ for _ in $(seq 1 100); do [ "$(cat "$D3C/status")" != running ] && break; sleep 
 for p in $(ps -eo pid,comm,args | awk -v d="$VICTIM_SLEEP" '$2=="sleep" && $4==d {print $1}'); do kill -9 "$p" 2>/dev/null; done
 rm -rf "$D3C"
 
+# ── 3d. a completed run releases its containment scope ─────────────────────
+# Only `cancel` used to release the cgroup, so every NORMALLY COMPLETING run
+# leaked one — measured at 71 leaked directories, 71 of the 74 cgroups on the
+# host, accumulating across sessions and surviving restarts. The first fix
+# called rmdir while the supervisor was still a member of the cgroup, which
+# silently does nothing; it has to leave first. Both halves are checked here
+# because the second failure mode looks exactly like success.
+CG_BEFORE=$(ls -d /sys/fs/cgroup/axon_run_* 2>/dev/null | wc -l)
+D3D=$("$RM" start gate_selftest_scope -- bash -c 'exit 0') || fail "start failed"
+for _ in $(seq 1 100); do [ "$(cat "$D3D/status")" != running ] && break; sleep 0.1; done
+[ "$(cat "$D3D/status")" = "exited:0" ] || fail "expected exited:0, got '$(cat "$D3D/status")'"
+CG_AFTER=$(ls -d /sys/fs/cgroup/axon_run_* 2>/dev/null | wc -l)
+# Only meaningful where cgroups are actually in use; on a host without them the
+# scope is a process group and there is nothing to leak.
+case "$(cat "$D3D/scope")" in
+  cgroup:*)
+    [ "$CG_AFTER" -le "$CG_BEFORE" ] \
+      || fail "a completed run leaked its cgroup ($CG_BEFORE -> $CG_AFTER) — the scope must be released, not just abandoned" ;;
+esac
+rm -rf "$D3D"
+
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has
 # an empty log, and demanding content here failed a correct run — the check
