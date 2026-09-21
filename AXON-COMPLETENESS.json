@@ -1799,7 +1799,7 @@
       "reality": "it stamped Access-Control-Allow-Origin: * on EVERY response, including POST /api/deploy, which writes caller-supplied content to a temp .ax and EXECUTES it. A cross-origin POST with Content-Type: text/plain is a CORS simple request, so no preflight intervenes, and the wildcard let the calling page read the result. Any site the operator visited could run arbitrary Axon code",
       "reproduced": "a cross-origin POST to /api/deploy from Origin: https://evil.example returned 200 with the wildcard header and created the file the payload wrote",
       "fix": "wildcard removed (the UI is same-origin and needs none) plus a WORKSPACE-WIDE guard, since the per-crate fix cited this crate as its model while never checking its CORS header",
-      "commit": "PENDING"
+      "commit": "499d08d"
     }
   ]
 }
