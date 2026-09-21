@@ -1728,7 +1728,7 @@
       "reality": "`cargo test | tee || true` discarded the exit status, and a compile error prints NO `test result` line \u2014 so `grep -q FAILED` found nothing, the else branch ran, and the gate reported a PASS having executed zero tests",
       "reproduced": "the verbatim logic against a compile-error log printed 'OK cargo test -p axon-os (0 test suites passed)'",
       "fix": "keep the producer's status via PIPESTATUS and assert a NON-ZERO suite count; the three outcomes now distinguish",
-      "commit": "PENDING"
+      "commit": "9519d5b"
     },
     {
       "id": "FG-021",
@@ -1739,7 +1739,7 @@
       "reality": "`rustup target list 2>/dev/null | grep -q <target>` discards rustup's exit status and stderr, so a MISSING or broken rustup concluded 'target not installed' \u2014 reporting a specific fact it never established, and turning a misconfigured toolchain into 15 silent skips that read like deliberate environment coverage",
       "reproduced": "the pattern with rustup absent concluded 'target not installed' though rustup never ran",
       "fix": "rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip \u2014 a skip must prove its own reason",
-      "commit": "PENDING"
+      "commit": "9519d5b"
     }
   ]
 }
