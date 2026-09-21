@@ -195,7 +195,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 14 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 15 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -294,4 +294,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** the append sat BELOW both `return Err(SandboxViolation)` paths, so a DENIED call returned before reaching it. The ledger recorded what was ALLOWED and dropped what was BLOCKED — the inverse of what a security review opens it for, making an attacker's refused probes the one class of event guaranteed to leave no trace
 - **Reproduced:** sandbox_scope_net.ax under AXON_AUDIT_LEDGER produced exactly one row, `sandbox_run`; the refused `http_get` produced none
 - **Fix:** one writer used by both verdicts, hoisted above the sandbox block; denials recorded as `denied:<op>` so the on-disk format and hash chain are unchanged (`9ba7d07`)
+
+### FG-015 — crates/axon-ledger/tests/authority_reachability.rs (security, fixed)
+
+- **Claimed:** the RBAC choke point means a reader added later cannot forget to authorize (my own claim, one commit earlier)
+- **Reality:** the guard read exactly ONE file, axon-ledger/src/mcp.rs, so it could not see another crate — and Store::open stayed pub and unfiltered. axon-signal read the same ledger through it on every path: CLI, its OWN MCP server, and an HTTP dashboard bound to 0.0.0.0 with Access-Control-Allow-Origin: * serving every engineer's data to an unauthenticated caller
+- **Reproduced:** axon-signal score returned both engineers' sessions for a member identity; curl against the dashboard with no identity returned both
+- **Fix:** guard widened to scan every .rs file in the workspace; axon-signal routed through open_as; dashboard bound to 127.0.0.1; all ingest/maintenance handles named open_for_write so the exception is auditable (`e04fe2c`)
 

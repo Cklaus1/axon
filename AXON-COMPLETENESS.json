@@ -1673,7 +1673,7 @@
       "reality": "the guard read exactly ONE file, axon-ledger/src/mcp.rs, so it could not see another crate \u2014 and Store::open stayed pub and unfiltered. axon-signal read the same ledger through it on every path: CLI, its OWN MCP server, and an HTTP dashboard bound to 0.0.0.0 with Access-Control-Allow-Origin: * serving every engineer's data to an unauthenticated caller",
       "reproduced": "axon-signal score returned both engineers' sessions for a member identity; curl against the dashboard with no identity returned both",
       "fix": "guard widened to scan every .rs file in the workspace; axon-signal routed through open_as; dashboard bound to 127.0.0.1; all ingest/maintenance handles named open_for_write so the exception is auditable",
-      "commit": "PENDING"
+      "commit": "e04fe2c"
     }
   ]
 }
