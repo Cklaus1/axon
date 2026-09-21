@@ -237,10 +237,32 @@ if [ "$n_ok" -eq 21 ] && grep -q '"value":"19"' "$TMP/j4"; then pass "21 cells d
 else fail "driver run: $n_ok/21 ok, tail: $(tail -1 "$TMP/j4")"; fi
 
 echo "== Slice-1..5 regression tests =="
-if (cd "$ROOT" && cargo test -p axon-core --test cli_run session_ 2>&1 | grep -q "test result: ok"); then
-    pass "cli_run session_* green (28 tests)"
+# Capture to a file and PRESERVE cargo's exit status. `cargo test ... | grep -q`
+# has three separate defects, all of which this gate had:
+#
+#   1. the pipe discards cargo's exit code, so the grep's verdict is the only
+#      signal;
+#   2. a COMPILE ERROR prints no "test result" line at all, making it
+#      indistinguishable from a test failure — "cargo could not build this" and
+#      "the tests are red" are different problems with different fixes;
+#   3. it passes VACUOUSLY if the `session_` filter ever matches nothing:
+#      cargo prints "test result: ok. 0 passed" and the grep is satisfied, so a
+#      suite whose tests were renamed away would report green while running
+#      nothing.
+#
+# The count is asserted, not just the word "ok".
+_r44_out="$TMP/session_tests.out"
+_r44_code=0
+(cd "$ROOT" && cargo test -p axon-core --test cli_run session_) >"$_r44_out" 2>&1 || _r44_code=$?
+_r44_passed=$(sed -n 's/^test result: ok\. \([0-9]\+\) passed.*/\1/p' "$_r44_out" | head -1)
+if [ "$_r44_code" -ne 0 ]; then
+    fail "cli_run session_* — cargo exited $_r44_code (build or test failure), tail: $(tail -3 "$_r44_out" | tr '\n' ' ')"
+elif [ -z "$_r44_passed" ]; then
+    fail "cli_run session_* — no 'test result: ok' line; cargo did not report a result at all, tail: $(tail -3 "$_r44_out" | tr '\n' ' ')"
+elif [ "$_r44_passed" -lt 1 ]; then
+    fail "cli_run session_* — the filter matched $_r44_passed tests; a suite that runs nothing is not green"
 else
-    fail "cli_run session_* not green"
+    pass "cli_run session_* green ($_r44_passed tests)"
 fi
 
 echo
