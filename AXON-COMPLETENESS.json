@@ -1717,7 +1717,7 @@
       "reality": "eval_native_call passed scope_args: None with a comment asserting native arguments carry no host \u2014 false for modbus_connect(host, port) and fhir_connect(base_url). And scope_violation's net branch keyed on capability_of_builtin(name)==Some(\"net\"), which is None for a module whose capability label is \"modbus\". So the allowlist did not apply to native dials at all",
       "reproduced": "one sandbox scoped to api.trusted.io: http_get to 127.0.0.1 refused exit 8, while native::modbus::modbus_connect(\"127.0.0.1\", 15502) reached the OS and panicked with Connection refused (os error 111) \u2014 the OS answering proves the dial happened",
       "fix": "native_net_host_arg is now a shared pub(crate) predicate consumed by BOTH the static checker and the runtime; a non-literal host fails closed",
-      "commit": "PENDING"
+      "commit": "f91d249"
     }
   ]
 }
