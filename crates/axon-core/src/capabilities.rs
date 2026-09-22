@@ -2655,7 +2655,7 @@ mod host_of_tests {
 
 #[cfg(test)]
 mod capability_catalog_lockstep {
-    use super::capability_of_builtin;
+    use super::{capability_of_builtin, capability_of_builtin_multi};
     use crate::builtins::{builtin_effect_row, BUILTINS};
 
     /// `builtin_effect_row` (Phase 6) and `classify_call` (the `@[contained]`
@@ -2684,6 +2684,65 @@ mod capability_catalog_lockstep {
     /// `ai_cost_spent` reads a process-local cost counter and opens no socket.
     /// Its `Net` row is an over-declaration (safe direction: it forces callers
     /// to annotate), not an ungated channel.
+    /// The IO/FS direction, added after the durable store shipped in NEITHER
+    /// table and was treated as pure by every capability mechanism at once.
+    ///
+    /// Each entry is a builtin with an IO or FS effect row that
+    /// `classify_call` deliberately does not classify, and each needs a
+    /// reason — not a claim that it is fine.
+    ///
+    /// UNGRANTABLE BY DESIGN. `println`/`print`/`eprint`/`eprintln`/
+    /// `read_line`/`exit` and the `host_await*` family are the console and
+    /// host-event channels: there is no allowlist clause that could grant
+    /// one, so `@[contained]` neither permits nor refuses them (R6 Section 4.4).
+    /// `sandbox_run` executes a named user function whose effects are the
+    /// INNER function's, gated where they occur.
+    ///
+    /// FIXED-PATH RUNTIME TELEMETRY. The `goal_*` family appends to
+    /// `$XDG_CACHE_HOME/axon/provenance.jsonl`. MEASURED, and stated here
+    /// because it is a real gap rather than a non-issue: a
+    /// `@[contained(fs: [], net: [], exec: none)]` fn calling `goal_run`
+    /// exits 0 and adds ~20 program-derived lines to that file, and a scoped
+    /// sandbox with `fs_write = ""` does not stop it either (its refusal in
+    /// the first probe was on the AI effect, not on fs). It is exempted, not
+    /// fixed, on three grounds: the path comes from the environment and never
+    /// from program input, so this is not an arbitrary-write primitive the
+    /// way the durable store's program-chosen key was; provenance is the
+    /// mechanism `@[adaptive]`/`goal_run` is built on, so classifying these
+    /// as `fs:write` would refuse every contained optimiser — a policy change,
+    /// not a bug fix; and the file is written for a do-nothing program too,
+    /// so its existence is infrastructure. The residual risk is a
+    /// low-bandwidth covert channel (scores and fn names are program-chosen)
+    /// into the same user's own cache. The fixed-path property is pinned by
+    /// `the_provenance_path_is_not_program_addressable`.
+    const EXEMPT_IO: &[&str] = &[
+        "println",
+        "print",
+        "eprint",
+        "eprintln",
+        "read_line",
+        "exit",
+        "host_await",
+        "host_await_opt",
+        "host_await_val",
+        "host_await_val_opt",
+        "sandbox_run",
+        "goal_run",
+        "goal_run_constrained",
+        "goal_run_categorical",
+        "goal_run_random",
+        "goal_run_multistart",
+        "goal_continue",
+        "goal_eval",
+        "goal_best_input",
+        "goal_best_inputs",
+        "goal_best_inputs_f64",
+        "goal_best_score",
+        "goal_count",
+        "goal_history",
+        "goal_clear",
+    ];
+
     const EXEMPT: &[&str] = &[
         "goal_run",
         "goal_run_constrained",
@@ -2701,7 +2760,26 @@ mod capability_catalog_lockstep {
         for b in BUILTINS {
             let row = builtin_effect_row(b.name);
             let consequential = row.contains(&"Net") || row.contains(&"Exec");
-            if consequential && capability_of_builtin(b.name).is_none() && !EXEMPT.contains(&b.name)
+            // The MULTI resolver: asking `capability_of_builtin` here made the
+            // guard reproduce the very blind spot it exists to catch, and it
+            // flagged `file_copy`/`file_rename` — which ARE classified, by the
+            // per-argument table — the moment the IO direction was added.
+            if consequential
+                && capability_of_builtin_multi(b.name).is_none()
+                && !EXEMPT.contains(&b.name)
+            {
+                ungated.push(b.name);
+            }
+            // The IO/FS direction. `IO` was left out as "the coarse row", and
+            // that is how `dstore_open`/`dstore_apply`/`dstore_clear` shipped
+            // in neither table: a builtin missing from BOTH is invisible to
+            // this check AND to its reverse. Every name it flags is now
+            // either ungrantable-by-design or carries a stated reason.
+            let touches_host = row.contains(&"IO") || row.contains(&"FS");
+            if touches_host
+                && capability_of_builtin_multi(b.name).is_none()
+                && !EXEMPT.contains(&b.name)
+                && !EXEMPT_IO.contains(&b.name)
             {
                 ungated.push(b.name);
             }
@@ -2720,6 +2798,19 @@ mod capability_catalog_lockstep {
             assert!(
                 BUILTINS.iter().any(|b| &b.name == name),
                 "EXEMPT names `{name}`, which is not a builtin"
+            );
+        }
+        for name in EXEMPT_IO {
+            assert!(
+                BUILTINS.iter().any(|b| &b.name == name),
+                "EXEMPT_IO names `{name}`, which is not a builtin"
+            );
+            // An exemption that the check would never reach is a claim nobody
+            // tests. If a name here gains a classification, it must leave.
+            assert!(
+                capability_of_builtin_multi(name).is_none(),
+                "`{name}` is now classified by the capability gate, so its \
+                 EXEMPT_IO entry is stale — remove it"
             );
         }
     }

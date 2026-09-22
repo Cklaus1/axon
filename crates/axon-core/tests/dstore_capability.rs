@@ -255,3 +255,84 @@ fn the_durable_store_refuses_to_run_under_replay_and_says_so_under_record() {
         "a replayed run wrote to the live store"
     );
 }
+
+// ── The goal_* exemption's justification, pinned ────────────────────────────
+
+/// `goal_*` is EXEMPT_IO because its filesystem write goes to a path the
+/// program cannot address. That is the whole argument for exempting it rather
+/// than classifying it, so it is a test, not a comment.
+///
+/// MEASURED, and stated plainly because this IS a gap, not a non-issue: a
+/// `@[contained(fs: [], net: [], exec: none)]` fn calling `goal_run` exits 0
+/// and appends ~20 program-derived lines to the provenance log; a scoped
+/// sandbox with `fs_write = ""` does not stop it either. It is exempted
+/// because classifying `goal_*` as `fs:write` would refuse every contained
+/// optimiser — a policy change — and because the path is fixed. If the path
+/// ever becomes program-influenced, that argument collapses and this fails.
+#[test]
+fn the_provenance_path_is_not_program_addressable() {
+    let d = tmp("prov");
+    let cache = d.join("cache");
+
+    // Two programs whose only difference is a string an attacker would
+    // control if the path were derived from program input.
+    let run = |name: &str, key: &str| -> Vec<String> {
+        let prog = d.join(format!("{name}.ax"));
+        std::fs::write(
+            &prog,
+            format!(
+                "@[adaptive]\nfn {key}(x: f64) -> f64 {{ 0.0 - (x - 7.0) * (x - 7.0) }}\n\
+                 fn main() {{ let _ = goal_run(\"{key}\", 0.0, 5) }}\n"
+            ),
+        )
+        .unwrap();
+        let out = Command::new(axon())
+            .arg("run")
+            .arg(&prog)
+            .env("XDG_CACHE_HOME", cache.join(name))
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "premise: the optimiser must run: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let root = cache.join(name);
+        let mut found = Vec::new();
+        let mut stack = vec![root.clone()];
+        while let Some(p) = stack.pop() {
+            if let Ok(rd) = std::fs::read_dir(&p) {
+                for e in rd.flatten() {
+                    let q = e.path();
+                    if q.is_dir() {
+                        stack.push(q);
+                    } else {
+                        found.push(q.strip_prefix(&root).unwrap().to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+        found.sort();
+        found
+    };
+
+    let a = run("a", "score");
+    let b = run("b", "zzzz_other_name");
+    assert!(
+        !a.is_empty(),
+        "premise: the optimiser must write something, or this proves nothing"
+    );
+    assert_eq!(
+        a, b,
+        "the set of files written changed with a program-chosen name, so the \
+         provenance path IS program-addressable and the goal_* EXEMPT_IO \
+         entry's justification no longer holds"
+    );
+    assert!(
+        a.iter().any(|f| f.ends_with("provenance.jsonl")),
+        "expected the provenance log among {a:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}

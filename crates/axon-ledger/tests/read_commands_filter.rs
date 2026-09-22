@@ -273,37 +273,89 @@ fn a_member_sees_exactly_what_a_ledger_of_their_own_records_would_show() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// The command list above must not drift from the CLI's read surface.
+/// Every verb the CLI exposes must be accounted for by name.
 ///
-/// An equivalence oracle only covers the commands it names, so a new read
-/// verb would be unguarded — the same omission direction as the naming grep
-/// this replaces, one level up.
+/// The first version of this asserted that each ALREADY-TESTED verb still
+/// appears in `--help`, which is the opposite of the direction it claimed to
+/// guard: a NEW read verb left it green, and "a new read verb would be
+/// unguarded" was exactly what its own doc comment said it was for. It also
+/// missed one that already existed — `prune --dry-run` read through the
+/// unfiltered handle and disclosed whole-ledger aggregates to a member.
+///
+/// So this enumerates the CLI's ACTUAL surface and requires every verb to be
+/// in one of two lists. A new verb fails until someone puts it in one.
 #[test]
-fn the_tested_read_verbs_match_the_cli_surface() {
-    let out = Command::new(bin()).arg("--help").output().expect("help");
+fn every_cli_verb_is_accounted_for_as_a_read_or_not() {
+    let out = std::process::Command::new(bin())
+        .arg("--help")
+        .output()
+        .expect("help");
     let help = String::from_utf8_lossy(&out.stdout).to_string();
-    let tested = [
-        "stats",
+    let block = help
+        .split("Commands:")
+        .nth(1)
+        .and_then(|s| s.split("Options:").next())
+        .expect("a Commands block in --help");
+    let verbs: Vec<String> = block
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim_start();
+            if l.starts_with("  ") && !l.starts_with("      ") && !t.is_empty() {
+                t.split_whitespace().next().map(String::from)
+            } else {
+                None
+            }
+        })
+        .filter(|v| v != "help")
+        .collect();
+    assert!(
+        verbs.len() >= 15,
+        "parsed only {} verbs from --help; the parser has drifted and this \
+         guard is vacuous: {verbs:?}",
+        verbs.len()
+    );
+
+    // Reads, each exercised by the equivalence oracle above.
+    const READS: &[&str] = &[
+        "why",
         "diff",
+        "stats",
+        "search",
         "as-of",
         "history",
-        "search",
-        "why",
         "pre-deploy",
         "weekly",
         "audit",
     ];
-    for verb in tested {
+    // Not reads. `prune`, `engineer-backfill`, `session-refresh`, `refresh`
+    // and `rbac` are admin-gated (see maintenance_authorization.rs), which is
+    // why they are not in the filter oracle; the rest append or serve.
+    const NON_READS: &[&str] = &[
+        "ingest",
+        "prune",
+        "engineer-backfill",
+        "session-refresh",
+        "webhook",
+        "rbac",
+        "refresh",
+        "mcp",
+        "watch",
+    ];
+
+    for v in &verbs {
         assert!(
-            help.contains(verb),
-            "`{verb}` is tested but is no longer a CLI verb — premise drifted"
+            READS.contains(&v.as_str()) || NON_READS.contains(&v.as_str()),
+            "CLI verb `{v}` is in neither list. If it reads records, add it to \
+             the equivalence oracle above; if it does not, add it to NON_READS \
+             and say why."
         );
     }
-    assert_eq!(
-        tested.len(),
-        9,
-        "update this test when the read surface changes"
-    );
+    for v in READS.iter().chain(NON_READS) {
+        assert!(
+            verbs.iter().any(|x| x == v),
+            "`{v}` is listed here but is no longer a CLI verb — the premise drifted"
+        );
+    }
 }
 
 // ── A filtered handle must not be able to rewrite the whole ledger ──────────
