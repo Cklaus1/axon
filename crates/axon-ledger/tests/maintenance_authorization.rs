@@ -442,15 +442,18 @@ fn an_authenticated_identity_that_is_not_an_admin_is_refused() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Appending verbs are deliberately NOT admin-gated (commit 9c86b41: "whether
-/// an arbitrary caller may append is a real question and a different one").
-/// A disproof review demonstrated the consequence: a member can write a
-/// record ATTRIBUTED to another principal.
+/// Appending verbs are deliberately NOT admin-gated, and a member may still
+/// name the SUBJECT of a record — `--engineer` exists so a CI account can
+/// ingest many engineers' sessions, and gating it would break the normal
+/// ingest path rather than secure it.
 ///
-/// Pinned as a KNOWN GAP, not fixed here — closing it (should appends be
-/// self-attributed only? admin-cosigned? unrestricted, as today?) is a
-/// policy decision, and this session's scope was the rewrite/delete path
-/// that had NO check at all, not appends that were considered and left open.
+/// What changed is that the record no longer hides WHO WROTE IT: every append
+/// is stamped with the OS-authenticated writer in `recorded_by`, which
+/// overwrites anything a caller supplies. This test therefore asserts the
+/// remaining, intended behaviour — an arbitrary subject is accepted — and
+/// `tests/attribution_integrity.rs` asserts the actor is recorded and
+/// unforgeable. Read them together: the subject is a claim, the actor is
+/// evidence.
 #[test]
 fn a_member_can_append_a_record_attributed_to_another_principal() {
     let d = std::env::temp_dir().join(format!("axon_mx_forge_{}", std::process::id()));

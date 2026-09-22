@@ -1534,6 +1534,20 @@
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "open": "axon-guest-init is compiled into the guest image ONLY for AXON_KERNEL_BACKEND=linux. The DEFAULT backend (axon-guest-kernel) writes a stub /init that execs `axon run` directly and never invokes guest-init at all, delivering policy by kernel cmdline (axon.policy=<base64>) and enforcing it in-kernel instead. So FG-023 hardens the non-default path only. The kernel parser appears to fail closed on every failure mode it handles (set_closed_policy, EffectSet(0) default), but whether a syntactically-valid-but-EMPTY axon.policy={} reaches the same conclusion is UNTRACED \u2014 the analogous defect in the analogous parser."
+    },
+    {
+      "name": "AXON_LEDGER_DEV_IMPERSONATE",
+      "category": "authority/identity",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-ledger/tests/maintenance_authorization.rs::claimed_identity_carries_authority_only_under_the_armed_dev_escape",
+      "open": "",
+      "note": "Read by the axon-ledger CLI only, not by any Axon execution engine \u2014 hence not-applicable across all four engine columns rather than unknown. It is the explicit development-only escape that lets a CLAIMED identity (--as / AXON_PRINCIPAL) carry admin authority again; without it authority comes from the real uid via rbac.json authenticated_admins. Must be exactly `1`; `0`, `true`, `yes`, empty and `1 ` are all tested disarmed, so production is the default state."
     }
   ],
   "false_greens": [
@@ -1862,7 +1876,7 @@
       "claimed": "The capability-catalog lockstep test ensures a builtin that reaches the world is classified by the @[contained] gate.",
       "reality": "It fired only on Net/Exec rows \u2014 `IO` was deliberately excluded as 'the coarse row' \u2014 so a builtin missing from BOTH tables was invisible to it AND to its reverse. That is exactly how dstore_open/apply/clear shipped as pure. Widening it to IO/FS also revealed that the guard asked `capability_of_builtin`, reproducing inside itself the single-kind blind spot it exists to catch: it flagged file_copy/file_rename, which ARE classified.",
       "reproduced": "Removing the dstore classification leaves the Net/Exec-only guard GREEN; the widened guard fails naming all three. Adding the IO direction while still asking the single-kind resolver falsely flags file_copy and file_rename.",
-      "fix": "Widened to IO/FS with an EXEMPT_IO list where every entry carries a reason, and both directions now ask `capability_of_builtin_multi`. A stale-exemption assertion fails if a listed name later becomes classified. KNOWN GAP recorded rather than closed, WIDER than first documented here: the entry originally named only the `goal_*` family, but a disproof review found the real vector is the `@[adaptive]` return-logging path inside `call_fn` itself, reached by ANY `@[adaptive]` call \u2014 `goal_run` is one caller of it, not the boundary. Measured: an `@[agent]` fn calling an `@[adaptive]` fn DIRECTLY (no goal_run) produces 0 `agent_action` audit rows and 2 program-derived `adaptive_return` lines on disk, and the same write happens at exit 0 under `AXON_ALLOWED_EFFECTS=Pure` \u2014 that ceiling gates BUILTIN calls via the F5 hook, and this write is not a builtin call, so it sits outside that hook entirely. Exempted, not fixed, because the path comes from the environment and never from program input, and gating `@[adaptive]`/`goal_run` would refuse every contained optimiser \u2014 a policy change, not a bug fix. The fixed-path property is pinned by `the_provenance_path_is_not_program_addressable`, extended to cover the direct `@[adaptive]` path as well as `goal_run`, so the exemption's justification fails loudly if it stops holding. Residual risk: a low-bandwidth covert channel into the same user's cache.",
+      "fix": "Widened to IO/FS with an EXEMPT_IO list where every entry carries a reason, and both directions now ask `capability_of_builtin_multi`. A stale-exemption assertion fails if a listed name later becomes classified. KNOWN GAP recorded rather than closed, WIDER than first documented here: the entry originally named only the `goal_*` family, but a disproof review found the real vector is the `@[adaptive]` return-logging path inside `call_fn` itself, reached by ANY `@[adaptive]` call \u2014 `goal_run` is one caller of it, not the boundary. Measured: an `@[agent]` fn calling an `@[adaptive]` fn DIRECTLY (no goal_run) produces 0 `agent_action` audit rows and 2 program-derived `adaptive_return` lines on disk, and the same write happens at exit 0 under `AXON_ALLOWED_EFFECTS=Pure` \u2014 that ceiling gates BUILTIN calls via the F5 hook, and this write is not a builtin call, so it sits outside that hook entirely. SUPERSEDED \u2014 now FIXED, see FG-032: the write is suppressed when the effect ceiling grants no IO, so the capability is no longer obtainable. The original reasoning for exempting it was that the path comes from the environment and never from program input, and gating `@[adaptive]`/`goal_run` would refuse every contained optimiser \u2014 a policy change, not a bug fix. The fixed-path property is pinned by `the_provenance_path_is_not_program_addressable`, extended to cover the direct `@[adaptive]` path as well as `goal_run`, so the exemption's justification fails loudly if it stops holding. Residual risk: a low-bandwidth covert channel into the same user's cache.",
       "status": "fixed",
       "severity": "security",
       "commit": "ed1e30a"
@@ -1877,6 +1891,28 @@
       "status": "fixed",
       "severity": "security",
       "commit": "48e37be"
+    },
+    {
+      "id": "FG-032",
+      "where": "crates/axon-core/src/interp.rs",
+      "claimed": "The effect ceiling (@[contained], scoped sandbox, AXON_ALLOWED_EFFECTS) governs a program's durable writes; FG-030 recorded the provenance write as an accepted exemption because its path is fixed and not program-addressable.",
+      "reality": "A fixed path still yields a durable write with program-chosen CONTENT and unbounded VOLUME. The @[adaptive] return-logging append is not a builtin call, so it never reached pre_effect_gate where the ceiling is enforced, and goal_run amplifies it \u2014 max_evals <= 0 means unlimited, so a contained function could drive an unbounded number of rows whose score, input and payload it chooses. That is a general durable store reached through the audit machinery.",
+      "reproduced": "Each exit 0 with a row on disk: a direct @[adaptive] call inside @[contained(fs: [], net: [], exec: none)]; the same under AXON_ALLOWED_EFFECTS=Pure; and inside sandbox_run(sandbox_create(p, \"\"), ...), whose ceiling is deny-all.",
+      "fix": "The write site now asks the ceiling the same question pre_effect_gate asks, through ONE shared predicate (first_effect_outside_ceiling), and SUPPRESSES the write rather than refusing the call. Refusal would abort every contained optimiser; suppression does not, because the in-memory best store goal_run reads is untouched \u2014 pinned by a companion test asserting the optimiser still returns the right best score, without which 'suppress' could not be told from 'break'. All reachability paths are covered because the check sits at the single site every path funnels through (direct, nested, contained, goal_run, sandbox_run); aliasing is not a vector since Axon has no first-class user-fn values. 4 mutations, 3 caught; the 4th is unreachable-by-construction dead defensive code and is documented as such rather than given a contrived fixture.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "c83a35b"
+    },
+    {
+      "id": "FG-033",
+      "where": "crates/axon-ledger/src/store.rs",
+      "claimed": "Ledger records identify their principal, and the previous pass recorded caller-chosen attribution on append as a deliberate, documented scope decision.",
+      "reality": "The record had exactly one identity field and it was the SUBJECT, fully caller-chosen, with nothing recording the ACTOR. A non-admin could write records attributed to another principal, and those records then landed inside the victim's RBAC view and nobody else's. The MCP ledger_refresh tool authenticates no identity at all.",
+      "reproduced": "`--as bob@example.com ingest session s1.jsonl --engineer alice@example.com` -> exit 0, record with principal alice@example.com. MCP tools/call ledger_refresh {engineer: carol@...} -> same, unauthenticated. A repo with a forged git author -> principal git:alice@example.com. Then `--as alice stats` showed them and `--as bob stats` showed none.",
+      "fix": "The subject is NOT restricted \u2014 --engineer exists so a CI account can ingest many engineers' sessions, and gating it would break the normal ingest path rather than secure it. Instead the axes are separated: `principal` stays the subject, and a new `recorded_by` carries the ACTOR, stamped by Store::append from the OS-authenticated identity and OVERWRITING anything the caller supplies. Store::append is the choke point every new record in the workspace is born through (CLI ingest, MCP, watcher, axon-signal), so all surfaces are covered at once; the MCP path, which authenticates nothing, is tested explicitly. Option + serde default + skip_serializing_if like the existing `repo` field, and no digest covers the struct (the record id hashes principal|effect|ts_ms|payload only), so existing records still load \u2014 a test. 3 mutations caught.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "122d9e9"
     }
   ]
 }
