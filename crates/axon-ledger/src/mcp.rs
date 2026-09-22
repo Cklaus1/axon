@@ -207,6 +207,27 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
     })
 }
 
+/// Which MCP tools perform a privileged operation.
+///
+/// EXHAUSTIVE over the declared tool set, and pinned by
+/// `every_declared_tool_is_classified` below, because the failure here was
+/// precisely a surface that exposed an admin-only operation without anyone
+/// noticing it was admin-only.
+fn mcp_tool_requires_admin(tool: &str) -> bool {
+    match tool {
+        // Writes records: the same operation as the CLI's `refresh`, which is
+        // admin-gated.
+        "ledger_refresh" => true,
+        // Reads. Authority for these is the RBAC view applied by `open_as`.
+        "ledger_why" | "ledger_history" | "ledger_search" | "ledger_as_of" | "ledger_stats"
+        | "ledger_weekly" | "ledger_audit" | "ledger_pre_deploy" => false,
+        // An unknown tool name reaches the dispatch's own error arm; treat it
+        // as privileged here so a tool added without being classified fails
+        // closed rather than silently unguarded.
+        _ => true,
+    }
+}
+
 fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> Value {
     let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -227,6 +248,48 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
         Ok(s) => s,
         Err(e) => return json_error(id.as_ref(), -32000, &format!("Could not open ledger: {e}")),
     };
+
+    // PRIVILEGED TOOLS NEED THE SAME AUTHORITY THE CLI DEMANDS.
+    //
+    // The admin gate lives in `main()` before CLI dispatch, and this server
+    // dispatches tool calls internally — so the same operation reached
+    // through stdio JSON-RPC skipped it entirely. REPRODUCED: with
+    // `authenticated_admins = ["nobody-real"]`, `axon-ledger refresh --repo R`
+    // was refused (exit 1, ledger unchanged at 2 records) while
+    // `tools/call ledger_refresh {repo: R}` returned ok and wrote 193
+    // records, including one whose principal was a git author the caller
+    // chose. The previous pass classified `Commands::Mcp` as "appends new
+    // records; does not rewrite or reattribute" — that was wrong, because it
+    // classified the SERVER rather than the operations the server exposes.
+    //
+    // WHAT THIS DOES AND DOES NOT ESTABLISH. MCP carries no caller identity,
+    // so the authority checked here is the SERVER PROCESS's OS identity. A
+    // client of an admin-run server inherits that admin's authority; the
+    // protocol gives nothing else to check. What it does close is the case
+    // that made this critical: a NON-admin can no longer obtain a privileged
+    // write by talking to their own server.
+    if mcp_tool_requires_admin(tool_name) {
+        let rbac = match crate::rbac::RbacConfig::load(ledger_dir) {
+            Ok(r) => r,
+            Err(e) => return json_error(id.as_ref(), -32000, &format!("Could not load rbac: {e}")),
+        };
+        if rbac.gate_is_armed() {
+            let authority = crate::rbac::Authority::resolve(None);
+            if !authority.is_admin(&rbac) {
+                return json_error(
+                    id.as_ref(),
+                    -32000,
+                    &format!(
+                        "`{tool_name}` is restricted to an admin. This server runs as \
+                         `{}`, which is not listed in `authenticated_admins` in \
+                         {}/rbac.json.",
+                        authority.real_name(),
+                        ledger_dir.display()
+                    ),
+                );
+            }
+        }
+    }
 
     let result = match tool_name {
         "ledger_why" => {

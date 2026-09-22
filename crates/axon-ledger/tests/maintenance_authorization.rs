@@ -597,13 +597,8 @@ fn rbac_grant_distinguishes_visibility_from_authority() {
     )
     .unwrap();
 
-    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "alice@example.com"]);
-    assert_eq!(code, 0, "{out}");
-    assert!(
-        out.contains("VISIBILITY") && out.contains("does NOT authorize"),
-        "granting visibility must not be reported as granting authority:\n{out}"
-    );
-
+    // Authority first — granting visibility to an unconfigured ledger is
+    // refused, because it would arm RBAC with no administrator.
     let me = real_os_identity();
     let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
     assert_eq!(code, 0, "{out}");
@@ -612,7 +607,14 @@ fn rbac_grant_distinguishes_visibility_from_authority() {
         "granting authority must say so:\n{out}"
     );
 
-    // And the grant is real: a privileged verb now succeeds.
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "alice@example.com"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("VISIBILITY") && out.contains("does NOT authorize"),
+        "granting visibility must not be reported as granting authority:\n{out}"
+    );
+
+    // And the authority grant is real: a privileged verb now succeeds.
     std::fs::write(d.join("events.ndjson"), RECS).unwrap();
     let (code, out) = run_env(
         &d,
@@ -624,54 +626,179 @@ fn rbac_grant_distinguishes_visibility_from_authority() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// The first authenticated admin can be granted through the CLI; after that
-/// the window closes.
+/// Configuring RBAC has exactly one safe order, and the unsafe orders are
+/// refused.
 ///
-/// Without the bootstrap an UPGRADED ledger — `admins` populated,
-/// `authenticated_admins` still empty — refuses every caller including the
-/// operator, and the only way in is to hand-edit rbac.json. MEASURED: that is
-/// what happened the first time this was tried.
+/// An earlier version of this allowed `rbac grant --authenticated` whenever
+/// `authenticated_admins` was empty — including on a ledger whose `admins`
+/// list was already populated, which is every pre-fix ledger. A disproof
+/// review pointed out that this let ANY caller self-grant permanent admin,
+/// and that the justification ("they could edit rbac.json anyway") conflated
+/// FILESYSTEM access with CLI access: the MCP server and a group-writable
+/// ledger both give CLI reach without an editor. The window is gone.
 ///
-/// The concession is sound because writing `authenticated_admins` needs write
-/// access to rbac.json, and a caller with that can self-grant with a text
-/// editor regardless (see
-/// `rbac_does_not_and_cannot_bind_a_writer_who_bypasses_the_cli`). What must
-/// hold is that the window CLOSES once someone holds authority.
+/// What remains is narrower and sound: authority may be established only
+/// while the gate is FULLY INERT, when nobody is restricted yet and
+/// self-granting therefore concedes nothing.
 #[test]
-fn the_first_authenticated_admin_can_bootstrap_but_the_window_then_closes() {
-    let d = std::env::temp_dir().join(format!("axon_mx_boot_{}", std::process::id()));
+fn rbac_can_only_be_configured_in_an_order_that_leaves_an_administrator() {
+    let d = std::env::temp_dir().join(format!("axon_mx_order_{}", std::process::id()));
     let me = real_os_identity();
 
-    // OPEN: nobody holds authority yet, so the first grant is allowed.
+    // Visibility FIRST is refused: it would arm the gate with nobody able to
+    // administer it, locking out every privileged command permanently —
+    // something an unprivileged caller could trigger deliberately.
     let _ = std::fs::remove_dir_all(&d);
-    seed_auth(&d, "\"alice@example.com\"", "");
+    seed_auth(&d, "", "");
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "attacker@evil.test"]);
+    assert_ne!(
+        code, 0,
+        "arming RBAC with no administrator must be refused:\n{out}"
+    );
+    assert!(
+        out.contains("Establish authority first"),
+        "the refusal must say how to proceed:\n{out}"
+    );
+
+    // Authority first, while the gate is inert: allowed.
     let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
     assert_eq!(
         code, 0,
-        "the first authenticated admin must be grantable:\n{out}"
+        "authority must be establishable on an inert ledger:\n{out}"
+    );
+    // Then visibility, now that an administrator exists.
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "alice@example.com"]);
+    assert_eq!(
+        code, 0,
+        "visibility must work once an administrator exists:\n{out}"
     );
 
-    // CLOSED: someone else already holds authority, and it is not me.
+    // ARMED: no self-grant, by any route. This is the hole that was removed.
     let _ = std::fs::remove_dir_all(&d);
     seed_auth(&d, "\"alice@example.com\"", "\"somebody-else\"");
     let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
+    assert_ne!(code, 0, "a non-admin self-granted authority:\n{out}");
+
+    // And the pre-fix shape specifically: `admins` populated,
+    // `authenticated_admins` empty. This is what every upgraded ledger looks
+    // like, and it is where the removed window was reachable.
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "\"alice@example.com\"", "");
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
     assert_ne!(
         code, 0,
-        "once authority exists, a non-admin must not be able to grant \
-         themselves more:\n{out}"
+        "an upgraded ledger let a caller self-grant authority:\n{out}"
     );
-    // And it did not take effect.
     let cfg = std::fs::read_to_string(d.join("rbac.json")).unwrap();
     assert!(
         !cfg.contains(&format!("\"{me}\"")),
-        "the refused grant still modified rbac.json: {cfg}"
+        "the refused grant took effect: {cfg}"
     );
 
-    // `list` is a read and must work regardless.
-    let (code, out) = run_env(&d, None, &[], &["rbac", "list"]);
-    assert_eq!(
-        code, 0,
-        "`rbac list` is a read and must not be gated:\n{out}"
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A claimed identity must not grant admin VISIBILITY either.
+///
+/// The write verbs moved to authenticated identity and the read bypass did
+/// not: `filter_owned`/`filter_visible` still compared `rbac.admins` against
+/// the `--as` string. REPRODUCED — `--as alice@example.com stats` reported 2
+/// records to a caller entitled to 1, and the same through $AXON_PRINCIPAL.
+#[test]
+fn a_claimed_admin_identity_does_not_widen_the_read_view() {
+    let d = std::env::temp_dir().join(format!("axon_mx_readview_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let me = real_os_identity();
+    // alice is a VISIBILITY admin; the authenticated admin is someone else.
+    seed_auth(&d, "\"alice@example.com\"", "\"somebody-else\"");
+
+    // A member sees only their own.
+    let (_, bob) = run_env(&d, Some("bob@example.com"), &[], &["stats"]);
+    assert!(bob.contains("Total records:    1"), "premise:\n{bob}");
+
+    // Claiming to be the visibility admin must not widen it.
+    let (_, claimed) = run_env(&d, Some("alice@example.com"), &[], &["stats"]);
+    assert!(
+        claimed.contains("Total records:    1"),
+        "a claimed admin identity widened the read view:\n{claimed}"
+    );
+    let (_, via_env) = run_env(
+        &d,
+        None,
+        &[("AXON_PRINCIPAL", "alice@example.com")],
+        &["stats"],
+    );
+    assert!(
+        via_env.contains("Total records:    0") || via_env.contains("Total records:    1"),
+        "$AXON_PRINCIPAL widened the read view:\n{via_env}"
+    );
+
+    // `search` is a second read surface, and it must not widen the view
+    // either. Note what this does and does not isolate: `search` reads
+    // through the already-filtered store handle, so the enforcement here is
+    // `filter_owned`'s, not `filter_visible`'s — mutation shows
+    // `filter_visible`'s own bypass has no observable effect from any
+    // surface. This covers the surface; the redundant inner filter is
+    // documented at its definition.
+    //
+    // It needs its own fixture: `search` matches agent_session GOALS, and the
+    // git_commit records above match nothing, so the first version of this
+    // assertion passed on "No results for work" — vacuous, and the mutation
+    // said so.
+    std::fs::write(
+        d.join("events.ndjson"),
+        concat!(
+            r#"{"id":"s1","principal":"agent:alice@example.com","effect":"agent_session","causal_parent":null,"ts_ms":1000,"payload":{"session_id":"s1","goal":"secret alice work","turn_count":1}}"#,
+            "\n",
+            r#"{"id":"s2","principal":"agent:bob@example.com","effect":"agent_session","causal_parent":null,"ts_ms":2000,"payload":{"session_id":"s2","goal":"bob work","turn_count":1}}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let (_, searched) = run_env(&d, Some("alice@example.com"), &[], &["search", "work"]);
+    assert!(
+        searched.contains("1 result"),
+        "premise: search must find something, or this asserts nothing:\n{searched}"
+    );
+    // The distinguishing fact is whether she sees ANOTHER principal's record,
+    // not her own. Claiming an identity still selects which records count as
+    // yours — that is ownership filtering, and it is the documented design
+    // for a gateway that authenticates its users out of band. What must not
+    // happen is the ADMIN BYPASS, which returns everyone's.
+    assert!(
+        !searched.contains("bob work"),
+        "a claimed admin identity got the admin bypass and saw another \
+         principal's records:\n{searched}"
+    );
+
+    // CONTROL: the AUTHENTICATED admin does see everything, so this is a
+    // narrowing of who gets the bypass and not a removal of the bypass.
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "\"alice@example.com\"", &format!("\"{me}\""));
+    let (_, admin) = run_env(&d, None, &[], &["stats"]);
+    assert!(
+        admin.contains("Total records:    2"),
+        "an authenticated admin must still see every record:\n{admin}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A ledger that lists ONLY `authenticated_admins` is configured, and must
+/// still filter.
+///
+/// `filter_owned` tested `self.admins.is_empty()` to decide RBAC was off, so
+/// a ledger written exactly as the refusal message instructs — authority set,
+/// no visibility admins — read as unconfigured and showed every caller
+/// everything.
+#[test]
+fn a_ledger_with_only_authenticated_admins_still_filters() {
+    let d = std::env::temp_dir().join(format!("axon_mx_inert2_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "", "\"somebody-else\"");
+    let (_, out) = run_env(&d, Some("bob@example.com"), &[], &["stats"]);
+    assert!(
+        out.contains("Total records:    1"),
+        "a ledger configured with only authenticated_admins did not filter:\n{out}"
     );
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -513,7 +513,24 @@ impl<'p> Interp<'p> {
                 // include the current principal name for audit attribution.
                 let effect_row = cap_to_effect_row(cap);
                 let principal = self.current_principal_name();
-                append_agent_action_jsonl(&agent_fn, op_name, cap, effect_row, &principal);
+                // SAME CEILING AS EVERY OTHER DURABLE WRITE. This row goes to
+                // the same provenance.jsonl the `@[adaptive]` writer does, with
+                // a program-chosen function name, and it is emitted BEFORE the
+                // ceiling is consulted — so a run refused IO still wrote one
+                // row per call. MEASURED under `AXON_ALLOWED_EFFECTS=Net,AI`
+                // (IO denied): an `@[agent]` fn looping 8 times over
+                // `ai_complete` produced 8 `agent_action` rows plus 8
+                // `ai_call` rows, 16 durable program-derived lines, in a run
+                // whose `write_file` was refused.
+                //
+                // The cost is real and is the right trade: a run denied
+                // filesystem effects now leaves NO provenance audit trail,
+                // because persisting one IS the capability it was denied.
+                // Auditing a sandboxed run requires giving the runtime a
+                // channel it is allowed to write.
+                if self.provenance_write_permitted() {
+                    append_agent_action_jsonl(&agent_fn, op_name, cap, effect_row, &principal);
+                }
             }
         }
 
@@ -5828,20 +5845,24 @@ impl<'p> Interp<'p> {
                 if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
                     let micro = tier.cost_micro(cached_tokens);
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
-                    append_ai_call_jsonl(
-                        &caller,
-                        &prompt,
-                        tier_name,
-                        model_id,
-                        model_ver,
-                        params,
-                        "replay",
-                        "",
-                        micro as f64 / 1_000_000.0,
-                        &goal,
-                        "AI",
-                        &principal,
-                    );
+                    // Same ceiling as every other durable write — see the
+                    // agent_action guard above.
+                    if self.provenance_write_permitted() {
+                        append_ai_call_jsonl(
+                            &caller,
+                            &prompt,
+                            tier_name,
+                            model_id,
+                            model_ver,
+                            params,
+                            "replay",
+                            "",
+                            micro as f64 / 1_000_000.0,
+                            &goal,
+                            "AI",
+                            &principal,
+                        );
+                    }
                     ok!(Value::Ok(Box::new(Value::Str(cached))));
                 }
                 if ai_mock_enabled() {
@@ -5855,10 +5876,14 @@ impl<'p> Interp<'p> {
                         .to_string();
                     self.ai_cost_micro
                         .set(self.ai_cost_micro.get() + cost_micro);
-                    append_ai_call_jsonl(
-                        &caller, &prompt, tier_name, model_id, model_ver, params, "mock", "",
-                        cost_usd, &goal, "AI", &principal,
-                    );
+                    // Same ceiling as every other durable write — see the
+                    // agent_action guard above.
+                    if self.provenance_write_permitted() {
+                        append_ai_call_jsonl(
+                            &caller, &prompt, tier_name, model_id, model_ver, params, "mock", "",
+                            cost_usd, &goal, "AI", &principal,
+                        );
+                    }
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
                     ai_replay_store(&prompt, &replay_model, &stub, est_tokens);
@@ -5884,10 +5909,14 @@ impl<'p> Interp<'p> {
                                 let real_usd = real_micro as f64 / 1_000_000.0;
                                 self.ai_cost_micro
                                     .set(self.ai_cost_micro.get() + real_micro);
-                                append_ai_call_jsonl(
-                                    &caller, &prompt, tier_name, model_id, model_ver, params,
-                                    "live", "", real_usd, &goal, "AI", &principal,
-                                );
+                                // Same ceiling as every other durable write — see the
+                                // agent_action guard above.
+                                if self.provenance_write_permitted() {
+                                    append_ai_call_jsonl(
+                                        &caller, &prompt, tier_name, model_id, model_ver, params,
+                                        "live", "", real_usd, &goal, "AI", &principal,
+                                    );
+                                }
                                 // Record the live (response, real token-count) so a
                                 // re-run with the same AXON_AI_REPLAY file reproduces
                                 // this exact response AND cost — the F2 replay engine.
@@ -5911,20 +5940,24 @@ impl<'p> Interp<'p> {
                         // (cost_usd stays the unused estimate; the record is 0).
                         // The cost meter only reflects calls that actually
                         // dispatched to a (mock or live) model.
-                        append_ai_call_jsonl(
-                            &caller,
-                            &prompt,
-                            tier_name,
-                            "none",
-                            "offline",
-                            params,
-                            "fallback",
-                            "offline: no model reachable",
-                            0.0,
-                            &goal,
-                            "AI",
-                            &principal,
-                        );
+                        // Same ceiling as every other durable write — see the
+                        // agent_action guard above.
+                        if self.provenance_write_permitted() {
+                            append_ai_call_jsonl(
+                                &caller,
+                                &prompt,
+                                tier_name,
+                                "none",
+                                "offline",
+                                params,
+                                "fallback",
+                                "offline: no model reachable",
+                                0.0,
+                                &goal,
+                                "AI",
+                                &principal,
+                            );
+                        }
                         ok!(Value::Ok(Box::new(Value::Str(fallback))));
                     }
                     ai_policy_err(format!(

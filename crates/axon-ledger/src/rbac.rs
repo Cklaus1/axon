@@ -88,6 +88,16 @@ impl RbacConfig {
         self.admins.iter().any(|a| a == email)
     }
 
+    /// Is the RBAC gate armed at all?
+    ///
+    /// ONE definition, because the CLI and the MCP server both need it and a
+    /// second copy would drift. Armed when EITHER list is non-empty: a ledger
+    /// that lists only `authenticated_admins` is configured, and treating it
+    /// as unconfigured made every record readable by everyone.
+    pub fn gate_is_armed(&self) -> bool {
+        !self.admins.is_empty() || !self.authenticated_admins.is_empty()
+    }
+
     /// Admin by AUTHENTICATED identity: the only predicate that may authorize
     /// a privileged operation.
     ///
@@ -143,13 +153,34 @@ impl RbacConfig {
     /// - If RBAC is disabled (no admins configured): all records visible.
     /// - If caller is an admin: all records visible.
     /// - Otherwise: only records the caller owns, per [`RbacConfig::owns`].
+    /// A SECOND filter, applied on top of an already-filtered handle.
+    ///
+    /// Its one caller (`search` in main.rs) reads through `Store::open_as`,
+    /// whose `all()` has already applied `filter_owned` — so by the time
+    /// records arrive here they are filtered, and mutating this function's
+    /// admin bypass has NO observable effect through any surface. Verified by
+    /// mutation: reverting this bypass to the claimed identity leaves the
+    /// whole suite green, while the same mutation to `filter_owned` is caught
+    /// immediately.
+    ///
+    /// It is corrected to use `authority` for consistency, not because a hole
+    /// was reachable through it. Recorded here so the next reader does not
+    /// mistake untested for untried, and so that if this ever gains a caller
+    /// with an unfiltered handle, the bypass is already right.
     pub fn filter_visible<'a>(
         &self,
         records: Vec<&'a LedgerRecord>,
         caller: Option<&str>,
+        authority: &Authority,
     ) -> Vec<&'a LedgerRecord> {
-        // RBAC disabled: no admins configured
-        if self.admins.is_empty() {
+        // RBAC disabled: neither list configured. Testing only `admins` meant
+        // a ledger listing only `authenticated_admins` — exactly what the
+        // refusal message tells an operator to write — read as unconfigured,
+        // and every caller saw everything.
+        if !self.gate_is_armed() {
+            return records;
+        }
+        if authority.is_admin(self) {
             return records;
         }
         let Some(caller) = caller else {
@@ -159,9 +190,6 @@ impl RbacConfig {
                 .filter(|r| r.principal == "unknown" || r.principal == "root")
                 .collect();
         };
-        if self.is_admin(caller) {
-            return records;
-        }
         // Member: filter to their own records
         records
             .into_iter()
@@ -170,12 +198,26 @@ impl RbacConfig {
     }
 
     /// Owned-record variant of filter_visible.
+    /// Filter to what `caller` may see.
+    ///
+    /// TWO SEPARATE QUESTIONS, and only one of them may trust the claim.
+    /// "Which records are MINE" narrows the view and is fine to answer from a
+    /// claimed name. "May I see EVERYONE's" is admin authority and must come
+    /// from `authority`. REPRODUCED before this split: `--as
+    /// alice@example.com stats` reported 2 records to a caller entitled to 1,
+    /// and the same through `$AXON_PRINCIPAL`, the MCP `ledger_stats` tool
+    /// and axon-signal. The write verbs had been moved to authenticated
+    /// identity and the read bypass had not.
     pub fn filter_owned(
         &self,
         records: Vec<LedgerRecord>,
         caller: Option<&str>,
+        authority: &Authority,
     ) -> Vec<LedgerRecord> {
-        if self.admins.is_empty() {
+        if !self.gate_is_armed() {
+            return records;
+        }
+        if authority.is_admin(self) {
             return records;
         }
         let Some(caller) = caller else {
@@ -184,9 +226,6 @@ impl RbacConfig {
                 .filter(|r| r.principal == "unknown" || r.principal == "root")
                 .collect();
         };
-        if self.is_admin(caller) {
-            return records;
-        }
         records
             .into_iter()
             .filter(|r| Self::owns(&r.principal, caller))
@@ -353,6 +392,25 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
+    /// A claim with NO authenticated authority — what an ordinary caller has.
+    ///
+    /// These tests used to pass a bare `&str` and the admin bypass keyed off
+    /// it, so `test_admin_sees_all` asserted that CLAIMING an admin's name
+    /// showed everything. That is the behaviour that was removed; the test is
+    /// now split into the claim (sees only its own) and the authenticated
+    /// admin (sees all).
+    fn claim_only() -> Authority {
+        Authority::Impersonated {
+            claimed: "\u{0}not-an-admin".to_string(),
+            real: AuthenticatedPrincipal("\u{0}not-an-admin".to_string()),
+        }
+    }
+
+    /// An authority that IS the named authenticated admin.
+    fn authenticated_as(who: &str) -> Authority {
+        Authority::Authenticated(AuthenticatedPrincipal(who.to_string()))
+    }
+
     fn make_record(principal: &str) -> LedgerRecord {
         LedgerRecord {
             id: format!("id-{}", principal),
@@ -371,20 +429,36 @@ mod tests {
         let config = RbacConfig::default();
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("agent:bob@example.com");
-        let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"));
+        let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"), &claim_only());
         assert_eq!(visible.len(), 2); // RBAC off
     }
 
     #[test]
-    fn test_admin_sees_all() {
+    fn test_authenticated_admin_sees_all() {
         let config = RbacConfig {
-            authenticated_admins: vec![],
+            authenticated_admins: vec!["alice-os".to_string()],
             admins: vec!["alice@example.com".to_string()],
         };
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("agent:bob@example.com");
-        let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"));
+        let visible = config.filter_owned(vec![r1, r2], None, &authenticated_as("alice-os"));
         assert_eq!(visible.len(), 2);
+    }
+
+    /// The other half of the split: CLAIMING an admin's name shows only what
+    /// that name owns. This is the behaviour change — the bypass moved to
+    /// authenticated identity.
+    #[test]
+    fn test_claimed_admin_does_not_see_all() {
+        let config = RbacConfig {
+            authenticated_admins: vec!["someone-else".to_string()],
+            admins: vec!["alice@example.com".to_string()],
+        };
+        let r1 = make_record("agent:alice@example.com");
+        let r2 = make_record("agent:bob@example.com");
+        let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"), &claim_only());
+        assert_eq!(visible.len(), 1, "a claimed admin must not get the bypass");
+        assert_eq!(visible[0].principal, "agent:alice@example.com");
     }
 
     #[test]
@@ -395,7 +469,7 @@ mod tests {
         };
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("agent:bob@example.com");
-        let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"));
+        let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"), &claim_only());
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].principal, "agent:alice@example.com");
     }
@@ -408,7 +482,7 @@ mod tests {
         };
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("unknown");
-        let visible = config.filter_owned(vec![r1, r2], None);
+        let visible = config.filter_owned(vec![r1, r2], None, &claim_only());
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].principal, "unknown");
     }
@@ -433,6 +507,15 @@ mod tests {
 }
 #[cfg(test)]
 mod identity_boundary_tests {
+    /// Same helper as the sibling module: a claim carrying no authenticated
+    /// authority, which is what an ordinary caller has.
+    fn claim_only() -> super::Authority {
+        super::Authority::Impersonated {
+            claimed: "\u{0}not-an-admin".to_string(),
+            real: super::AuthenticatedPrincipal("\u{0}not-an-admin".to_string()),
+        }
+    }
+
     use super::*;
     use crate::model::{Effect, LedgerRecord};
 
@@ -465,7 +548,7 @@ mod identity_boundary_tests {
     fn a_suffix_collision_is_not_ownership() {
         let c = active();
         let recs = vec![rec("agent:bob@example.com")];
-        let seen = c.filter_owned(recs, Some("ob@example.com"));
+        let seen = c.filter_owned(recs, Some("ob@example.com"), &claim_only());
         assert!(
             seen.is_empty(),
             "a caller whose name is a SUFFIX of another principal must own nothing"
@@ -482,7 +565,7 @@ mod identity_boundary_tests {
         let c = active();
         for caller in ["", "   ", "\t"] {
             let recs = vec![rec("agent:alice@example.com"), rec("git:bob@example.com")];
-            let seen = c.filter_owned(recs, Some(caller));
+            let seen = c.filter_owned(recs, Some(caller), &claim_only());
             assert!(
                 seen.is_empty(),
                 "caller {caller:?} must own nothing; an empty identity is not an identity"
@@ -502,7 +585,7 @@ mod identity_boundary_tests {
             rec("bob@example.com"),
             rec("agent:alice@example.com"),
         ];
-        let seen = c.filter_owned(recs, Some("bob@example.com"));
+        let seen = c.filter_owned(recs, Some("bob@example.com"), &claim_only());
         assert_eq!(
             seen.len(),
             3,
@@ -517,7 +600,7 @@ mod identity_boundary_tests {
     fn a_prefix_collision_is_not_ownership() {
         let c = active();
         let recs = vec![rec("agent:bob@example.com.evil.test")];
-        let seen = c.filter_owned(recs, Some("bob@example.com"));
+        let seen = c.filter_owned(recs, Some("bob@example.com"), &claim_only());
         assert!(
             seen.is_empty(),
             "a principal merely CONTAINING the caller must not be owned by them"
@@ -527,9 +610,33 @@ mod identity_boundary_tests {
     /// Control: the fix must not be "nobody owns anything".
     #[test]
     fn an_admin_still_sees_everything_and_a_member_still_sees_their_own() {
-        let c = active();
+        let mut c = active();
+        // The admin half needs an AUTHENTICATED authority now. It previously
+        // passed a claimed "admin@example.com" and asserted 2 — which is the
+        // behaviour that was removed, so the assertion had to move with it
+        // rather than be deleted.
+        c.add_authenticated_admin("admin-os");
         let all = || vec![rec("agent:alice@example.com"), rec("git:bob@example.com")];
-        assert_eq!(c.filter_owned(all(), Some("admin@example.com")).len(), 2);
-        assert_eq!(c.filter_owned(all(), Some("bob@example.com")).len(), 1);
+        assert_eq!(
+            c.filter_owned(
+                all(),
+                Some("admin@example.com"),
+                &Authority::Authenticated(AuthenticatedPrincipal("admin-os".to_string()))
+            )
+            .len(),
+            2
+        );
+        // And the claim alone does not.
+        assert_eq!(
+            c.filter_owned(all(), Some("admin@example.com"), &claim_only())
+                .len(),
+            0,
+            "a claimed admin must see only what that name owns, which is nothing here"
+        );
+        assert_eq!(
+            c.filter_owned(all(), Some("bob@example.com"), &claim_only())
+                .len(),
+            1
+        );
     }
 }

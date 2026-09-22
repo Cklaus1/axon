@@ -142,6 +142,16 @@ fn a_caller_supplied_writer_is_overwritten_not_trusted() {
 fn the_mcp_write_path_is_stamped_too() {
     let d = setup("mcp");
     let me = real_os_identity();
+    // ledger_refresh is admin-gated now, so the server must hold authority
+    // for the write to happen at all — this test is about the STAMP, not the
+    // gate (which `a_privileged_mcp_tool_requires_the_same_authority_as_the_cli_verb`
+    // covers). Without this the write is refused and the test would assert
+    // stamping on an empty ledger.
+    std::fs::write(
+        d.join("L").join("rbac.json"),
+        format!("{{\"admins\":[\"alice@example.com\"],\"authenticated_admins\":[\"{me}\"]}}"),
+    )
+    .unwrap();
     let repo = d.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     let git = |args: &[&str]| {
@@ -231,6 +241,197 @@ fn a_record_written_before_this_field_existed_still_loads() {
         String::from_utf8_lossy(&out.stdout).contains("Total records:    1"),
         "the old record was not counted: {}",
         String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── The MCP surface must not be a way around the admin gate ────────────────
+
+/// A privileged operation must require the same authority whichever surface
+/// reaches it.
+///
+/// The admin gate lived in `main()` before CLI dispatch, and the MCP server
+/// dispatches tool calls internally, so the same operation reached over
+/// stdio JSON-RPC skipped it entirely. REPRODUCED: with
+/// `authenticated_admins = ["nobody-real"]`, the CLI `refresh --repo R` was
+/// refused and left the ledger at 2 records, while
+/// `tools/call ledger_refresh {repo: R}` returned ok and wrote 193.
+///
+/// The previous pass had classified `Commands::Mcp` as "appends new records;
+/// does not rewrite or reattribute" — classifying the SERVER rather than the
+/// operations it exposes.
+#[test]
+fn a_privileged_mcp_tool_requires_the_same_authority_as_the_cli_verb() {
+    let d = setup("mcpgate");
+    // Authority belongs to someone who is not this process.
+    std::fs::write(
+        d.join("L").join("rbac.json"),
+        r#"{"admins":["alice@example.com"],"authenticated_admins":["nobody-real"]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("L").join("events.ndjson"),
+        "{\"id\":\"a1\",\"principal\":\"git:alice@example.com\",\"effect\":\"git_commit\",\
+         \"causal_parent\":null,\"ts_ms\":1000,\"payload\":{\"sha\":\"a\"}}\n",
+    )
+    .unwrap();
+    let before = std::fs::read_to_string(d.join("L").join("events.ndjson")).unwrap();
+
+    let repo = d.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "attacker@evil.test"]);
+    git(&["config", "user.name", "x"]);
+    std::fs::write(repo.join("f.txt"), "y").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "forged"]);
+
+    // PREMISE: the CLI verb is refused for this caller.
+    let cli = Command::new(bin())
+        .arg("--ledger-dir")
+        .arg(d.join("L"))
+        .args(["refresh", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert_ne!(
+        cli.status.code(),
+        Some(0),
+        "premise: CLI refresh must be refused"
+    );
+
+    // The same operation through MCP must be refused too.
+    let frames = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"ledger_refresh\",\"arguments\":{{\"repo\":\"{}\"}}}}}}\n",
+        repo.display()
+    );
+    let mut child = Command::new(bin())
+        .arg("--ledger-dir")
+        .arg(d.join("L"))
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(frames.as_bytes())
+        .unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(
+        stdout.contains("restricted to an admin"),
+        "MCP performed a privileged operation without authority:\n{stdout}"
+    );
+    assert_eq!(
+        before,
+        std::fs::read_to_string(d.join("L").join("events.ndjson")).unwrap(),
+        "the ledger was modified through MCP despite the caller having no authority"
+    );
+
+    // CONTROL: a READ tool is not gated — gating reads would be a different
+    // product, and would hide a filter regression behind a refusal.
+    let read_frame = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ledger_stats\",\"arguments\":{}}}\n";
+    let mut child = Command::new(bin())
+        .arg("--ledger-dir")
+        .arg(d.join("L"))
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(read_frame.as_bytes())
+        .unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        !stdout.contains("restricted to an admin"),
+        "a read tool must not be admin-gated:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `replace_record` must stamp too, or an update erases the writer.
+///
+/// `Store::append` is the choke point for a record being BORN, not for its
+/// bytes changing. `session-refresh` rewrites a record through
+/// `replace_record`, which wrote the caller's struct verbatim — and because
+/// `recorded_by` is `skip_serializing_if = "Option::is_none"`, and
+/// `ingest_session` returns an UNSTAMPED original while appending a stamped
+/// clone, the field vanished entirely. The refreshed record became
+/// indistinguishable from a pre-attribution legacy record.
+///
+/// Mutation found that this was fixed but untested: removing the stamp from
+/// `replace_record` left the suite green.
+#[test]
+fn refreshing_a_record_does_not_erase_its_writer() {
+    let d = setup("refresh");
+    let me = real_os_identity();
+    std::fs::write(
+        d.join("L").join("rbac.json"),
+        format!("{{\"admins\":[],\"authenticated_admins\":[\"{me}\"]}}"),
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("L").join("events.ndjson"),
+        "{\"id\":\"sess-1\",\"principal\":\"agent:victim@example.com\",\
+         \"effect\":\"agent_session\",\"causal_parent\":null,\
+         \"ts_ms\":1767225600000,\"payload\":{\"session_id\":\"aaaabbbbccccdddd\",\
+         \"turn_count\":0,\"goal\":\"original\"},\"recorded_by\":\"ci-bot\"}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("sess").join("aaaabbbbccccdddd.jsonl"),
+        r#"{"type":"user","message":{"role":"user","content":"do the thing"},"timestamp":"2026-01-01T00:00:00Z","sessionId":"aaaabbbbccccdddd"}"#,
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .arg("--ledger-dir")
+        .arg(d.join("L"))
+        .arg("session-refresh")
+        .arg(d.join("sess"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "premise: the refresh must run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let recs = records(&d);
+    assert_eq!(recs.len(), 1);
+    assert!(
+        recs[0].get("recorded_by").is_some(),
+        "the refresh ERASED the writer — the record is now indistinguishable \
+         from a pre-attribution legacy record: {:?}",
+        recs[0]
+    );
+    assert_eq!(
+        recs[0]["recorded_by"], me,
+        "the writer must name whoever actually rewrote the bytes: {:?}",
+        recs[0]
     );
     let _ = std::fs::remove_dir_all(&d);
 }

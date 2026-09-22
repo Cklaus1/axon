@@ -538,31 +538,21 @@ fn main() -> Result<()> {
     // does not make.
     if !rbac.admins.is_empty() || !rbac.authenticated_admins.is_empty() {
         if let Some(verb) = requires_admin(&cli.command) {
-            // BOOTSTRAP. While NOBODY holds privileged authority, granting the
-            // first one is allowed. Otherwise an upgraded ledger — `admins`
-            // populated, `authenticated_admins` still empty — refuses every
-            // caller including the operator, and the only way in is to
-            // hand-edit rbac.json. MEASURED: that is exactly what happened
-            // the first time this was tried.
+            // NO BOOTSTRAP WINDOW. An earlier version of this allowed
+            // `rbac grant --authenticated` whenever `authenticated_admins`
+            // was empty, reasoning that writing that file needs filesystem
+            // access anyway. That reasoning was wrong: it conflated
+            // FILESYSTEM access with CLI access. Every pre-existing ledger
+            // has an empty list, `rbac grant <email>` produces one, and the
+            // MCP server or a group-writable shared ledger gives CLI reach
+            // to callers who were never meant to hold authority — so any
+            // caller could have granted themselves permanent admin.
             //
-            // It concedes nothing. Writing `authenticated_admins` requires
-            // write access to rbac.json, and a caller who has that can grant
-            // themselves authority with a text editor whether or not this CLI
-            // helps them — the boundary test
-            // `rbac_does_not_and_cannot_bind_a_writer_who_bypasses_the_cli`
-            // makes that explicit. The concession ends the moment the list is
-            // non-empty, which is the state worth protecting.
-            let bootstrapping = rbac.authenticated_admins.is_empty()
-                && matches!(
-                    &cli.command,
-                    Commands::Rbac {
-                        action: RbacAction::Grant {
-                            authenticated: true,
-                            ..
-                        }
-                    }
-                );
-            if !bootstrapping && !authority.is_admin(&rbac) {
+            // Bootstrapping is therefore an OPERATOR action, done with an
+            // editor on rbac.json, which the refusal below names explicitly.
+            // That is the same shape as /etc/sudoers: the first grant is
+            // outside the tool, deliberately.
+            if !authority.is_admin(&rbac) {
                 anyhow::bail!(
                     "`{verb}` rewrites records that may belong to other principals \
                      and is restricted to an admin.\n  \
@@ -977,9 +967,12 @@ fn main() -> Result<()> {
                 hits.retain(|h| h.record.repo.as_deref() == Some(r.as_str()));
             }
             // RBAC: member can only see their own session/commit records
-            if !rbac.admins.is_empty() {
+            // `gate_is_armed`, not `!admins.is_empty()`: a ledger listing
+            // only `authenticated_admins` is configured, and treating it as
+            // unconfigured skipped the filter entirely.
+            if rbac.gate_is_armed() {
                 hits.retain(|h| {
-                    rbac.filter_visible(vec![&h.record], caller.as_deref())
+                    rbac.filter_visible(vec![&h.record], caller.as_deref(), &authority)
                         .len()
                         == 1
                 });
@@ -2010,6 +2003,31 @@ fn main() -> Result<()> {
                 authenticated,
             } => {
                 let mut config = RbacConfig::load(&dir_path)?;
+                // NEVER ARM THE GATE WITH NOBODY ABLE TO ADMINISTER IT.
+                //
+                // On an unconfigured ledger every caller may run this,
+                // because RBAC is inert and nobody is restricted yet. Adding
+                // a VISIBILITY admin arms the gate — and if no authenticated
+                // admin exists, every privileged verb, including `rbac grant`
+                // itself, is then refused for everyone, permanently, short of
+                // hand-editing rbac.json. An unprivileged caller could
+                // trigger that deliberately.
+                //
+                // So visibility cannot be the FIRST thing configured.
+                // Establishing authority is, which is also allowed only while
+                // the gate is inert — at which point nobody is being
+                // restricted, so self-granting concedes nothing.
+                if !authenticated && !config.gate_is_armed() {
+                    anyhow::bail!(
+                        "granting visibility to `{email}` would switch RBAC ON with no \
+                         one holding privileged authority, which would refuse every \
+                         privileged command — including this one — for everybody.\n  \
+                         Establish authority first:\n    \
+                         axon-ledger --ledger-dir {} rbac grant --authenticated {}",
+                        dir_path.display(),
+                        axon_ledger::rbac::authenticated_principal(),
+                    );
+                }
                 if authenticated {
                     config.add_authenticated_admin(&email);
                     config.save(&dir_path)?;

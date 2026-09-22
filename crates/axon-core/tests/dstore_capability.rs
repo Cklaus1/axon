@@ -495,3 +495,92 @@ fn suppressing_the_durable_write_does_not_break_optimisation() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// The OTHER provenance writers are on the same ceiling.
+///
+/// The first pass guarded only the `@[adaptive]` writer. A disproof review
+/// found two more into the same file: `append_agent_action_jsonl`, emitted at
+/// the TOP of `pre_effect_gate` before the ceiling is consulted, and
+/// `append_ai_call_jsonl`. MEASURED under `AXON_ALLOWED_EFFECTS=Net,AI` (IO
+/// denied, so `write_file` is refused): an `@[agent]` fn looping 8 times over
+/// `ai_complete` produced 8 `agent_action` plus 8 `ai_call` rows — 16 durable
+/// program-derived lines, with an attacker-chosen function name and a
+/// SHA-256 of an attacker-chosen prompt, in a run that had no filesystem
+/// effect at all. Loop count arbitrary, so the volume was unbounded.
+///
+/// The cost of closing it is stated plainly: a run denied filesystem effects
+/// now leaves NO provenance audit trail, because persisting one IS the
+/// capability it was denied. Auditing a sandboxed run requires granting the
+/// runtime a channel it may write.
+#[test]
+fn every_provenance_writer_honours_the_ceiling() {
+    let d = tmp("prov_writers");
+    let prog = d.join("leak.ax");
+    std::fs::write(
+        &prog,
+        "@[agent]\nfn LEAK_ROW(i: i64) -> i64 {\n    \
+         let _ = ai_complete(\"payload-\" + to_str(i))\n    i\n}\n\
+         fn main() {\n    let i = 0\n    while i < 8 {\n        \
+         let _ = LEAK_ROW(i)\n        i = i + 1\n    }\n}\n",
+    )
+    .unwrap();
+
+    let rows = |cache: &std::path::Path, event: &str| -> usize {
+        std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+            .map(|t| t.matches(&format!("\"event\":\"{event}\"")).count())
+            .unwrap_or(0)
+    };
+
+    // PREMISE: with IO granted, both writers fire. Without this the
+    // suppression below could pass against a build that never writes at all.
+    let open_cache = d.join("granted");
+    let out = Command::new(axon())
+        .arg("run")
+        .arg(&prog)
+        .env("XDG_CACHE_HOME", &open_cache)
+        .env("AXON_AI_MOCK", "1")
+        .env("AXON_ALLOWED_EFFECTS", "Net,AI,IO")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "premise run failed: {}",
+               String::from_utf8_lossy(&out.stderr));
+    assert!(rows(&open_cache, "agent_action") >= 8, "premise: agent_action rows");
+    assert!(rows(&open_cache, "ai_call") >= 8, "premise: ai_call rows");
+
+    // IO denied: neither writer may persist.
+    let shut_cache = d.join("denied");
+    let out = Command::new(axon())
+        .arg("run")
+        .arg(&prog)
+        .env("XDG_CACHE_HOME", &shut_cache)
+        .env("AXON_AI_MOCK", "1")
+        .env("AXON_ALLOWED_EFFECTS", "Net,AI")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "the program must still run");
+    assert_eq!(
+        rows(&shut_cache, "agent_action"),
+        0,
+        "agent_action rows were persisted under a ceiling granting no IO"
+    );
+    assert_eq!(
+        rows(&shut_cache, "ai_call"),
+        0,
+        "ai_call rows were persisted under a ceiling granting no IO"
+    );
+
+    // Only `run_start` may remain: it is written at the CLI boundary before
+    // the program executes, carries a generated run-id, the seed and the
+    // operator's chosen path, and is one row per process — no program-chosen
+    // content and no volume to amplify. It is the replay handle, so guarding
+    // it would cost the run its identity for nothing.
+    let total = std::fs::read_to_string(shut_cache.join("axon").join("provenance.jsonl"))
+        .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+    assert_eq!(
+        total,
+        rows(&shut_cache, "run_start"),
+        "something other than run_start was persisted under a denied ceiling"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

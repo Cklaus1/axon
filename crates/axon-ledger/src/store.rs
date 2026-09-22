@@ -49,7 +49,11 @@ pub struct Store {
     /// nine and left the tenth to be written without one. Filtering in the
     /// reader means a new handler cannot forget: there is no unfiltered read to
     /// reach through this handle.
-    view: Option<(crate::rbac::RbacConfig, Option<String>)>,
+    view: Option<(
+        crate::rbac::RbacConfig,
+        Option<String>,
+        crate::rbac::Authority,
+    )>,
 }
 
 impl Store {
@@ -88,14 +92,21 @@ impl Store {
     pub fn open_as(path: &Path, caller: Option<String>) -> Result<Store> {
         let mut st = Store::open(path)?;
         let rbac = crate::rbac::RbacConfig::load(path).unwrap_or_default();
-        st.view = Some((rbac, caller));
+        // The AUTHORITY is derived here rather than passed in, so every
+        // existing call site — CLI, MCP, axon-signal — gets the authenticated
+        // admin check without changing its signature, and none of them can
+        // pass a claim where authority is required.
+        let authority = crate::rbac::Authority::resolve(caller.as_deref());
+        st.view = Some((rbac, caller, authority));
         Ok(st)
     }
 
     /// Apply the view, if this handle has one.
     fn visible(&self, records: Vec<LedgerRecord>) -> Vec<LedgerRecord> {
         match &self.view {
-            Some((rbac, caller)) => rbac.filter_owned(records, caller.as_deref()),
+            Some((rbac, caller, authority)) => {
+                rbac.filter_owned(records, caller.as_deref(), authority)
+            }
             None => records,
         }
     }
@@ -252,6 +263,20 @@ impl Store {
 
     /// Replace a single record by id. Returns `true` if a record was replaced.
     /// Writes atomically via a `.tmp` rename.
+    /// Replace one record wholesale.
+    ///
+    /// STAMPS THE WRITER, like `append`. It did not, and `session-refresh`
+    /// hands it a record built by `ingest_session` — which appends a stamped
+    /// CLONE to its store and returns the UNSTAMPED original. Because
+    /// `recorded_by` is `skip_serializing_if = "Option::is_none"`, the field
+    /// vanished entirely and the refreshed record became indistinguishable
+    /// from a pre-attribution legacy record. Erasure, not forgery, but the
+    /// claim "every record carries an unforgeable writer" was false.
+    ///
+    /// THE RULE, uniform across this type: a method that changes a record's
+    /// BYTES stamps the writer, so `recorded_by` always names whoever last
+    /// wrote them. `prune` is the exception and deliberately so — it deletes
+    /// records and copies the survivors verbatim without altering them.
     pub fn replace_record(&mut self, old_id: &str, new_record: &LedgerRecord) -> Result<bool> {
         self.require_unfiltered("replace_record")?;
         let all = self.all()?;
@@ -261,7 +286,11 @@ impl Store {
             .map(|r| {
                 if r.id == old_id {
                     replaced = true;
-                    new_record.clone()
+                    {
+                        let mut stamped = new_record.clone();
+                        stamped.recorded_by = Some(writer_identity().to_string());
+                        stamped
+                    }
                 } else {
                     r
                 }
@@ -301,6 +330,14 @@ impl Store {
             .map(|mut r| {
                 if r.principal.starts_with(old_prefix) {
                     r.principal = new_principal.to_string();
+                    // Same rule as `replace_record`: this changes the
+                    // record's bytes — its attribution, no less — so the
+                    // writer is restamped. It costs the ORIGINAL writer's
+                    // name, which is the deliberate trade: `recorded_by`
+                    // means "who last wrote these bytes", and a reattribution
+                    // performed by an admin is exactly the kind of act that
+                    // should not be invisible.
+                    r.recorded_by = Some(writer_identity().to_string());
                     updated += 1;
                 }
                 r
