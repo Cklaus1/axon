@@ -1303,6 +1303,21 @@ mod tests {
 
         let prev = std::env::var("ANTHROPIC_API_KEY").ok();
         std::env::remove_var("ANTHROPIC_API_KEY");
+        // ALSO neutralise AXON_AI_MOCK. This test asserts "no API key => rc 1",
+        // but mock mode ALSO produces a successful rc 0 without a key, so the
+        // assertion only holds when mock is off — a premise the test did not
+        // control. Sibling tests in this file set AXON_AI_MOCK=1 and restore
+        // it, and if one of them leaves it set (a panic while holding the
+        // poison-tolerant ENV_LOCK is enough) this test fails with
+        // "missing API key must return 1: left 0, right 1".
+        //
+        // MEASURED: green 5/5 in a warm tree and RED in a cold gate worktree,
+        // which is the signature of an ordering race rather than a code
+        // change. The run receipt showed `env_axon_names=` empty, ruling out
+        // an inherited AXON_AI_MOCK and localising the pollution to
+        // in-process state.
+        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
+        std::env::remove_var("AXON_AI_MOCK");
 
         // ── i64 bridge ──
         let prompt = b"hi";
@@ -1363,6 +1378,10 @@ mod tests {
         assert_eq!(rc, 1);
 
         // Restore env var.
+        match prev_mock {
+            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
+            None => std::env::remove_var("AXON_AI_MOCK"),
+        }
         if let Some(v) = prev {
             std::env::set_var("ANTHROPIC_API_KEY", v);
         }
@@ -1510,6 +1529,21 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let prev = std::env::var("ANTHROPIC_API_KEY").ok();
         std::env::remove_var("ANTHROPIC_API_KEY");
+        // ALSO neutralise AXON_AI_MOCK. This test asserts "no API key => rc 1",
+        // but mock mode ALSO produces a successful rc 0 without a key, so the
+        // assertion only holds when mock is off — a premise the test did not
+        // control. Sibling tests in this file set AXON_AI_MOCK=1 and restore
+        // it, and if one of them leaves it set (a panic while holding the
+        // poison-tolerant ENV_LOCK is enough) this test fails with
+        // "missing API key must return 1: left 0, right 1".
+        //
+        // MEASURED: green 5/5 in a warm tree and RED in a cold gate worktree,
+        // which is the signature of an ordering race rather than a code
+        // change. The run receipt showed `env_axon_names=` empty, ruling out
+        // an inherited AXON_AI_MOCK and localising the pollution to
+        // in-process state.
+        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
+        std::env::remove_var("AXON_AI_MOCK");
 
         let prompt = b"hi";
 
@@ -1588,6 +1622,10 @@ mod tests {
             "got: {msg2}"
         );
 
+        match prev_mock {
+            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
+            None => std::env::remove_var("AXON_AI_MOCK"),
+        }
         if let Some(v) = prev {
             std::env::set_var("ANTHROPIC_API_KEY", v);
         }
