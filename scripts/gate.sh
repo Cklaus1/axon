@@ -187,6 +187,18 @@ bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 # staleness refusal: the suite that should have caught it was not part of any
 # gate, and five of its six boundary cases were passing vacuously besides.
 echo "── gate: cortex policy boundary tests ─────────────────────────────"
+# The cortex CLI suite shells out to the interpreter at target/debug/axon and
+# refuses to run without it. Nothing before this point built it, so the stage
+# only ever passed on a binary left in the developer's tree by an earlier
+# build — a gate passing on gitignored leftover state rather than on the
+# commit it claims to judge.
+#
+# FOUND by running the gate in a detached worktree at a fixed commit, whose
+# target/ starts empty: 18 of 18 cortex CLI tests failed with "the CLI suite
+# needs the interpreter at .../src/target/debug/axon". In a pristine clone or
+# on CI-from-scratch this stage was never really green.
+cargo build -q -p axon-core --no-default-features --bin axon \
+  || fail "interpreter build (needed by the cortex CLI suite)"
 cargo test -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
 
