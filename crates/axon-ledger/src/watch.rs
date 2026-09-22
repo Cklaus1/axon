@@ -81,7 +81,11 @@ pub fn watch_sessions(
                             .get("goal")
                             .and_then(|v| v.as_str())
                             .unwrap_or("?");
-                        eprintln!("[ledger-watch] ingested {} — goal: {}", &r.id[..8], goal);
+                        eprintln!(
+                            "[ledger-watch] ingested {} — goal: {}",
+                            crate::model::short_id(&r.id, 8),
+                            goal
+                        );
                     }
                     new_ingested += 1;
                 }

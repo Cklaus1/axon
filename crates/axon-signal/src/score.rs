@@ -275,11 +275,17 @@ pub fn score_sessions(store: &Store) -> anyhow::Result<Vec<SessionScore>> {
     let mut scores = Vec::new();
     for s in sessions {
         let p = &s.payload;
+        // `unwrap_or(&s.id[..8])` here was wrong twice over. Rust evaluates
+        // `unwrap_or`'s argument EAGERLY, so the fallback slice ran on every
+        // record even when `session_id` was present — and `&id[..8]` panics on
+        // an id shorter than 8 bytes or one whose char spans byte 8. This
+        // function serves an HTTP endpoint, so one such record killed the
+        // dashboard outright (exit 101) on a single unauthenticated request.
         let session_id = p
             .get("session_id")
             .and_then(|v| v.as_str())
-            .unwrap_or(&s.id[..8])
-            .to_string();
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| axon_ledger::model::short_id(&s.id, 8).to_string());
         let goal = p
             .get("goal")
             .and_then(|v| v.as_str())
@@ -613,6 +619,52 @@ mod tests {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             s.score as u64
+        );
+    }
+}
+
+#[cfg(test)]
+mod short_id_regression_tests {
+    use super::score_sessions;
+    use axon_ledger::store::Store;
+
+    /// A record id shorter than 8 bytes must not crash scoring.
+    ///
+    /// `score_sessions` used `.unwrap_or(&s.id[..8])` for the display id.
+    /// `unwrap_or` evaluates its argument EAGERLY, so that slice ran for every
+    /// record even when `session_id` was present, and `&id[..8]` panics on a
+    /// short id. This function backs the dashboard's `/api/score`, so the
+    /// panic was not confined to a CLI: a SINGLE request against a ledger
+    /// holding such a record killed the server (exit 101, connection refused
+    /// afterwards), and that endpoint requires no credentials.
+    ///
+    /// Asserted through `score_sessions` rather than through `short_id`
+    /// directly, because the helper being correct is not the property that
+    /// broke — the call site's eager evaluation was.
+    #[test]
+    fn scoring_survives_a_record_whose_id_is_shorter_than_the_display_prefix() {
+        let dir = std::env::temp_dir().join(format!("axon_signal_shortid_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // session_id IS present here, deliberately: the eager fallback panicked
+        // even then, so a fixture omitting it would test a different bug.
+        std::fs::write(
+            dir.join("events.ndjson"),
+            "{\"id\":\"r1\",\"principal\":\"alice\",\"effect\":\"agent_session\",\
+             \"ts_ms\":1750000000000,\"payload\":{\"session_id\":\"s1\",\"goal\":\"g\"}}\n\
+             {\"id\":\"\u{20ac}\u{20ac}\u{20ac}\",\"principal\":\"bob\",\"effect\":\"agent_session\",\
+             \"ts_ms\":1750000001000,\"payload\":{\"goal\":\"g2\"}}\n",
+        )
+        .unwrap();
+
+        let store = Store::open_as(&dir, axon_ledger::rbac::resolve_caller(None)).unwrap();
+        let scored = score_sessions(&store);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let scored = scored.expect("scoring a short/multi-byte id must not error");
+        assert_eq!(
+            scored.len(),
+            2,
+            "both session records should be scored; got {scored:?}"
         );
     }
 }

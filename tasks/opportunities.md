@@ -2175,3 +2175,25 @@ rather than a growing set of `is_wasm` / `is_wasi` / `is_browser` /
 
 Not done now because the current repair needs exactly one distinction and a
 speculative refactor would widen a security fix's diff.
+
+## The dashboard has no per-request panic isolation
+
+Fixing the `&id[..8]` slice removed the panic that was reachable, not the
+property that made it severe: `axon-signal dashboard` runs its handlers on the
+serving thread, so ANY panic in a handler terminates the process. Measured
+before the slice fix — one request against a ledger holding a record with a
+2-byte id returned 500 and the server exited 101; every later request got
+connection refused. The endpoint requires no credentials, so that is a
+denial of service triggered by ordinary stored data.
+
+The obvious remedy (`catch_unwind` per request, 500 and keep serving) is NOT
+obviously right, and is deliberately left to a human: it converts every future
+handler bug from a loud crash into a quiet 500, which is exactly the kind of
+"failure that reports as a handled case" this repo keeps finding. Wanted first:
+a decision on whether this dashboard is a local dev tool (crash loudly) or a
+service anything depends on (isolate and report).
+
+Note the related open gap the code already documents: `resolve_caller(None)`
+reads the SERVER's principal, so RBAC filtering here is by operator identity
+and every HTTP caller sees the operator's view. Verified this session — a
+request carrying no credentials at all is served HTTP 200.

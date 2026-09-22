@@ -55,3 +55,49 @@ impl Effect {
         }
     }
 }
+
+/// The first `n` CHARACTERS of an id, for display. Never panics.
+///
+/// The idiom this replaces was `&id[..8]`, which panics two ways on data that
+/// deserialises perfectly well:
+///
+///   * an id shorter than 8 bytes  -> "end byte index 8 is out of bounds"
+///   * a multi-byte char spanning byte 8 -> "is not a char boundary"
+///
+/// Both were reachable, and one of them was worse than a crash in a CLI: the
+/// axon-signal dashboard calls this path per request, so a SINGLE request
+/// against a ledger holding one such record killed the server outright (exit
+/// 101, connection refused thereafter) — and that endpoint requires no
+/// credentials. Measured on ids "r1" and "€€€".
+///
+/// Byte slicing was also the wrong operation for the intent. "First 8" of a
+/// display id means characters, not bytes, so this truncates on char
+/// boundaries and returns the whole string when it is shorter.
+pub fn short_id(id: &str, n: usize) -> &str {
+    match id.char_indices().nth(n) {
+        Some((byte_idx, _)) => &id[..byte_idx],
+        None => id,
+    }
+}
+
+#[cfg(test)]
+mod short_id_tests {
+    use super::short_id;
+
+    #[test]
+    fn short_id_never_panics_on_the_inputs_that_used_to_crash() {
+        // Shorter than the requested length: the whole string, no panic.
+        assert_eq!(short_id("r1", 8), "r1");
+        assert_eq!(short_id("", 8), "");
+        // A multi-byte char spanning byte 8. `&s[..8]` panics here with
+        // "not a char boundary"; this truncates on a char boundary instead.
+        assert_eq!(
+            short_id("\u{20ac}\u{20ac}\u{20ac}", 8),
+            "\u{20ac}\u{20ac}\u{20ac}"
+        );
+        assert_eq!(short_id("\u{20ac}\u{20ac}\u{20ac}", 2), "\u{20ac}\u{20ac}");
+        // The ordinary case still truncates to the requested length.
+        assert_eq!(short_id("0123456789abcdef", 8), "01234567");
+        assert_eq!(short_id("01234567", 8), "01234567");
+    }
+}
