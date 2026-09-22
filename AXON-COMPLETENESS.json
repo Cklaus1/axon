@@ -1979,6 +1979,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "ee115ad"
+    },
+    {
+      "id": "FG-040",
+      "where": "crates/axon-ai/src/lib.rs",
+      "claimed": "`axon trace --ai` is the AI-call audit trail: per-fn ai_complete calls, tier->model, mode (live/mock/replay/fallback), metered cost, and the goal each served.",
+      "reality": "The trail covered the INTERPRETER only. The ai_call record is appended by interp's builtin dispatch (append_ai_call_jsonl); native codegen reaches the model through six extern \"C\" symbols in axon-ai that touch no provenance writer, so a natively built binary made the call and left NOTHING behind. An absent record is read as a call that never happened, so the operator sees a clean trail for a run that talked to a model. Worse than the control row stated: the live path is reachable from an ordinary `axon build`, because the PRODUCED BINARY carries axon-ai's live HTTP code regardless of the compiler's own asi-runtime feature.",
+      "reproduced": "3-line program calling ai_complete. `axon run`: 1 ai_call record. Native binary: no provenance directory created at all. Live reachability proved against a local HTTP listener \u2014 the native binary completed a round trip to the configured endpoint (94-byte body, API key header present) with zero audit records.",
+      "fix": "REFUSAL, matching this codebase's doctrine for native gaps (AXON_REPLAY / AXON_RECORD / AXON_AUDIT_LEDGER in __axon_rt_refuse_interp_only_env, and the E0910 non-balanced tier refusal). All six native AI entry points refuse a LIVE call with exit 2. Scoped twice so the refusal is no broader than the gap: AXON_AI_MOCK returns early (nothing billed, nothing to attribute, parity harnesses unaffected \u2014 all_examples_parity still reports 76 native==interp) and so does an unresolvable API key (no request issued, so the catchable 'missing key' Err stays available). A PARTIAL native record was rejected as worse than none: the reader skips any record with no \"fn\" field and defaults an absent \"principal\" to \"root\", so native rows would be silently dropped or falsely attributed. Verified with the interpreter as a POSITIVE CONTROL proving the probe detects requests (interp: 1 request + 1 audit record; native: refused, zero requests). A drift test derives the entry-point list from the source; mutation-verified by deleting one guard.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "105444e"
     }
   ]
 }
