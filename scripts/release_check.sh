@@ -52,6 +52,19 @@ for d in "$RUNS"/*/; do
 done
 if [ -n "$gate_run" ]; then
   ok "strict gate receipt: $(basename "$gate_run")"
+  # WHICH ENVIRONMENT the gate ran in. Axon's behaviour is steered by AXON_*
+  # variables, and a release gate run under, say, AXON_AI_MOCK=1 or a relaxed
+  # AXON_ALLOWED_EFFECTS is testing something other than the default product.
+  # Motivated by a real bug: two axon-ai tests passed or failed depending on
+  # whether AXON_AI_MOCK was set, and the receipt's env field is what
+  # localised it.
+  gate_env="$(sed -n 's/^env_axon_names=//p' "$gate_run/receipt")"
+  if [ -n "$gate_env" ]; then
+    bad "the strict gate ran with AXON_* set ($gate_env) — that is not the"
+    bad "  default environment, so it does not certify default behaviour"
+  else
+    ok "strict gate ran with a clean AXON_* environment"
+  fi
 else
   bad "no CITABLE strict-gate receipt bound to $SHORT"
   bad "  (a receipt for another commit does not certify this one)"
