@@ -1326,11 +1326,12 @@
       "engines": {
         "interpreter": "enforced",
         "native": "enforced",
-        "wasm": "unknown",
+        "wasm": "not-applicable",
         "guest": "unknown"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested."
+      "note": "One implementation linked into BOTH engines (axon-ai is a staticlib in every native binary). wasm untested.",
+      "open": " wasm MEASURED: not-applicable, because the programs this variable traces cannot run there. It traces native::gfx FFI calls, and a `use native::gfx` program does not link for wasm32-wasip1 \u2014 rust-lld reports a signature mismatch on every gfx symbol (`__axon_gfx_surface` emitted as (i32,i64,i64) by codegen vs (i32,i32) in the wasm build of axon-rt), which is the documented i64->i32 ABI retarget gap (R7 \u00a712), not a regression. Native is confirmed enforced by direct run: AXON_NATIVE_TRACE=1 printed `native-trace: gfx::window_open/surface/clear/present` lines that are absent without it. guest remains unmeasured."
     },
     {
       "name": "AXON_HOST_SOCKET",
