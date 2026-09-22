@@ -1024,7 +1024,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " RE-MEASURED (native binary, three arms, with positive controls so the negative arm means something): a `.env` one directory ABOVE the invocation dir holding AXON_AI_API_KEY is NOT read by default \u2014 the program reports 'API key is not set' and exits 0; under AXON_DOTENV_WALK=1 the same file IS read and the key resolves; and a `.env` in the invocation dir is read by default. The second and third arms prove the probe detects a loaded .env, so the first arm's absence is a real refusal to walk rather than a blind test. This is the exfiltration path the walk restriction exists to close: a program with only an fs:write grant could plant a parent .env that redirects AXON_AI_BASE_URL and sends the API key to a listener."
     },
     {
       "name": "AXON_DOTENV_WALK",
@@ -1037,7 +1038,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " RE-MEASURED (native binary, three arms, with positive controls so the negative arm means something): a `.env` one directory ABOVE the invocation dir holding AXON_AI_API_KEY is NOT read by default \u2014 the program reports 'API key is not set' and exits 0; under AXON_DOTENV_WALK=1 the same file IS read and the key resolves; and a `.env` in the invocation dir is read by default. The second and third arms prove the probe detects a loaded .env, so the first arm's absence is a real refusal to walk rather than a blind test. This is the exfiltration path the walk restriction exists to close: a program with only an fs:write grant could plant a parent .env that redirects AXON_AI_BASE_URL and sends the API key to a listener."
     },
     {
       "name": "AXON_VM_ALLOWED_EFFECTS",
