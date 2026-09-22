@@ -2225,3 +2225,32 @@ or an internal registry mirror. Not done here: it adds the full dependency tree
 review-churn tradeoff that should be chosen deliberately rather than
 inherited from a lockfile fix. Worth revisiting if the `hermetic` profile's
 stated guarantees are ever meant to cover the BUILD as well as the run.
+
+## Native emits a legacy `call` provenance record the interpreter does not
+
+Measured on one `@[adaptive]` program, same source, same seed:
+
+```
+interp   {'run_start': 1, 'adaptive_return': 1}
+native   {'call': 1,      'adaptive_return': 1}
+```
+
+Two differences, one benign by design and one merely untidy:
+
+* `run_start` is interpreter-only ON PURPOSE. It is the handle
+  `axon trace --replay <run-id>` uses to re-execute the SOURCE, and native
+  refuses `AXON_REPLAY`/`AXON_RECORD` outright, so there is nothing for a
+  native run to stamp.
+* `call` is the "legacy string-event flavour" codegen emits at an
+  `@[adaptive]` prologue. The interpreter writes no entry record at all.
+
+NOT changed, deliberately. Nothing reads `call` — every consumer reads the
+score-bearing `adaptive_return` — and `axon-rt`'s module docs make on-disk
+backward compatibility an explicit goal, so removing it from native or adding
+it to interp is a compatibility decision rather than a cleanup. Recorded
+because the two logs are NOT record-for-record identical, and
+`provenance_parity.sh` compares only `fn|score` on `adaptive_return`, so
+nothing would tell a reader who assumed otherwise.
+
+Worth settling if provenance logs ever become something diffed across engines
+(a replay equivalence check would trip on this immediately).
