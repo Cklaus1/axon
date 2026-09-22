@@ -210,7 +210,8 @@ cmd_cancel() {
       # released. The cancelled run was non-citable anyway on its status, so
       # the wrong reason cost nothing here; it would have misled the first
       # time it appeared alone.
-      if [ -d "$cg" ]; then echo "released=no" >> "$dir/cleanup"; else echo "released=yes" >> "$dir/cleanup"; fi ;;
+      if [ -d "$cg" ]; then echo "released=no" >> "$dir/cleanup"; else echo "released=yes" >> "$dir/cleanup"; fi
+      remove_snapshot_worktree "$dir" ;;
     pgid:*)
       local p="${scope#pgid:}"
       [ "$p" = "pending" ] && die "scope not yet established"
@@ -218,6 +219,7 @@ cmd_cancel() {
       for _ in $(seq 1 30); do scope_alive "$dir" || break; sleep 0.1; done
       if scope_alive "$dir"; then kill -KILL "-$p" 2>/dev/null || true; fi
       if scope_alive "$dir"; then echo "released=no" >> "$dir/cleanup"; else echo "released=yes" >> "$dir/cleanup"; fi
+      remove_snapshot_worktree "$dir"
       for _ in $(seq 1 30); do scope_alive "$dir" || break; sleep 0.1; done ;;
     *) die "no scope recorded for $dir" ;;
   esac
@@ -306,15 +308,7 @@ cmd_supervise() {
   # The snapshot worktree is scaffolding too. Remove it AFTER the status file
   # is durable, for the same reason the cgroup is removed after: a failure to
   # clean up must not be able to cost the verdict.
-  local work2
-  work2="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
-  if [ -n "$work2" ] && [ -d "$work2" ]; then
-    if git -C "$ROOT" worktree remove --force "$work2" >/dev/null 2>&1; then
-      echo "worktree_removed=yes" >> "$dir/cleanup"
-    else
-      echo "worktree_removed=no" >> "$dir/cleanup"
-    fi
-  fi
+  remove_snapshot_worktree "$dir"
 
   # Cleanup is EVIDENCE, not a side effect: `verify` reads this to decide
   # whether the scope was genuinely released, so record it either way.
@@ -367,6 +361,34 @@ reap_scope() {
   if grep -q 'populated 1' "$cg/cgroup.events" 2>/dev/null; then
     echo 1 > "$cg/cgroup.kill" 2>/dev/null || true
     echo "force_killed=yes" >> "$dir/cleanup"
+  fi
+}
+
+# Remove a run's snapshot worktree, if it has one.
+#
+# ONE implementation, called from BOTH normal completion and cancellation.
+# It was inlined in the completion path only, so a CANCELLED snapshot run
+# left its worktree behind — and a snapshot worktree carries its own
+# multi-gigabyte `target/`, because these runs deliberately do not share a
+# CARGO_TARGET_DIR. MEASURED: three cancelled runs left 14G in .axon-runs and
+# the disk hit 100%, which then failed a gate with
+# "failed to build archive … No space left on device (os error 28)".
+#
+# Exactly the shape of the cgroup leak fixed earlier in this file, inverted:
+# there, only `cancel` released the scope; here, only completion did.
+remove_snapshot_worktree() {
+  local dir="$1" work
+  work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
+  [ -n "$work" ] && [ -d "$work" ] || return 0
+  if git -C "$ROOT" worktree remove --force "$work" >/dev/null 2>&1; then
+    echo "worktree_removed=yes" >> "$dir/cleanup"
+  else
+    rm -rf "$work" 2>/dev/null && git -C "$ROOT" worktree prune >/dev/null 2>&1
+    if [ -d "$work" ]; then
+      echo "worktree_removed=no" >> "$dir/cleanup"
+    else
+      echo "worktree_removed=yes(forced)" >> "$dir/cleanup"
+    fi
   fi
 }
 
