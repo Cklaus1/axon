@@ -75,13 +75,50 @@ if [ ! -f "$NLOG" ]; then
 fi
 
 # ── Parity assertion: the native return records must carry the SAME ────────────
-# discriminating fields the interpreter writes. We extract, from each log, the
-# adaptive_return records as `fn|score` and require the native set ⊇ interp set.
+# fields the interpreter writes — ALL of them, not a chosen few.
+#
+# This used to project each record to `fn|score` with a regex. A projection can
+# only compare the fields it names, so it cannot notice a field ONE engine stops
+# writing: that is exactly how native `agent_action` records lost `effect_row`
+# and `principal` while their own harness reported a match (378da246). The same
+# shape of blind spot was here, on the records the goal optimizer is built on.
+#
+# Now every key of each adaptive_return record is compared, minus `ts_ms` (two
+# runs legitimately differ in when they happened). Parsed as JSON, so field
+# ORDER is not part of the comparison either.
+#
+# Scoped to adaptive_return ON PURPOSE. The two logs are NOT record-for-record
+# identical and are not meant to be: the interpreter stamps a `run_start` (the
+# handle `axon trace --replay` needs, which native refuses), and native emits a
+# legacy `call` entry record nothing reads. Comparing whole logs would fail on
+# that known, intentional difference instead of on a regression.
 extract() {
-  grep '"event":"adaptive_return"' "$1" \
-    | grep '"zone":"adaptive"' \
-    | sed -E 's/.*"fn":"([^"]+)".*"score":([0-9.eE+-]+).*/\1|\2/' \
-    | sort
+  python3 - "$1" <<'PYEOF'
+import json, sys
+try:
+    lines = open(sys.argv[1]).read().splitlines()
+except OSError:
+    sys.exit(0)
+out = []
+for line in lines:
+    if '"event":"adaptive_return"' not in line or '"zone":"adaptive"' not in line:
+        continue
+    try:
+        r = json.loads(line)
+    except ValueError:
+        out.append("UNPARSEABLE-RECORD")
+        continue
+    r.pop("ts_ms", None)
+    # A record missing the fields that carry the MEANING is a failure, not a
+    # thing to compare loosely: if both engines dropped `fn` or `score`, two
+    # identical husks would still match and the harness would pass vacuously.
+    missing = [k for k in ("fn", "score") if r.get(k) in (None, "")]
+    if missing:
+        out.append("MISSING-FIELD:" + ",".join(missing))
+        continue
+    out.append(json.dumps(r, sort_keys=True))
+print("\n".join(sorted(out)))
+PYEOF
 }
 
 ISET="$(extract "$ILOG")"
@@ -109,7 +146,7 @@ if [ -n "$MISSING" ]; then
   exit 1
 fi
 
-echo "provenance_parity: OK — native and interp adaptive provenance agree (event/zone/fn/score):"
+echo "provenance_parity: OK — native and interp adaptive provenance agree (every field but ts_ms):"
 echo "$NSET" | sed 's/^/  /'
 echo "native and interp provenance agree"
 exit 0
