@@ -148,11 +148,13 @@ impl RbacConfig {
         }
     }
 
-    /// Filter `records` by what `caller` is allowed to see.
+    /// Filter `records` by what the caller is allowed to see.
     ///
-    /// - If RBAC is disabled (no admins configured): all records visible.
-    /// - If caller is an admin: all records visible.
-    /// - Otherwise: only records the caller owns, per [`RbacConfig::owns`].
+    /// - RBAC disabled (NEITHER list configured): all records visible.
+    /// - `authority` is an AUTHENTICATED admin: all records visible.
+    /// - Otherwise: only records the claimed `caller` owns, per
+    ///   [`RbacConfig::owns`].
+    ///
     /// A SECOND filter, applied on top of an already-filtered handle.
     ///
     /// Its one caller (`search` in main.rs) reads through `Store::open_as`,
