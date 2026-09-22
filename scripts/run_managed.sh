@@ -404,6 +404,15 @@ write_receipt() {
     echo "tree_digest=$tree_digest"
     echo "source_mode=$(sed -n 's/^mode=//p' "$dir/snapshot" 2>/dev/null)"
     echo "toolchain=$(rustc --version 2>/dev/null | tr ' ' '-')"
+    # ENVIRONMENT. Axon's behaviour is steered by AXON_* variables — an
+    # effect ceiling, a mock/replay mode, a clock, a seed — so "the tests
+    # passed" is a claim about the environment they passed in. Recorded as a
+    # sorted name=value digest plus the names themselves: the names make a
+    # surprising run legible at a glance, the digest makes two runs
+    # comparable without publishing any value.
+    echo "env_axon_names=$(env | grep -oE '^AXON_[A-Z0-9_]+' | sort | tr '\n' ',' | sed 's/,$//')"
+    echo "env_axon_digest=$(env | grep -E '^AXON_' | sort | sha256sum | cut -d' ' -f1)"
+    echo "cargo_profile=${CARGO_PROFILE:-debug}"
     echo "child_exit=$code"
     echo "started_at=$(cat "$dir/started_at" 2>/dev/null)"
     echo "finished_at=$(cat "$dir/finished_at" 2>/dev/null)"
