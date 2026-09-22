@@ -2197,3 +2197,31 @@ Note the related open gap the code already documents: `resolve_caller(None)`
 reads the SERVER's principal, so RBAC filtering here is by operator identity
 and every HTTP caller sees the operator's view. Verified this session — a
 request carrying no credentials at all is served HTTP 200.
+
+## Vendoring is a separate decision from the lockfile
+
+Tracking Cargo.lock (473480f) closed dependency-resolution
+reproducibility. It did not make builds independent of the network, and
+the two are easy to conflate:
+
+* **Cargo.lock pins WHICH dependency artifacts are required.**
+* **Vendoring controls WHERE those artifacts come from.**
+
+So, precisely:
+
+* **A. resolution reproducibility** — CLOSED. The commit now determines the
+  exact graph, and `--locked` fails rather than re-resolving.
+* **B. offline build from a WARM cargo cache** — supported. This is the normal
+  state for snapshot gate runs on this machine.
+* **C. offline build from an EMPTY cache / clean machine** — NOT guaranteed.
+  The lockfile names the crates; something still has to fetch them.
+
+**Do not claim C from A.** A release note saying "builds are reproducible" will
+be read as C by most people.
+
+Closing C needs `cargo vendor` plus a `.cargo/config.toml` source replacement,
+or an internal registry mirror. Not done here: it adds the full dependency tree
+(reqwest, inkwell, z3 bindings, …) to the repo, which is a size and
+review-churn tradeoff that should be chosen deliberately rather than
+inherited from a lockfile fix. Worth revisiting if the `hermetic` profile's
+stated guarantees are ever meant to cover the BUILD as well as the run.
