@@ -42,6 +42,44 @@ fn seed(dir: &Path, admins: &str) {
     std::fs::write(dir.join("rbac.json"), format!("{{\"admins\":[{admins}]}}")).unwrap();
 }
 
+/// Seed with an OS identity holding real (authenticated) admin authority.
+fn seed_auth(dir: &Path, claimed_admins: &str, authenticated_admins: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("events.ndjson"), RECS).unwrap();
+    std::fs::write(
+        dir.join("rbac.json"),
+        format!(
+            "{{\"admins\":[{claimed_admins}],\"authenticated_admins\":[{authenticated_admins}]}}"
+        ),
+    )
+    .unwrap();
+}
+
+/// This process's real OS identity, discovered INDEPENDENTLY of the code under
+/// test (`id -un`), so a fixture built from it cannot agree with the
+/// implementation merely by sharing its bug.
+fn real_os_identity() -> String {
+    let out = Command::new("id").arg("-un").output().expect("id -un");
+    assert!(out.status.success(), "id -un failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn run_env(dir: &Path, caller: Option<&str>, env: &[(&str, &str)], args: &[&str]) -> (i32, String) {
+    let mut c = Command::new(bin());
+    c.arg("--ledger-dir").arg(dir);
+    if let Some(who) = caller {
+        c.arg("--as").arg(who);
+    }
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let out = c.args(args).output().unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
 fn run(dir: &Path, caller: &str, args: &[&str]) -> (i32, String) {
     let out = Command::new(bin())
         .arg("--ledger-dir")
@@ -114,18 +152,79 @@ fn a_member_cannot_rewrite_or_delete_other_principals_records() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// CONTROL: an admin must still be able to do the work.
+/// CONTROL: an AUTHENTICATED admin must still be able to do the work.
+///
+/// Authority now comes from the OS identity listed in `authenticated_admins`,
+/// not from `--as`, so this control names the real one. Without it the fix
+/// could be "refuse every maintenance command" and every negative test would
+/// still pass.
 #[test]
-fn an_admin_can_still_run_maintenance() {
+fn an_authenticated_admin_can_still_run_maintenance() {
     let d = std::env::temp_dir().join(format!("axon_mx_admin_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
-    seed(&d, "\"alice@example.com\"");
-    let (code, out) = run(
+    let me = real_os_identity();
+    seed_auth(&d, "\"alice@example.com\"", &format!("\"{me}\""));
+    // No `--as` at all: authority is the OS identity, nothing is claimed.
+    let (code, out) = run_env(
         &d,
-        "alice@example.com",
+        None,
+        &[],
         &["prune", "--older-than", "2099-01-01", "--yes"],
     );
-    assert_eq!(code, 0, "an admin must still be able to prune:\n{out}");
+    assert_eq!(
+        code, 0,
+        "an authenticated admin must still be able to prune:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The explicit development escape, and the fact that it is not entered by
+/// accident.
+///
+/// A claimed identity may carry authority ONLY when the operator deliberately
+/// arms `AXON_LEDGER_DEV_IMPERSONATE=1`. Values that are merely truthy-looking
+/// must not arm it, or "explicit" degrades into "whatever was in the
+/// environment".
+#[test]
+fn claimed_identity_carries_authority_only_under_the_armed_dev_escape() {
+    let d = std::env::temp_dir().join(format!("axon_mx_dev_{}", std::process::id()));
+    let prune = ["prune", "--older-than", "2099-01-01", "--yes"];
+
+    // ARMED: the claim is honoured. This is the escape working as designed.
+    let _ = std::fs::remove_dir_all(&d);
+    seed(&d, "\"alice@example.com\"");
+    let (code, out) = run_env(
+        &d,
+        Some("alice@example.com"),
+        &[("AXON_LEDGER_DEV_IMPERSONATE", "1")],
+        &prune,
+    );
+    assert_eq!(
+        code, 0,
+        "the armed dev escape must honour the claim:\n{out}"
+    );
+
+    // NOT ARMED, in each way it could be mistaken for armed.
+    for value in ["0", "true", "yes", "", "1 "] {
+        let _ = std::fs::remove_dir_all(&d);
+        seed(&d, "\"alice@example.com\"");
+        let before = std::fs::read_to_string(d.join("events.ndjson")).unwrap();
+        let (code, out) = run_env(
+            &d,
+            Some("alice@example.com"),
+            &[("AXON_LEDGER_DEV_IMPERSONATE", value)],
+            &prune,
+        );
+        assert_ne!(
+            code, 0,
+            "AXON_LEDGER_DEV_IMPERSONATE={value:?} must not arm the escape:\n{out}"
+        );
+        assert_eq!(
+            before,
+            std::fs::read_to_string(d.join("events.ndjson")).unwrap(),
+            "the ledger changed under a non-armed escape value {value:?}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -225,50 +324,120 @@ fn replace_record_also_refuses_a_filtered_handle() {
 // `requires_admin`/`resolve_caller` cannot silently narrow or widen this
 // trust boundary without someone reading why it is shaped this way.
 
-/// The admin gate rests on a SELF-ASSERTED, unauthenticated identity.
-/// `resolve_caller` returns `--as <email>` or `$AXON_PRINCIPAL` verbatim, and
-/// `is_admin` is a plain string comparison — there is no verification
-/// anywhere that the caller is who they claim. A disproof review found this
-/// after the admin gate landed: `--as alice@example.com prune --yes`, run by
-/// anyone, deletes the whole ledger, because the CLI has no way to know the
-/// caller is not actually alice.
+/// A caller-supplied identity string must never, by itself, confer admin
+/// authority — through ANY surface that accepts one.
 ///
-/// This is not a regression to fix here — it is consistent with
-/// `AXON_PRINCIPAL` being documented elsewhere (CLAUDE.md) as "Identity for
-/// AUDIT ATTRIBUTION only ... it grants and withholds nothing". The admin
-/// gate closes the CARELESS case (a member who has not claimed to be
-/// someone else) and holds wherever a trusted gateway sets `--as` from a
-/// verified identity. Building real authentication is a TCB design decision
-/// outside this fix's scope.
+/// REPRODUCED before the fix, on a two-principal ledger with
+/// `admins = ["alice@example.com"]`: `--as alice@example.com prune
+/// --older-than 2099-01-01 --yes`, run by any caller, reported
+/// "Pruned 2; 0 remain" and emptied the file. The gate compared rbac.admins
+/// against whatever the caller typed.
+///
+/// Every way the caller can name themselves is covered here, because fixing
+/// only the flag would leave the environment variable doing the same job:
+/// `--as`, `$AXON_PRINCIPAL`, and `$USER`/`$LOGNAME` (which are NOT an OS
+/// identity — a caller sets them freely, which is exactly why the real uid is
+/// what gets consulted).
 #[test]
-fn the_admin_gate_trusts_the_asserted_identity_by_design() {
-    let d = std::env::temp_dir().join(format!("axon_mx_trust_{}", std::process::id()));
+fn no_caller_supplied_identity_grants_admin_authority() {
+    let d = std::env::temp_dir().join(format!("axon_mx_claim_{}", std::process::id()));
+    let prune = ["prune", "--older-than", "2099-01-01", "--yes"];
+
+    // Each surface names the identity it is trying to become, AND the fixture
+    // makes that identity a genuine admin — otherwise the refusal could come
+    // from "nobody is an admin here" rather than from the claim being
+    // powerless, and the test would pass against a broken implementation.
+    //
+    // MEASURED: the first version of the $USER case seeded only `admins`,
+    // leaving `authenticated_admins` empty. Mutating `authenticated_principal`
+    // to read $USER instead of the real uid left this test GREEN, because the
+    // empty list refused it anyway. The mutation is caught only once the
+    // forged identity would otherwise WORK.
+    /// label, claimed identity, env overrides, claimed admins, authenticated admins
+    type Surface = (
+        &'static str,
+        Option<&'static str>,
+        Vec<(&'static str, &'static str)>,
+        &'static str,
+        &'static str,
+    );
+    let surfaces: Vec<Surface> = vec![
+        (
+            "--as flag",
+            Some("alice@example.com"),
+            vec![],
+            "\"alice@example.com\"",
+            "",
+        ),
+        (
+            "AXON_PRINCIPAL",
+            None,
+            vec![("AXON_PRINCIPAL", "alice@example.com")],
+            "\"alice@example.com\"",
+            "",
+        ),
+        (
+            "forged $USER/$LOGNAME",
+            Some("alice@example.com"),
+            vec![("USER", "alice"), ("LOGNAME", "alice")],
+            "\"alice@example.com\"",
+            // `alice` IS an authenticated admin here. If the implementation
+            // took identity from $USER, the forgery would succeed.
+            "\"alice\"",
+        ),
+    ];
+
+    for (label, claim, env, claimed_admins, auth_admins) in surfaces {
+        let _ = std::fs::remove_dir_all(&d);
+        seed_auth(&d, claimed_admins, auth_admins);
+        let before = std::fs::read_to_string(d.join("events.ndjson")).unwrap();
+
+        let (code, out) = run_env(&d, claim, &env, &prune);
+        assert_ne!(
+            code, 0,
+            "{label}: a claimed identity was granted admin:\n{out}"
+        );
+        assert!(
+            out.contains("does not grant authority"),
+            "{label}: refused, but not for lack of authority — a refusal for \
+             another reason is not this gate working:\n{out}"
+        );
+        assert_eq!(
+            before,
+            std::fs::read_to_string(d.join("events.ndjson")).unwrap(),
+            "{label}: the ledger changed despite the refusal"
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
-    seed(&d, "\"alice@example.com\"");
+}
 
-    // Premise: as bob, the same command IS refused (the gate the rest of
-    // this file pins).
-    let (code, _) = run(
+/// The OS identity itself must be what is checked, not merely "some string
+/// that is not `--as`".
+///
+/// Names an OS identity that is NOT this process's, and confirms the refusal;
+/// paired with `an_authenticated_admin_can_still_run_maintenance`, which names
+/// one that IS. Together they show the gate reads the real uid rather than
+/// accepting or refusing everything.
+#[test]
+fn an_authenticated_identity_that_is_not_an_admin_is_refused() {
+    let d = std::env::temp_dir().join(format!("axon_mx_notadmin_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let me = real_os_identity();
+    let not_me = format!("definitely-not-{me}");
+    seed_auth(&d, "", &format!("\"{not_me}\""));
+    let before = std::fs::read_to_string(d.join("events.ndjson")).unwrap();
+
+    let (code, out) = run_env(
         &d,
-        "bob@example.com",
+        None,
+        &[],
         &["prune", "--older-than", "2099-01-01", "--yes"],
     );
-    assert_ne!(code, 0, "premise: bob must be refused");
-
-    seed(&d, "\"alice@example.com\""); // reset the ledger
-
-    // Claiming to BE alice — an unverifiable assertion any caller can make —
-    // is treated as alice.
-    let (code, out) = run(
-        &d,
-        "alice@example.com",
-        &["prune", "--older-than", "2099-01-01", "--yes"],
-    );
+    assert_ne!(code, 0, "a non-admin OS identity was granted admin:\n{out}");
     assert_eq!(
-        code, 0,
-        "documented: an asserted admin identity is trusted, so this succeeds:\n{out}"
+        before,
+        std::fs::read_to_string(d.join("events.ndjson")).unwrap()
     );
-
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -315,5 +484,86 @@ fn a_member_can_append_a_record_attributed_to_another_principal() {
         "documented: bob wrote a record attributed to alice:\n{ledger}"
     );
 
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── Where the boundary actually is ──────────────────────────────────────────
+
+/// THE BOUNDARY, stated and then demonstrated: axon-ledger's RBAC constrains
+/// what the LEDGER CLI will do, and cannot constrain what a process with write
+/// access to the ledger file can do by other means.
+///
+/// This matters for reading the tests above correctly. They prove a caller
+/// cannot obtain admin authority THROUGH axon-ledger by asserting an identity.
+/// They do not — and no userspace check could — prevent someone who already
+/// holds OS write permission on `events.ndjson` from simply writing to it.
+/// This test performs exactly that bypass with `std::fs` and no CLI at all,
+/// so the limit is executable rather than a claim in a comment.
+///
+/// The enforcement for THAT case is the filesystem: a ledger whose directory
+/// is not writable by a principal is not modifiable by them, whatever the CLI
+/// does. RBAC is the narrower, in-process layer for callers who share that
+/// access — a team ledger on a shared box, a CI account several people drive —
+/// which is precisely the case where the `--as` hole was exploitable and is
+/// now closed.
+#[test]
+fn rbac_does_not_and_cannot_bind_a_writer_who_bypasses_the_cli() {
+    let d = std::env::temp_dir().join(format!("axon_mx_bound_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let me = real_os_identity();
+    // A ledger where the caller is NOT an admin by any route: not claimed,
+    // not authenticated. The CLI must refuse them.
+    seed_auth(&d, "\"alice@example.com\"", "\"definitely-not-me\"");
+
+    let (code, out) = run_env(
+        &d,
+        None,
+        &[],
+        &["prune", "--older-than", "2099-01-01", "--yes"],
+    );
+    assert_ne!(code, 0, "premise: the CLI must refuse this caller:\n{out}");
+    assert!(
+        !std::fs::read_to_string(d.join("events.ndjson"))
+            .unwrap()
+            .is_empty(),
+        "premise: the ledger must still be intact after the refusal"
+    );
+
+    // The same destructive outcome, without the CLI. Same process, same uid,
+    // same file — no authority check exists on this path because there is no
+    // axon-ledger in it.
+    std::fs::write(d.join("events.ndjson"), "").unwrap();
+    assert!(
+        std::fs::read_to_string(d.join("events.ndjson"))
+            .unwrap()
+            .is_empty(),
+        "the ledger file is writable by this process, which is the boundary \
+         being documented: RBAC governs the CLI, the filesystem governs the file"
+    );
+
+    // And the converse, so the boundary is not merely an excuse: the OS layer
+    // is real. A directory this process cannot write is not writable through
+    // ANY path — checked only when the test is not running as root, since
+    // root is exempt from file permission bits and the check would be
+    // vacuous rather than reassuring.
+    if me != "root" {
+        let locked = d.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::write(locked.join("events.ndjson"), "x").unwrap();
+        let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+        std::fs::set_permissions(&locked, perms).unwrap();
+        assert!(
+            std::fs::write(locked.join("new.ndjson"), "y").is_err(),
+            "a non-writable directory must reject writes — the OS layer this \
+             boundary defers to has to actually hold"
+        );
+    } else {
+        eprintln!(
+            "boundary test: the filesystem-enforcement half did NOT run — this \
+             process is root, which bypasses permission bits, so the assertion \
+             would pass without testing anything. The CLI-bypass half above DID run."
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }

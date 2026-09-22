@@ -27,6 +27,19 @@ use crate::model::LedgerRecord;
 pub struct RbacConfig {
     #[serde(default)]
     pub admins: Vec<String>,
+    /// OS identities that hold ADMIN AUTHORITY, as opposed to `admins`, which
+    /// names claimed/display identities and confers nothing on its own.
+    ///
+    /// Entries are matched against [`authenticated_principal`] — an OS
+    /// username, or `uid:<n>` when the uid has no passwd entry. Deliberately a
+    /// SEPARATE list rather than reusing `admins` with a local-part heuristic:
+    /// matching the OS user `alice` against the admin entry
+    /// `alice@some-corp.example` would silently grant authority to whoever
+    /// happens to hold that local account, which is the kind of accidental
+    /// grant this whole change exists to remove. An operator says which OS
+    /// identities are admins, explicitly, or none are.
+    #[serde(default)]
+    pub authenticated_admins: Vec<String>,
 }
 
 impl RbacConfig {
@@ -57,8 +70,24 @@ impl RbacConfig {
         self.admins.retain(|a| a != email);
     }
 
+    /// Admin by CLAIMED identity. Confers nothing on its own — see
+    /// [`RbacConfig::is_admin_authenticated`], which is what privileged
+    /// operations consume.
     pub fn is_admin(&self, email: &str) -> bool {
         self.admins.iter().any(|a| a == email)
+    }
+
+    /// Admin by AUTHENTICATED identity: the only predicate that may authorize
+    /// a privileged operation.
+    ///
+    /// Takes an [`AuthenticatedPrincipal`] rather than a `&str` so that a
+    /// caller-supplied string cannot reach it by mistake. That is the whole
+    /// point: the previous gate compared `rbac.admins` against whatever
+    /// `--as` said, so `--as alice@example.com prune --yes` — run by anyone —
+    /// deleted the entire ledger.
+    pub fn is_admin_authenticated(&self, who: &AuthenticatedPrincipal) -> bool {
+        let name = who.as_str();
+        self.authenticated_admins.iter().any(|a| a == name)
     }
 
     /// Does `principal` belong to `caller`?
@@ -162,6 +191,150 @@ pub fn resolve_caller(as_flag: Option<&str>) -> Option<String> {
     std::env::var("AXON_PRINCIPAL").ok()
 }
 
+// ── Authenticated identity ──────────────────────────────────────────────────
+//
+// THE INVARIANT: a privileged decision must be made from a principal the
+// calling process cannot choose for itself; a caller-supplied identity string
+// may name who is CLAIMED, never what is AUTHORIZED.
+//
+// [`resolve_caller`] above returns exactly what the caller asked to be called:
+// `--as <anything>`, or `$AXON_PRINCIPAL`. Both are set by the caller, so
+// neither can carry authority. REPRODUCED before this existed, on a
+// two-principal ledger with `admins = ["alice@example.com"]`: any caller
+// running `--as alice@example.com prune --older-than 2099-01-01 --yes`
+// destroyed every record, and `--as alice@example.com diff --json` returned
+// every principal's payload.
+
+/// An identity established by the operating system rather than asserted by the
+/// caller.
+///
+/// Constructed only by [`authenticated_principal`], so a `&str` from a flag
+/// cannot be passed where one of these is required — the type is the
+/// enforcement, not a convention someone has to remember.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedPrincipal(String);
+
+impl AuthenticatedPrincipal {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for AuthenticatedPrincipal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The OS identity of the process, from the real uid.
+///
+/// `getuid()` is the one identity here the process cannot change for itself:
+/// an unprivileged process cannot become another uid without going through a
+/// mechanism that authenticates first. `$USER` and `$LOGNAME` are NOT
+/// equivalent — a caller sets those freely (`env USER=alice axon-ledger …`),
+/// which would make them exactly as forgeable as the `--as` flag this
+/// replaces.
+///
+/// Resolves the uid to a passwd name, falling back to `uid:<n>` when there is
+/// no passwd entry (minimal containers). Both forms are stable and
+/// unforgeable, and either may be listed in `authenticated_admins`.
+pub fn authenticated_principal() -> AuthenticatedPrincipal {
+    // SAFETY: getuid() is always successful and takes no arguments.
+    let uid = unsafe { libc::getuid() };
+    if let Some(name) = passwd_name_for_uid(uid) {
+        return AuthenticatedPrincipal(name);
+    }
+    AuthenticatedPrincipal(format!("uid:{uid}"))
+}
+
+/// Look up a uid in `/etc/passwd`. Parsed directly rather than through
+/// `getpwuid_r` to keep the unsafe surface to the single `getuid()` call.
+fn passwd_name_for_uid(uid: u32) -> Option<String> {
+    let text = std::fs::read_to_string("/etc/passwd").ok()?;
+    for line in text.lines() {
+        let mut f = line.split(':');
+        let name = f.next()?;
+        let _passwd = f.next()?;
+        let entry_uid: u32 = f.next()?.parse().ok()?;
+        if entry_uid == uid && !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Whether the explicit development-only impersonation escape is armed.
+///
+/// A caller-asserted identity may carry authority ONLY when the operator has
+/// deliberately turned this on. It is off unless the variable is exactly `1`,
+/// so production is the default and the escape cannot be entered by accident,
+/// by a typo, or by an empty value.
+pub const DEV_IMPERSONATE_VAR: &str = "AXON_LEDGER_DEV_IMPERSONATE";
+
+pub fn dev_impersonation_armed() -> bool {
+    std::env::var(DEV_IMPERSONATE_VAR).ok().as_deref() == Some("1")
+}
+
+/// How a privileged decision should be made for this invocation.
+#[derive(Debug, Clone)]
+pub enum Authority {
+    /// Authority comes from the OS identity. The normal case.
+    Authenticated(AuthenticatedPrincipal),
+    /// The operator armed [`DEV_IMPERSONATE_VAR`], so the claimed identity is
+    /// treated as authoritative. Carries the real OS identity too, because an
+    /// impersonated action still has someone actually performing it.
+    Impersonated {
+        claimed: String,
+        real: AuthenticatedPrincipal,
+    },
+}
+
+impl Authority {
+    /// Resolve for this process. `claim` is the caller-supplied `--as` value.
+    pub fn resolve(claim: Option<&str>) -> Authority {
+        let real = authenticated_principal();
+        match claim {
+            Some(c) if dev_impersonation_armed() => Authority::Impersonated {
+                claimed: c.to_string(),
+                real,
+            },
+            _ => Authority::Authenticated(real),
+        }
+    }
+
+    /// Does this authority hold admin rights under `rbac`?
+    pub fn is_admin(&self, rbac: &RbacConfig) -> bool {
+        match self {
+            Authority::Authenticated(p) => rbac.is_admin_authenticated(p),
+            // Under the armed dev escape the claim is what is being tested —
+            // that is the entire purpose of the escape — but the real OS
+            // identity still counts, so an actual admin need not impersonate.
+            Authority::Impersonated { claimed, real } => {
+                rbac.is_admin(claimed) || rbac.is_admin_authenticated(real)
+            }
+        }
+    }
+
+    /// The identity to ATTRIBUTE actions to: what the caller asked to be
+    /// called when impersonating, otherwise the OS identity.
+    pub fn attributed_name(&self) -> &str {
+        match self {
+            Authority::Authenticated(p) => p.as_str(),
+            Authority::Impersonated { claimed, .. } => claimed,
+        }
+    }
+
+    /// The identity that ACTUALLY performed the action, always the OS one.
+    /// Distinct from [`Authority::attributed_name`] so an impersonated write
+    /// still records who really made it.
+    pub fn real_name(&self) -> &str {
+        match self {
+            Authority::Authenticated(p) => p.as_str(),
+            Authority::Impersonated { real, .. } => real.as_str(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +366,7 @@ mod tests {
     #[test]
     fn test_admin_sees_all() {
         let config = RbacConfig {
+            authenticated_admins: vec![],
             admins: vec!["alice@example.com".to_string()],
         };
         let r1 = make_record("agent:alice@example.com");
@@ -204,6 +378,7 @@ mod tests {
     #[test]
     fn test_member_sees_only_own_records() {
         let config = RbacConfig {
+            authenticated_admins: vec![],
             admins: vec!["admin@example.com".to_string()],
         };
         let r1 = make_record("agent:alice@example.com");
@@ -216,6 +391,7 @@ mod tests {
     #[test]
     fn test_no_caller_sees_anonymous_only() {
         let config = RbacConfig {
+            authenticated_admins: vec![],
             admins: vec!["admin@example.com".to_string()],
         };
         let r1 = make_record("agent:alice@example.com");

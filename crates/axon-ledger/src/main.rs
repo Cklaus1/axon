@@ -12,7 +12,7 @@ use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
 use axon_ledger::mcp::run_mcp_server;
 use axon_ledger::query::{as_of, diff, history, search, why};
-use axon_ledger::rbac::{resolve_caller, RbacConfig};
+use axon_ledger::rbac::{resolve_caller, Authority, RbacConfig};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
 use axon_ledger::webhook::{
@@ -479,6 +479,11 @@ fn main() -> Result<()> {
     let mut store = Store::open_for_write(&dir)?;
     let rbac = RbacConfig::load(&dir_path)?;
     let caller = resolve_caller(cli.caller.as_deref());
+    // CLAIMED vs AUTHORIZED, kept as two separate values on purpose.
+    // `caller` above is whatever the invoker asked to be called (`--as`, or
+    // $AXON_PRINCIPAL) and steers read FILTERING. `authority` is what the OS
+    // says, and is the only thing a privileged decision may consume.
+    let authority = Authority::resolve(cli.caller.as_deref());
 
     // A SECOND, FILTERED handle for reads.
     //
@@ -516,16 +521,22 @@ fn main() -> Result<()> {
     // identity, but it is not authentication and must not be read as one.
     // Building real authentication here is a TCB design decision this fix
     // does not make.
-    if !rbac.admins.is_empty() {
+    if !rbac.admins.is_empty() || !rbac.authenticated_admins.is_empty() {
         if let Some(verb) = requires_admin(&cli.command) {
-            let permitted = caller.as_deref().map(|c| rbac.is_admin(c)).unwrap_or(false);
-            if !permitted {
+            if !authority.is_admin(&rbac) {
                 anyhow::bail!(
-                    "`{verb}` rewrites records that may belong to other principals and \
-                     is restricted to an admin. Caller: {}. Admins are configured in \
-                     {}/rbac.json.",
+                    "`{verb}` rewrites records that may belong to other principals \
+                     and is restricted to an admin.\n  \
+                     authenticated as: {}\n  \
+                     claimed:          {}\n  \
+                     A claimed identity (`--as`, $AXON_PRINCIPAL) does not grant \
+                     authority. List the OS identity above in \
+                     `authenticated_admins` in {}/rbac.json, or set {}=1 to allow \
+                     the claim to be trusted (development only).",
+                    authority.real_name(),
                     caller.as_deref().unwrap_or("<none>"),
-                    dir_path.display()
+                    dir_path.display(),
+                    axon_ledger::rbac::DEV_IMPERSONATE_VAR,
                 );
             }
         }
