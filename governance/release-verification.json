@@ -1,0 +1,274 @@
+{
+  "schema": "axon-release-verification/1",
+  "purpose": "The single source of truth for which workspace crates must have GREEN verification before a release claim. It exists because release-critical coverage was previously spread across shell fragments in gate.sh, where it was possible \u2014 and true \u2014 for the strict gate to COMPILE 20 of 22 crates while RUNNING the tests of only 5, with axon-ledger (the crate holding the RBAC/authority model) among the unrun. Compiling a test is not running it.",
+  "classes": {
+    "A": "security/authority critical \u2014 decides who may do what, or produces the evidence that decision is audited. Required: tests must RUN in the release gate.",
+    "B": "runtime/execution critical \u2014 executes user or model-supplied code, or is the engine a security property is enforced by. Required: tests must RUN in the release gate.",
+    "C": "tooling/support \u2014 no authority decision and no untrusted execution. Required: must COMPILE and lint clean; tests are not release-blocking.",
+    "D": "examples/generated/non-production \u2014 not shipped as a product surface."
+  },
+  "rules": [
+    "Every workspace member must appear here. `release_manifest_covers_every_workspace_member` fails the build otherwise, so a new crate cannot be added without being classified.",
+    "Every A and B crate must list at least one `required` command.",
+    "A `required` command must be runnable by the release gate and must exit non-zero on failure."
+  ],
+  "crates": {
+    "axon-core": {
+      "class": "A",
+      "why": "Holds the capability model itself: @[contained], the scoped sandbox, the ambient effect ceiling, refinement/verify enforcement, and the interpreter that executes untrusted .ax code.",
+      "surfaces": [
+        "capability checker",
+        "effect ceiling",
+        "sandbox",
+        "interpreter",
+        "codegen",
+        "provenance writers"
+      ],
+      "required": [
+        "cargo test -p axon-core --no-default-features"
+      ]
+    },
+    "axon-ledger": {
+      "class": "A",
+      "why": "RBAC and admin authority, record attribution, the MCP serving surface, and webhook egress configuration. Every authority fix in this hardening pass landed here, and it was NOT run by the strict gate.",
+      "surfaces": [
+        "Authority/authenticated principal",
+        "rbac.json",
+        "record attribution",
+        "MCP tools",
+        "webhook egress"
+      ],
+      "required": [
+        "cargo test -p axon-ledger"
+      ]
+    },
+    "axon-os": {
+      "class": "A",
+      "why": "Job authority: approval tokens, grants, capability profiles, the supervisor and its kill latch.",
+      "surfaces": [
+        "approval verification",
+        "grant intersection",
+        "profiles",
+        "supervisor"
+      ],
+      "required": [
+        "cargo test -p axon-os"
+      ]
+    },
+    "axon-audit": {
+      "class": "A",
+      "why": "The tamper-evident capability audit ledger. If this is wrong, every other security claim loses its evidence.",
+      "surfaces": [
+        "hash chain",
+        "effect records"
+      ],
+      "required": [
+        "cargo test -p axon-audit"
+      ]
+    },
+    "axon-attest": {
+      "class": "A",
+      "why": "Guest-kernel measurement, signing and verification. An attestation that verifies anything it is given is worse than none.",
+      "surfaces": [
+        "measure",
+        "sign",
+        "verify",
+        "HMAC key handling"
+      ],
+      "required": [
+        "cargo test -p axon-attest"
+      ]
+    },
+    "axon-certcheck": {
+      "class": "A",
+      "why": "Solver-free proof-certificate checker (R23). A checker that accepts an invalid certificate silently converts an unproven claim into a proven one.",
+      "surfaces": [
+        "certificate validation"
+      ],
+      "required": [
+        "cargo test -p axon-certcheck"
+      ]
+    },
+    "axon-guest-init": {
+      "class": "A",
+      "why": "Reads the VM's MMDS policy and sets the ambient effect ceiling and token budget for the payload. A misread here silently unbounds the guest.",
+      "surfaces": [
+        "MMDS policy parsing",
+        "ceiling/budget propagation"
+      ],
+      "required": [
+        "cargo test -p axon-guest-init"
+      ]
+    },
+    "axon-vm": {
+      "class": "A",
+      "why": "The confidential micro-VM boundary and its attestation report.",
+      "surfaces": [
+        "VM boundary",
+        "attestation report",
+        "measurement"
+      ],
+      "required": [
+        "cargo test -p axon-vm"
+      ]
+    },
+    "cortex-policy-adapter": {
+      "class": "A",
+      "why": "The policy boundary Cortex's repair loop is authorized through.",
+      "surfaces": [
+        "policy decisions",
+        "grant snapshot staleness"
+      ],
+      "required": [
+        "cargo test -p cortex-policy-adapter"
+      ]
+    },
+    "axon-reflex": {
+      "class": "A",
+      "why": "The Reflex serving boundary: three transports onto one authority core, where handle possession must convey no authority.",
+      "surfaces": [
+        "serving transports",
+        "authority core",
+        "refusal round-trip"
+      ],
+      "required": [
+        "cargo test -p axon-reflex"
+      ]
+    },
+    "axon-signal": {
+      "class": "A",
+      "why": "Writes ledger records and serves an HTTP dashboard over ledger content. Previously exposed on 0.0.0.0 with wildcard CORS.",
+      "surfaces": [
+        "ledger writes",
+        "HTTP dashboard",
+        "bind address",
+        "CORS"
+      ],
+      "required": [
+        "cargo test -p axon-signal"
+      ]
+    },
+    "axon-web": {
+      "class": "A",
+      "why": "HTTP server proxying the deploy pipeline. A wildcard CORS header here was cross-origin code execution.",
+      "surfaces": [
+        "HTTP API",
+        "deploy proxy",
+        "CORS"
+      ],
+      "required": [
+        "cargo test -p axon-web"
+      ]
+    },
+    "axon-cortex": {
+      "class": "B",
+      "why": "The repair control loop: it executes model-authored patches and adjudicates them against a hidden check.",
+      "surfaces": [
+        "repair loop",
+        "generator seam",
+        "adjudication",
+        "workspace restore"
+      ],
+      "required": [
+        "cargo test -p axon-cortex"
+      ]
+    },
+    "axon-rt": {
+      "class": "B",
+      "why": "The native runtime linked into every AOT binary: RNG seeding, channels, and the native provenance writer.",
+      "surfaces": [
+        "native runtime ABI",
+        "seeding",
+        "provenance"
+      ],
+      "required": [
+        "cargo test -p axon-rt"
+      ]
+    },
+    "axon-ai": {
+      "class": "B",
+      "why": "Live model dispatch and API-key handling; the mock/replay paths that make AI runs reproducible.",
+      "surfaces": [
+        "provider routing",
+        "API keys",
+        "mock/replay"
+      ],
+      "required": [
+        "cargo test -p axon-ai"
+      ]
+    },
+    "axon-intent": {
+      "class": "B",
+      "why": "Compiles prose goals into executable .ax, optionally via a live model. Its output is then run.",
+      "surfaces": [
+        "prose-to-AST",
+        "LLM body generation"
+      ],
+      "required": [
+        "cargo test -p axon-intent"
+      ]
+    },
+    "axon-wasm": {
+      "class": "B",
+      "why": "The interpreter as a wasm cdylib \u2014 a second execution engine for the same programs. Its required command is a build check, not a test run \u2014 see verified_by.",
+      "surfaces": [
+        "wasm interpreter",
+        "host bridge"
+      ],
+      "required": [
+        "cargo test -p axon-wasm"
+      ],
+      "verified_by": "scripts/wasm_parity.sh and the wasm_* parity harnesses in the strict gate. NOTE: `cargo test -p axon-wasm` reports 4 suites and ZERO tests \u2014 the crate is a cdylib with no host tests, so that command passes vacuously and is kept only to prove the crate still builds for the host. Its real verification is the parity harnesses, which compare the wasm engine against the interpreter."
+    },
+    "axon-surface": {
+      "class": "B",
+      "why": "Phase-10 prose-to-AST surface compiler feeding the same execution path.",
+      "surfaces": [
+        "prose-to-AST"
+      ],
+      "required": [
+        "cargo test -p axon-surface"
+      ]
+    },
+    "axon-domain": {
+      "class": "B",
+      "why": "R22 native interop modules (native::modbus). Native modules are a capability-bearing FFI surface reached through the sandbox's net scope.",
+      "surfaces": [
+        "native module FFI",
+        "network dial"
+      ],
+      "required": [
+        "cargo test -p axon-domain"
+      ]
+    },
+    "axon-guest-kernel": {
+      "class": "C",
+      "why": "Freestanding guest kernel. Built for a bare-metal target with -Z build-std by scripts/build-guest-image.sh and exercised by scripts/qemu_boot_test.sh; `cargo test` cannot host-run it, so its verification is that boot gate rather than a host test binary.",
+      "surfaces": [
+        "syscall enforcement",
+        "boot"
+      ],
+      "required": [],
+      "verified_by": "scripts/qemu_boot_test.sh (boot gate; not a host cargo test)"
+    },
+    "axon-gfx": {
+      "class": "C",
+      "why": "Headless wgpu renderer behind the native::gfx module. Needs a GPU/lavapipe environment; its gate is the platform-target harness, not a host unit test.",
+      "surfaces": [
+        "GPU module"
+      ],
+      "required": [],
+      "verified_by": "scripts/gfx_wgpu_render_gate.sh (environment-gated; see ENVIRONMENTS.md)"
+    },
+    "axon-gfx-mock": {
+      "class": "C",
+      "why": "GPU-free mock shim for native::gfx, used so the module surface can be exercised without a GPU. No authority decision.",
+      "surfaces": [
+        "mock module"
+      ],
+      "required": [
+        "cargo test -p axon-gfx-mock"
+      ]
+    }
+  }
+}

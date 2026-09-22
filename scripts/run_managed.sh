@@ -273,6 +273,7 @@ cmd_supervise() {
   # Never overwrite an explicit `cancelled`: the canceller's verdict is the
   # true one, and `wait` would otherwise report the signal as a plain exit.
   [ "$(cat "$dir/status")" = "cancelled" ] || echo "exited:$code" > "$dir/status"
+  write_receipt "$dir" "$code"
   # Release the containment scope. Only `cancel` used to do this, so every
   # NORMALLY COMPLETING run leaked its cgroup — measured at 71 leaked
   # directories, 71 of the 74 cgroups on the host, accumulating across
@@ -361,6 +362,60 @@ reap_scope() {
   fi
 }
 
+# ── receipts ────────────────────────────────────────────────────────────────
+#
+# A receipt binds a RESULT to the exact thing it judged. Without that binding
+# a green result is just a green result, and nothing stops it being read as
+# evidence about a later commit.
+#
+# THE FAILURE THIS ANSWERS, which happened: a long `cargo test` was launched
+# with `nohup ... &`, the launching shell exited 0, the child was killed
+# partway through its largest suite, and the partial tally (704 of 1542) was
+# read as a pass. Two separate defects — a launcher's status standing in for
+# the job's, and a partial run counted as a complete one — so the receipt
+# records BOTH the child's own exit status and whether every suite that
+# started also reported.
+write_receipt() {
+  local dir="$1" code="$2"
+  local head dirty tree_digest log_digest
+  head="$(sed -n 's/^head=//p' "$dir/snapshot" 2>/dev/null)"
+  dirty="$(sed -n 's/^dirty=//p' "$dir/snapshot" 2>/dev/null)"
+  # A dirty tree is recorded as a DIGEST, not just a flag, so two different
+  # dirty trees cannot share one receipt.
+  tree_digest="$(git -C "$ROOT" status --porcelain 2>/dev/null | sha256sum | cut -d' ' -f1)"
+  log_digest="$(sha256sum "$dir/log" 2>/dev/null | cut -d' ' -f1)"
+
+  # SUITES STARTED vs SUITES THAT REPORTED. cargo prints `Running <binary>`
+  # when a suite starts and `test result:` when it finishes; a killed or
+  # crashed suite produces the first and never the second, which is exactly
+  # how a partial run passes for a complete one.
+  local started reported passed failed
+  started="$(grep -cE '^[[:space:]]+(Running|Doc-tests)' "$dir/log" 2>/dev/null | head -1)"
+  reported="$(grep -cE '^test result:' "$dir/log" 2>/dev/null | head -1)"
+  passed="$(grep -oE '[0-9]+ passed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  failed="$(grep -oE '[0-9]+ failed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  : "${started:=0}"; : "${reported:=0}"
+
+  {
+    echo "schema=axon-run-receipt/1"
+    echo "command=$(cat "$dir/cmd" 2>/dev/null)"
+    echo "head=${head:-unknown}"
+    echo "tree=${dirty:-unknown}"
+    echo "tree_digest=$tree_digest"
+    echo "source_mode=$(sed -n 's/^mode=//p' "$dir/snapshot" 2>/dev/null)"
+    echo "toolchain=$(rustc --version 2>/dev/null | tr ' ' '-')"
+    echo "child_exit=$code"
+    echo "started_at=$(cat "$dir/started_at" 2>/dev/null)"
+    echo "finished_at=$(cat "$dir/finished_at" 2>/dev/null)"
+    echo "log_sha256=${log_digest:-unknown}"
+    echo "suites_started=$started"
+    echo "suites_reported=$reported"
+    echo "tests_passed=${passed:-0}"
+    echo "tests_failed=${failed:-0}"
+  } > "$dir/receipt.tmp"
+  mv -f "$dir/receipt.tmp" "$dir/receipt"
+}
+
 # ── verify: is this run citable as evidence about a commit? ─────────────────
 #
 # Four facts have to hold TOGETHER, and each was independently wrong at some
@@ -375,6 +430,14 @@ reap_scope() {
 # caller can branch on the status rather than on prose.
 cmd_verify() {
   local dir="${1:?verify needs a run dir}"
+  shift || true
+  # `--for <commit>`: the commit this evidence is being cited FOR. Defaults to
+  # the current HEAD, which is the case that matters — a receipt must not be
+  # readable as evidence about work committed after it ran.
+  local want=""
+  if [ "${1:-}" = "--for" ]; then
+    shift; want="${1:?--for needs a commit}"; shift || true
+  fi
   [ -d "$dir" ] || die "no such run: $dir"
   local bad=0
   local mode head st
@@ -420,11 +483,67 @@ cmd_verify() {
     bad=1
   fi
 
+  # ── receipt ───────────────────────────────────────────────────────────
+  if [ ! -f "$dir/receipt" ]; then
+    echo "  NOT CITABLE: no receipt — this run predates receipts or died"
+    echo "               before recording one"
+    bad=1
+  else
+    local r_head r_exit r_started r_reported r_failed r_log
+    r_head="$(sed -n 's/^head=//p' "$dir/receipt")"
+    r_exit="$(sed -n 's/^child_exit=//p' "$dir/receipt")"
+    r_started="$(sed -n 's/^suites_started=//p' "$dir/receipt")"
+    r_reported="$(sed -n 's/^suites_reported=//p' "$dir/receipt")"
+    r_failed="$(sed -n 's/^tests_failed=//p' "$dir/receipt")"
+    r_log="$(sed -n 's/^log_sha256=//p' "$dir/receipt")"
+
+    # THE CHILD's status, not the launcher's. This is the distinction the
+    # whole receipt exists for.
+    if [ "${r_exit:-1}" != "0" ]; then
+      echo "  NOT CITABLE: the job's own child exited $r_exit"
+      bad=1
+    fi
+
+    # A PARTIAL RUN IS NOT A PASS. Every suite that started must have
+    # reported; a killed suite prints `Running` and never `test result:`.
+    if [ "${r_started:-0}" -ne "${r_reported:-0}" ]; then
+      echo "  NOT CITABLE: $r_started suite(s) started but only $r_reported"
+      echo "               reported — the run did not finish, and its partial"
+      echo "               tally must not be read as a complete result"
+      bad=1
+    fi
+    if [ "${r_failed:-0}" -ne 0 ]; then
+      echo "  NOT CITABLE: $r_failed test(s) failed"
+      bad=1
+    fi
+
+    # The log must still be the log this receipt was written for.
+    local now_log
+    now_log="$(sha256sum "$dir/log" 2>/dev/null | cut -d' ' -f1)"
+    if [ -n "$r_log" ] && [ "$r_log" != "unknown" ] && [ "$now_log" != "$r_log" ]; then
+      echo "  NOT CITABLE: the log has changed since the receipt was written"
+      bad=1
+    fi
+
+    # ── STALENESS ────────────────────────────────────────────────────────
+    # A receipt for commit X must not certify commit Y. This is the check
+    # that makes a receipt evidence rather than a souvenir.
+    local target
+    target="$(git -C "$ROOT" rev-parse "${want:-HEAD}" 2>/dev/null)"
+    if [ -n "$target" ] && [ -n "$r_head" ] && [ "$r_head" != "$target" ]; then
+      echo "  STALE: this receipt certifies $r_head"
+      echo "         but evidence was requested for $target"
+      echo "         (a receipt created before later commits cannot certify them)"
+      bad=1
+    fi
+  fi
+
   if [ "$bad" -ne 0 ]; then
     echo "run: $dir"
     return 1
   fi
   echo "CITABLE  commit=$head  status=$st  suites=$suites  scope=released"
+  echo "         child_exit=0  suites_reported=$(sed -n 's/^suites_reported=//p' "$dir/receipt")  tests_passed=$(sed -n 's/^tests_passed=//p' "$dir/receipt")"
   echo "run: $dir"
   return 0
 }
@@ -436,5 +555,5 @@ case "${1:-}" in
   cancel) shift; cmd_cancel "$@" ;;
   scope-alive) shift; scope_alive "$@" && echo alive || echo empty ;;
   verify) shift; cmd_verify "$@" ;;
-  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] -- <cmd...>|status <dir>|verify <dir>|cancel <dir>|scope-alive <dir>}" ;;
+  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] -- <cmd...>|status <dir>|verify <dir> [--for <commit>]|cancel <dir>|scope-alive <dir>}" ;;
 esac

@@ -366,6 +366,45 @@ fi
 echo "── gate: restore the codegen binary after the no-default test stage ──"
 cargo build -q -p axon-core --bin axon || fail "codegen rebuild after tests"
 
+# ── REQUIRED CRATE VERIFICATION, driven by the manifest ────────────────────
+#
+# WHY THIS STAGE EXISTS. This gate COMPILED 20 of 22 crates (the clippy stage
+# above runs --all-targets, which builds their tests) while RUNNING the tests
+# of only five. `axon-ledger` — the crate holding the RBAC model, record
+# attribution, the MCP serving surface and webhook egress, and where every
+# authority fix of the 2026-09 hardening pass landed — was among those whose
+# tests never executed. A green gate said nothing about it, and nothing
+# noticed, because the coverage intent existed only as shell fragments here.
+#
+# Compiling a test is not running it. The list now lives in
+# governance/release-verification.json, where `release_manifest.rs` checks it
+# against the actual workspace members, so a new crate cannot arrive without a
+# classification and an A/B crate cannot exist without a required command.
+echo "── gate: required crate verification (manifest-driven) ───────────"
+MANIFEST="$ROOT/governance/release-verification.json"
+[ -f "$MANIFEST" ] || fail "release verification manifest missing at $MANIFEST"
+# axon-core's own command is run by the dedicated stage above, which must
+# precede the codegen rebuild; re-running it here would cost ~10 minutes to
+# learn the same fact twice. It is skipped BY NAME, and `release_manifest.rs`
+# still requires it to be declared, so the declaration cannot quietly vanish.
+while IFS= read -r cmd; do
+  [ -n "$cmd" ] || continue
+  echo "   → $cmd"
+  # shellcheck disable=SC2086
+  $cmd || fail "required verification: $cmd"
+done < <(python3 - "$MANIFEST" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+for name, spec in sorted(m["crates"].items()):
+    if spec.get("class") not in ("A", "B"):
+        continue
+    if name == "axon-core":
+        continue  # run by its own stage above; see the comment in gate.sh
+    for c in spec.get("required", []):
+        print(c)
+PYEOF
+)
+
 
 
 if [ "$STRICT" = 1 ]; then
