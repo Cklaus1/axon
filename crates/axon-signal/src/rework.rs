@@ -238,6 +238,7 @@ mod tests {
                 "files_touched": files,
             }),
             repo: None,
+            recorded_by: None,
         }
     }
 

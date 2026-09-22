@@ -81,6 +81,7 @@ pub fn ingest_git(
             ts_ms,
             payload,
             repo: repo_name.map(String::from),
+            recorded_by: None,
         };
 
         store.append(&record)?;

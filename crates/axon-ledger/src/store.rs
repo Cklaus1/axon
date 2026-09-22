@@ -23,6 +23,16 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// The OS-authenticated identity of this process, resolved once.
+///
+/// Cached because a bulk ingest calls `append` thousands of times and the
+/// lookup reads `/etc/passwd`; the value cannot change during a process's
+/// lifetime, since it comes from the real uid.
+fn writer_identity() -> &'static str {
+    static WRITER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    WRITER.get_or_init(|| crate::rbac::authenticated_principal().as_str().to_string())
+}
+
 pub struct Store {
     events_path: PathBuf,
     /// When set, EVERY read through this handle is filtered to what `caller`
@@ -90,12 +100,27 @@ impl Store {
         }
     }
 
+    /// Append one record, stamping the authenticated writer.
+    ///
+    /// THE CHOKE POINT for attribution. Every new record in the workspace is
+    /// born here — the CLI ingest verbs, the MCP `ledger_refresh` tool, the
+    /// watcher, and axon-signal — so stamping here covers all of them at once
+    /// rather than at each call site, where the next one added would not have
+    /// it.
+    ///
+    /// The stamp OVERWRITES whatever the caller put in `recorded_by`. That is
+    /// what makes it unforgeable: there is no code path on which a
+    /// caller-supplied value survives. `principal` is deliberately left alone
+    /// — it is the subject, and a CI account ingesting an engineer's session
+    /// legitimately names someone else.
     pub fn append(&mut self, record: &LedgerRecord) -> Result<()> {
+        let mut stamped = record.clone();
+        stamped.recorded_by = Some(writer_identity().to_string());
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.events_path)?;
-        let line = serde_json::to_string(record)?;
+        let line = serde_json::to_string(&stamped)?;
         writeln!(file, "{}", line)?;
         Ok(())
     }
@@ -309,6 +334,7 @@ mod tests {
             ts_ms,
             payload: json!({}),
             repo: None,
+            recorded_by: None,
         }
     }
 

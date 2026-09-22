@@ -322,6 +322,7 @@ pub fn ingest_session(
         ts_ms,
         payload,
         repo: repo_name.map(String::from),
+        recorded_by: None,
     };
 
     store.append(&record)?;

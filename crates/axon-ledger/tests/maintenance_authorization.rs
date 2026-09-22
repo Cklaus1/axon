@@ -304,6 +304,7 @@ fn replace_record_also_refuses_a_filtered_handle() {
         ts_ms: 1000,
         payload: serde_json::json!({"sha": "zzz"}),
         repo: None,
+        recorded_by: None,
     };
     assert!(
         filtered.replace_record("a1", &rec).is_err(),

@@ -275,6 +275,7 @@ fn main() -> Result<()> {
                         ts_ms,
                         payload,
                         repo: None,
+                        recorded_by: None,
                     };
                     if store_mut.append(&record).is_ok() {
                         written += 1;

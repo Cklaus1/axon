@@ -617,6 +617,7 @@ mod tests {
             ts_ms,
             payload,
             repo: None,
+            recorded_by: None,
         }
     }
 
@@ -644,6 +645,7 @@ mod tests {
             ts_ms,
             payload,
             repo: None,
+            recorded_by: None,
         }
     }
 
@@ -663,6 +665,7 @@ mod tests {
             ts_ms,
             payload,
             repo: None,
+            recorded_by: None,
         }
     }
 
@@ -728,6 +731,7 @@ mod tests {
             ts_ms: ts + 1,
             payload: outcome_payload,
             repo: None,
+            recorded_by: None,
         };
 
         store.append(&commit).unwrap();
@@ -814,6 +818,7 @@ mod tests {
             ts_ms,
             payload,
             repo: None,
+            recorded_by: None,
         }
     }
 

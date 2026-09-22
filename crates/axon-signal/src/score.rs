@@ -510,6 +510,7 @@ mod tests {
             ts_ms: ts - 300_000,
             payload: session_payload,
             repo: None,
+            recorded_by: None,
         };
 
         // Commit record
@@ -534,6 +535,7 @@ mod tests {
             ts_ms: ts,
             payload: commit_payload,
             repo: None,
+            recorded_by: None,
         };
 
         // Edge linking session → commit
@@ -552,6 +554,7 @@ mod tests {
             ts_ms: ts,
             payload: edge_payload,
             repo: None,
+            recorded_by: None,
         };
 
         store.append(&session).unwrap();
@@ -592,6 +595,7 @@ mod tests {
             ts_ms: ts + 1,
             payload: outcome_payload,
             repo: None,
+            recorded_by: None,
         };
         store.append(&outcome).unwrap();
 

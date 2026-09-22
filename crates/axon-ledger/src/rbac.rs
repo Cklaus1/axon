@@ -351,6 +351,7 @@ mod tests {
             ts_ms: 1000,
             payload: json!({}),
             repo: None,
+            recorded_by: None,
         }
     }
 
@@ -433,6 +434,7 @@ mod identity_boundary_tests {
             ts_ms: 1,
             payload: serde_json::json!({}),
             repo: None,
+            recorded_by: None,
         }
     }
 

@@ -64,6 +64,7 @@ pub fn ingest_outcome(
         ts_ms,
         payload,
         repo: None,
+        recorded_by: None,
     };
 
     store.append(&record)?;

@@ -370,6 +370,7 @@ mod tests {
                     // get different scores. Use files_touched length as proxy.
                 }),
                 repo: None,
+                recorded_by: None,
             }
         };
 

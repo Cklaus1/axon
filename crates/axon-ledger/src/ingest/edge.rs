@@ -132,6 +132,7 @@ pub fn infer_edges(store: &mut Store) -> Result<usize> {
                 ts_ms,
                 payload,
                 repo: commit.repo.clone(),
+                recorded_by: None,
             };
 
             new_edges.push(edge);
@@ -201,6 +202,7 @@ mod tests {
             ts_ms: start_ms,
             payload,
             repo: None,
+            recorded_by: None,
         }
     }
 
@@ -220,6 +222,7 @@ mod tests {
             ts_ms,
             payload,
             repo: None,
+            recorded_by: None,
         }
     }
 
