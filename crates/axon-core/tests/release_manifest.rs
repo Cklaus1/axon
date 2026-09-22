@@ -210,3 +210,37 @@ fn release_path_scripts_never_discard_a_build_or_test_status() {
         offenders.join("\n  ")
     );
 }
+
+/// The inventory's own `gate_tests` field must match the rule the gate
+/// actually implements, or the inventory is documentation that drifts.
+///
+/// Found by hand-maintaining it once: `axon-gfx-mock` is class C and has a
+/// required command, and the field said the gate runs it. The gate stage
+/// runs A and B only, so it does not.
+#[test]
+fn the_inventory_says_what_the_gate_actually_runs() {
+    let m = manifest();
+    let mut wrong = Vec::new();
+    for (name, spec) in m["crates"].as_object().expect("crates") {
+        let class = spec["class"].as_str().unwrap_or("?");
+        let has_cmd = spec["required"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
+        // The rule the gate stage implements: run the required commands of
+        // class A and B crates.
+        let gate_runs_it = has_cmd && (class == "A" || class == "B");
+        let claimed = spec["gate_tests"].as_bool().unwrap_or(false);
+        if claimed != gate_runs_it {
+            wrong.push(format!(
+                "{name}: says gate_tests={claimed}, gate runs it={gate_runs_it}"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "the crate inventory claims coverage the gate does not provide (or \
+         omits coverage it does):\n  {}",
+        wrong.join("\n  ")
+    );
+}

@@ -26,7 +26,9 @@
       ],
       "required": [
         "cargo test -p axon-core --no-default-features"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-ledger": {
       "class": "A",
@@ -40,7 +42,9 @@
       ],
       "required": [
         "cargo test -p axon-ledger"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-os": {
       "class": "A",
@@ -53,7 +57,9 @@
       ],
       "required": [
         "cargo test -p axon-os"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-audit": {
       "class": "A",
@@ -64,7 +70,9 @@
       ],
       "required": [
         "cargo test -p axon-audit"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-attest": {
       "class": "A",
@@ -77,7 +85,9 @@
       ],
       "required": [
         "cargo test -p axon-attest"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-certcheck": {
       "class": "A",
@@ -87,7 +97,9 @@
       ],
       "required": [
         "cargo test -p axon-certcheck"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-guest-init": {
       "class": "A",
@@ -98,7 +110,9 @@
       ],
       "required": [
         "cargo test -p axon-guest-init"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-vm": {
       "class": "A",
@@ -110,7 +124,9 @@
       ],
       "required": [
         "cargo test -p axon-vm"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "cortex-policy-adapter": {
       "class": "A",
@@ -121,7 +137,9 @@
       ],
       "required": [
         "cargo test -p cortex-policy-adapter"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-reflex": {
       "class": "A",
@@ -133,7 +151,9 @@
       ],
       "required": [
         "cargo test -p axon-reflex"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-signal": {
       "class": "A",
@@ -146,7 +166,9 @@
       ],
       "required": [
         "cargo test -p axon-signal"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-web": {
       "class": "A",
@@ -158,7 +180,9 @@
       ],
       "required": [
         "cargo test -p axon-web"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-cortex": {
       "class": "B",
@@ -171,7 +195,9 @@
       ],
       "required": [
         "cargo test -p axon-cortex"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-rt": {
       "class": "B",
@@ -183,7 +209,9 @@
       ],
       "required": [
         "cargo test -p axon-rt"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-ai": {
       "class": "B",
@@ -195,7 +223,9 @@
       ],
       "required": [
         "cargo test -p axon-ai"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-intent": {
       "class": "B",
@@ -206,7 +236,9 @@
       ],
       "required": [
         "cargo test -p axon-intent"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-wasm": {
       "class": "B",
@@ -218,7 +250,9 @@
       "required": [
         "cargo test -p axon-wasm"
       ],
-      "verified_by": "scripts/wasm_parity.sh and the wasm_* parity harnesses in the strict gate. NOTE: `cargo test -p axon-wasm` reports 4 suites and ZERO tests \u2014 the crate is a cdylib with no host tests, so that command passes vacuously and is kept only to prove the crate still builds for the host. Its real verification is the parity harnesses, which compare the wasm engine against the interpreter."
+      "verified_by": "scripts/wasm_parity.sh and the wasm_* parity harnesses in the strict gate. NOTE: `cargo test -p axon-wasm` reports 4 suites and ZERO tests \u2014 the crate is a cdylib with no host tests, so that command passes vacuously and is kept only to prove the crate still builds for the host. Its real verification is the parity harnesses, which compare the wasm engine against the interpreter.",
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-surface": {
       "class": "B",
@@ -228,7 +262,9 @@
       ],
       "required": [
         "cargo test -p axon-surface"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-domain": {
       "class": "B",
@@ -239,7 +275,9 @@
       ],
       "required": [
         "cargo test -p axon-domain"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     },
     "axon-guest-kernel": {
       "class": "C",
@@ -249,7 +287,9 @@
         "boot"
       ],
       "required": [],
-      "verified_by": "scripts/qemu_boot_test.sh (boot gate; not a host cargo test)"
+      "verified_by": "scripts/qemu_boot_test.sh (boot gate; not a host cargo test)",
+      "gate_compiles": false,
+      "gate_tests": false
     },
     "axon-gfx": {
       "class": "C",
@@ -258,7 +298,9 @@
         "GPU module"
       ],
       "required": [],
-      "verified_by": "scripts/gfx_wgpu_render_gate.sh (environment-gated; see ENVIRONMENTS.md)"
+      "verified_by": "scripts/gfx_wgpu_render_gate.sh (environment-gated; see ENVIRONMENTS.md)",
+      "gate_compiles": true,
+      "gate_tests": false
     },
     "axon-gfx-mock": {
       "class": "C",
@@ -268,7 +310,10 @@
       ],
       "required": [
         "cargo test -p axon-gfx-mock"
-      ]
+      ],
+      "gate_compiles": true,
+      "gate_tests": false
     }
-  }
+  },
+  "inventory_note": "gate_compiles: the strict gate builds this crate (clippy --all-targets builds its tests too). gate_tests: the strict gate RUNS its required commands. The distinction is the point \u2014 before 2026-09-22 the gate compiled 20 of 22 crates and ran the tests of 5, and nothing recorded the gap."
 }
