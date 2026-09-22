@@ -203,13 +203,21 @@ cmd_cancel() {
       # ones. This is exactly what a substring kill cannot do safely.
       echo 1 > "$cg/cgroup.kill" 2>/dev/null || true
       for _ in $(seq 1 50); do scope_alive "$dir" || break; sleep 0.1; done
-      rmdir "$cg" 2>/dev/null || true ;;
+      rmdir "$cg" 2>/dev/null || true
+      # RECORD the release. `cancel` removed the cgroup but wrote no cleanup
+      # record, so `verify` — which reads that record — reported "the
+      # containment scope was not released" for a run whose scope WAS
+      # released. The cancelled run was non-citable anyway on its status, so
+      # the wrong reason cost nothing here; it would have misled the first
+      # time it appeared alone.
+      if [ -d "$cg" ]; then echo "released=no" >> "$dir/cleanup"; else echo "released=yes" >> "$dir/cleanup"; fi ;;
     pgid:*)
       local p="${scope#pgid:}"
       [ "$p" = "pending" ] && die "scope not yet established"
       kill -TERM "-$p" 2>/dev/null || true
       for _ in $(seq 1 30); do scope_alive "$dir" || break; sleep 0.1; done
       if scope_alive "$dir"; then kill -KILL "-$p" 2>/dev/null || true; fi
+      if scope_alive "$dir"; then echo "released=no" >> "$dir/cleanup"; else echo "released=yes" >> "$dir/cleanup"; fi
       for _ in $(seq 1 30); do scope_alive "$dir" || break; sleep 0.1; done ;;
     *) die "no scope recorded for $dir" ;;
   esac
