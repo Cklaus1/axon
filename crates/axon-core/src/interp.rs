@@ -3671,6 +3671,16 @@ mod eval;
 // call_builtin and call_builtin's calls to goal.rs/eval.rs methods + the parent's
 // private Interp fields all resolve across the split impl blocks.
 mod builtins;
+// Re-exported for CODEGEN, so the caps->effect-row rule has exactly one
+// implementation. Native agent_action records carried no effect row until
+// the ABI was widened to pass one; re-deriving it on the runtime side would
+// have created a second copy of this mapping, free to drift from the
+// interpreter's.
+// Only CODEGEN consumes this; the interpreter calls the fn directly inside its
+// own module. Gated on the same feature, or a --no-default-features build fails
+// on an unused import.
+#[cfg(feature = "codegen")]
+pub(crate) use builtins::cap_to_effect_row;
 // `@[forall]` property-testing harness extracted to interp/proptest.rs (R0
 // slice 4). Self-contained — its only entry point is the public `run_property_test`,
 // re-exported here at the original `interp::` path for main.rs (no unqualified

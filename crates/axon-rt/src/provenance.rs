@@ -349,6 +349,27 @@ fn log_adaptive_return(
 /// — the same `event:"agent_action"`/`zone:"agent"` record the interpreter
 /// writes (I-13, un-opt-out-able). `fn_name`/`action`/`caps_used` are str ABI
 /// pairs; `action` is the tool (builtin) name, `caps_used` its capability kind.
+/// The principal a NATIVE run attributes its agent actions to.
+///
+/// `AXON_PRINCIPAL` is the whole story here, and deliberately so. The
+/// interpreter reads `principal_current_name()`, which also reflects a runtime
+/// `principal_activate()` — but those kernel builtins are interpreter-only and
+/// codegen refuses them (E0910), so a native binary has no way to change
+/// principal mid-run. Reading the variable therefore matches the interpreter
+/// wherever native can run at all, and "root" is the same default.
+///
+/// This is ATTRIBUTION, not authority: `CLAUDE.md` is explicit that
+/// AXON_PRINCIPAL grants and withholds nothing, and `axon-ledger` treats the
+/// claimed identity as a claim and takes admin authority from the real uid.
+/// Recording a claimed actor in an audit row is the intended use; it is not
+/// evidence that the actor was authenticated.
+fn agent_principal() -> String {
+    std::env::var("AXON_PRINCIPAL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "root".to_string())
+}
+
 #[no_mangle]
 pub extern "C" fn __axon_log_agent_action(
     fn_name_ptr: *const u8,
@@ -357,10 +378,24 @@ pub extern "C" fn __axon_log_agent_action(
     action_len: i64,
     caps_ptr: *const u8,
     caps_len: i64,
+    // ATTRIBUTION, added because native records had none. The interpreter has
+    // written `effect_row` and `principal` on every agent_action since F3
+    // (Phase 9); the native record carried neither, so the same @[agent]
+    // function run under the same AXON_PRINCIPAL produced an audit row naming
+    // WHAT was done and not WHO did it. Measured on one program with
+    // AXON_PRINCIPAL=alice: interp logged `"effect_row":"FS","principal":
+    // "alice"`, native logged neither field.
+    //
+    // `effect_row` is PASSED rather than re-derived here: codegen resolves it
+    // with the interpreter's own `cap_to_effect_row`, so the caps->row rule
+    // lives in one place instead of once per crate.
+    effect_row_ptr: *const u8,
+    effect_row_len: i64,
 ) {
     let fn_name = slice_to_str(fn_name_ptr, fn_name_len);
     let action = slice_to_str(action_ptr, action_len);
     let caps = slice_to_str(caps_ptr, caps_len);
+    let effect_row = slice_to_str(effect_row_ptr, effect_row_len);
     let Some(dir) = provenance_dir() else { return };
     if fs::create_dir_all(&dir).is_err() {
         return;
@@ -377,10 +412,12 @@ pub extern "C" fn __axon_log_agent_action(
         format!(",\"src\":{}", json_quote(&src))
     };
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\"action\":{a},\"caps_used\":{c}{src_field}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\"action\":{a},\"caps_used\":{c},\"effect_row\":{er},\"principal\":{pr}{src_field}}}\n",
         f = json_quote(fn_name),
         a = json_quote(action),
         c = json_quote(caps),
+        er = json_quote(effect_row),
+        pr = json_quote(&agent_principal()),
     );
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());

@@ -266,7 +266,11 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
 
 /// F3 (Phase 9): map a raw capability kind (from `capability_of_builtin`) to its
 /// effect-row tag for audit records. Unmapped kinds default to the raw cap name.
-fn cap_to_effect_row(cap: &str) -> &'static str {
+// `pub(crate)` so CODEGEN uses this exact mapping rather than a second copy.
+// Native agent_action records carried no effect_row at all until the ABI was
+// widened to pass one; deriving it again in axon-rt would have put the same
+// rule in two crates, free to drift.
+pub(crate) fn cap_to_effect_row(cap: &str) -> &'static str {
     // Matched against the labels `cap_label` ACTUALLY produces. It matched
     // `"fs"`, which is never one of them — the labels are `"fs:read"` and
     // `"fs:write"` — so the arm was dead and every filesystem agent action

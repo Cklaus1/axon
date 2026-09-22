@@ -38,11 +38,44 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
 fi
 AXON="${AXON:-target/debug/axon}"
 
-# Extract the discriminating fields of each agent_action record (fn|action|caps).
+# Extract the discriminating fields of each agent_action record.
+#
+# ATTRIBUTION IS PART OF THE RECORD, so it is part of the comparison. This
+# extracted only fn|action|caps_used — exactly the three fields BOTH engines
+# happened to write — so it reported "native agent_action records match interp"
+# while the native record carried no `effect_row` and no `principal` at all.
+# Measured on one @[agent] program with AXON_PRINCIPAL=alice: interp logged
+# `"effect_row":"FS","principal":"alice"`, native logged neither, and this
+# harness passed. A comparison that only looks at the fields both sides produce
+# cannot see a field one side stopped producing.
+#
+# Parsed as JSON rather than by a field-ORDER-dependent regex, and every field
+# is required to be NON-EMPTY: if both engines dropped attribution, an
+# order-blind comparison of two empty values would still match and pass
+# vacuously, which is the same defect one level up.
 extract() {
-  grep '"event":"agent_action"' "$1" 2>/dev/null \
-    | sed -E 's/.*"fn":"([^"]+)".*"action":"([^"]+)".*"caps_used":"([^"]+)".*/\1|\2|\3/' \
-    | sort
+  python3 - "$1" <<'PYEOF'
+import json, sys
+rows = []
+try:
+    lines = open(sys.argv[1]).read().splitlines()
+except OSError:
+    sys.exit(0)
+for line in lines:
+    if '"event":"agent_action"' not in line:
+        continue
+    try:
+        r = json.loads(line)
+    except ValueError:
+        print("UNPARSEABLE-RECORD")
+        continue
+    vals = [r.get(k, "") for k in ("fn", "action", "caps_used", "effect_row", "principal")]
+    if any(v == "" for v in vals):
+        missing = [k for k, v in zip(("fn","action","caps_used","effect_row","principal"), vals) if v == ""]
+        print("MISSING-FIELD:" + ",".join(missing))
+        continue
+    print("|".join(vals))
+PYEOF
 }
 
 IPROV="$WORK/icache"; mkdir -p "$IPROV"
