@@ -32,6 +32,12 @@ fn write(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
     p
 }
 
+fn adaptive_rows(cache: &std::path::Path) -> usize {
+    std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+        .map(|t| t.matches("\"event\":\"adaptive_return\"").count())
+        .unwrap_or(0)
+}
+
 fn tmp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("axon_dstore_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -337,58 +343,155 @@ fn the_provenance_path_is_not_program_addressable() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// The provenance write happens on a call to ANY `@[adaptive]` fn, not only
-/// through `goal_run`. `goal_run` is a caller of `call_fn`'s adaptive-return
-/// logging, not the boundary — a disproof review found the DIRECT-call
-/// vector: an `@[agent]` fn invoking an `@[adaptive]` fn without going
-/// through `goal_run` at all still writes program-derived data to disk, with
-/// ZERO `agent_action` audit rows (the write is not a builtin call, so it
-/// never reaches `pre_effect_gate`, where the row would be injected).
+/// A program must not gain an otherwise-forbidden durable write by reaching
+/// the provenance machinery.
 ///
-/// Also confirms the write happens under `AXON_ALLOWED_EFFECTS=Pure`: that
-/// ceiling gates builtin calls through the F5 hook, and calling an
-/// `@[adaptive]` fn is an ordinary fn call, so it is outside the hook.
+/// REPRODUCED before the fix — each of these wrote a program-derived row to
+/// `$XDG_CACHE_HOME/axon/provenance.jsonl` and exited 0: a direct
+/// `@[adaptive]` call under `@[contained(fs: [], net: [], exec: none)]`; the
+/// same under `AXON_ALLOWED_EFFECTS=Pure`; and inside
+/// `sandbox_run(sandbox_create(p, ""), …)`, whose ceiling is deny-all.
+/// `goal_run` amplified it: `max_evals <= 0` means unlimited, so a contained
+/// function could drive an unbounded number of rows whose `score`, `input`
+/// and `payload` it chose — a general durable store reached through the audit
+/// machinery.
+///
+/// The write is not a builtin call, so it never passed `pre_effect_gate`
+/// where the ceiling is enforced. It now asks the same question through the
+/// same predicate, and SUPPRESSES the write rather than refusing the call:
+/// refusing would abort every contained optimiser, and the optimiser does not
+/// need the write — `goal_run` reads the in-memory store, which is untouched.
+/// That is verified by the companion test below, without which "suppress"
+/// could not be told from "break".
 #[test]
-fn a_direct_adaptive_call_writes_provenance_with_no_agent_action_row() {
-    let d = tmp("direct_adaptive");
-    let prog = d.join("a.ax");
+fn a_restricted_ceiling_suppresses_the_provenance_write_on_every_path() {
+    let d = tmp("prov_ceiling");
+    let adaptive = "@[adaptive]\nfn metric(x: i64) -> i64 { 10 - (x - 3) * (x - 3) }\n";
+
+    let cases: &[(&str, &str)] = &[
+        ("direct", "fn main() { let _ = metric(3) }\n"),
+        (
+            "nested",
+            "fn wrapper(x: i64) -> i64 { metric(x) }\nfn main() { let _ = wrapper(3) }\n",
+        ),
+        (
+            "contained",
+            "@[contained(fs: [], net: [], exec: none)]\n\
+             fn boxed(x: i64) -> i64 { metric(x) }\nfn main() { let _ = boxed(3) }\n",
+        ),
+    ];
+
+    for (name, body) in cases {
+        let prog = d.join(format!("{name}.ax"));
+        std::fs::write(&prog, format!("{adaptive}{body}")).unwrap();
+
+        // PREMISE: with no ceiling the row IS written. Without this the
+        // suppression assertion below could pass against a build that never
+        // writes provenance at all.
+        let open_cache = d.join(format!("{name}_open"));
+        let out = Command::new(axon())
+            .arg("run")
+            .arg(&prog)
+            .env("XDG_CACHE_HOME", &open_cache)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{name}: baseline run failed");
+        assert!(
+            adaptive_rows(&open_cache) >= 1,
+            "{name}: premise — an unrestricted run must write a provenance row"
+        );
+
+        // Under a ceiling that grants no IO, nothing is persisted, and the
+        // program still completes: suppression, not refusal.
+        let shut_cache = d.join(format!("{name}_shut"));
+        let out = Command::new(axon())
+            .arg("run")
+            .arg(&prog)
+            .env("XDG_CACHE_HOME", &shut_cache)
+            .env("AXON_ALLOWED_EFFECTS", "Pure")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{name}: the program must still run — the remedy is suppression, not \
+             refusal: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            adaptive_rows(&shut_cache),
+            0,
+            "{name}: a durable provenance row was written under a ceiling that \
+             grants no filesystem effect"
+        );
+    }
+
+    // The sharpest case: an explicit deny-all scoped sandbox.
+    let prog = d.join("sbx.ax");
     std::fs::write(
         &prog,
-        "@[adaptive]\nfn score(x: f64) -> f64 { 0.0 - (x - 7.0) * (x - 7.0) }\n\
-         @[agent]\nfn act() -> i64 {\n    let _ = score(10.0)\n    let _ = score(20.0)\n    7\n}\n\
-         fn main() { let _ = act() }\n",
+        format!(
+            "{adaptive}fn main() {{\n    \
+             let p = principal_root(\"p\", false, false, false, 100)\n    \
+             let s = sandbox_create(p, \"\")\n    \
+             let _ = sandbox_run(s, \"metric\", 3)\n}}\n"
+        ),
     )
     .unwrap();
-    let cache = d.join("cache");
-
+    let cache = d.join("sbx_cache");
     let out = Command::new(axon())
         .arg("run")
         .arg(&prog)
         .env("XDG_CACHE_HOME", &cache)
-        .env("AXON_ALLOWED_EFFECTS", "Pure")
         .output()
         .unwrap();
     assert_eq!(
         out.status.code(),
         Some(0),
-        "premise: a Pure ceiling must not refuse a pure @[adaptive]/@[agent] \
-         program outright, or this proves nothing about the write: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
-        .expect("provenance written under a Pure ceiling");
-    let adaptive_rows = log.matches("\"event\":\"adaptive_return\"").count();
-    let agent_rows = log.matches("\"event\":\"agent_action\"").count();
-    assert!(
-        adaptive_rows >= 2,
-        "premise: the direct @[adaptive] calls must have logged:\n{log}"
+        "sandbox_run case did not complete"
     );
     assert_eq!(
-        agent_rows, 0,
-        "documented: a direct @[adaptive] call from inside @[agent] writes \
-         to disk under a Pure ceiling with no agent_action row:\n{log}"
+        adaptive_rows(&cache),
+        0,
+        "a deny-all sandbox still persisted a provenance row"
     );
 
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Suppression must not break the optimiser, or the fix is just "stop
+/// working under a ceiling".
+///
+/// `goal_run`/`goal_best_score` read the IN-MEMORY store, which the
+/// suppression does not touch — only the durable append is gated. With `IO`
+/// granted the rows persist AND the best score is right; the point of the
+/// pairing is that the optimiser's answer never depended on the file.
+#[test]
+fn suppressing_the_durable_write_does_not_break_optimisation() {
+    let d = tmp("prov_optim");
+    let prog = d.join("m.ax");
+    std::fs::write(
+        &prog,
+        "@[adaptive]\nfn metric(x: i64) -> i64 { 10 - (x - 3) * (x - 3) }\n\
+         fn main() {\n    let _ = metric(1)\n    let _ = metric(3)\n    let _ = metric(5)\n    \
+         eprintln(\"best=\" + to_str(goal_best_score(\"metric\", 100.0)))\n}\n",
+    )
+    .unwrap();
+
+    for (label, effects) in [("no ceiling", None), ("IO granted", Some("Pure,IO"))] {
+        let cache = d.join(label.replace(' ', "_"));
+        let mut c = Command::new(axon());
+        c.arg("run").arg(&prog).env("XDG_CACHE_HOME", &cache);
+        if let Some(e) = effects {
+            c.env("AXON_ALLOWED_EFFECTS", e);
+        }
+        let out = c.output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{label}: run failed: {err}");
+        assert!(
+            err.contains("best=10"),
+            "{label}: the optimiser must still find the best score: {err}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }

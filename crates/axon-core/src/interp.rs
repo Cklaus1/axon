@@ -2865,6 +2865,38 @@ impl<'p> Interp<'p> {
         })
     }
 
+    /// May the runtime persist a provenance row right now?
+    ///
+    /// Asks the SAME question `pre_effect_gate` asks for a builtin, through the
+    /// same predicate, so the ceiling cannot mean one thing for `write_file`
+    /// and another for the telemetry writer. `IO` is the row the effect
+    /// catalog gives filesystem and console builtins.
+    fn provenance_write_permitted(&self) -> bool {
+        let handle = self.active_sandbox.get();
+        if handle < 0 {
+            return true; // no ceiling in force
+        }
+        let sbs = self.sandboxes.borrow();
+        match sbs.get(handle as usize) {
+            Some(sb) => {
+                crate::interp::builtins::first_effect_outside_ceiling(sb, &["IO"]).is_none()
+            }
+            // UNREACHABLE BY CONSTRUCTION, and deliberately fail-closed
+            // anyway. `active_sandbox` only ever holds -1 or an index that
+            // was valid when it was stored, so there is no way to observe
+            // this arm — a mutation flipping it to `true` survives the suite,
+            // which is the honest signal that it is untested rather than a
+            // test gap to paper over with a contrived fixture.
+            //
+            // Worth recording that `pre_effect_gate` diverges here: its
+            // `if let Some(sb) = sbs.get(..)` has no else, so in this same
+            // impossible state it SKIPS the ceiling check entirely and fails
+            // OPEN. If the invariant on `active_sandbox` is ever weakened,
+            // that is the site that turns into a hole, not this one.
+            None => false,
+        }
+    }
+
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
@@ -3225,7 +3257,36 @@ impl<'p> Interp<'p> {
                     Some(l) => ("experiment", Some(l.as_str())),
                     None => ("adaptive", None),
                 };
-                append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
+                // PROVENANCE IS RUNTIME-OWNED TELEMETRY, NOT A PROGRAM EFFECT.
+                //
+                // This append is a durable filesystem write that no capability
+                // mechanism used to see: it is not a builtin call, so it never
+                // reached `pre_effect_gate`, where the ceiling is enforced.
+                // MEASURED — every one of these produced a row on disk, exit 0:
+                // a direct `@[adaptive]` call under
+                // `@[contained(fs: [], net: [], exec: none)]`; the same under
+                // `AXON_ALLOWED_EFFECTS=Pure`; and inside
+                // `sandbox_run(sandbox_create(p, ""), …)`, whose ceiling is
+                // deny-all. `goal_run` amplifies it — `max_evals <= 0` means
+                // unlimited, so a contained fn could drive an unbounded number
+                // of rows whose `score`, `input` and `payload` it chooses. That
+                // is a general durable store reached through the audit
+                // machinery, which is exactly what must not exist.
+                //
+                // The remedy is SUPPRESSION, not refusal. Refusing would abort
+                // every contained optimiser, and the optimiser does not need
+                // this write: the in-memory best store pushed just above is
+                // what `goal_run` reads, and it is untouched here. So a program
+                // denied filesystem effects keeps optimising and simply leaves
+                // no durable trace — it gains no capability it was refused, and
+                // there is no channel to amplify.
+                //
+                // Cross-process resume (`AXON_GOAL_CONTINUE`, which reads the
+                // log) does degrade under a restrictive ceiling. That is the
+                // correct direction: durable state is what was not granted.
+                if self.provenance_write_permitted() {
+                    append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
+                }
             }
         }
 

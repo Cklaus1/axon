@@ -147,6 +147,21 @@ fn json_root(src: &str, who: &str) -> std::result::Result<serde_json::Value, Str
     serde_json::from_str(src).map_err(|e| format!("{who}: E2201 {e}"))
 }
 
+/// The first of `effects` the sandbox's ceiling does not allow, if any.
+///
+/// ONE implementation of "is this effect within the ceiling", because there
+/// are now two consumers with DIFFERENT remedies: `pre_effect_gate` refuses
+/// the call (exit 8), while the provenance writer suppresses its write and
+/// lets the program continue. Asking the question in two places would be the
+/// duplication this file has been bitten by before — the same defect then has
+/// to be fixed twice and can be fixed once.
+pub(super) fn first_effect_outside_ceiling<'a>(
+    sb: &SandboxEntry,
+    effects: &[&'a str],
+) -> Option<&'a str> {
+    effects.iter().copied().find(|e| !sb.allowed.contains(*e))
+}
+
 fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<String> {
     use crate::capabilities as caps;
     let deny = |what: &str, val: &str, list: &[String]| {
@@ -563,16 +578,19 @@ impl<'p> Interp<'p> {
                 if !effects.is_empty() || requires_exec {
                     let sbs = self.sandboxes.borrow();
                     if let Some(sb) = sbs.get(sb_handle as usize) {
-                        for &eff in effects.iter().chain(extra) {
-                            if !sb.allowed.contains(eff) {
-                                audit(self, true);
-                                return Err(crate::interp::Flow::SandboxViolation(format!(
-                                    "builtin `{op_name}` requires effect `{eff}` which is not \
-                                     in the active sandbox's allowed set {:?} \
-                                     (principal handle {})",
-                                    sb.allowed, sb.principal
-                                )));
-                            }
+                        let all: Vec<&str> = effects
+                            .iter()
+                            .copied()
+                            .chain(extra.iter().copied())
+                            .collect();
+                        if let Some(eff) = first_effect_outside_ceiling(sb, &all) {
+                            audit(self, true);
+                            return Err(crate::interp::Flow::SandboxViolation(format!(
+                                "builtin `{op_name}` requires effect `{eff}` which is not \
+                                 in the active sandbox's allowed set {:?} \
+                                 (principal handle {})",
+                                sb.allowed, sb.principal
+                            )));
                         }
                         // AUDIT T3: the effect is permitted — now check its
                         // SCOPE. A grant of `fs: [write("./out/")]` must mean
