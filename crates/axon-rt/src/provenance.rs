@@ -294,9 +294,22 @@ fn log_event(fn_name: &str, payload: &str, score: Option<f64>) -> std::io::Resul
 /// `zone` discriminator so native and interpreted runs of the same program
 /// produce structurally identical provenance (I-13).  When `input` is `Some`,
 /// emits the interpreter's structured `"input":<n>` field too (F11 threads the
-/// leading i64 arg through `__axon_provenance_log_ret_i64_in`); the `src`
-/// (source path) field is still codegen-side TODO. The discriminating fields
-/// (`event`/`zone`/`fn`/`score`[/`input`]) are the parity contract.
+/// leading i64 arg through `__axon_provenance_log_ret_i64_in`).
+///
+/// `src` IS emitted now — `__axon_set_provenance_source` stamps it from main's
+/// prologue — so the sentence that used to sit here calling it "still
+/// codegen-side TODO" was stale. Measured on one @[adaptive] program: the
+/// interpreted and native records are field-identical apart from `ts_ms`
+/// (`ts_ms`/`fn`/`event`/`zone`/`payload`/`score`/`input`/`src` all match).
+///
+/// The discriminating fields (`event`/`zone`/`fn`/`score`[/`input`]) are what
+/// `provenance_parity.sh` compares. Note what that does and does not buy:
+/// a narrow comparison cannot notice a field ONE engine stops writing, which
+/// is exactly how native `agent_action` records lost `effect_row` and
+/// `principal` while their harness reported a match (378da246). These records
+/// are currently identical, so the narrow contract is not hiding anything
+/// here — but "the harness passes" is not by itself evidence of that, and it
+/// was re-measured rather than assumed.
 fn log_adaptive_return(
     fn_name: &str,
     payload: &str,
