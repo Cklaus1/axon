@@ -5,7 +5,27 @@
 # scripts/artifact_admission_gate.sh, which is exactly why that gate exists.
 /target
 /target/
-Cargo.lock
+
+# Cargo.lock is TRACKED, deliberately. This workspace ships executable
+# artifacts and uses immutable snapshot worktrees as RELEASE EVIDENCE, so the
+# commit must determine the exact dependency graph that evidence was produced
+# from. Ignoring it broke that two ways, both measured:
+#
+#   * a fresh snapshot worktree had no lockfile, so every gate run had to
+#     re-resolve against the registry — two 30-minute strict-gate cycles were
+#     lost to registry fetch timeouts that had nothing to do with the code
+#     ("unable to update registry `crates-io`", 0 test suites started);
+#   * a receipt naming a commit could not identify what was BUILT, because
+#     two runs of that same commit were free to resolve different versions.
+#
+# Proven on a fresh worktree of the same commit:
+#     no lockfile  + --offline -> cannot resolve
+#     with lockfile+ --offline -> resolves
+#
+# Never edit it by hand; let cargo write it. Release-significant commands pass
+# `--locked`, so a stale or missing lockfile FAILS rather than silently
+# re-resolving. Nested (non-root) lockfiles stay ignored — a workspace has one.
+*/Cargo.lock
 *.o
 *.a
 *.so
