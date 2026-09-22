@@ -523,6 +523,15 @@ impl<'p> Interp<'p> {
                 // `ai_call` rows, 16 durable program-derived lines, in a run
                 // whose `write_file` was refused.
                 //
+                // SCOPE OF THAT CLAIM: this governs provenance.jsonl. The
+                // separate R28 audit ledger (AXON_AUDIT_LEDGER) is NOT gated
+                // here and still records `denied:<op>` under a refused
+                // ceiling — deliberately, since dropping denials is the
+                // failure this file already fixed once. It is not a channel:
+                // the operator opts in by setting the variable, the path is
+                // theirs and not the program's, and the content is the
+                // operation name and verdict rather than program data.
+                //
                 // The cost is real and is the right trade: a run denied
                 // filesystem effects now leaves NO provenance audit trail,
                 // because persisting one IS the capability it was denied.
