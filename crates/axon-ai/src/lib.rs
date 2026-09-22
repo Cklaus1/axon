@@ -335,6 +335,68 @@ unsafe fn write_err_out(s: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
 ///
 /// Reads ANTHROPIC_API_KEY from the environment.  If unset, returns an error.
 /// Uses model claude-sonnet-4-6, max_tokens 1024.
+/// Refuse a LIVE model call from a NATIVELY BUILT binary, because native writes
+/// no audit record for it.
+///
+/// The `ai_call` provenance record — prompt hash, model, tier, cost, principal,
+/// and the goal the call served — is appended by the INTERPRETER's builtin
+/// dispatch (`interp/provenance.rs::append_ai_call_jsonl`). Native codegen
+/// reaches the model through these `extern "C"` symbols instead, which touch no
+/// provenance writer at all, so a natively built binary makes the call and
+/// leaves NOTHING behind. Measured, one 3-line program: `axon run` appended one
+/// `ai_call` record; the native binary created no provenance directory, and
+/// `axon trace --ai` was empty.
+///
+/// An EMPTY audit trail is the problem, not a partial one. `axon trace --ai`
+/// reads an absent record as a call that never happened, so the failure mode is
+/// a silent one: the operator sees a clean trail for a run that talked to a
+/// model. Emitting a partial record instead would be worse — the reader SKIPS
+/// any record without a `"fn"` field (so native rows would be written and then
+/// silently ignored) and DEFAULTS an absent `"principal"` to `"root"` (so a row
+/// native cannot attribute would be reported as root's). Faithful native
+/// records need the fn name, tier and principal threaded through this ABI,
+/// which it does not carry.
+///
+/// So: REFUSAL, not implementation — the same trade this codebase already makes
+/// for `AXON_REPLAY`, `AXON_RECORD`, `AXON_AUDIT_LEDGER` and the non-balanced
+/// `@[ai(tier:)]` routing (`axon-rt`'s `__axon_rt_refuse_interp_only_env`, and
+/// E0910 in `codegen/mod.rs`). Refusing converts a silent unaudited call into an
+/// explicit stop.
+///
+/// MOCK IS UNAFFECTED, and that is the whole point of scoping the refusal here:
+/// under `AXON_AI_MOCK` no request leaves the process, nothing is billed, and
+/// there is no call to attribute — so native/interp parity for the AI examples
+/// and every `*_parity.sh` harness (gate.sh pins `AXON_AI_MOCK=1`) keeps
+/// working unchanged.
+///
+/// Exit 2, matching the other native refusals, and NOT a catchable `Err`: an
+/// audit control a program can swallow and continue past is not a control.
+fn refuse_unaudited_native_live_ai(builtin: &str) {
+    if ai_mock_enabled() {
+        return;
+    }
+    // SCOPED TO THE CALL THAT ACTUALLY HAPPENS. With no key resolvable, no
+    // request is issued, nothing is billed and there is no call to attribute —
+    // so there is no audit exposure to refuse, and the existing "missing API
+    // key" error stays a catchable `Err` that a program doing optional AI
+    // enrichment can fall back from. Refusing that too would be breadth
+    // without benefit. The key is resolved by the SAME `api_key` the live path
+    // uses, not by a second copy of the rule that could drift from it.
+    if api_key(provider()).is_err() {
+        return;
+    }
+    eprintln!(
+        "axon: `{builtin}` reached a LIVE model call, but this is a NATIVELY \
+BUILT binary and AI-call auditing is honoured by the interpreter only.\n  \
+Refusing to run: continuing would send the prompt and API key to the provider \
+and bill real tokens while writing NO `ai_call` record — leaving `axon trace \
+--ai` empty and indistinguishable from a run that never called a model.\n  \
+Run the program with `axon run`, which records the call, or set AXON_AI_MOCK=1 \
+for the deterministic stub."
+    );
+    std::process::exit(2);
+}
+
 #[no_mangle]
 pub extern "C" fn __axon_ai_complete(
     prompt_ptr: *const u8,
@@ -342,6 +404,7 @@ pub extern "C" fn __axon_ai_complete(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
+    refuse_unaudited_native_live_ai("ai_complete");
     // Safety: the Axon codegen always passes valid str{ptr,len} pairs.
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
@@ -905,6 +968,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
         }
         return 1;
     }
+    refuse_unaudited_native_live_ai("ai_extract_uncertain_i64");
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -955,6 +1019,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
         }
         return 1;
     }
+    refuse_unaudited_native_live_ai("ai_extract_uncertain_f64");
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1012,6 +1077,7 @@ pub extern "C" fn __axon_ai_extract_i64(
         }
         return 1;
     }
+    refuse_unaudited_native_live_ai("ai_extract_i64");
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1056,6 +1122,7 @@ pub extern "C" fn __axon_ai_extract_f64(
         }
         return 1;
     }
+    refuse_unaudited_native_live_ai("ai_extract_f64");
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1105,6 +1172,7 @@ pub extern "C" fn __axon_ai_extract_bool(
         }
         return 1;
     }
+    refuse_unaudited_native_live_ai("ai_extract_bool");
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1948,5 +2016,78 @@ mod host_of_url_tests {
     fn ipv6_literal_is_not_chopped_at_an_inner_colon() {
         assert_eq!(host_of("http://[::1]:8080/v1"), "[::1]");
         assert_eq!(host_of("http://[::1]/v1"), "[::1]");
+    }
+}
+
+#[cfg(test)]
+mod native_ai_audit_refusal_tests {
+    /// EVERY native AI entry point must refuse an unaudited live call.
+    ///
+    /// The refusal is what keeps a natively built binary from calling a model
+    /// with no `ai_call` record behind it. Guarding the five entry points that
+    /// existed when it was written would leave the SIXTH — the one added later
+    /// by someone who did not read this — silently unaudited, which is exactly
+    /// the shape of the hole being closed. So the list is derived from the
+    /// source rather than restated here: any `pub extern "C" fn __axon_ai_*`
+    /// whose body does not call the guard fails this test.
+    #[test]
+    fn every_native_ai_entry_point_refuses_an_unaudited_live_call() {
+        let src = include_str!("lib.rs");
+        let mut checked = 0usize;
+        let mut unguarded = Vec::new();
+
+        for (idx, _) in src.match_indices("pub extern \"C\" fn __axon_ai_") {
+            let rest = &src[idx..];
+            let name: String = rest["pub extern \"C\" fn ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            // `include_str!` reads THIS file, so the scan also matches the
+            // pattern literal a few lines above. A real definition is followed
+            // by its parameter list; the literal is followed by a quote.
+            if name == "__axon_ai_"
+                || !rest["pub extern \"C\" fn ".len() + name.len()..].starts_with('(')
+            {
+                continue;
+            }
+            // The body starts at the first `{` after the signature; scan a
+            // generous window rather than brace-matching — the guard is the
+            // FIRST statement, so it is always well inside it.
+            let body_start = match rest.find(" {\n") {
+                Some(b) => b,
+                None => continue,
+            };
+            let window_end = (body_start + 1200).min(rest.len());
+            let window = &rest[body_start..window_end];
+            checked += 1;
+            if !window.contains("refuse_unaudited_native_live_ai(") {
+                unguarded.push(name);
+            }
+        }
+
+        assert!(
+            checked >= 6,
+            "found only {checked} native AI entry points — the scan stopped \
+             matching, so this test is verifying nothing"
+        );
+        assert!(
+            unguarded.is_empty(),
+            "native AI entry points with no unaudited-live-call refusal: {unguarded:?} \
+             — a native call through these writes no ai_call record, so `axon trace --ai` \
+             reads as though no model was called"
+        );
+    }
+
+    /// The refusal must not fire under mock: no request leaves the process,
+    /// nothing is billed, and there is no call to attribute — so the AI
+    /// examples and every parity harness (gate.sh pins AXON_AI_MOCK=1) must
+    /// keep working natively. This is the half of the behaviour a refusal is
+    /// most likely to break, so it is asserted rather than assumed.
+    #[test]
+    fn mock_mode_is_not_refused() {
+        // `ai_mock_enabled` is the predicate the guard returns early on.
+        std::env::set_var("AXON_AI_MOCK", "1");
+        assert!(super::ai_mock_enabled());
+        std::env::remove_var("AXON_AI_MOCK");
     }
 }

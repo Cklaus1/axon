@@ -115,7 +115,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**57 controls tracked; 23 engine states unknown or silently-ignored.**
+**57 controls tracked; 22 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -127,7 +127,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_NATIVE_TRACE` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
-| `AXON_PRINCIPAL` | replay/record/audit | ✓ | **IGNORED** | **?** | n/a | open |
+| `AXON_PRINCIPAL` | replay/record/audit | ✓ | refused | **?** | n/a | closed |
 | `AXON_RECORD` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_REPLAY` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_SEED` | determinism | ✓ | ✓ | **IGNORED** | ✓ | native-closed |
@@ -187,7 +187,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 - **`AXON_SEED`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_CLOCK`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_AI_REPLAY`** — PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED.
-- **`AXON_PRINCIPAL`** — Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine.
+- **`AXON_PRINCIPAL`** — CLOSED BY REFUSAL. Native emitted no ai_call record for a call it really made, so `axon trace --ai` was empty and read as 'no model was called'. Measured: a natively built binary completed an HTTP round trip to the configured endpoint with the API key attached and created no provenance directory at all, while `axon run` on the same source appended one ai_call record. Native now REFUSES a live model call (exit 2, zero requests issued — verified against a local listener with the interpreter as the positive control, which recorded 1 request and 1 audit record under identical config). AXON_AI_MOCK is unaffected: no request leaves the process, nothing is billed, and there is no call to attribute, so every *_parity.sh harness keeps working. Attribution is no longer silently absent because there is no unaudited native call left to attribute.
 - **`AXON_TEE_ENCLAVE`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`AXON_TEE_MEASUREMENT`** — REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var("` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open — these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.
 - **`reflex.principal-isolation`** — DEMOTED after adversarial review — the previous `enforced` in all three modes overstated what the code delivers, and this row misleading readers outside the crate is the expensive kind of defect. REPRODUCED: (a) the principal on the wire is an UNAUTHENTICATED caller-asserted string, so mallory obtains alice's decision by typing "principal":"alice"; (b) duplicate `principal` keys are accepted last-wins — the exact attack axon-cortex's parse_strict was written to stop; (c) frames carry no request correlation, so an HONEST backend's refusal is delivered to the client as Ok; (d) RemoteService ignores the HTTP status, so a 500 becomes a decision. Embedded stays `enforced`: it has no wire and reaches the shared authority core directly.

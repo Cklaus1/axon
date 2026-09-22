@@ -910,15 +910,15 @@
     {
       "name": "AXON_PRINCIPAL",
       "category": "replay/record/audit",
-      "status": "open",
+      "status": "closed",
       "engines": {
         "interpreter": "enforced",
-        "native": "silently-ignored",
+        "native": "explicitly-refused",
         "wasm": "unknown",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "Native emits no ai_call records at all, so `axon trace --ai` is empty and attribution is silently absent rather than wrong. Audit attribution is the control; an empty trail reads as 'nothing happened'. The guest SETS this var and execs a payload; it is a setter, not a reader, so whether it is honoured is decided by the payload's engine."
+      "open": "CLOSED BY REFUSAL. Native emitted no ai_call record for a call it really made, so `axon trace --ai` was empty and read as 'no model was called'. Measured: a natively built binary completed an HTTP round trip to the configured endpoint with the API key attached and created no provenance directory at all, while `axon run` on the same source appended one ai_call record. Native now REFUSES a live model call (exit 2, zero requests issued \u2014 verified against a local listener with the interpreter as the positive control, which recorded 1 request and 1 audit record under identical config). AXON_AI_MOCK is unaffected: no request leaves the process, nothing is billed, and there is no call to attribute, so every *_parity.sh harness keeps working. Attribution is no longer silently absent because there is no unaudited native call left to attribute."
     },
     {
       "name": "AXON_TEE_ENCLAVE",
