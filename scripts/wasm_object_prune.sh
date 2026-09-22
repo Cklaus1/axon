@@ -116,7 +116,14 @@ fn planner() {
 }
 fn main() { planner() }
 AX
-if "$AXON" target build --engine codegen --target wasm32-wasip1 "$AGENT_PROG" >"$WORK/agent_build.log" 2>&1; then
+"$AXON" target build --engine codegen --target wasm32-wasip1 "$AGENT_PROG" >"$WORK/agent_build.log" 2>&1
+# `axon target build` exits 0 even when the LINK fails (it emitted an object,
+# which is its contract), so the exit status cannot stand in for "this probe
+# ran". Require evidence that the build reached the link step: without it, a
+# probe that never got that far would find no mismatch and report success
+# having compared nothing — the same vacuous pass this harness exists to
+# prevent one level down.
+if grep -qE "linked, RUNNABLE|wasm object:|wasm link failed" "$WORK/agent_build.log"; then
   if grep -q "function signature mismatch" "$WORK/agent_build.log"; then
     echo "wasm_object_prune: FAIL — codegen and axon-rt disagree on a runtime signature:"
     grep -A2 "function signature mismatch" "$WORK/agent_build.log" | sed 's/^/    /'
@@ -124,10 +131,13 @@ if "$AXON" target build --engine codegen --target wasm32-wasip1 "$AGENT_PROG" >"
   fi
   echo "wasm_object_prune: agent-path link has no signature mismatch"
 else
-  # A build that cannot run is an absence, not a pass — but only the MISMATCH
-  # is asserted here, so a target/toolchain absence is reported and skipped
-  # rather than failed.
-  echo "wasm_object_prune: agent-path probe did not build — mismatch check skipped"
+  # No link-step evidence at all. The earlier stages already established that
+  # codegen and the wasm target work, so this is a result rather than an
+  # absence: the probe should have reached a link and did not.
+  echo "wasm_object_prune: FAIL — the agent-path probe never reached the link step;"
+  echo "  the signature-mismatch check verified nothing. Build output:"
+  sed 's/^/    /' "$WORK/agent_build.log" | head -8
+  exit 1
 fi
 
 echo "wasm_object_prune: PASS"
