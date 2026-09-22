@@ -542,9 +542,16 @@ fn every_provenance_writer_honours_the_ceiling() {
         .env("AXON_ALLOWED_EFFECTS", "Net,AI,IO")
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(0), "premise run failed: {}",
-               String::from_utf8_lossy(&out.stderr));
-    assert!(rows(&open_cache, "agent_action") >= 8, "premise: agent_action rows");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "premise run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        rows(&open_cache, "agent_action") >= 8,
+        "premise: agent_action rows"
+    );
     assert!(rows(&open_cache, "ai_call") >= 8, "premise: ai_call rows");
 
     // IO denied: neither writer may persist.
