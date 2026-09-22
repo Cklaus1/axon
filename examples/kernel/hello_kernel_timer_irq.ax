@@ -29,9 +29,42 @@ let IDT_ENTRY_SIZE = 16
 // PIT reload value for ~100 Hz (1193182 Hz / 100).
 let PIT_DIVISOR = 11932
 
+// ── Milestones, and why they exist ──────────────────────────────────────────
+// The host used to decide PASS by counting >=5 'T' bytes inside a 2-second
+// WALL-CLOCK window. That conflates two different things: "the interrupt path
+// works" and "this machine was fast enough just now". Measured: the test failed
+// a strict gate with 0 ticks at load average ~4.3, then passed 5/5 in isolation
+// on the same commit — a false RED that cost a 30-minute gate cycle.
+//
+// The tempting repair — retry when ticks == 0 — is WRONG, because 0 ticks is
+// not evidence of a slow machine. A kernel that never ran `sti`, never
+// programmed the PIT, never installed the IDT gate, or whose handler never
+// EOI'd also produces exactly 0 ticks. The count alone cannot tell "did not
+// run" from "ran and the timer is broken", which is the whole property under
+// test.
+//
+// So the guest says where it GOT to. Each milestone is emitted once, in order,
+// so the host can name the last stage reached instead of guessing. Bytes are
+// chosen not to collide with 'T' (a tick) or the freestanding trap markers
+// 'A'/'B'/'R', which the host reads as failures.
+let MARK_ENTERED  = 69   // 'E' — kmain reached
+let MARK_IDT      = 73   // 'I' — IDT built and lidt'd
+let MARK_PIC      = 80   // 'P' — PIC remapped
+let MARK_PIT      = 68   // 'D' — PIT programmed (divisor written)
+let MARK_STI      = 83   // 'S' — interrupts enabled
+let MARK_PIT_BAD  = 88   // 'X' — PIT is NOT running at the divisor we programmed
+
+
 @[no_alloc]
 @[interrupt]
 fn isr_timer() | {Hal} {
+    // DELIBERATELY MINIMAL. An earlier version of this repair counted ticks
+    // here — a 64-bit volatile load/store plus a branch — and the kernel then
+    // died at `sti`, before the first 'T' ever reached debugcon: milestones
+    // showed E/I/P/D and no S. Whatever an @[interrupt] handler can safely do
+    // in this freestanding context, that was past it. The counting therefore
+    // lives on the HOST, which reads this byte stream, and this handler stays
+    // as small as it was when it worked.
     port_out_u8(0xE9, 84)   // 'T' — proves the handler actually ran
     port_out_u8(0x20, 0x20) // EOI to the master PIC
 }
@@ -90,6 +123,45 @@ fn pic_remap() | {Hal} {
     port_out_u8(0xA1, 0xFF) // mask all slave IRQs
 }
 
+// Read channel 0's live count via the latch command.
+@[hal]
+fn pit_read_count() -> i64 | {Hal} {
+    port_out_u8(0x43, 0x00)     // latch channel 0's counter
+    let lo = port_in_u8(0x40)
+    let hi = port_in_u8(0x40)
+    lo + hi * 256
+}
+
+// PROVE THE PIT IS OURS, rather than inferring it from how fast ticks arrive.
+//
+// An unprogrammed 8254 free-runs from its power-on reload of 65536 (~18.2 Hz),
+// so IRQ0 still fires and a tick-COUNTING test passes while `pit_init` is
+// missing entirely. Measured: deleting the `pit_init()` call left the original
+// 2-second harness reporting "PASS: timer interrupt fired 35 times —
+// IDT/lidt/PIC-remap/PIT/sti/ISR/EOI all correct", naming the PIT as correct
+// in the very run that never programmed it. 35 ticks in 2s IS the default
+// rate; the check could not tell the two apart.
+//
+// Rate is the wrong instrument for this: distinguishing ~100 Hz from ~18.2 Hz
+// means timing a guest, which is exactly the wall-clock dependence that made
+// this test flake under load. The divisor is CONFIGURATION, so it is read back
+// instead. With our reload the live counter can never exceed PIT_DIVISOR;
+// with the default reload most samples do. Several samples are taken because
+// one low reading proves nothing — the counter sweeps the whole range.
+@[hal]
+fn pit_verify_divisor() | {Hal} {
+    let worst = 0
+    for i in 0..16 {
+        let c = pit_read_count()
+        if c > worst {
+            worst = c
+        }
+    }
+    if worst > PIT_DIVISOR {
+        port_out_u8(0xE9, MARK_PIT_BAD)
+    }
+}
+
 @[hal]
 fn pit_init() | {Hal} {
     port_out_u8(0x43, 0x36) // channel 0, lobyte/hibyte, mode 3, binary
@@ -99,10 +171,24 @@ fn pit_init() | {Hal} {
 
 @[entry]
 fn kmain() | {Hal} {
+    port_out_u8(0xE9, MARK_ENTERED)
+
     idt_build_and_load()
+    port_out_u8(0xE9, MARK_IDT)
+
     pic_remap()
+    port_out_u8(0xE9, MARK_PIC)
+
     pit_init()
+    pit_verify_divisor()
+    port_out_u8(0xE9, MARK_PIT)
+
     sti()
+    port_out_u8(0xE9, MARK_STI)
+
+    // From here the host watches the debugcon stream and ends the run as soon
+    // as the required number of interrupts has been DELIVERED, or reports the
+    // last milestone above if they never are.
     while true {
         hlt()
     }
