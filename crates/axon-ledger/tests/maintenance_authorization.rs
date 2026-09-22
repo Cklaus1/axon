@@ -107,7 +107,10 @@ fn destructive() -> Vec<Vec<&'static str>> {
             "bob@example.com",
             "--dry-run",
         ],
-        vec!["rbac", "list"],
+        // `rbac list` is deliberately NOT here: it is a pure read of a file
+        // the caller can already read, and gating it locked operators out of
+        // seeing their own config. The privileged rbac action is `grant`.
+        vec!["rbac", "grant", "mallory@example.com"],
     ]
 }
 
@@ -569,5 +572,106 @@ fn rbac_does_not_and_cannot_bind_a_writer_who_bypasses_the_cli() {
              would pass without testing anything. The CLI-bypass half above DID run."
         );
     }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── Granting authority through the CLI ──────────────────────────────────────
+
+/// `rbac grant` must say what it actually granted.
+///
+/// It printed "Granted admin role to X. Admins can view all records" while
+/// adding X to `admins` — the CLAIMED-identity list, which after the
+/// authenticated-principal change confers visibility and no authority at all.
+/// An operator reading that line would believe they had granted rights they
+/// had not. There was also no CLI path to the list that DOES carry authority,
+/// so the only way to grant it was to hand-edit rbac.json.
+#[test]
+fn rbac_grant_distinguishes_visibility_from_authority() {
+    let d = std::env::temp_dir().join(format!("axon_mx_grant_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("events.ndjson"), "").unwrap();
+    std::fs::write(
+        d.join("rbac.json"),
+        r#"{"admins":[],"authenticated_admins":[]}"#,
+    )
+    .unwrap();
+
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "alice@example.com"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("VISIBILITY") && out.contains("does NOT authorize"),
+        "granting visibility must not be reported as granting authority:\n{out}"
+    );
+
+    let me = real_os_identity();
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("PRIVILEGED"),
+        "granting authority must say so:\n{out}"
+    );
+
+    // And the grant is real: a privileged verb now succeeds.
+    std::fs::write(d.join("events.ndjson"), RECS).unwrap();
+    let (code, out) = run_env(
+        &d,
+        None,
+        &[],
+        &["prune", "--older-than", "2099-01-01", "--yes"],
+    );
+    assert_eq!(code, 0, "the granted authority must actually work:\n{out}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The first authenticated admin can be granted through the CLI; after that
+/// the window closes.
+///
+/// Without the bootstrap an UPGRADED ledger — `admins` populated,
+/// `authenticated_admins` still empty — refuses every caller including the
+/// operator, and the only way in is to hand-edit rbac.json. MEASURED: that is
+/// what happened the first time this was tried.
+///
+/// The concession is sound because writing `authenticated_admins` needs write
+/// access to rbac.json, and a caller with that can self-grant with a text
+/// editor regardless (see
+/// `rbac_does_not_and_cannot_bind_a_writer_who_bypasses_the_cli`). What must
+/// hold is that the window CLOSES once someone holds authority.
+#[test]
+fn the_first_authenticated_admin_can_bootstrap_but_the_window_then_closes() {
+    let d = std::env::temp_dir().join(format!("axon_mx_boot_{}", std::process::id()));
+    let me = real_os_identity();
+
+    // OPEN: nobody holds authority yet, so the first grant is allowed.
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "\"alice@example.com\"", "");
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
+    assert_eq!(
+        code, 0,
+        "the first authenticated admin must be grantable:\n{out}"
+    );
+
+    // CLOSED: someone else already holds authority, and it is not me.
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "\"alice@example.com\"", "\"somebody-else\"");
+    let (code, out) = run_env(&d, None, &[], &["rbac", "grant", "--authenticated", &me]);
+    assert_ne!(
+        code, 0,
+        "once authority exists, a non-admin must not be able to grant \
+         themselves more:\n{out}"
+    );
+    // And it did not take effect.
+    let cfg = std::fs::read_to_string(d.join("rbac.json")).unwrap();
+    assert!(
+        !cfg.contains(&format!("\"{me}\"")),
+        "the refused grant still modified rbac.json: {cfg}"
+    );
+
+    // `list` is a read and must work regardless.
+    let (code, out) = run_env(&d, None, &[], &["rbac", "list"]);
+    assert_eq!(
+        code, 0,
+        "`rbac list` is a read and must not be gated:\n{out}"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }

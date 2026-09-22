@@ -364,15 +364,24 @@ enum WebhookAction {
 
 #[derive(Subcommand)]
 enum RbacAction {
-    /// Grant admin role to an engineer (can view all records)
+    /// Grant admin role. Without --authenticated this grants VISIBILITY only
+    /// (see all records); privileged operations require --authenticated.
     Grant {
-        /// Engineer email address
+        /// Engineer email (visibility) or OS identity (with --authenticated)
         email: String,
+        /// Grant PRIVILEGED authority to an OS identity (username, or
+        /// `uid:<n>`), not a claimed email. This is the list that authorizes
+        /// prune / engineer-backfill / session-refresh / refresh / rbac.
+        #[arg(long)]
+        authenticated: bool,
     },
-    /// Revoke admin role from an engineer
+    /// Revoke admin role from an engineer or OS identity
     Revoke {
-        /// Engineer email address
+        /// Engineer email (visibility) or OS identity (with --authenticated)
         email: String,
+        /// Revoke PRIVILEGED authority rather than visibility
+        #[arg(long)]
+        authenticated: bool,
     },
     /// List current RBAC config
     List,
@@ -440,7 +449,13 @@ fn requires_admin(cmd: &Commands) -> Option<&'static str> {
         Commands::EngineerBackfill { .. } => Some("engineer-backfill"),
         Commands::SessionRefresh { .. } => Some("session-refresh"),
         Commands::Refresh { .. } => Some("refresh"),
-        Commands::Rbac { .. } => Some("rbac"),
+        // `rbac` is privileged for grant/revoke, but `list` is a pure read of
+        // a file the caller can already read, and gating it locked operators
+        // out of even SEEING the config. Classified per action below.
+        Commands::Rbac { action } => match action {
+            RbacAction::List => None,
+            RbacAction::Grant { .. } | RbacAction::Revoke { .. } => Some("rbac"),
+        },
 
         // Reads. Already filtered to the caller's view by `Store::open_as`,
         // so authority is enforced by what they can SEE, not by refusal.
@@ -523,7 +538,31 @@ fn main() -> Result<()> {
     // does not make.
     if !rbac.admins.is_empty() || !rbac.authenticated_admins.is_empty() {
         if let Some(verb) = requires_admin(&cli.command) {
-            if !authority.is_admin(&rbac) {
+            // BOOTSTRAP. While NOBODY holds privileged authority, granting the
+            // first one is allowed. Otherwise an upgraded ledger — `admins`
+            // populated, `authenticated_admins` still empty — refuses every
+            // caller including the operator, and the only way in is to
+            // hand-edit rbac.json. MEASURED: that is exactly what happened
+            // the first time this was tried.
+            //
+            // It concedes nothing. Writing `authenticated_admins` requires
+            // write access to rbac.json, and a caller who has that can grant
+            // themselves authority with a text editor whether or not this CLI
+            // helps them — the boundary test
+            // `rbac_does_not_and_cannot_bind_a_writer_who_bypasses_the_cli`
+            // makes that explicit. The concession ends the moment the list is
+            // non-empty, which is the state worth protecting.
+            let bootstrapping = rbac.authenticated_admins.is_empty()
+                && matches!(
+                    &cli.command,
+                    Commands::Rbac {
+                        action: RbacAction::Grant {
+                            authenticated: true,
+                            ..
+                        }
+                    }
+                );
+            if !bootstrapping && !authority.is_admin(&rbac) {
                 anyhow::bail!(
                     "`{verb}` rewrites records that may belong to other principals \
                      and is restricted to an admin.\n  \
@@ -1966,19 +2005,55 @@ fn main() -> Result<()> {
         },
 
         Commands::Rbac { action } => match action {
-            RbacAction::Grant { email } => {
+            RbacAction::Grant {
+                email,
+                authenticated,
+            } => {
                 let mut config = RbacConfig::load(&dir_path)?;
-                config.add_admin(&email);
-                config.save(&dir_path)?;
-                println!("Granted admin role to {email}.");
-                println!("Admins can view all records; members see only their own.");
+                if authenticated {
+                    config.add_authenticated_admin(&email);
+                    config.save(&dir_path)?;
+                    println!("Granted PRIVILEGED authority to OS identity `{email}`.");
+                    println!(
+                        "This authorizes prune / engineer-backfill / session-refresh / \
+                         refresh / rbac for a caller whose real uid resolves to `{email}`."
+                    );
+                } else {
+                    config.add_admin(&email);
+                    config.save(&dir_path)?;
+                    // SAY WHAT WAS ACTUALLY GRANTED. This used to print
+                    // "Granted admin role", which stopped being true for
+                    // privileged operations once those started requiring an
+                    // authenticated identity: the `admins` list is a CLAIMED
+                    // identity and confers visibility, not authority. An
+                    // operator reading the old line would believe they had
+                    // granted rights they had not.
+                    println!("Granted VISIBILITY to {email} (can view all records).");
+                    println!(
+                        "This does NOT authorize prune / engineer-backfill / \
+                         session-refresh / refresh / rbac — those require an \
+                         OS-authenticated identity. For that, run:\n  \
+                         axon-ledger rbac grant --authenticated <os-username>"
+                    );
+                }
             }
-            RbacAction::Revoke { email } => {
+            RbacAction::Revoke {
+                email,
+                authenticated,
+            } => {
                 let mut config = RbacConfig::load(&dir_path)?;
-                if config.is_admin(&email) {
+                if authenticated {
+                    if config.authenticated_admins.iter().any(|a| a == &email) {
+                        config.remove_authenticated_admin(&email);
+                        config.save(&dir_path)?;
+                        println!("Revoked privileged authority from `{email}`.");
+                    } else {
+                        eprintln!("`{email}` does not hold privileged authority.");
+                    }
+                } else if config.is_admin(&email) {
                     config.remove_admin(&email);
                     config.save(&dir_path)?;
-                    println!("Revoked admin role from {email}.");
+                    println!("Revoked visibility from {email}.");
                 } else {
                     eprintln!("{email} is not an admin.");
                     std::process::exit(1);
@@ -1986,15 +2061,34 @@ fn main() -> Result<()> {
             }
             RbacAction::List => {
                 let config = RbacConfig::load(&dir_path)?;
-                if config.admins.is_empty() {
+                if config.admins.is_empty() && config.authenticated_admins.is_empty() {
                     println!("RBAC is disabled (no admins configured). All records are visible to everyone.");
                     println!("Enable with: axon-ledger rbac grant <email>");
                 } else {
-                    println!("Admins ({}):", config.admins.len());
+                    // BOTH lists, because they mean different things and
+                    // showing only the first made `admins` look like it
+                    // carried authority.
+                    println!(
+                        "Visibility admins ({}) — see all records:",
+                        config.admins.len()
+                    );
                     for a in &config.admins {
                         println!("  {a}");
                     }
-                    println!("\nMembers see only their own records. Use --as <email> to identify yourself.");
+                    println!(
+                        "\nPrivileged (OS-authenticated) admins ({}) — may prune / backfill / refresh / rbac:",
+                        config.authenticated_admins.len()
+                    );
+                    if config.authenticated_admins.is_empty() {
+                        println!("  (none — privileged operations are refused for everyone)");
+                    }
+                    for a in &config.authenticated_admins {
+                        println!("  {a}");
+                    }
+                    println!(
+                        "\nMembers see only their own records. `--as <email>` is a CLAIM: it \
+                         steers visibility and confers no authority."
+                    );
                 }
             }
         },

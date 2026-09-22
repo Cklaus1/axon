@@ -70,6 +70,17 @@ impl RbacConfig {
         self.admins.retain(|a| a != email);
     }
 
+    /// Grant PRIVILEGED authority to an OS identity.
+    pub fn add_authenticated_admin(&mut self, who: &str) {
+        if !self.authenticated_admins.iter().any(|a| a == who) {
+            self.authenticated_admins.push(who.to_string());
+        }
+    }
+
+    pub fn remove_authenticated_admin(&mut self, who: &str) {
+        self.authenticated_admins.retain(|a| a != who);
+    }
+
     /// Admin by CLAIMED identity. Confers nothing on its own — see
     /// [`RbacConfig::is_admin_authenticated`], which is what privileged
     /// operations consume.
