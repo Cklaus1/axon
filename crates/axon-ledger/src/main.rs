@@ -1936,7 +1936,7 @@ fn main() -> Result<()> {
                 // Use a throwaway store in a fresh temp dir to re-parse without dedup
                 let tmp_dir = std::env::temp_dir().join(format!(
                     "axon_refresh_{}_{}",
-                    axon_ledger::model::short_id(&session_id, 8),
+                    axon_ledger::model::short_id(session_id, 8),
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -1951,7 +1951,7 @@ fn main() -> Result<()> {
                         if dry_run {
                             println!(
                                 "  would refresh {} → turn_count={}",
-                                axon_ledger::model::short_id(&session_id, 8),
+                                axon_ledger::model::short_id(session_id, 8),
                                 new_record
                                     .payload
                                     .get("turn_count")
@@ -1967,7 +1967,7 @@ fn main() -> Result<()> {
                     Ok(None) => { /* deduped in tmp store — shouldn't happen but safe */ }
                     Err(e) => eprintln!(
                         "  [skip] {}: {e}",
-                        axon_ledger::model::short_id(&session_id, 8)
+                        axon_ledger::model::short_id(session_id, 8)
                     ),
                 }
             }
