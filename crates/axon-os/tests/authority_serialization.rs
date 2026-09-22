@@ -294,3 +294,26 @@ fn explain_says_when_a_grant_diverges_from_the_profile_it_names() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A duplicate `profile` key is ambiguous and worse than ambiguous: the
+/// parser is last-wins, but `explain`'s profile-divergence note reads the
+/// FIRST `profile =` line straight from the file text (it does not go
+/// through this parser). Measured before this check existed —
+/// `profile = "hermetic"` then `profile = "developer"` (no `reproducible`
+/// line): the parser produced a wide-open `developer` grant, and `explain`
+/// printed "Profile: hermetic — but ... do NOT match this profile's
+/// defaults", naming the WRONG profile for the grant it just showed.
+#[test]
+fn a_duplicate_profile_key_is_refused() {
+    let src = "program = \"p.ax\"\nintent = \"t\"\nseed = 1\n\
+               profile = \"hermetic\"\nprofile = \"developer\"\n\
+               [grant]\nmax_label = \"internal\"\n\
+               [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n";
+    let err =
+        parse(src, std::path::Path::new(".")).expect_err("a duplicate profile key must be refused");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("duplicate") && msg.to_lowercase().contains("profile"),
+        "the refusal must name the problem: {msg}"
+    );
+}

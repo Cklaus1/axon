@@ -2715,6 +2715,22 @@ mod capability_catalog_lockstep {
     /// low-bandwidth covert channel (scores and fn names are program-chosen)
     /// into the same user's own cache. The fixed-path property is pinned by
     /// `the_provenance_path_is_not_program_addressable`.
+    ///
+    /// NARROWER THAN THE REAL GAP, and worth saying precisely why: `goal_*`
+    /// is the set of BUILTINS this table can name. The same write also
+    /// happens on a call to ANY `@[adaptive]` fn made DIRECTLY — no
+    /// `goal_run` involved — because the write lives in `call_fn`'s
+    /// adaptive-return logging, not behind a builtin dispatch this checker
+    /// ever sees. Measured: `@[agent] fn act() { adaptive_fn(x); 7 }`
+    /// produces 0 `agent_action` audit rows and 2 program-derived
+    /// `adaptive_return` lines on disk, and the same write happens at exit 0
+    /// under `AXON_ALLOWED_EFFECTS=Pure` — that ceiling gates builtin calls
+    /// through the F5 hook, and calling an `@[adaptive]` fn is an ordinary
+    /// fn call, not a builtin call, so it is outside that hook by
+    /// construction. There is no builtin name to add to EXEMPT_IO for this
+    /// half of the gap; it is recorded here because the vocabulary this list
+    /// speaks in cannot name it. Same three grounds for leaving it exempted;
+    /// same pinning test, extended to cover the direct-call path too.
     const EXEMPT_IO: &[&str] = &[
         "println",
         "print",

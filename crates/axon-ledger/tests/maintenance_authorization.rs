@@ -217,3 +217,103 @@ fn replace_record_also_refuses_a_filtered_handle() {
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ── KNOWN GAPS, pinned rather than silent ────────────────────────────────
+//
+// The two tests below document behavior this session decided NOT to change,
+// with the repro that proves it. They exist so a future "fix" to
+// `requires_admin`/`resolve_caller` cannot silently narrow or widen this
+// trust boundary without someone reading why it is shaped this way.
+
+/// The admin gate rests on a SELF-ASSERTED, unauthenticated identity.
+/// `resolve_caller` returns `--as <email>` or `$AXON_PRINCIPAL` verbatim, and
+/// `is_admin` is a plain string comparison — there is no verification
+/// anywhere that the caller is who they claim. A disproof review found this
+/// after the admin gate landed: `--as alice@example.com prune --yes`, run by
+/// anyone, deletes the whole ledger, because the CLI has no way to know the
+/// caller is not actually alice.
+///
+/// This is not a regression to fix here — it is consistent with
+/// `AXON_PRINCIPAL` being documented elsewhere (CLAUDE.md) as "Identity for
+/// AUDIT ATTRIBUTION only ... it grants and withholds nothing". The admin
+/// gate closes the CARELESS case (a member who has not claimed to be
+/// someone else) and holds wherever a trusted gateway sets `--as` from a
+/// verified identity. Building real authentication is a TCB design decision
+/// outside this fix's scope.
+#[test]
+fn the_admin_gate_trusts_the_asserted_identity_by_design() {
+    let d = std::env::temp_dir().join(format!("axon_mx_trust_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    seed(&d, "\"alice@example.com\"");
+
+    // Premise: as bob, the same command IS refused (the gate the rest of
+    // this file pins).
+    let (code, _) = run(
+        &d,
+        "bob@example.com",
+        &["prune", "--older-than", "2099-01-01", "--yes"],
+    );
+    assert_ne!(code, 0, "premise: bob must be refused");
+
+    seed(&d, "\"alice@example.com\""); // reset the ledger
+
+    // Claiming to BE alice — an unverifiable assertion any caller can make —
+    // is treated as alice.
+    let (code, out) = run(
+        &d,
+        "alice@example.com",
+        &["prune", "--older-than", "2099-01-01", "--yes"],
+    );
+    assert_eq!(
+        code, 0,
+        "documented: an asserted admin identity is trusted, so this succeeds:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Appending verbs are deliberately NOT admin-gated (commit 9c86b41: "whether
+/// an arbitrary caller may append is a real question and a different one").
+/// A disproof review demonstrated the consequence: a member can write a
+/// record ATTRIBUTED to another principal.
+///
+/// Pinned as a KNOWN GAP, not fixed here — closing it (should appends be
+/// self-attributed only? admin-cosigned? unrestricted, as today?) is a
+/// policy decision, and this session's scope was the rewrite/delete path
+/// that had NO check at all, not appends that were considered and left open.
+#[test]
+fn a_member_can_append_a_record_attributed_to_another_principal() {
+    let d = std::env::temp_dir().join(format!("axon_mx_forge_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let sess_dir = d.join("sess");
+    std::fs::create_dir_all(&sess_dir).unwrap();
+    std::fs::write(
+        sess_dir.join("s1.jsonl"),
+        r#"{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-09-20T10:00:00Z","sessionId":"s1"}"#,
+    )
+    .unwrap();
+    std::fs::write(d.join("events.ndjson"), "").unwrap();
+    std::fs::write(d.join("rbac.json"), r#"{"admins":["alice@example.com"]}"#).unwrap();
+
+    let (code, out) = run(
+        &d,
+        "bob@example.com",
+        &[
+            "ingest",
+            "session",
+            sess_dir.join("s1.jsonl").to_str().unwrap(),
+            "--engineer",
+            "alice@example.com",
+        ],
+    );
+    assert_eq!(code, 0, "documented: ingest is not admin-gated:\n{out}");
+
+    let ledger = std::fs::read_to_string(d.join("events.ndjson")).unwrap();
+    assert!(
+        ledger.contains("\"principal\":\"alice@example.com\""),
+        "documented: bob wrote a record attributed to alice:\n{ledger}"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}

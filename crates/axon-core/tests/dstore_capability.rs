@@ -336,3 +336,59 @@ fn the_provenance_path_is_not_program_addressable() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// The provenance write happens on a call to ANY `@[adaptive]` fn, not only
+/// through `goal_run`. `goal_run` is a caller of `call_fn`'s adaptive-return
+/// logging, not the boundary — a disproof review found the DIRECT-call
+/// vector: an `@[agent]` fn invoking an `@[adaptive]` fn without going
+/// through `goal_run` at all still writes program-derived data to disk, with
+/// ZERO `agent_action` audit rows (the write is not a builtin call, so it
+/// never reaches `pre_effect_gate`, where the row would be injected).
+///
+/// Also confirms the write happens under `AXON_ALLOWED_EFFECTS=Pure`: that
+/// ceiling gates builtin calls through the F5 hook, and calling an
+/// `@[adaptive]` fn is an ordinary fn call, so it is outside the hook.
+#[test]
+fn a_direct_adaptive_call_writes_provenance_with_no_agent_action_row() {
+    let d = tmp("direct_adaptive");
+    let prog = d.join("a.ax");
+    std::fs::write(
+        &prog,
+        "@[adaptive]\nfn score(x: f64) -> f64 { 0.0 - (x - 7.0) * (x - 7.0) }\n\
+         @[agent]\nfn act() -> i64 {\n    let _ = score(10.0)\n    let _ = score(20.0)\n    7\n}\n\
+         fn main() { let _ = act() }\n",
+    )
+    .unwrap();
+    let cache = d.join("cache");
+
+    let out = Command::new(axon())
+        .arg("run")
+        .arg(&prog)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("AXON_ALLOWED_EFFECTS", "Pure")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "premise: a Pure ceiling must not refuse a pure @[adaptive]/@[agent] \
+         program outright, or this proves nothing about the write: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+        .expect("provenance written under a Pure ceiling");
+    let adaptive_rows = log.matches("\"event\":\"adaptive_return\"").count();
+    let agent_rows = log.matches("\"event\":\"agent_action\"").count();
+    assert!(
+        adaptive_rows >= 2,
+        "premise: the direct @[adaptive] calls must have logged:\n{log}"
+    );
+    assert_eq!(
+        agent_rows, 0,
+        "documented: a direct @[adaptive] call from inside @[agent] writes \
+         to disk under a Pure ceiling with no agent_action row:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}

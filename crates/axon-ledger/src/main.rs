@@ -499,6 +499,23 @@ fn main() -> Result<()> {
     // One check, before dispatch. RBAC is INERT when no admins are
     // configured, and that must stay true or every existing single-user
     // ledger breaks — so the refusal applies only once an admin list exists.
+    //
+    // TRUST BOUNDARY, stated because a disproof review found the gate
+    // rests entirely on it: `caller` (below) is `--as <email>` or
+    // AXON_PRINCIPAL, and NEITHER IS AUTHENTICATED — `resolve_caller`
+    // returns whatever string was handed to it, and `is_admin` is a plain
+    // equality check against that string. MEASURED: `--as
+    // alice@example.com prune --older-than 2099-01-01 --yes`, run by
+    // anyone, deletes the whole ledger — the CLI has no way to know the
+    // caller is not actually alice. This is consistent with the rest of
+    // the codebase: CLAUDE.md documents AXON_PRINCIPAL as "Identity for
+    // AUDIT ATTRIBUTION only ... it grants and withholds nothing". This
+    // gate is the same shape and does not change that — it closes the
+    // CARELESS case (a member who has not claimed to be someone else) and
+    // holds wherever a trusted gateway sets `--as` from a verified
+    // identity, but it is not authentication and must not be read as one.
+    // Building real authentication here is a TCB design decision this fix
+    // does not make.
     if !rbac.admins.is_empty() {
         if let Some(verb) = requires_admin(&cli.command) {
             let permitted = caller.as_deref().map(|c| rbac.is_admin(c)).unwrap_or(false);

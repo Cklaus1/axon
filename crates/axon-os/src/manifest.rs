@@ -127,6 +127,24 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
             // The capability POSTURE. Absent = developer (easy by default);
             // a misspelling is refused rather than falling back to it.
             ("", "profile") | ("grant", "profile") => {
+                // A SECOND `profile =` line is ambiguous, and worse than
+                // ambiguous: `explain`'s divergence note reads the FIRST
+                // `profile =` line straight from the file text (it does not
+                // go through this parser), while this parser is last-wins.
+                // Measured — `profile = "hermetic"` then `profile =
+                // "developer"` (no `reproducible` line): the parser produces
+                // a wide-open `developer` grant, and `explain` printed
+                // "Profile: hermetic — but ... do NOT match this profile's
+                // defaults", naming the WRONG profile for the grant it just
+                // showed. Refusing the duplicate outright means there is only
+                // one profile to disagree about.
+                if profile.is_some() {
+                    return Err(bad(format!(
+                        "{}: duplicate `profile` key — a manifest may name \
+                         only one profile",
+                        where_()
+                    )));
+                }
                 profile = Some(
                     crate::profile::Profile::parse(val.trim().trim_matches('"'))
                         .map_err(|e| bad(format!("{}: {e}", where_())))?,
