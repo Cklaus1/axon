@@ -36,7 +36,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let Some(agent_fn) = self.current_agent_fn.clone() else {
             return;
         };
-        let Some(caps) = crate::capabilities::capability_of_builtin(action) else {
+        // The MULTI resolver, for the same reason as the interpreter's
+        // `pre_effect_gate`: `capability_of_builtin` is None for
+        // `file_copy`/`file_rename`, so this returned early and a natively
+        // compiled @[agent] fn copied or renamed a file with no row in the
+        // log I-13 calls un-opt-out-able.
+        let Some(caps) = crate::capabilities::capability_of_builtin_multi(action) else {
             return;
         };
         let log_fn = match self.ir.module.get_function("__axon_log_agent_action") {

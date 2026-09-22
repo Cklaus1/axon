@@ -217,3 +217,80 @@ fn the_archived_form_of_a_hermetic_job_still_parses() {
          run under the developer profile"
     );
 }
+
+// ── `explain` must connect the profile name to the grant ────────────────────
+
+/// A profile supplies defaults for OMITTED dimensions; an explicit value
+/// overrides it. That is the documented design, not a bug — but `explain`
+/// showed a job labelled `profile = "hermetic"` granting `read *`, `write *`,
+/// `reach *` and `spawn processes`, said "It may NOT: (no restrictions)", and
+/// exited 0, with nothing connecting the label to the grant. A reader who
+/// trusts the name learns the opposite of the truth from the output whose
+/// whole job is to say what a run may do.
+///
+/// This reports; it does not refuse. Making a profile a CEILING rather than a
+/// default set is a policy change that the documented semantics contradict.
+#[test]
+fn explain_says_when_a_grant_diverges_from_the_profile_it_names() {
+    use std::process::Command;
+
+    let d = std::env::temp_dir().join(format!("axon_os_prof_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let prog = d.join("p.ax");
+    std::fs::write(&prog, "fn main() { let _ = 1 + 1 }\n").unwrap();
+
+    let write_job = |name: &str, body: &str| -> std::path::PathBuf {
+        let p = d.join(name);
+        std::fs::write(
+            &p,
+            format!(
+                "program = \"{}\"\nintent = \"t\"\nseed = 1\nprofile = \"hermetic\"\n\
+                 [grant]\n{body}max_label = \"internal\"\n\
+                 [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n",
+                prog.display()
+            ),
+        )
+        .unwrap();
+        p
+    };
+
+    let explain = |p: &std::path::Path| -> String {
+        let out = Command::new(env!("CARGO_BIN_EXE_axon-os"))
+            .arg("explain")
+            .arg(p)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    let wide = write_job(
+        "wide.axjob",
+        "fs_read = [\"*\"]\nfs_write = [\"*\"]\nnet = [\"*\"]\nexec = \"any\"\n",
+    );
+    let txt = explain(&wide);
+    assert!(
+        txt.contains("read *"),
+        "premise: the grant really is wide open:\n{txt}"
+    );
+    assert!(
+        txt.contains("do NOT match this profile's defaults"),
+        "a job labelled hermetic granted everything and explain said nothing \
+         about the divergence:\n{txt}"
+    );
+    for dim in ["fs_read", "fs_write", "net", "exec"] {
+        assert!(txt.contains(dim), "the note must name `{dim}`:\n{txt}");
+    }
+
+    // CONTROL: a grant that MATCHES the profile must not be reported as
+    // diverging, or the note is noise everyone learns to skip.
+    let matching = write_job("match.axjob", "");
+    let txt = explain(&matching);
+    assert!(
+        txt.contains("grant matches its defaults"),
+        "a conforming job must be reported as conforming:\n{txt}"
+    );
+    assert!(!txt.contains("do NOT match"), "false divergence:\n{txt}");
+
+    let _ = std::fs::remove_dir_all(&d);
+}

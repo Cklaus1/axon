@@ -145,3 +145,53 @@ fn a_copy_and_a_rename_audit_as_filesystem_effects() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A `never:` clause is a HARD deny that overrides the allowlist, and the
+/// value-ref check consulted only the allowlists.
+///
+/// Under `never: [exec, net("*")]` with both otherwise granted, the direct
+/// calls produced two E1004s and the aliases produced exit 0. An alias has no
+/// call site left at which to path/host-check, so if anything must refuse it,
+/// a hard deny must.
+#[test]
+fn a_never_clause_forbids_aliasing_the_capability_it_denies() {
+    let spec = "@[contained(fs: [read(\"./\")], net: [\"api.example.com\"], exec: any, \
+                never: [exec, net(\"*\")])]";
+
+    // Premise: the DIRECT calls are refused, or the never clause is not in
+    // force and the alias result below would mean nothing.
+    let (code, out) = check(&format!(
+        "{spec}\nfn f() -> i64 {{\n    let _ = exec(\"ls\", [])\n    \
+         let _ = http_get(\"api.example.com/x\")\n    0\n}}\nfn main() {{ let _ = f() }}\n"
+    ));
+    assert_eq!(
+        code, 2,
+        "premise: direct calls must hit the never clause:\n{out}"
+    );
+    assert!(out.contains("E1004"), "premise: expected E1004:\n{out}");
+
+    let (code, out) = check(&format!(
+        "{spec}\nfn f() -> i64 {{\n    let g = exec\n    let h = http_get\n    0\n}}\n\
+         fn main() {{ let _ = f() }}\n"
+    ));
+    assert_eq!(
+        code, 2,
+        "aliasing a never-denied capability was permitted:\n{out}"
+    );
+}
+
+/// CONTROL: a `never:` clause naming a PATH must not forbid the alias. That
+/// clause denies a path, and the whole reason to refuse an alias is that no
+/// path is knowable — so only a clause denying a WHOLE capability can decide
+/// a question with no argument in it.
+#[test]
+fn a_path_scoped_never_clause_does_not_forbid_aliasing() {
+    let (code, out) = check(
+        "@[contained(fs: [read(\"./\")], net: [], exec: none, never: [read(\"/etc/\")])]\n\
+         fn f() -> i64 {\n    let g = read_file\n    0\n}\nfn main() { let _ = f() }\n",
+    );
+    assert_eq!(
+        code, 0,
+        "a path-scoped never clause must not forbid aliasing the builtin:\n{out}"
+    );
+}

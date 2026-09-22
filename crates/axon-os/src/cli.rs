@@ -168,6 +168,57 @@ fn help(line: &str) -> ExitCode {
     ExitCode::from(0)
 }
 
+/// Report where an explicit grant DIVERGES from the profile the job names.
+///
+/// A profile supplies defaults for OMITTED dimensions; an explicit value
+/// overrides it, which is the documented design and not a bug. But `explain`
+/// showed a job labelled `profile = "hermetic"` granting `read *`, `write *`,
+/// `reach *` and `spawn processes`, said "It may NOT: (no restrictions)", and
+/// exited 0 — with nothing connecting the name to the grant. A reader who
+/// trusts the label learns the opposite of the truth from the output whose
+/// whole job is to explain what a run may do.
+///
+/// This reports; it does not refuse. Turning a profile into a CEILING rather
+/// than a default set is a policy change, and one the profile table's
+/// documented semantics ("an omitted dimension takes the profile's default")
+/// contradicts — so it is not a decision to make inside a reporting fix.
+///
+/// The profile name is not kept on `JobManifest` (and adding it would change
+/// `canonical_manifest`, hence every existing record digest), so it is read
+/// back from the job file.
+fn profile_divergence_note(job: &Path, m: &crate::manifest::JobManifest) -> Option<String> {
+    let text = std::fs::read_to_string(job).ok()?;
+    let name = text.lines().find_map(|l| {
+        let l = l.trim();
+        let rest = l.strip_prefix("profile")?.trim_start().strip_prefix('=')?;
+        Some(rest.trim().trim_matches('"').to_string())
+    })?;
+    let profile = crate::profile::Profile::parse(&name).ok()?;
+    let d = profile.default_grant(m.grant.max_label, m.grant.budget);
+    let mut widened = Vec::new();
+    if m.grant.fs_read != d.fs_read {
+        widened.push("fs_read");
+    }
+    if m.grant.fs_write != d.fs_write {
+        widened.push("fs_write");
+    }
+    if m.grant.net != d.net {
+        widened.push("net");
+    }
+    if m.grant.exec != d.exec {
+        widened.push("exec");
+    }
+    if widened.is_empty() {
+        return Some(format!("  Profile: {name} (grant matches its defaults)"));
+    }
+    Some(format!(
+        "  Profile: {name} — but {} {} set explicitly and do NOT match this \
+         profile's defaults; the grant above is what applies",
+        widened.join(", "),
+        if widened.len() == 1 { "is" } else { "are" }
+    ))
+}
+
 fn cmd_explain(job: &Path) -> ExitCode {
     let manifest = match read_manifest(job) {
         Ok(m) => m,
@@ -181,6 +232,9 @@ fn cmd_explain(job: &Path) -> ExitCode {
     let eff = manifest.grant.intersect(&broad_supervisor_grant());
     println!("Intent: {}", manifest.intent);
     println!("{}", legible_grant(&eff));
+    if let Some(note) = profile_divergence_note(job, &manifest) {
+        println!("{note}");
+    }
     match admit(&declared, &eff) {
         Admission::Admit => {
             println!("  Gate: \u{2713} ADMIT (declared effects are within the grant)");

@@ -252,10 +252,19 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
 /// F3 (Phase 9): map a raw capability kind (from `capability_of_builtin`) to its
 /// effect-row tag for audit records. Unmapped kinds default to the raw cap name.
 fn cap_to_effect_row(cap: &str) -> &'static str {
+    // Matched against the labels `cap_label` ACTUALLY produces. It matched
+    // `"fs"`, which is never one of them — the labels are `"fs:read"` and
+    // `"fs:write"` — so the arm was dead and every filesystem agent action
+    // logged `effect_row:"Other"` with `caps_used":"fs:read"` beside it. The
+    // F3 contract says this field is the effect tag (FS/Net/Exec/AI); it was
+    // reporting the one value that means "unknown".
     match cap {
+        "fs:read" | "fs:write" | "fs" => "FS",
+        // The durable store is a file under the cache dir.
+        "dstore" => "FS",
         "net" | "ai" => "Net",
-        "fs" => "FS",
         "exec" => "Exec",
+        // `env` has no ledger class of its own, and is deliberately not FS.
         _ => "Other",
     }
 }
@@ -614,7 +623,13 @@ impl<'p> Interp<'p> {
         self.pre_effect_gate(
             name,
             crate::builtins::builtin_effect_row(name),
-            crate::capabilities::capability_of_builtin(name),
+            // The MULTI resolver: `capability_of_builtin` returns None for
+            // `file_copy`/`file_rename`, and `pre_effect_gate` only writes the
+            // @[agent] action record `if let Some(cap) = cap`. Measured — an
+            // @[agent] fn that read, copied and renamed a file produced ONE
+            // row (the read), while `moved.txt` existed on disk with nothing
+            // in the log the R4 contract calls un-opt-out-able.
+            crate::capabilities::capability_of_builtin_multi(name),
             audit_effect_kind(name),
             Some(args),
         )?;

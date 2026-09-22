@@ -775,15 +775,34 @@ fn check_builtin_value_ref(name: &str, spec: &ContainedSpec, errors: &mut Vec<Ca
         // ambient secret channel — could be aliased and called, and so could
         // the durable store. A new IoKind must now be decided about here
         // rather than defaulting to allowed.
-        let forbidden = match kind {
-            IoKind::FsRead => spec.fs_read.is_empty(),
-            IoKind::FsWrite => spec.fs_write.is_empty(),
-            IoKind::Net => spec.net_allow.is_empty(),
-            IoKind::Exec => !spec.exec_allowed,
-            // No clause can grant either, so an alias of one is always
-            // forbidden — the same answer their direct call sites give.
-            IoKind::Env | IoKind::DurableStore => true,
-        };
+        // A `never:` clause is a HARD deny that overrides the allowlist, and
+        // this function consulted only the allowlists. Measured, under
+        // `never: [exec, net("*")]` with both otherwise granted: the direct
+        // calls produced two E1004s, and `let g = exec` / `let h = http_get`
+        // produced exit 0. An alias has no call site left at which to
+        // path/host-check, so if anything must refuse it, a hard deny must.
+        //
+        // A `never: [read("/etc/")]` does NOT forbid aliasing `read_file`:
+        // that clause denies a PATH, and the whole point of refusing an alias
+        // is that no path is knowable. Only the clauses that deny a WHOLE
+        // capability (bare `exec`/`spawn`, or a `net("*")` glob covering
+        // every host) can decide a question with no argument in it.
+        let hard_denied = spec.never.iter().any(|n| match (n, &kind) {
+            (crate::ast::NeverClause::Exec, IoKind::Exec)
+            | (crate::ast::NeverClause::Spawn, IoKind::Exec) => true,
+            (crate::ast::NeverClause::Net(h), IoKind::Net) => h == "*",
+            _ => false,
+        });
+        let forbidden = hard_denied
+            || match kind {
+                IoKind::FsRead => spec.fs_read.is_empty(),
+                IoKind::FsWrite => spec.fs_write.is_empty(),
+                IoKind::Net => spec.net_allow.is_empty(),
+                IoKind::Exec => !spec.exec_allowed,
+                // No clause can grant either, so an alias of one is always
+                // forbidden — the same answer their direct call sites give.
+                IoKind::Env | IoKind::DurableStore => true,
+            };
         if !forbidden {
             continue;
         }
@@ -925,8 +944,21 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
                 _ => None,
             };
             if let Some(n) = name {
-                if let Some(kind) = classify_call(n) {
-                    caps.insert(cap_label(&kind).to_string());
+                // EVERY kind the call exercises, from the per-argument
+                // table. This asked `classify_call`, which yields one kind and
+                // has no arm for `file_copy`/`file_rename`, so those two
+                // contributed NOTHING to the capability surface. Measured: an
+                // imported module calling `write_file` is E1203 against a
+                // contained importer, while the same module calling
+                // `file_copy` — strictly more authority, a read AND a write —
+                // passed with exit 0. `program_capabilities` also feeds the
+                // module audit verdict and R10's G2 monotonicity gate, so a
+                // rewrite that introduced a `file_copy` widened the surface
+                // without changing the set that G2 compares.
+                if let Some(pairs) = classify_call_paths(n) {
+                    for (kind, _) in pairs {
+                        caps.insert(cap_label(&kind).to_string());
+                    }
                 }
                 // R13: a native `M::*` call is a capability — record it as
                 // `native:M` so the import-edge (E1203) and grant (E1004) checks
