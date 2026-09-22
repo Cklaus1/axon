@@ -1968,6 +1968,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "30fbfaa"
+    },
+    {
+      "id": "FG-039",
+      "where": "scripts/release_check.sh",
+      "claimed": "scripts/release_check.sh step 3 (\"A STRICT GATE RECEIPT BOUND TO THIS COMMIT\") reports \"ok strict gate receipt\" only when a strict-mode gate.sh run certifies the commit, per governance/RELEASE.md Section 6.",
+      "reality": "The matching logic was a substring regex, grep -qE '^command=.*gate\\.sh', which a PLAIN non-strict scripts/gate.sh invocation also matches. --strict is what runs parity_all.sh (~22 interp/codegen/AOT-wasm harnesses), --all-targets clippy, and the smt feature; gate.sh's own GATE-03 comment states a non-strict run \"proves NOTHING about invariant I-2\" while still printing gate PASSED. A legitimately green non-strict run would be reported as ok strict gate receipt and could certify RELEASE-VERIFIED. Found by an adversarial review whose sole task was to disprove the release-verification machinery itself, immediately after that machinery was built.",
+      "reproduced": "printf 'command=%s\\n' \"scripts/gate.sh\" | grep -qE '^command=.*gate\\.sh' matches. Verified end to end with synthetic receipts built in scratch (not the real .axon-runs dir): the old check accepted both a non-strict and a strict receipt as strict gate evidence.",
+      "fix": "Fixed at the source rather than by tightening the regex \u2014 a free-text command match is fragile (a proposed tighter regex would still miss --strict=1 or reordered flags). write_receipt now derives explicit gate_run/gate_strict fields the same way gate.sh parses its own argv: gate_strict requires an exact --strict TOKEN; gate_run requires gate.sh as the FIRST token of the command, not merely present anywhere \u2014 closing a second gap found while fixing the first (echo scripts/gate.sh --strict would otherwise set both fields true with no gate run at all). release_check.sh now reads only those two fields. Re-verified against the same synthetic receipts: new logic rejects the non-strict one, accepts the strict one.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "ee115ad"
     }
   ]
 }
