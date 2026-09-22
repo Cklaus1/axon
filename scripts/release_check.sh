@@ -45,7 +45,17 @@ gate_run=""
 for d in "$RUNS"/*/; do
   [ -f "$d/receipt" ] || continue
   grep -q "^head=$TARGET$" "$d/receipt" 2>/dev/null || continue
-  grep -qE '^command=.*gate\.sh' "$d/receipt" 2>/dev/null || continue
+  # `gate_run=yes` / `gate_strict=yes`, not a substring match on the command
+  # string. A plain (non-strict) `scripts/gate.sh` run satisfied a substring
+  # check for "gate.sh" and was accepted here as a "strict gate receipt" —
+  # found by an adversarial review, reproduced with a one-line grep, and
+  # serious: --strict is what runs parity_all.sh (~22 interp/codegen/AOT-wasm
+  # harnesses) and --all-targets clippy; a non-strict pass proves nothing
+  # about that and still prints "gate PASSED". The fields are now written
+  # by write_receipt itself, parsed the same way gate.sh parses its own
+  # argv (an exact --strict token), so this script only ever reads them.
+  grep -q "^gate_run=yes$" "$d/receipt" 2>/dev/null || continue
+  grep -q "^gate_strict=yes$" "$d/receipt" 2>/dev/null || continue
   if scripts/run_managed.sh verify "${d%/}" --for "$TARGET" >/dev/null 2>&1; then
     gate_run="${d%/}"; break
   fi

@@ -426,9 +426,44 @@ write_receipt() {
   failed="$(grep -oE '[0-9]+ failed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
   : "${started:=0}"; : "${reported:=0}"
 
+  # IS THIS A GATE RUN, AND WAS IT STRICT. Recorded as explicit fields rather
+  # than left for a consumer to re-derive from the free-text command string.
+  # `release_check.sh` used to grep the command for the substring "gate.sh",
+  # which a PLAIN (non-strict) `scripts/gate.sh` invocation also matches —
+  # so a legitimately green non-strict run was accepted as a "strict gate
+  # receipt" and certified a release. --strict skips parity_all.sh (~22
+  # interp/codegen/AOT-wasm harnesses), --all-targets clippy, and the smt
+  # feature; gate.sh's own GATE-03 comment says a non-strict run "proves
+  # NOTHING about invariant I-2" while still printing "gate PASSED". The
+  # match is done HERE, once, the same way gate.sh itself parses its own
+  # argv (an exact token, not a substring), so every consumer reads one
+  # trustworthy field instead of re-implementing the parse.
+  local raw_cmd is_gate is_strict first_tok
+  raw_cmd="$(cat "$dir/cmd" 2>/dev/null)"
+  # shellcheck disable=SC2086
+  first_tok="$(set -- $raw_cmd; echo "${1:-}")"
+  is_gate=no; is_strict=no
+  # `gate_run` is decided by the FIRST token only — the command must BE
+  # gate.sh, not merely mention it. `echo scripts/gate.sh --strict` would
+  # otherwise set both fields true with no gate ever running; the log's own
+  # `test result:` count already guards that case (see cmd_verify), but a
+  # command deliberately crafted to also fake a suite line would not be. The
+  # first-token check closes that without narrowing real invocations, which
+  # always start with the gate.sh path.
+  case "$first_tok" in
+    */gate.sh|gate.sh) is_gate=yes ;;
+  esac
+  for tok in $raw_cmd; do
+    case "$tok" in
+      --strict) is_strict=yes ;;
+    esac
+  done
+
   {
     echo "schema=axon-run-receipt/1"
     echo "command=$(cat "$dir/cmd" 2>/dev/null)"
+    echo "gate_run=$is_gate"
+    echo "gate_strict=$is_strict"
     echo "head=${head:-unknown}"
     echo "tree=${dirty:-unknown}"
     echo "tree_digest=$tree_digest"
