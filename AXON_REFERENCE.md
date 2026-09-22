@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 53 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 54 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (53)
+## Environment variables (54)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -100,6 +100,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_ATTEST_KEY` | operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party |
 | `AXON_AUDIT_LEDGER` | path to the R28 capability audit ledger |
+| `AXON_LEDGER_DEV_IMPERSONATE` | development-only escape for axon-ledger: when exactly `1`, a CLAIMED identity (--as / AXON_PRINCIPAL) is trusted for privileged operations again. Any other value leaves it disarmed, so production is the default and the escape cannot be entered by a typo. Admin authority otherwise comes from the real uid via rbac.json authenticated_admins |
 | `AXON_AUDIT_DETERMINISTIC` | use a counter instead of a clock for ledger timestamps, so audit output is reproducible in tests |
 | `AXON_KILL_FILE` | kill file the axon-os supervisor polls; its EXISTENCE trips nothing — the job stops only once its CONTENT reads `{"latch":"tripped"}` |
 | `AXON_GOAL_CONTINUE` | resume a `goal` search from the best prior input in the provenance log (set automatically by `axon goal --iterate`) |

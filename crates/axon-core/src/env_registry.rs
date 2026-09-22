@@ -50,6 +50,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_REQUIRE_CERTS", "fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass"),
     ("AXON_ATTEST_KEY", "operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party"),
     ("AXON_AUDIT_LEDGER", "path to the R28 capability audit ledger"),
+    ("AXON_LEDGER_DEV_IMPERSONATE", "development-only escape for axon-ledger: when exactly `1`, a CLAIMED identity (--as / AXON_PRINCIPAL) is trusted for privileged operations again. Any other value leaves it disarmed, so production is the default and the escape cannot be entered by a typo. Admin authority otherwise comes from the real uid via rbac.json authenticated_admins"),
     ("AXON_AUDIT_DETERMINISTIC", "use a counter instead of a clock for ledger timestamps, so audit output is reproducible in tests"),
     ("AXON_KILL_FILE", "kill file the axon-os supervisor polls; its EXISTENCE trips nothing — the job stops only once its CONTENT reads `{\"latch\":\"tripped\"}`"),
     // ── Goal search ──────────────────────────────────────────────────────

@@ -1866,6 +1866,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "ed1e30a"
+    },
+    {
+      "id": "FG-031",
+      "where": "crates/axon-ledger/src/rbac.rs",
+      "claimed": "The ledger's admin gate restricts prune/engineer-backfill/session-refresh/refresh/rbac to an admin, and refused non-admins with 'restricted to an admin'.",
+      "reality": "It compared rbac.admins against the caller's OWN assertion \u2014 `--as <email>` or $AXON_PRINCIPAL, both set by the caller with no verification of any kind. The gate refused a caller who had not claimed to be someone else and admitted anyone who had, which looks like authorization and is not. The previous pass recorded this as an accepted boundary and pinned the vulnerable behavior in a passing test.",
+      "reproduced": "Two-principal ledger, admins=[alice@example.com]: `--as alice@example.com prune --older-than 2099-01-01 --yes` run by an arbitrary caller -> exit 0, 'Pruned 2; 0 remain', events.ndjson emptied. Same claim via $AXON_PRINCIPAL -> identical result.",
+      "fix": "Identity split into CLAIMED (--as/$AXON_PRINCIPAL, steers read filtering, confers nothing) and AUTHORITY (Authority::resolve, built from the real uid via getuid()). is_admin_authenticated takes an AuthenticatedPrincipal that only that constructor can produce, so a flag-derived &str cannot reach the privileged check. Admin authority comes from a new, explicitly separate rbac.json field `authenticated_admins` holding OS identities \u2014 separate rather than an email local-part heuristic over `admins`, since matching OS user `alice` against `alice@some-corp.example` would silently grant authority to whoever holds that local account. $USER/$LOGNAME deliberately not consulted (caller-settable, so exactly as forgeable as the flag). Dev impersonation survives behind AXON_LEDGER_DEV_IMPERSONATE=1, which must be exactly '1' ('0','true','yes','','1 ' all tested disarmed). 4 mutations caught, after fixing a test premise where the forged-$USER fixture left authenticated_admins empty so the refusal came from 'nobody is an admin' rather than from the forgery failing. BOUNDARY, executable: a test performs the same destructive outcome with plain std::fs and no CLI, because RBAC governs the CLI and the filesystem governs the file.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "48e37be"
     }
   ]
 }
