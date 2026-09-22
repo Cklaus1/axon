@@ -913,12 +913,12 @@
       "status": "closed",
       "engines": {
         "interpreter": "enforced",
-        "native": "explicitly-refused",
-        "wasm": "unknown",
+        "native": "enforced",
+        "wasm": "enforced",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "CLOSED BY REFUSAL. Native emitted no ai_call record for a call it really made, so `axon trace --ai` was empty and read as 'no model was called'. Measured: a natively built binary completed an HTTP round trip to the configured endpoint with the API key attached and created no provenance directory at all, while `axon run` on the same source appended one ai_call record. Native now REFUSES a live model call (exit 2, zero requests issued \u2014 verified against a local listener with the interpreter as the positive control, which recorded 1 request and 1 audit record under identical config). AXON_AI_MOCK is unaffected: no request leaves the process, nothing is billed, and there is no call to attribute, so every *_parity.sh harness keeps working. Attribution is no longer silently absent because there is no unaudited native call left to attribute."
+      "open": "CLOSED, and this row previously OVERSTATED one thing and understated another. AXON_PRINCIPAL is audit ATTRIBUTION only (CLAUDE.md: it grants and withholds nothing). Two engines failed to honour it and both now do:\n  * the AI path \u2014 native emitted no ai_call record at all, so attribution was absent rather than wrong. Closed by refusing an unaudited native LIVE model call (105444e).\n  * the AGENT path \u2014 native and wasip1 wrote agent_action records carrying neither effect_row nor principal, so an @[agent] function's un-opt-out-able audit trail named WHAT was done and not WHO. Measured: interp logged `\"effect_row\":\"FS\",\"principal\":\"alice\"` and native logged neither, while agent_action_parity.sh reported a match because it compared only the fields BOTH engines wrote. Closed in 378da246; both engines now emit identical records (verified field-by-field, only ts_ms differs).\nAn earlier revision of this row marked native `explicitly-refused`, which described the AI-path refusal as though it were this variable's state. Native HONOURS the variable; it refuses an unauditable AI call, which is a different fact.\nwasm measured directly: a wasm32-wasip1 build of the same @[agent] program links, runs under wasmtime, and writes `\"effect_row\":\"FS\",\"principal\":\"alice\"` \u2014 it links the same axon-rt. wasm32-unknown-unknown has no environment channel, so the variable cannot be set there at all."
     },
     {
       "name": "AXON_TEE_ENCLAVE",

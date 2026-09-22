@@ -90,5 +90,45 @@ if [ -n "$RUSTLLD" ] && [ -n "$WASIDIR" ] && [ -f "$WASIDIR/libc.a" ]; then
   echo "wasm_object_prune: links clean (no ABI mismatch)"
 fi
 
+# ── A program that actually CALLS the runtime, not just a pure-int one ───────
+#
+# The check above links a pure-integer program, which by design imports no
+# `__axon_*` symbol — so it cannot see a codegen/axon-rt ABI disagreement about
+# one. That gap is not theoretical: widening `__axon_log_agent_action` from six
+# parameters to eight (378da246) produced
+#
+#   rust-lld: warning: function signature mismatch: __axon_log_agent_action
+#   >>> defined as (i32,i64,i32,i64,i32,i64,i32,i64) -> void in <program>
+#   >>> defined as (i32,i64,i32,i64,i32,i64) -> void in libaxon_rt.a
+#
+# and NOTHING in the gate would have caught it, because the mismatch is SILENT
+# on native: the SysV C ABI ignores extra arguments, so a native build of the
+# same inconsistency links, runs, and passes its tests. wasm is where the two
+# declarations are actually compared.
+#
+# So link an @[agent] program too: it calls __axon_log_agent_action, which is
+# the widest runtime signature codegen emits.
+AGENT_PROG="$WORK/agent_probe.ax"
+cat > "$AGENT_PROG" <<'AX'
+@[agent]
+fn planner() {
+    let _ = read_file("probe.txt")
+}
+fn main() { planner() }
+AX
+if "$AXON" target build --engine codegen --target wasm32-wasip1 "$AGENT_PROG" >"$WORK/agent_build.log" 2>&1; then
+  if grep -q "function signature mismatch" "$WORK/agent_build.log"; then
+    echo "wasm_object_prune: FAIL — codegen and axon-rt disagree on a runtime signature:"
+    grep -A2 "function signature mismatch" "$WORK/agent_build.log" | sed 's/^/    /'
+    exit 1
+  fi
+  echo "wasm_object_prune: agent-path link has no signature mismatch"
+else
+  # A build that cannot run is an absence, not a pass — but only the MISMATCH
+  # is asserted here, so a target/toolchain absence is reported and skipped
+  # rather than failed.
+  echo "wasm_object_prune: agent-path probe did not build — mismatch check skipped"
+fi
+
 echo "wasm_object_prune: PASS"
 exit 0
