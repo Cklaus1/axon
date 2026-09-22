@@ -1855,6 +1855,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "d19d98b"
+    },
+    {
+      "id": "FG-030",
+      "where": "crates/axon-core/src/capabilities.rs",
+      "claimed": "The capability-catalog lockstep test ensures a builtin that reaches the world is classified by the @[contained] gate.",
+      "reality": "It fired only on Net/Exec rows \u2014 `IO` was deliberately excluded as 'the coarse row' \u2014 so a builtin missing from BOTH tables was invisible to it AND to its reverse. That is exactly how dstore_open/apply/clear shipped as pure. Widening it to IO/FS also revealed that the guard asked `capability_of_builtin`, reproducing inside itself the single-kind blind spot it exists to catch: it flagged file_copy/file_rename, which ARE classified.",
+      "reproduced": "Removing the dstore classification leaves the Net/Exec-only guard GREEN; the widened guard fails naming all three. Adding the IO direction while still asking the single-kind resolver falsely flags file_copy and file_rename.",
+      "fix": "Widened to IO/FS with an EXEMPT_IO list where every entry carries a reason, and both directions now ask `capability_of_builtin_multi`. A stale-exemption assertion fails if a listed name later becomes classified. KNOWN GAP recorded rather than closed: the goal_* family appends program-derived lines to $XDG_CACHE_HOME/axon/provenance.jsonl from inside @[contained(fs: [])] (exit 0) and past a scoped sandbox with fs_write deny-all. Exempted because the path comes from the environment and never from program input, and classifying goal_* as fs:write would refuse every contained optimiser \u2014 a policy change, not a bug fix. The fixed-path property is pinned by the_provenance_path_is_not_program_addressable, so the exemption's justification fails loudly if it stops holding. Residual risk: a low-bandwidth covert channel into the same user's cache.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "ed1e30a"
     }
   ]
 }
