@@ -115,7 +115,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**57 controls tracked; 22 engine states unknown or silently-ignored.**
+**57 controls tracked; 18 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -124,12 +124,8 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_AI_MOCK` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_AI_MODEL_BALANCED` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_AI_PROVIDER` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
-| `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | refused | **IGNORED** | ✓ | native-closed |
-| `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_NATIVE_TRACE` | ai-routing/diagnostic | ✓ | ✓ | **?** | **?** | native-closed |
 | `AXON_PRINCIPAL` | replay/record/audit | ✓ | refused | **?** | n/a | closed |
-| `AXON_RECORD` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
-| `AXON_REPLAY` | replay/record/audit | ✓ | refused | **IGNORED** | ✓ | native-closed |
 | `AXON_SEED` | determinism | ✓ | ✓ | **IGNORED** | ✓ | native-closed |
 | `axon-signal.http-caller-identity` | serving/authority | **?** | **?** | **?** | **?** | open |
 | `guest.policy-delivery-default-backend` | authorization/effect-ceiling | n/a | n/a | n/a | **?** | open |
@@ -137,9 +133,11 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_AI_MODEL_CHEAP` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
 | `AXON_AI_MODEL_STRONG` | interpreter-scoped | ✓ | refused | n/a | n/a | resolved |
 | `AXON_AI_REPLAY` | replay/record/audit | ✓ | refused | ✓ | ✓ | native-closed |
+| `AXON_ALLOWED_EFFECTS` | authorization/effect-ceiling | ✓ | refused | refused | ✓ | native-closed |
 | `AXON_ANDROID_API` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_ATTEST_KEY` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_AUDIT_DETERMINISTIC` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
+| `AXON_AUDIT_LEDGER` | replay/record/audit | ✓ | refused | refused | ✓ | native-closed |
 | `AXON_BIN` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_BUDGET_TOKENS` | resource-budget | ✓ | refused | ✓ | ✓ | native-closed |
 | `AXON_CI_NO_KVM` | launcher-side | n/a | n/a | n/a | n/a | resolved |
@@ -163,6 +161,8 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_PATH` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_PROOF_DEPTH` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_PROOF_TIMEOUT_MS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_RECORD` | replay/record/audit | ✓ | refused | refused | ✓ | native-closed |
+| `AXON_REPLAY` | replay/record/audit | ✓ | refused | refused | ✓ | native-closed |
 | `AXON_REQUIRE_CERTS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_STRICT` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_TEE_ENCLAVE` | approval/attestation | ✓ | refused | ✓ | ✓ | open |
@@ -179,11 +179,11 @@ Per-engine support for each runtime/security control. States are a closed set: `
 
 ### Open control divergences
 
-- **`AXON_ALLOWED_EFFECTS`** — Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling — the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED.
+- **`AXON_ALLOWED_EFFECTS`** — Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling — the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape — `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt — there is no env var to set.
 - **`AXON_BUDGET_TOKENS`** — Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling — the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED.
-- **`AXON_REPLAY`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
-- **`AXON_RECORD`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
-- **`AXON_AUDIT_LEDGER`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
+- **`AXON_REPLAY`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape — `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt — there is no env var to set.
+- **`AXON_RECORD`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape — `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt — there is no env var to set.
+- **`AXON_AUDIT_LEDGER`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape — `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt — there is no env var to set.
 - **`AXON_SEED`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_CLOCK`** — wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents.
 - **`AXON_AI_REPLAY`** — PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED.

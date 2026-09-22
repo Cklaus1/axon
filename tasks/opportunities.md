@@ -2152,3 +2152,26 @@ Adding them is the documented "fast path" in CLAUDE.md: a `BUILTINS` row, a
 `wrapping_add`, `wrapping_sub`, `wrapping_mul`, `wrapping_div`, `wrapping_rem`.
 The comment in `interp/value.rs` has been corrected to say they do not exist
 rather than to keep pointing at them.
+
+## Replace accumulating target booleans with a `TargetKind` enum
+
+`Codegen` now carries `target_is_wasm` AND `target_is_wasi`. Two booleans is
+still readable, but the pair already permits an impossible state
+(`is_wasi && !is_wasm`), and the bug that introduced the second one was
+exactly a single boolean being asked a question it could not answer: the
+refusal prologue was skipped for ALL wasm targets, though only the browser
+target has no environment to refuse.
+
+If a third target-specific behaviour appears, replace both with:
+
+```rust
+enum TargetKind { Native, WasmBrowser, Wasi }
+```
+
+so the impossible combinations cannot be represented and each new
+target-specific decision is a `match` the compiler forces to be total —
+rather than a growing set of `is_wasm` / `is_wasi` / `is_browser` /
+`is_native` flags whose valid combinations live only in the reader's head.
+
+Not done now because the current repair needs exactly one distinction and a
+speculative refactor would widen a security fix's diff.

@@ -802,12 +802,12 @@
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
-        "wasm": "silently-ignored",
+        "wasm": "explicitly-refused",
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: interp refused a println under Pure (exit 8), native emitted a binary that printed, exit 0. Native now refuses EMISSION at every codegen entry point. Build-time only \u2014 the guest sets it at boot, which D-009 tracks. || WASM/GUEST (source audit): WASM: the AOT artifact never calls __axon_rt_refuse_interp_only_env \u2014 emit_interp_only_env_refusal_init early-returns on target_is_wasm (codegen/asi.rs:998) \u2014 so the D-002 residual closed for native is REOPEN on wasm. The build-time refusal covers the wasm entry points but keys on the builder's shell and only two of six vars. GUEST: payload is `axon run` (guest-init main.rs:65-71, built --no-default-features), so the interpreter enforces; guest-init execvp's, so the env it set is inherited intact.",
-      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED."
+      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
     },
     {
       "name": "AXON_BUDGET_TOKENS",
@@ -830,12 +830,12 @@
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
-        "wasm": "silently-ignored",
+        "wasm": "explicitly-refused",
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: interp replay created no file; native printed the replayed output AND performed the write, exit 0 \u2014 an authoritative-looking transcript of a run that never happened. || WASM/GUEST (source audit): WASM: silently-ignored on BOTH wasip1 artifacts. Note this is not a wasm defect in origin \u2014 replay::install_from_env lives in the `axon` CLI's dispatch(), and the axon-run binary calls interp::run_program directly (bin/axon-run.rs:46), so NATIVE axon-run has the identical hole.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
     },
     {
       "name": "AXON_RECORD",
@@ -844,12 +844,12 @@
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
-        "wasm": "silently-ignored",
+        "wasm": "explicitly-refused",
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Native recorded nothing, leaving an empty journal indistinguishable from a run that touched nothing. || WASM/GUEST (source audit): Same axon-run/dispatch() gap as AXON_REPLAY.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
     },
     {
       "name": "AXON_AUDIT_LEDGER",
@@ -858,12 +858,12 @@
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
-        "wasm": "silently-ignored",
+        "wasm": "explicitly-refused",
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: interp wrote 2 entries for one write_file; native did not create the ledger file at all. || WASM/GUEST (source audit): Same gap: the ledger install is in dispatch() (main.rs:826-831) and nothing in axon-rt writes a ledger.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
     },
     {
       "name": "AXON_SEED",

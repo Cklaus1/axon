@@ -1003,7 +1003,17 @@ impl<'ctx> super::Codegen<'ctx> {
     /// output AND performed the write for real, exit 0 — indistinguishable
     /// from a correct replay.
     pub(super) fn emit_interp_only_env_refusal_init(&mut self) {
-        if self.target_is_wasm {
+        // Skipped for the BROWSER target only. wasm32-unknown-unknown has no
+        // environment for an operator to set these in, so there is nothing to
+        // refuse; wasm32-wasip1 DOES have env vars, and skipping it left the
+        // same hole this refusal exists to close. Measured, one program, one
+        // ceiling: `AXON_ALLOWED_EFFECTS=Pure axon run` exited 8 with a sandbox
+        // violation, while the wasip1 build of that program run under
+        // `wasmtime --env AXON_ALLOWED_EFFECTS=Pure` printed "IO HAPPENED" and
+        // exited 0 — the ceiling silently dropped, which is exactly the D-002
+        // shape closed for native. One boolean covered two targets whose
+        // answers differ.
+        if self.target_is_wasm && !self.target_is_wasi {
             return;
         }
         if self

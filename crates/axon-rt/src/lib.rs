@@ -2084,8 +2084,18 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
     ];
     for (var, consequence) in REFUSED {
         if std::env::var_os(var).is_some() {
+            // Name the engine ACCURATELY. This refusal is emitted for
+            // wasm32-wasip1 as well as native, and a wasi guest told it is a
+            // "NATIVELY BUILT binary" sends the reader looking at the wrong
+            // engine — the same class of misreport this control exists to
+            // prevent, just smaller.
+            let engine = if cfg!(target_arch = "wasm32") {
+                "a COMPILED wasm binary"
+            } else {
+                "a NATIVELY BUILT binary"
+            };
             eprintln!(
-                "axon: `{var}` is set, but this is a NATIVELY BUILT binary and \
+                "axon: `{var}` is set, but this is {engine} and \
                  that control is honoured by the interpreter only.\n  \
                  Refusing to run: continuing would {consequence}.\n  \
                  Run the program with `axon run`, which implements it."

@@ -450,6 +450,16 @@ if [ "$STRICT" = 1 ]; then
   echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
   ./scripts/parity_all.sh --quiet || fail "parity suite"
 
+  # The WASI env-control refusal. Separate from parity_all because it is not a
+  # parity question: it asserts that a wasm32-wasip1 build REFUSES the
+  # interpreter-only env controls rather than performing the effects anyway,
+  # and — asserted separately, because the two wasm targets' control surfaces
+  # genuinely differ — that wasm32-unknown-unknown does NOT carry the refusal,
+  # having no environment channel to police. Placed under --strict beside the
+  # other wasm work, since it needs wasmtime and both wasm targets.
+  echo "── gate: WASI env-control refusal (wasip1 vs browser) ───────────"
+  ./scripts/wasi_env_control_gate.sh || fail "WASI env-control gate"
+
   # THE BROADEST SWEEP IN THE REPO, and it ran nowhere. `all_examples_parity`
   # compares EVERY example under interp and native rather than a curated list —
   # it is what caught the `llvm_sizeof`-reports-8-bytes Result-payload memory

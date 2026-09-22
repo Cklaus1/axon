@@ -2884,6 +2884,7 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     // before emission so the runtime decls + call sites use the right width
     // (otherwise array allocation traps: `type mismatch: expected i32, found i64`).
     cg.set_target_is_wasm(llvm_triple.starts_with("wasm32"));
+    cg.set_target_is_wasi(llvm_triple.contains("wasi"));
     cg.declare_functions(&concrete);
     cg.emit_program(&concrete);
 

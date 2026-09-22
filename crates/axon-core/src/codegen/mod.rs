@@ -297,6 +297,12 @@ pub struct Codegen<'ctx> {
     /// size param and call sites truncate the i64 byte-count to i32. Set by
     /// `set_target_is_wasm` BEFORE `emit_program`; defaults to false (native).
     pub(super) target_is_wasm: bool,
+    /// Whether the wasm target is WASI (`wasm32-wasip1`) rather than the
+    /// browser's `wasm32-unknown-unknown`. The distinction matters wherever a
+    /// control is delivered through the ENVIRONMENT: WASI guests have env vars,
+    /// browser guests have none, so "skip this on wasm" is right for one and a
+    /// silent hole in the other.
+    pub(super) target_is_wasi: bool,
     /// R17 §12 Q9: true for `--freestanding` builds. `axon-rt` (the runtime
     /// providing `__axon_arith_panic`/`__axon_bounds_panic`/`__axon_refine_panic`
     /// etc.) is never linked into a freestanding kernel — there is no host OS
@@ -449,6 +455,7 @@ impl<'ctx> Codegen<'ctx> {
             current_verify_fn: None,
             current_ret_refine: None,
             target_is_wasm: false,
+            target_is_wasi: false,
             freestanding: false,
             target_triple: String::new(),
             codegen_errors: Vec::new(),
@@ -477,6 +484,12 @@ impl<'ctx> Codegen<'ctx> {
     /// `emit_program`; native builds leave this false (LP64, i64 size).
     pub fn set_target_is_wasm(&mut self, is_wasm: bool) {
         self.target_is_wasm = is_wasm;
+    }
+
+    /// Record whether the wasm target is WASI. Callers pass the triple's own
+    /// answer; see `target_is_wasi`.
+    pub fn set_target_is_wasi(&mut self, is_wasi: bool) {
+        self.target_is_wasi = is_wasi;
     }
 
     /// R17 §12 Q9: mark this build as `--freestanding`. Call BEFORE
