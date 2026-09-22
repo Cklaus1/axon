@@ -411,6 +411,60 @@ fn short_path(path: &str, max_components: usize) -> String {
     }
 }
 
+/// Which commands may only be run by an admin, and why each other one may not.
+///
+/// REPRODUCED before this existed. On a two-principal ledger with
+/// `rbac.json = {"admins":["alice@example.com"]}`, bob is a member and `stats`
+/// correctly showed him 1 of 2 records. He could still:
+///
+///   prune --older-than 2099-01-01 --yes      -> exit 0, "Pruned 2; 0 remain"
+///                                               alice's records destroyed
+///   engineer-backfill --email bob@...        -> exit 0, "2/2 records -> bob"
+///                                               then `stats` showed 2, and
+///                                               `diff --json` returned alice's
+///                                               payload. Privilege escalation,
+///                                               not merely destruction.
+///
+/// `rbac` was consulted at exactly two lines in the whole CLI, both in
+/// `search`. The read paths were filtered; nothing asked who the caller was
+/// before letting them rewrite the file.
+///
+/// EXHAUSTIVE ON PURPOSE — no `_` arm. Four verbs needed the check; adding
+/// four `if is_admin` guards leaves the fifth to be written without one,
+/// which is the shape of every defect found in this file. Here a new command
+/// does not compile until someone decides what it is.
+fn requires_admin(cmd: &Commands) -> Option<&'static str> {
+    match cmd {
+        // Rewrite or delete records that already exist, or change policy.
+        Commands::Prune { .. } => Some("prune"),
+        Commands::EngineerBackfill { .. } => Some("engineer-backfill"),
+        Commands::SessionRefresh { .. } => Some("session-refresh"),
+        Commands::Refresh { .. } => Some("refresh"),
+        Commands::Rbac { .. } => Some("rbac"),
+
+        // Reads. Already filtered to the caller's view by `Store::open_as`,
+        // so authority is enforced by what they can SEE, not by refusal.
+        Commands::Why { .. }
+        | Commands::Diff { .. }
+        | Commands::Stats { .. }
+        | Commands::Search { .. }
+        | Commands::AsOf { .. }
+        | Commands::History { .. }
+        | Commands::PreDeploy { .. }
+        | Commands::Weekly { .. }
+        | Commands::Audit { .. } => None,
+
+        // Append NEW records; they do not rewrite or reattribute existing
+        // ones. Whether an arbitrary caller may append, and under which
+        // principal, is a real question — and a different one. Folding it
+        // into this change would decide it silently.
+        Commands::Ingest { .. }
+        | Commands::Webhook { .. }
+        | Commands::Watch { .. }
+        | Commands::Mcp => None,
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let dir = ledger_dir(cli.ledger_dir.as_ref());
@@ -441,6 +495,24 @@ fn main() -> Result<()> {
     // sole reader and applies the view, so every query reached through
     // `store_ro` is filtered whether or not its author thought about it.
     let store_ro = Store::open_as(&dir, caller.clone())?;
+
+    // One check, before dispatch. RBAC is INERT when no admins are
+    // configured, and that must stay true or every existing single-user
+    // ledger breaks — so the refusal applies only once an admin list exists.
+    if !rbac.admins.is_empty() {
+        if let Some(verb) = requires_admin(&cli.command) {
+            let permitted = caller.as_deref().map(|c| rbac.is_admin(c)).unwrap_or(false);
+            if !permitted {
+                anyhow::bail!(
+                    "`{verb}` rewrites records that may belong to other principals and \
+                     is restricted to an admin. Caller: {}. Admins are configured in \
+                     {}/rbac.json.",
+                    caller.as_deref().unwrap_or("<none>"),
+                    dir_path.display()
+                );
+            }
+        }
+    }
 
     match cli.command {
         Commands::Ingest { source } => match source {
