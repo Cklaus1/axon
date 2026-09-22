@@ -346,7 +346,7 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Claimed:** the wasm32 target is not installed (reported by 15 harnesses as a SKIP)
 - **Reality:** `rustup target list 2>/dev/null | grep -q <target>` discards rustup's exit status and stderr, so a MISSING or broken rustup concluded 'target not installed' — reporting a specific fact it never established, and turning a misconfigured toolchain into 15 silent skips that read like deliberate environment coverage
 - **Reproduced:** the pattern with rustup absent concluded 'target not installed' though rustup never ran
-- **Fix:** rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip — a skip must prove its own reason (`9519d5b`)
+- **Fix:** rust_target_installed separates installed / absent / probe-failed, and a failed probe is a FAIL not a skip — a skip must prove its own reason NOTE: this entry originally cited 9519d5b, whose commit MESSAGE describes this same wasm-harness work, but whose actual diff touches only AXON-COMPLETENESS.json and scripts/r27_acceptance_gate.sh — not scripts/lib/harness_skip.sh. The real fix (the helper plus all 15 wasm-harness call sites) landed in 0c428c8, confirmed by `git show --name-only` and `git log -S`. Found by checking every 'status: fixed' citation's `where` path against its `commit`'s actual diff — 1 of 30 mismatched. (`0c428c8`)
 
 ### FG-022 — crates/axon-signal/src/dashboard.rs (security, fixed)
 

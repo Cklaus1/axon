@@ -19,7 +19,7 @@ the claims falsifiable, so it does two things and the SECOND is the point:
 Exit 0 generate+pass, 1 a claim failed, 2 the checker could not run (a broken
 checker must not be indistinguishable from a clean tree).
 """
-import json, os, sys
+import json, os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "AXON-COMPLETENESS.json")
@@ -233,6 +233,29 @@ for f in _fg:
     w = (f.get("where") or "").split(" :: ")[0]
     if w and not os.path.exists(os.path.join(ROOT, w)):
         fails.append(f"false green `{fid}`: cites `{w}`, which does not exist")
+    # A `fixed` entry's citation must lead to the fix: the commit's own diff
+    # must touch the file the entry claims to fix. FG-021 shipped citing a
+    # commit whose diff was two unrelated files, while the fix it described
+    # (a 15-call-site change) had landed in a DIFFERENT commit whose message
+    # happened to describe the same work — found only by checking every
+    # citation by hand, which is what this codifies so it need not be redone
+    # by hand again.
+    if w and f.get("status") == "fixed" and _c and len(_c) >= 7 and all(
+        ch in "0123456789abcdef" for ch in _c
+    ):
+        _r = subprocess.run(
+            ["git", "show", "--name-only", "--format=", _c],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        if _r.returncode != 0:
+            fails.append(f"false green `{fid}`: commit `{_c}` does not exist "
+                         f"in this repo")
+        else:
+            _touched = set(_r.stdout.split())
+            if not any(w == t or t.startswith(w + "/") for t in _touched):
+                fails.append(f"false green `{fid}`: cites commit `{_c}`, whose "
+                             f"diff does not touch `{w}` — the citation does "
+                             f"not lead to the fix")
 
 # THE RELEASE CRITERION. An OPEN false green blocks any claim of completeness —
 # harder than the unknown count, and deliberately so: unknowns shrink by doing
