@@ -197,9 +197,9 @@ echo "── gate: cortex policy boundary tests ──────────�
 # target/ starts empty: 18 of 18 cortex CLI tests failed with "the CLI suite
 # needs the interpreter at .../src/target/debug/axon". In a pristine clone or
 # on CI-from-scratch this stage was never really green.
-cargo build -q -p axon-core --no-default-features --bin axon \
+cargo build --locked -q -p axon-core --no-default-features --bin axon \
   || fail "interpreter build (needed by the cortex CLI suite)"
-cargo test -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
+cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
 
 # The same crate again with `ai` on, because that feature gates the only
@@ -208,9 +208,9 @@ cargo test -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
 # module would rot exactly the way lsp.rs did below: present, plausible, and
 # verified by nothing. Clippy as well as test, since the default clippy sweep
 # further down also passes no features.
-cargo clippy -p axon-cortex --all-targets --features ai -- -D warnings \
+cargo clippy --locked -p axon-cortex --all-targets --features ai -- -D warnings \
   || fail "cortex ai-generator lint"
-cargo test -p axon-cortex --features ai \
+cargo test --locked -p axon-cortex --features ai \
   || fail "cortex ai-generator tests"
 
 # The benchmark prose against the data it cites, in BOTH directions. Twice in
@@ -248,7 +248,7 @@ bash scripts/gate_verdict_is_read.sh \
 
 
 echo "── gate: native codegen build ─────────────────────────────────────"
-cargo build -p axon-core || fail "native build"
+cargo build --locked -p axon-core || fail "native build"
 
 # AUDIT T15 (finding P5-34). Nothing ever built the serde-json feature — not
 # gate.sh, not CI — so lsp.rs rotted silently as new Type variants landed and
@@ -257,11 +257,11 @@ cargo build -p axon-core || fail "native build"
 # could not be compiled at all. An advertised command with no build gate is a
 # command that will eventually stop existing without anyone noticing.
 echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
-cargo check --no-default-features --features serde-json -p axon-core \
+cargo check --locked --no-default-features --features serde-json -p axon-core \
   || fail "serde-json feature check (axon lsp / axon parse --json)"
 
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
-cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
+cargo clippy --locked --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
 
 # BUG_HUNT #35: the runtime crates (axon-rt/axon-ai/axon-surface) used to be
 # invisible to the clippy gate (scoped to -p axon-core), hiding ~80 lints. They
@@ -291,7 +291,7 @@ echo "── gate: clippy runtime crates (-D warnings) ────────�
 # wasm32, but living under tests/ cargo ALSO builds it as a host integration test
 # with no test fns, where the static is genuinely unused — so the crate could not
 # be lint-gated at all.
-cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
+cargo clippy --locked -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-gfx-mock \
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
   -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \
@@ -355,7 +355,7 @@ echo "── gate: tests (--no-default-features) ──────────�
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
   cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
 else
-  cargo test -p axon-core --no-default-features || fail "tests"
+  cargo test --locked -p axon-core --no-default-features || fail "tests"
 fi
 
 # REBUILD the codegen binary. The stage above rebuilt `target/debug/axon`
@@ -364,7 +364,7 @@ fi
 # codegen backend (E0907)`. The harness refused to call it a skip, which is the
 # only reason it was visible rather than a silent 14-harness gap.
 echo "── gate: restore the codegen binary after the no-default test stage ──"
-cargo build -q -p axon-core --bin axon || fail "codegen rebuild after tests"
+cargo build --locked -q -p axon-core --bin axon || fail "codegen rebuild after tests"
 
 # ── REQUIRED CRATE VERIFICATION, driven by the manifest ────────────────────
 #
@@ -380,6 +380,12 @@ cargo build -q -p axon-core --bin axon || fail "codegen rebuild after tests"
 # governance/release-verification.json, where `release_manifest.rs` checks it
 # against the actual workspace members, so a new crate cannot arrive without a
 # classification and an A/B crate cannot exist without a required command.
+# The dependency graph is the one build input a commit hash did not pin until
+# Cargo.lock was tracked (473480f). Runs early and unconditionally: it is
+# seconds, and everything below builds against whatever the lockfile says.
+echo "── gate: lockfile tracked and current ────────────────────────────"
+./scripts/lockfile_gate.sh || fail "lockfile gate"
+
 echo "── gate: required crate verification (manifest-driven) ───────────"
 MANIFEST="$ROOT/governance/release-verification.json"
 [ -f "$MANIFEST" ] || fail "release verification manifest missing at $MANIFEST"
@@ -409,7 +415,7 @@ PYEOF
 
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"
-  cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings || fail "all-targets clippy"
+  cargo clippy --locked --no-default-features -p axon-core --all-targets -- -D warnings || fail "all-targets clippy"
 
   # BUG_HUNT #35 follow-on: the codegen feature (axon-core WITH default features)
   # was never clippy-gated — the lib clippy above uses --no-default-features, so
@@ -418,7 +424,7 @@ if [ "$STRICT" = 1 ]; then
   # the parity harnesses), so --strict enforces it going forward. Only under
   # --strict because it links LLVM (slower than the interp-only passes).
   echo "── gate: clippy codegen feature (--all-targets, -D warnings) ─────"
-  cargo clippy -p axon-core --all-targets -- -D warnings || fail "codegen-feature clippy"
+  cargo clippy --locked -p axon-core --all-targets -- -D warnings || fail "codegen-feature clippy"
 
   # Coverage gap closed: the test stage above runs --no-default-features, so any
   # `#[cfg(feature = "codegen")]` integration test (e.g. the end-to-end runtime
@@ -428,7 +434,7 @@ if [ "$STRICT" = 1 ]; then
   # gated tests today); the rest already run under the interp pass / via the
   # CARGO_BIN_EXE harnesses. Under --strict only because it links LLVM.
   echo "── gate: codegen-gated integration tests ────────────────────────"
-  cargo test -p axon-core --test integration_fixtures || fail "codegen integration tests"
+  cargo test --locked -p axon-core --test integration_fixtures || fail "codegen integration tests"
 
   # R1d Slice-3 drift kill-gate (governance/specs/R1d-single-source-builtins.md):
   # the builtin_externs drift tests live behind #[cfg(feature = "codegen")], so
@@ -439,7 +445,7 @@ if [ "$STRICT" = 1 ]; then
   # with default features (codegen on). Cheap: same build as the two stages
   # above, 5 tests, ~0s.
   echo "── gate: builtin-externs drift tests (R1d slice 3) ──────────────"
-  cargo test -p axon-core --lib codegen::builtin_externs || fail "builtin-externs drift tests"
+  cargo test --locked -p axon-core --lib codegen::builtin_externs || fail "builtin-externs drift tests"
 
   # The two-engine invariant (I-2): native codegen + AOT-wasm must match the
   # interpreter oracle byte-for-byte. ~22 scripts/*_parity.sh harnesses assert
@@ -681,9 +687,9 @@ stage order means it should have had one here" ;;
   # harnesses) rather than fail, so the gate still works on a Z3-less box.
   if echo 'int main(){return 0;}' | cc -xc - -lz3 -o /dev/null 2>/dev/null; then
     echo "── gate: clippy + tests (smt feature, Z3) ───────────────────────"
-    cargo clippy --no-default-features -p axon-core --features smt --all-targets -- -D warnings \
+    cargo clippy --locked --no-default-features -p axon-core --features smt --all-targets -- -D warnings \
       || fail "smt-feature clippy"
-    cargo test --no-default-features -p axon-core --features smt --lib smt \
+    cargo test --locked --no-default-features -p axon-core --features smt --lib smt \
       || fail "smt unit tests"
   else
     echo "── gate: smt feature SKIPPED (libz3 not found; install to enable) ─"

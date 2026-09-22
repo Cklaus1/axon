@@ -25,7 +25,7 @@
         "provenance writers"
       ],
       "required": [
-        "cargo test -p axon-core --no-default-features"
+        "cargo test --locked -p axon-core --no-default-features"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -41,7 +41,7 @@
         "webhook egress"
       ],
       "required": [
-        "cargo test -p axon-ledger"
+        "cargo test --locked -p axon-ledger"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -56,7 +56,7 @@
         "supervisor"
       ],
       "required": [
-        "cargo test -p axon-os"
+        "cargo test --locked -p axon-os"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -69,7 +69,7 @@
         "effect records"
       ],
       "required": [
-        "cargo test -p axon-audit"
+        "cargo test --locked -p axon-audit"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -84,7 +84,7 @@
         "HMAC key handling"
       ],
       "required": [
-        "cargo test -p axon-attest"
+        "cargo test --locked -p axon-attest"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -96,7 +96,7 @@
         "certificate validation"
       ],
       "required": [
-        "cargo test -p axon-certcheck"
+        "cargo test --locked -p axon-certcheck"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -109,7 +109,7 @@
         "ceiling/budget propagation"
       ],
       "required": [
-        "cargo test -p axon-guest-init"
+        "cargo test --locked -p axon-guest-init"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -123,7 +123,7 @@
         "measurement"
       ],
       "required": [
-        "cargo test -p axon-vm"
+        "cargo test --locked -p axon-vm"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -136,7 +136,7 @@
         "grant snapshot staleness"
       ],
       "required": [
-        "cargo test -p cortex-policy-adapter"
+        "cargo test --locked -p cortex-policy-adapter"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -150,7 +150,7 @@
         "refusal round-trip"
       ],
       "required": [
-        "cargo test -p axon-reflex"
+        "cargo test --locked -p axon-reflex"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -165,7 +165,7 @@
         "CORS"
       ],
       "required": [
-        "cargo test -p axon-signal"
+        "cargo test --locked -p axon-signal"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -179,7 +179,7 @@
         "CORS"
       ],
       "required": [
-        "cargo test -p axon-web"
+        "cargo test --locked -p axon-web"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -194,7 +194,7 @@
         "workspace restore"
       ],
       "required": [
-        "cargo test -p axon-cortex"
+        "cargo test --locked -p axon-cortex"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -208,7 +208,7 @@
         "provenance"
       ],
       "required": [
-        "cargo test -p axon-rt"
+        "cargo test --locked -p axon-rt"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -222,7 +222,7 @@
         "mock/replay"
       ],
       "required": [
-        "cargo test -p axon-ai"
+        "cargo test --locked -p axon-ai"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -235,7 +235,7 @@
         "LLM body generation"
       ],
       "required": [
-        "cargo test -p axon-intent"
+        "cargo test --locked -p axon-intent"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -248,7 +248,7 @@
         "host bridge"
       ],
       "required": [
-        "cargo test -p axon-wasm"
+        "cargo test --locked -p axon-wasm"
       ],
       "verified_by": "scripts/wasm_parity.sh and the wasm_* parity harnesses in the strict gate. NOTE: `cargo test -p axon-wasm` reports 4 suites and ZERO tests \u2014 the crate is a cdylib with no host tests, so that command passes vacuously and is kept only to prove the crate still builds for the host. Its real verification is the parity harnesses, which compare the wasm engine against the interpreter.",
       "gate_compiles": true,
@@ -261,7 +261,7 @@
         "prose-to-AST"
       ],
       "required": [
-        "cargo test -p axon-surface"
+        "cargo test --locked -p axon-surface"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -274,7 +274,7 @@
         "network dial"
       ],
       "required": [
-        "cargo test -p axon-domain"
+        "cargo test --locked -p axon-domain"
       ],
       "gate_compiles": true,
       "gate_tests": true
@@ -309,7 +309,7 @@
         "mock module"
       ],
       "required": [
-        "cargo test -p axon-gfx-mock"
+        "cargo test --locked -p axon-gfx-mock"
       ],
       "gate_compiles": true,
       "gate_tests": false
