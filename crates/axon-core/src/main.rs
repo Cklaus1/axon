@@ -3069,6 +3069,17 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     // wasm would trap), so we only claim "runnable" when it genuinely is.
     let stderr = String::from_utf8_lossy(&status.stderr);
     if !status.status.success() || stderr.contains("function signature mismatch") {
+        // REPORT WHAT THE LINKER SAID. The caller's fallback message names one
+        // specific cause ("str/array programs await the i64->i32 ABI
+        // retarget"), which it asserts for EVERY failure — so an unrelated
+        // failure, such as a genuinely undefined symbol, was reported as a
+        // known ABI limitation and looked expected. A diagnosis the tool did
+        // not make is worse than no diagnosis: it stops the reader looking.
+        eprintln!(
+            "wasm link failed ({}):\n{}",
+            status.status,
+            stderr.trim_end()
+        );
         let _ = std::fs::remove_file(&linked);
         return None;
     }

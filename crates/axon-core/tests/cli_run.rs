@@ -31866,3 +31866,64 @@ fn a_native_binary_refuses_interpreter_only_env_controls() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A wasm LINK failure must report what the linker said, not a stock diagnosis.
+///
+/// `try_link_wasm` returns `Option`, and the caller printed one fixed sentence
+/// for every `None`: "str/array programs await the i64→i32 ABI retarget, R7
+/// §12". That sentence is true of SOME link failures and was asserted for ALL
+/// of them, so an unrelated failure — a genuinely undefined symbol — was
+/// reported as a known, expected ABI limitation. A diagnosis the tool did not
+/// make is worse than none: it stops the reader looking.
+///
+/// This was not hypothetical. While fixing the wasip1 env-control refusal, an
+/// over-broad version emitted a call to `__axon_rt_refuse_interp_only_env` for
+/// the browser target, whose runtime does not provide it. The link failed with
+/// `undefined symbol`, and the stock message reported it as the ABI gap.
+///
+/// A `println` program for wasm32-unknown-unknown is the stable case: that
+/// target has no libc `puts`, so the link fails on an undefined symbol that has
+/// nothing to do with the i64/i32 ABI.
+#[test]
+fn a_wasm_link_failure_reports_the_linkers_own_error() {
+    let dir = std::env::temp_dir().join(format!("axon_wasm_linkerr_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let src = dir.join("io.ax");
+    std::fs::write(&src, "fn main() { println(\"hi\") }\n").unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .args([
+            "target",
+            "build",
+            "--engine",
+            "codegen",
+            "--target",
+            "wasm32-unknown-unknown",
+            src.to_str().unwrap(),
+        ])
+        .current_dir(&dir)
+        .output()
+        .expect("axon target build");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Codegen for this target may be unavailable in this build; that is an
+    // absence, not a result, and must not masquerade as a pass.
+    if !err.contains("wasm object") && !err.contains("wasm:") {
+        eprintln!("wasm codegen unavailable — link-diagnostic test skipped");
+        return;
+    }
+    // The link is EXPECTED to fail here. If it ever links, this test is no
+    // longer exercising a link failure and must be rewritten rather than
+    // quietly passing.
+    assert!(
+        err.contains("wasm link failed"),
+        "expected a reported wasm link failure for a str program on \
+         wasm32-unknown-unknown; got:\n{err}"
+    );
+    assert!(
+        err.contains("undefined symbol"),
+        "the linker's OWN error was not surfaced — the caller's stock ABI \
+         sentence is not evidence about this failure. stderr:\n{err}"
+    );
+}
