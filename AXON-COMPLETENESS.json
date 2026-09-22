@@ -872,12 +872,12 @@
       "engines": {
         "interpreter": "enforced",
         "native": "enforced",
-        "wasm": "silently-ignored",
+        "wasm": "enforced",
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: native ignored it entirely \u2014 seeds 1/42/999 all gave 289383 \u2014 because codegen lowers random_i64 to a bare rand() and srand was called nowhere. Now seeded from main's prologue. The generators differ, so a seed determines the run but values are not equal across engines. || WASM/GUEST (source audit): WASM: AOT honours no seed \u2014 emit_rng_seed_init early-returns on target_is_wasm and random_i64 lowers to a bare rand() with srand called nowhere. Self-documented as D-012 in axon-rt/src/lib.rs. The native defect fixed today, still live on wasm.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. WASI CLOSED, BROWSER STILL OPEN \u2014 and the two are now recorded as different engines rather than one \"wasm\". The prior silently-ignored classification understated it: measured on wasm32-wasip1, random_i64(1,1000000) twice returned 1 and 883707 on every run under every seed \u2014 a FIXED SEQUENCE, not an unseedable one, so \"honours no seed\" invited the opposite conclusion to the truth. Cause was the same one-boolean skip as the env-control refusal, in the sibling prologue emitter. wasip1 is now seeded like native (verified: seeds differ, same seed reproduces, unseeded varies; gated by scripts/wasi_env_control_gate.sh). wasm32-unknown-unknown has neither a libc nor a clock to seed from, so it remains unseeded by construction."
     },
     {
       "name": "AXON_CLOCK",
