@@ -94,6 +94,37 @@ for var in AXON_ALLOWED_EFFECTS AXON_RECORD AXON_REPLAY AXON_AUDIT_LEDGER; do
   fi
 done
 
+# ── LEG 1b: AXON_SEED must actually seed on wasip1 ──────────────────────────
+# Not an env-control REFUSAL (native honours this one, so wasi should too), but
+# the same root cause and the same file: the seeding prologue was skipped for
+# every wasm target by one boolean. The failure was worse than "the seed is
+# ignored" — measured, `random_i64(1, 1000000)` twice returned 1 and 883707 on
+# EVERY run and under EVERY seed. A fixed sequence, not an unseedable one, which
+# is the half this repo's own notes call the more serious.
+cat > "$WORK/rand.ax" <<'AX'
+fn main() {
+    println(to_str(random_i64(1, 1000000)))
+    println(to_str(random_i64(1, 1000000)))
+}
+AX
+if "$AXON" target build --engine codegen --target wasm32-wasip1 "$WORK/rand.ax" >/dev/null 2>&1 \
+   && [ -f "$WORK/rand.linked.wasm" ]; then
+  r_a="$("$WASMRT" --env AXON_SEED=1  --invoke main "$WORK/rand.linked.wasm" 2>/dev/null | head -2 | tr '\n' ' ')"
+  r_b="$("$WASMRT" --env AXON_SEED=42 --invoke main "$WORK/rand.linked.wasm" 2>/dev/null | head -2 | tr '\n' ' ')"
+  r_b2="$("$WASMRT" --env AXON_SEED=42 --invoke main "$WORK/rand.linked.wasm" 2>/dev/null | head -2 | tr '\n' ' ')"
+  if [ -z "$r_a" ]; then
+    bad "AXON_SEED: the wasip1 random probe produced no output"
+  elif [ "$r_a" = "$r_b" ]; then
+    bad "AXON_SEED: different seeds produced identical output ($r_a) — the seed is ignored"
+  elif [ "$r_b" != "$r_b2" ]; then
+    bad "AXON_SEED: the same seed produced different output ($r_b vs $r_b2) — not reproducible"
+  else
+    ok "AXON_SEED: wasip1 honours the seed (differs across seeds, reproduces within one)"
+  fi
+else
+  echo "  skip  AXON_SEED leg: the random probe did not link"
+fi
+
 # ── LEG 2: wasm32-unknown-unknown is NOT-APPLICABLE, structurally ───────────
 # Asserted on the SAME program built for BOTH targets, so the comparison is
 # about the target and not about the program.

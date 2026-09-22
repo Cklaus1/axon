@@ -1047,7 +1047,14 @@ impl<'ctx> super::Codegen<'ctx> {
     /// ignored the seed. Verified: interp varied with the seed, native returned
     /// 289383 for seeds 1, 42 and 999 alike.
     pub(super) fn emit_rng_seed_init(&mut self) {
-        if self.target_is_wasm {
+        // Skipped for the BROWSER target only — the same one-boolean mistake
+        // that hid the env-control refusal lived here too, in the sibling
+        // prologue emitter. wasm32-wasip1 has a libc and a clock, so it can be
+        // seeded exactly as native is; wasm32-unknown-unknown has neither.
+        // Measured before this: a wasip1 artifact returned 1 and 883707 from
+        // two `random_i64(1, 1000000)` calls on EVERY run and under EVERY
+        // AXON_SEED — a fixed sequence, not merely an unseedable one.
+        if self.target_is_wasm && !self.target_is_wasi {
             return;
         }
         if self

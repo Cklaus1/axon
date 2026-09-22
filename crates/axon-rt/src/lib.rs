@@ -2135,11 +2135,23 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
 /// the same hole on Windows; gating on the same predicate as the dependency
 /// cannot drift from it.
 ///
-/// The non-unix arm is a no-op rather than absent, so the symbol every native
-/// `main` prologue calls always exists. Codegen additionally skips the call
-/// entirely for wasm targets — which is a real gap, not a fix, and is tracked
-/// as D-012: a wasm artifact honours no seed at all.
-#[cfg(unix)]
+/// The fallback arm is a no-op rather than absent, so the symbol every
+/// prologue calls always exists.
+///
+/// D-012, PARTLY CLOSED. This was gated `cfg(unix)` alone while codegen also
+/// skipped the call for every wasm target, so a wasm artifact honoured no seed.
+/// The gap was worse than "honours no seed" suggests, and worse along the axis
+/// this function's own history calls out as the more serious half: measured on
+/// wasm32-wasip1, `random_i64(1, 1000000)` twice returned 1 and 883707 on EVERY
+/// run and under EVERY seed. Not unreproducible — never random. "Honours no
+/// seed" reads as "varies, but you cannot pin it"; the truth was the exact
+/// opposite.
+///
+/// WASI is therefore seeded like unix now (it has both a libc and a clock).
+/// wasm32-unknown-unknown still is not: it has neither, so there is nothing to
+/// seed and nothing to seed it from. That half of D-012 stays open, and stays
+/// distinct — the two wasm targets are not one engine.
+#[cfg(any(unix, target_os = "wasi"))]
 #[no_mangle]
 pub extern "C" fn __axon_rt_seed_rng() {
     let seed = match std::env::var("AXON_SEED")
@@ -2159,7 +2171,7 @@ pub extern "C" fn __axon_rt_seed_rng() {
 /// No-op seeding where there is no `libc` to seed. The symbol must still
 /// exist: `main`'s prologue emits a call to it unconditionally on non-wasm
 /// targets, so removing it would trade a compile error for a link error.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_os = "wasi")))]
 #[no_mangle]
 pub extern "C" fn __axon_rt_seed_rng() {}
 

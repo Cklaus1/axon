@@ -33,12 +33,45 @@ fi
 OBJ="${PROG%.ax}.wasm"
 [ -f "$OBJ" ] || { echo "wasm_object_prune: no emitted object — skipping"; exit 0; }
 
-# Count __axon_* symbols in the object. A pure-int program must have ZERO.
-N=$(python3 -c "import re,sys; print(len(set(re.findall(rb'__axon_[a-z_0-9]+', open('$OBJ','rb').read()))))" 2>/dev/null || echo -1)
-echo "wasm_object_prune: pure-int wasm object has $N __axon_* symbols"
-if [ "$N" != "0" ]; then
-  echo "wasm_object_prune: FAIL — expected 0 (dead-function pruning regressed)"; exit 1
+# Count __axon_* symbols in the object, EXCLUDING the ones deliberately kept
+# live. The bare "must be ZERO" form was a proxy for the property that actually
+# matters — no leftover str/array helper carrying the i64-pointer ABI that
+# clashes with wasm's i32 libc — and it stopped being equivalent to it once a
+# runtime symbol was intentionally called from every wasip1 prologue.
+#
+# The allowlist NAMES each expected symbol rather than raising the count to
+# "<=1", because a threshold would admit whichever helper happened to survive
+# next; an unexpected name still fails. Each entry must be genuinely live (so
+# pruning cannot remove it) and pointer-free (so it cannot reintroduce the ABI
+# clash this harness exists to catch):
+#
+#   __axon_rt_refuse_interp_only_env  fn() -> void. Emitted into the wasip1
+#     prologue so a compiled artifact REFUSES the interpreter-only env controls
+#     rather than silently ignoring them (AXON_ALLOWED_EFFECTS was measured
+#     performing the effects and exiting 0 on this target). Never emitted for
+#     wasm32-unknown-unknown.
+#
+#   __axon_rt_seed_rng  fn() -> void. Seeds the C RNG in the wasip1 prologue.
+#     Without it the artifact returns ONE FIXED SEQUENCE forever — measured,
+#     `random_i64(1, 1000000)` twice gave 1 and 883707 on every run and under
+#     every AXON_SEED. Also never emitted for wasm32-unknown-unknown, which has
+#     neither a libc nor a clock to seed from.
+#
+# This allowlist earned its shape immediately: written naming only the first
+# symbol, it failed on the second rather than absorbing it.
+ALLOWED_LIVE='__axon_rt_refuse_interp_only_env __axon_rt_seed_rng'
+UNEXPECTED=$(python3 - "$OBJ" "$ALLOWED_LIVE" <<'PYEOF'
+import re, sys
+obj, allowed = sys.argv[1], set(sys.argv[2].split())
+found = set(m.decode() for m in re.findall(rb'__axon_[a-z_0-9]+', open(obj, 'rb').read()))
+print(' '.join(sorted(found - allowed)))
+PYEOF
+) || UNEXPECTED="<probe-failed>"
+if [ -n "$UNEXPECTED" ]; then
+  echo "wasm_object_prune: pure-int wasm object has UNEXPECTED __axon_* symbols: $UNEXPECTED"
+  echo "wasm_object_prune: FAIL — expected none beyond the allowlist (dead-function pruning regressed)"; exit 1
 fi
+echo "wasm_object_prune: pure-int wasm object has no __axon_* symbols beyond the allowlist"
 
 # Bonus: if rust-lld + wasi libc are present, confirm it LINKS with no signature
 # mismatches (the prune's whole point). A trap at runtime is the entry-point ABI,

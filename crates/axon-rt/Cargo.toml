@@ -28,3 +28,12 @@ axon-gfx-mock = { path = "../axon-gfx-mock" }
 # pulled on wasm/Windows — the guard is a no-op there.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# WASI has a libc too, and `random_*` needs `srand` there for the same reason
+# it needs it on unix: codegen lowers the builtin to a bare `rand()`, so
+# without seeding the artifact returns one fixed sequence forever. Measured on
+# wasm32-wasip1 before this: the same two values (1, 883707) on every run and
+# under every AXON_SEED. Not pulled for wasm32-unknown-unknown, which has no
+# libc and no clock to seed from.
+[target.'cfg(target_os = "wasi")'.dependencies]
+libc = "0.2"
