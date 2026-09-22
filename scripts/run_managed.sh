@@ -74,6 +74,10 @@ scope_alive() {
 
 cmd_start() {
   local name="$1"; shift
+  local snapshot_ref=""
+  if [ "${1:-}" = "--snapshot" ]; then
+    shift; snapshot_ref="${1:?--snapshot needs a committish}"; shift
+  fi
   [ "${1:-}" = "--" ] && shift
   [ $# -gt 0 ] || die "no command given"
 
@@ -84,10 +88,38 @@ cmd_start() {
   # WHICH SOURCE SNAPSHOT. A result is meaningless without the tree it judged.
   # `dirty` is recorded as a fact, not a refusal — a gate run on a dirty tree
   # is legitimate, but its result must not later be read as certifying HEAD.
-  {
-    echo "head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-    echo "dirty=$( [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] && echo yes || echo no )"
-  } > "$dir/snapshot"
+  # WHICH SOURCE, AND CAN IT STILL MOVE. Recording `head=` is not enough on its
+  # own: the job reads the WORKING TREE, so an edit made while it runs lands in
+  # a build that is then reported against the old sha. MEASURED — a strict gate
+  # was launched on a clean tree, source files were edited ~2.5 min in while
+  # cargo was still compiling those crates, and the resulting PASS could not be
+  # attributed to either the committed state or the edited one. It was
+  # discarded rather than cited.
+  #
+  # `--snapshot <committish>` removes the possibility instead of asking people
+  # to remember: the job runs in a DETACHED WORKTREE checked out at one commit,
+  # which no edit to the developer tree can reach.
+  local work=""
+  if [ -n "$snapshot_ref" ]; then
+    local sha
+    sha="$(git -C "$ROOT" rev-parse --verify "${snapshot_ref}^{commit}" 2>/dev/null)" \
+      || die "not a commit: $snapshot_ref"
+    work="$dir/src"
+    git -C "$ROOT" worktree add --detach "$work" "$sha" >/dev/null 2>&1 \
+      || die "could not create worktree at $work for $sha"
+    {
+      echo "mode=worktree"
+      echo "head=$sha"
+      echo "dirty=no"
+      echo "worktree=$work"
+    } > "$dir/snapshot"
+  else
+    {
+      echo "mode=live-tree"
+      echo "head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+      echo "dirty=$( [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] && echo yes || echo no )"
+    } > "$dir/snapshot"
+  fi
   printf '%s\n' "$*" > "$dir/cmd"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/started_at"
   echo running > "$dir/status"
@@ -214,7 +246,15 @@ cmd_supervise() {
     # $BASHPID, not $$: this process's own pid.
     echo $BASHPID > "${scope#cgroup:}/cgroup.procs" 2>/dev/null || true
   fi
-  setsid "$@" > "$dir/log" 2>&1 &
+  # Run INSIDE the snapshot when there is one, so the job reads committed
+  # bytes rather than whatever the developer tree happens to hold right now.
+  local work=""
+  work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
+  if [ -n "$work" ] && [ -d "$work" ]; then
+    setsid env -C "$work" "$@" > "$dir/log" 2>&1 &
+  else
+    setsid "$@" > "$dir/log" 2>&1 &
+  fi
   local child=$!
   echo "$child" > "$dir/pid"
   # A setsid child leads its own process group, so pgid == pid. That is the
@@ -250,9 +290,143 @@ cmd_supervise() {
       # called rmdir while still a member and silently did nothing, leaving the
       # leak exactly as it was. Moving back to the root cgroup empties it.
       echo $BASHPID > /sys/fs/cgroup/cgroup.procs 2>/dev/null || true
+      reap_scope "$dir" "${scope#cgroup:}"
       rmdir "${scope#cgroup:}" 2>/dev/null || true
       ;;
   esac
+  # The snapshot worktree is scaffolding too. Remove it AFTER the status file
+  # is durable, for the same reason the cgroup is removed after: a failure to
+  # clean up must not be able to cost the verdict.
+  local work2
+  work2="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
+  if [ -n "$work2" ] && [ -d "$work2" ]; then
+    if git -C "$ROOT" worktree remove --force "$work2" >/dev/null 2>&1; then
+      echo "worktree_removed=yes" >> "$dir/cleanup"
+    else
+      echo "worktree_removed=no" >> "$dir/cleanup"
+    fi
+  fi
+
+  # Cleanup is EVIDENCE, not a side effect: `verify` reads this to decide
+  # whether the scope was genuinely released, so record it either way.
+  if [ -d "${scope#cgroup:}" ]; then
+    echo "released=no" >> "$dir/cleanup"
+  else
+    echo "released=yes" >> "$dir/cleanup"
+  fi
+}
+
+# Processes that legitimately OUTLIVE the job that spawned them.
+#
+# A build spawns `sccache` as a system-wide singleton daemon. Cargo forks it
+# while inside this job's cgroup, and a daemon that double-forks to detach
+# from its parent does NOT thereby leave the cgroup — cgroup membership is
+# independent of process ancestry. So it stayed a member after the gate
+# finished, `rmdir` failed (a populated cgroup cannot be removed), the failure
+# was swallowed by `|| true`, and `scope-alive` then reported `alive` for a job
+# whose own status file said `exited:0`. MEASURED on finalgate3: pid 407063,
+# `/usr/bin/sccache`, `cgroup.events: populated 1`, hours after the gate exited.
+#
+# Killing it would be wrong — it is shared infrastructure serving other builds,
+# not a straggler of this job. So the rule is EVICT, not kill, and only for
+# names on this list; anything else still alive in the scope IS a straggler of
+# a job that has ended, and gets killed. Both outcomes are recorded.
+SHARED_DAEMONS="sccache"
+
+reap_scope() {
+  local dir="$1" cg="$2"
+  [ -d "$cg" ] || return 0
+  local pid comm
+  while read -r pid; do
+    [ -n "$pid" ] || continue
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || echo '?')"
+    if printf '%s\n' $SHARED_DAEMONS | grep -qx -- "$comm"; then
+      # Evict to the root cgroup: it keeps running, this scope stops owning it.
+      echo "$pid" > /sys/fs/cgroup/cgroup.procs 2>/dev/null \
+        && echo "evicted=$comm:$pid" >> "$dir/cleanup" \
+        || echo "evict_failed=$comm:$pid" >> "$dir/cleanup"
+    else
+      kill -TERM "$pid" 2>/dev/null || true
+      echo "killed=$comm:$pid" >> "$dir/cleanup"
+    fi
+  done < <(cat "$cg/cgroup.procs" 2>/dev/null)
+  # Give TERM a moment, then take the subtree down hard if anything remains.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    grep -q 'populated 1' "$cg/cgroup.events" 2>/dev/null || break
+    sleep 0.1
+  done
+  if grep -q 'populated 1' "$cg/cgroup.events" 2>/dev/null; then
+    echo 1 > "$cg/cgroup.kill" 2>/dev/null || true
+    echo "force_killed=yes" >> "$dir/cleanup"
+  fi
+}
+
+# ── verify: is this run citable as evidence about a commit? ─────────────────
+#
+# Four facts have to hold TOGETHER, and each was independently wrong at some
+# point this project: the source was an immutable snapshot (a live-tree run was
+# edited mid-build), the job actually executed tests (a `grep "^test result"`
+# reports nothing on a compile error, and nothing read as green), the exit
+# status is the JOB's and not a launcher's (`nohup` returned 0 four times for
+# failed runs), and the scope was released (a lingering daemon left
+# `scope-alive` contradicting a recorded `exited:0`).
+#
+# Exit 0 only when all four hold. Anything else prints why and exits 1, so a
+# caller can branch on the status rather than on prose.
+cmd_verify() {
+  local dir="${1:?verify needs a run dir}"
+  [ -d "$dir" ] || die "no such run: $dir"
+  local bad=0
+  local mode head st
+  mode="$(sed -n 's/^mode=//p' "$dir/snapshot" 2>/dev/null)"
+  head="$(sed -n 's/^head=//p' "$dir/snapshot" 2>/dev/null)"
+  st="$(cat "$dir/status" 2>/dev/null || echo unknown)"
+
+  if [ "$mode" != "worktree" ]; then
+    echo "  NOT CITABLE: source mode is '${mode:-unset}', not 'worktree' — a"
+    echo "               live-tree run can be edited while it builds, so its"
+    echo "               result is not attributable to any one commit"
+    bad=1
+  fi
+  case "$head" in
+    ''|unknown) echo "  NOT CITABLE: no source commit recorded"; bad=1 ;;
+  esac
+  if [ "$st" != "exited:0" ]; then
+    echo "  NOT CITABLE: status is '$st', not 'exited:0'"
+    bad=1
+  fi
+
+  # EXECUTION, positively. Absence of failure is not evidence of testing.
+  # NOT `grep -c ... || echo 0`: on no matches grep prints "0" AND exits 1, so
+  # the fallback appends a second "0" and the count becomes the string "0\n0",
+  # which is not an integer and silently defeats the comparison below. Caught
+  # by mutation-testing this very check with a compile-error log.
+  local suites
+  suites="$(grep -c '^test result: ok' "$dir/log" 2>/dev/null | head -1)"
+  [ -n "$suites" ] || suites=0
+  if [ "${suites:-0}" -lt 1 ]; then
+    echo "  NOT CITABLE: the log records 0 passing test suites — a build"
+    echo "               failure prints no 'test result' line at all, and"
+    echo "               empty output is not green"
+    bad=1
+  fi
+  if grep -qE '^  FAIL|test result: FAILED' "$dir/log" 2>/dev/null; then
+    echo "  NOT CITABLE: the log contains failures"
+    bad=1
+  fi
+
+  if ! grep -q '^released=yes' "$dir/cleanup" 2>/dev/null; then
+    echo "  NOT CITABLE: the containment scope was not released"
+    bad=1
+  fi
+
+  if [ "$bad" -ne 0 ]; then
+    echo "run: $dir"
+    return 1
+  fi
+  echo "CITABLE  commit=$head  status=$st  suites=$suites  scope=released"
+  echo "run: $dir"
+  return 0
 }
 
 case "${1:-}" in
@@ -261,5 +435,6 @@ case "${1:-}" in
   status) shift; cmd_status "$@" ;;
   cancel) shift; cmd_cancel "$@" ;;
   scope-alive) shift; scope_alive "$@" && echo alive || echo empty ;;
-  *) die "usage: run_managed.sh {start <name> -- <cmd...>|status <dir>|cancel <dir>|scope-alive <dir>}" ;;
+  verify) shift; cmd_verify "$@" ;;
+  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] -- <cmd...>|status <dir>|verify <dir>|cancel <dir>|scope-alive <dir>}" ;;
 esac
