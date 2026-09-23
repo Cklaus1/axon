@@ -798,113 +798,113 @@
     {
       "name": "AXON_ALLOWED_EFFECTS",
       "category": "authorization/effect-ceiling",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "explicitly-refused",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: interp refused a println under Pure (exit 8), native emitted a binary that printed, exit 0. Native now refuses EMISSION at every codegen entry point. Build-time only \u2014 the guest sets it at boot, which D-009 tracks. || WASM/GUEST (source audit): WASM: the AOT artifact never calls __axon_rt_refuse_interp_only_env \u2014 emit_interp_only_env_refusal_init early-returns on target_is_wasm (codegen/asi.rs:998) \u2014 so the D-002 residual closed for native is REOPEN on wasm. The build-time refusal covers the wasm entry points but keys on the builder's shell and only two of six vars. GUEST: payload is `axon run` (guest-init main.rs:65-71, built --no-default-features), so the interpreter enforces; guest-init execvp's, so the env it set is inherited intact.",
-      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
+      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_BUDGET_TOKENS",
       "category": "resource-budget",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "enforced",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Same refusal path as the effect ceiling. Zero reads in codegen/ or axon-rt. || WASM/GUEST (source audit): WASM: enforced on the wasip1 interpreter bundle; not-applicable on AOT and browser, where axon-ai is absent from the link line so no model is reachable at all. No artifact silently ignores it. GUEST: interpreter.",
-      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED."
+      "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_REPLAY",
       "category": "replay/record/audit",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "explicitly-refused",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: interp replay created no file; native printed the replayed output AND performed the write, exit 0 \u2014 an authoritative-looking transcript of a run that never happened. || WASM/GUEST (source audit): WASM: silently-ignored on BOTH wasip1 artifacts. Note this is not a wasm defect in origin \u2014 replay::install_from_env lives in the `axon` CLI's dispatch(), and the axon-run binary calls interp::run_program directly (bin/axon-run.rs:46), so NATIVE axon-run has the identical hole.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_RECORD",
       "category": "replay/record/audit",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "explicitly-refused",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Native recorded nothing, leaving an empty journal indistinguishable from a run that touched nothing. || WASM/GUEST (source audit): Same axon-run/dispatch() gap as AXON_REPLAY.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_AUDIT_LEDGER",
       "category": "replay/record/audit",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "explicitly-refused",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: interp wrote 2 entries for one write_file; native did not create the ledger file at all. || WASM/GUEST (source audit): Same gap: the ledger install is in dispatch() (main.rs:826-831) and nothing in axon-rt writes a ledger.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. wasm was classified UNTESTED, and the classification was wrong in the unsafe direction: measured on wasm32-wasip1, which HAS env vars via WASI, an AOT build silently ignored this control. For AXON_ALLOWED_EFFECTS the divergence was the full D-002 shape \u2014 `axon run` exited 8 on a `println` under a Pure ceiling while the wasip1 build of the same program, run as `wasmtime --env AXON_ALLOWED_EFFECTS=Pure`, printed and exited 0. Cause: codegen's refusal prologue was skipped for ALL wasm targets by one boolean, though only the BROWSER target (wasm32-unknown-unknown) has no environment to refuse. wasip1 now emits the same refusal native does (exit 2), verified for AXON_ALLOWED_EFFECTS, AXON_RECORD, AXON_REPLAY and AXON_AUDIT_LEDGER, each naming its own variable; an unconstrained wasip1 run still executes normally (control verified, so the wasm parity harnesses are unaffected). The browser target remains correctly exempt \u2014 there is no env var to set. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_SEED",
       "category": "determinism",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "enforced",
         "wasm": "enforced",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "PROVEN: native ignored it entirely \u2014 seeds 1/42/999 all gave 289383 \u2014 because codegen lowers random_i64 to a bare rand() and srand was called nowhere. Now seeded from main's prologue. The generators differ, so a seed determines the run but values are not equal across engines. || WASM/GUEST (source audit): WASM: AOT honours no seed \u2014 emit_rng_seed_init early-returns on target_is_wasm and random_i64 lowers to a bare rand() with srand called nowhere. Self-documented as D-012 in axon-rt/src/lib.rs. The native defect fixed today, still live on wasm.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. WASI CLOSED, BROWSER STILL OPEN \u2014 and the two are now recorded as different engines rather than one \"wasm\". The prior silently-ignored classification understated it: measured on wasm32-wasip1, random_i64(1,1000000) twice returned 1 and 883707 on every run under every seed \u2014 a FIXED SEQUENCE, not an unseedable one, so \"honours no seed\" invited the opposite conclusion to the truth. Cause was the same one-boolean skip as the env-control refusal, in the sibling prologue emitter. wasip1 is now seeded like native (verified: seeds differ, same seed reproduces, unseeded varies; gated by scripts/wasi_env_control_gate.sh). wasm32-unknown-unknown has neither a libc nor a clock to seed from, so it remains unseeded by construction."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. WASI CLOSED, BROWSER STILL OPEN \u2014 and the two are now recorded as different engines rather than one \"wasm\". The prior silently-ignored classification understated it: measured on wasm32-wasip1, random_i64(1,1000000) twice returned 1 and 883707 on every run under every seed \u2014 a FIXED SEQUENCE, not an unseedable one, so \"honours no seed\" invited the opposite conclusion to the truth. Cause was the same one-boolean skip as the env-control refusal, in the sibling prologue emitter. wasip1 is now seeded like native (verified: seeds differ, same seed reproduces, unseeded varies; gated by scripts/wasi_env_control_gate.sh). wasm32-unknown-unknown has neither a libc nor a clock to seed from, so it remains unseeded by construction. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_CLOCK",
       "category": "determinism",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "enforced",
         "wasm": "enforced",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "The precedent: the only control whose CLAUDE.md row already said 'Honoured by interp AND native', with a parity harness behind it. || WASM/GUEST (source audit): Honoured by both wasip1 artifacts \u2014 clock.rs and axon-rt's vclock carry no wasm cfg. UNVERIFIED at runtime: settled by `wasmtime --env AXON_CLOCK=5000:0 prog.linked.wasm`, not yet run.",
-      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents."
+      "open": "wasm and guest are UNTESTED for this control. The native divergence is closed and proven; claiming the control itself resolved would reuse the collapse it documents. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
       "name": "AXON_AI_REPLAY",
       "category": "replay/record/audit",
-      "status": "native-closed",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "enforced",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED.",
+      "open": "PROVEN then CLOSED BY REFUSAL. One cache, one program: interp returned the cached response with no API key set; the native binary ignored the cache and reached for the live API. With a key present that is a live billed call under a variable documented as 'no live call / mock / API key'. Native now exits 2 naming the variable. wasm and guest UNASSESSED. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement.",
       "note": "|| WASM/GUEST (source audit): WASM: enforced on the wasip1 interpreter bundle; not-applicable on AOT and browser (axon-ai absent from the link line). GUEST: interpreter."
     },
     {
@@ -915,10 +915,10 @@
         "interpreter": "enforced",
         "native": "enforced",
         "wasm": "enforced",
-        "guest": "not-applicable"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "CLOSED, and this row previously OVERSTATED one thing and understated another. AXON_PRINCIPAL is audit ATTRIBUTION only (CLAUDE.md: it grants and withholds nothing). Two engines failed to honour it and both now do:\n  * the AI path \u2014 native emitted no ai_call record at all, so attribution was absent rather than wrong. Closed by refusing an unaudited native LIVE model call (105444e).\n  * the AGENT path \u2014 native and wasip1 wrote agent_action records carrying neither effect_row nor principal, so an @[agent] function's un-opt-out-able audit trail named WHAT was done and not WHO. Measured: interp logged `\"effect_row\":\"FS\",\"principal\":\"alice\"` and native logged neither, while agent_action_parity.sh reported a match because it compared only the fields BOTH engines wrote. Closed in 378da246; both engines now emit identical records (verified field-by-field, only ts_ms differs).\nAn earlier revision of this row marked native `explicitly-refused`, which described the AI-path refusal as though it were this variable's state. Native HONOURS the variable; it refuses an unauditable AI call, which is a different fact.\nwasm measured directly: a wasm32-wasip1 build of the same @[agent] program links, runs under wasmtime, and writes `\"effect_row\":\"FS\",\"principal\":\"alice\"` \u2014 it links the same axon-rt. wasm32-unknown-unknown has no environment channel, so the variable cannot be set there at all."
+      "open": "CLOSED, and this row previously OVERSTATED one thing and understated another. AXON_PRINCIPAL is audit ATTRIBUTION only (CLAUDE.md: it grants and withholds nothing). Two engines failed to honour it and both now do:\n  * the AI path \u2014 native emitted no ai_call record at all, so attribution was absent rather than wrong. Closed by refusing an unaudited native LIVE model call (105444e).\n  * the AGENT path \u2014 native and wasip1 wrote agent_action records carrying neither effect_row nor principal, so an @[agent] function's un-opt-out-able audit trail named WHAT was done and not WHO. Measured: interp logged `\"effect_row\":\"FS\",\"principal\":\"alice\"` and native logged neither, while agent_action_parity.sh reported a match because it compared only the fields BOTH engines wrote. Closed in 378da246; both engines now emit identical records (verified field-by-field, only ts_ms differs).\nAn earlier revision of this row marked native `explicitly-refused`, which described the AI-path refusal as though it were this variable's state. Native HONOURS the variable; it refuses an unauditable AI call, which is a different fact.\nwasm measured directly: a wasm32-wasip1 build of the same @[agent] program links, runs under wasmtime, and writes `\"effect_row\":\"FS\",\"principal\":\"alice\"` \u2014 it links the same axon-rt. wasm32-unknown-unknown has no environment channel, so the variable cannot be set there at all. [guest: not-applicable -> blocked-by-open-defect] guest-init sets AXON_PRINCIPAL from policy (axon-guest-init main.rs ~217) and the payload `axon run` reads it (interp.rs ~2672), so N/A was factually wrong \u2014 this is one of the few variables actually delivered INTO a guest. BLOCKING DEFECT: no guest backend runs a payload under axon-vm (the default kernel has no program loader; the linux backend's guest-init refuses to start with no MMDS route, since axon-vm configures no NIC)."
     },
     {
       "name": "AXON_TEE_ENCLAVE",
@@ -928,10 +928,10 @@
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "enforced",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var(\"` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open \u2014 these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.",
+      "open": "REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var(\"` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open \u2014 these builtins are interpreter-side and whether codegen refuses them is UNASSESSED. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement.",
       "note": "|| WASM/GUEST (source audit): WASM: enforced on the interpreter bundle; the AOT backend E0910-refuses tee_* (no lowering in codegen/). GUEST: interpreter."
     },
     {
@@ -942,10 +942,10 @@
         "interpreter": "enforced",
         "native": "explicitly-refused",
         "wasm": "enforced",
-        "guest": "enforced"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var(\"` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open \u2014 these builtins are interpreter-side and whether codegen refuses them is UNASSESSED.",
+      "open": "REGISTRY GAP CLOSED: `vars_read()` now scans the host-seam form `.env_var(\"` as well as the literal `env::var(` forms, and both vars have registry rows and appear as env-var rows in AXON_REFERENCE.md. Mutation-verified: a new host-seam read is now caught, where before it was invisible. The ENGINE question is still open \u2014 these builtins are interpreter-side and whether codegen refuses them is UNASSESSED. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement.",
       "note": "|| WASM/GUEST (source audit): Same as AXON_TEE_ENCLAVE."
     },
     {
@@ -956,10 +956,11 @@
         "interpreter": "enforced",
         "native": "enforced",
         "wasm": "enforced",
-        "guest": "not-applicable"
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " [guest: not-applicable -> unsupported] Read by the front end that `axon run` executes inside the guest; N/A was wrong. Nothing DELIVERS it (axon-vm boot_args are fixed; guest-init sets five other vars only), which is a reversible launcher decision, not architecture."
     },
     {
       "name": "AXON_STRICT",
@@ -969,36 +970,39 @@
         "interpreter": "enforced",
         "native": "enforced",
         "wasm": "enforced",
-        "guest": "not-applicable"
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " [guest: not-applicable -> unsupported] Read by the front end that `axon run` executes inside the guest; N/A was wrong. Nothing DELIVERS it (axon-vm boot_args are fixed; guest-init sets five other vars only), which is a reversible launcher decision, not architecture."
     },
     {
       "name": "AXON_PROOF_TIMEOUT_MS",
       "category": "compile-time/shared-front-end",
-      "status": "resolved",
+      "status": "open",
       "engines": {
-        "interpreter": "enforced",
-        "native": "enforced",
-        "wasm": "enforced",
-        "guest": "not-applicable"
+        "interpreter": "unsupported",
+        "native": "unsupported",
+        "wasm": "unsupported",
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " [guest: not-applicable -> unsupported] Readers live under the opt-in `smt` feature; the guest image is built --no-default-features. Unreachable by a BUILD CHOICE, not by architecture. [interpreter/native/wasm: enforced -> unsupported] Readers exist only under the opt-in `smt` feature (lib.rs; default = [\"codegen\"]). In the shipped default build no engine reads this variable, so `enforced` described a build nobody ships by default."
     },
     {
       "name": "AXON_PROOF_DEPTH",
       "category": "compile-time/shared-front-end",
-      "status": "resolved",
+      "status": "open",
       "engines": {
-        "interpreter": "enforced",
-        "native": "enforced",
-        "wasm": "enforced",
-        "guest": "not-applicable"
+        "interpreter": "unsupported",
+        "native": "unsupported",
+        "wasm": "unsupported",
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " [guest: not-applicable -> unsupported] Readers live under the opt-in `smt` feature; the guest image is built --no-default-features. Unreachable by a BUILD CHOICE, not by architecture. [interpreter/native/wasm: enforced -> unsupported] Readers exist only under the opt-in `smt` feature (lib.rs; default = [\"codegen\"]). In the shipped default build no engine reads this variable, so `enforced` described a build nobody ships by default."
     },
     {
       "name": "AXON_REQUIRE_CERTS",
@@ -1008,38 +1012,39 @@
         "interpreter": "enforced",
         "native": "enforced",
         "wasm": "enforced",
-        "guest": "not-applicable"
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
+      "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
+      "open": " [guest: not-applicable -> unsupported] Read by the front end that `axon run` executes inside the guest; N/A was wrong. Nothing DELIVERS it (axon-vm boot_args are fixed; guest-init sets five other vars only), which is a reversible launcher decision, not architecture."
     },
     {
       "name": "AXON_DOTENV",
       "category": "compile-time/shared-front-end",
-      "status": "resolved",
+      "status": "open",
       "engines": {
-        "interpreter": "enforced",
+        "interpreter": "unsupported",
         "native": "enforced",
-        "wasm": "enforced",
-        "guest": "not-applicable"
+        "wasm": "blocked-by-open-defect",
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
-      "open": " RE-MEASURED (native binary, three arms, with positive controls so the negative arm means something): a `.env` one directory ABOVE the invocation dir holding AXON_AI_API_KEY is NOT read by default \u2014 the program reports 'API key is not set' and exits 0; under AXON_DOTENV_WALK=1 the same file IS read and the key resolves; and a `.env` in the invocation dir is read by default. The second and third arms prove the probe detects a loaded .env, so the first arm's absence is a real refusal to walk rather than a blind test. This is the exfiltration path the walk restriction exists to close: a program with only an fs:write grant could plant a parent .env that redirects AXON_AI_BASE_URL and sends the API key to a listener."
+      "open": " RE-MEASURED (native binary, three arms, with positive controls so the negative arm means something): a `.env` one directory ABOVE the invocation dir holding AXON_AI_API_KEY is NOT read by default \u2014 the program reports 'API key is not set' and exits 0; under AXON_DOTENV_WALK=1 the same file IS read and the key resolves; and a `.env` in the invocation dir is read by default. The second and third arms prove the probe detects a loaded .env, so the first arm's absence is a real refusal to walk rather than a blind test. This is the exfiltration path the walk restriction exists to close: a program with only an fs:write grant could plant a parent .env that redirects AXON_AI_BASE_URL and sends the API key to a listener. [guest: not-applicable -> unsupported] Readers are in axon-ai, linked into the interpreter only under asi-runtime; the guest image is --no-default-features. A build choice, not architecture. [wasm: enforced -> blocked-by-open-defect; interpreter: enforced -> unsupported] The reader is axon-ai. BLOCKING DEFECT (wasm): the AI runtime is absent from both wasm paths \u2014 the sibling AI rows record `undefined symbol: __axon_ai_complete`, and axon-run.wasm is --no-default-features. INTERPRETER: MEASURED this pass \u2014 in a directory holding a `.env` with AXON_AI_API_KEY, the DEFAULT `axon run` reported E1300 'no model reachable' (the key was never loaded), while a NATIVE build of the same program in the same directory resolved the key and was refused (exit 2). The interpreter loads .env only under --features asi-runtime, which no gated or CI build compiles; that is a build choice, hence `unsupported`. The earlier re-measurement of the walk restriction was NATIVE-only and remains correct; its conclusions do not extend to the default interpreter."
     },
     {
       "name": "AXON_DOTENV_WALK",
       "category": "compile-time/shared-front-end",
-      "status": "resolved",
+      "status": "open",
       "engines": {
-        "interpreter": "enforced",
+        "interpreter": "unsupported",
         "native": "enforced",
-        "wasm": "enforced",
-        "guest": "not-applicable"
+        "wasm": "blocked-by-open-defect",
+        "guest": "unsupported"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge.",
-      "open": " RE-MEASURED (native binary, three arms, with positive controls so the negative arm means something): a `.env` one directory ABOVE the invocation dir holding AXON_AI_API_KEY is NOT read by default \u2014 the program reports 'API key is not set' and exits 0; under AXON_DOTENV_WALK=1 the same file IS read and the key resolves; and a `.env` in the invocation dir is read by default. The second and third arms prove the probe detects a loaded .env, so the first arm's absence is a real refusal to walk rather than a blind test. This is the exfiltration path the walk restriction exists to close: a program with only an fs:write grant could plant a parent .env that redirects AXON_AI_BASE_URL and sends the API key to a listener."
+      "open": " RE-MEASURED (native binary, three arms, with positive controls so the negative arm means something): a `.env` one directory ABOVE the invocation dir holding AXON_AI_API_KEY is NOT read by default \u2014 the program reports 'API key is not set' and exits 0; under AXON_DOTENV_WALK=1 the same file IS read and the key resolves; and a `.env` in the invocation dir is read by default. The second and third arms prove the probe detects a loaded .env, so the first arm's absence is a real refusal to walk rather than a blind test. This is the exfiltration path the walk restriction exists to close: a program with only an fs:write grant could plant a parent .env that redirects AXON_AI_BASE_URL and sends the API key to a listener. [guest: not-applicable -> unsupported] Readers are in axon-ai, linked into the interpreter only under asi-runtime; the guest image is --no-default-features. A build choice, not architecture. [wasm: enforced -> blocked-by-open-defect; interpreter: enforced -> unsupported] The reader is axon-ai. BLOCKING DEFECT (wasm): the AI runtime is absent from both wasm paths \u2014 the sibling AI rows record `undefined symbol: __axon_ai_complete`, and axon-run.wasm is --no-default-features. INTERPRETER: MEASURED this pass \u2014 in a directory holding a `.env` with AXON_AI_API_KEY, the DEFAULT `axon run` reported E1300 'no model reachable' (the key was never loaded), while a NATIVE build of the same program in the same directory resolved the key and was refused (exit 2). The interpreter loads .env only under --features asi-runtime, which no gated or CI build compiles; that is a build choice, hence `unsupported`. The earlier re-measurement of the walk restriction was NATIVE-only and remains correct; its conclusions do not extend to the default interpreter."
     },
     {
       "name": "AXON_VM_ALLOWED_EFFECTS",
@@ -1052,7 +1057,8 @@
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm launcher only (crates/axon-vm/src/main.rs); tightens the policy it writes for the guest."
     },
     {
       "name": "AXON_GUEST_ALLOW_NO_POLICY",
@@ -1065,33 +1071,36 @@
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-guest-init PID 1 only (crates/axon-guest-init/src/main.rs); exists only inside a linux-backend guest."
     },
     {
       "name": "AXON_KILL_FILE",
       "category": "launcher-side",
       "status": "resolved",
       "engines": {
-        "interpreter": "not-applicable",
+        "interpreter": "enforced",
         "native": "not-applicable",
         "wasm": "not-applicable",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-os supervisor (crates/axon-os/src/runtime.rs, polled around the job). [interpreter: not-applicable -> enforced] axon-os launches only `axon run` (runtime.rs: Command::new(axon_bin).arg(\"run\")), so this bounds the INTERPRETER, and the ledger already marks the axon-vm launcher vars `enforced` on the engine they bound. Consistency, not a new capability. On native/wasm/guest it stays N/A: axon-os never launches those."
     },
     {
       "name": "AXON_OS_TIMEOUT_MS",
       "category": "launcher-side",
       "status": "resolved",
       "engines": {
-        "interpreter": "not-applicable",
+        "interpreter": "enforced",
         "native": "not-applicable",
         "wasm": "not-applicable",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-os supervisor (crates/axon-os/src/runtime.rs, run_bounded). [interpreter: not-applicable -> enforced] axon-os launches only `axon run` (runtime.rs: Command::new(axon_bin).arg(\"run\")), so this bounds the INTERPRETER, and the ledger already marks the axon-vm launcher vars `enforced` on the engine they bound. Consistency, not a new capability. On native/wasm/guest it stays N/A: axon-os never launches those."
     },
     {
       "name": "AXON_VM_TIMEOUT_SECS",
@@ -1104,7 +1113,8 @@
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm launcher only (crates/axon-vm/src/main.rs); bounds the VM it launches, so it applies to the guest and to no in-process engine."
     },
     {
       "name": "AXON_VM_SOCKET_TIMEOUT_SECS",
@@ -1117,7 +1127,8 @@
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm launcher only (crates/axon-vm/src/main.rs); a Firecracker API-socket deadline."
     },
     {
       "name": "AXON_INTENT_TIMEOUT_MS",
@@ -1130,7 +1141,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-intent tool only (crates/axon-intent/src/synth.rs); a subprocess deadline for the synthesis tool, never read by a program."
     },
     {
       "name": "AXON_CORTEX_GENERATOR_TIMEOUT_MS",
@@ -1143,7 +1155,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-cortex only (crates/axon-cortex/src/generate.rs); the repair generator's deadline, never read by a program."
     },
     {
       "name": "AXON_ATTEST_KEY",
@@ -1156,7 +1169,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm `attest` only (crates/axon-vm/src/main.rs); signs reports ABOUT a guest kernel and is not consulted by the run gate."
     },
     {
       "name": "AXON_VM_DEBUG",
@@ -1169,7 +1183,8 @@
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm launcher only (crates/axon-vm/src/main.rs); launcher diagnostics."
     },
     {
       "name": "AXON_VM_QUIET",
@@ -1182,7 +1197,8 @@
         "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm launcher only (crates/axon-vm/src/main.rs); launcher output."
     },
     {
       "name": "AXON_CI_NO_KVM",
@@ -1195,7 +1211,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm attest/chain/quorum mock mode and axon-web's API (crates/axon-vm/src/main.rs, crates/axon-web/src/api.rs); never read on the run path."
     },
     {
       "name": "AXON_CONFIG_DIR",
@@ -1205,10 +1222,11 @@
         "interpreter": "not-applicable",
         "native": "not-applicable",
         "wasm": "not-applicable",
-        "guest": "not-applicable"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): axon-vm's principal registry lookup (crates/axon-vm/src/main.rs). [guest: not-applicable -> blocked-by-open-defect] it picks the principal whose allowed_effects and budget_tokens become the GUEST's policy when no manifest supplies one, so it bears directly on the guest \u2014 but no guest run currently reaches a payload. BLOCKING DEFECT: no guest backend runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route)."
     },
     {
       "name": "AXON_BIN",
@@ -1221,7 +1239,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER (verified this pass, not inherited from the category note): tool-side path to the axon CLI, read by axon-web, axon-os and axon-intent; never read by a program under any engine."
     },
     {
       "name": "AXON_WASM_RT",
@@ -1230,11 +1249,12 @@
       "engines": {
         "interpreter": "not-applicable",
         "native": "not-applicable",
-        "wasm": "not-applicable",
+        "wasm": "enforced",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " [wasm: not-applicable -> enforced] Build-time input that selects the runtime library for the wasip1 AOT link (main.rs find_wasm_axon_rt). It configures the wasm artifact and nothing else, so N/A on wasm was backwards; same shape as AXON_PATH being enforced on native."
     },
     {
       "name": "AXON_ANDROID_API",
@@ -1242,12 +1262,13 @@
       "status": "resolved",
       "engines": {
         "interpreter": "not-applicable",
-        "native": "not-applicable",
+        "native": "enforced",
         "wasm": "not-applicable",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it."
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " [native: not-applicable -> enforced] Build-time input setting the NDK API level for native Android binaries (codegen/link.rs). N/A on native was backwards."
     },
     {
       "name": "AXON_AI_MOCK",
@@ -1336,80 +1357,86 @@
     {
       "name": "AXON_HOST_SOCKET",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
-        "native": "not-applicable",
+        "native": "unsupported",
         "wasm": "not-applicable",
-        "guest": "not-applicable"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " [guest: not-applicable -> blocked-by-open-defect] Documented as the axon-guest-kernel hypercall bridge, but that bridge is a stub (hypercall.rs) and the kernel halts before loading a program. BLOCKING DEFECT: axon-guest-kernel's hypercall bridge is a stub and it has no program loader. [native: not-applicable -> unsupported] host_await is E0910-refused by codegen ('sound-by-refusal, interp-only') \u2014 a deliberate, reversible refusal of the underlying capability, not an architectural exclusion. [wasm: not-applicable, KEPT] architectural: socket selection is under #[cfg(unix)]/#[cfg(target_os=\"linux\")] and WASI preview1 has neither AF_UNIX nor AF_VSOCK; the browser has no sockets at all. That holds for as long as the target is preview1 \u2014 a move to a socket-capable WASI would reopen it, which is noted so the N/A is not read as permanent."
     },
     {
       "name": "AXON_VM_VSOCK_PORT",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
-        "native": "not-applicable",
+        "native": "unsupported",
         "wasm": "not-applicable",
-        "guest": "not-applicable"
+        "guest": "blocked-by-open-defect"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " [guest: not-applicable -> blocked-by-open-defect] The guest is this variable's intended home (registry: 'vsock port for host_await inside an axon-vm microVM'), and axon-vm configures the vsock device, but no launcher ever sets the variable. BLOCKING DEFECT: axon-vm/guest-init never export AXON_VM_VSOCK_PORT into the guest. [native: not-applicable -> unsupported] host_await is E0910-refused by codegen ('sound-by-refusal, interp-only') \u2014 a deliberate, reversible refusal of the underlying capability, not an architectural exclusion."
     },
     {
       "name": "AXON_DUMP_BINDINGS",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "not-applicable",
-        "wasm": "not-applicable",
+        "wasm": "unknown",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " [wasm: not-applicable -> unknown] N/A was wrong: axon-run.wasm (wasip1) runs the same interpreter and wasip1 has a process environment; the reader is not cfg-gated off wasm32. Only the BROWSER target is genuinely without an environment. Unmeasured on wasip1."
     },
     {
       "name": "AXON_DUMP_SHAPES",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "not-applicable",
-        "wasm": "not-applicable",
+        "wasm": "unknown",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " [wasm: not-applicable -> unknown] N/A was wrong: axon-run.wasm (wasip1) runs the same interpreter and wasip1 has a process environment; the reader is not cfg-gated off wasm32. Only the BROWSER target is genuinely without an environment. Unmeasured on wasip1."
     },
     {
       "name": "AXON_GOAL_CONTINUE",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
-        "native": "not-applicable",
-        "wasm": "not-applicable",
+        "native": "silently-ignored",
+        "wasm": "unknown",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " [wasm: not-applicable -> unknown] N/A was wrong: axon-run.wasm (wasip1) runs the same interpreter and wasip1 has a process environment; the reader is not cfg-gated off wasm32. Only the BROWSER target is genuinely without an environment. Unmeasured on wasip1. [native: not-applicable -> silently-ignored] The N/A premise ('E0910-refused, or reachable only from an interpreter-only verb') is false here: native goal_run exists (codegen/builtins.rs, axon-rt goal.rs) and is not refused. Its warm start reads only the in-process store, never the persisted provenance.jsonl that native itself appends to, so AXON_GOAL_CONTINUE=1 on a native binary does not resume and says nothing. From source; unmeasured."
     },
     {
       "name": "AXON_INTENT_GEN",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
-        "interpreter": "enforced",
+        "interpreter": "unsupported",
         "native": "not-applicable",
         "wasm": "not-applicable",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " READER (verified this pass, not inherited from the category note): the `axon intent compile` CLI verb and axon-intent (crates/axon-core/src/main.rs, crates/axon-intent/src/cli.rs); a CLI verb, not reached by a running program. [interpreter: enforced -> unsupported] Its only effect path is #[cfg(feature = \"asi-runtime\")] (main.rs); the default build prints 'requires --features asi-runtime' and falls back to the skeleton."
     },
     {
       "name": "AXON_AI_MODEL_CHEAP",
@@ -1442,28 +1469,30 @@
     {
       "name": "AXON_AUDIT_DETERMINISTIC",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "not-applicable",
-        "wasm": "not-applicable",
+        "wasm": "unknown",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " [wasm: not-applicable -> unknown] N/A was wrong: axon-run.wasm (wasip1) runs the same interpreter and wasip1 has a process environment; the reader is not cfg-gated off wasm32. Only the BROWSER target is genuinely without an environment. Unmeasured on wasip1."
     },
     {
       "name": "AXON_MAX_DEPTH",
       "category": "interpreter-scoped",
-      "status": "resolved",
+      "status": "open",
       "engines": {
         "interpreter": "enforced",
         "native": "not-applicable",
-        "wasm": "not-applicable",
+        "wasm": "silently-ignored",
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb."
+      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
+      "open": " WASM RECLASSIFIED from not-applicable to SILENTLY-IGNORED \u2014 measured, on the wasip1 interpreter (axon-run.wasm, release) under wasmtime 45. The reader is not gated off wasm32 (interp.rs resolve_max_depth), so the variable IS read there; what wasm cannot do is grow its stack (fixed at link, -zstack-size=64MiB), unlike native which scales the interpreter thread stack with the requested depth. With the runtime's own wasm-stack cap raised (-W max-wasm-stack=64MiB) so the interpreter's limit is what binds: default depth panics gracefully at 450 (exit 101); AXON_MAX_DEPTH=100 and =300 panic gracefully at 100 and 300; AXON_MAX_DEPTH=5000 and =100000 ran recursion to 3000 cleanly. So the variable RAISES a guard the stack was sized for, and the documented invariant \u2014 'the graceful recursion-limit panic always fires before a real stack overflow' \u2014 holds on native only.\nSECOND FINDING, larger, not predicted by the review: under wasmtime's DEFAULT stack (no -W flag), the interpreter traps with 'call stack exhausted' (exit 134) at recursion depths as low as 200 \u2014 BELOW its own 450 guard, with NO environment variable set. The code comment sizing that guard ('empirical overflow boundary ~700 frames \u2026 450 leaves a comfortable margin') assumes the full 64 MiB link-time stack is usable; the embedding runtime's own cap binds first. So on the shipped default, deep recursion on wasip1 is a TRAP, not the catchable panic native gives \u2014 independent of AXON_MAX_DEPTH. BLOCKING/OPEN DEFECT: wasm recursion guard sized against the link-time stack rather than the effective runtime stack."
     },
     {
       "name": "AXON_TEST_DOTENV_VAR",
@@ -1476,7 +1505,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Test fixture only; not a runtime control."
+      "note": "Test fixture only; not a runtime control.",
+      "open": " READER (verified this pass, not inherited from the category note): appears only inside #[cfg(test)] in crates/axon-ai/src/lib.rs; a test fixture, not a runtime control."
     },
     {
       "name": "AXON_TEST_DOTENV_NEW",
@@ -1489,7 +1519,8 @@
         "guest": "not-applicable"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Test fixture only; not a runtime control."
+      "note": "Test fixture only; not a runtime control.",
+      "open": " READER (verified this pass, not inherited from the category note): appears only inside #[cfg(test)] in crates/axon-ai/src/lib.rs; a test fixture, not a runtime control."
     },
     {
       "name": "AXON_HOST_TEST_VAR",
@@ -1556,7 +1587,7 @@
         "guest": "not-applicable"
       },
       "evidence": "crates/axon-ledger/tests/maintenance_authorization.rs::claimed_identity_carries_authority_only_under_the_armed_dev_escape",
-      "open": "",
+      "open": " CORRECTION to the reader set: not 'the axon-ledger CLI only'. It is also reached through Store::open_as -> Authority::resolve, which axon-signal's dashboard and MCP server and axon-ledger's own MCP server call. So the development escape also arms claim-as-authority in those SERVERS, not only in the CLI. Engine states unaffected (still no execution engine reads it); the stated scope of the escape was not.",
       "note": "Read by the axon-ledger CLI only, not by any Axon execution engine \u2014 hence not-applicable across all four engine columns rather than unknown. It is the explicit development-only escape that lets a CLAIMED identity (--as / AXON_PRINCIPAL) carry admin authority again; without it authority comes from the real uid via rbac.json authenticated_admins. Must be exactly `1`; `0`, `true`, `yes`, empty and `1 ` are all tested disarmed, so production is the default state."
     }
   ],

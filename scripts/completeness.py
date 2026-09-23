@@ -320,10 +320,36 @@ if os.path.exists(_regsrc):
 _UNREACHABLE_WORDS = ("does not link", "fails to link", "undefined symbol",
                       "signature mismatch", "not implemented", "unimplemented",
                       "cannot link", "link fails")
+# A `note` is read too, because that is where the boilerplate lives. The first
+# version of this guard read `open`/`why` only, and an adversarial review found
+# every misclassification it was built to catch hiding in `note` instead — in
+# category TEMPLATES shared by up to sixteen rows ("Interpreter-scoped by
+# construction: … E0910-refused in codegen or reachable only from an
+# interpreter-only verb"). That premise was simply false for several rows it
+# was stamped onto: native `goal_run` exists and is not refused, and the
+# wasip1 interpreter reads what the template called interpreter-only.
+_note_uses = {}
+for _c in (art.get("controls") or []):
+    if _c.get("note"):
+        _note_uses[_c["note"]] = _note_uses.get(_c["note"], 0) + 1
 for _c in (art.get("controls") or []):
     _eng = _c.get("engines") or {}
-    _why = (_c.get("open") or "") + " " + (_c.get("why") or "")
+    _why = (_c.get("open") or "") + " " + (_c.get("why") or "") + " " + (_c.get("note") or "")
     _low = _why.lower()
+    # 3. a not-applicable must be argued FOR THIS ROW. If the only text behind
+    #    it is a note shared by several rows and no row-specific `open`, the
+    #    N/A was assigned by category, never checked against the reader. That
+    #    is how the false premises above spread.
+    _row_specific = (_c.get("open") or "").strip()
+    _templated = _note_uses.get(_c.get("note") or "", 0) > 1
+    if _templated and not _row_specific:
+        for _e, _st in _eng.items():
+            if _st == "not-applicable":
+                fails.append(
+                    f"control `{_c.get('name')}` marks `{_e}` not-applicable on the "
+                    f"strength of a note shared by {_note_uses[_c['note']]} rows, with "
+                    f"no row-specific justification — say which reader makes it "
+                    f"inapplicable to THIS engine, or it was classified by category")
     for _e, _st in _eng.items():
         if _st == "blocked-by-open-defect" and "blocking defect" not in _low:
             fails.append(
