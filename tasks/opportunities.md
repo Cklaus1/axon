@@ -2255,7 +2255,7 @@ nothing would tell a reader who assumed otherwise.
 Worth settling if provenance logs ever become something diffed across engines
 (a replay equivalence check would trip on this immediately).
 
-## The asyncified browser interpreter uses ~15 GB to print "hello" — characterized, not yet fixed
+## The asyncified browser interpreter used ~15 GB to print "hello" — FIXED 2-5x, residual recorded
 
 Found because a strict gate was cancelled under memory pressure: the gate's
 `wasm_asyncify_host_await_suspends_across_async_r7c` test held a ~29 GB `node`
@@ -2309,3 +2309,48 @@ caught near its peak.
   so a gate cannot launch a 15-30 GB test while other large workloads are
   resident. Recorded rather than built, because it touches how every gate
   stage is scheduled.
+
+### Resolution (follow-up)
+
+**Cause.** binaryen's Asyncify assumes any `call_indirect` might reach the
+suspending import. axon-wasm has 344 indirect calls, so it instrumented 1418 of
+1423 functions (the interpreter's 125K-line `call_builtin` grew 4.05x), and
+the V8 memory spent executing that instrumented code is the 15 GB. It is NOT
+the suspension point itself: only 34 functions can reach `axon_host_await` by
+direct calls, and none of them is address-taken.
+
+**A dead end, recorded so it is not retried:** extracting the four
+`host_await*` arms out of `call_builtin` into their own function changed
+nothing — the indirect-call assumption still reached everything. Reverted.
+
+**Fix:** `--pass-arg=asyncify-ignore-indirect`, gated by
+`scripts/asyncify_indirect_guard.py`, which PROVES the flag is sound for the
+module being built: the set of functions that can reach the import must not
+intersect the address-taken set. It refuses to call a module safe when its
+parse finds nothing (exit 2, "undecided"). Mutation-verified on hand-built
+modules: an address-taken suspending function -> UNSAFE, exit 1.
+
+| program | before | after | output |
+|---|---|---|---|
+| `println("hello")` | 15.3 GB | 2.4 GB | identical |
+| greet (2 suspends) | 29.3 GB | 8.2 GB | identical |
+| loop (3 suspends) | 18.6 GB | 7.7 GB | identical |
+| opt | >30 GB (OOM at a 30 GB cap) | 6.1 GB | identical |
+| guess (deep nested) | 18.4 GB | 6.0 GB | identical |
+| whole harness | ~29 GB in the gate | 8.4 GB peak | PASS |
+
+**Residual, and why it is not closed:** 6-8 GB to run a few host_await calls
+is still ~200x the uninstrumented cost. It is NOT instrumentation breadth: an
+`asyncify-onlylist` restricted to exactly the 33 functions that can reach the
+import (binaryen 108 accepted the 2.5 KB list without complaint) peaked at
+8.2 GB on greet — the same as ignore-indirect. So once the indirect-call
+over-instrumentation is gone, the remaining cost lives in executing the
+instrumented REACHABLE path itself, which includes the interpreter's 125K-line
+`call_builtin` and `eval`. (An earlier draft of this note claimed binaryen could
+not accept a list that long; it was a guess, it was tested, and it was wrong.)
+
+Next step if this matters: profile V8 while running the instrumented module
+(`--prof`, or `--trace-wasm-compilation`/code-space stats) to see whether the
+growth is compiled-code size, deopt churn, or unwind/rewind bookkeeping. JSPI,
+which suspends without instrumenting anything, remains the structural answer
+and is a toolchain decision not made here.

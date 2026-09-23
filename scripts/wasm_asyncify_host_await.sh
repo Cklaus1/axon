@@ -30,6 +30,14 @@ command -v node >/dev/null 2>&1 || { echo "wasm_asyncify_host_await: node not fo
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
+# MEMORY CLASS: HEAVY. Measured under a cgroup ceiling, the four programs below
+# peak at ~8.4 GB of V8 memory together (each 6-8 GB), all of it native V8
+# structures created while executing Asyncify-instrumented code — the wasm
+# linear memory stays at 64 MB throughout. That is after asyncify-ignore-indirect
+# cut it from 18-31 GB. It is recorded here so a scheduler (or a person) can
+# see this is not an ordinary test: running it beside other memory-heavy
+# workloads is what got a strict gate cancelled at 2-3 GiB free.
+
 echo "wasm_asyncify_host_await: building axon-wasm + asyncify…"
 cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/null \
   || { echo "axon-wasm wasm build failed — skipping"; exit 0; }
@@ -37,7 +45,23 @@ RAW=target/wasm32-unknown-unknown/release/axon_wasm.wasm
 ASYNC="$WORK/axon_wasm.async.wasm"
 # Modern wasm features rustc emits must be enabled for binaryen 108 to validate.
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
-if ! wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>/dev/null; then
+# `asyncify-ignore-indirect` is what makes this test affordable, and it is only
+# sound when no function that can reach the suspend point is ever called
+# indirectly. Without it binaryen assumes every call_indirect might suspend and
+# instruments 1418 of 1423 functions; executing `println("hello")` through that
+# cost ~15 GB of V8 memory, and this harness's four programs peaked at 18-31 GB
+# — enough to endanger a shared machine and to get the gate cancelled. With it,
+# the same four programs peak at 6-8 GB and produce identical output.
+#
+# The soundness condition is CHECKED, not assumed: the guard proves no
+# suspend-reaching function is address-taken. If a future change makes one
+# indirectly callable, this fails loudly instead of corrupting a resume on
+# whichever path happens to go indirect.
+if ! python3 scripts/asyncify_indirect_guard.py "$RAW" env axon_host_await; then
+  echo "wasm_asyncify_host_await: FAIL — asyncify-ignore-indirect is not provably safe for this module"; exit 1
+fi
+if ! wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await \
+      --pass-arg=asyncify-ignore-indirect "$RAW" -o "$ASYNC" 2>/dev/null; then
   echo "wasm_asyncify_host_await: wasm-opt --asyncify failed — skipping"; exit 0
 fi
 # Asyncify REWIND re-enters every saved wasm frame, so a deep suspend point needs

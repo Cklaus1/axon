@@ -21,5 +21,9 @@ RAW="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
 # instruments only the axon_host_await import so host_await is the single suspend point.
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
 echo "wasm-opt --asyncify → $OUT"
-wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$OUT"
+# ignore-indirect cuts the asyncified module's execution memory ~2-5x; it is
+# only sound when no suspend-reaching function is address-taken, so check first.
+python3 "$(dirname "$0")/../../scripts/asyncify_indirect_guard.py" "$RAW" env axon_host_await || exit 1
+wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await \
+  --pass-arg=asyncify-ignore-indirect "$RAW" -o "$OUT"
 echo "done: $OUT ($(wc -c < "$OUT") bytes)"
