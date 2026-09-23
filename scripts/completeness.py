@@ -151,7 +151,30 @@ for c in excused:
 # defect state is nameable (`silently-ignored`) because every divergence found
 # so far had that shape: an engine that neither honours a control nor refuses
 # it, so the control reads as system-wide when it is not.
+#
+# `not-applicable` IS NOT `unreachable`. That conflation was made in this file's
+# own data and is the reason the set grew: AXON_NATIVE_TRACE was marked N/A on
+# wasm because a `native::gfx` program does not LINK there — but it does not
+# link because of the open i64->i32 ABI retarget gap (R7 §12), so fixing an
+# unrelated defect would silently turn a "permanent" N/A into a live, untested
+# control. A classification a neighbouring bugfix can invalidate was never a
+# classification about design.
+#
+#   not-applicable          the control CANNOT semantically apply to this
+#                           engine, by architecture. Browser wasm has no
+#                           process environment, so an env-var runtime control
+#                           can never reach it — no future fix changes that.
+#   unsupported             the engine deliberately does not implement the
+#                           underlying capability. A decision, not a defect.
+#   blocked-by-open-defect  the control would become meaningful if a KNOWN
+#                           open defect were fixed; the program that would
+#                           exercise it currently cannot run. Names the defect.
+#
+# The last two exist so the unknown/N-A counts cannot fall because an upstream
+# defect made a feature unreachable. Ten honest unknowns beat zero containing
+# one false N/A.
 CONTROL_STATES = {"enforced", "explicitly-refused", "not-applicable",
+                  "unsupported", "blocked-by-open-defect",
                   "unknown", "silently-ignored"}
 ENGINES = {"interpreter", "native", "wasm", "guest"}
 # A control row may be keyed by EXECUTION ENGINE or by SERVING MODE, declared
@@ -278,6 +301,44 @@ if os.path.exists(_regsrc):
                      f"no row for it — a control matrix that may omit rows "
                      f"cannot be read as coverage")
 
+# ── `not-applicable` must mean INAPPLICABLE, not merely unreachable ─────────
+#
+# The distinction is enforced mechanically because it was got wrong here by
+# hand: AXON_NATIVE_TRACE was marked N/A on wasm because a `native::gfx`
+# program fails to LINK there — which is a consequence of the open i64->i32 ABI
+# retarget gap, not a statement about design. Fixing that gap would have turned
+# a settled row into a live, untested control with nothing to notice.
+#
+# Two rules:
+#   1. a `blocked-by-open-defect` state must NAME the blocking defect, or it is
+#      just `unknown` wearing a more confident label;
+#   2. a `not-applicable` state must not justify itself with the VOCABULARY OF
+#      FAILURE. "does not link", "undefined symbol", "signature mismatch",
+#      "not implemented" describe something broken or unbuilt, and a row that
+#      reaches for those words is describing unreachability. Architecture reads
+#      differently: "has no process environment", "there is no such layer".
+_UNREACHABLE_WORDS = ("does not link", "fails to link", "undefined symbol",
+                      "signature mismatch", "not implemented", "unimplemented",
+                      "cannot link", "link fails")
+for _c in (art.get("controls") or []):
+    _eng = _c.get("engines") or {}
+    _why = (_c.get("open") or "") + " " + (_c.get("why") or "")
+    _low = _why.lower()
+    for _e, _st in _eng.items():
+        if _st == "blocked-by-open-defect" and "blocking defect" not in _low:
+            fails.append(
+                f"control `{_c.get('name')}` marks `{_e}` blocked-by-open-defect "
+                f"without naming the blocking defect — say WHICH defect, or the "
+                f"state is `unknown` with a confident label")
+        if _st == "not-applicable":
+            _hit = [w for w in _UNREACHABLE_WORDS if w in _low]
+            if _hit:
+                fails.append(
+                    f"control `{_c.get('name')}` marks `{_e}` not-applicable but "
+                    f"justifies it with {_hit!r} — that describes something "
+                    f"UNREACHABLE, not inapplicable. If a fix elsewhere would "
+                    f"make this control meaningful, it is blocked-by-open-defect")
+
 if fails:
     for f in fails:
         print(f"  UNBACKED: {f}")
@@ -334,18 +395,30 @@ lines += [
 # anything an engine ignores silently or has never been assessed on.
 _c = art.get("controls") or []
 if _c:
-    _bad = lambda c: any(v in ("unknown", "silently-ignored")
+    # `blocked-by-open-defect` counts as NOT SETTLED, deliberately. It means
+    # nobody knows what that engine does with the control and there is a
+    # standing reason nobody can find out — which is nearer to `unknown` than
+    # to a decision. Excluding it would let the headline number improve by
+    # reclassifying a row away from `unknown`, which is the exact optimism this
+    # ledger exists to resist.
+    _bad = lambda c: any(v in ("unknown", "silently-ignored",
+                               "blocked-by-open-defect")
                          for v in (c.get("engines") or {}).values())
     lines += ["", "## Cross-engine control matrix", "",
               "Per-engine support for each runtime/security control. States are a "
               "closed set: `enforced` / `explicitly-refused` / `not-applicable` / "
-              "`unknown` / `silently-ignored`. The defect state is named on purpose "
+              "`unsupported` / `blocked-by-open-defect` / "
+              "`unknown` / `silently-ignored`. `not-applicable` means the control "
+              "cannot apply BY DESIGN; a control that is merely unreachable "
+              "because some other defect is open is `blocked-by-open-defect`, so "
+              "that fixing that defect cannot quietly convert a settled row into "
+              "an untested one. The defect state is named on purpose "
               "— a control an engine neither honours nor refuses reads as "
               "system-wide when it is not, and that shape produced every divergence "
               "found so far.", "",
               f"**{len(_c)} controls tracked; "
               f"{sum(1 for c in _c for v in (c.get('engines') or {}).values() if v in ('unknown','silently-ignored'))} "
-              f"engine states unknown or silently-ignored.**", "",
+              f"engine states unsettled (unknown / silently-ignored / blocked-by-open-defect).**", "",
               "| control | category | interp | native | wasm | guest | status |",
               "|---|---|---|---|---|---|---|"]
     _sym = {"enforced": "✓", "explicitly-refused": "refused",
@@ -399,11 +472,12 @@ open(OUT, "w").write("\n".join(lines) + "\n")
 _ctl = art.get("controls") or []
 _ctl_unknown = sum(1 for c in _ctl
                    for v in (c.get("engines") or {}).values()
-                   if v in ("unknown", "silently-ignored"))
+                   if v in ("unknown", "silently-ignored",
+                            "blocked-by-open-defect"))
 print(f"AXON-COMPLETENESS.md generated: {tot} rows, {proven} with a production "
       f"proof, {unknown} unknown")
-print(f"controls: {len(_ctl)} tracked, {_ctl_unknown} engine states unknown or "
-      f"silently-ignored"
+print(f"controls: {len(_ctl)} tracked, {_ctl_unknown} engine states unsettled"
+      f" (unknown / silently-ignored / blocked-by-open-defect)"
       + ("" if not _ctl_unknown else " — NOT a clean bill"))
 # Reported BESIDE the unknown count, never traded against it: relabelling an
 # unknown as enforced to improve one number manufactures the other.
