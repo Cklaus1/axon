@@ -2254,3 +2254,58 @@ nothing would tell a reader who assumed otherwise.
 
 Worth settling if provenance logs ever become something diffed across engines
 (a replay equivalence check would trip on this immediately).
+
+## The asyncified browser interpreter uses ~15 GB to print "hello" — characterized, not yet fixed
+
+Found because a strict gate was cancelled under memory pressure: the gate's
+`wasm_asyncify_host_await_suspends_across_async_r7c` test held a ~29 GB `node`
+process while ~70 GB of unrelated model servers were resident. Cancelled on the
+user's instruction; the model servers were not touched.
+
+**Measured outside the gate, under a cgroup memory ceiling** (so the probe could
+not endanger the machine), one variable at a time:
+
+| scenario | peak | time | result |
+|---|---|---|---|
+| RAW `axon_wasm.wasm` (not asyncified), `println("hello")` | **36 MB** | 0.27 s | ok |
+| ASYNCIFIED module, same trivial program | **15.3 GB** | ~12 s | ok, prints `hello` |
+| asyncified, V8 Liftoff only (no tier-up) | 15.7 GB | ~11 s | ok |
+| asyncified, TurboFan only (no Liftoff) | 17.4 GB | 120 s | **stack overflow** |
+| asyncified, node's default stack (no `--stack-size`) | 15.8 GB | ~12 s | ok |
+| asyncified, compile + instantiate only, no eval | **55 MB** | 0.1 s | ok |
+| asyncified, under an 8 GB ceiling | — | — | **OOM-killed** |
+
+What that establishes, and what it does not:
+
+* It is **execution**, not the artifact: compiling and instantiating the 5.6 MB
+  asyncified module costs 55 MB; running a one-line program costs 15 GB.
+* It is **the asyncify transformation**: the SAME program through the
+  non-asyncified module peaks at 36 MB. A ~430x amplification from one pass.
+* It is **not** host_await: the trivial program never calls it.
+* It is **not** the fixture: one `println`.
+* It is **not** the JS stack-size flag, and **not** a single V8 tier.
+* Growth is steady at ~1.2 GB/s for the whole run, then released at exit.
+
+**Not established, and deliberately not claimed:** whether this is a leak. High
+RSS alone does not make one. The obvious candidates are native V8 structures
+created while executing the heavily-instrumented code (asyncify roughly
+triples code size, 1.7 MB -> 5.6 MB), or pathological behaviour in binaryen 108's
+asyncify output for this module. The module ships no name section, so the
+frames in the TurboFan overflow could not be symbolised; rebuilding with names
+kept is the next step, not a guess at the internals.
+
+**Why the gate numbers were higher (~29 GB):** the gate runs four programs
+through the harness, including `examples/interactive/guess.ax`, and one run was
+caught near its peak.
+
+**Not done, on purpose:**
+* The test was NOT weakened or skipped to make the gate fit. A test that proves
+  the browser can suspend across async JS is load-bearing.
+* No memory budget was added yet: the realistic expected peak is the thing
+  being established, and it should come from a fixed module, not from today's
+  number.
+* **Resource-aware scheduling** is the structural answer regardless of the fix:
+  heavyweight tests should declare their memory class and run exclusively,
+  so a gate cannot launch a 15-30 GB test while other large workloads are
+  resident. Recorded rather than built, because it touches how every gate
+  stage is scheduled.
