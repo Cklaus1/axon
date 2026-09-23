@@ -1534,16 +1534,16 @@
     {
       "name": "guest.policy-delivery-default-backend",
       "category": "authorization/effect-ceiling",
-      "status": "open",
+      "status": "resolved",
       "axis": "engine",
       "engines": {
         "interpreter": "not-applicable",
         "native": "not-applicable",
         "wasm": "not-applicable",
-        "guest": "unknown"
+        "guest": "enforced"
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "open": "axon-guest-init is compiled into the guest image ONLY for AXON_KERNEL_BACKEND=linux. The DEFAULT backend (axon-guest-kernel) writes a stub /init that execs `axon run` directly and never invokes guest-init at all, delivering policy by kernel cmdline (axon.policy=<base64>) and enforcing it in-kernel instead. So FG-023 hardens the non-default path only. The kernel parser appears to fail closed on every failure mode it handles (set_closed_policy, EffectSet(0) default), but whether a syntactically-valid-but-EMPTY axon.policy={} reaches the same conclusion is UNTRACED \u2014 the analogous defect in the analogous parser."
+      "open": "axon-guest-init is compiled into the guest image ONLY for AXON_KERNEL_BACKEND=linux. The DEFAULT backend (axon-guest-kernel) writes a stub /init that execs `axon run` directly and never invokes guest-init at all, delivering policy by kernel cmdline (axon.policy=<base64>) and enforcing it in-kernel instead. So FG-023 hardens the non-default path only. The kernel parser appears to fail closed on every failure mode it handles (set_closed_policy, EffectSet(0) default), but whether a syntactically-valid-but-EMPTY axon.policy={} reaches the same conclusion is UNTRACED \u2014 the analogous defect in the analogous parser. TRACED, IN A LIVE FIRECRACKER VM \u2014 and the trace found a defect the question above did not anticipate. The kernel's program issues one openat, which needs FS, so FS granted-or-withheld is directly observable on the serial console. Against the kernel from ea7de7b3: absent policy, malformed (non-base64), {}, all-null object, unknown-fields-only, and axon-vm's real default payload all WITHHOLD FS and the gate blocks the syscall (violation, exit 8). A valid minimal IO-only policy withholds FS. A valid policy granting FS, and axon-vm's real payload granting FS, both GRANT it (the positive controls that stop 'deny everything' from passing the rest). So syntactically-valid-but-semantically-empty policy FAILS CLOSED on this path.\nTHE DEFECT IT FOUND: the parser took the first textual `\"key\":` anywhere in the payload. Measured in a live VM against the PRE-FIX kernel, a nested `{\"meta\":{\"allowed_effects\":[\"FS\"]},\"allowed_effects\":[]}`, a duplicated key with the broad value first, and an unterminated array each GRANTED FS. Not reachable from axon-vm's current flat, serde-escaped MmdsPayload, and fixed anyway in ea7de7b3 because a capability parser must not rely on its producer never nesting. Keys are now found among top-level members only, duplicates grant nothing, and arrays must terminate. Host tests include! the same file the kernel compiles and were RED against the old parser."
     },
     {
       "name": "AXON_LEDGER_DEV_IMPERSONATE",
@@ -2000,6 +2000,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "105444e"
+    },
+    {
+      "id": "FG-041",
+      "where": "crates/axon-guest-kernel/src/mmds_parse.rs",
+      "claimed": "The guest kernel MMDS policy parser fails closed: \"A policy we cannot read is a policy we do not have; both now deny.\" (AUDIT T48), backed by host tests that include! the same file the kernel compiles.",
+      "reality": "It failed closed on every shape its tests exercised, all of which were FLAT. It located each field by a substring search for `\"key\":` and took the first textual match anywhere in the payload, so a key nested inside another object, a duplicated key, or an unterminated array was read as the grant. The T48 tests never built a nested or duplicated payload, so they could not see it.",
+      "reproduced": "Live Firecracker VM, kernel built from the pre-fix parser. The kernel program issues one openat needing FS. `{\"meta\":{\"allowed_effects\":[\"FS\"]},\"allowed_effects\":[]}` GRANTED FS; `{\"allowed_effects\":[\"FS\"],\"allowed_effects\":[]}` GRANTED FS; `{\"allowed_effects\":[\"IO\",\"FS\"` GRANTED FS. Same payloads against the fixed kernel: FS withheld, openat blocked, violation exit 8.",
+      "fix": "Keys located among TOP-LEVEL members only, by a byte walk tracking nesting depth and string/escape state (no allocation; bare-metal). Duplicated keys are ambiguous and grant nothing; arrays must terminate; a `]` inside a quoted element is text; non-single-object payloads are refused. Applied to allowed_effects, budget_tokens and principal. Not reachable from axon-vm's current flat serde-escaped MmdsPayload \u2014 fixed because the parser's correctness depended on the producer never nesting. Two host tests added, RED against the old parser; full live-VM policy matrix (absent, malformed, {}, all-null, unknown-only, minimal, permitting) recorded, with positive controls.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "ea7de7b3"
     }
   ]
 }
