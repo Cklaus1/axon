@@ -422,8 +422,12 @@ write_receipt() {
   local started reported passed failed
   started="$(grep -cE '^[[:space:]]+(Running|Doc-tests)' "$dir/log" 2>/dev/null | head -1)"
   reported="$(grep -cE '^test result:' "$dir/log" 2>/dev/null | head -1)"
-  passed="$(grep -oE '[0-9]+ passed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-  failed="$(grep -oE '[0-9]+ failed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  # Only cargo's own `test result:` lines. Summing `N passed` from ANYWHERE in
+  # the log added nested tool output (`claims_gate: 5 passed, 1 failed`) to the
+  # totals — measured 1552/3 against cargo's 1547/2 — and any tool that prints
+  # "N passed" would add phantom passes the same way.
+  passed="$(grep -E '^test result:' "$dir/log" 2>/dev/null | grep -oE '[0-9]+ passed' | awk '{s+=$1} END{print s+0}')"
+  failed="$(grep -E '^test result:' "$dir/log" 2>/dev/null | grep -oE '[0-9]+ failed' | awk '{s+=$1} END{print s+0}')"
   : "${started:=0}"; : "${reported:=0}"
 
   # IS THIS A GATE RUN, AND WAS IT STRICT. Recorded as explicit fields rather

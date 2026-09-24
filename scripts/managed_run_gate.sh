@@ -178,6 +178,34 @@ case "$(cat "$D3D/scope")" in
 esac
 rm -rf "$D3D"
 
+# ── 3e. the receipt counts CARGO's tests, not every "N passed" in the log ──
+# `tests_passed`/`tests_failed` were summed from `[0-9]+ passed` ANYWHERE in the
+# log. Measured on a real axon-core run: a nested tool's line
+# (`claims_gate: 5 passed, 1 failed`) was added to cargo's totals, so the
+# receipt read 1552/3 while cargo reported 1547/2. That run failed closed by
+# luck; any tool printing "N passed" adds phantom PASSES the same way — a
+# false-green shape. Only `test result:` lines are cargo's tally.
+D3E=$("$RM" start gate_selftest_tally -- bash -c '
+  echo "     Running tests/x.rs (target/debug/deps/x-0)"
+  echo "some_tool: 900 passed, 0 failed"
+  echo "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  echo "     Running tests/y.rs (target/debug/deps/y-0)"
+  echo "test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  echo "other: 5 failed checks"
+  exit 0') || fail "start failed"
+# Wait for the RECEIPT, not the status: status flips first, the receipt is
+# written after, and reading it in between makes this check fail for the
+# wrong reason.
+for _ in $(seq 1 100); do [ -s "$D3E/receipt" ] && break; sleep 0.1; done
+[ -s "$D3E/receipt" ] || fail "no receipt written for a completed run"
+[ "$(sed -n 's/^tests_passed=//p' "$D3E/receipt")" = 7 ] \
+  || fail "receipt tests_passed=$(sed -n 's/^tests_passed=//p' "$D3E/receipt"), expected 7 — non-cargo 'N passed' text was counted as passing tests"
+# Both directions: cargo's REAL failures must still be counted (2), and a
+# non-cargo "5 failed" must not be.
+[ "$(sed -n 's/^tests_failed=//p' "$D3E/receipt")" = 2 ] \
+  || fail "receipt tests_failed=$(sed -n 's/^tests_failed=//p' "$D3E/receipt"), expected 2 — cargo failures must count and non-cargo text must not"
+rm -rf "$D3E"
+
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has
 # an empty log, and demanding content here failed a correct run — the check
