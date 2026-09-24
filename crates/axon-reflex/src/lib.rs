@@ -36,6 +36,8 @@
 //! are NOT invariant here. They belong to the mode matrix in
 //! `AXON-COMPLETENESS.json` under `axis: mode`.
 
+pub mod shortlist;
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::ToSocketAddrs;
