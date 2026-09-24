@@ -24,8 +24,56 @@ pub struct RunOutcome {
     pub verdict: Verdict,
 }
 
+/// What kind of confinement a runtime actually provides (B259).
+///
+/// A label, not a tier: it says what the runtime IS so a request that needs
+/// something stronger can be refused rather than silently downgraded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Isolation {
+    /// A child process of the supervisor on the same host, same uid, same
+    /// kernel. Capability limits are enforced by the Axon interpreter's
+    /// sandbox (`sandbox_run`), not by any OS/VM boundary. The label is
+    /// `process_scoped`.
+    ProcessScoped,
+}
+
+impl Isolation {
+    pub fn label(self) -> &'static str {
+        match self {
+            Isolation::ProcessScoped => "process_scoped",
+        }
+    }
+}
+
+/// What confinement a request REQUIRES.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IsolationRequirement {
+    /// Any runtime will do (every existing caller: the legacy semantics).
+    #[default]
+    Any,
+    /// A qualified microVM. No runtime in this crate provides one, so this is
+    /// always refused here — never routed to a subprocess as a fallback
+    /// (G13-r22-no-weak-fallback).
+    MicroVm,
+}
+
+impl IsolationRequirement {
+    pub fn satisfied_by(self, iso: Isolation) -> bool {
+        match (self, iso) {
+            (IsolationRequirement::Any, _) => true,
+            (IsolationRequirement::MicroVm, Isolation::ProcessScoped) => false,
+        }
+    }
+}
+
 /// The seam. Every method that touches the model/interpreter/OS lives here.
 pub trait Runtime {
+    /// What confinement this runtime provides. Defaults to the WEAKEST label,
+    /// so a runtime that forgets to say can only under-claim.
+    fn isolation(&self) -> Isolation {
+        Isolation::ProcessScoped
+    }
+
     /// The effect row a program declares it may perform. An error / absent
     /// declaration MUST map to `DeclaredEffects::unknown()` (deny-by-default).
     fn declared_effects(&self, program: &Path) -> DeclaredEffects;
@@ -68,12 +116,40 @@ use std::time::Duration;
 /// (S3) denies a program whose declared effects exceed the grant BEFORE this
 /// runs; here we additionally bound execution in time and map the interpreter's
 /// fail-closed exit codes (6/7/8) back to verdicts.
+///
+/// B259: this is the LEGACY PROCESS ADAPTER and says so — its
+/// [`Runtime::isolation`] is `process_scoped`, so a request requiring a
+/// microVM is refused before it gets here. Its wrapper is staged in a private
+/// per-run `0700` directory (not a guessable name in shared `/tmp`), and what
+/// it captures from the child is bounded ([`DEFAULT_MAX_CAPTURE_BYTES`] per
+/// stream, head + tail kept).
 pub struct AxonCoreRuntime {
     axon_bin: PathBuf,
     timeout: Duration,
+    /// Parent of the per-run private staging directories.
+    staging_root: PathBuf,
+    /// Per-stream capture bound (bytes).
+    max_capture: usize,
 }
 
+/// Default per-stream bound on captured child output: 1 MiB.
+pub const DEFAULT_MAX_CAPTURE_BYTES: usize = 1 << 20;
+
 impl AxonCoreRuntime {
+    /// Override where private per-run staging directories are created
+    /// (default: the system temp dir). Each run still gets its own fresh
+    /// `0700` directory underneath.
+    pub fn with_staging_root(mut self, root: PathBuf) -> Self {
+        self.staging_root = root;
+        self
+    }
+
+    /// Override the per-stream capture bound.
+    pub fn with_max_capture(mut self, bytes: usize) -> Self {
+        self.max_capture = bytes.max(2);
+        self
+    }
+
     /// Resolve the canonical entrypoint from `AXON_BIN` (an absolute path, not
     /// an ambient PATH search) or a sensible default, and the timeout from
     /// `AXON_OS_TIMEOUT_MS` (default 30s).
@@ -85,18 +161,120 @@ impl AxonCoreRuntime {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(30_000);
-        AxonCoreRuntime {
-            axon_bin: absolutize(axon_bin),
-            timeout: Duration::from_millis(ms),
-        }
+        Self::with_bin_and_timeout(axon_bin, Duration::from_millis(ms))
     }
 
     pub fn with_bin_and_timeout(axon_bin: PathBuf, timeout: Duration) -> Self {
         AxonCoreRuntime {
             axon_bin: absolutize(axon_bin),
             timeout,
+            staging_root: std::env::temp_dir(),
+            max_capture: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
+}
+
+/// A private, per-run staging directory: created fresh with mode `0700`
+/// (`create`, not `create_all`, so a pre-existing path — e.g. a symlink an
+/// attacker planted under a predictable name — is an error, not reused), and
+/// removed with everything in it on drop.
+///
+/// Replaces `$TMPDIR/axon-os-wrap-<pid>-<stem>.ax`, a predictable name in a
+/// shared directory that any local user could pre-create or read.
+pub(crate) struct StagingDir {
+    path: PathBuf,
+}
+
+impl StagingDir {
+    pub(crate) fn create(root: &Path) -> std::io::Result<StagingDir> {
+        use std::os::unix::fs::DirBuilderExt;
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut last = None;
+        for attempt in 0..8u32 {
+            let path = root.join(format!(
+                "axon-os-run-{}-{}-{n}-{attempt}",
+                std::process::id(),
+                done_nonce()
+            ));
+            match std::fs::DirBuilder::new().mode(0o700).create(&path) {
+                Ok(()) => return Ok(StagingDir { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| std::io::Error::other("staging dir collision")))
+    }
+
+    /// Write a new file inside the directory (`create_new`: never follows or
+    /// overwrites an existing entry).
+    pub(crate) fn write_new(&self, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let p = self.path.join(name);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&p)?;
+        f.write_all(bytes)?;
+        Ok(p)
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StagingDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Bounded capture of one child stream: keeps the first `cap/2` and the last
+/// `cap/2` bytes and counts what was dropped. The whole stream is still READ
+/// (so the child never blocks on a full pipe — T25), only not retained.
+///
+/// Head AND tail, not just head: the wrapper's completion marker is the LAST
+/// line of stdout, and a job that printed more than the bound before it would
+/// otherwise lose the marker and be sealed as not-completed.
+fn read_bounded<R: std::io::Read>(mut r: R, cap: usize) -> (String, u64) {
+    let half = (cap / 2).max(1);
+    let mut head: Vec<u8> = Vec::new();
+    let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+    let mut dropped: u64 = 0;
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let mut chunk = &buf[..n];
+        if head.len() < half {
+            let take = (half - head.len()).min(chunk.len());
+            head.extend_from_slice(&chunk[..take]);
+            chunk = &chunk[take..];
+        }
+        for &b in chunk {
+            if tail.len() == half {
+                tail.pop_front();
+                dropped += 1;
+            }
+            tail.push_back(b);
+        }
+    }
+    let mut out = String::from_utf8_lossy(&head).into_owned();
+    if dropped > 0 {
+        out.push_str(&format!(
+            "\n[axon-os: {dropped} bytes of output omitted (capture bound {cap})]\n"
+        ));
+    }
+    let tail: Vec<u8> = tail.into_iter().collect();
+    out.push_str(&String::from_utf8_lossy(&tail));
+    (out, dropped)
 }
 
 /// Resolve a possibly-relative entrypoint to an absolute path NOW (against the
@@ -134,10 +312,21 @@ struct ProcOutcome {
 /// When the file contains `"latch":"tripped"`, SIGKILL the child immediately.
 /// Returns `killed_by_latch = true` (→ `Verdict::Halted`, exit 4 for R27;
 /// the R29 monitor overrides to exit 12 via `containment_violation` in cmd_run).
+#[cfg(test)]
 fn run_bounded(
     cmd: &mut Command,
     timeout: Duration,
     kill_file: Option<&std::path::Path>,
+) -> std::io::Result<ProcOutcome> {
+    run_bounded_capped(cmd, timeout, kill_file, DEFAULT_MAX_CAPTURE_BYTES)
+}
+
+/// [`run_bounded`] with an explicit per-stream capture bound (B259).
+fn run_bounded_capped(
+    cmd: &mut Command,
+    timeout: Duration,
+    kill_file: Option<&std::path::Path>,
+    max_capture: usize,
 ) -> std::io::Result<ProcOutcome> {
     /// SIGKILL the child's whole process GROUP, then reap the child.
     ///
@@ -190,21 +379,19 @@ fn run_bounded(
     //
     // Drain both pipes on their own threads, concurrently with the wait. The
     // timeout and kill-file polling below are untouched; only the reads move.
+    //
+    // B259: and BOUNDED. `read_to_string` retained everything a job printed,
+    // so a job could make the supervisor allocate without limit. The pipes are
+    // still drained to EOF; only `max_capture` bytes per stream are kept.
     let out_h = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = String::new();
-        if let Some(mut s) = stdout_pipe {
-            let _ = s.read_to_string(&mut buf);
-        }
-        buf
+        stdout_pipe
+            .map(|s| read_bounded(s, max_capture).0)
+            .unwrap_or_default()
     });
     let err_h = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = String::new();
-        if let Some(mut s) = stderr_pipe {
-            let _ = s.read_to_string(&mut buf);
-        }
-        buf
+        stderr_pipe
+            .map(|s| read_bounded(s, max_capture).0)
+            .unwrap_or_default()
     });
     let start = std::time::Instant::now();
     let mut killed_by_latch = false;
@@ -493,6 +680,12 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> St
 }
 
 impl Runtime for AxonCoreRuntime {
+    /// Stated explicitly, not inherited from the default, so a change to the
+    /// trait default cannot silently relabel the legacy adapter.
+    fn isolation(&self) -> Isolation {
+        Isolation::ProcessScoped
+    }
+
     fn declared_effects(&self, program: &Path) -> DeclaredEffects {
         match std::fs::read_to_string(program) {
             Ok(src) => scan_effects(&src),
@@ -536,23 +729,43 @@ impl Runtime for AxonCoreRuntime {
         };
         let nonce = done_nonce();
         let wrapper_src = wrap_in_sandbox(&src, grant, budget, &nonce);
-        let wrapper_path = std::env::temp_dir().join(format!(
-            "axon-os-wrap-{}-{}.ax",
-            std::process::id(),
-            program
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("job")
-        ));
-        if std::fs::write(&wrapper_path, &wrapper_src).is_err() {
-            return RunOutcome {
-                events: vec![],
-                verdict: Verdict::Denied {
-                    reason: "cannot stage sandbox wrapper".into(),
-                    axis: "io".into(),
-                },
+        // B259: a PRIVATE per-run 0700 directory, removed on every exit path
+        // when `staging` drops. The wrapper name inside it is fixed; its
+        // uniqueness comes from the directory.
+        let stem = program
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| {
+                s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            })
+            .unwrap_or("job");
+        let staging = match StagingDir::create(&self.staging_root) {
+            Ok(d) => d,
+            Err(e) => {
+                return RunOutcome {
+                    events: vec![],
+                    verdict: Verdict::Denied {
+                        reason: format!("cannot create private staging dir: {e}"),
+                        axis: "io".into(),
+                    },
+                }
+            }
+        };
+        let wrapper_path =
+            match staging.write_new(&format!("{stem}.wrap.ax"), wrapper_src.as_bytes()) {
+                Ok(p) => p,
+                Err(_) => {
+                    return RunOutcome {
+                        events: vec![],
+                        verdict: Verdict::Denied {
+                            reason: "cannot stage sandbox wrapper".into(),
+                            axis: "io".into(),
+                        },
+                    };
+                }
             };
-        }
+        debug_assert!(wrapper_path.starts_with(staging.path()));
 
         let mut cmd = Command::new(&self.axon_bin);
         cmd.arg("run").arg(&wrapper_path);
@@ -621,8 +834,8 @@ impl Runtime for AxonCoreRuntime {
         // compliance monitor. Both write `{"latch":"tripped"}` to stop the job.
         let kill_file_env = std::env::var_os("AXON_KILL_FILE").map(std::path::PathBuf::from);
         let kill_file = kill_file_env.as_deref();
-        let proc_res = run_bounded(&mut cmd, self.timeout, kill_file);
-        let _ = std::fs::remove_file(&wrapper_path); // best-effort cleanup
+        let proc_res = run_bounded_capped(&mut cmd, self.timeout, kill_file, self.max_capture);
+        drop(staging); // removes the private dir and the wrapper in it
         let proc = match proc_res {
             Ok(p) => p,
             Err(e) => {
@@ -849,6 +1062,63 @@ mod runtime_tests {
             start.elapsed() < Duration::from_secs(2),
             "must return promptly after the kill, not wait out the sleep"
         );
+    }
+
+    #[test]
+    fn read_bounded_keeps_head_and_tail_and_counts_the_rest() {
+        let data: Vec<u8> = (0..10_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+        let (s, dropped) = read_bounded(&data[..], 100);
+        assert_eq!(dropped, 10_000 - 100);
+        assert!(s.starts_with(std::str::from_utf8(&data[..50]).unwrap()));
+        assert!(s.ends_with(std::str::from_utf8(&data[10_000 - 50..]).unwrap()));
+        assert!(s.contains("9900 bytes of output omitted"));
+        // Under the bound: byte-identical, no annotation.
+        let (s, dropped) = read_bounded(&b"hello\n"[..], 100);
+        assert_eq!((s.as_str(), dropped), ("hello\n", 0));
+    }
+
+    #[test]
+    fn run_bounded_capped_drains_a_flood_without_retaining_it() {
+        // 8 MiB of output, 4 KiB bound: must neither deadlock (T25) nor retain.
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg("head -c 8388608 /dev/zero | tr '\\0' x; echo; echo LAST");
+        let out = run_bounded_capped(&mut cmd, Duration::from_secs(20), None, 4096).unwrap();
+        assert_eq!(out.code, Some(0));
+        assert!(out.stdout.len() < 4096 + 200, "{}", out.stdout.len());
+        assert!(out.stdout.trim_end().ends_with("LAST"));
+    }
+
+    #[test]
+    fn staging_dir_is_private_fresh_and_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("axon-os-stg-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let d = StagingDir::create(&root).unwrap();
+        let mode = std::fs::metadata(d.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        let f = d.write_new("w.ax", b"x").unwrap();
+        assert_eq!(
+            std::fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(d.write_new("w.ax", b"y").is_err(), "never overwrites");
+        let p = d.path().to_path_buf();
+        let d2 = StagingDir::create(&root).unwrap();
+        assert_ne!(d2.path(), p, "each run gets its own directory");
+        drop(d);
+        assert!(!p.exists());
+        drop(d2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_legacy_adapter_is_labelled_process_scoped() {
+        let rt = AxonCoreRuntime::with_bin_and_timeout("/bin/false".into(), Duration::from_secs(1));
+        assert_eq!(rt.isolation(), Isolation::ProcessScoped);
+        assert_eq!(rt.isolation().label(), "process_scoped");
+        assert!(!IsolationRequirement::MicroVm.satisfied_by(rt.isolation()));
+        assert!(IsolationRequirement::Any.satisfied_by(rt.isolation()));
     }
 
     #[test]

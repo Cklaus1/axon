@@ -6,7 +6,7 @@ use crate::gate::{admit, Admission};
 use crate::grant::EffectSet;
 use crate::manifest::JobManifest;
 use crate::record::{build, RawEvent, RunRecord};
-use crate::runtime::Runtime;
+use crate::runtime::{IsolationRequirement, Runtime};
 use crate::verdict::Verdict;
 
 /// Run a job under the supervisor (R21 §4.2). `supervisor_grant` is the
@@ -22,6 +22,48 @@ pub fn run(
     run_id: &str,
     rt: &impl Runtime,
 ) -> RunRecord {
+    run_requiring(
+        manifest,
+        job_path,
+        supervisor_grant,
+        run_id,
+        IsolationRequirement::Any,
+        rt,
+    )
+}
+
+/// [`run`], for a request that states the confinement it REQUIRES (B259).
+///
+/// If `rt` cannot provide it, the job is refused on the `isolation` axis
+/// BEFORE approval, admission, mint or run — zero runtime calls. There is no
+/// fallback: a request requiring a microVM is never handed to a
+/// `process_scoped` runtime (G13-r22-no-weak-fallback).
+pub fn run_requiring(
+    manifest: &JobManifest,
+    job_path: &std::path::Path,
+    supervisor_grant: &crate::grant::Grant,
+    run_id: &str,
+    required: IsolationRequirement,
+    rt: &impl Runtime,
+) -> RunRecord {
+    let iso = rt.isolation();
+    if !required.satisfied_by(iso) {
+        let denial = RawEvent::new("denied", "isolation", EffectSet::default(), "");
+        return build(
+            run_id,
+            manifest,
+            manifest.seed,
+            std::slice::from_ref(&denial),
+            Verdict::Denied {
+                reason: format!(
+                    "request requires {required:?} isolation; this runtime is {} \
+                     and is never used as a fallback for it",
+                    iso.label()
+                ),
+                axis: "isolation".to_string(),
+            },
+        );
+    }
     // 0. AUTHORIZATION — before anything else, at the point every execution
     //    path converges on.
     //
