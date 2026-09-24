@@ -33,7 +33,8 @@
 
 use axon_cortex::action::SymbolRef;
 use axon_cortex::runner::{
-    CheckRegistry, EditGrant, EpisodeOutcome, LocalInterpreterExecutor, Runner, LOCAL_AXON_TEST_ID,
+    CheckRegistry, EditGrant, EpisodeOutcome, FabricDispatch, FabricSubmitExecutor,
+    LocalInterpreterExecutor, Runner, LOCAL_AXON_TEST_ID,
 };
 
 const USAGE: &str = "\
@@ -82,6 +83,18 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          resolved and its sha256 PINNED at startup; a check is
                          refused, before anything is spawned, if those bytes
                          change during the run.
+  --fabric-journal FILE  route EVERY check through the Fabric submit path: each
+                         dispatch becomes an acf-compute-request/1 handed to the
+                         `axon-fabric` binary named (by path AND sha256) in
+                         --check-registry, which rechecks the authority epoch,
+                         journals intent/launch/terminal to FILE and returns an
+                         acf-execution-receipt/1. Requires --check-registry,
+                         --fabric-store, --fabric-tenant, --fabric-family and
+                         --fabric-epoch. Receipts appear under `receipts` in
+                         --json. A refused or verdict-less dispatch is exit 22.
+  --fabric-store DIR     the axon-loop store holding the authority epoch
+  --fabric-tenant T / --fabric-family F   the scope within it
+  --fabric-epoch N       the epoch this run was authorized under
   --check-registry FILE  a `cortex-check-registry/1` JSON file naming the
                          checker by path AND sha256 (entry id
                          `axon-test-local`). Verified on load; a mismatch or a
@@ -116,10 +129,95 @@ fn no_target(reason: &str) -> ! {
 /// A registration failure exits 22 (environment) with nothing spawned: the
 /// same code an unrunnable checker has always had, because it is the same
 /// fact — no verdict can be produced.
+/// `--fabric-*` flags. All operator input.
+#[derive(Default)]
+struct FabricArgs {
+    journal: Option<std::path::PathBuf>,
+    store: Option<std::path::PathBuf>,
+    tenant: Option<String>,
+    family: Option<String>,
+    epoch: Option<u64>,
+}
+
+impl FabricArgs {
+    /// Consume one `--fabric-*` flag; false if `flag` is not one.
+    fn take(&mut self, flag: &str, val: &mut dyn FnMut(&str) -> String) -> bool {
+        match flag {
+            "--fabric-journal" => self.journal = Some(val(flag).into()),
+            "--fabric-store" => self.store = Some(val(flag).into()),
+            "--fabric-tenant" => self.tenant = Some(val(flag)),
+            "--fabric-family" => self.family = Some(val(flag)),
+            "--fabric-epoch" => {
+                let raw = val(flag);
+                self.epoch = Some(raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--fabric-epoch must be a number, got `{raw}`"))
+                }))
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
+/// The Fabric dispatch, if one was asked for. `Arc` so the CLI can read the
+/// receipts back after the Runner has used the executor.
+fn fabric_executor(
+    f: &FabricArgs,
+    check_registry: Option<&std::path::Path>,
+    workspace: &std::path::Path,
+) -> Option<std::sync::Arc<FabricSubmitExecutor>> {
+    let journal = f.journal.clone()?;
+    let need = |v: Option<String>, name: &str| {
+        v.unwrap_or_else(|| usage(&format!("--fabric-journal requires {name}")))
+    };
+    let cfg = FabricDispatch {
+        registry_file: check_registry
+            .unwrap_or_else(|| usage("--fabric-journal requires --check-registry"))
+            .to_path_buf(),
+        journal,
+        store: f
+            .store
+            .clone()
+            .unwrap_or_else(|| usage("--fabric-journal requires --fabric-store")),
+        tenant: need(f.tenant.clone(), "--fabric-tenant"),
+        family: need(f.family.clone(), "--fabric-family"),
+        expected_epoch: f
+            .epoch
+            .unwrap_or_else(|| usage("--fabric-journal requires --fabric-epoch")),
+        principal_ref: "cortex:repair".into(),
+        grant_ref: format!("cortex-workspace:{}", workspace.display()),
+        policy_digest: format!("acf1:{}", "0".repeat(64)),
+        task_id: "cortex-repair".into(),
+    };
+    match FabricSubmitExecutor::new(cfg) {
+        Ok(x) => Some(std::sync::Arc::new(x)),
+        Err(e) => {
+            eprintln!("the checks could not be run: {e}");
+            std::process::exit(22);
+        }
+    }
+}
+
+/// Adapter so the Runner can own a handle while the CLI keeps another.
+struct SharedFabric(std::sync::Arc<FabricSubmitExecutor>);
+
+impl axon_cortex::runner::CheckExecutor for SharedFabric {
+    fn id(&self) -> String {
+        self.0.id()
+    }
+    fn run_checks(
+        &self,
+        req: &axon_cortex::runner::CheckRequest<'_>,
+    ) -> std::io::Result<axon_cortex::runner::CheckReport> {
+        self.0.run_checks(req)
+    }
+}
+
 fn registered_runner(
     axon_bin: &std::path::Path,
     check_registry: Option<&std::path::Path>,
     workspace: &std::path::Path,
+    fabric: Option<&std::sync::Arc<FabricSubmitExecutor>>,
 ) -> Runner {
     let reg = match check_registry {
         Some(file) => CheckRegistry::load(file),
@@ -141,6 +239,11 @@ fn registered_runner(
             .map_err(|e| e.to_string())
     });
     match exec {
+        Ok((exe, _)) if fabric.is_some() => Runner::with_check_executor(
+            exe,
+            workspace,
+            Box::new(SharedFabric(std::sync::Arc::clone(fabric.expect("some")))),
+        ),
         Ok((exe, x)) => Runner::with_check_executor(exe, workspace, Box::new(x)),
         Err(e) => {
             eprintln!("the checks could not be run: {e}");
@@ -174,6 +277,7 @@ fn main() {
     let mut generator_spec = "none".to_string();
     let mut axon_bin = std::path::PathBuf::from("axon");
     let mut check_registry: Option<std::path::PathBuf> = None;
+    let mut fabric_args = FabricArgs::default();
     let mut write_prefixes: Vec<String> = Vec::new();
     let mut json = false;
     let mut candidates: usize = 3;
@@ -193,6 +297,11 @@ fn main() {
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--check-registry" => {
                 check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
+            }
+            f if f.starts_with("--fabric-") => {
+                if !fabric_args.take(f, &mut val) {
+                    usage(&format!("unknown argument `{f}`"))
+                }
             }
             "--write-prefix" => write_prefixes.push(val("--write-prefix")),
             "--candidates" => {
@@ -261,7 +370,13 @@ fn main() {
             },
         };
 
-    let mut runner = registered_runner(&axon_bin, check_registry.as_deref(), &workspace);
+    let fabric = fabric_executor(&fabric_args, check_registry.as_deref(), &workspace);
+    let mut runner = registered_runner(
+        &axon_bin,
+        check_registry.as_deref(),
+        &workspace,
+        fabric.as_ref(),
+    );
     // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
     // was redundant with the check below and strictly worse: it accepted any
     // FUNCTION, so a `--check` naming an ordinary function passed it and was
@@ -516,6 +631,9 @@ fn main() {
                     Ok(d) => serde_json::Value::String(d),
                     Err(e) => serde_json::Value::String(format!("<undigestable: {e}>")),
                 },
+                // Present only under --fabric-journal: the acf-execution-receipt/1
+                // of every check this run dispatched, in order.
+                "receipts": fabric.as_ref().map(|f| f.receipts()),
             })
         );
     } else {
@@ -559,6 +677,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     let (mut file, mut check) = (String::new(), String::new());
     let mut axon_bin = std::path::PathBuf::from("axon");
     let mut check_registry: Option<std::path::PathBuf> = None;
+    let mut fabric_args = FabricArgs::default();
     let mut json = false;
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -572,6 +691,11 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--check-registry" => {
                 check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
+            }
+            f if f.starts_with("--fabric-") => {
+                if !fabric_args.take(f, &mut val) {
+                    usage(&format!("unknown argument `{f}`"))
+                }
             }
             "--json" => json = true,
             other => usage(&format!("unknown argument `{other}`")),
@@ -591,7 +715,13 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
              as evidence, and the target becomes a function of the answer",
         );
     }
-    let runner = registered_runner(&axon_bin, check_registry.as_deref(), &workspace);
+    let fabric = fabric_executor(&fabric_args, check_registry.as_deref(), &workspace);
+    let runner = registered_runner(
+        &axon_bin,
+        check_registry.as_deref(),
+        &workspace,
+        fabric.as_ref(),
+    );
     let src = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {file}: {e}")));
     // An unrunnable checker is reported as such, never as an empty spectrum:
@@ -609,6 +739,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
             "{}",
             serde_json::json!({
                 "schema": "cortex-locate/1",
+                "receipts": fabric.as_ref().map(|f| f.receipts()),
                 "failing": failing,
                 "passing": passing,
                 // Every candidate WITH its score, not just the winner. The

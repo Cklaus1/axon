@@ -43,7 +43,7 @@ pub fn spawn_counting_wrapper(dir: &Path, spawns: &Path) -> PathBuf {
     std::fs::write(
         &p,
         format!(
-            "#!/bin/sh\necho spawned >> '{}'\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\necho \"$1\" >> '{}'\nexec '{}' \"$@\"\n",
             spawns.display(),
             axon_bin().display()
         ),

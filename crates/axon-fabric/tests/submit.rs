@@ -546,3 +546,140 @@ fn an_epoch_change_between_submit_and_launch_is_refused_before_the_launch_record
     let u = j.scope_usage(&scope()).unwrap();
     assert_eq!(u.committed(), axon_fabric::ResourceVector::default());
 }
+
+// ── linux-microvm-protected dispatch, through a STAND-IN launcher ───────────
+//
+// The real `scripts/fc_linux_profile.sh` needs root + jailer + the built guest
+// artifacts; these tests drive the Fabric's side of the contract (argv it
+// passes, result.json → receipt, --verify-result rebinding, cleanup) with a
+// stand-in that writes the documented `axon-linux-microvm-result/1` shape.
+// They say nothing about the VM itself — B263's qualification harness does.
+
+fn stand_in_launcher(
+    env: &Env,
+    exit: i32,
+    bound: bool,
+    cleanup_ok: bool,
+    verify_exit: i32,
+) -> std::path::PathBuf {
+    let p = env.dir.path().join(format!(
+        "fake-launcher-{exit}-{bound}-{cleanup_ok}-{verify_exit}.sh"
+    ));
+    let body = format!(
+        r#"#!/bin/sh
+if [ "$1" = "--verify-result" ]; then exit {verify_exit}; fi
+OUT=""
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
+mkdir -p "$OUT/out"
+echo launched >> "$OUT/../launches"
+cat > "$OUT/result.json" <<J
+{{"schema":"axon-linux-microvm-result/1","status":"x","workload_exit":0,
+ "output_bound":{bound},"outputs":{{"stdout":{{"sha256":"ab","bytes":1}}}},
+ "cleanup":{{"complete":{cleanup_ok},"left_behind":[]}}}}
+J
+exit {exit}
+"#
+    );
+    std::fs::write(&p, body).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+fn linux_run_request(env: &Env, op: &str, manifest_guest_axon: &str) -> serde_json::Value {
+    let mut r = linux_request(env, op);
+    r["job_kind"] = json!("interpreter_run");
+    r["argv"] = json!(["f.ax"]);
+    r["registered_executable_ref"] = json!(backend::LINUX_GUEST_AXON_ID);
+    r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
+        backend::LINUX_GUEST_AXON_ID,
+        manifest_guest_axon
+    ));
+    r
+}
+
+fn linux_submit(env: &Env, op: &str, launcher: std::path::PathBuf) -> axon_fabric::Submission {
+    let guest = "cd".repeat(32);
+    let manifest = json!({"artifacts":{"axon":{"sha256": guest}}}).to_string();
+    let mut lx = linux_cfg(env, &manifest, "");
+    lx.launcher = launcher;
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    let mut cfg = env.cfg(0);
+    cfg.linux = Some(lx);
+    cfg.effect_ceiling = None; // no guest policy channel (x1)
+    submit(&linux_run_request(env, op, &guest).to_string(), &cfg).unwrap()
+}
+
+#[test]
+fn linux_profile_ok_run_maps_to_a_completed_receipt() {
+    let env = Env::new();
+    let s = linux_submit(&env, "op-lx-ok", stand_in_launcher(&env, 0, true, true, 0));
+    assert_eq!(s.backend, Some("linux-microvm-protected"));
+    let r = &s.receipt;
+    assert_eq!(r.backend_profile_ref.as_str(), "linux-microvm-protected");
+    assert_eq!(r.status, ReceiptStatus::Completed);
+    assert_eq!(r.process_exit_code, Some(0));
+    // The profile runs a program; it does not produce a check verdict.
+    assert_eq!(r.verification, ReceiptVerification::NotRequested);
+    assert!(r
+        .evidence_refs
+        .iter()
+        .any(|e| e.as_str().starts_with("sha256-result-json:")));
+    assert_eq!(r.unresolved_liability_micro, 100);
+    assert_eq!(env.launch_records(), 1);
+    assert_eq!(
+        spawn_count(&env.spawns),
+        0,
+        "the host interpreter never ran"
+    );
+}
+
+#[test]
+fn linux_profile_failures_are_outcome_unknown_with_liability() {
+    for (name, exit, bound, clean, verify) in [
+        ("cleanup-incomplete", 24, true, false, 0),
+        ("verify-fails", 0, true, true, 23),
+        ("unbound", 23, false, true, 0),
+        ("vmm-died", 21, false, true, 0),
+    ] {
+        let env = Env::new();
+        let s = linux_submit(
+            &env,
+            &format!("op-{name}"),
+            stand_in_launcher(&env, exit, bound, clean, verify),
+        );
+        let r = &s.receipt;
+        assert_eq!(
+            r.status,
+            ReceiptStatus::OutcomeUnknown,
+            "{name}: {:?}",
+            s.reason
+        );
+        assert_eq!(r.process_exit_code, None, "{name}");
+        assert_eq!(r.unresolved_liability_micro, 100, "{name}: liability kept");
+        axon_loop_contracts::parse::<axon_loop_contracts::ExecutionReceipt>(
+            &serde_json::to_string(r).unwrap(),
+        )
+        .unwrap_or_else(|e| panic!("{name}: invalid receipt {e}"));
+        let (j, _) = axon_fabric::Journal::open(&env.journal).unwrap();
+        let u = j.scope_usage(&scope()).unwrap();
+        assert_eq!(u.liability.model_micro_usd, 100, "{name}");
+    }
+}
+
+#[test]
+fn a_changed_manifest_makes_the_linux_profile_ineligible_with_no_launch() {
+    let env = Env::new();
+    let guest = "cd".repeat(32);
+    let manifest = json!({"artifacts":{"axon":{"sha256": guest}}}).to_string();
+    let mut lx = linux_cfg(&env, &manifest, &"0".repeat(64)); // evidence ≠ manifest
+    lx.launcher = stand_in_launcher(&env, 0, true, true, 0);
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    let mut cfg = env.cfg(0);
+    cfg.linux = Some(lx.clone());
+    cfg.effect_ceiling = None;
+    let s = submit(&linux_run_request(&env, "op-chg", &guest).to_string(), &cfg).unwrap();
+    assert_eq!(s.receipt.status, ReceiptStatus::Unsupported);
+    assert_eq!(env.launch_records(), 0);
+    assert!(!lx.out_root.join("launches").exists(), "launcher never ran");
+}
