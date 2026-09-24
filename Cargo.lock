@@ -270,6 +270,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-loop"
+version = "0.1.0"
+dependencies = [
+ "axon-loop-contracts",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "axon-loop-contracts"
 version = "0.1.0"
 dependencies = [

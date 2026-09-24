@@ -1,0 +1,18 @@
+[package]
+name = "axon-loop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Axon Cortex v0.22 closed loop: fenced policy pointer + authority epoch, frozen experiment register, EVO proposal, EVL evaluation, admission, TEL economics"
+
+# Uses the v0.22 contract types from axon-loop-contracts; defines no parallel
+# copies of them. MiCode has no Cargo dependency on this crate: it drives the
+# `axon-loop` binary over files/JSON.
+[dependencies]
+axon-loop-contracts = { path = "../axon-loop-contracts" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
