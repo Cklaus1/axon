@@ -273,6 +273,9 @@ pub fn admit(store: &Store, req: &AdmitRequest) -> Result<(AdmissionRecord, Ref)
     )?;
     let r = store.put_cas("admissions", &rec)?;
     if tx.admission_event(&r).is_none() {
+        // ONE append: the decision and its hypothesis verdict (the verdict
+        // is read back from this entry by `Tx::hypotheses`). A kill -9 leaves
+        // the store at pre or post, never between the two (CW1).
         tx.append(Event::Admission {
             scope: rec.scope.clone(),
             experiment_id: rec.experiment_id.clone(),
@@ -281,19 +284,6 @@ pub fn admit(store: &Store, req: &AdmitRequest) -> Result<(AdmissionRecord, Ref)
             decision: rec.decision,
             mechanism_test: rec.mechanism_test,
         })?;
-        let verdict = match rec.decision {
-            Decision::Accept => Verdict::Accept,
-            Decision::Reject => Verdict::Reject,
-            Decision::Inconclusive => Verdict::Inconclusive,
-        };
-        crate::evo::append_verdict(
-            &mut tx,
-            &rec.scope,
-            &rec.target_policy_ref,
-            verdict,
-            &r,
-            rec.mechanism_test,
-        )?;
     }
     Ok((rec, r))
 }
@@ -465,4 +455,14 @@ fn decide(
 /// Load a stored admission record.
 pub fn load(store: &Store, r: &Ref) -> Result<AdmissionRecord> {
     store.get_record("admissions", r)
+}
+
+impl From<Decision> for Verdict {
+    fn from(d: Decision) -> Verdict {
+        match d {
+            Decision::Accept => Verdict::Accept,
+            Decision::Reject => Verdict::Reject,
+            Decision::Inconclusive => Verdict::Inconclusive,
+        }
+    }
 }

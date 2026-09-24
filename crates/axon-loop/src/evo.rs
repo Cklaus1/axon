@@ -111,28 +111,6 @@ pub fn history(store: &Store, scope: &Scope) -> Result<Vec<Hypothesis>> {
     Ok(Tx::begin(store)?.hypotheses(scope, None))
 }
 
-pub(crate) fn append_verdict(
-    tx: &mut Tx,
-    scope: &Scope,
-    candidate: &Ref,
-    verdict: Verdict,
-    admission_ref: &Ref,
-    mechanism_test: bool,
-) -> Result<()> {
-    tx.append(Event::Hypothesis {
-        scope: scope.clone(),
-        hypothesis: Box::new(Hypothesis::Verdict {
-            schema: HypothesisSchema,
-            candidate_policy_ref: candidate.clone(),
-            verdict,
-            admission_ref: admission_ref.clone(),
-            mechanism_test,
-            decided_ms: crate::now_ms(),
-        }),
-    })?;
-    Ok(())
-}
-
 /// The recorded proposer of an EVO candidate, if it was proposed here.
 pub(crate) fn proposer_in(tx: &Tx, scope: &Scope, candidate: &Ref) -> Option<OpaqueRef> {
     tx.hypotheses(scope, None)

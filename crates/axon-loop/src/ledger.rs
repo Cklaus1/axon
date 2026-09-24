@@ -68,6 +68,9 @@ pub enum Event {
         freeze_seq: u64,
         authority_epoch: AuthorityEpoch,
     },
+    /// An admission decision AND its hypothesis verdict, in ONE entry: a
+    /// crash leaves the store before or after the decision, never with a
+    /// decision whose verdict is missing from hypothesis history (CW1).
     Admission {
         scope: Scope,
         experiment_id: String,
@@ -436,6 +439,8 @@ impl Tx<'_> {
     }
 
     /// The scope's hypothesis history, optionally only entries before `upto`.
+    /// The scope's hypothesis history, optionally only entries before `upto`.
+    /// Verdicts are read from `admission` entries (one entry per decision).
     pub fn hypotheses(&self, scope: &Scope, upto: Option<u64>) -> Vec<Hypothesis> {
         self.entries
             .iter()
@@ -445,6 +450,21 @@ impl Tx<'_> {
                     scope: s,
                     hypothesis,
                 } if s == scope => Some((**hypothesis).clone()),
+                Event::Admission {
+                    scope: s,
+                    admission_ref,
+                    target_policy_ref,
+                    decision,
+                    mechanism_test,
+                    ..
+                } if s == scope => Some(Hypothesis::Verdict {
+                    schema: crate::evo::HypothesisSchema,
+                    candidate_policy_ref: target_policy_ref.clone(),
+                    verdict: (*decision).into(),
+                    admission_ref: admission_ref.clone(),
+                    mechanism_test: *mechanism_test,
+                    decided_ms: e.recorded_ms,
+                }),
                 _ => None,
             })
             .collect()

@@ -884,3 +884,61 @@ fn c10_crash_windows_between_append_projection_and_head_recover() {
         );
     }
 }
+
+/// CW1 / CR1 / CR2 (independent round 3): the admission decision and its
+/// hypothesis verdict are ONE ledger entry. Dropping the last ledger line (a
+/// kill -9 before the head moved) returns the store exactly to the pre-admit
+/// state, and a retry records BOTH together — the verdict is never lost.
+#[test]
+fn cw1_admit_is_one_ledger_entry() {
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 0, Some(100), Some(50));
+    let (_, e) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let root = w.s.root().to_path_buf();
+    let lp = root.join("ledger.jsonl");
+    let (pre_ledger, pre_head) = (
+        std::fs::read(&lp).unwrap(),
+        std::fs::read(root.join("ledger.head")).unwrap(),
+    );
+    let n0 = pre_ledger.iter().filter(|b| **b == b'\n').count();
+    let (rec, adm) = admit(&w.s, "exp", &e, ADMITTER, false).unwrap();
+    assert_eq!(rec.decision, Decision::Reject);
+    let n1 = std::fs::read(&lp)
+        .unwrap()
+        .iter()
+        .filter(|b| **b == b'\n')
+        .count();
+    assert_eq!(n1, n0 + 1, "admit must append exactly one ledger entry");
+    let verdicts = |w: &World| {
+        evo::history(&w.s, &scope())
+            .unwrap()
+            .into_iter()
+            .filter(|h| {
+                matches!(
+                    h,
+                    evo::Hypothesis::Verdict {
+                        verdict: evo::Verdict::Reject,
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    assert_eq!(verdicts(&w), 1);
+    // kill -9 before the head moved: the only possible intermediate state
+    std::fs::write(&lp, &pre_ledger).unwrap();
+    std::fs::write(root.join("ledger.head"), &pre_head).unwrap();
+    assert_eq!(verdicts(&w), 0, "pre-state: no decision, no verdict");
+    let (_, adm2) = admit(&w.s, "exp", &e, ADMITTER, false).unwrap();
+    assert_eq!(adm2, adm);
+    assert_eq!(
+        verdicts(&w),
+        1,
+        "retry records decision and verdict together"
+    );
+}
