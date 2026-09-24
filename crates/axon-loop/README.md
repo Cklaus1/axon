@@ -22,8 +22,11 @@ No `axon` CLI verb reaches this crate.
   it is published.
 * `plan`: the experiment register. A `closed-loop-pilot/1` plan is frozen by
   its `cl22:` digest.
-* `candidates` / `tasks`: registered candidate lists and task manifests, both
-  content-addressed.
+* `candidates` / `tasks`: registered candidate lists and task manifests. Each
+  is named by its list digest and stored under
+  `<kind>/<tenant>/<family>/<hex>.json`. Keying the path by scope means the
+  same list registered for two scopes is two files, never an overwrite
+  (NS3, fixed in stage 2).
 * `evo`: one bounded shortlist candidate, with its hypothesis history.
 * `evl`: paired-trial evaluation of exact artifacts. Unknown is never a pass.
 * `admission`: applies the frozen plan rule and returns ACCEPT, REJECT or
@@ -74,11 +77,10 @@ No `axon` CLI verb reaches this crate.
 
 From red-team round 4, run independently against `dead41b` (operator-side
 evidence, `.axon-v022/redteam/axon-loop-r4-independent.md`, **not in the
-repository**). None is fixed on the candidate line. All three are Stage 2.
+repository**). Stage 2 lane 2A fixes NS3 (scope-keyed records); the rows still listed below are open.
 
 | id | severity | defect |
 |---|---|---|
-| NS3a/b/c | MEDIUM | `candidate-sets/<hex>.json` and `task-manifests/<hex>.json` are keyed by the list digest only. When a trusted admitter registers the SAME list for another scope, it overwrites the first scope's record. That scope's `activate`, `propose` and `freeze` then exit 2 ("store corrupt"), and re-putting the list does not repair it |
 | NS4p / NS4w | MEDIUM | `evl` checks the preflight observer against `trusted_observers` and against the expecting parent, but never against the subject set (the request's `subject_issuers` plus the candidate's proposer). If an operator lists the proposer or the worker as an observer, that party can establish a verified pass over its own trials |
 | NS4b | LOW | An explicit `"trusted_observers": []` in `config.json` is refused as malformed (exit 3) by every writing verb, including a fenced pause. The cause: `skip_serializing_if = "Vec::is_empty"` combined with the strict canonical round-trip. It fails closed, but "I said none" becomes unparseable, which contradicts the project's rule that absent ≠ empty |
 

@@ -703,6 +703,12 @@ Unkeyed controls of the same attacks still succeed. Two mutations were run:
   context (the `axon-ledger` `authenticated_admins` rule). This part is
   **open**.
 
+**Related, same lane (not D-015).** red-team r4 NS3a/b/c is fixed.
+Candidate lists and task manifests are now stored under
+`<kind>/<tenant>/<family>/<hex>.json`, so registering the same list for a
+second scope cannot overwrite the first scope's record. A re-put repairs a
+store that the old flat layout bricked.
+
 ## D-016 — D-C2: a fourth authority vocabulary; admission under a grant that is not enforced
 
 **Document passage.** `IMPLEMENTATION_MAP.md` §5 risk 2: *"A fourth authority

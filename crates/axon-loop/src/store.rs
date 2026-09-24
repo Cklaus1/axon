@@ -432,6 +432,21 @@ impl Store {
         Ok(self.root.join(kind).join(format!("{}.json", r.hex())))
     }
 
+    /// `<kind>/<tenant>/<family>/<hex>.json`: a record whose name is a digest
+    /// of SCOPE-INDEPENDENT content (a candidate list, a task manifest) but
+    /// whose bytes name a scope. Keying the path by scope means the identical
+    /// list registered for two scopes is two files, never one file the second
+    /// registration overwrites (NS3).
+    pub fn scoped_cas_path(&self, kind: &str, scope: &Scope, r: &Ref) -> Result<PathBuf> {
+        let flat = self.cas_path(kind, r)?;
+        Ok(self
+            .root
+            .join(kind)
+            .join(scope.tenant_id.as_str())
+            .join(scope.task_family.as_str())
+            .join(flat.file_name().expect("cas file name")))
+    }
+
     /// Store a record under its own `cl22:` digest. Idempotent.
     pub fn put_cas<T: Serialize>(&self, kind: &str, v: &T) -> Result<Ref> {
         let r = axon_loop_contracts::digest(v)?;
