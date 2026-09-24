@@ -33,6 +33,7 @@ pub mod evl;
 pub mod evo;
 pub mod plan;
 pub mod pointer;
+pub mod rules;
 pub mod store;
 pub mod tel;
 
