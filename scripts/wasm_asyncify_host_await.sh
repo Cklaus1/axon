@@ -23,27 +23,47 @@ if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_pari
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+. "$ROOT/scripts/lib/harness_skip.sh"
+
+# ABSENT tools are a legitimate SKIP. A tool that is PRESENT and FAILS is a
+# result: the build and wasm-opt steps below used to print "skipping" and exit 0
+# on failure, so a broken toolchain or a bad instrumentation pass read as
+# "not applicable" — measured, a wasm-opt that exits 1 produced exit 0 and a
+# skip line. Failure may never synthesize success.
 rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown \
-  || { echo "wasm_asyncify_host_await: wasm32-unknown-unknown not installed — skipping"; exit 0; }
-command -v wasm-opt >/dev/null 2>&1 || { echo "wasm_asyncify_host_await: wasm-opt (binaryen) not found — skipping"; exit 0; }
-command -v node >/dev/null 2>&1 || { echo "wasm_asyncify_host_await: node not found — skipping"; exit 0; }
+  || harness_skip wasm_asyncify_host_await "wasm32-unknown-unknown target not installed"
+command -v wasm-opt >/dev/null 2>&1 || harness_skip wasm_asyncify_host_await "wasm-opt (binaryen) not found"
+command -v node >/dev/null 2>&1 || harness_skip wasm_asyncify_host_await "node not found"
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 echo "wasm_asyncify_host_await: building axon-wasm + asyncify…"
-cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/null \
-  || { echo "axon-wasm wasm build failed — skipping"; exit 0; }
+if ! berr="$(cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>&1)"; then
+  echo "wasm_asyncify_host_await: FAIL — axon-wasm wasm build FAILED (a build error is not a skip):"
+  printf '%s\n' "$berr" | tail -8 | sed 's/^/    /'
+  exit 1
+fi
 RAW=target/wasm32-unknown-unknown/release/axon_wasm.wasm
+[ -s "$RAW" ] || { echo "wasm_asyncify_host_await: FAIL — build reported success but $RAW is missing or empty"; exit 1; }
 ASYNC="$WORK/axon_wasm.async.wasm"
-# Modern wasm features rustc emits must be enabled for binaryen 108 to validate.
+# Modern wasm features rustc emits must be enabled explicitly for binaryen to
+# validate the module (needed on every version tested: 108 in R15, 120, 127).
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
 # -O2 IS REQUIRED, not a nicety: the UNOPTIMIZED asyncify output runs away —
 # `axon_eval` never returns and linear memory grows until the host is exhausted,
 # even for a program with no `host_await` at all (measured on wasm-opt 120 and 127,
 # whose asyncify output is byte-identical). With -O2 the same module runs every
 # fixture in well under the cap. Do not drop the -O level to "keep the build fast".
-if ! wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>/dev/null; then
-  echo "wasm_asyncify_host_await: wasm-opt --asyncify failed — skipping"; exit 0
+if ! oerr="$(wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>&1)"; then
+  echo "wasm_asyncify_host_await: FAIL — wasm-opt --asyncify FAILED (an instrumentation error is not a skip):"
+  printf '%s\n' "$oerr" | tail -8 | sed 's/^/    /'
+  exit 1
+fi
+# The instrumented module must actually be instrumented: without the asyncify
+# exports the driver cannot suspend, and a silently-uninstrumented artifact is
+# exactly the "stale/corrupt artifact" shape this incident taught us to refuse.
+if ! grep -qa asyncify_start_unwind "$ASYNC"; then
+  echo "wasm_asyncify_host_await: FAIL — $ASYNC is missing the asyncify exports (not instrumented)"; exit 1
 fi
 # Asyncify REWIND re-enters every saved wasm frame, so a deep suspend point needs
 # more JS stack than node's ~984KB default. Browsers configure stack per worker; for
@@ -156,6 +176,25 @@ if [ -f examples/interactive/guess.ax ]; then
   fi
   echo "  OK  guess: deep-nested multi-turn async loop → 3 tries, clean exit"
 fi
+
+# (5) The BROWSER must refuse an artifact it cannot vouch for. The page's module is
+# generated and gitignored, so it is whatever the last local build left; a stale
+# -O0 one exhausts host memory (incident 2026-09-24). Same loader the page imports.
+stamp() { printf '{"schema":"axon-asyncify-artifact/1","opt":"%s","sha256":"%s","bytes":%s}\n' \
+  "$2" "$(sha256sum "$1" | cut -d' ' -f1)" "$(wc -c < "$1")"; }
+stamp "$ASYNC" O2 > "$WORK/good.stamp"
+wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$WORK/o0.wasm" 2>/dev/null \
+  || { echo "wasm_asyncify_host_await: FAIL — could not build the -O0 refusal fixture"; exit 1; }
+stamp "$WORK/o0.wasm" O0 > "$WORK/o0.stamp"
+for c in "$ASYNC|$WORK/good.stamp|accept|fresh -O2 + its stamp" \
+         "$ASYNC|-|refuse|no stamp" \
+         "$WORK/o0.wasm|$WORK/good.stamp|refuse|stale -O0 module, current stamp" \
+         "$WORK/o0.wasm|$WORK/o0.stamp|refuse|-O0 module, honest stamp"; do
+  IFS='|' read -r w st ex label <<<"$c"
+  bounded_run "$ASYNCIFY_MEM_MAX" "$ASYNCIFY_DEADLINE" node scripts/browser_artifact_guard.mjs "$w" "$st" "$ex" >"$WORK/g" 2>&1 \
+    || { echo "wasm_asyncify_host_await: FAIL (artifact guard: $label): $(cat "$WORK/g") [$BOUNDED_RUN_CLASS]"; exit 1; }
+done
+echo "  OK  artifact guard: page runs a fresh stamped -O2 build; refuses unstamped / stale / -O0"
 
 echo "wasm_asyncify_host_await: PASS — host_await suspends across async JS work in the browser (Asyncify)"
 exit 0
