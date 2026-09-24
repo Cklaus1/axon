@@ -43,7 +43,7 @@
 //! `expected_version` is recorded as the effect's CAS precondition but not
 //! compared against anything by this module.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{InputDigest, OpKey, ScopeKey};
+use axon_loop_contracts::{AttemptId, AuthorityEpoch, OperationId, Ref, Scope, TaskId, TrialId};
 
 pub const JOURNAL_SCHEMA: &str = "axon-fabric-journal/1";
 
@@ -102,13 +102,21 @@ pub enum Billing {
 /// The immutable request an operation id is bound to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Intent {
-    pub op: OpKey,
-    pub input_digest: InputDigest,
+    pub op: OperationId,
+    pub task_id: TaskId,
+    pub trial_id: TrialId,
+    pub attempt_id: AttemptId,
+    /// `cl22:` digest of the operation's immutable input (for a submitted
+    /// `ComputeRequest`, the whole request). Same op + different digest is a
+    /// CONFLICT.
+    pub input_digest: Ref,
     /// Opaque execution configuration (profile, limits …) as supplied.
     pub config: serde_json::Value,
     /// Reference to the authority (grant / approval) this runs under.
     pub authority_ref: String,
-    pub scope: ScopeKey,
+    /// The authority epoch the intent was admitted under.
+    pub authority_epoch: AuthorityEpoch,
+    pub scope: Scope,
     pub reservation: ResourceVector,
     /// The version of the target the effect expects to find (CAS precondition).
     pub expected_version: u64,
@@ -145,6 +153,10 @@ pub struct OpView {
     /// released (never-launched) cancel.
     pub billing: Option<Billing>,
     pub reason: Option<String>,
+    /// The terminal outcome document (e.g. an `acf-execution-receipt/1`)
+    /// recorded for this op, once. A duplicate submit returns THIS rather than
+    /// re-executing.
+    pub outcome: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -185,11 +197,11 @@ pub struct RecoveryReport {
     pub torn_tail_bytes: u64,
     /// Operations that were `Launched` with no terminal record, now
     /// `OutcomeUnknown` (liability kept).
-    pub reconciled_unknown: Vec<OpKey>,
+    pub reconciled_unknown: Vec<OperationId>,
     /// Operations left `Intended` (no effect, no reservation).
-    pub pending_intended: Vec<OpKey>,
+    pub pending_intended: Vec<OperationId>,
     /// Operations left `Reserved` (budget held, never launched).
-    pub pending_reserved: Vec<OpKey>,
+    pub pending_reserved: Vec<OperationId>,
 }
 
 /// Settlement of an unresolved liability with evidence of the actual cost.
@@ -211,26 +223,26 @@ pub enum JournalError {
     },
     /// Same operation id, different immutable request.
     Conflict {
-        op: OpKey,
+        op: OperationId,
         recorded: Box<Intent>,
         requested: Box<Intent>,
     },
-    UnknownOp(OpKey),
-    UnknownScope(ScopeKey),
+    UnknownOp(OperationId),
+    UnknownScope(Scope),
     /// A budget scope was redeclared with a different ceiling.
     ScopeConflict {
-        scope: ScopeKey,
+        scope: Scope,
         recorded: ResourceVector,
         requested: ResourceVector,
     },
     InvalidTransition {
-        op: OpKey,
+        op: OperationId,
         from: OpState,
         to: &'static str,
     },
     /// The reservation does not fit. Nothing was written.
     BudgetExceeded {
-        scope: ScopeKey,
+        scope: Scope,
         requested: ResourceVector,
         committed: ResourceVector,
         ceiling: ResourceVector,
@@ -289,40 +301,45 @@ enum Rec {
         schema: String,
     },
     Budget {
-        scope: ScopeKey,
+        scope: Scope,
         ceiling: ResourceVector,
     },
     Intent {
         intent: Intent,
     },
     Reserved {
-        op: OpKey,
+        op: OperationId,
     },
     Launched {
-        op: OpKey,
+        op: OperationId,
     },
     Completed {
-        op: OpKey,
+        op: OperationId,
         billing: Billing,
     },
     Failed {
-        op: OpKey,
+        op: OperationId,
         reason: String,
         billing: Billing,
     },
     Cancelled {
-        op: OpKey,
+        op: OperationId,
         reason: String,
         /// Required iff the op was launched.
         billing: Option<Billing>,
     },
     OutcomeUnknown {
-        op: OpKey,
+        op: OperationId,
         reason: String,
     },
     Settled {
-        op: OpKey,
+        op: OperationId,
         actual: ResourceVector,
+    },
+    /// The outcome document for a terminal op. At most one per op.
+    Outcome {
+        op: OperationId,
+        outcome: serde_json::Value,
     },
 }
 
@@ -337,13 +354,13 @@ struct Line {
 
 #[derive(Default)]
 struct State {
-    scopes: BTreeMap<ScopeKey, ResourceVector>,
-    ops: BTreeMap<OpKey, OpView>,
+    scopes: HashMap<Scope, ResourceVector>,
+    ops: BTreeMap<OperationId, OpView>,
 }
 
 enum Change {
     None,
-    Scope(ScopeKey, ResourceVector),
+    Scope(Scope, ResourceVector),
     Op(Box<OpView>),
 }
 
@@ -352,7 +369,7 @@ impl State {
     /// makes. Used identically for live appends and for replay, so a journal
     /// that replays is one the live path could have written.
     fn transition(&self, rec: &Rec) -> Result<Change, JournalError> {
-        let get = |op: &OpKey| {
+        let get = |op: &OperationId| {
             self.ops
                 .get(op)
                 .cloned()
@@ -396,6 +413,7 @@ impl State {
                     launched: false,
                     billing: None,
                     reason: None,
+                    outcome: None,
                 }))
             }
             Rec::Reserved { op } => {
@@ -495,6 +513,14 @@ impl State {
                 v.billing = Some(Billing::Known(*actual));
                 Change::Op(Box::new(v))
             }
+            Rec::Outcome { op, outcome } => {
+                let mut v = get(op)?;
+                if !v.state.is_terminal() || v.outcome.is_some() {
+                    return Err(bad(&v, "outcome"));
+                }
+                v.outcome = Some(outcome.clone());
+                Change::Op(Box::new(v))
+            }
         })
     }
 
@@ -510,7 +536,7 @@ impl State {
         }
     }
 
-    fn usage(&self, scope: &ScopeKey) -> Result<ScopeUsage, JournalError> {
+    fn usage(&self, scope: &Scope) -> Result<ScopeUsage, JournalError> {
         let ceiling = *self
             .scopes
             .get(scope)
@@ -730,7 +756,7 @@ impl Journal {
 
     pub fn declare_budget(
         &self,
-        scope: &ScopeKey,
+        scope: &Scope,
         ceiling: ResourceVector,
     ) -> Result<(), JournalError> {
         if self.lock().state.scopes.get(scope) == Some(&ceiling) {
@@ -767,23 +793,23 @@ impl Journal {
     }
 
     /// Carve the operation's reservation from its scope, atomically.
-    pub fn reserve(&self, op: &OpKey) -> Result<(), JournalError> {
+    pub fn reserve(&self, op: &OperationId) -> Result<(), JournalError> {
         self.append(Rec::Reserved { op: op.clone() })
     }
 
     /// Record that the effect is about to be dispatched. Call BEFORE dispatch.
-    pub fn mark_launched(&self, op: &OpKey) -> Result<(), JournalError> {
+    pub fn mark_launched(&self, op: &OperationId) -> Result<(), JournalError> {
         self.append(Rec::Launched { op: op.clone() })
     }
 
-    pub fn complete(&self, op: &OpKey, billing: Billing) -> Result<(), JournalError> {
+    pub fn complete(&self, op: &OperationId, billing: Billing) -> Result<(), JournalError> {
         self.append(Rec::Completed {
             op: op.clone(),
             billing,
         })
     }
 
-    pub fn fail(&self, op: &OpKey, reason: &str, billing: Billing) -> Result<(), JournalError> {
+    pub fn fail(&self, op: &OperationId, reason: &str, billing: Billing) -> Result<(), JournalError> {
         self.append(Rec::Failed {
             op: op.clone(),
             reason: reason.to_string(),
@@ -795,7 +821,7 @@ impl Journal {
     /// `Some` for a launched one (charged or held as liability).
     pub fn cancel(
         &self,
-        op: &OpKey,
+        op: &OperationId,
         reason: &str,
         billing: Option<Billing>,
     ) -> Result<(), JournalError> {
@@ -808,18 +834,30 @@ impl Journal {
 
     /// Resolve an unknown-cost liability with evidence of the actual cost. The
     /// operation's STATE does not change: an OutcomeUnknown op stays unknown.
-    pub fn settle(&self, op: &OpKey, s: Settlement) -> Result<(), JournalError> {
+    pub fn settle(&self, op: &OperationId, s: Settlement) -> Result<(), JournalError> {
         self.append(Rec::Settled {
             op: op.clone(),
             actual: s.actual,
         })
     }
 
-    pub fn view(&self, op: &OpKey) -> Option<OpView> {
+    /// Attach the terminal outcome document (once) to a terminal op.
+    pub fn record_outcome(
+        &self,
+        op: &OperationId,
+        outcome: serde_json::Value,
+    ) -> Result<(), JournalError> {
+        self.append(Rec::Outcome {
+            op: op.clone(),
+            outcome,
+        })
+    }
+
+    pub fn view(&self, op: &OperationId) -> Option<OpView> {
         self.lock().state.ops.get(op).cloned()
     }
 
-    pub fn scope_usage(&self, scope: &ScopeKey) -> Result<ScopeUsage, JournalError> {
+    pub fn scope_usage(&self, scope: &Scope) -> Result<ScopeUsage, JournalError> {
         self.lock().state.usage(scope)
     }
 

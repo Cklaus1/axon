@@ -1,30 +1,27 @@
-//! axon-fabric — the Axon compute fabric (v0.22, M1 first slices).
+//! axon-fabric — the Axon compute fabric (v0.22, M1 slices).
 //!
-//! What exists here today:
+//! * [`journal`] — the durable, append-only operation journal (B260): intent is
+//!   fsynced BEFORE any effect; `Intended → Reserved → Launched → (Completed |
+//!   Failed | Cancelled | OutcomeUnknown)`; the same `OperationId` with a
+//!   different input digest is a CONFLICT; reopening after a crash turns a
+//!   `Launched` op with no terminal record into `OutcomeUnknown` with its
+//!   liability kept, never re-executed. Aggregate reservations over a combined
+//!   model/exec/verify/retry budget are carved atomically.
+//! * [`submit`] — the Fabric submit path: an `acf-compute-request/1` in, an
+//!   `acf-execution-receipt/1` out, with authority, isolation and the
+//!   registered executable checked BEFORE the journal's launch record, and the
+//!   journal wrapped around the effect.
+//! * [`backend`] — the execution backends and their truthful profiles.
 //!
-//! * [`journal`] — a durable, append-only operation journal (B260, first half):
-//!   intent is recorded and fsynced BEFORE any effect, operations move through
-//!   `Intended → Reserved → Launched → (Completed | Failed | Cancelled |
-//!   OutcomeUnknown)`, the same operation id with a different request is a
-//!   CONFLICT, and reopening after a crash RECONCILES: a `Launched` operation
-//!   with no terminal record becomes `OutcomeUnknown` with its liability kept.
-//!   It is never silently re-executed.
-//! * aggregate reservations over a combined model/exec/verify/retry budget,
-//!   carved atomically under the journal lock and rebuilt from the journal on
-//!   reopen, so a restart cannot free budget.
-//!
-//! What does NOT exist yet (see the crate README in the final report): no
-//! launcher is driven from here, no epoch/fence, no workspace store. Storage is
-//! plain files — no database dependency.
-//!
-//! Identity types are a deliberate placeholder: [`ids::OpKey`] is the single
-//! adapter point where `axon-loop-contracts`' `OperationId` replaces it.
+//! Identities are `axon_loop_contracts` types throughout. Storage is plain
+//! files — no database dependency.
 
-pub mod ids;
+pub mod backend;
 pub mod journal;
+pub mod submit;
 
-pub use ids::{InputDigest, OpKey, ScopeKey};
 pub use journal::{
     Begin, Billing, Intent, Journal, JournalError, OpState, OpView, RecoveryReport, ResourceVector,
     ScopeUsage, Settlement, JOURNAL_SCHEMA,
 };
+pub use submit::{submit, EpochSource, SubmitConfig, SubmitError, Submission};

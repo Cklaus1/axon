@@ -4,12 +4,20 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Axon compute fabric (v0.22 M1): durable operation journal and aggregate reservations"
+description = "Axon compute fabric (v0.22 M1): durable operation journal, aggregate reservations, and the Fabric submit path"
+
+[[bin]]
+name = "axon-fabric"
+path = "src/bin/axon-fabric.rs"
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
+axon-loop-contracts = { path = "../axon-loop-contracts" }
+axon-cortex = { path = "../axon-cortex" }
+axon-os = { path = "../axon-os" }
+axon-vm = { path = "../axon-vm" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

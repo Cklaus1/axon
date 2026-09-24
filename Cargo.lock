@@ -210,6 +210,10 @@ dependencies = [
 name = "axon-fabric"
 version = "0.1.0"
 dependencies = [
+ "axon-cortex",
+ "axon-loop-contracts",
+ "axon-os",
+ "axon-vm",
  "libc",
  "serde",
  "serde_json",

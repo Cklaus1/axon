@@ -35,12 +35,25 @@ pub enum Isolation {
     /// sandbox (`sandbox_run`), not by any OS/VM boundary. The label is
     /// `process_scoped`.
     ProcessScoped,
+    /// A KVM microVM that has NOT been physically qualified: Firecracker
+    /// launched without jailer, booting the custom Axon guest kernel (not
+    /// Linux). Hardware virtualisation is present; the host-side enclosure
+    /// and the guest are not what a protected profile requires (B263).
+    KvmMicroVmUnqualified,
+    /// The B263 `linux-microvm-protected` profile: Firecracker under jailer,
+    /// pinned Linux guest, empty netns, host cgroup limits. axon-os takes this
+    /// label from the runtime that states it; the runtime is responsible for
+    /// stating it only when its pinned artifacts match the qualification
+    /// evidence (axon-fabric checks manifest sha256 vs the evidence record).
+    LinuxMicroVmProtected,
 }
 
 impl Isolation {
     pub fn label(self) -> &'static str {
         match self {
             Isolation::ProcessScoped => "process_scoped",
+            Isolation::KvmMicroVmUnqualified => "kvm_microvm_unqualified",
+            Isolation::LinuxMicroVmProtected => "linux_microvm_protected",
         }
     }
 }
@@ -51,8 +64,11 @@ pub enum IsolationRequirement {
     /// Any runtime will do (every existing caller: the legacy semantics).
     #[default]
     Any,
-    /// A qualified microVM. No runtime in this crate provides one, so this is
-    /// always refused here — never routed to a subprocess as a fallback
+    /// Hardware virtualisation (any KVM microVM, qualified or not).
+    HardwareIsolated,
+    /// A QUALIFIED protected Linux microVM. Only
+    /// [`Isolation::LinuxMicroVmProtected`] satisfies it; nothing is ever
+    /// routed to a subprocess or an unqualified VM as a fallback
     /// (G13-r22-no-weak-fallback).
     MicroVm,
 }
@@ -61,7 +77,10 @@ impl IsolationRequirement {
     pub fn satisfied_by(self, iso: Isolation) -> bool {
         match (self, iso) {
             (IsolationRequirement::Any, _) => true,
-            (IsolationRequirement::MicroVm, Isolation::ProcessScoped) => false,
+            (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => false,
+            (IsolationRequirement::HardwareIsolated, _) => true,
+            (IsolationRequirement::MicroVm, Isolation::LinuxMicroVmProtected) => true,
+            (IsolationRequirement::MicroVm, _) => false,
         }
     }
 }
@@ -1110,6 +1129,29 @@ mod runtime_tests {
         assert!(!p.exists());
         drop(d2);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_the_protected_linux_profile_satisfies_a_microvm_requirement() {
+        use IsolationRequirement as R;
+        let all = [
+            Isolation::ProcessScoped,
+            Isolation::KvmMicroVmUnqualified,
+            Isolation::LinuxMicroVmProtected,
+        ];
+        for iso in all {
+            assert!(R::Any.satisfied_by(iso));
+            assert_eq!(
+                R::MicroVm.satisfied_by(iso),
+                iso == Isolation::LinuxMicroVmProtected,
+                "{iso:?}"
+            );
+            assert_eq!(
+                R::HardwareIsolated.satisfied_by(iso),
+                iso != Isolation::ProcessScoped,
+                "{iso:?}"
+            );
+        }
     }
 
     #[test]
