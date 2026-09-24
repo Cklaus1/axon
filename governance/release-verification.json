@@ -53,7 +53,8 @@
         "approval verification",
         "grant intersection",
         "profiles",
-        "supervisor"
+        "supervisor",
+        "isolation labels / IsolationRequirement (runtime.rs; v0.22)"
       ],
       "required": [
         "cargo test --locked -p axon-os"
@@ -120,13 +121,15 @@
       "surfaces": [
         "VM boundary",
         "attestation report",
-        "measurement"
+        "measurement",
+        "library launch path (run_in_firecracker; v0.22)"
       ],
       "required": [
         "cargo test --locked -p axon-vm"
       ],
       "gate_compiles": true,
-      "gate_tests": true
+      "gate_tests": true,
+      "verified_by": "The required command includes tests/lib_launch.rs, whose live boot RETURNS EARLY reporting ok when firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent (FG-043, open) \u2014 a green run of this command does not prove the library launch path booted anything."
     },
     "cortex-policy-adapter": {
       "class": "A",
@@ -147,7 +150,8 @@
       "surfaces": [
         "serving transports",
         "authority core",
-        "refusal round-trip"
+        "refusal round-trip",
+        "DEC shortlist (shortlist.rs; v0.22, no production caller)"
       ],
       "required": [
         "cargo test --locked -p axon-reflex"
@@ -313,6 +317,55 @@
       ],
       "gate_compiles": true,
       "gate_tests": false
+    },
+    "axon-loop": {
+      "class": "A",
+      "why": "v0.22 closed-loop authority: the fenced policy pointer and authority epoch, admission decisions, and the hash-chained ledger that is the store's one source of authority. It decides which policy becomes active. Its ledger is UNKEYED (D-C1, open) \u2014 which makes running its tests more necessary, not less.",
+      "surfaces": [
+        "policy pointer / authority epoch fence",
+        "admission rules",
+        "authority ledger (unkeyed)",
+        "EVL paired-trial evaluation",
+        "MiCode sidecar intake",
+        "axon-loop CLI"
+      ],
+      "required": [
+        "cargo test --locked -p axon-loop"
+      ],
+      "verified_by": "NOTE: tests/intake_dec_driver.rs::produce_policy is #[ignore] and runs only under scripts/loop_interop_gate.sh, which no gate or CI invokes \u2014 the Axon<->MiCode interop leg is NOT covered by the required command.",
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-loop-contracts": {
+      "class": "A",
+      "why": "Strict parsing and the cl22 digest for every v0.22 contract document (episodes, policies, compute requests, receipts). A parse that accepts an unknown field, a float budget or a non-canonical document feeds a forged or ambiguous input straight into axon-loop admission and axon-fabric dispatch. Refs it defines are content hashes, NOT authenticated identity.",
+      "surfaces": [
+        "strict contract parsing",
+        "cl22 canonical digest",
+        "semantic checks"
+      ],
+      "required": [
+        "cargo test --locked -p axon-loop-contracts"
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-fabric": {
+      "class": "B",
+      "why": "The v0.22 compute fabric: executes registered checks (and, on the Linux profile, interpreter runs) through a durable operation journal with budget reservations, and chooses the backend a job's isolation claim rests on. It also performs an admission step, but that step is currently NON-BINDING (hard-coded Restricted probe grant, D-C2/R5, open), so the authority surface is recorded here rather than earning class A.",
+      "surfaces": [
+        "operation journal / reservations",
+        "submit path",
+        "backend selection and qualification",
+        "cortex --fabric-journal executor seam"
+      ],
+      "required": [
+        "cargo test --locked -p axon-fabric"
+      ],
+      "prerequisite": "tests/common/mod.rs:14 and tests/cortex_via_fabric.rs:17 hard-code <repo>/target/debug/axon and <repo>/target/debug/cortex and ignore CARGO_TARGET_DIR. In gate.sh both exist by this stage (the codegen axon is rebuilt at gate.sh:368; the cortex bin is built by `cargo test -p axon-cortex` at gate.sh:202), but only when CARGO_TARGET_DIR is unset. With it set, the 3 cortex_via_fabric tests FAIL (loudly, not skipped). Verified 2026-09-24: 35 passed / 1 ignored with either the no-default or the codegen axon present.",
+      "verified_by": "journal.rs::crash_child is #[ignore] by design \u2014 it is the child-process body the sigkill_after_* restart tests spawn, so it IS exercised. The linux-microvm-protected dispatch is tested only against a stand-in launcher; the real scripts/fc_linux_profile.sh + b263_qualify.sh need root/jailer and are invoked by no gate.",
+      "gate_compiles": true,
+      "gate_tests": true
     }
   },
   "inventory_note": "gate_compiles: the strict gate builds this crate (clippy --all-targets builds its tests too). gate_tests: the strict gate RUNS its required commands. The distinction is the point \u2014 before 2026-09-22 the gate compiled 20 of 22 crates and ran the tests of 5, and nothing recorded the gap."
