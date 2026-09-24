@@ -226,6 +226,7 @@ PIN_CTX="$(new_file "$CL/context" "$SN_CTX")"
 check "pinned: ack state pinned" eq "$(jq -r .pin.state "$PIN_ACK")" pinned
 check "pinned: ack policy_id == Axon's" eq "$(jq -r .pin.policy_id "$PIN_ACK")" "$RES_ID"
 check "pinned: ack policy_ref == Axon's cl22 digest" eq "$(jq -r .pin.policy_ref "$PIN_ACK")" "$RES_DIGEST"
+check "G6: sidecar projection_ref is null (the ack is not a PolicyProjection)" eq "$(jq -r .projection_ref "$PIN_EP")" null
 check "pinned: sidecar policy_ref == Axon's digest" eq "$(jq -r .policy_ref "$PIN_EP")" "$RES_DIGEST"
 check "pinned: sidecar epoch == Axon pointer epoch" eq "$(jq -r .authority_epoch "$PIN_EP")" "$RES_EPOCH"
 # Unit conversion on real bytes: 10 in + 3 out tokens at $3/$15 per MTok
@@ -252,20 +253,21 @@ H1="$(store_hash)"
 axl intake episode --in "$PIN_EP" --context "$CL/context" --ack "$CL/policy-ack" > "$WORK/intake2.json"
 check "re-intake is idempotent (recorded_now false)" eq "$(jq -r .recorded_now "$WORK/intake2.json")" false
 check "re-intake leaves store bytes unchanged" eq "$(store_hash)" "$H1"
-# The canonical MiCode episode the sidecar references: digest joins, but its
-# cost is MiCode's default-0 ResourceCost, not the metered spend (see gaps).
+# The canonical MiCode episode the sidecar references. G1 is fixed in MiCode
+# (475f3641): cost.micro_cents is the task's metered spend, so the digest AND
+# the cost join under the 1e-8 → 1e-6 round-up rule.
 SRC_EP="$(find "$REPO/.micode/axon/episodes" -name '*.json' | while read -r f; do
   [ "cl22:$(python3 -c 'import json,sys,hashlib;v=json.load(open(sys.argv[1]));print(hashlib.sha256(json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())' "$f")" = "$(jq -r .source_episode_ref "$PIN_EP")" ] && echo "$f"; done | head -1)"
 check "source_episode_ref resolves to a canonical MiCode episode on disk" test -n "$SRC_EP"
+check "G1 fixed: canonical episode cost.micro_cents is the metered spend (7500), not 0" eq "$(jq -r .cost.micro_cents "$SRC_EP")" 7500
 axl intake episode --in "$PIN_EP" --context "$CL/context" --ack "$CL/policy-ack" --source-episode "$SRC_EP" >/dev/null 2>"$WORK/src.err"
-SRC_RC=$?
-if [ "$(jq -r .cost.micro_cents "$SRC_EP")" = 0 ]; then
-  check "KNOWN GAP G1: canonical episode cost.micro_cents=0 vs sidecar 75 → intake refuses the join (exit 4)" eq "$SRC_RC" 4
-  check "KNOWN GAP G1: refusal is the unit-conversion check, not a digest mismatch" grep -q "unit conversion" "$WORK/src.err"
-  check "KNOWN GAP G1: refusal names the producer gap (canonical cost ZERO, G1)" bash -c "grep -q 'ZERO spend' '$WORK/src.err' && grep -q G1 '$WORK/src.err'"
-else
-  check "canonical episode cost joins the sidecar under the round-up rule" eq "$SRC_RC" 0
-fi
+check "G1 fixed: --source-episode join succeeds (digest + round-up cost conversion)" eq "$?" 0
+# A canonical episode whose cost disagrees is still refused, never repaired.
+jq -c '.cost.micro_cents = 0' "$SRC_EP" > "$WORK/src-zero.json"
+jq -c --arg r "cl22:$(python3 -c 'import json,sys,hashlib;v=json.load(open(sys.argv[1]));print(hashlib.sha256(json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())' "$WORK/src-zero.json")" \
+  '.source_episode_ref = $r | .identity.trial_id = "trial-src0"' "$PIN_EP" > "$WORK/ep-src-zero.json"
+axl intake episode --in "$WORK/ep-src-zero.json" --context "$CL/context" --ack "$CL/policy-ack" --source-episode "$WORK/src-zero.json" >/dev/null 2>"$WORK/src0.err"
+check "a zero canonical cost vs a metered sidecar is still refused (exit 4)" eq "$?" 4
 check "store unchanged by the source-episode cross-check" eq "$(store_hash)" "$H1"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -336,15 +338,16 @@ tamper context-ref '.context_ref = ("cl22:"+("f"*64))'
 tamper cost-unconverted '.usage.cost_micro = 7500'   # MicroCents passed through as µUSD
 tamper identity '.identity.trial_id = "trial-other"'
 sed 's/"corpus_role":"mechanism_test"/"corpus_role":"discovery","corpus_role":"mechanism_test"/' "$PIN_EP" > "$WORK/tamper-dup-key.json"
-for spec in "policy-ref:4" "unknown-field:3" "context-ref:4" "dup-key:3" "identity:4"; do
+tamper projection-ref '.projection_ref = ("cl22:"+("9"*64))'   # G6: must be a real PolicyProjection
+for spec in "policy-ref:4" "unknown-field:3" "context-ref:4" "dup-key:3" "identity:4" "projection-ref:4"; do
   name="${spec%%:*}"; want="${spec##*:}"
   N="$(ledger_n)"; H="$(store_hash)"
   axl intake episode --in "$WORK/tamper-$name.json" --context "$PIN_CTX" --ack "$PIN_ACK" >/dev/null 2>"$WORK/tamper-$name.err"
   check "tampered $name: refused with exit $want" eq "$?" "$want"
   check "tampered $name: nothing recorded, store unchanged" bash -c "[ $(ledger_n) -eq $N ] && [ '$(store_hash)' = '$H' ]"
 done
-# cost-unconverted changes the sidecar bytes, so projection/ack still bind; it is
-# refused only against the canonical episode — which is 0 today (gap G1). Record it.
+# cost-unconverted changes the sidecar bytes but keeps the trial identity, so it
+# is refused as an identity conflict with the already-recorded episode.
 N="$(ledger_n)"
 axl intake episode --in "$WORK/tamper-cost-unconverted.json" --context "$PIN_CTX" --ack "$PIN_ACK" >/dev/null 2>"$WORK/tamper-cost.err"
 TC_RC=$?

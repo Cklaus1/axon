@@ -29,12 +29,15 @@
 //! axon-loop --store DIR admit              --in admit-request.json
 //! axon-loop             tel     summarize  --in tel-request.json
 //! axon-loop --store DIR intake  episode    --in sidecar.json --context FILE|DIR
-//!                                          --ack FILE|DIR [--source-episode FILE]
+//!                                          --ack FILE|DIR [--projection FILE] [--source-episode FILE]
 //! ```
 //!
-//! `intake episode`: `--context`/`--ack` may name MiCode's `context/` /
-//! `policy-ack/` directory, in which case the file is the one the sidecar
-//! names (`context_ref` / `projection_ref`); nothing is searched for.
+//! `intake episode`: `--context` may name MiCode's `context/` directory, in
+//! which case the file is the one the sidecar's `context_ref` names. `--ack`
+//! may name MiCode's `policy-ack/` directory: the acknowledgement is found BY
+//! CONTENT (exactly one distinct ack pinning the episode's policy_ref over its
+//! candidate_set_ref), because `projection_ref` names a PolicyProjection, not
+//! the ack (G6). A non-null `projection_ref` requires `--projection`.
 
 use axon_loop::error::LoopError;
 use axon_loop::store::{contract_from_value, strict_record, Store};
@@ -244,34 +247,42 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                       "token_breakdown":"unavailable: Usage v1 has no token fields"}))
         }
         ["intake", "episode"] => {
-            a.only(&["in", "context", "ack", "source-episode"])?;
+            a.only(&["in", "context", "ack", "projection", "source-episode"])?;
             let episode = a.input()?;
-            // Parse strictly once here only to learn which receipt/ack the
+            // Parse strictly once here only to learn which receipt the
             // sidecar names when a DIRECTORY is given; intake re-parses.
             let named: LoopEpisode = parse(&episode)?;
-            let pick = |flag: &str, r: Option<&Ref>| -> Result<Option<String>, LoopError> {
-                let Some(p) = a.flags.get(flag) else {
-                    return Ok(None);
-                };
-                let p = std::path::Path::new(p);
-                let file = if p.is_dir() {
-                    let r = r.ok_or_else(|| {
-                        LoopError::Refused(format!(
-                            "--{flag} is a directory but the episode names no ref for it"
-                        ))
-                    })?;
-                    p.join(format!("{}.json", r.hex()))
-                } else {
-                    p.to_path_buf()
-                };
-                std::fs::read_to_string(&file)
-                    .map(Some)
+            let read = |file: &std::path::Path| {
+                std::fs::read_to_string(file)
                     .map_err(|e| LoopError::Io(format!("{}: {e}", file.display())))
             };
-            let context = pick("context", Some(&named.context_ref))?
-                .ok_or_else(|| LoopError::Usage("missing --context".into()))?;
-            let ack = pick("ack", named.projection_ref.as_ref())?
-                .ok_or_else(|| LoopError::Usage("missing --ack".into()))?;
+            let context = {
+                let p = std::path::Path::new(a.flag("context")?);
+                if p.is_dir() {
+                    read(&p.join(format!("{}.json", named.context_ref.hex())))?
+                } else {
+                    read(p)?
+                }
+            };
+            // G6: the ack is found BY CONTENT, so a directory hands over all
+            // of its *.json files and the intake selects exactly one.
+            let acks: Vec<String> = {
+                let p = std::path::Path::new(a.flag("ack")?);
+                if p.is_dir() {
+                    let mut files: Vec<_> = std::fs::read_dir(p)?
+                        .filter_map(|e| e.ok().map(|e| e.path()))
+                        .filter(|f| f.extension().is_some_and(|x| x == "json") && f.is_file())
+                        .collect();
+                    files.sort();
+                    files.iter().map(|f| read(f)).collect::<Result<_, _>>()?
+                } else {
+                    vec![read(p)?]
+                }
+            };
+            let projection = match a.flags.get("projection") {
+                Some(p) => Some(read(std::path::Path::new(p))?),
+                None => None,
+            };
             let source = match a.flags.get("source-episode") {
                 Some(p) => Some(std::fs::read_to_string(p)?),
                 None => None,
@@ -281,7 +292,8 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                 &intake::IntakeInput {
                     episode: &episode,
                     context: &context,
-                    ack: &ack,
+                    acks: &acks,
+                    projection: projection.as_deref(),
                     source_episode: source.as_deref(),
                 },
             )?;

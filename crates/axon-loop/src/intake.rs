@@ -23,14 +23,23 @@
 //! 5. [`axon_loop_contracts::bind_episode`] at the scope's CURRENT authority
 //!    epoch: identity, scope, policy/context bytes, controls and candidate
 //!    view, input workspace;
-//! 6. the policy acknowledgement (REQUIRED): its `cl22:` is the sidecar's
-//!    `projection_ref`, it records `pinned` for exactly this policy id, ref and
-//!    shortlist, and its candidate list digests to the policy's
-//!    `candidate_set_ref` and contains the shortlist. It is required because
-//!    `bind_episode` compares policy BYTES only against the policy the episode
-//!    itself names: an episode re-pointed at a different stored policy with the
-//!    same controls and candidate view would bind. The ack is MiCode's record
-//!    of the shortlist that was actually applied;
+//! 6. the policy acknowledgement (REQUIRED), located BY CONTENT (G6): among
+//!    the acks presented (MiCode's `policy-ack/` directory, or one file),
+//!    exactly one DISTINCT ack whose `pin.policy_ref` is the episode's
+//!    `policy_ref` and whose `candidate_set_ref` is the episode's. None ⇒
+//!    refused ("no ack"); two different ones ⇒ refused ("ambiguous ack").
+//!    It must record `pinned` for exactly this policy id, ref and shortlist,
+//!    and its candidate list must digest to the `candidate_set_ref` and
+//!    contain the shortlist. It is required because `bind_episode` compares
+//!    policy BYTES only against the policy the episode itself names: an
+//!    episode re-pointed at a different stored policy with the same controls
+//!    and candidate view would bind. The ack is MiCode's record of the
+//!    shortlist that was actually applied. And `projection_ref` means a
+//!    `PolicyProjection` (sidecar policy → ACF policy digest), never the ack:
+//!    `null` is accepted (MiCode submits no ACF job); a non-null ref must be a
+//!    presented `PolicyProjection` whose `cl22:` is that ref and whose
+//!    `sidecar_policy_ref` is the episode's `policy_ref`, or the episode is
+//!    refused;
 //! 7. optionally the canonical MiCode episode (`--source-episode`): its
 //!    `cl22:` is the sidecar's `source_episode_ref`, and a KNOWN
 //!    `usage.cost_micro` equals its `cost.micro_cents` converted 1e-8 → 1e-6
@@ -47,7 +56,8 @@ use crate::store::Store;
 use axon_loop_contracts::{
     bind_episode, check_shortlist, digest, digest_value, parse, parse_value, AuthorityEpoch,
     CandidateId, CorpusRole, EpisodeStatus, ExecutionContextReceipt, LoopEpisode, OpaqueRef,
-    PolicyEnvelope, PolicyId, Ref, RefScheme, Refusal, Scope, TrialIdentity, UsageState,
+    PolicyEnvelope, PolicyId, PolicyProjection, Ref, RefScheme, Refusal, Scope, TrialIdentity,
+    UsageState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -91,8 +101,7 @@ pub struct IntakeRecord {
     #[serde(deserialize_with = "crate::nullable")]
     pub cost_micro: Option<u64>,
     pub source_episode_ref: Ref,
-    /// `cl22:` of MiCode's policy acknowledgement (= the sidecar's
-    /// `projection_ref`).
+    /// `cl22:` of MiCode's policy acknowledgement, located by content.
     pub ack_ref: Ref,
     /// Whether the canonical episode was presented and the unit conversion
     /// cross-checked.
@@ -123,7 +132,11 @@ pub struct IntakeOutcome {
 pub struct IntakeInput<'a> {
     pub episode: &'a str,
     pub context: &'a str,
-    pub ack: &'a str,
+    /// Candidate acknowledgements; the one that belongs to this episode is
+    /// selected by content (see module docs, step 6).
+    pub acks: &'a [String],
+    /// The `PolicyProjection` bytes, required iff `projection_ref` is non-null.
+    pub projection: Option<&'a str>,
     pub source_episode: Option<&'a str>,
 }
 
@@ -212,8 +225,9 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     )
     .map_err(semantic("bind"))?;
 
-    // 6. The acknowledgement, when presented.
-    let ack_ref = check_ack(input.ack, &ep, &policy)?;
+    // 6. The acknowledgement, located by content; 6b the projection.
+    let ack_ref = check_ack(select_ack(input.acks, &ep)?, &ep, &policy)?;
+    check_projection(input.projection, &ep)?;
 
     // 7. The canonical episode and the unit conversion, when presented.
     if let Some(text) = input.source_episode {
@@ -297,12 +311,6 @@ fn check_ack(text: &str, ep: &LoopEpisode, policy: &PolicyEnvelope) -> Result<Re
         return Err(shape(format!("ack: schema must be {ACK_SCHEMA:?}")));
     }
     let ack_ref = digest_value(&v)?;
-    if ep.projection_ref.as_ref() != Some(&ack_ref) {
-        return Err(refused(format!(
-            "ack digests to {ack_ref}, but the episode's projection_ref is {:?}",
-            ep.projection_ref.as_ref().map(Ref::as_str)
-        )));
-    }
     let pin = &obj["pin"];
     if pin["state"] != "pinned" {
         return Err(refused(format!(
@@ -352,6 +360,68 @@ fn check_ack(text: &str, ep: &LoopEpisode, policy: &PolicyEnvelope) -> Result<Re
     )
     .map_err(semantic("ack shortlist"))?;
     Ok(ack_ref)
+}
+
+/// Step 6: exactly one DISTINCT ack joins this episode by content. Files that
+/// are not acks, or acks for another policy/view, are skipped; an ack that
+/// matches but is malformed is still returned so `check_ack` refuses it.
+fn select_ack<'a>(acks: &'a [String], ep: &LoopEpisode) -> Result<&'a str> {
+    let mut found: Vec<(Ref, &str)> = Vec::new();
+    for text in acks {
+        let Ok(v) = parse_value(text) else { continue };
+        if v.get("schema").and_then(Value::as_str) != Some(ACK_SCHEMA) {
+            continue;
+        }
+        let pin_ref = v.pointer("/pin/policy_ref").and_then(Value::as_str);
+        let csr = v.get("candidate_set_ref").and_then(Value::as_str);
+        if pin_ref != Some(ep.policy_ref.as_str()) || csr != Some(ep.candidate_set_ref.as_str()) {
+            continue;
+        }
+        let r = digest_value(&v)?;
+        if !found.iter().any(|(x, _)| *x == r) {
+            found.push((r, text.as_str()));
+        }
+    }
+    match found.as_slice() {
+        [] => Err(refused(format!(
+            "no ack: none of the {} presented acknowledgement(s) pins policy {} over view {}",
+            acks.len(),
+            ep.policy_ref,
+            ep.candidate_set_ref
+        ))),
+        [(_, t)] => Ok(t),
+        many => Err(refused(format!(
+            "ambiguous ack: {} different acknowledgements pin policy {} over view {}",
+            many.len(),
+            ep.policy_ref,
+            ep.candidate_set_ref
+        ))),
+    }
+}
+
+/// Step 6b: `projection_ref` is a PolicyProjection, not the ack.
+fn check_projection(text: Option<&str>, ep: &LoopEpisode) -> Result<()> {
+    let Some(want) = &ep.projection_ref else {
+        return Ok(());
+    };
+    let text = text.ok_or_else(|| {
+        refused(format!(
+            "projection_ref {want} names a PolicyProjection, but none was presented (--projection)"
+        ))
+    })?;
+    let proj: PolicyProjection = parse(text).map_err(semantic("projection"))?;
+    let r = digest(&proj)?;
+    if &r != want {
+        return Err(refused(format!(
+            "projection digests to {r}, but the episode's projection_ref is {want}"
+        )));
+    }
+    if proj.sidecar_policy_ref != ep.policy_ref {
+        return Err(refused(
+            "projection maps a different sidecar policy than the episode names",
+        ));
+    }
+    Ok(())
 }
 
 fn check_source_episode(text: &str, ep: &LoopEpisode) -> Result<()> {

@@ -3,7 +3,7 @@
 //! The documents here are built the way `micode-persist::loop_sidecar::build`
 //! and `active_policy::acknowledgement` build them (not_run verification,
 //! estimated usage, `not_produced` markers for ACF refs, `projection_ref` =
-//! the ack's `cl22:`). The real-bytes proof — MiCode's own binary writing
+//! null — the ack is joined by content, G6). The real-bytes proof — MiCode's own binary writing
 //! them — is `scripts/loop_interop_gate.sh`; these pin the refusal rules and
 //! the unit conversion.
 
@@ -95,7 +95,7 @@ fn source_episode(micro_cents: u64) -> Value {
 fn sidecar(
     p: &PolicyEnvelope,
     ctx: &Value,
-    ack: &Value,
+    _ack: &Value,
     src: &Value,
     micro_cents: Option<u64>,
 ) -> Value {
@@ -120,7 +120,7 @@ fn sidecar(
                   "attempt_refs": [digest_value(&json!({"attempt_id":"attempt-1"})).unwrap()]},
         "corpus_role": "mechanism_test",
         "data_use_ref": format!("cl22:{}", "d".repeat(64)),
-        "projection_ref": digest_value(ack).unwrap(),
+        "projection_ref": null,
     })
 }
 
@@ -174,7 +174,8 @@ fn run(c: &Case, ep: &Value, src: bool) -> Result<axon_loop::intake::IntakeOutco
         &IntakeInput {
             episode: &ep.to_string(),
             context: &c.ctx.to_string(),
-            ack: &c.ack.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
             source_episode: src.then(|| c.src.to_string()).as_deref(),
         },
     )
@@ -280,11 +281,15 @@ fn tampered_unknown_or_unjoinable_episodes_are_refused_with_the_store_unchanged(
         |e| matches!(e, LoopError::Refused(ref m) if m.contains("not-produced")),
     ));
 
+    // G6: projection_ref means a PolicyProjection. A non-null ref with no
+    // projection presented is refused (it is never read as "the ack").
     let mut v = c.ep.clone();
     v["projection_ref"] = json!(format!("cl22:{}", "9".repeat(64)));
-    cases.push(("ack not the named one", v, |e| {
-        matches!(e, LoopError::Refused(_))
-    }));
+    cases.push((
+        "projection_ref with no projection",
+        v,
+        |e| matches!(e, LoopError::Refused(ref m) if m.contains("PolicyProjection")),
+    ));
 
     let mut v = c.ep.clone();
     v["usage"]["cost_micro"] = json!(0);
@@ -312,7 +317,8 @@ fn tampered_unknown_or_unjoinable_episodes_are_refused_with_the_store_unchanged(
         &IntakeInput {
             episode: &raw,
             context: &c.ctx.to_string(),
-            ack: &c.ack.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
             source_episode: None,
         },
     )
@@ -357,7 +363,8 @@ fn a_policy_the_store_does_not_hold_is_refused() {
         &IntakeInput {
             episode: &ep.to_string(),
             context: &c.ctx.to_string(),
-            ack: &a.to_string(),
+            acks: &[a.to_string()],
+            projection: None,
             source_episode: None,
         },
     )
@@ -391,7 +398,8 @@ fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
         &IntakeInput {
             episode: &ep.to_string(),
             context: &c.ctx.to_string(),
-            ack: &c.ack.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
             source_episode: Some(&src.to_string()),
         },
     )
@@ -406,4 +414,94 @@ fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
         "{m}"
     );
     assert_eq!(snapshot(c.s.root()), before);
+}
+
+fn run_with(
+    c: &Case,
+    acks: &[String],
+    projection: Option<&str>,
+    ep: &Value,
+) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &c.ctx.to_string(),
+            acks,
+            projection,
+            source_episode: None,
+        },
+    )
+}
+
+/// G6: the ack is found by CONTENT among the presented files — unrelated acks
+/// and non-ack files are ignored; the same ack twice is fine.
+#[test]
+fn g6_ack_is_selected_by_content() {
+    let c = case(Some(500));
+    let mut other = ack(&policy(&["read"]));
+    other["pin"]["policy_ref"] = json!(format!("cl22:{}", "7".repeat(64)));
+    let acks = vec![
+        "{\"not\":\"an ack\"}".to_string(),
+        other.to_string(),
+        c.ack.to_string(),
+        c.ack.to_string(),
+    ];
+    let out = run_with(&c, &acks, None, &c.ep).unwrap();
+    assert_eq!(out.record.ack_ref, digest_value(&c.ack).unwrap());
+}
+
+/// G6: zero matching acks ⇒ "no ack"; two DIFFERENT matching acks ⇒
+/// "ambiguous ack". Both refusals leave the store unchanged.
+#[test]
+fn g6_no_or_ambiguous_ack_is_refused() {
+    let c = case(Some(500));
+    let before = snapshot(c.s.root());
+    let e = run_with(&c, &[], None, &c.ep).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("no ack")),
+        "{e}"
+    );
+    let mut twin = c.ack.clone();
+    twin["pin"]["shortlist"] = json!(["read"]);
+    let e = run_with(&c, &[c.ack.to_string(), twin.to_string()], None, &c.ep).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("ambiguous ack")),
+        "{e}"
+    );
+    // a matching but malformed ack (extra field) is refused, not skipped
+    let mut bad = c.ack.clone();
+    bad["extra"] = json!(1);
+    assert!(run_with(&c, &[bad.to_string()], None, &c.ep).is_err());
+    assert_eq!(before, snapshot(c.s.root()));
+}
+
+/// G6: a non-null projection_ref must be a real PolicyProjection over THIS
+/// episode's policy; a matching one is accepted.
+#[test]
+fn g6_non_null_projection_ref_is_validated() {
+    let c = case(Some(500));
+    let proj = |sidecar: &Ref| {
+        json!({"sidecar_policy_ref": sidecar,
+               "acf_policy_digest": format!("acf1:{}", "c".repeat(64)),
+               "projection_ref": format!("cl22:{}", "9".repeat(64))})
+    };
+    let good = proj(&digest(&c.p).unwrap());
+    let mut ep = c.ep.clone();
+    ep["projection_ref"] = json!(digest_value(&good).unwrap());
+    let acks = [c.ack.to_string()];
+    let before = snapshot(c.s.root());
+    // the ack's bytes presented as the projection: refused
+    assert!(run_with(&c, &acks, Some(&c.ack.to_string()), &ep).is_err());
+    // a projection for a different sidecar policy: refused
+    let wrong = proj(&Ref::new(format!("cl22:{}", "8".repeat(64))).unwrap());
+    let mut ep2 = c.ep.clone();
+    ep2["projection_ref"] = json!(digest_value(&wrong).unwrap());
+    let e = run_with(&c, &acks, Some(&wrong.to_string()), &ep2).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("different sidecar policy")),
+        "{e}"
+    );
+    assert_eq!(before, snapshot(c.s.root()));
+    run_with(&c, &acks, Some(&good.to_string()), &ep).unwrap();
 }
