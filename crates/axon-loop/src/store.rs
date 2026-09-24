@@ -47,10 +47,13 @@ pub struct Config {
     pub trusted_admitters: Vec<OpaqueRef>,
     pub trusted_verifiers: Vec<OpaqueRef>,
     /// Independent preflight observers whose context receipts EVL accepts
-    /// (`check_context_current`). Absent/empty ⇒ no context is trusted, so no
-    /// trial is a verified pass (fail closed). Optional in the file so older
-    /// configs still parse; never serialized when empty.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// (`check_context_current`). Empty ⇒ no context is trusted, so no trial
+    /// is a verified pass (fail closed); it never locks out pause/rollback.
+    /// Always serialized, so an explicit `[]` round-trips (NS4b: it used to be
+    /// dropped on re-serialization and then refused as non-canonical, exit 3
+    /// on every writing verb). A config written before this field existed
+    /// still parses: [`Store::config`] reads the absent field as `[]`.
+    #[serde(default)]
     pub trusted_observers: Vec<OpaqueRef>,
 }
 
@@ -393,7 +396,17 @@ impl Store {
     pub fn config(&self) -> Result<Config> {
         let p = self.root.join("config.json");
         match self.read_text(&p)? {
-            Some(s) => strict_record(&s),
+            Some(s) => {
+                // A pre-observer config omits the field; it means the same
+                // as an explicit `[]`, so it is read as one and the strict
+                // canonical check then applies to the whole record.
+                let mut v = axon_loop_contracts::parse_value(&s)?;
+                if let Some(o) = v.as_object_mut() {
+                    o.entry("trusted_observers")
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                }
+                strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
+            }
             None => Ok(Config {
                 schema: ConfigSchema,
                 trusted_admitters: Vec::new(),

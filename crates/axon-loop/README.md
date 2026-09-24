@@ -69,21 +69,30 @@ No `axon` CLI verb reaches this crate.
     external witness and is **OPEN**.
   * **Deleting the anchor as well (R3/NS6c).**
 * **Plan approval is not `axon-os` approval.** `operator_approved` is a
-  self-asserted bool, and `approval_ref` is only checked for being non-null
-  (D-016).
+  **self-asserted** bool the submitter sets, and `approval_ref` is only
+  checked for being non-null. It reuses none of `axon-os`'s approval
+  verification (D-016, E_hardening H03). This is still open and was
+  deliberately not redesigned in stage 2.
 * **No cost metering of its own.** It consumes `Usage` as reported.
 
-## Open defects
+## Red-team round 4 defects
 
 From red-team round 4, run independently against `dead41b` (operator-side
 evidence, `.axon-v022/redteam/axon-loop-r4-independent.md`, **not in the
-repository**). Stage 2 lane 2A fixes NS3 (scope-keyed records) and NS4p/NS4w (a subject issuer is never accepted as the preflight observer of its own trials, mirroring the verifier rule). The rows still listed below are open.
+repository**). Stage 2 lane 2A fixed all three, each with a regression test
+that fails when the fix is reverted:
 
-| id | severity | defect |
-|---|---|---|
-| NS4b | LOW | An explicit `"trusted_observers": []` in `config.json` is refused as malformed (exit 3) by every writing verb, including a fenced pause. The cause: `skip_serializing_if = "Vec::is_empty"` combined with the strict canonical round-trip. It fails closed, but "I said none" becomes unparseable, which contradicts the project's rule that absent ≠ empty |
+| id | fix |
+|---|---|
+| NS3a/b/c | `candidate-sets/` and `task-manifests/` are keyed by `(scope, list)`, so registering the same list for another scope can no longer overwrite the first scope's record. Re-putting the list repairs a store written in the old layout. |
+| NS4p / NS4w | `evl` refuses a trial whose preflight observer is a subject issuer (the request's `subject_issuers` plus every arm's proposer), even when the operator lists it in `trusted_observers`. This mirrors the verifier rule. |
+| NS4b | An explicit `"trusted_observers": []` is valid and round-trips, and an absent field reads the same way. EVL then gives 0 verified passes, and pause/rollback still work. |
 
-Ownership conflicts D-C1 and D-C2 are also open. See
+Still open from that round, each out of model: R1 (see the ledger bullet
+above), R3/NS6c (deleting the anchor too), and PF1 (the context's
+`created_ms` is caller-supplied and unsigned).
+
+Ownership conflict D-C1 is partly resolved (keyed ledger under `AXON_ATTEST_KEY`; R1 open) and D-C2 is open. See
 `governance/cortex-v015/IMPLEMENTATION_MAP.md` §4a.
 
 ## Axon ↔ MiCode

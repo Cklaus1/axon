@@ -1251,3 +1251,55 @@ fn ns4p_ns4w_a_subject_is_never_a_trusted_observer_of_its_own_trials() {
         "control: a non-subject observer"
     );
 }
+
+/// NS4b (independent round 4): an explicit `"trusted_observers": []` is a
+/// valid config meaning "no observer is trusted". It must not lock the
+/// operator out: a fenced pause succeeds. EVL fails closed: 0 verified
+/// passes. The absent field ("I did not say") still parses with the same
+/// meaning, and `write_config` round-trips the explicit empty list.
+#[test]
+fn ns4b_explicit_empty_trusted_observers_is_valid_and_fails_closed() {
+    fn set_observers(w: &World, observers: Option<serde_json::Value>) {
+        let p = w.s.root().join("config.json");
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        match observers {
+            Some(o) => v["trusted_observers"] = o,
+            None => {
+                v.as_object_mut().unwrap().remove("trusted_observers");
+            }
+        }
+        std::fs::write(&p, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    }
+    for (name, obs) in [("explicit []", Some(json!([]))), ("absent", None)] {
+        // EVL: fail closed, zero verified passes.
+        let w = world();
+        set_observers(&w, obs.clone());
+        assert!(w.s.config().unwrap().trusted_observers.is_empty(), "{name}");
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+        let (rec, _) = evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+        )
+        .unwrap();
+        assert!(rec.arms.iter().all(|a| a.verified_pass == 0), "{name}");
+        // A fenced pause is never locked out by the observer set.
+        let w = world();
+        set_observers(&w, obs);
+        pointer::transition(
+            &w.s,
+            &t(transition("pz", "pause", &w.inc_ref, None, 1, None, false)),
+        )
+        .unwrap_or_else(|e| panic!("{name}: pause refused: {e}"));
+    }
+    // write_config round-trips an explicit empty list, byte for byte.
+    let w = world();
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_observers.clear();
+    w.s.write_config(&cfg).unwrap();
+    let text = std::fs::read_to_string(w.s.root().join("config.json")).unwrap();
+    assert!(text.contains("\"trusted_observers\": []"), "{text}");
+    assert!(w.s.config().unwrap().trusted_observers.is_empty());
+}

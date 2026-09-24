@@ -707,7 +707,9 @@ Unkeyed controls of the same attacks still succeed. Two mutations were run:
 Candidate lists and task manifests are now stored under
 `<kind>/<tenant>/<family>/<hex>.json`, so registering the same list for a
 second scope cannot overwrite the first scope's record. A re-put repairs a
-store that the old flat layout bricked.
+store that the old flat layout bricked. NS4p/NS4w are fixed: EVL never accepts a subject issuer as the preflight
+observer of its own trials. NS4b is fixed: an explicit empty
+`trusted_observers` is valid, round-trips, and fails closed.
 
 ## D-016 — D-C2: a fourth authority vocabulary; admission under a grant that is not enforced
 
