@@ -85,6 +85,7 @@ pub struct ExecutionReceipt {
 }
 
 impl Contract for ExecutionReceipt {
+    const SCHEMA: &'static str = crate::schema::schema_text!("acf-execution-receipt.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         if let Some(m) = self.matched_checks {
             check_int("matched_checks", m, 0)?;

@@ -82,6 +82,7 @@ pub struct ExecutionContextReceipt {
 }
 
 impl Contract for ExecutionContextReceipt {
+    const SCHEMA: &'static str = crate::schema::schema_text!("closed-loop-context.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         check_int("created_ms", self.created_ms, 0)?;
         check_int("expires_ms", self.expires_ms, 1)?;

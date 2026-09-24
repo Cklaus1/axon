@@ -154,6 +154,7 @@ pub struct LoopEpisode {
 }
 
 impl Contract for LoopEpisode {
+    const SCHEMA: &'static str = crate::schema::schema_text!("closed-loop-episode.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         let v = &self.verification;
         check_int("verification.matched_checks", v.matched_checks, 0)?;

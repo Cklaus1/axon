@@ -28,6 +28,7 @@ pub mod error;
 pub mod ids;
 pub mod policy;
 pub mod receipt;
+pub mod schema;
 
 pub use canonical::{
     canonical_bytes, canonical_json, digest, digest_value, parse, parse_bytes, parse_value,
@@ -71,6 +72,11 @@ pub const MAX_DEPTH: usize = 32;
 /// [`parse`] runs [`Contract::validate`] after typed deserialization; code that
 /// builds a value directly should call it before emitting or digesting.
 pub trait Contract: serde::de::DeserializeOwned + serde::Serialize {
+    /// The JSON Schema text this contract's wire form must satisfy. [`parse`]
+    /// validates the untyped document against it BEFORE typed serde, so serde's
+    /// extra accepted encodings (struct-as-array, enum-as-object) never reach
+    /// the typed layer.
+    const SCHEMA: &'static str;
     fn validate(&self) -> Result<(), Refusal>;
 }
 

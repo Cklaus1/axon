@@ -63,6 +63,7 @@ impl PolicyEnvelope {
 }
 
 impl Contract for PolicyEnvelope {
+    const SCHEMA: &'static str = crate::schema::schema_text!("closed-loop-policy.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         if self.authority_expansion {
             return Err(semantic("authority_expansion must be false"));
@@ -100,6 +101,7 @@ pub enum PinAck {
 }
 
 impl Contract for PolicyPin {
+    const SCHEMA: &'static str = crate::schema::schema_text!("local-policy-pin.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         if self.pinned_at_ms < 0 {
             return Err(shape("pinned_at_ms must be >= 0"));
@@ -141,6 +143,7 @@ pub struct PolicyTransition {
 }
 
 impl Contract for PolicyTransition {
+    const SCHEMA: &'static str = crate::schema::schema_text!("closed-loop-transition.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         if self.next_epoch.get() < 1 {
             return Err(shape("next_epoch must be >= 1"));
@@ -186,6 +189,7 @@ pub struct PolicyProjection {
 }
 
 impl Contract for PolicyProjection {
+    const SCHEMA: &'static str = crate::schema::schema_text!("local-policy-projection.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         Ok(())
     }

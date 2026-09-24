@@ -111,6 +111,7 @@ pub struct ComputeRequest {
 }
 
 impl Contract for ComputeRequest {
+    const SCHEMA: &'static str = crate::schema::schema_text!("acf-compute-request.schema.json");
     fn validate(&self) -> Result<(), Refusal> {
         let l = &self.limits;
         for (what, v) in [

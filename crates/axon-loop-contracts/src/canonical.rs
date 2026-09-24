@@ -37,6 +37,12 @@ use serde_json::Value;
 /// integer) → the type's schema-level and intrinsic semantic checks.
 pub fn parse<T: Contract>(json: &str) -> Result<T, Refusal> {
     let value = parse_value(json)?;
+    // Shape first, from the checked-in schema: an object where the schema says
+    // object (never a positional array), a string where it says enum/const
+    // (never `{"variant":null}`), no ignored fields — at every nesting level
+    // (red-team D1-D3). Typed serde then runs as a second, narrower layer.
+    let schema = crate::schema::load(T::SCHEMA)?;
+    crate::schema::validate_against(&schema, &value)?;
     let typed: T = serde_json::from_value(value).map_err(|e| {
         let m = e.to_string();
         if m.contains("unknown field") || m.contains("unknown variant") {
@@ -64,9 +70,55 @@ pub fn parse_value(json: &str) -> Result<Value, Refusal> {
         return Err(Refusal::TooLarge(json.len()));
     }
     bounded_depth(json)?;
-    let value: Value = axon_cortex::parse_strict(json).map_err(Refusal::Strict)?;
+    let normalized = negative_zero_to_zero(json);
+    let value: Value = axon_cortex::parse_strict(normalized.as_deref().unwrap_or(json))
+        .map_err(Refusal::Strict)?;
     json_tree(&value, 0)?;
     Ok(value)
+}
+
+/// `-0` is a JSON INTEGER token and the reference reads it as integer `0`:
+/// `tools/closed_loop_reference.py` `strict_json` passes every integer token
+/// through `bounded_int` (L114-120: `value = int(text)`, and `int('-0') == 0`),
+/// so `strict_json('-0')` is `0` and it canonicalises as `0`. serde_json
+/// instead parses `-0` as the float `-0.0`, which the float rule would refuse
+/// (red-team D4). The token is rewritten to `0` LEXICALLY, before parsing, so
+/// `-0.0`, `-0e0` and friends still reach the parser as floats and are refused.
+/// Returns `None` when the text contains no such token (the common case).
+fn negative_zero_to_zero(text: &str) -> Option<String> {
+    let b = text.as_bytes();
+    let (mut quoted, mut escaped) = (false, false);
+    let mut hits = Vec::new();
+    for i in 0..b.len() {
+        let c = b[i];
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                quoted = false;
+            }
+        } else if c == b'"' {
+            quoted = true;
+        } else if c == b'-'
+            && b.get(i + 1) == Some(&b'0')
+            && !matches!(b.get(i + 2), Some(b'0'..=b'9' | b'.' | b'e' | b'E'))
+        {
+            hits.push(i);
+        }
+    }
+    if hits.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for i in hits {
+        out.push_str(&text[last..i]);
+        last = i + 1; // drop the '-' only
+    }
+    out.push_str(&text[last..]);
+    Some(out)
 }
 
 /// The text pre-scan: count `[`/`{` outside strings, refuse past MAX_DEPTH.

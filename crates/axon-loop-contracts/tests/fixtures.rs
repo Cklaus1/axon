@@ -346,11 +346,14 @@ fn edit(key: &str, f: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn authority_expansion_must_be_false() {
+    // Refused by the schema walk (`"const": false`) before typed serde...
     let j = edit("policy", |v| v["authority_expansion"] = true.into());
-    assert!(matches!(
-        parse::<PolicyEnvelope>(&j),
-        Err(Refusal::Semantic(_))
-    ));
+    let e = parse::<PolicyEnvelope>(&j).unwrap_err();
+    assert!(e.to_string().contains("authority_expansion"), "{e}");
+    // ...and independently by the typed layer, for values built in code.
+    let mut p: PolicyEnvelope = parse(&member("policy")).unwrap();
+    p.authority_expansion = true;
+    assert!(matches!(p.validate(), Err(Refusal::Semantic(_))));
 }
 
 #[test]
