@@ -144,6 +144,26 @@ echo "── gate: VISION.md focus ───────────────
 # 0.15s, no cargo, so it runs on every gate rather than only --strict.
 ./scripts/cortex_package_gate.sh >/dev/null || fail "cortex v0.15 package (integrity / honesty invariant)"
 
+# The vendored Cortex v0.22 package, ALONGSIDE (never instead of) v0.15 above —
+# G00-r22-package-gate-upgrade requires the older package and its gate retained.
+# The pack ships Python tools, so its SHA256SUMS manifest is verified by
+# stdlib-only code BEFORE any package code runs, with count floors
+# (37 specs / 287 tasks / 504 gates / 337 hashed files / 0 orphans), the
+# package validator run read-only, and its offline suite only under the pinned
+# jsonschema (else a SKIP recorded to $SKIPLOG, fatal under AXON_HARNESS_STRICT).
+# The PASS line is printed rather than discarded, because it is the only place
+# a skipped offline suite is visible. check_v022_runtime_evidence.py is NOT a
+# stage: it has no success exit code.
+echo "── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──"
+if c22=$(./scripts/cortex_package_gate_v022.sh 2>&1); then
+  case "$(printf '%s\n' "$c22" | tail -1)" in
+    "cortex_package_gate_v022: PASS — "*) echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')" ;;
+    *) printf '%s\n' "$c22" | tail -8; fail "cortex v0.22 package gate exited 0 without its PASS line" ;;
+  esac
+else
+  printf '%s\n' "$c22" | tail -15; fail "cortex v0.22 package (integrity / honesty / validator)"
+fi
+
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
@@ -201,6 +221,21 @@ cargo build --locked -q -p axon-core --no-default-features --bin axon \
   || fail "interpreter build (needed by the cortex CLI suite)"
 cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
+
+# The v0.22 closed-loop crates — the contract types, the epoch/ledger store and
+# the Fabric submit path Cortex dispatches checks through. They were CLIPPY-gated
+# below and tested by nothing in this gate (only CI's --workspace run reached
+# them): compiled is not run. Placed here, not in the manifest stage, because
+# axon-fabric's production-caller tests drive the real `axon` interpreter and
+# the real `cortex` binary and FAIL (never skip) without them — both are built
+# at this point, into whatever CARGO_TARGET_DIR says. If governance/
+# release-verification.json later lists these same commands, the manifest stage
+# re-runs them; that costs ~seconds and is the safe direction.
+echo "── gate: v0.22 closed-loop crate tests (contracts, loop, fabric) ──"
+cargo build --locked -q -p axon-cortex --bins \
+  || fail "cortex binary build (needed by axon-fabric's production-caller tests)"
+cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
+  || fail "v0.22 closed-loop crate tests (axon-loop-contracts / axon-loop / axon-fabric)"
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to
@@ -593,6 +628,48 @@ stage order means it should have had one here" ;;
   else
     echo "$out"; fail "kernel_enforce_test (guest-kernel syscall enforcement)"
   fi
+
+  # The v0.22 PAIRED interop gate: real axon-loop and real `micode exec` bytes
+  # in both directions, negatives asserting absence of effect. It was the only
+  # real-peer evidence for the closed loop and was invoked by nothing
+  # (B_gates.json, C_offline_tests.json). Same PASS-line rule as above: exit 0
+  # is not trusted alone. A SKIP (no MiCode worktree at ../micode-v022-wt and no
+  # MICODE_DIR) is printed and counted, never scored as a pass, and is FATAL
+  # under AXON_HARNESS_STRICT=1 (the harness itself exits 3 then).
+  if lig=$(./scripts/loop_interop_gate.sh 2>&1); then
+    case "$(printf '%s\n' "$lig" | tail -1)" in
+      "loop_interop_gate: PASS — "*)
+        echo "  OK $(printf '%s\n' "$lig" | tail -1)" ;;
+      "loop_interop_gate: SKIP — "*)
+        echo "  SKIP $(printf '%s\n' "$lig" | tail -1) — this measured NOTHING"
+        echo "loop_interop_gate" >> "$SKIPLOG" ;;
+      *) printf '%s\n' "$lig" | tail -5; fail "loop_interop_gate exited 0 without its PASS line" ;;
+    esac
+  else
+    printf '%s\n' "$lig" | grep -E 'FAIL|FATAL|assertions:' | tail -15
+    fail "loop_interop_gate (Axon <-> MiCode v0.22 paired interop)"
+  fi
+
+  # B263 physical qualification of the protected Linux microVM profile
+  # (root + KVM + firecracker/jailer + built dist/guest-linux artifacts).
+  # PASS_WITH_BLOCKED (exit 3) FAILS this gate: qualification is not earned
+  # while any required assertion is BLOCKED, and today four are (x1-x4, see
+  # b263_qualify.sh). That is deliberate — reporting it as a named open blocker
+  # would let a strict gate go green over an unqualified profile. SKIP (exit 4,
+  # prerequisite absent) is printed and counted, FATAL under AXON_HARNESS_STRICT=1.
+  b263_rc=0; b263=$(./scripts/b263_qualify.sh 2>&1) || b263_rc=$?
+  b263_last="$(printf '%s\n' "$b263" | tail -1)"
+  case "$b263_rc:$b263_last" in
+    "0:b263_qualify: PASS — "*) echo "  OK $b263_last" ;;
+    "4:b263_qualify: SKIP — "*)
+      echo "  SKIP $b263_last"
+      echo "b263_qualify" >> "$SKIPLOG"
+      [ "${AXON_HARNESS_STRICT:-}" = 1 ] && fail "b263_qualify SKIPPED under AXON_HARNESS_STRICT=1" ;;
+    "3:b263_qualify: PASS_WITH_BLOCKED — "*)
+      echo "  $b263_last"
+      fail "b263_qualify PASS_WITH_BLOCKED — the protected Linux profile is NOT qualified (BLOCKED rows are open blockers, not passes)" ;;
+    *) printf '%s\n' "$b263" | tail -15; fail "b263_qualify (exit $b263_rc)" ;;
+  esac
 
   run_quiet "R26 acceptance gate" ./scripts/r26_acceptance_gate.sh
   run_quiet "R27 acceptance gate" ./scripts/r27_acceptance_gate.sh
