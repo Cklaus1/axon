@@ -2,20 +2,26 @@
 //!
 //! A plan is the package's `axon.closed-loop.pilot/1` document, validated
 //! against the byte-copied package schema (`schemas/closed-loop-pilot.schema.json`)
-//! BEFORE typed serde. `freeze` records its `cl22:` digest; after that the
-//! plan can never be replaced, and every reader re-checks that the stored
-//! bytes still digest to the frozen ref.
+//! BEFORE typed serde. It is stored content-addressed (`plans/<hex>.json`)
+//! and registered in the store ledger under its experiment id.
 //!
-//! The package template leaves the operator fields `null` ON PURPOSE. Nothing
-//! here fills them: freeze refuses a plan with any unset operator field, and
-//! [`ready`] additionally requires `operator_approved`, `runtime_ready`,
-//! distinct corpus manifests and a candidate distinct from the incumbent.
+//! `freeze` is a LEDGER event, so it is permanent: deleting any file does not
+//! undo it (G6), and a frozen experiment id can never be re-registered. A
+//! freeze binds the experiment to exactly one (incumbent, candidate) pair and
+//! a candidate can be frozen in at most ONE experiment, so a plan cannot be
+//! shopped for after outcomes exist (G7). It records the scope's authority
+//! epoch and its own ledger sequence; evaluations are only accepted AFTER it.
+//!
+//! Freeze refuses (exit 7) a plan with any unset operator field — the package
+//! template leaves them `null` ON PURPOSE and nothing here fills them — and a
+//! plan whose rules the admitter cannot EXECUTE ([`crate::rules`]); a frozen
+//! rule that is never read would be a rule in name only (I13, I14). The
+//! candidate must be an EVO proposal from this incumbent (O1/O2).
 
 use crate::error::{refused, LoopError, Result};
-use crate::store::{
-    read_json, strict_record, write_bytes_atomic, write_json_atomic, DirLock, Store,
-};
-use axon_loop_contracts::{Ref, Refusal, Scope, TaskId};
+use crate::ledger::{Event, Tx};
+use crate::store::{strict_record, Store};
+use axon_loop_contracts::{AuthorityEpoch, PolicyEnvelope, Ref, Refusal, Scope, TaskId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -25,7 +31,6 @@ pub const PILOT_SCHEMA_TEXT: &str = include_str!(concat!(
 ));
 
 crate::record_tag!(PilotSchema, "axon.closed-loop.pilot/1");
-crate::record_tag!(FrozenSchema, "axon.loop.frozen-plan/1");
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -185,70 +190,93 @@ impl PilotPlan {
     }
 }
 
-/// The freeze record: `plans/<id>/frozen.json`.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FrozenPlan {
-    pub schema: FrozenSchema,
-    pub experiment_id: String,
-    pub plan_ref: Ref,
-}
-
-fn plan_path(store: &Store, id: &str) -> std::path::PathBuf {
-    store.plan_dir(id).join("plan.json")
-}
-
-fn frozen_path(store: &Store, id: &str) -> std::path::PathBuf {
-    store.plan_dir(id).join("frozen.json")
-}
-
-/// Register (or, while NOT frozen, replace) a plan. A frozen plan is refused.
+/// Register (or, while NOT frozen, replace) a plan. A frozen id is refused.
 pub fn register(store: &Store, plan: &PilotPlan) -> Result<Ref> {
-    let dir = store.plan_dir(&plan.experiment_id);
-    let _lock = DirLock::acquire(&dir)?;
-    if frozen_path(store, &plan.experiment_id).exists() {
+    store.plan_dir(&plan.experiment_id)?; // id validated before any fs call
+    let mut tx = Tx::begin(store)?;
+    if tx.freeze_of(&plan.experiment_id).is_some() {
         return Err(refused(format!(
             "plan {} is frozen; a frozen plan cannot change",
             plan.experiment_id
         )));
     }
-    let bytes = axon_loop_contracts::canonical_json(plan)?;
-    write_bytes_atomic(&plan_path(store, &plan.experiment_id), &bytes)?;
-    plan.digest()
+    let r = plan.digest()?;
+    if let Some(Event::PlanRegistered { plan_ref, .. }) =
+        tx.latest_registration(&plan.experiment_id)
+    {
+        if plan_ref == &r {
+            return Ok(r);
+        }
+    }
+    store.put_cas("plans", plan)?;
+    tx.append(Event::PlanRegistered {
+        experiment_id: plan.experiment_id.clone(),
+        scope: plan.scope.clone(),
+        plan_ref: r.clone(),
+    })?;
+    Ok(r)
 }
 
-fn load_plan(store: &Store, id: &str) -> Result<PilotPlan> {
-    TaskId::new(id).map_err(|_| LoopError::Usage(format!("bad experiment id {id:?}")))?;
-    let text = match std::fs::read_to_string(plan_path(store, id)) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(refused(format!("no registered plan {id}")))
-        }
-        Err(e) => return Err(e.into()),
+fn load_registered(tx: &Tx, id: &str) -> Result<(PilotPlan, Ref)> {
+    let r = match tx.latest_registration(id) {
+        Some(Event::PlanRegistered { plan_ref, .. }) => plan_ref.clone(),
+        _ => return Err(refused(format!("no registered plan {id}"))),
     };
+    Ok((load_by_ref(tx.store, &r)?, r))
+}
+
+/// Load a plan by digest, re-checking bytes against the name.
+pub fn load_by_ref(store: &Store, r: &Ref) -> Result<PilotPlan> {
+    let text = store
+        .read_text(&store.cas_path("plans", r)?)?
+        .ok_or_else(|| LoopError::Io(format!("store corrupt: plan {r} missing")))?;
     let p = PilotPlan::parse(&text)?;
-    if p.experiment_id != id {
-        return Err(LoopError::Io(format!(
-            "plan {id} names {}",
-            p.experiment_id
-        )));
+    if &p.digest()? != r {
+        return Err(LoopError::Io(format!("store corrupt: plan {r} changed")));
     }
     Ok(p)
 }
 
-/// Freeze: compute the `cl22:` digest and record it. Refuses a plan with any
-/// unset operator field (a frozen incomplete plan could never start, and the
-/// decision rule must be fixed BEFORE protected outcomes). Idempotent.
+/// The freeze facts the rest of the loop binds to.
+#[derive(Clone, Debug, Serialize)]
+pub struct Frozen {
+    pub plan: PilotPlan,
+    pub plan_ref: Ref,
+    pub freeze_seq: u64,
+    pub freeze_ms: u64,
+    pub authority_epoch: AuthorityEpoch,
+}
+
+pub(crate) fn frozen_in(tx: &Tx, id: &str) -> Result<Option<Frozen>> {
+    let Some((
+        seq,
+        Event::Freeze {
+            plan_ref,
+            authority_epoch,
+            ..
+        },
+    )) = tx.freeze_of(id)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Frozen {
+        plan: load_by_ref(tx.store, plan_ref)?,
+        plan_ref: plan_ref.clone(),
+        freeze_seq: seq,
+        freeze_ms: tx.recorded_ms(seq),
+        authority_epoch: *authority_epoch,
+    }))
+}
+
+/// Freeze: permanent, journalled, one candidate per experiment. Idempotent.
 pub fn freeze(store: &Store, id: &str) -> Result<Ref> {
-    let dir = store.plan_dir(id);
-    let _lock = DirLock::acquire(&dir)?;
-    let plan = load_plan(store, id)?;
-    let r = plan.digest()?;
-    if let Some(f) = read_json::<FrozenPlan>(&frozen_path(store, id))? {
+    store.plan_dir(id)?;
+    let mut tx = Tx::begin(store)?;
+    let (plan, r) = load_registered(&tx, id)?;
+    if let Some(f) = frozen_in(&tx, id)? {
         if f.plan_ref != r {
             return Err(LoopError::Io(format!(
-                "plan {id} bytes digest to {r} but were frozen as {}",
-                f.plan_ref
+                "store corrupt: plan {id} re-registered after its freeze"
             )));
         }
         return Ok(r);
@@ -260,15 +288,76 @@ pub fn freeze(store: &Store, id: &str) -> Result<Ref> {
             unset.join(", ")
         )));
     }
-    write_json_atomic(
-        &frozen_path(store, id),
-        &FrozenPlan {
-            schema: FrozenSchema,
-            experiment_id: id.to_string(),
-            plan_ref: r.clone(),
-        },
-    )?;
+    crate::rules::Rules::parse(&plan)
+        .map_err(|e| LoopError::NotReady(format!("cannot freeze {id}: {e}")))?;
+    let inc = plan.incumbent_policy_ref.clone().expect("set");
+    let cand = plan.candidate_policy_ref.clone().expect("set");
+    if inc == cand {
+        return Err(LoopError::NotReady("candidate equals incumbent".into()));
+    }
+    for e in tx.entries() {
+        if let Event::Freeze {
+            experiment_id,
+            candidate_policy_ref,
+            ..
+        } = &e.event
+        {
+            if candidate_policy_ref == &cand {
+                return Err(refused(format!(
+                    "candidate {cand} is already frozen in experiment {experiment_id}: one experiment per candidate (no plan shopping)"
+                )));
+            }
+        }
+    }
+    check_candidate(&tx, &plan, &inc, &cand)?;
+    let epoch = tx.pointer(&plan.scope).epoch;
+    tx.append(Event::Freeze {
+        experiment_id: id.to_string(),
+        scope: plan.scope.clone(),
+        plan_ref: r.clone(),
+        incumbent_policy_ref: inc,
+        candidate_policy_ref: cand,
+        authority_epoch: epoch,
+    })?;
     Ok(r)
+}
+
+/// The candidate must be a bounded EVO mutation of this incumbent: proposed
+/// (proposer on record), parent = incumbent, same scope/mode/candidate set/
+/// controls, shortlist ⊆ the incumbent's, no authority expansion.
+pub(crate) fn check_candidate(tx: &Tx, plan: &PilotPlan, inc: &Ref, cand: &Ref) -> Result<()> {
+    let ie: PolicyEnvelope = tx.store.get_contract("policies", inc)?;
+    let ce: PolicyEnvelope = tx.store.get_contract("policies", cand)?;
+    if crate::evo::proposer_in(tx, &plan.scope, cand).is_none() {
+        return Err(refused(format!(
+            "candidate {cand} was not produced by EVO in this scope (no proposer on record)"
+        )));
+    }
+    if &ce.parent_policy_ref != inc {
+        return Err(refused("candidate's parent is not the plan's incumbent"));
+    }
+    if ce.scope != plan.scope || ie.scope != plan.scope {
+        return Err(refused("candidate/incumbent scope differs from the plan"));
+    }
+    if Some(&ce.controls_ref) != plan.controls_ref.as_ref() || ce.controls_ref != ie.controls_ref {
+        return Err(refused(
+            "candidate controls differ from the plan's frozen controls",
+        ));
+    }
+    if ce.candidate_set_ref != ie.candidate_set_ref || ce.mode != ie.mode {
+        return Err(refused(
+            "candidate changes the eligible candidate view or mode",
+        ));
+    }
+    if let Some(c) = ce.shortlist.iter().find(|c| !ie.shortlist.contains(c)) {
+        return Err(refused(format!(
+            "candidate adds {c}: a shortlist mutation may only reorder/remove"
+        )));
+    }
+    if ce.authority_expansion {
+        return Err(refused("authority_expansion"));
+    }
+    Ok(())
 }
 
 /// What `plan show` reports.
@@ -277,26 +366,24 @@ pub struct PlanView {
     pub plan: PilotPlan,
     pub plan_ref: Ref,
     pub frozen_ref: Option<Ref>,
+    pub freeze_seq: Option<u64>,
     pub unset_fields: Vec<&'static str>,
     pub start_blockers: Vec<String>,
 }
 
 pub fn show(store: &Store, id: &str) -> Result<PlanView> {
-    let plan = load_plan(store, id)?;
-    let plan_ref = plan.digest()?;
-    let frozen = read_json::<FrozenPlan>(&frozen_path(store, id))?;
-    if let Some(f) = &frozen {
-        if f.plan_ref != plan_ref {
-            return Err(LoopError::Io(format!("plan {id} changed after freeze")));
-        }
-    }
+    store.plan_dir(id)?;
+    let tx = Tx::begin(store)?;
+    let (plan, plan_ref) = load_registered(&tx, id)?;
+    let frozen = frozen_in(&tx, id)?;
     let mut start_blockers = plan.start_blockers();
     if frozen.is_none() {
         start_blockers.insert(0, "plan is not frozen".into());
     }
     Ok(PlanView {
         unset_fields: plan.unset_fields(),
-        frozen_ref: frozen.map(|f| f.plan_ref),
+        frozen_ref: frozen.as_ref().map(|f| f.plan_ref.clone()),
+        freeze_seq: frozen.as_ref().map(|f| f.freeze_seq),
         plan_ref,
         start_blockers,
         plan,
@@ -304,13 +391,26 @@ pub fn show(store: &Store, id: &str) -> Result<PlanView> {
 }
 
 /// The frozen, startable plan — or `NotReady` naming every blocker.
-pub fn ready(store: &Store, id: &str) -> Result<(PilotPlan, Ref)> {
-    let v = show(store, id)?;
-    if !v.start_blockers.is_empty() {
+pub(crate) fn ready_in(tx: &Tx, id: &str) -> Result<Frozen> {
+    check_segment_id(id)?;
+    let Some(f) = frozen_in(tx, id)? else {
+        return Err(LoopError::NotReady(format!("plan {id} is not frozen")));
+    };
+    let b = f.plan.start_blockers();
+    if !b.is_empty() {
         return Err(LoopError::NotReady(format!(
             "plan {id} may not start: {}",
-            v.start_blockers.join("; ")
+            b.join("; ")
         )));
     }
-    Ok((v.plan, v.plan_ref))
+    Ok(f)
+}
+
+pub fn ready(store: &Store, id: &str) -> Result<Frozen> {
+    check_segment_id(id)?;
+    ready_in(&Tx::begin(store)?, id)
+}
+
+fn check_segment_id(id: &str) -> Result<()> {
+    crate::store::check_segment("experiment id", id)
 }

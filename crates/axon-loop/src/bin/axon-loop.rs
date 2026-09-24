@@ -5,7 +5,9 @@
 //! failure stdout is empty and stderr carries
 //! `{"schema":"axon.loop.error/1","error":<kind>,"exit_code":N,"message":…}`.
 //!
-//! Exit codes: 0 ok · 2 usage/io/corrupt store · 3 malformed input (strict
+//! Exit codes: 0 ok · 2 usage/io/corrupt store (incl. a pointer projection
+//! that differs from the ledger, a broken ledger chain, a symlink in the
+//! store) · 3 malformed input (strict
 //! parse) · 4 refused (rules; nothing written) · 5 CAS conflict (stale epoch /
 //! wrong expected policy; nothing written) · 6 paused (no usable active
 //! policy) · 7 plan not ready (unset operator fields / not approved / not
@@ -16,6 +18,7 @@
 //! axon-loop --store DIR pointer show       --tenant T --family F
 //! axon-loop --store DIR pointer transition --in transition.json
 //! axon-loop --store DIR pointer revoke     --tenant T --family F --policy REF --reason REF --issuer ID
+//! axon-loop --store DIR pointer baseline   --in baseline.json   (incumbent-of-record; activate from paused)
 //! axon-loop --store DIR policy  put        --in policy.json
 //! axon-loop --store DIR plan    register   --in plan.json
 //! axon-loop --store DIR plan    freeze     --experiment ID
@@ -126,8 +129,11 @@ fn run(a: &Args) -> Result<Value, LoopError> {
     match w.as_slice() {
         ["pointer", "resolve"] => {
             a.only(&["tenant", "family"])?;
-            let (pin, env) = pointer::resolve(&a.store()?, &a.scope()?)?;
-            Ok(json!({"schema":"axon.loop.resolve/1","pin":pin,"policy":env}))
+            let r = pointer::resolve(&a.store()?, &a.scope()?)?;
+            Ok(
+                json!({"schema":"axon.loop.resolve/1","pin":r.pin,"policy":r.policy,
+                      "mechanism_test":r.mechanism_test,"admission_ref":r.admission_ref}),
+            )
         }
         ["pointer", "show"] => {
             a.only(&["tenant", "family"])?;
@@ -136,6 +142,7 @@ fn run(a: &Args) -> Result<Value, LoopError> {
             let p = pointer::load(&st, &s)?;
             let r = pointer::revocations(&st, &s)?;
             let n = pointer::log(&st, &s)?.len();
+            let r = json!({"schema":"axon.loop.revocations/1","revoked":r});
             Ok(
                 json!({"schema":"axon.loop.pointer-view/1","pointer":p,"revocations":r,"transitions":n}),
             )
@@ -150,13 +157,20 @@ fn run(a: &Args) -> Result<Value, LoopError> {
             a.only(&["tenant", "family", "policy", "reason", "issuer"])?;
             let issuer = OpaqueRef::new(a.flag("issuer")?)
                 .map_err(|_| LoopError::Usage("bad --issuer".into()))?;
-            val(&pointer::revoke(
+            let revoked = pointer::revoke(
                 &a.store()?,
                 &a.scope()?,
                 &a.fref("policy")?,
                 &a.fref("reason")?,
                 &issuer,
-            )?)
+            )?;
+            Ok(json!({"schema":"axon.loop.revocations/1","revoked":revoked}))
+        }
+        ["pointer", "baseline"] => {
+            a.only(&["in"])?;
+            let b = pointer::parse_baseline(&a.input()?)?;
+            let r = pointer::designate_baseline(&a.store()?, &b)?;
+            Ok(json!({"schema":"axon.loop.baseline-result/1","baseline_ref":r}))
         }
         ["policy", "put"] => {
             a.only(&["in"])?;

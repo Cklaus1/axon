@@ -5,9 +5,7 @@
 //! credentials.
 #![allow(dead_code)]
 
-use axon_loop::admission::{AdmissionRecord, AdmissionSchema, ArmFacts, Decision};
 use axon_loop::store::{Config, ConfigSchema, Store};
-use axon_loop::tel::Total;
 use axon_loop_contracts::*;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -91,6 +89,8 @@ pub struct Trial<'a> {
     pub liability: u64,
     pub epoch: u64,
     pub verifier: &'a str,
+    /// Preflight time; default: now (after any freeze made before the call).
+    pub created_ms: Option<u64>,
 }
 
 impl<'a> Trial<'a> {
@@ -104,8 +104,9 @@ impl<'a> Trial<'a> {
             out: Out::Pass,
             cost: Some(100),
             liability: 0,
-            epoch: 0,
+            epoch: 1,
             verifier: VERIFIER,
+            created_ms: None,
         }
     }
 }
@@ -127,6 +128,8 @@ pub fn trial(t: &Trial) -> Value {
     let mut ctx: ExecutionContextReceipt = member("context");
     ctx.identity = identity.clone();
     ctx.authority_epoch = epoch;
+    ctx.created_ms = t.created_ms.unwrap_or_else(axon_loop::now_ms);
+    ctx.expires_ms = ctx.created_ms + 3_600_000;
 
     let mut req: ComputeRequest = member("acf_request");
     req.task_id = identity.task_id.clone();
@@ -190,12 +193,14 @@ pub fn trial(t: &Trial) -> Value {
 pub fn discovery_episode(p: &PolicyEnvelope, trial_id: &str) -> Value {
     let mut t = Trial::new(p, "disc-task", "incumbent", trial_id);
     t.role = CorpusRole::Discovery;
+    t.created_ms = Some(1_000);
     trial(&t)["episode"].clone()
 }
 
 pub fn episode_with_role(p: &PolicyEnvelope, trial_id: &str, role: CorpusRole) -> Value {
     let mut t = Trial::new(p, "disc-task", "incumbent", trial_id);
     t.role = role;
+    t.created_ms = Some(1_000);
     trial(&t)["episode"].clone()
 }
 
@@ -241,6 +246,8 @@ pub fn complete_plan(id: &str, inc: &Ref, cand: &Ref) -> Value {
     o.insert("repetitions".into(), json!(1));
     o.insert("candidate_budget".into(), json!(1));
     o.insert("independent_unit".into(), json!("task"));
+    o.insert("order_rule".into(), json!("paired_tasks"));
+    o.insert("cache_rule".into(), json!("not_enforced_here"));
     o.insert("quality_margin".into(), json!("pass_rate_margin_ppm=0"));
     o.insert(
         "economic_threshold".into(),
@@ -249,57 +256,11 @@ pub fn complete_plan(id: &str, inc: &Ref, cand: &Ref) -> Value {
     o.insert("uncertainty_rule".into(), json!("exact_bounds"));
     o.insert("missing_data_rule".into(), json!("unknown_bounds"));
     o.insert("multiplicity_rule".into(), json!("single_candidate"));
-    o.insert("order_rule".into(), json!("alternate"));
-    o.insert("cache_rule".into(), json!("cold"));
     o.insert(
         "budget_rule".into(),
         json!("max_unresolved_liability_micro=0"),
     );
     p
-}
-
-/// Seed an admission record directly (pointer tests that are not about the
-/// admission rule itself). Returns its ref.
-pub fn seed_admission(
-    store: &Store,
-    target: &PolicyEnvelope,
-    decision: Decision,
-    mechanism_test: bool,
-    deployment_enabled: bool,
-) -> Ref {
-    store.put_cas("policies", target).unwrap();
-    let t = digest(target).unwrap();
-    let facts = ArmFacts {
-        policy_ref: t.clone(),
-        assigned: 1,
-        distinct_tasks: 1,
-        verified_pass: 1,
-        fail: 0,
-        unknown: 0,
-        total: Total::Known { cost_micro: 1 },
-    };
-    let rec = AdmissionRecord {
-        schema: AdmissionSchema,
-        decision,
-        reasons: vec!["seeded by test".into()],
-        scope: scope(),
-        experiment_id: "seed".into(),
-        plan_ref: r('9'),
-        evaluation_ref: r('8'),
-        target_policy_ref: t,
-        incumbent_policy_ref: r('0'),
-        controls_ref: target.controls_ref.clone(),
-        admitter_ref: OpaqueRef::new(ADMITTER).unwrap(),
-        proposer_ref: None,
-        evaluator_ref: OpaqueRef::new(EVALUATOR).unwrap(),
-        mechanism_test,
-        deployment_enabled,
-        evaluated_at_epoch: AuthorityEpoch::new(0).unwrap(),
-        candidate: facts.clone(),
-        incumbent: facts,
-        evidence_refs: vec![],
-    };
-    store.put_cas("admissions", &rec).unwrap()
 }
 
 pub fn transition(
@@ -348,4 +309,220 @@ pub fn snapshot(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
     }
     walk(dir, &mut m);
     m
+}
+
+// ── the real flow ─────────────────────────────────────────────────────────
+
+use axon_loop::admission::{self, AdmissionRecord};
+use axon_loop::error::LoopError;
+use axon_loop::plan::{self, PilotPlan};
+use axon_loop::{evl, evo, null_policy_ref, pointer};
+
+pub struct World {
+    pub dir: tempfile::TempDir,
+    pub s: Store,
+    pub inc: PolicyEnvelope,
+    pub inc_ref: Ref,
+    pub baseline: Ref,
+    pub cand: PolicyEnvelope,
+    pub cand_ref: Ref,
+}
+
+pub fn baseline_doc(p: &Ref) -> Value {
+    json!({"schema":"axon.loop.baseline/1","scope":scope(),"policy_ref":p,
+           "issuer_ref":ADMITTER,"reason_ref":r('b')})
+}
+
+/// Store with config; incumbent stored, designated incumbent-of-record and
+/// activated (epoch 1); one EVO candidate proposed from it.
+pub fn world() -> World {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store_with_config(dir.path());
+    let inc = incumbent();
+    let inc_ref = s.put_cas("policies", &inc).unwrap();
+    let baseline = pointer::designate_baseline(
+        &s,
+        &pointer::parse_baseline(&baseline_doc(&inc_ref).to_string()).unwrap(),
+    )
+    .unwrap();
+    pointer::transition(
+        &s,
+        &tparse(&transition(
+            "boot",
+            "activate",
+            &null_policy_ref(),
+            Some(&inc_ref),
+            0,
+            Some(&baseline),
+            false,
+        )),
+    )
+    .unwrap();
+    let (cand, cand_ref) = propose(&s, &inc, 3, "cand-1");
+    World {
+        dir,
+        s,
+        inc,
+        inc_ref,
+        baseline,
+        cand,
+        cand_ref,
+    }
+}
+
+pub fn propose(s: &Store, parent: &PolicyEnvelope, seed: u64, id: &str) -> (PolicyEnvelope, Ref) {
+    let req = evo::parse_request(
+        &evo_request(
+            parent,
+            seed,
+            id,
+            vec![discovery_episode(parent, &format!("d-{id}"))],
+        )
+        .to_string(),
+    )
+    .unwrap();
+    let p = evo::propose(s, &req).unwrap();
+    (p.candidate, p.candidate_policy_ref)
+}
+
+pub fn freeze_plan(
+    s: &Store,
+    id: &str,
+    inc: &Ref,
+    cand: &Ref,
+    edit: impl FnOnce(&mut Value),
+) -> Result<Ref, LoopError> {
+    let mut v = complete_plan(id, inc, cand);
+    edit(&mut v);
+    plan::register(s, &PilotPlan::from_value(&v)?)?;
+    plan::freeze(s, id)
+}
+
+/// (arm, policy, task, trial, outcome, cost)
+pub type Spec<'a> = (
+    &'a str,
+    &'a PolicyEnvelope,
+    String,
+    String,
+    Out,
+    Option<u64>,
+);
+
+pub fn arm<'a>(
+    arm: &'a str,
+    p: &'a PolicyEnvelope,
+    n: usize,
+    pfx: &str,
+    pass: usize,
+    cost: Option<u64>,
+) -> Vec<Spec<'a>> {
+    (0..n)
+        .map(|i| {
+            (
+                arm,
+                p,
+                format!("task-{i}"),
+                format!("{pfx}{i}"),
+                if i < pass { Out::Pass } else { Out::Fail },
+                cost,
+            )
+        })
+        .collect()
+}
+
+pub fn pair<'a>(
+    inc: &'a PolicyEnvelope,
+    cand: &'a PolicyEnvelope,
+    n: usize,
+    inc_pass: usize,
+    cand_pass: usize,
+    inc_cost: Option<u64>,
+    cand_cost: Option<u64>,
+) -> Vec<Spec<'a>> {
+    let mut v = arm("incumbent", inc, n, "i", inc_pass, inc_cost);
+    v.extend(arm("challenger-1", cand, n, "c", cand_pass, cand_cost));
+    v
+}
+
+pub struct EvlOpts {
+    pub epoch: u64,
+    pub role: CorpusRole,
+    pub deliver: Box<dyn Fn(&str) -> bool>,
+    pub created_ms: Option<u64>,
+}
+
+impl Default for EvlOpts {
+    fn default() -> Self {
+        EvlOpts {
+            epoch: 1,
+            role: CorpusRole::Confirmation,
+            deliver: Box::new(|_| true),
+            created_ms: None,
+        }
+    }
+}
+
+pub fn evl_request(
+    exp: &str,
+    a: &PolicyEnvelope,
+    b: &PolicyEnvelope,
+    specs: &[Spec],
+    o: &EvlOpts,
+) -> Value {
+    let mut assigned = vec![];
+    let mut trials = vec![];
+    for (armid, p, task, t, out, cost) in specs {
+        assigned.push(json!({"task_id": task, "arm_id": armid, "trial_id": t, "policy_ref": digest(*p).unwrap()}));
+        if (o.deliver)(t) {
+            let mut tr = Trial::new(p, task, armid, t);
+            tr.out = *out;
+            tr.cost = *cost;
+            tr.epoch = o.epoch;
+            tr.role = o.role;
+            tr.created_ms = o.created_ms;
+            trials.push(trial(&tr));
+        }
+    }
+    json!({"schema":"axon.loop.evl-request/1","experiment_id":exp,"scope":scope(),
+           "evaluator_ref":EVALUATOR,"subject_issuers":[WORKER],"policies":[a, b],
+           "assigned":assigned,"trials":trials})
+}
+
+pub fn evaluate(s: &Store, v: &Value) -> Result<(evl::EvaluationRecord, Ref), LoopError> {
+    evl::evaluate(s, &evl::parse_request(&v.to_string())?)
+}
+
+pub fn admit(
+    s: &Store,
+    exp: &str,
+    eval: &Ref,
+    admitter: &str,
+    mech: bool,
+) -> Result<(AdmissionRecord, Ref), LoopError> {
+    let req = admission::parse_request(
+        &json!({"schema":"axon.loop.admit-request/1","experiment_id":exp,
+        "evaluation_ref":eval,"admitter_ref":admitter,"mechanism_test":mech})
+        .to_string(),
+    )?;
+    admission::admit(s, &req)
+}
+
+/// Full happy path on a world: freeze `exp`, evaluate (2 tasks, cand cheaper),
+/// admit. Returns the admission ref.
+pub fn accepted(w: &World, exp: &str) -> Ref {
+    freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (_, e) = evaluate(
+        &w.s,
+        &evl_request(exp, &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let (rec, a) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
+    assert_eq!(
+        rec.decision,
+        axon_loop::admission::Decision::Accept,
+        "{:?}",
+        rec.reasons
+    );
+    a
 }

@@ -19,6 +19,7 @@
 //! delivered episode is `unknown: missing` — reported, not dropped.
 
 use crate::error::{refused, LoopError, Result};
+use crate::ledger::{Event, Tx};
 use crate::store::{contract_from_value, strict_record, Store};
 use crate::tel::{self, Summary};
 use axon_loop_contracts::{
@@ -56,6 +57,9 @@ pub struct DeliveredTrial {
 #[serde(deny_unknown_fields)]
 pub struct EvlRequest {
     pub schema: EvlRequestSchema,
+    /// The FROZEN experiment this evaluation belongs to. Its arms must be
+    /// exactly the plan's incumbent and candidate.
+    pub experiment_id: String,
     pub scope: Scope,
     pub evaluator_ref: OpaqueRef,
     pub subject_issuers: Vec<OpaqueRef>,
@@ -105,6 +109,11 @@ pub struct ArmResult {
 pub struct EvaluationRecord {
     pub schema: EvaluationSchema,
     pub scope: Scope,
+    pub experiment_id: String,
+    pub plan_ref: Ref,
+    /// Ledger sequence of the plan's freeze; every trial's context was
+    /// created after that freeze.
+    pub freeze_seq: u64,
     pub authority_epoch: AuthorityEpoch,
     pub evaluator_ref: OpaqueRef,
     pub trusted_verifiers: Vec<OpaqueRef>,
@@ -128,7 +137,23 @@ struct Delivered {
 }
 
 /// Evaluate and store. Returns the record and its `cl22:` ref.
+///
+/// Freeze-before-outcomes (B274 G33): the experiment must already be frozen
+/// in the ledger, the arms are exactly its incumbent and candidate, and a
+/// trial whose preflight context was created BEFORE the freeze was recorded
+/// is refused — its outcome existed before the rule did.
 pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)> {
+    crate::store::check_segment("experiment id", &r.experiment_id)?;
+    let mut tx = Tx::begin(store)?;
+    let frozen = crate::plan::ready_in(&tx, &r.experiment_id)?;
+    if frozen.plan.scope != r.scope {
+        return Err(refused("evaluation scope differs from the frozen plan"));
+    }
+    let plan_arms: BTreeSet<Ref> = [
+        frozen.plan.incumbent_policy_ref.clone().expect("frozen"),
+        frozen.plan.candidate_policy_ref.clone().expect("frozen"),
+    ]
+    .into();
     let config = store.config()?;
     let verifiers = config.verifiers();
     if verifiers.is_empty() {
@@ -136,7 +161,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             "no trusted verifiers configured: nothing can be verified",
         ));
     }
-    let epoch = crate::epoch::current(store, &r.scope)?;
+    let epoch = tx.pointer(&r.scope).epoch;
 
     let mut policies: BTreeMap<Ref, PolicyEnvelope> = BTreeMap::new();
     for (i, v) in r.policies.iter().enumerate() {
@@ -146,11 +171,17 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         }
         policies.insert(digest(&p)?, p);
     }
+    let supplied: BTreeSet<Ref> = policies.keys().cloned().collect();
+    if supplied != plan_arms {
+        return Err(refused(
+            "the evaluated policies must be exactly the frozen plan's incumbent and candidate",
+        ));
+    }
 
     // Subject issuers: the request's, plus every stored proposer of an arm policy.
     let mut subjects: BTreeSet<OpaqueRef> = r.subject_issuers.iter().cloned().collect();
     for pref in policies.keys() {
-        if let Some(p) = crate::evo::proposer_of(store, &r.scope, pref)? {
+        if let Some(p) = crate::evo::proposer_in(&tx, &r.scope, pref) {
             subjects.insert(p);
         }
     }
@@ -204,6 +235,19 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                 ep.identity.trial_id
             )));
         }
+        let now = crate::now_ms();
+        if ctx.created_ms > now {
+            return Err(refused(format!(
+                "trials[{i}] ({}) claims a preflight in the future ({} ms > now {now} ms)",
+                ep.identity.trial_id, ctx.created_ms
+            )));
+        }
+        if ctx.created_ms < frozen.freeze_ms {
+            return Err(refused(format!(
+                "trials[{i}] ({}) was preflighted at {} ms, before the plan froze at {} ms: outcomes that predate the rule cannot be judged by it",
+                ep.identity.trial_id, ctx.created_ms, frozen.freeze_ms
+            )));
+        }
         let ep_ref = digest(&ep)?;
         for d in [&ep_ref, &digest(&ctx)?, &digest(&req)?, &digest(&rcpt)?] {
             evidence.insert(d.clone());
@@ -241,6 +285,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             trials: Vec::new(),
             economics: Summary {
                 records: 0,
+                missing_records: 0,
                 by_currency: Vec::new(),
             },
         });
@@ -282,7 +327,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     }
     for (id, arm) in arms.iter_mut() {
         let us = usages.remove(id).unwrap_or_default();
-        arm.economics = tel::summarize(us.iter().map(|(u, s)| (u, *s)))?;
+        arm.economics = tel::summarize_with_missing(us.iter().map(|(u, s)| (u, *s)), arm.missing)?;
     }
 
     let mut subject_issuers: Vec<OpaqueRef> = subjects.into_iter().collect();
@@ -290,6 +335,9 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     let rec = EvaluationRecord {
         schema: EvaluationSchema,
         scope: r.scope.clone(),
+        experiment_id: r.experiment_id.clone(),
+        plan_ref: frozen.plan_ref.clone(),
+        freeze_seq: frozen.freeze_seq,
         authority_epoch: epoch,
         evaluator_ref: r.evaluator_ref.clone(),
         trusted_verifiers: verifiers.into_iter().collect(),
@@ -300,8 +348,17 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     for p in policies.values() {
         store.put_cas("policies", p)?;
     }
-    let r = store.put_cas("evaluations", &rec)?;
-    Ok((rec, r))
+    let eref = store.put_cas("evaluations", &rec)?;
+    if tx.evaluation_event(&eref).is_none() {
+        tx.append(Event::Evaluation {
+            scope: rec.scope.clone(),
+            experiment_id: rec.experiment_id.clone(),
+            evaluation_ref: eref.clone(),
+            freeze_seq: frozen.freeze_seq,
+            authority_epoch: epoch,
+        })?;
+    }
+    Ok((rec, eref))
 }
 
 fn judge(
@@ -363,6 +420,17 @@ fn judge(
 /// Load a stored evaluation.
 pub fn load(store: &Store, r: &Ref) -> Result<EvaluationRecord> {
     store.get_record("evaluations", r)
+}
+
+/// Load an evaluation only if the ledger journalled it (so a CAS file written
+/// by hand is never evidence).
+pub(crate) fn load_journalled(tx: &Tx, r: &Ref) -> Result<(u64, EvaluationRecord)> {
+    let (seq, _) = tx.evaluation_event(r).ok_or_else(|| {
+        refused(format!(
+            "evaluation {r} was never journalled by `evl evaluate`"
+        ))
+    })?;
+    Ok((seq, tx.store.get_record("evaluations", r)?))
 }
 
 impl EvaluationRecord {

@@ -279,6 +279,7 @@ name = "axon-loop"
 version = "0.1.0"
 dependencies = [
  "axon-loop-contracts",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

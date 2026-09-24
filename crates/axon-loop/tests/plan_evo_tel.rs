@@ -65,57 +65,60 @@ fn plan_strictness() {
 
 #[test]
 fn frozen_plan_is_immutable_and_digest_stable() {
-    let d = tempfile::tempdir().unwrap();
-    let s = store_with_config(d.path());
-    let v = complete_plan("exp1", &r('a'), &r('b'));
+    let w = world();
+    let v = complete_plan("exp1", &w.inc_ref, &w.cand_ref);
     let p = PilotPlan::from_value(&v).unwrap();
-    let reg = plan::register(&s, &p).unwrap();
-    let fr = plan::freeze(&s, "exp1").unwrap();
+    let reg = plan::register(&w.s, &p).unwrap();
+    let fr = plan::freeze(&w.s, "exp1").unwrap();
     assert_eq!(reg, fr);
     assert_eq!(
-        plan::freeze(&s, "exp1").unwrap(),
+        plan::freeze(&w.s, "exp1").unwrap(),
         fr,
         "freeze is idempotent"
     );
-    let (_, rr) = plan::ready(&s, "exp1").unwrap();
-    assert_eq!(rr, fr);
-    let before = snapshot(d.path());
+    assert_eq!(plan::ready(&w.s, "exp1").unwrap().plan_ref, fr);
+    let before = snapshot(w.dir.path());
     let mut v2 = v.clone();
     v2["quality_margin"] = serde_json::json!("pass_rate_margin_ppm=500000");
     assert!(matches!(
-        plan::register(&s, &PilotPlan::from_value(&v2).unwrap()),
+        plan::register(&w.s, &PilotPlan::from_value(&v2).unwrap()),
         Err(LoopError::Refused(_))
     ));
-    assert_eq!(snapshot(d.path()), before);
-    // tamper on disk ⇒ refused
-    let path = s.plan_dir("exp1").join("plan.json");
+    assert_eq!(snapshot(w.dir.path()), before);
+    // tamper on disk ⇒ corrupt
+    let path = w.s.cas_path("plans", &fr).unwrap();
     let t = std::fs::read_to_string(&path)
         .unwrap()
         .replace("pass_rate_margin_ppm=0", "pass_rate_margin_ppm=9");
     std::fs::write(&path, t).unwrap();
-    assert!(plan::ready(&s, "exp1").is_err());
+    assert!(matches!(plan::ready(&w.s, "exp1"), Err(LoopError::Io(_))));
 }
 
 #[test]
-fn ready_refuses_aliasing_and_candidate_equal_incumbent() {
-    let d = tempfile::tempdir().unwrap();
-    let s = store_with_config(d.path());
-    let mut v = complete_plan("alias", &r('a'), &r('a'));
+fn ready_refuses_aliasing() {
+    let w = world();
+    let mut v = complete_plan("alias", &w.inc_ref, &w.cand_ref);
     v["reporting_manifest_ref"] = v["confirmation_manifest_ref"].clone();
-    plan::register(&s, &PilotPlan::from_value(&v).unwrap()).unwrap();
-    plan::freeze(&s, "alias").unwrap();
-    match plan::ready(&s, "alias") {
-        Err(LoopError::NotReady(m)) => {
-            assert!(
-                m.contains("aliasing") && m.contains("candidate equals incumbent"),
-                "{m}"
-            )
-        }
+    plan::register(&w.s, &PilotPlan::from_value(&v).unwrap()).unwrap();
+    plan::freeze(&w.s, "alias").unwrap();
+    match plan::ready(&w.s, "alias") {
+        Err(LoopError::NotReady(m)) => assert!(m.contains("aliasing"), "{m}"),
         o => panic!("{o:?}"),
     }
 }
 
-fn propose(
+#[test]
+fn freeze_refuses_candidate_equal_incumbent() {
+    let w = world();
+    let v = complete_plan("same", &w.inc_ref, &w.inc_ref);
+    plan::register(&w.s, &PilotPlan::from_value(&v).unwrap()).unwrap();
+    assert!(matches!(
+        plan::freeze(&w.s, "same"),
+        Err(LoopError::NotReady(_))
+    ));
+}
+
+fn propose_eps(
     s: &axon_loop::Store,
     seed: u64,
     id: &str,
@@ -131,7 +134,7 @@ fn evo_proposes_a_bounded_deterministic_candidate() {
     let run = |seed| {
         let d = tempfile::tempdir().unwrap();
         let s = store_with_config(d.path());
-        let p = propose(&s, seed, "cand-1", vec![discovery_episode(&inc, "d1")]).unwrap();
+        let p = propose_eps(&s, seed, "cand-1", vec![discovery_episode(&inc, "d1")]).unwrap();
         (p.candidate, p.candidate_policy_ref)
     };
     let (c1, r1) = run(7);
@@ -157,7 +160,7 @@ fn evo_regularizes_history_and_exhausts() {
     let mut seen = std::collections::BTreeSet::new();
     // 3 removals + 3 swaps = 6 distinct one-edit interventions; same seed every time.
     for i in 0..6 {
-        let p = propose(
+        let p = propose_eps(
             &s,
             42,
             &format!("cand-{i}"),
@@ -171,7 +174,7 @@ fn evo_regularizes_history_and_exhausts() {
     }
     let before = snapshot(d.path());
     assert!(matches!(
-        propose(&s, 42, "cand-7", vec![discovery_episode(&inc, "d1")]),
+        propose_eps(&s, 42, "cand-7", vec![discovery_episode(&inc, "d1")]),
         Err(LoopError::Refused(_))
     ));
     assert_eq!(snapshot(d.path()), before);
@@ -191,7 +194,7 @@ fn evo_refuses_protected_roles_and_excludes_ineligible() {
     let inc = incumbent();
     let before = snapshot(d.path());
     for role in [CorpusRole::Confirmation, CorpusRole::Reporting] {
-        let e = propose(
+        let e = propose_eps(
             &s,
             1,
             "c",
@@ -205,7 +208,7 @@ fn evo_refuses_protected_roles_and_excludes_ineligible() {
     }
     // mechanism-test only ⇒ nothing eligible ⇒ refused
     assert!(matches!(
-        propose(
+        propose_eps(
             &s,
             1,
             "c",
@@ -215,7 +218,7 @@ fn evo_refuses_protected_roles_and_excludes_ineligible() {
     ));
     assert_eq!(snapshot(d.path()), before);
     // mixed: mechanism-test is excluded and reported, discovery feeds
-    let p = propose(
+    let p = propose_eps(
         &s,
         1,
         "c",
@@ -254,7 +257,7 @@ fn evo_refuses_incumbent_outside_eligible_set() {
     assert!(evo::propose(&s, &req).is_err());
     assert!(snapshot(d.path())
         .keys()
-        .all(|k| k.ends_with("config.json")));
+        .all(|k| k.ends_with("config.json") || k.ends_with("root.lock")));
 }
 
 fn usage(state: UsageState, cost: Option<u64>, liab: u64, attempt: char) -> Usage {

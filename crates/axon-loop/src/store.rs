@@ -13,13 +13,16 @@
 //!     transitions.jsonl                 append-only log of applied transitions
 //!     revocations.json                  per-scope revocation list
 //!     hypotheses.jsonl                  append-only EVO hypothesis history
-//!     lock                              flock(2) target serialising every writer
 //! ```
 //!
 //! Every record replace is tmp + fsync + rename + directory fsync, so a reader
 //! sees the old bytes or the new bytes and never a torn file. Every append is
 //! write + fsync. Scope and experiment ids are validated `[A-Za-z0-9._:-]`
-//! with an alphanumeric first byte, so they cannot name `..` or contain `/`.
+//! with an alphanumeric first byte BEFORE any filesystem call, so they cannot
+//! name `..`, contain `/` or be absolute. The root is canonicalized on open;
+//! below it every path component is checked with `symlink_metadata` and every
+//! open uses `O_NOFOLLOW`, so a symlinked store file or directory is refused
+//! (exit 2), never followed out of the store.
 
 use crate::error::{LoopError, Result};
 use axon_loop_contracts::{OpaqueRef, Ref, RefScheme, Refusal, Scope};
@@ -27,8 +30,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 crate::record_tag!(ConfigSchema, "axon.loop.config/1");
@@ -55,15 +59,54 @@ impl Config {
 
 #[derive(Clone, Debug)]
 pub struct Store {
+    /// Canonical (symlink-resolved) root. Every store path is built from this
+    /// and checked by [`Store::guard`], so a lock or record can only ever land
+    /// inside the one canonical store directory.
     root: PathBuf,
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Validate a single store path SEGMENT (experiment id, tenant, family, CAS
+/// kind) BEFORE it touches the filesystem: the package id rule, which has no
+/// `/`, cannot be `.`/`..` and cannot be absolute.
+pub fn check_segment(what: &str, s: &str) -> Result<()> {
+    axon_loop_contracts::TaskId::new(s)
+        .map(|_| ())
+        .map_err(|_| {
+            LoopError::Usage(format!(
+                "bad {what} {s:?}: must match [A-Za-z0-9][A-Za-z0-9._:-]{{0,127}}"
+            ))
+        })
+}
+
+fn nofollow() -> OpenOptions {
+    let mut o = OpenOptions::new();
+    o.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    o
+}
+
+fn symlink_err(p: &Path) -> LoopError {
+    LoopError::Io(format!(
+        "symlink in store at {}: store files and directories must be real",
+        p.display()
+    ))
+}
+
+fn map_open(p: &Path, e: std::io::Error) -> LoopError {
+    // ELOOP: the final component is a symlink and O_NOFOLLOW refused it.
+    if e.raw_os_error() == Some(libc::ELOOP) {
+        symlink_err(p)
+    } else {
+        LoopError::Io(format!("{}: {e}", p.display()))
+    }
+}
+
 impl Store {
     pub fn open(root: impl Into<PathBuf>) -> Result<Store> {
         let root = root.into();
         fs::create_dir_all(&root)?;
+        let root = fs::canonicalize(&root)?;
         Ok(Store { root })
     }
 
@@ -71,38 +114,226 @@ impl Store {
         &self.root
     }
 
+    /// Refuse a path that leaves the store or crosses a symlink anywhere
+    /// below the root. Components that do not exist yet are fine.
+    pub fn guard(&self, p: &Path) -> Result<()> {
+        let rel = p
+            .strip_prefix(&self.root)
+            .map_err(|_| LoopError::Io(format!("{} is outside the store", p.display())))?;
+        let mut cur = self.root.clone();
+        for c in rel.components() {
+            match c {
+                Component::Normal(n) => cur.push(n),
+                _ => {
+                    return Err(LoopError::Io(format!(
+                        "non-normal store path {}",
+                        p.display()
+                    )))
+                }
+            }
+            match fs::symlink_metadata(&cur) {
+                Ok(m) if m.file_type().is_symlink() => return Err(symlink_err(&cur)),
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Create `dir` (and missing parents) inside the store, one real directory
+    /// at a time; refuses if any component is (or races into) a symlink.
+    pub fn ensure_dir(&self, dir: &Path) -> Result<()> {
+        self.guard(dir)?;
+        let rel = dir.strip_prefix(&self.root).expect("guarded");
+        let mut cur = self.root.clone();
+        for c in rel.components() {
+            cur.push(c);
+            match fs::create_dir(&cur) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
+            }
+            let m = fs::symlink_metadata(&cur)?;
+            if m.file_type().is_symlink() {
+                return Err(symlink_err(&cur));
+            }
+            if !m.is_dir() {
+                return Err(LoopError::Io(format!(
+                    "{} is not a directory",
+                    cur.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Read a store file; `None` if absent. Never follows a symlink.
+    pub fn read_text(&self, p: &Path) -> Result<Option<String>> {
+        self.guard(p)?;
+        match nofollow().read(true).open(p) {
+            Ok(mut f) => {
+                let mut s = String::new();
+                f.read_to_string(&mut s)?;
+                Ok(Some(s))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(map_open(p, e)),
+        }
+    }
+
+    /// tmp + fsync + rename + directory fsync, inside the store only.
+    pub fn write_atomic(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        let dir = path
+            .parent()
+            .ok_or_else(|| LoopError::Io(format!("{} has no parent", path.display())))?;
+        self.ensure_dir(dir)?;
+        self.guard(path)?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| LoopError::Io(format!("bad path {}", path.display())))?;
+        let tmp = dir.join(format!(
+            ".{name}.tmp.{}.{}",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let res = (|| -> Result<()> {
+            let mut f = nofollow()
+                .create_new(true)
+                .write(true)
+                .open(&tmp)
+                .map_err(|e| map_open(&tmp, e))?;
+            f.write_all(bytes)?;
+            f.sync_all()?;
+            fs::rename(&tmp, path)?;
+            fsync_dir(dir)
+        })();
+        if res.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        res
+    }
+
+    pub fn write_json<T: Serialize>(&self, path: &Path, v: &T) -> Result<()> {
+        let mut bytes = serde_json::to_vec_pretty(v).map_err(|e| LoopError::Io(e.to_string()))?;
+        bytes.push(b'\n');
+        self.write_atomic(path, &bytes)
+    }
+
+    /// Append one JSON line and fsync it (and the directory, on creation).
+    pub fn append_jsonl<T: Serialize>(&self, path: &Path, v: &T) -> Result<()> {
+        let dir = path
+            .parent()
+            .ok_or_else(|| LoopError::Io("no parent".into()))?;
+        self.ensure_dir(dir)?;
+        self.guard(path)?;
+        let created = fs::symlink_metadata(path).is_err();
+        let mut line = serde_json::to_vec(v).map_err(|e| LoopError::Io(e.to_string()))?;
+        line.push(b'\n');
+        let mut f = nofollow()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| map_open(path, e))?;
+        f.write_all(&line)?;
+        f.sync_all()?;
+        if created {
+            fsync_dir(dir)?;
+        }
+        Ok(())
+    }
+
+    /// Read a JSONL file strictly; a missing file is empty. A torn LAST line
+    /// (a crash mid-append, before its fsync returned) is ignored — that
+    /// append was never acknowledged. A malformed line elsewhere is corruption.
+    pub fn read_jsonl<T: Serialize + DeserializeOwned>(&self, path: &Path) -> Result<Vec<T>> {
+        let Some(s) = self.read_text(path)? else {
+            return Ok(Vec::new());
+        };
+        parse_jsonl(path, &s)
+    }
+
+    pub fn read_json<T: Serialize + DeserializeOwned>(&self, path: &Path) -> Result<Option<T>> {
+        match self.read_text(path)? {
+            Some(s) => strict_record(&s)
+                .map(Some)
+                .map_err(|e| LoopError::Io(format!("{}: {e}", path.display()))),
+            None => Ok(None),
+        }
+    }
+
+    fn lock_file(&self, rel: &[&str], shared: bool) -> Result<Lock> {
+        let mut p = self.root.join("locks");
+        for (i, seg) in rel.iter().enumerate() {
+            check_segment("lock name", seg)?;
+            if i + 1 == rel.len() {
+                p.push(format!("{seg}.lock"));
+            } else {
+                p.push(seg);
+            }
+        }
+        self.ensure_dir(p.parent().expect("has parent"))?;
+        self.guard(&p)?;
+        let f = nofollow()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&p)
+            .map_err(|e| map_open(&p, e))?;
+        if shared {
+            f.lock_shared()?;
+        } else {
+            f.lock()?;
+        }
+        Ok(Lock { _f: f })
+    }
+
+    /// The ONE store lock, `<canonical root>/locks/root.lock`. Every
+    /// operation that reads or writes the ledger holds it exclusively for its
+    /// whole duration (see [`crate::ledger::Tx`]); there is no second lock, so
+    /// there is no lock order to get wrong and no lock can be taken on a path
+    /// outside the canonical store.
+    pub fn lock_root(&self, shared: bool) -> Result<Lock> {
+        self.lock_file(&["root"], shared)
+    }
+
     /// The operator config. Absent ⇒ both trusted sets EMPTY, so every
     /// admission, transition and verified outcome is refused (fail closed).
     pub fn config(&self) -> Result<Config> {
         let p = self.root.join("config.json");
-        match fs::read_to_string(&p) {
-            Ok(s) => strict_record(&s),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config {
+        match self.read_text(&p)? {
+            Some(s) => strict_record(&s),
+            None => Ok(Config {
                 schema: ConfigSchema,
                 trusted_admitters: Vec::new(),
                 trusted_verifiers: Vec::new(),
             }),
-            Err(e) => Err(e.into()),
         }
     }
 
     pub fn write_config(&self, c: &Config) -> Result<()> {
-        write_json_atomic(&self.root.join("config.json"), c)
+        self.write_json(&self.root.join("config.json"), c)
     }
 
     pub fn scope_dir(&self, scope: &Scope) -> PathBuf {
+        // TenantId/TaskFamily are validated newtypes: no `/`, never `..`.
         self.root
             .join("scopes")
             .join(scope.tenant_id.as_str())
             .join(scope.task_family.as_str())
     }
 
-    pub fn plan_dir(&self, experiment_id: &str) -> PathBuf {
-        self.root.join("plans").join(experiment_id)
+    /// `plans/<id>`; the id is validated BEFORE any path is built.
+    pub fn plan_dir(&self, experiment_id: &str) -> Result<PathBuf> {
+        check_segment("experiment id", experiment_id)?;
+        Ok(self.root.join("plans").join(experiment_id))
     }
 
     /// Content-addressed path for a `cl22:` record kind.
     pub fn cas_path(&self, kind: &str, r: &Ref) -> Result<PathBuf> {
+        check_segment("record kind", kind)?;
         if r.scheme() != RefScheme::Cl22 {
             return Err(crate::error::refused(format!(
                 "{kind} references must be cl22:, got {r}"
@@ -111,27 +342,22 @@ impl Store {
         Ok(self.root.join(kind).join(format!("{}.json", r.hex())))
     }
 
-    /// Store a record under its own `cl22:` digest. Idempotent: the same bytes
-    /// land at the same path.
+    /// Store a record under its own `cl22:` digest. Idempotent.
     pub fn put_cas<T: Serialize>(&self, kind: &str, v: &T) -> Result<Ref> {
         let r = axon_loop_contracts::digest(v)?;
         let p = self.cas_path(kind, &r)?;
-        if !p.exists() {
+        self.guard(&p)?;
+        if fs::symlink_metadata(&p).is_err() {
             let bytes = axon_loop_contracts::canonical_json(v)?;
-            write_bytes_atomic(&p, &bytes)?;
+            self.write_atomic(&p, &bytes)?;
         }
         Ok(r)
     }
 
     fn read_cas(&self, kind: &str, r: &Ref) -> Result<String> {
         let p = self.cas_path(kind, r)?;
-        match fs::read_to_string(&p) {
-            Ok(s) => Ok(s),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err(crate::error::refused(format!("no {kind} record {r}")))
-            }
-            Err(e) => Err(e.into()),
-        }
+        self.read_text(&p)?
+            .ok_or_else(|| crate::error::refused(format!("no {kind} record {r}")))
     }
 
     /// Load a stored package contract (e.g. a `PolicyEnvelope`) under the
@@ -145,8 +371,8 @@ impl Store {
         Ok(v)
     }
 
-    /// Load one of this crate's own records (admission, evaluation) through
-    /// [`strict_record`], with the same digest re-check.
+    /// Load one of this crate's own records through [`strict_record`], with
+    /// the same digest re-check.
     pub fn get_record<T: Serialize + DeserializeOwned>(&self, kind: &str, r: &Ref) -> Result<T> {
         let s = self.read_cas(kind, r)?;
         let v: T = strict_record(&s)
@@ -204,25 +430,11 @@ pub fn contract_from_value<T: axon_loop_contracts::Contract>(
     })
 }
 
-/// Exclusive advisory lock (flock) on `<dir>/lock`, held until drop. Separate
-/// `File` handles are separate open file descriptions, so this serialises
-/// threads of one process as well as separate processes.
-pub struct DirLock {
+/// A flock held until drop. Separate `File` handles are separate open file
+/// descriptions, so this serialises threads of one process as well as
+/// separate processes.
+pub struct Lock {
     _f: File,
-}
-
-impl DirLock {
-    pub fn acquire(dir: &Path) -> Result<DirLock> {
-        fs::create_dir_all(dir)?;
-        let f = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(dir.join("lock"))?;
-        f.lock()?;
-        Ok(DirLock { _f: f })
-    }
 }
 
 fn fsync_dir(dir: &Path) -> Result<()> {
@@ -230,74 +442,13 @@ fn fsync_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// tmp + fsync + rename + directory fsync.
-pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| LoopError::Io(format!("{} has no parent", path.display())))?;
-    fs::create_dir_all(dir)?;
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| LoopError::Io(format!("bad path {}", path.display())))?;
-    let tmp = dir.join(format!(
-        ".{name}.tmp.{}.{}",
-        std::process::id(),
-        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let res = (|| -> Result<()> {
-        let mut f = OpenOptions::new().create_new(true).write(true).open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        fs::rename(&tmp, path)?;
-        fsync_dir(dir)
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
-}
-
-pub fn write_json_atomic<T: Serialize>(path: &Path, v: &T) -> Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(v).map_err(|e| LoopError::Io(e.to_string()))?;
-    bytes.push(b'\n');
-    write_bytes_atomic(path, &bytes)
-}
-
-/// Append one JSON line and fsync it (and the directory, on first creation).
-pub fn append_jsonl<T: Serialize>(path: &Path, v: &T) -> Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| LoopError::Io("no parent".into()))?;
-    fs::create_dir_all(dir)?;
-    let created = !path.exists();
-    let mut line = serde_json::to_vec(v).map_err(|e| LoopError::Io(e.to_string()))?;
-    line.push(b'\n');
-    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-    f.write_all(&line)?;
-    f.sync_all()?;
-    if created {
-        fsync_dir(dir)?;
-    }
-    Ok(())
-}
-
-/// Read a JSONL file strictly; a missing file is empty. A torn LAST line (a
-/// crash mid-append, before its fsync returned) is ignored — that append was
-/// never acknowledged. A malformed line anywhere else is corruption.
-pub fn read_jsonl<T: Serialize + DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
-    let s = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
+fn parse_jsonl<T: Serialize + DeserializeOwned>(path: &Path, s: &str) -> Result<Vec<T>> {
     let complete = s.ends_with('\n');
     let lines: Vec<&str> = s.lines().collect();
     let mut out = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
         let last = i + 1 == lines.len();
-        let parsed = strict_record::<T>(line);
-        match parsed {
+        match strict_record::<T>(line) {
             Ok(v) => out.push(v),
             Err(_) if last && !complete => break,
             Err(e) => {
@@ -310,14 +461,4 @@ pub fn read_jsonl<T: Serialize + DeserializeOwned>(path: &Path) -> Result<Vec<T>
         }
     }
     Ok(out)
-}
-
-pub fn read_json<T: Serialize + DeserializeOwned>(path: &Path) -> Result<Option<T>> {
-    match fs::read_to_string(path) {
-        Ok(s) => strict_record(&s)
-            .map(Some)
-            .map_err(|e| LoopError::Io(format!("{}: {e}", path.display()))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-    }
 }

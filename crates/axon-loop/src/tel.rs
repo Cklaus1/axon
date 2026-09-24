@@ -54,7 +54,21 @@ pub struct CurrencySummary {
 #[serde(deny_unknown_fields)]
 pub struct Summary {
     pub records: u64,
+    /// Assigned attempts with NO usage record at all (never delivered). Each
+    /// is an unknown cost; any nonzero value makes every total unresolved.
+    pub missing_records: u64,
     pub by_currency: Vec<CurrencySummary>,
+}
+
+impl Summary {
+    /// The single-currency total, or `None` when it cannot be stated (no
+    /// records, more than one currency).
+    pub fn single_total(&self) -> Option<&Total> {
+        match self.by_currency.as_slice() {
+            [c] => Some(&c.total),
+            _ => None,
+        }
+    }
 }
 
 fn add(a: u64, b: u64, what: &str) -> Result<u64> {
@@ -68,6 +82,17 @@ fn add(a: u64, b: u64, what: &str) -> Result<u64> {
 /// Summarize usages. `status` is the owning episode's status when known.
 pub fn summarize<'a>(
     items: impl IntoIterator<Item = (&'a Usage, Option<EpisodeStatus>)>,
+) -> Result<Summary> {
+    summarize_with_missing(items, 0)
+}
+
+/// [`summarize`] plus `missing` assigned attempts that produced no usage at
+/// all. A missing attempt is an UNKNOWN cost, never zero and never dropped:
+/// it is counted in every currency's `unknown_count` and forces every total
+/// to `unresolved` (J202/Q4).
+pub fn summarize_with_missing<'a>(
+    items: impl IntoIterator<Item = (&'a Usage, Option<EpisodeStatus>)>,
+    missing: u64,
 ) -> Result<Summary> {
     let mut seen: BTreeSet<&Ref> = BTreeSet::new();
     let mut by: BTreeMap<String, CurrencySummary> = BTreeMap::new();
@@ -124,7 +149,8 @@ pub fn summarize<'a>(
     let mut out = Vec::new();
     for (_, mut c) in by {
         c.price_schedule_refs.sort();
-        c.total = if c.estimated_count == 0
+        c.total = if missing == 0
+            && c.estimated_count == 0
             && c.unknown_count == 0
             && c.unresolved_liability_micro == 0
         {
@@ -134,7 +160,7 @@ pub fn summarize<'a>(
         } else {
             Total::Unresolved {
                 known_sum_micro: c.final_sum_micro,
-                unknown_count: c.unknown_count + c.estimated_count,
+                unknown_count: c.unknown_count + c.estimated_count + missing,
                 unresolved_liability_micro: c.unresolved_liability_micro,
             }
         };
@@ -142,6 +168,7 @@ pub fn summarize<'a>(
     }
     Ok(Summary {
         records,
+        missing_records: missing,
         by_currency: out,
     })
 }

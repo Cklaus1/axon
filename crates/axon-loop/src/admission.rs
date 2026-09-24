@@ -6,41 +6,41 @@
 //! record carries no clock, so the same plan + evaluation + admitter always
 //! produce the same `cl22:` admission ref.
 //!
-//! # The executable rule grammar
+//! The rule grammar is [`crate::rules`] (a plan whose rules do not parse
+//! cannot be frozen). Quality: with `n` assigned trials, `p` verified passes
+//! and `u` unknown (incl. missing) outcomes, pessimistic rate = p/n,
+//! optimistic = (p+u)/n. Noninferiority is ESTABLISHED iff
+//! candidate-pessimistic ≥ incumbent-optimistic − margin AND the candidate
+//! has at least one verified pass (a 0/n candidate is never accepted, G01
+//! nonvacuous); inferiority is ESTABLISHED iff candidate-optimistic <
+//! incumbent-pessimistic − margin (⇒ REJECT); otherwise INCONCLUSIVE.
 //!
-//! The pilot schema's rule fields are free text, and the package supplies no
-//! universal thresholds. This admitter executes exactly this grammar; a rule
-//! it cannot parse yields INCONCLUSIVE ("not executable"), never a guess:
+//! INCONCLUSIVE also whenever: the arms were not assigned the same task set
+//! (paired design); an arm has fewer distinct tasks than `independent_units`;
+//! more candidates were proposed from the incumbent than the plan allows;
+//! the unresolved liability exceeds the tolerance; or either arm's cost is
+//! not fully final (a missing trial is an unknown cost). REJECT when
+//! inferiority is established or the known costs fail the economic
+//! threshold. ACCEPT only when none of those hold.
 //!
-//! | field | accepted value | meaning |
-//! |---|---|---|
-//! | `quality_margin` | `pass_rate_margin_ppm=<n>` | noninferiority margin on verified-pass rate, parts per million |
-//! | `economic_threshold` | `min_cost_reduction_ppm=<n>` | candidate cost per assigned trial must be ≤ incumbent × (1 − n/1e6) |
-//! | `budget_rule` | `max_unresolved_liability_micro=<n>` | unknown-liability tolerance across both arms |
-//! | `missing_data_rule` | `unknown_bounds` | unknown/missing outcomes are bounded both ways (below) |
-//! | `uncertainty_rule` | `exact_bounds` | no sampling model: decide on the worst/best-case bounds only |
-//! | `multiplicity_rule` | `single_candidate` | at most one candidate may have been proposed from this plan's incumbent |
+//! # Re-derivation
 //!
-//! Quality: with `n` assigned trials, `p` verified passes and `u` unknown
-//! (incl. missing) outcomes: pessimistic rate = p/n (every unknown a failure),
-//! optimistic rate = (p+u)/n (every unknown a pass). Noninferiority is
-//! ESTABLISHED iff candidate-pessimistic ≥ incumbent-optimistic − margin;
-//! inferiority is ESTABLISHED iff candidate-optimistic < incumbent-pessimistic
-//! − margin (⇒ REJECT); otherwise it cannot be established (⇒ INCONCLUSIVE).
-//!
-//! INCONCLUSIVE also whenever: an arm's distinct-task count is below
-//! `independent_units`; the unresolved liability exceeds the tolerance; either
-//! arm's cost is not fully final (economics cannot be established); or a rule
-//! is not executable. REJECT when inferiority is established or the known
-//! costs fail the economic threshold. ACCEPT only when none of those hold.
+//! [`derive`] is a pure function of (frozen plan, journalled evaluation,
+//! hypothesis history as of the evaluation, admitter, mechanism flag). `admit`
+//! stores its result and journals it; activation ([`rederive`]) recomputes it
+//! from the ledger and requires the IDENTICAL record — so an admission file
+//! written by hand, or one whose plan/evaluation does not exist, is refused
+//! (A6, O1/O2).
 
-use crate::error::{refused, Result};
+use crate::error::{refused, LoopError, Result};
 use crate::evl::{ArmResult, EvaluationRecord};
 use crate::evo::{Hypothesis, Verdict};
-use crate::plan::PilotPlan;
+use crate::ledger::{Event, Tx};
+use crate::plan::Frozen;
+use crate::rules::{Rules, PPM};
 use crate::store::{strict_record, Store};
 use crate::tel::Total;
-use axon_loop_contracts::{AuthorityEpoch, CorpusRole, OpaqueRef, PolicyEnvelope, Ref, Scope};
+use axon_loop_contracts::{AuthorityEpoch, CorpusRole, OpaqueRef, Ref, Scope};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -106,39 +106,18 @@ pub fn parse_request(text: &str) -> Result<AdmitRequest> {
     strict_record(text)
 }
 
-fn rule_u64(field: &str, value: &Option<String>, key: &str) -> std::result::Result<u64, String> {
-    let v = value.as_deref().ok_or(format!("{field} unset"))?;
-    v.strip_prefix(key)
-        .and_then(|r| r.strip_prefix('='))
-        .and_then(|n| n.parse::<u64>().ok())
-        .filter(|n| *n <= axon_loop_contracts::MAX_INTEGER)
-        .ok_or(format!(
-            "{field} {v:?} is not executable (expected `{key}=<n>`)"
-        ))
-}
-
-fn rule_word(field: &str, value: &Option<String>, word: &str) -> std::result::Result<(), String> {
-    match value.as_deref() {
-        Some(v) if v == word => Ok(()),
-        Some(v) => Err(format!(
-            "{field} {v:?} is not executable (expected `{word}`)"
-        )),
-        None => Err(format!("{field} unset")),
-    }
-}
-
-fn facts(a: &ArmResult) -> Result<ArmFacts> {
+fn facts(a: &ArmResult) -> ArmFacts {
     let tasks: BTreeSet<_> = a.trials.iter().map(|t| &t.task_id).collect();
-    let total = match a.economics.by_currency.as_slice() {
-        [] => Total::Unresolved {
+    let total = a
+        .economics
+        .single_total()
+        .cloned()
+        .unwrap_or(Total::Unresolved {
             known_sum_micro: 0,
             unknown_count: a.assigned,
             unresolved_liability_micro: 0,
-        },
-        [c] => c.total.clone(),
-        _ => return Err(refused("an arm mixes currencies; costs are not comparable")),
-    };
-    Ok(ArmFacts {
+        });
+    ArmFacts {
         policy_ref: a.policy_ref.clone(),
         assigned: a.assigned,
         distinct_tasks: tasks.len() as u64,
@@ -146,7 +125,7 @@ fn facts(a: &ArmResult) -> Result<ArmFacts> {
         fail: a.fail,
         unknown: a.unknown,
         total,
-    })
+    }
 }
 
 fn liability(t: &Total) -> u64 {
@@ -159,50 +138,71 @@ fn liability(t: &Total) -> u64 {
     }
 }
 
-/// Decide. Writes the admission record and a hypothesis verdict. Refuses
-/// (writing nothing) when the inputs cannot be admitted at all: plan not
-/// frozen/ready, wrong scope or arms, untrusted admitter, admitter = proposer
-/// or subject, wrong corpus role.
-pub fn admit(store: &Store, req: &AdmitRequest) -> Result<(AdmissionRecord, Ref)> {
-    let (plan, plan_ref) = crate::plan::ready(store, &req.experiment_id)?;
-    let eval: EvaluationRecord = crate::evl::load(store, &req.evaluation_ref)?;
-    let config = store.config()?;
-    if !config.admitters().contains(&req.admitter_ref) {
+/// The pure admission function. Refuses (Err) inputs that cannot be admitted
+/// at all; otherwise returns the complete record.
+pub(crate) struct Inputs<'a> {
+    pub frozen: &'a Frozen,
+    pub eval_ref: &'a Ref,
+    pub eval: &'a EvaluationRecord,
+    pub eval_seq: u64,
+    pub admitter: &'a OpaqueRef,
+    pub mechanism_test: bool,
+}
+
+pub(crate) fn derive(
+    tx: &Tx,
+    i: Inputs,
+    admitters: &BTreeSet<OpaqueRef>,
+) -> Result<AdmissionRecord> {
+    let Inputs {
+        frozen,
+        eval_ref,
+        eval,
+        eval_seq,
+        admitter,
+        mechanism_test,
+    } = i;
+    let plan = &frozen.plan;
+    if !admitters.contains(admitter) {
         return Err(refused(format!(
-            "admitter {} is not in the trusted-admitter set",
-            req.admitter_ref
+            "admitter {admitter} is not in the trusted-admitter set"
         )));
     }
-    if eval.scope != plan.scope {
-        return Err(refused("evaluation and plan are for different scopes"));
+    if eval.scope != plan.scope || eval.experiment_id != plan.experiment_id {
+        return Err(refused("evaluation belongs to a different experiment"));
     }
-    let cand_ref = plan.candidate_policy_ref.clone().expect("ready");
-    let inc_ref = plan.incumbent_policy_ref.clone().expect("ready");
-    let controls = plan.controls_ref.clone().expect("ready");
-    let cand_env: PolicyEnvelope = store.get_contract("policies", &cand_ref)?;
-    if cand_env.controls_ref != controls || cand_env.scope != plan.scope {
+    if eval.plan_ref != frozen.plan_ref || eval.freeze_seq != frozen.freeze_seq {
         return Err(refused(
-            "candidate envelope controls/scope differ from the frozen plan",
+            "evaluation was not made under this frozen plan (plan frozen after the evaluation?)",
         ));
     }
+    if eval_seq <= frozen.freeze_seq {
+        return Err(refused("evaluation predates the freeze"));
+    }
+    let rules = Rules::parse(plan).map_err(LoopError::NotReady)?;
+    let cand_ref = plan.candidate_policy_ref.clone().expect("frozen");
+    let inc_ref = plan.incumbent_policy_ref.clone().expect("frozen");
+    let controls = plan.controls_ref.clone().expect("frozen");
+    crate::plan::check_candidate(tx, plan, &inc_ref, &cand_ref)?;
     if eval.arms.len() != 2 {
         return Err(refused(
             "admission needs exactly an incumbent and a candidate arm",
         ));
     }
-    let cand = facts(eval.arm_for_policy(&cand_ref)?)?;
-    let inc = facts(eval.arm_for_policy(&inc_ref)?)?;
+    let cand_arm = eval.arm_for_policy(&cand_ref)?;
+    let inc_arm = eval.arm_for_policy(&inc_ref)?;
 
-    let proposer = crate::evo::proposer_of(store, &plan.scope, &cand_ref)?;
-    if proposer.as_ref() == Some(&req.admitter_ref) {
+    let proposer = crate::evo::proposer_in(tx, &plan.scope, &cand_ref)
+        .ok_or_else(|| refused("candidate has no EVO proposer on record"))?;
+    if &proposer == admitter {
         return Err(refused("the proposer cannot admit its own candidate"));
     }
-    if eval.subject_issuers.contains(&req.admitter_ref) || eval.evaluator_ref == req.admitter_ref {
+    if eval.subject_issuers.contains(admitter) || &eval.evaluator_ref == admitter {
         return Err(refused(
             "the admitter must be independent of the subject and the evaluator",
         ));
     }
-    let want = if req.mechanism_test {
+    let want = if mechanism_test {
         CorpusRole::MechanismTest
     } else {
         CorpusRole::Confirmation
@@ -219,116 +219,169 @@ pub fn admit(store: &Store, req: &AdmitRequest) -> Result<(AdmissionRecord, Ref)
             }
         }
     }
+    // Hypothesis history AS OF the evaluation, so the count cannot change
+    // between `admit` and a later re-derivation.
+    let proposals = tx
+        .hypotheses(&plan.scope, Some(eval_seq))
+        .iter()
+        .filter(|h| matches!(h, Hypothesis::Proposed { parent_policy_ref, .. } if parent_policy_ref == &inc_ref))
+        .count() as u64;
 
-    let (decision, reasons) = decide(store, &plan, &cand, &inc)?;
-    let rec = AdmissionRecord {
+    let (decision, reasons) = decide(&rules, proposals, cand_arm, inc_arm);
+    Ok(AdmissionRecord {
         schema: AdmissionSchema,
         decision,
         reasons,
         scope: plan.scope.clone(),
         experiment_id: plan.experiment_id.clone(),
-        plan_ref,
-        evaluation_ref: req.evaluation_ref.clone(),
-        target_policy_ref: cand_ref.clone(),
+        plan_ref: frozen.plan_ref.clone(),
+        evaluation_ref: eval_ref.clone(),
+        target_policy_ref: cand_ref,
         incumbent_policy_ref: inc_ref,
         controls_ref: controls,
-        admitter_ref: req.admitter_ref.clone(),
-        proposer_ref: proposer,
+        admitter_ref: admitter.clone(),
+        proposer_ref: Some(proposer),
         evaluator_ref: eval.evaluator_ref.clone(),
-        mechanism_test: req.mechanism_test,
+        mechanism_test,
         deployment_enabled: plan.deployment_enabled,
         evaluated_at_epoch: eval.authority_epoch,
-        candidate: cand,
-        incumbent: inc,
+        candidate: facts(cand_arm),
+        incumbent: facts(inc_arm),
         evidence_refs: eval.evidence_refs.clone(),
-    };
+    })
+}
+
+/// Decide, store and journal. Refuses (writing nothing) when the inputs
+/// cannot be admitted at all.
+pub fn admit(store: &Store, req: &AdmitRequest) -> Result<(AdmissionRecord, Ref)> {
+    crate::store::check_segment("experiment id", &req.experiment_id)?;
+    let mut tx = Tx::begin(store)?;
+    let frozen = crate::plan::ready_in(&tx, &req.experiment_id)?;
+    let (eval_seq, eval) = crate::evl::load_journalled(&tx, &req.evaluation_ref)?;
+    let admitters = store.config()?.admitters();
+    let rec = derive(
+        &tx,
+        Inputs {
+            frozen: &frozen,
+            eval_ref: &req.evaluation_ref,
+            eval: &eval,
+            eval_seq,
+            admitter: &req.admitter_ref,
+            mechanism_test: req.mechanism_test,
+        },
+        &admitters,
+    )?;
     let r = store.put_cas("admissions", &rec)?;
-    let verdict = match decision {
-        Decision::Accept => Verdict::Accept,
-        Decision::Reject => Verdict::Reject,
-        Decision::Inconclusive => Verdict::Inconclusive,
-    };
-    let already = crate::evo::history(store, &plan.scope)?
-        .iter()
-        .any(|h| matches!(h, Hypothesis::Verdict { admission_ref, .. } if admission_ref == &r));
-    if !already {
-        crate::evo::append_verdict(store, &plan.scope, &cand_ref, verdict, &r)?;
+    if tx.admission_event(&r).is_none() {
+        tx.append(Event::Admission {
+            scope: rec.scope.clone(),
+            experiment_id: rec.experiment_id.clone(),
+            admission_ref: r.clone(),
+            target_policy_ref: rec.target_policy_ref.clone(),
+            decision: rec.decision,
+            mechanism_test: rec.mechanism_test,
+        })?;
+        let verdict = match rec.decision {
+            Decision::Accept => Verdict::Accept,
+            Decision::Reject => Verdict::Reject,
+            Decision::Inconclusive => Verdict::Inconclusive,
+        };
+        crate::evo::append_verdict(
+            &mut tx,
+            &rec.scope,
+            &rec.target_policy_ref,
+            verdict,
+            &r,
+            rec.mechanism_test,
+        )?;
     }
     Ok((rec, r))
 }
 
+/// For activation: the admission must have been journalled by `admit`, and
+/// recomputing it from the ledger's frozen plan + journalled evaluation must
+/// give the IDENTICAL record, decided ACCEPT, by a still-trusted admitter.
+pub(crate) fn rederive(
+    tx: &Tx,
+    adm_ref: &Ref,
+    admitters: &BTreeSet<OpaqueRef>,
+) -> Result<AdmissionRecord> {
+    if tx.admission_event(adm_ref).is_none() {
+        return Err(refused(format!(
+            "admission {adm_ref} was never journalled by `admit`"
+        )));
+    }
+    let stored: AdmissionRecord = tx.store.get_record("admissions", adm_ref)?;
+    let frozen = crate::plan::frozen_in(tx, &stored.experiment_id)?
+        .ok_or_else(|| refused("admission's plan is not frozen"))?;
+    let (eval_seq, eval) = crate::evl::load_journalled(tx, &stored.evaluation_ref)?;
+    let again = derive(
+        tx,
+        Inputs {
+            frozen: &frozen,
+            eval_ref: &stored.evaluation_ref,
+            eval: &eval,
+            eval_seq,
+            admitter: &stored.admitter_ref,
+            mechanism_test: stored.mechanism_test,
+        },
+        admitters,
+    )?;
+    if again != stored {
+        return Err(refused(format!(
+            "admission {adm_ref} does not re-derive from its plan and evaluation"
+        )));
+    }
+    if again.decision != Decision::Accept {
+        return Err(refused(format!(
+            "admission {adm_ref} decided {:?}, not ACCEPT",
+            again.decision
+        )));
+    }
+    Ok(again)
+}
+
 fn decide(
-    store: &Store,
-    plan: &PilotPlan,
-    cand: &ArmFacts,
-    inc: &ArmFacts,
-) -> Result<(Decision, Vec<String>)> {
+    rules: &Rules,
+    proposals: u64,
+    cand_arm: &ArmResult,
+    inc_arm: &ArmResult,
+) -> (Decision, Vec<String>) {
+    let cand = facts(cand_arm);
+    let inc = facts(inc_arm);
     let mut inconclusive = Vec::new();
     let mut reject = Vec::new();
 
-    let margin = rule_u64(
-        "quality_margin",
-        &plan.quality_margin,
-        "pass_rate_margin_ppm",
-    );
-    let econ = rule_u64(
-        "economic_threshold",
-        &plan.economic_threshold,
-        "min_cost_reduction_ppm",
-    );
-    let tol = rule_u64(
-        "budget_rule",
-        &plan.budget_rule,
-        "max_unresolved_liability_micro",
-    );
-    for r in [
-        rule_word(
-            "missing_data_rule",
-            &plan.missing_data_rule,
-            "unknown_bounds",
-        ),
-        rule_word("uncertainty_rule", &plan.uncertainty_rule, "exact_bounds"),
-        rule_word(
-            "multiplicity_rule",
-            &plan.multiplicity_rule,
-            "single_candidate",
-        ),
-    ] {
-        if let Err(e) = r {
-            inconclusive.push(e);
-        }
+    if proposals > 1 {
+        inconclusive.push(format!(
+            "multiplicity: {proposals} candidates were proposed from this incumbent but the plan declares single_candidate"
+        ));
     }
-    if plan.multiplicity_rule.as_deref() == Some("single_candidate") {
-        // Every candidate ever proposed from THIS incumbent counts, rejected and
-        // inconclusive ones included: that is the attempted-candidate count
-        // multiplicity must be charged for.
-        let inc_ref = plan.incumbent_policy_ref.as_ref().expect("ready");
-        let n = crate::evo::history(store, &plan.scope)?
-            .iter()
-            .filter(|h| {
-                matches!(h, Hypothesis::Proposed { parent_policy_ref, .. } if parent_policy_ref == inc_ref)
-            })
-            .count() as u64;
-        if n > 1 {
-            inconclusive.push(format!(
-                "multiplicity: {n} candidates were proposed from this incumbent but the plan declares single_candidate"
-            ));
-        }
-        if n > plan.candidate_budget.unwrap_or(0) {
-            inconclusive.push(format!(
-                "candidate budget exceeded: {n} proposals > {}",
-                plan.candidate_budget.unwrap_or(0)
-            ));
-        }
+    if proposals > rules.candidate_budget {
+        inconclusive.push(format!(
+            "candidate budget exceeded: {proposals} proposals > {}",
+            rules.candidate_budget
+        ));
     }
 
-    // Sample size.
-    let min_units = plan.independent_units.unwrap_or(u64::MAX);
-    for (name, a) in [("candidate", cand), ("incumbent", inc)] {
-        if a.distinct_tasks < min_units {
+    // Paired design (order_rule = paired_tasks): the same assigned task set.
+    let ct: BTreeSet<_> = cand_arm.trials.iter().map(|t| &t.task_id).collect();
+    let it: BTreeSet<_> = inc_arm.trials.iter().map(|t| &t.task_id).collect();
+    if ct != it {
+        inconclusive.push(format!(
+            "unpaired: arms were assigned different task sets ({} vs {} tasks, {} shared)",
+            ct.len(),
+            it.len(),
+            ct.intersection(&it).count()
+        ));
+    }
+
+    // Sample size, cluster unit = task.
+    for (name, a) in [("candidate", &cand), ("incumbent", &inc)] {
+        if a.distinct_tasks < rules.independent_units {
             inconclusive.push(format!(
-                "sample size: {name} arm has {} independent task(s) < plan minimum {min_units}",
-                a.distinct_tasks
+                "sample size: {name} arm has {} independent task(s) < plan minimum {}",
+                a.distinct_tasks, rules.independent_units
             ));
         }
         if a.assigned == 0 {
@@ -338,63 +391,65 @@ fn decide(
 
     // Unknown liability.
     let liab = liability(&cand.total).saturating_add(liability(&inc.total));
-    match &tol {
-        Ok(t) if liab > *t => inconclusive.push(format!(
-            "unresolved liability {liab} µ exceeds plan tolerance {t} µ"
-        )),
-        Ok(_) => {}
-        Err(e) => inconclusive.push(e.clone()),
+    if liab > rules.max_liability_micro {
+        inconclusive.push(format!(
+            "unresolved liability {liab} µ exceeds plan tolerance {} µ",
+            rules.max_liability_micro
+        ));
     }
 
     // Quality noninferiority on exact bounds (integer arithmetic, ppm).
-    match &margin {
-        Err(e) => inconclusive.push(e.clone()),
-        Ok(m) if cand.assigned > 0 && inc.assigned > 0 => {
-            let (m, nc, ni) = (*m as u128, cand.assigned as u128, inc.assigned as u128);
-            // Only UNKNOWN outcomes are uncertain; a verified fail is a fail.
-            let unk = |a: &ArmFacts| a.unknown as u128;
-            let c_pess = cand.verified_pass as u128;
-            let c_opt = c_pess + unk(cand);
-            let i_pess = inc.verified_pass as u128;
-            let i_opt = i_pess + unk(inc);
-            // c/nc >= i/ni - m/1e6   ⇔   c*ni*1e6 + m*nc*ni >= i*nc*1e6
-            let ge = |c: u128, i: u128| c * ni * 1_000_000 + m * nc * ni >= i * nc * 1_000_000;
-            if ge(c_pess, i_opt) {
-                // established
-            } else if !ge(c_opt, i_pess) {
-                reject.push(format!(
-                    "quality inferiority established: candidate ≤ {c_opt}/{nc} passes vs incumbent ≥ {i_pess}/{ni} beyond margin"
-                ));
-            } else {
-                inconclusive.push(format!(
-                    "noninferiority cannot be established: candidate {c_pess}..{c_opt}/{nc}, incumbent {i_pess}..{i_opt}/{ni} passes"
-                ));
-            }
+    if cand.assigned > 0 && inc.assigned > 0 {
+        let (m, nc, ni) = (
+            rules.margin_ppm as u128,
+            cand.assigned as u128,
+            inc.assigned as u128,
+        );
+        let p = PPM as u128;
+        let c_pess = cand.verified_pass as u128;
+        let c_opt = c_pess + cand.unknown as u128;
+        let i_pess = inc.verified_pass as u128;
+        let i_opt = i_pess + inc.unknown as u128;
+        // c/nc >= i/ni - m/1e6   ⇔   c*ni*1e6 + m*nc*ni >= i*nc*1e6
+        let ge = |c: u128, i: u128| c * ni * p + m * nc * ni >= i * nc * p;
+        if ge(c_pess, i_opt) && c_pess > 0 {
+            // established, and nonvacuous
+        } else if !ge(c_opt, i_pess) {
+            reject.push(format!(
+                "quality inferiority established: candidate ≤ {c_opt}/{nc} passes vs incumbent ≥ {i_pess}/{ni} beyond margin"
+            ));
+        } else if c_opt == 0 {
+            reject.push("candidate has no verified pass at all".into());
+        } else {
+            inconclusive.push(format!(
+                "noninferiority cannot be established: candidate {c_pess}..{c_opt}/{nc}, incumbent {i_pess}..{i_opt}/{ni} passes"
+            ));
         }
-        Ok(_) => {}
     }
 
-    // Economics: only on fully known totals.
-    match (&econ, &cand.total, &inc.total) {
-        (Err(e), _, _) => inconclusive.push(e.clone()),
-        (Ok(t), Total::Known { cost_micro: cc }, Total::Known { cost_micro: ic })
+    // Economics: only on fully known totals (a missing trial is unknown).
+    match (&cand.total, &inc.total) {
+        (Total::Known { cost_micro: cc }, Total::Known { cost_micro: ic })
             if cand.assigned > 0 && inc.assigned > 0 =>
         {
-            let (t, cc, ic) = (*t as u128, *cc as u128, *ic as u128);
-            let (nc, ni) = (cand.assigned as u128, inc.assigned as u128);
-            if t > 1_000_000 {
-                inconclusive.push("economic_threshold above 100%".into());
-            } else if cc * ni * 1_000_000 > ic * nc * (1_000_000 - t) {
+            let (t, cc, ic) = (
+                rules.min_cost_reduction_ppm as u128,
+                *cc as u128,
+                *ic as u128,
+            );
+            let (nc, ni, p) = (cand.assigned as u128, inc.assigned as u128, PPM as u128);
+            if cc * ni * p > ic * nc * (p - t) {
                 reject.push(format!(
                     "economic benefit not met: candidate {cc}µ/{nc} trials vs incumbent {ic}µ/{ni} trials, required reduction {t} ppm"
                 ));
             }
         }
-        (Ok(_), _, _) => inconclusive
-            .push("economics cannot be established: an arm's cost is not fully final".into()),
+        _ => inconclusive.push(
+            "economics cannot be established: an arm's cost is not fully final (unknown, estimated, liability or missing trial)".into(),
+        ),
     }
 
-    Ok(if !reject.is_empty() {
+    if !reject.is_empty() {
         reject.extend(inconclusive);
         (Decision::Reject, reject)
     } else if !inconclusive.is_empty() {
@@ -404,7 +459,7 @@ fn decide(
             Decision::Accept,
             vec!["all frozen plan criteria established".into()],
         )
-    })
+    }
 }
 
 /// Load a stored admission record.

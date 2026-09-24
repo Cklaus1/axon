@@ -2,7 +2,9 @@
 //!
 //! Inputs: the incumbent `PolicyEnvelope`, the already-eligible candidate set,
 //! and episodes. Only DISCOVERY/TUNING episodes for which
-//! `learning_eligible() == true` feed the proposer; a confirmation or
+//! `learning_eligible() == true` AND whose verification issuer is a
+//! configured trusted verifier that is not the proposer (no self-label loop,
+//! N4/N5) feed the proposer; a confirmation or
 //! reporting episode in the input REFUSES the whole request (protected
 //! evidence must never reach a proposer, even to be ignored), and
 //! mechanism-test or ineligible episodes are excluded and reported.
@@ -17,7 +19,8 @@
 //! intervention is never re-proposed under a new id.
 
 use crate::error::{refused, LoopError, Result};
-use crate::store::{append_jsonl, read_jsonl, strict_record, DirLock, Store};
+use crate::ledger::{Event, Tx};
+use crate::store::{strict_record, Store};
 use axon_loop_contracts::{
     check_shortlist, digest, learning_eligible, BoundedText, CandidateId, Contract, CorpusRole,
     LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyId, Ref, Scope,
@@ -90,6 +93,8 @@ pub enum Hypothesis {
         candidate_policy_ref: Ref,
         verdict: Verdict,
         admission_ref: Ref,
+        /// A mechanism-test verdict is a fixture, never improvement evidence.
+        mechanism_test: bool,
         decided_ms: u64,
     },
 }
@@ -101,45 +106,45 @@ pub struct Proposal {
     pub hypothesis: Hypothesis,
 }
 
-fn hyp_path(store: &Store, scope: &Scope) -> std::path::PathBuf {
-    store.scope_dir(scope).join("hypotheses.jsonl")
-}
-
+/// The scope's hypothesis history (ledger replay).
 pub fn history(store: &Store, scope: &Scope) -> Result<Vec<Hypothesis>> {
-    let _lock = DirLock::acquire(&store.scope_dir(scope))?;
-    read_jsonl(&hyp_path(store, scope))
+    Ok(Tx::begin(store)?.hypotheses(scope, None))
 }
 
 pub(crate) fn append_verdict(
-    store: &Store,
+    tx: &mut Tx,
     scope: &Scope,
     candidate: &Ref,
     verdict: Verdict,
     admission_ref: &Ref,
+    mechanism_test: bool,
 ) -> Result<()> {
-    let _lock = DirLock::acquire(&store.scope_dir(scope))?;
-    append_jsonl(
-        &hyp_path(store, scope),
-        &Hypothesis::Verdict {
+    tx.append(Event::Hypothesis {
+        scope: scope.clone(),
+        hypothesis: Box::new(Hypothesis::Verdict {
             schema: HypothesisSchema,
             candidate_policy_ref: candidate.clone(),
             verdict,
             admission_ref: admission_ref.clone(),
+            mechanism_test,
             decided_ms: crate::now_ms(),
-        },
-    )
+        }),
+    })?;
+    Ok(())
 }
 
-/// The proposer of a candidate, from hypothesis history.
-pub fn proposer_of(store: &Store, scope: &Scope, candidate: &Ref) -> Result<Option<OpaqueRef>> {
-    Ok(history(store, scope)?.into_iter().find_map(|h| match h {
-        Hypothesis::Proposed {
-            candidate_policy_ref,
-            proposer_ref,
-            ..
-        } if &candidate_policy_ref == candidate => Some(proposer_ref),
-        _ => None,
-    }))
+/// The recorded proposer of an EVO candidate, if it was proposed here.
+pub(crate) fn proposer_in(tx: &Tx, scope: &Scope, candidate: &Ref) -> Option<OpaqueRef> {
+    tx.hypotheses(scope, None)
+        .into_iter()
+        .find_map(|h| match h {
+            Hypothesis::Proposed {
+                candidate_policy_ref,
+                proposer_ref,
+                ..
+            } if &candidate_policy_ref == candidate => Some(proposer_ref),
+            _ => None,
+        })
 }
 
 /// splitmix64 — a fixed, documented PRNG so a seed means the same thing on
@@ -217,6 +222,7 @@ pub fn propose(store: &Store, req: &EvoRequest) -> Result<Proposal> {
     )?;
     let incumbent_ref = digest(&incumbent)?;
 
+    let verifiers = store.config()?.verifiers();
     // B281: only eligible discovery/tuning evidence feeds the proposer.
     let mut evidence = Vec::new();
     let mut excluded = Vec::new();
@@ -237,10 +243,15 @@ pub fn propose(store: &Store, req: &EvoRequest) -> Result<Proposal> {
                 "episodes[{i}] is from a different scope or candidate view"
             )));
         }
+        let issuer = ep.verification.issuer_ref.as_ref();
         let reason = if ep.corpus_role == CorpusRole::MechanismTest {
             Some("mechanism_test episodes never feed learning")
         } else if !learning_eligible(&ep)? {
             Some("not learning-eligible (needs completed, independently verified, final usage)")
+        } else if issuer == Some(&req.proposer_ref) {
+            Some("verified by the proposer itself: self-labelled evidence never feeds learning")
+        } else if !issuer.is_some_and(|i| verifiers.contains(i)) {
+            Some("verification issuer is not a configured trusted verifier")
         } else {
             None
         };
@@ -265,9 +276,8 @@ pub fn propose(store: &Store, req: &EvoRequest) -> Result<Proposal> {
         return Err(refused("more than 256 discovery evidence refs"));
     }
 
-    let dir = store.scope_dir(&scope);
-    let _lock = DirLock::acquire(&dir)?;
-    let past: Vec<Hypothesis> = read_jsonl(&hyp_path(store, &scope))?;
+    let mut tx = Tx::begin(store)?;
+    let past: Vec<Hypothesis> = tx.hypotheses(&scope, None);
     let mut tried: BTreeSet<Vec<CandidateId>> = past
         .iter()
         .filter_map(|h| match h {
@@ -330,7 +340,10 @@ pub fn propose(store: &Store, req: &EvoRequest) -> Result<Proposal> {
         excluded,
         proposed_ms: crate::now_ms(),
     };
-    append_jsonl(&hyp_path(store, &scope), &hypothesis)?;
+    tx.append(Event::Hypothesis {
+        scope: scope.clone(),
+        hypothesis: Box::new(hypothesis.clone()),
+    })?;
     Ok(Proposal {
         candidate,
         candidate_policy_ref: candidate_ref,
