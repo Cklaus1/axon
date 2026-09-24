@@ -10,11 +10,48 @@ use serde_json::{json, Value};
 
 pub const ADMITTER: &str = "admitter:fabric-test";
 
+/// Locate a workspace binary these tests drive but cargo does not build for
+/// this crate (so there is no `CARGO_BIN_EXE_*` for it).
+///
+/// Order: the explicit env var (`AXON_BIN` / `CORTEX_BIN`), then the SAME
+/// target directory this test's own `axon-fabric` binary was built into — which
+/// is how a custom `CARGO_TARGET_DIR` is honoured — then the workspace
+/// `target/debug/`. It FAILS, never skips, when none exists: these are
+/// production-caller tests, and one that silently passes proves nothing. It
+/// used to hard-code `../../target/debug/`, so under a custom CARGO_TARGET_DIR
+/// every such test failed spuriously (or ran a stale binary left in the tree).
+/// An env var naming a missing file is an error, not a cue to fall back.
+pub fn workspace_bin(name: &str, env_var: &str, build_hint: &str) -> PathBuf {
+    if let Some(p) = std::env::var_os(env_var) {
+        let p = PathBuf::from(p);
+        assert!(p.exists(), "{env_var}={} does not exist", p.display());
+        return p.canonicalize().unwrap();
+    }
+    let own_profile_dir = Path::new(env!("CARGO_BIN_EXE_axon-fabric"))
+        .parent()
+        .map(Path::to_path_buf);
+    let mut looked = Vec::new();
+    for dir in own_profile_dir.into_iter().chain(std::iter::once(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug"),
+    )) {
+        let p = dir.join(name);
+        if p.exists() {
+            return p.canonicalize().unwrap();
+        }
+        looked.push(p.display().to_string());
+    }
+    panic!(
+        "needs the `{name}` binary (looked in: {}; or set {env_var}) — {build_hint}",
+        looked.join(", ")
+    )
+}
+
 pub fn axon_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/debug/axon")
-        .canonicalize()
-        .expect("needs the interpreter: cargo build -p axon-core --no-default-features --bin axon")
+    workspace_bin(
+        "axon",
+        "AXON_BIN",
+        "cargo build -p axon-core --no-default-features --bin axon",
+    )
 }
 
 pub fn sha256_file(p: &Path) -> String {

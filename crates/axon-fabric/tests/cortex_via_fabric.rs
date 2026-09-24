@@ -14,13 +14,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn cortex_bin() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/cortex");
-    assert!(
-        p.exists(),
-        "needs {} — run `cargo build -p axon-cortex --bins` first",
-        p.display()
-    );
-    p.canonicalize().unwrap()
+    workspace_bin(
+        "cortex",
+        "CORTEX_BIN",
+        "run `cargo build -p axon-cortex --bins` first",
+    )
 }
 
 const BROKEN: &str = "\
