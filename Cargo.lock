@@ -259,6 +259,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-loop-contracts"
+version = "0.1.0"
+dependencies = [
+ "axon-cortex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "axon-os"
 version = "0.1.0"
 dependencies = [

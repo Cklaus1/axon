@@ -295,7 +295,7 @@ cargo clippy --locked -p axon-rt -p axon-ai -p axon-surface -p axon-gfx -p axon-
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
   -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \
-  -p axon-reflex \
+  -p axon-reflex -p axon-loop-contracts \
   --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 

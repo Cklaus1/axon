@@ -3,6 +3,7 @@ members = [
   "crates/axon-core",
   "crates/axon-audit",
   "crates/axon-cortex",
+  "crates/axon-loop-contracts",
   "crates/cortex-policy-adapter",
   "crates/axon-reflex",
   "crates/axon-rt",
