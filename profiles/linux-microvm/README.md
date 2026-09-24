@@ -1,8 +1,50 @@
-# Protected Linux microVM profile (`linux-microvm-protected`, B263 / ACF-T06)
+# Linux microVM profile (`linux-microvm-protected`, B263 / ACF-T06): enclosure-only, NOT qualified as protected
 
-A pinned Linux guest plus a Firecracker **jailer** launch that runs ONE Axon
-program offline. Its host and guest boundaries are measured by
-`scripts/b263_qualify.sh`.
+> **Status as of 2026-09-24 (`v022/integration@279da778`). Read this before
+> you rely on the name.** The profile id says "protected". What exists is
+> weaker than that:
+>
+> * **It is an enclosure only. The guest enforces no policy.** `/init` is
+>   `guest-init.sh`, not `axon-guest-init`: it has no MMDS, no boot policy, no
+>   effect ceiling and no scoped grant. The program runs as an unconstrained
+>   `axon run` inside the VM. What is enforced is the VM boundary (jailer,
+>   empty netns, host cgroups, read-only rootfs). Fabric therefore refuses
+>   every request that needs an in-guest ceiling or a path-scoped grant (B263
+>   x1/x2). An in-guest policy channel through `axon-guest-init` is planned for
+>   Stage 3 (operator decision D5).
+> * **Qualification: 32 PASS / 0 FAIL / 4 BLOCKED** (`result:
+>   PASS_WITH_BLOCKED`) on a **WSL2 host with nested KVM** (decision D2; the L0
+>   Hyper-V hypervisor is outside the boundary). The four BLOCKED rows are: x1
+>   guest policy channel (ACF-G25), x2 scope preservation (ACF-G26), x3 the L0
+>   boundary, and x4 the trusted evidence issuer.
+> * **The record is unsigned.** It was produced by an unauthenticated local
+>   root shell, and no issuer key exists (x4). Even so,
+>   `axon-fabric`'s `qualification()` enables dispatch on `FAIL == 0` plus a
+>   manifest match, ignoring BLOCKED (D-020).
+> * **The guest `axon` was built from a dirty tree.** `manifest.json` says
+>   `source.axon_tree_dirty_at_build: true` at `4cceb892`, so the rootfs cannot
+>   be reproduced from a commit.
+> * **It deviates with `acpi=off`.** See "Known deviation" below. The deviation
+>   is recorded here and in `kernel-overlay.config`, not in `manifest.json`.
+> * **Firecracker and jailer are not digest-checked at launch.**
+>   `scripts/fc_linux_profile.sh` uses fixed paths. The evidence records their
+>   sha256, but a change to either binary after qualification is not refused.
+> * **Nothing automated runs it.** `gate.sh` and CI invoke neither
+>   `fc_linux_profile.sh` nor `b263_qualify.sh`, since both need root. The
+>   `axon-fabric` tests use a stand-in launcher.
+>
+> **Do not describe or treat this profile as a qualified protected microVM.**
+> Recorded as `governance/cortex-v015/DISCREPANCIES.md` D-020.
+>
+> The evidence files live in the operator's untracked
+> `.axon-v022/evidence/b263/`. The qualifying record is `20260924T080432Z.json`.
+> Two earlier runs had FAILs (`075735Z`: b2 and c4; `075923Z`: b2), and
+> `080319Z` also shows 32/0/4. They are **not in the
+> repository**.
+
+A pinned Linux guest and a Firecracker **jailer** launch that together run ONE
+Axon program offline. `scripts/b263_qualify.sh` measures the host and guest
+boundaries.
 
 Qualification host: WSL2, kernel 6.18, nested KVM (operator decision D2). Every
 evidence record says `host=WSL2-nested`, with the caveat that **the L0
@@ -45,7 +87,7 @@ device discovery. Details are in `kernel-overlay.config`.
 
 ## Launch interface — `scripts/fc_linux_profile.sh`
 
-The contract below is what axon-vm / Fabric should drive. It must run as root,
+The contract below is what Fabric drives (`axon-fabric` `backend.rs`). `axon-vm` does not drive it: the `axon-vm` library is the jailer-less custom-kernel path. It must run as root,
 because the jailer needs root to drop to the profile uid.
 
 ```
