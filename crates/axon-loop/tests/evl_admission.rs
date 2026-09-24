@@ -11,7 +11,7 @@ use serde_json::json;
 #[test]
 fn evl_counts_missing_and_unknown_against_quality() {
     let w = world();
-    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 3, |_| {}).unwrap();
     let mut specs = pair(&w.inc, &w.cand, 3, 3, 3, Some(100), Some(50));
     specs[3].4 = Out::Unknown; // c0 timed out
     specs[5].4 = Out::Fail; // c2 failed
@@ -176,13 +176,17 @@ fn decision(
 
 #[test]
 fn inconclusive_on_small_sample_liability_and_unknowns() {
+    // Sample size is now fixed at FREEZE: a manifest smaller than the planned
+    // independent units cannot be frozen, so no evaluation can be too small.
     let w = world();
-    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
-    let (d, r) = decision(&w, "small", &specs, EvlOpts::default(), |v| {
+    let e = freeze_plan(&w.s, "small", &w.inc_ref, &w.cand_ref, |v| {
         v["independent_units"] = json!(3)
-    });
-    assert_eq!(d, Decision::Inconclusive);
-    assert!(r.iter().any(|x| x.contains("sample size")), "{r:?}");
+    })
+    .unwrap_err();
+    assert!(
+        matches!(e, LoopError::NotReady(ref m) if m.contains("independent_units")),
+        "{e}"
+    );
 
     let w = world();
     freeze_plan(&w.s, "liab", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();

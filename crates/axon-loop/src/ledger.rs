@@ -102,6 +102,9 @@ pub enum Event {
         scope: Scope,
         candidate_set_ref: Ref,
     },
+    /// A trusted admitter registered an experiment's task manifest (bytes in
+    /// `task-manifests/`; see `crate::tasks`).
+    TaskManifest { scope: Scope, manifest_ref: Ref },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -151,6 +154,7 @@ const DEPENDENT: &[&str] = &[
     "episodes",
     "contexts",
     "candidate-sets",
+    "task-manifests",
 ];
 
 impl<'s> Tx<'s> {
@@ -476,5 +480,58 @@ impl Tx<'_> {
         self.entries.iter().any(|e| {
             matches!(&e.event, Event::CandidateSet { scope: s, candidate_set_ref } if s == scope && candidate_set_ref == r)
         })
+    }
+}
+
+impl Tx<'_> {
+    pub fn task_manifest_event(&self, scope: &Scope, r: &Ref) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(&e.event, Event::TaskManifest { scope: s, manifest_ref } if s == scope && manifest_ref == r)
+        })
+    }
+
+    /// `(seq, evaluation_ref)` of every evaluation journalled for `experiment_id`.
+    pub fn evaluations_of(&self, experiment_id: &str) -> Vec<(u64, Ref)> {
+        self.entries
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Evaluation {
+                    experiment_id: x,
+                    evaluation_ref,
+                    ..
+                } if x == experiment_id => Some((e.seq, evaluation_ref.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Admission refs journalled for `experiment_id`.
+    pub fn admissions_of(&self, experiment_id: &str) -> Vec<Ref> {
+        self.entries
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Admission {
+                    experiment_id: x,
+                    admission_ref,
+                    ..
+                } if x == experiment_id => Some(admission_ref.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every journalled evaluation of `scope`, by ref.
+    pub fn evaluations_in(&self, scope: &Scope) -> Vec<Ref> {
+        self.entries
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Evaluation {
+                    scope: s,
+                    evaluation_ref,
+                    ..
+                } if s == scope => Some(evaluation_ref.clone()),
+                _ => None,
+            })
+            .collect()
     }
 }

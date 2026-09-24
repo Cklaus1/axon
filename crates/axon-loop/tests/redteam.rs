@@ -284,7 +284,7 @@ fn h2_candidate_not_activatable_from_paused() {
 #[test]
 fn g7_plan_shopping_is_refused() {
     let w = world();
-    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 10, |_| {}).unwrap();
     let mut specs = pair(&w.inc, &w.cand, 10, 10, 9, Some(100), Some(50));
     specs.truncate(20);
     let (_, e) = evaluate(
@@ -421,7 +421,7 @@ fn i3_i4_i7_i8_i13_i14_rules_must_be_executable() {
 #[test]
 fn j201_zero_pass_candidate_never_accepted() {
     let w = world();
-    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |v| {
+    freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 10, |v| {
         v["quality_margin"] = json!("pass_rate_margin_ppm=999999")
     })
     .unwrap();
@@ -435,27 +435,25 @@ fn j201_zero_pass_candidate_never_accepted() {
     assert_ne!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
 }
 
-/// J109: arms on disjoint task sets ⇒ INCONCLUSIVE.
+/// J109: arms on disjoint task sets. Since the task manifest is frozen, an
+/// evaluation whose arms do not both cover exactly the manifest is REFUSED
+/// (stronger than the earlier INCONCLUSIVE); the admission-side "unpaired"
+/// check remains as defence in depth.
 #[test]
-fn j109_unpaired_task_sets_inconclusive() {
+fn j109_unpaired_task_sets_refused() {
     let w = world();
     freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let mut specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     for s in specs.iter_mut().skip(2) {
         s.2 = s.2.replace("task", "easy");
     }
-    let (_, e) = evaluate(
-        &w.s,
-        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
-    )
-    .unwrap();
-    let (rec, _) = admit(&w.s, "exp", &e, ADMITTER, false).unwrap();
-    assert_eq!(rec.decision, Decision::Inconclusive);
-    assert!(
-        rec.reasons.iter().any(|r| r.contains("unpaired")),
-        "{:?}",
-        rec.reasons
-    );
+    let e = refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+        )
+    });
+    assert!(e.to_string().contains("task manifest"), "{e}");
 }
 
 // ── root cause 6: missing trial = unknown cost ─────────────────────────────
@@ -464,7 +462,7 @@ fn j109_unpaired_task_sets_inconclusive() {
 #[test]
 fn j202_q4_missing_trial_is_unknown_cost() {
     let w = world();
-    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |v| {
+    freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 4, |v| {
         v["quality_margin"] = json!("pass_rate_margin_ppm=500000")
     })
     .unwrap();
@@ -782,7 +780,10 @@ fn m4_mechanism_fixture_is_not_a_real_incumbent() {
     // a real candidate compared against the (fixture) active policy
     let (c2, c2ref) = propose(&w.s, &w.cand, 7, "cand-2");
     freeze_plan(&w.s, "real", &w.cand_ref, &c2ref, |_| {}).unwrap();
-    let specs = pair(&w.cand, &c2, 2, 2, 2, Some(100), Some(50));
+    let mut specs = pair(&w.cand, &c2, 2, 2, 2, Some(100), Some(50));
+    for s in specs.iter_mut() {
+        s.3 = format!("real-{}", s.3); // trial ids are unique for the scope's lifetime
+    }
     let o = EvlOpts {
         epoch: 2,
         ..Default::default()
@@ -1011,4 +1012,163 @@ fn ab6_ab7_ab8_context_checks_gate_every_trial() {
     )
     .unwrap();
     assert!(rec.arms.iter().all(|a| a.verified_pass == 0));
+}
+
+/// AB9 / AB10 (independent round 3): evaluation shopping. A REJECTed
+/// experiment cannot be re-evaluated — not with a cherry-picked subset of the
+/// tasks the candidate passed (AB9), not by re-rolling trial ids (AB10) — and
+/// the REJECT stands: nothing can activate the candidate.
+#[test]
+fn ab9_ab10_one_evaluation_per_experiment_the_reject_stands() {
+    let w = world();
+    freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 4, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 4, 4, 2, Some(100), Some(50));
+    let (_, e1) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let (rec, a1) = admit(&w.s, "exp", &e1, ADMITTER, false).unwrap();
+    assert_eq!(rec.decision, Decision::Reject);
+    // AB9: only the tasks the candidate passed
+    let cherry: Vec<_> = specs
+        .iter()
+        .filter(|s| s.2 == "task-0" || s.2 == "task-1")
+        .cloned()
+        .collect();
+    let e = refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &cherry, &EvlOpts::default()),
+        )
+    });
+    assert!(
+        e.to_string()
+            .contains("one evaluation per frozen experiment"),
+        "{e}"
+    );
+    // AB10: the full manifest again, fresh trial ids, candidate now 4/4
+    let mut reroll = pair(&w.inc, &w.cand, 4, 4, 4, Some(100), Some(50));
+    for s in reroll.iter_mut() {
+        s.3 = format!("r{}", s.3);
+    }
+    refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &reroll, &EvlOpts::default()),
+        )
+    });
+    // the REJECT stands
+    refused_unchanged(&w, || {
+        pointer::transition(
+            &w.s,
+            &t(transition(
+                "ab9",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(&a1),
+                false,
+            )),
+        )
+    });
+}
+
+/// AB9 (first evaluation): even the FIRST evaluation must cover exactly the
+/// frozen manifest × both arms × `repetitions`; missing deliveries are kept
+/// as `missing`, never dropped.
+#[test]
+fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
+    let w = world();
+    freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 4, |_| {}).unwrap();
+    let full = pair(&w.inc, &w.cand, 4, 4, 2, Some(100), Some(50));
+    // subset of tasks
+    let subset: Vec<_> = full.iter().filter(|s| s.2 != "task-3").cloned().collect();
+    let e = refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &subset, &EvlOpts::default()),
+        )
+    });
+    assert!(e.to_string().contains("cover exactly the manifest"), "{e}");
+    // an extra task
+    let mut extra = full.clone();
+    extra.push((
+        "challenger-1",
+        &w.cand,
+        "task-9".into(),
+        "c9".into(),
+        Out::Pass,
+        Some(50),
+    ));
+    refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &extra, &EvlOpts::default()),
+        )
+    });
+    // a repeated task (repetitions = 1)
+    let mut rep = full.clone();
+    rep.push((
+        "challenger-1",
+        &w.cand,
+        "task-0".into(),
+        "c0b".into(),
+        Out::Pass,
+        Some(50),
+    ));
+    let e = refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp", &w.inc, &w.cand, &rep, &EvlOpts::default()),
+        )
+    });
+    assert!(e.to_string().contains("repetitions"), "{e}");
+    // undelivered trials are fine and counted as missing
+    let o = EvlOpts {
+        deliver: Box::new(|t| t != "c3"),
+        ..Default::default()
+    };
+    let (rec, _) = evaluate(&w.s, &evl_request("exp", &w.inc, &w.cand, &full, &o)).unwrap();
+    assert_eq!(rec.arm_for_policy(&w.cand_ref).unwrap().missing, 1);
+}
+
+/// AB10: trial ids are unique across the scope's evaluations — an old trial
+/// id cannot be replayed into a new experiment.
+#[test]
+fn ab10_trial_ids_never_reused_across_experiments() {
+    let w = world();
+    let _ = accepted(&w, "exp"); // uses trial ids i0,i1,c0,c1
+    let (c2, c2ref) = propose(&w.s, &w.inc, 9, "cand-2");
+    freeze_plan(&w.s, "exp2", &w.inc_ref, &c2ref, |v| {
+        v["candidate_budget"] = json!(2)
+    })
+    .unwrap();
+    let specs = pair(&w.inc, &c2, 2, 2, 2, Some(100), Some(50));
+    let e = refused_unchanged(&w, || {
+        evaluate(
+            &w.s,
+            &evl_request("exp2", &w.inc, &c2, &specs, &EvlOpts::default()),
+        )
+    });
+    assert!(
+        e.to_string()
+            .contains("unique for the experiment's lifetime"),
+        "{e}"
+    );
+}
+
+/// AB9 (freeze): a plan cannot be frozen without its registered task list.
+#[test]
+fn ab9_freeze_requires_the_registered_manifest() {
+    let w = world();
+    let mut v = complete_plan("nomanifest", &w.inc_ref, &w.cand_ref);
+    v["task_manifest_ref"] = json!(r('1'));
+    plan::register(&w.s, &PilotPlan::from_value(&v).unwrap()).unwrap();
+    let e = refused_unchanged(&w, || plan::freeze(&w.s, "nomanifest"));
+    assert!(
+        e.to_string().contains("not a registered task manifest"),
+        "{e}"
+    );
 }

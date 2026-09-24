@@ -99,6 +99,7 @@ pub fn store_with_config(dir: &Path) -> Store {
     })
     .unwrap();
     register_candidates(&s);
+    register_tasks(&s, 2);
     s
 }
 
@@ -275,7 +276,6 @@ pub fn complete_plan(id: &str, inc: &Ref, cand: &Ref) -> Value {
     o.insert("deployment_enabled".into(), json!(true));
     o.insert("operator_approved".into(), json!(true));
     for (k, c) in [
-        ("task_manifest_ref", '1'),
         ("repository_split_ref", '3'),
         ("discovery_manifest_ref", '4'),
         ("confirmation_manifest_ref", '5'),
@@ -287,6 +287,7 @@ pub fn complete_plan(id: &str, inc: &Ref, cand: &Ref) -> Value {
     ] {
         o.insert(k.into(), json!(r(c)));
     }
+    o.insert("task_manifest_ref".into(), json!(task_manifest_ref(2)));
     o.insert("controls_ref".into(), json!(incumbent().controls_ref));
     o.insert("incumbent_policy_ref".into(), json!(inc));
     o.insert("candidate_policy_ref".into(), json!(cand));
@@ -433,6 +434,43 @@ pub fn propose(s: &Store, parent: &PolicyEnvelope, seed: u64, id: &str) -> (Poli
     (p.candidate, p.candidate_policy_ref)
 }
 
+fn manifest(n: usize) -> axon_loop::tasks::TaskManifest {
+    let mut tasks: Vec<String> = (0..n).map(|i| format!("task-{i}")).collect();
+    tasks.sort();
+    axon_loop::tasks::TaskManifest::parse(
+        &json!({"schema":"axon.loop.task-manifest/1","scope":scope(),"tasks":tasks,"issuer_ref":ADMITTER})
+            .to_string(),
+    )
+    .unwrap()
+}
+
+/// The ref of the manifest `task-0 .. task-{n-1}`.
+pub fn task_manifest_ref(n: usize) -> Ref {
+    manifest(n).manifest_ref().unwrap()
+}
+
+/// Register the manifest `task-0 .. task-{n-1}` and return its ref.
+pub fn register_tasks(s: &Store, n: usize) -> Ref {
+    axon_loop::tasks::put(s, &manifest(n)).unwrap()
+}
+
+/// Register + freeze a plan over the manifest `task-0 .. task-{n-1}`.
+pub fn freeze_plan_n(
+    s: &Store,
+    id: &str,
+    inc: &Ref,
+    cand: &Ref,
+    n: usize,
+    edit: impl FnOnce(&mut Value),
+) -> Result<Ref, LoopError> {
+    let mut v = complete_plan(id, inc, cand);
+    v["task_manifest_ref"] = json!(register_tasks(s, n));
+    edit(&mut v);
+    plan::register(s, &PilotPlan::from_value(&v)?)?;
+    plan::freeze(s, id)
+}
+
+/// [`freeze_plan_n`] over two tasks, the fixtures' default pairing.
 pub fn freeze_plan(
     s: &Store,
     id: &str,
@@ -440,10 +478,7 @@ pub fn freeze_plan(
     cand: &Ref,
     edit: impl FnOnce(&mut Value),
 ) -> Result<Ref, LoopError> {
-    let mut v = complete_plan(id, inc, cand);
-    edit(&mut v);
-    plan::register(s, &PilotPlan::from_value(&v)?)?;
-    plan::freeze(s, id)
+    freeze_plan_n(s, id, inc, cand, 2, edit)
 }
 
 /// (arm, policy, task, trial, outcome, cost)

@@ -271,7 +271,22 @@ fn cli_plan_register_freeze_show() {
     );
     assert_eq!((c, v["frozen_ref"].clone()), (0, Value::Null));
 
-    let full = complete_plan("exp", &w.inc_ref, &w.cand_ref);
+    let mut full = complete_plan("exp", &w.inc_ref, &w.cand_ref);
+    full["task_manifest_ref"] = json!(r('1')); // a manifest nobody registered
+    assert_eq!(run(d, &["plan", "register"], Some(&full)).0, 0);
+    // AB9: freeze needs the registered task manifest behind task_manifest_ref
+    let before = snapshot(d);
+    let (c, _, e) = run(d, &["plan", "freeze", "--experiment", "exp"], None);
+    assert!(
+        c == 4 && e.contains("not a registered task manifest"),
+        "{e}"
+    );
+    assert_eq!(snapshot(d), before);
+    let manifest = json!({"schema":"axon.loop.task-manifest/1","scope":scope(),
+                          "tasks":["task-0","task-1","task-2"],"issuer_ref":ADMITTER});
+    let (c, v, e) = run(d, &["tasks", "put"], Some(&manifest));
+    assert_eq!(c, 0, "{e}");
+    full["task_manifest_ref"] = v["task_manifest_ref"].clone();
     assert_eq!(run(d, &["plan", "register"], Some(&full)).0, 0);
     let (c, v, e) = run(d, &["plan", "freeze", "--experiment", "exp"], None);
     assert_eq!(c, 0, "{e}");
@@ -360,15 +375,13 @@ fn cli_evo_evl_admit_tel_end_to_end() {
     let cand_ref: Ref = serde_json::from_value(v["candidate_policy_ref"].clone()).unwrap();
     assert_eq!(digest(&cand).unwrap(), cand_ref);
 
-    assert_eq!(
-        run(
-            d.path(),
-            &["plan", "register"],
-            Some(&complete_plan("exp", &inc_ref, &cand_ref))
-        )
-        .0,
-        0
-    );
+    let manifest = json!({"schema":"axon.loop.task-manifest/1","scope":scope(),
+                          "tasks":["task-0","task-1"],"issuer_ref":ADMITTER});
+    let (c, v, e) = run(d.path(), &["tasks", "put"], Some(&manifest));
+    assert_eq!(c, 0, "{e}");
+    let mut plan_doc = complete_plan("exp", &inc_ref, &cand_ref);
+    plan_doc["task_manifest_ref"] = v["task_manifest_ref"].clone();
+    assert_eq!(run(d.path(), &["plan", "register"], Some(&plan_doc)).0, 0);
     assert_eq!(
         run(d.path(), &["plan", "freeze", "--experiment", "exp"], None).0,
         0

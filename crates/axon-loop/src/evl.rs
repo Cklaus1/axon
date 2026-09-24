@@ -151,6 +151,10 @@ struct Delivered {
 /// in the ledger, the arms are exactly its incumbent and candidate, and a
 /// trial whose preflight context was created BEFORE the freeze was recorded
 /// is refused — its outcome existed before the rule did.
+///
+/// No evaluation shopping (AB9/AB10): exactly ONE evaluation per experiment;
+/// it assigns exactly the frozen task manifest × both arms × `repetitions`;
+/// trial ids are unique across every evaluation in the scope.
 pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)> {
     crate::store::check_segment("experiment id", &r.experiment_id)?;
     let mut tx = Tx::begin(store)?;
@@ -220,6 +224,77 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     for a in &r.assigned {
         if arm_policy[&a.arm_id] != &a.policy_ref {
             return Err(refused(format!("arm {} assigned two policies", a.arm_id)));
+        }
+    }
+
+    // AB9/AB10 — no evaluation shopping. ONE evaluation per frozen experiment,
+    // covering EXACTLY the frozen task manifest × both arms × the planned
+    // repetitions, with trial ids never seen in any earlier evaluation of the
+    // scope. A trial that is assigned but not delivered is kept and counted
+    // as `missing` (never dropped); what cannot be changed is WHICH trials
+    // the population contains.
+    if let Some((_, prior)) = tx.evaluations_of(&r.experiment_id).first() {
+        return Err(refused(format!(
+            "experiment {} already has its evaluation {prior}: one evaluation per frozen experiment \
+             (a second one would let a REJECT be re-rolled or cherry-picked)",
+            r.experiment_id
+        )));
+    }
+    let manifest = crate::tasks::resolve(
+        &tx,
+        &frozen.plan.scope,
+        frozen.plan.task_manifest_ref.as_ref().expect("frozen"),
+    )?;
+    let reps = frozen.plan.repetitions.expect("frozen");
+    let mut per_arm_task: BTreeMap<(&Ref, &TaskId), u64> = BTreeMap::new();
+    let mut trial_ids: BTreeSet<&TrialId> = BTreeSet::new();
+    for a in &r.assigned {
+        if !trial_ids.insert(&a.trial_id) {
+            return Err(refused(format!(
+                "trial id {} is assigned twice in this evaluation",
+                a.trial_id
+            )));
+        }
+        *per_arm_task.entry((&a.policy_ref, &a.task_id)).or_default() += 1;
+    }
+    let arms_seen: BTreeSet<&Ref> = r.assigned.iter().map(|a| &a.policy_ref).collect();
+    if arms_seen.len() != 2 {
+        return Err(refused(
+            "the evaluation must assign both the incumbent and the candidate arm",
+        ));
+    }
+    for arm in &arms_seen {
+        let tasks: BTreeSet<TaskId> = per_arm_task
+            .keys()
+            .filter(|(p, _)| p == arm)
+            .map(|(_, t)| (*t).clone())
+            .collect();
+        if tasks != manifest.task_set() {
+            return Err(refused(format!(
+                "arm {arm} is assigned {} task(s), but the frozen task manifest has {}: \
+                 the evaluation must cover exactly the manifest (no cherry-picked subset, no extras)",
+                tasks.len(),
+                manifest.tasks.len()
+            )));
+        }
+    }
+    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| **n != reps) {
+        return Err(refused(format!(
+            "arm {arm} task {task} is assigned {n} time(s), plan repetitions = {reps}"
+        )));
+    }
+    for prior in tx.evaluations_in(&r.scope) {
+        let old: EvaluationRecord = tx.store.get_record("evaluations", &prior)?;
+        if let Some(t) = old
+            .arms
+            .iter()
+            .flat_map(|a| &a.trials)
+            .find(|t| trial_ids.contains(&t.trial_id))
+        {
+            return Err(refused(format!(
+                "trial id {} was already evaluated in {prior}: trial ids are unique for the experiment's lifetime",
+                t.trial_id
+            )));
         }
     }
 

@@ -40,6 +40,7 @@ pub mod plan;
 pub mod pointer;
 pub mod rules;
 pub mod store;
+pub mod tasks;
 pub mod tel;
 
 pub use error::LoopError;

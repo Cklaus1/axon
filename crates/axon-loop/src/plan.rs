@@ -310,6 +310,20 @@ pub fn freeze(store: &Store, id: &str) -> Result<Ref> {
         }
     }
     check_candidate(&tx, &plan, &inc, &cand)?;
+    // AB9/AB10: the assigned task set is a REGISTERED manifest, frozen with
+    // the plan, and it must hold at least the planned independent units.
+    let manifest = crate::tasks::resolve(
+        &tx,
+        &plan.scope,
+        plan.task_manifest_ref.as_ref().expect("set"),
+    )?;
+    let units = plan.independent_units.expect("set");
+    if (manifest.tasks.len() as u64) < units {
+        return Err(LoopError::NotReady(format!(
+            "cannot freeze {id}: the task manifest has {} task(s) < independent_units {units}",
+            manifest.tasks.len()
+        )));
+    }
     let epoch = tx.pointer(&plan.scope).epoch;
     tx.append(Event::Freeze {
         experiment_id: id.to_string(),
