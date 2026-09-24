@@ -11,6 +11,9 @@ const BIN: &str = env!("CARGO_BIN_EXE_axon-loop");
 
 fn run(store: &Path, args: &[&str], input: Option<&Value>) -> (i32, Value, String) {
     let mut cmd = Command::new(BIN);
+    // These stores are written unkeyed by the library; an ambient operator
+    // key must not change what the binary verifies them under.
+    cmd.env_remove("AXON_ATTEST_KEY");
     cmd.arg("--store").arg(store).args(args);
     let tmp = tempfile::NamedTempFile::new().unwrap();
     if let Some(v) = input {

@@ -14,6 +14,9 @@ axon-loop-contracts = { path = "../axon-loop-contracts" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
+# D-015: the ledger is keyed with the SAME primitive `axon-audit` keys its
+# chain with (`hmac_sha256`, owned by axon-attest), not a second copy.
+axon-attest = { path = "../axon-attest" }
 
 [dev-dependencies]
 tempfile = "3"

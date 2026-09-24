@@ -170,3 +170,105 @@ fn g2_freeze_refuses_a_candidate_outside_the_list() {
     assert!(e.to_string().contains("teleport"), "{e}");
     assert_eq!(snapshot(w.dir.path()), before);
 }
+
+fn other_scope_doc(mut v: serde_json::Value) -> serde_json::Value {
+    v["scope"]["tenant_id"] = json!("tenant-b");
+    v
+}
+
+/// NS3a/b (rt4i): a trusted admitter registers the IDENTICAL candidate list
+/// for another scope. Scope A must be unaffected: its genuinely admitted
+/// activation and an EVO proposal still succeed. Before NS3 the second
+/// registration overwrote `candidate-sets/<hex>.json` and every scope-A path
+/// exited 2 "store corrupt", with no CLI repair.
+#[test]
+fn ns3ab_same_candidate_list_for_another_scope_does_not_brick_the_first() {
+    let w = world();
+    let adm = accepted(&w, "exp");
+    let b = cs(other_scope_doc(candidate_set_doc(&candidate_list()))).unwrap();
+    assert_eq!(candidates::put(&w.s, &b).unwrap(), candidate_set_ref());
+    // the ref is registered for both scopes, each with its own bytes
+    pointer::transition(
+        &w.s,
+        &tparse(&transition(
+            "ns3",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            false,
+        )),
+    )
+    .expect("scope A activation must survive tenant-b's registration");
+    propose(&w.s, &w.inc, 9, "cand-ns3");
+    // and a repeat of either registration is an idempotent no-op
+    let before = snapshot(w.dir.path());
+    candidates::put(&w.s, &b).unwrap();
+    register_candidates(&w.s);
+    assert_eq!(snapshot(w.dir.path()), before);
+}
+
+/// NS3c (rt4i): the same for task manifests — scope A still freezes over its
+/// own (identical) registered manifest after tenant-b registers it.
+#[test]
+fn ns3c_same_task_manifest_for_another_scope_does_not_brick_the_first() {
+    let w = world();
+    let mut tasks: Vec<String> = (0..2).map(|i| format!("task-{i}")).collect();
+    tasks.sort();
+    let m = axon_loop::tasks::TaskManifest::parse(
+        &json!({"schema":"axon.loop.task-manifest/1",
+                "scope":{"tenant_id":"tenant-b","task_family":"fixture-coding"},
+                "tasks":tasks,"issuer_ref":ADMITTER})
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        axon_loop::tasks::put(&w.s, &m).unwrap(),
+        task_manifest_ref(2)
+    );
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {})
+        .expect("scope A freeze must survive tenant-b's manifest registration");
+}
+
+/// NS3b repair (rt4i): a store written BEFORE NS3 kept the list at the flat
+/// `candidate-sets/<hex>.json`, which another scope's registration
+/// overwrote. The flat file is read only when its bytes name the right
+/// scope, so scope A is refused (exit 2), and re-putting scope A's list
+/// now REPAIRS it (before: an idempotent no-op that left it bricked).
+#[test]
+fn ns3b_a_pre_ns3_overwritten_store_is_repaired_by_re_putting_the_list() {
+    let w = world();
+    let adm = accepted(&w, "exp");
+    let root = w.s.root().to_path_buf();
+    let hex = candidate_set_ref().hex().to_string();
+    let scoped = root
+        .join("candidate-sets/fixture-tenant/fixture-coding")
+        .join(format!("{hex}.json"));
+    // Reconstruct the pre-NS3 broken state: only a flat file, holding the
+    // tenant-b document.
+    let b = cs(other_scope_doc(candidate_set_doc(&candidate_list()))).unwrap();
+    std::fs::remove_file(&scoped).unwrap();
+    std::fs::write(
+        root.join("candidate-sets").join(format!("{hex}.json")),
+        axon_loop_contracts::canonical_json(&b).unwrap(),
+    )
+    .unwrap();
+    let act = |id: &str| {
+        pointer::transition(
+            &w.s,
+            &tparse(&transition(
+                id,
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(&adm),
+                false,
+            )),
+        )
+    };
+    assert_eq!(act("before").unwrap_err().exit_code(), 2);
+    register_candidates(&w.s);
+    act("after").expect("re-put must repair scope A");
+}

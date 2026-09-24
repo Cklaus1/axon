@@ -11,7 +11,8 @@
 //!   workspaces, status semantics);
 //! * the trial's preflight context passes the bounded paired-trial profile
 //!   ([`axon_loop_contracts::check_paired_trial_context`]: expected ==
-//!   observed, the observer is NOT the expecting parent and IS in the store's
+//!   observed, the observer is NOT the expecting parent, NOT a subject issuer
+//!   (the verifier rule, mirrored: NS4p/NS4w) and IS in the store's
 //!   `trusted_observers`, the window `created_ms <= now < expires_ms` at
 //!   evaluation time, the current epoch, a non-primary worktree, concrete
 //!   paths). A trial failing it is TASK_NOT_STARTED evidence — `unknown`,
@@ -393,7 +394,19 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     .or_default()
                     .push((d.ep.usage.clone(), Some(d.ep.status)));
                 let policy = &policies[&a.policy_ref];
-                let (o, why) = match check_paired_trial_context(&d.ctx, now, epoch, &observers) {
+                // NS4p/NS4w: a subject (request subject issuer, arm proposer)
+                // never observes its own preflight, even if the operator
+                // listed it as an observer — the verifier rule, mirrored.
+                let ctx_check = if subjects.contains(&d.ctx.observed_issuer_ref) {
+                    Err(format!(
+                        "observer {} is a subject issuer: no self-observation",
+                        d.ctx.observed_issuer_ref
+                    ))
+                } else {
+                    check_paired_trial_context(&d.ctx, now, epoch, &observers)
+                        .map_err(|e| e.to_string())
+                };
+                let (o, why) = match ctx_check {
                     Err(e) => (
                         Outcome::Unknown,
                         format!(

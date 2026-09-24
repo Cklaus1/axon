@@ -11,8 +11,10 @@
 //! * its `candidate_set_ref` is `cl22:` over the candidate ARRAY — the same
 //!   rule MiCode's `PolicyScope::candidate_set_ref` and Axon's DEC driver use,
 //!   so the ref a policy carries is the ref registered here;
-//! * the list is stored content-addressed under `candidate-sets/<hex>.json`
-//!   and re-checked against its name on every read.
+//! * the list is stored under `candidate-sets/<tenant>/<family>/<hex>.json`
+//!   (scope-keyed: the same list registered for two scopes is two files, so
+//!   one registration can never overwrite another's, NS3) and re-checked
+//!   against its name AND scope on every read.
 //!
 //! [`require_shortlist`] is called by `policy put`, `evo propose`, plan freeze,
 //! `admit` and `activate`: an unregistered `candidate_set_ref` is REFUSED
@@ -72,8 +74,20 @@ impl CandidateSet {
     }
 }
 
-fn path(store: &Store, r: &Ref) -> Result<std::path::PathBuf> {
-    store.cas_path("candidate-sets", r)
+/// `candidate-sets/<tenant>/<family>/<hex>.json` (NS3: scope-keyed, so the same list
+/// registered for another scope is a second file, never an overwrite).
+fn path(store: &Store, scope: &Scope, r: &Ref) -> Result<std::path::PathBuf> {
+    store.scoped_cas_path("candidate-sets", scope, r)
+}
+
+/// Read the record for `(scope, r)`. A store written before NS3 kept it at
+/// the flat `candidate-sets/<hex>.json`; that file is accepted only when its bytes
+/// name THIS scope (checked by the caller), so it is read, never trusted.
+fn read(tx: &Tx, scope: &Scope, r: &Ref) -> Result<Option<String>> {
+    match tx.store.read_text(&path(tx.store, scope, r)?)? {
+        Some(t) => Ok(Some(t)),
+        None => tx.store.read_text(&tx.store.cas_path("candidate-sets", r)?),
+    }
 }
 
 /// Register a candidate list. Idempotent. Returns its `candidate_set_ref`.
@@ -87,12 +101,19 @@ pub fn put(store: &Store, c: &CandidateSet) -> Result<Ref> {
         )));
     }
     let r = c.candidate_set_ref()?;
-    if tx.candidate_set_event(&c.scope, &r) {
+    let registered = tx.candidate_set_event(&c.scope, &r);
+    if registered && resolve(&tx, &c.scope, &r).is_ok() {
         return Ok(r);
     }
+    // The path is keyed by (scope, list), so this can only ever replace a
+    // file for the SAME scope and list: never another scope's (NS3). When the
+    // event already exists this is a repair: it restores the record of a
+    // store whose flat pre-NS3 file another scope overwrote.
     let bytes = axon_loop_contracts::canonical_json(c)?;
-    let p = path(store, &r)?;
-    store.write_atomic(&p, &bytes)?;
+    store.write_atomic(&path(store, &c.scope, &r)?, &bytes)?;
+    if registered {
+        return Ok(r);
+    }
     tx.append(Event::CandidateSet {
         scope: c.scope.clone(),
         candidate_set_ref: r.clone(),
@@ -109,9 +130,7 @@ pub fn resolve(tx: &Tx, scope: &Scope, r: &Ref) -> Result<CandidateSet> {
             scope.tenant_id, scope.task_family
         )));
     }
-    let text = tx
-        .store
-        .read_text(&path(tx.store, r)?)?
+    let text = read(tx, scope, r)?
         .ok_or_else(|| LoopError::Io(format!("store corrupt: candidate set {r} missing")))?;
     let c: CandidateSet = strict_record(&text)
         .map_err(|e| LoopError::Io(format!("store corrupt: candidate set {r}: {e}")))?;

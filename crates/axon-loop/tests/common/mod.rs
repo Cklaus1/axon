@@ -90,7 +90,20 @@ pub fn incumbent() -> PolicyEnvelope {
 }
 
 pub fn store_with_config(dir: &Path) -> Store {
-    let s = Store::open_dir(dir).unwrap();
+    store_with_config_keyed(dir, None)
+}
+
+/// A fixture operator key for keyed-ledger tests (D-015). A test premise.
+pub const FIXTURE_KEY_HEX: &str =
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+pub fn fixture_key() -> axon_loop::store::LedgerKey {
+    axon_loop::store::LedgerKey::derive(&[0x11; 32]).unwrap()
+}
+
+/// [`store_with_config`] with an explicit ledger key (`None` = unkeyed).
+pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerKey>) -> Store {
+    let s = Store::open_dir_keyed(dir, key).unwrap();
     s.write_config(&Config {
         schema: ConfigSchema,
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
@@ -385,8 +398,13 @@ pub fn baseline_doc(p: &Ref) -> Value {
 /// Store with config; incumbent stored, designated incumbent-of-record and
 /// activated (epoch 1); one EVO candidate proposed from it.
 pub fn world() -> World {
+    world_keyed(None)
+}
+
+/// [`world`] over a store opened with `key` (D-015 keyed ledger).
+pub fn world_keyed(key: Option<axon_loop::store::LedgerKey>) -> World {
     let dir = tempfile::tempdir().unwrap();
-    let s = store_with_config(dir.path());
+    let s = store_with_config_keyed(dir.path(), key);
     let inc = incumbent();
     let inc_ref = s.put_cas("policies", &inc).unwrap();
     let baseline = pointer::designate_baseline(

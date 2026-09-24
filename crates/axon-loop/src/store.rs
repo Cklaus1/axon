@@ -47,10 +47,13 @@ pub struct Config {
     pub trusted_admitters: Vec<OpaqueRef>,
     pub trusted_verifiers: Vec<OpaqueRef>,
     /// Independent preflight observers whose context receipts EVL accepts
-    /// (`check_context_current`). Absent/empty ⇒ no context is trusted, so no
-    /// trial is a verified pass (fail closed). Optional in the file so older
-    /// configs still parse; never serialized when empty.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// (`check_context_current`). Empty ⇒ no context is trusted, so no trial
+    /// is a verified pass (fail closed); it never locks out pause/rollback.
+    /// Always serialized, so an explicit `[]` round-trips (NS4b: it used to be
+    /// dropped on re-serialization and then refused as non-canonical, exit 3
+    /// on every writing verb). A config written before this field existed
+    /// still parses: [`Store::config`] reads the absent field as `[]`.
+    #[serde(default)]
     pub trusted_observers: Vec<OpaqueRef>,
 }
 
@@ -72,6 +75,75 @@ pub struct Store {
     /// and checked by [`Store::guard`], so a lock or record can only ever land
     /// inside the one canonical store directory.
     root: PathBuf,
+    /// D-015: the ledger MAC key, when the operator configured one (see
+    /// [`crate::ledger`]'s threat model). `None` = the historical unkeyed store.
+    key: Option<LedgerKey>,
+}
+
+/// The operator key source, shared with `axon-vm`'s attestation: hex, at least
+/// 16 bytes. There is deliberately no ephemeral fallback: a per-process key
+/// cannot verify what a previous process wrote, so "no key" means an unkeyed
+/// store, stated as such, never a key that silently authenticates nothing.
+pub const LEDGER_KEY_ENV: &str = "AXON_ATTEST_KEY";
+
+/// The ledger MAC key: `HMAC-SHA256(operator_key, domain)`, so the ledger's
+/// MACs are never interchangeable with any other use of the operator key.
+/// `Debug` is redacted.
+#[derive(Clone)]
+pub struct LedgerKey([u8; 32]);
+
+impl std::fmt::Debug for LedgerKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LedgerKey(<redacted>)")
+    }
+}
+
+impl LedgerKey {
+    /// Derive the ledger key from operator key bytes (>= 16 bytes).
+    pub fn derive(operator_key: &[u8]) -> Result<LedgerKey> {
+        if operator_key.len() < 16 {
+            return Err(LoopError::Usage(format!(
+                "{LEDGER_KEY_ENV} is shorter than 16 bytes: refusing to key the ledger with it"
+            )));
+        }
+        Ok(LedgerKey(axon_attest::hmac_sha256(
+            operator_key,
+            b"axon-loop ledger key v1",
+        )))
+    }
+
+    /// `HMAC-SHA256(ledger_key, data)`, the primitive `axon-audit` keys its chain with.
+    pub fn mac(&self, data: &[u8]) -> [u8; 32] {
+        axon_attest::hmac_sha256(&self.0, data)
+    }
+
+    /// The key from [`LEDGER_KEY_ENV`]: unset or blank ⇒ `None` (unkeyed);
+    /// set but not hex, or shorter than 16 bytes ⇒ a refusal (exit 2), never a
+    /// silent fall back to unkeyed.
+    pub fn from_env() -> Result<Option<LedgerKey>> {
+        match std::env::var(LEDGER_KEY_ENV) {
+            Ok(v) if !v.trim().is_empty() => {
+                let bytes = decode_hex(v.trim()).ok_or_else(|| {
+                    LoopError::Usage(format!("{LEDGER_KEY_ENV} is not valid hex"))
+                })?;
+                LedgerKey::derive(&bytes).map(Some)
+            }
+            Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(LoopError::Usage(format!(
+                "{LEDGER_KEY_ENV} is not valid hex"
+            ))),
+        }
+    }
+}
+
+pub(crate) fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -112,11 +184,22 @@ fn map_open(p: &Path, e: std::io::Error) -> LoopError {
 }
 
 impl Store {
+    /// Open a store, keyed by [`LEDGER_KEY_ENV`] when the operator set it.
     pub fn open_dir(root: impl Into<PathBuf>) -> Result<Store> {
+        Self::open_dir_keyed(root, LedgerKey::from_env()?)
+    }
+
+    /// Open a store with an explicit ledger key (`None` = unkeyed). The key
+    /// decides how the ledger is verified; the files never do.
+    pub fn open_dir_keyed(root: impl Into<PathBuf>, key: Option<LedgerKey>) -> Result<Store> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(&root)?;
-        Ok(Store { root })
+        Ok(Store { root, key })
+    }
+
+    pub fn ledger_key(&self) -> Option<&LedgerKey> {
+        self.key.as_ref()
     }
 
     pub fn root(&self) -> &Path {
@@ -313,7 +396,17 @@ impl Store {
     pub fn config(&self) -> Result<Config> {
         let p = self.root.join("config.json");
         match self.read_text(&p)? {
-            Some(s) => strict_record(&s),
+            Some(s) => {
+                // A pre-observer config omits the field; it means the same
+                // as an explicit `[]`, so it is read as one and the strict
+                // canonical check then applies to the whole record.
+                let mut v = axon_loop_contracts::parse_value(&s)?;
+                if let Some(o) = v.as_object_mut() {
+                    o.entry("trusted_observers")
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                }
+                strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
+            }
             None => Ok(Config {
                 schema: ConfigSchema,
                 trusted_admitters: Vec::new(),
@@ -350,6 +443,21 @@ impl Store {
             )));
         }
         Ok(self.root.join(kind).join(format!("{}.json", r.hex())))
+    }
+
+    /// `<kind>/<tenant>/<family>/<hex>.json`: a record whose name is a digest
+    /// of SCOPE-INDEPENDENT content (a candidate list, a task manifest) but
+    /// whose bytes name a scope. Keying the path by scope means the identical
+    /// list registered for two scopes is two files, never one file the second
+    /// registration overwrites (NS3).
+    pub fn scoped_cas_path(&self, kind: &str, scope: &Scope, r: &Ref) -> Result<PathBuf> {
+        let flat = self.cas_path(kind, r)?;
+        Ok(self
+            .root
+            .join(kind)
+            .join(scope.tenant_id.as_str())
+            .join(scope.task_family.as_str())
+            .join(flat.file_name().expect("cas file name")))
     }
 
     /// Store a record under its own `cl22:` digest. Idempotent.

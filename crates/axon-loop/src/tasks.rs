@@ -10,7 +10,8 @@
 //!   non-empty, sorted, duplicate-free list of [`TaskId`]s;
 //! * its ref is `cl22:` over the task ARRAY (one list, one ref, whoever
 //!   registers it) and must equal the plan's `task_manifest_ref`;
-//! * bytes live under `task-manifests/<hex>.json`, re-checked on every read.
+//! * bytes live under `task-manifests/<tenant>/<family>/<hex>.json`
+//!   (scope-keyed, NS3), re-checked against name and scope on every read.
 //!
 //! [`crate::evl::evaluate`] then requires the evaluation to assign EXACTLY
 //! these tasks × both arms × the plan's `repetitions`, once per experiment.
@@ -65,8 +66,20 @@ impl TaskManifest {
     }
 }
 
-fn path(store: &Store, r: &Ref) -> Result<std::path::PathBuf> {
-    store.cas_path("task-manifests", r)
+/// `task-manifests/<tenant>/<family>/<hex>.json` (NS3: scope-keyed, so the same list
+/// registered for another scope is a second file, never an overwrite).
+fn path(store: &Store, scope: &Scope, r: &Ref) -> Result<std::path::PathBuf> {
+    store.scoped_cas_path("task-manifests", scope, r)
+}
+
+/// Read the record for `(scope, r)`. A store written before NS3 kept it at
+/// the flat `task-manifests/<hex>.json`; that file is accepted only when its bytes
+/// name THIS scope (checked by the caller), so it is read, never trusted.
+fn read(tx: &Tx, scope: &Scope, r: &Ref) -> Result<Option<String>> {
+    match tx.store.read_text(&path(tx.store, scope, r)?)? {
+        Some(t) => Ok(Some(t)),
+        None => tx.store.read_text(&tx.store.cas_path("task-manifests", r)?),
+    }
 }
 
 /// Register a task manifest. Idempotent. Returns its ref.
@@ -80,10 +93,19 @@ pub fn put(store: &Store, m: &TaskManifest) -> Result<Ref> {
         )));
     }
     let r = m.manifest_ref()?;
-    if tx.task_manifest_event(&m.scope, &r) {
+    let registered = tx.task_manifest_event(&m.scope, &r);
+    if registered && resolve(&tx, &m.scope, &r).is_ok() {
         return Ok(r);
     }
-    store.write_atomic(&path(store, &r)?, &axon_loop_contracts::canonical_json(m)?)?;
+    // Scope-keyed path: replaces only this scope's file for this list (NS3);
+    // with the event present it is a repair, as in `candidates::put`.
+    store.write_atomic(
+        &path(store, &m.scope, &r)?,
+        &axon_loop_contracts::canonical_json(m)?,
+    )?;
+    if registered {
+        return Ok(r);
+    }
     tx.append(Event::TaskManifest {
         scope: m.scope.clone(),
         manifest_ref: r.clone(),
@@ -100,9 +122,7 @@ pub fn resolve(tx: &Tx, scope: &Scope, r: &Ref) -> Result<TaskManifest> {
             scope.tenant_id, scope.task_family
         )));
     }
-    let text = tx
-        .store
-        .read_text(&path(tx.store, r)?)?
+    let text = read(tx, scope, r)?
         .ok_or_else(|| LoopError::Io(format!("store corrupt: task manifest {r} missing")))?;
     let m: TaskManifest = strict_record(&text)
         .map_err(|e| LoopError::Io(format!("store corrupt: task manifest {r}: {e}")))?;

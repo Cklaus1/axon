@@ -278,6 +278,7 @@ dependencies = [
 name = "axon-loop"
 version = "0.1.0"
 dependencies = [
+ "axon-attest",
  "axon-loop-contracts",
  "axon-reflex",
  "libc",
