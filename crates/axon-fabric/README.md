@@ -68,9 +68,12 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 * **It does not meter cost.** Every receipt says `usage_state: unknown` and
   every settlement is `Billing::Unknown`. Unknown is reported as unknown, never
   as 0.
-* **It ignores `required.architecture` and `required.checkpoint_kind`.**
-  `backend::select` never reads them (**G6**). A request for an unsupported
-  architecture or checkpoint kind is not refused. Open, Stage 2.
+* **It does not checkpoint.** Every profile states the architectures it runs
+  (`Profile::architectures`: the host's for the local interpreter, x86_64 for
+  both VM profiles) and offers `checkpoint_kind = none` only. A request for
+  another architecture or checkpoint kind — or an `axon_wasm` /
+  `native_process` engine — is refused as `unsupported` (journalled, never
+  launched) before any effect (G6, fixed in Stage 2).
 * **It cannot treat a CX-11 admission or the active-policy pointer as
   authority.** It reads only the epoch from the loop store (D-018).
 
@@ -84,7 +87,6 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 | Linux dispatch is tested only through a **stand-in launcher**, so the tests say nothing about the VM | `tests/submit.rs:550-560` | `F_guest_vm.json` B280 |
 | The Linux profile's guest is unpoliced (no in-guest effect ceiling). Fabric refuses requests that need one, so only grant-free `interpreter_run` reaches it | `src/backend.rs` `select` | D-020, operator decision D5 |
 | Cost is unmetered | `src/submit.rs` | above |
-| G6: architecture and checkpoint kind are ignored | `src/backend.rs` `select` | above |
 
 ## Evidence location
 

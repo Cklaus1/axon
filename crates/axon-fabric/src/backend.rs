@@ -16,7 +16,9 @@
 
 use std::path::{Path, PathBuf};
 
-use axon_loop_contracts::{ComputeRequest, Engine, JobKind, NetworkMode, Os};
+use axon_loop_contracts::{
+    Architecture, CheckpointKind, ComputeRequest, Engine, JobKind, NetworkMode, Os,
+};
 use axon_os::Isolation;
 
 /// A backend's self-description, mirroring `acf-backend-profile/1`'s fields.
@@ -34,7 +36,25 @@ pub struct Profile {
     pub isolation: Isolation,
     /// Job kinds this backend can actually carry out.
     pub job_kinds: &'static [JobKind],
+    /// Instruction-set architectures the executed program runs on.
+    pub architectures: &'static [Architecture],
+    /// Checkpoint kinds this backend can take. None of them checkpoints
+    /// anything today, so each offers only `CheckpointKind::None`.
+    pub checkpoint_kinds: &'static [CheckpointKind],
 }
+
+/// The architecture the host interpreter runs on: the one this Fabric was
+/// built for. A host with no `Architecture` counterpart offers none.
+const HOST_ARCH: &[Architecture] = if cfg!(target_arch = "x86_64") {
+    &[Architecture::X86_64]
+} else if cfg!(target_arch = "aarch64") {
+    &[Architecture::Aarch64]
+} else {
+    &[]
+};
+
+/// No backend takes a checkpoint of any kind.
+const NO_CHECKPOINT: &[CheckpointKind] = &[CheckpointKind::None];
 
 pub const LOCAL_INTERPRETER: Profile = Profile {
     id: axon_cortex::runner::LocalInterpreterExecutor::PROFILE,
@@ -45,6 +65,8 @@ pub const LOCAL_INTERPRETER: Profile = Profile {
     hardware_isolation: false,
     isolation: Isolation::ProcessScoped,
     job_kinds: &[JobKind::RegisteredCheck],
+    architectures: HOST_ARCH,
+    checkpoint_kinds: NO_CHECKPOINT,
 };
 
 pub const FIRECRACKER_AXON_KERNEL: Profile = Profile {
@@ -57,6 +79,9 @@ pub const FIRECRACKER_AXON_KERNEL: Profile = Profile {
     isolation: Isolation::KvmMicroVmUnqualified,
     // The Axon guest kernel does not execute programs yet.
     job_kinds: &[],
+    // `x86_64-axon-metal`.
+    architectures: &[Architecture::X86_64],
+    checkpoint_kinds: NO_CHECKPOINT,
 };
 
 pub const LINUX_MICROVM_PROTECTED: Profile = Profile {
@@ -68,6 +93,10 @@ pub const LINUX_MICROVM_PROTECTED: Profile = Profile {
     hardware_isolation: true,
     isolation: Isolation::LinuxMicroVmProtected,
     job_kinds: &[JobKind::InterpreterRun],
+    // The pinned guest is x86_64 (`profiles/linux-microvm/manifest.json`:
+    // `x86_64-unknown-linux-musl` interpreter, x86_64 kernel config).
+    architectures: &[Architecture::X86_64],
+    checkpoint_kinds: NO_CHECKPOINT,
 };
 
 /// Registry id of the interpreter INSIDE the Linux guest rootfs. Its sha256 is
@@ -174,6 +203,26 @@ pub struct AuthorityNeeds {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unsupported(pub String);
 
+/// Does `p` offer the request's architecture and checkpoint kind? Checked for
+/// the one backend a request's other requirements single out — never used to
+/// pick a different one.
+fn offers(p: &Profile, req: &ComputeRequest) -> Result<(), Unsupported> {
+    let r = &req.required;
+    if !p.architectures.contains(&r.architecture) {
+        return Err(Unsupported(format!(
+            "{}: architecture {:?} unsupported (offers {:?})",
+            p.id, r.architecture, p.architectures
+        )));
+    }
+    if !p.checkpoint_kinds.contains(&r.checkpoint_kind) {
+        return Err(Unsupported(format!(
+            "{}: checkpoint_kind {:?} unsupported (offers {:?}); no backend here checkpoints",
+            p.id, r.checkpoint_kind, p.checkpoint_kinds
+        )));
+    }
+    Ok(())
+}
+
 /// Pick the backend that satisfies EVERY requirement, or refuse. `linux` is
 /// `None` when the operator configured no Linux profile.
 pub fn select(
@@ -203,6 +252,7 @@ pub fn select(
     if r.hardware_isolation && r.os == Os::Linux {
         // ONLY the qualified Linux profile. Nothing substitutes for it.
         let p = LINUX_MICROVM_PROTECTED;
+        offers(&p, req)?;
         let lx = linux.ok_or_else(|| {
             Unsupported(format!(
                 "hardware_isolation+os=linux requires {}; it is not configured here",
@@ -248,6 +298,7 @@ pub fn select(
         )));
     }
     let p = LOCAL_INTERPRETER;
+    offers(&p, req)?;
     if needs.path_scoped_grant {
         // The host interpreter's only policy input is `AXON_ALLOWED_EFFECTS`,
         // a set of coarse effect names: it cannot carry a path or host
