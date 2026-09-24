@@ -1,0 +1,330 @@
+{
+  "schema": "acf-source-evidence/1",
+  "scope": "Targeted static source and specification review; not exhaustive repository audit.",
+  "evidence": [
+    {
+      "id": "E01",
+      "path": "AI_CONTEXT_README.md",
+      "start_line": 1,
+      "end_line": 14,
+      "claim": "Bundle provenance; reported commit, exclusions.",
+      "sha256": "314d29470c5a30c3878f432b677f941b98a6f8ab132f54666eb7ed901cda7ad7",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E02",
+      "path": "AGENTS.md",
+      "start_line": 18,
+      "end_line": 39,
+      "claim": "Interpreter-first reference and feature constraint.",
+      "sha256": "ad1e5023f60df9e93ebd95177ab592e5b7cbd954cbc7ca96bfedfe932e3c8d44",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E03",
+      "path": "crates/axon-os/src/runtime.rs",
+      "start_line": 15,
+      "end_line": 54,
+      "claim": "Existing Runtime seam; scoped Grant not just EffectSet.",
+      "sha256": "7b033ba159eee680c20795c77b6007e0dfd7558227db65008897858a43b8158f",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E04",
+      "path": "crates/axon-os/src/supervisor.rs",
+      "start_line": 18,
+      "end_line": 105,
+      "claim": "Approval, grant intersection, admission, mint, run, record.",
+      "sha256": "7199b59f3d7101bc6c6cc638834f6812df7102cc180f6d50630a309dffb97eb2",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E05",
+      "path": "crates/axon-os/src/runtime.rs",
+      "start_line": 495,
+      "end_line": 563,
+      "claim": "Local subprocess wrapper and per-process temp naming.",
+      "sha256": "7b033ba159eee680c20795c77b6007e0dfd7558227db65008897858a43b8158f",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E06",
+      "path": "crates/axon-os/src/runtime.rs",
+      "start_line": 588,
+      "end_line": 625,
+      "claim": "Environment projection, virtual clock, cancellation path.",
+      "sha256": "7b033ba159eee680c20795c77b6007e0dfd7558227db65008897858a43b8158f",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E07",
+      "path": "crates/axon-os/src/grant.rs",
+      "start_line": 62,
+      "end_line": 99,
+      "claim": "Current Budget axes and scoped Grant.",
+      "sha256": "89df45c30aa1bca52a9db503314b5a089c71fb8d523ea99a397538bffb797e60",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E08",
+      "path": "crates/axon-os/src/manifest.rs",
+      "start_line": 1,
+      "end_line": 25,
+      "claim": "Existing flat manifest and JobManifest.",
+      "sha256": "56a848251ccdab112fbc51800230b9c40759650576edef89e121dbe51d19de7d",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E09",
+      "path": "crates/axon-os/src/record.rs",
+      "start_line": 19,
+      "end_line": 71,
+      "claim": "Existing raw/audit events and RunRecord wire schema.",
+      "sha256": "84ff67aa2a1909a398e47f694691a61cd8d4875f25fad0d53ae4966c1e3d7356",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E10",
+      "path": "crates/axon-os/src/replay.rs",
+      "start_line": 1,
+      "end_line": 40,
+      "claim": "Existing replay re-executes under the supervisor.",
+      "sha256": "f55a30e08e15e385943d74ec020f3e05a93b9ee7f96e042c855631089385e2e7",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E11",
+      "path": "crates/axon-vm/Cargo.toml",
+      "start_line": 1,
+      "end_line": 27,
+      "claim": "Binary-only launcher packaging.",
+      "sha256": "5fd0b95a7d2ced39d578f5b658df6da94d52845bc54cb9fa0e1bac5fe0adbfec",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E12",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 1,
+      "end_line": 14,
+      "claim": "Firecracker launcher role.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E13",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 593,
+      "end_line": 636,
+      "claim": "VM policy is not the full OS Grant.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E14",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 2237,
+      "end_line": 2297,
+      "claim": "Direct spawn and fallible work after spawning.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E15",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 2327,
+      "end_line": 2376,
+      "claim": "vsock path, no NIC, and balloon rather than jailer controls.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E16",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 2378,
+      "end_line": 2407,
+      "claim": "Echo relay, read-only program device, start action.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E17",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 2425,
+      "end_line": 2482,
+      "claim": "Guest outcome handling and normal-path cleanup.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E18",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 1514,
+      "end_line": 1546,
+      "claim": "Versioned result, guest verdict and CLI exit preservation.",
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E19",
+      "path": "crates/axon-guest-init/src/main.rs",
+      "start_line": 1,
+      "end_line": 31,
+      "claim": "Linux guest init enforcement and source-hash limitation.",
+      "sha256": "3d0d0603f45677b36358e2afdea96c3cc67624774dda538cff486826196155b1",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E20",
+      "path": "crates/axon-guest-init/src/main.rs",
+      "start_line": 264,
+      "end_line": 285,
+      "claim": "Linux init currently reads MMDS.",
+      "sha256": "3d0d0603f45677b36358e2afdea96c3cc67624774dda538cff486826196155b1",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E21",
+      "path": "crates/axon-guest-kernel/src/enforce.rs",
+      "start_line": 316,
+      "end_line": 364,
+      "claim": "Kernel demo explicitly does not load full interpreter/VFS.",
+      "sha256": "0afd69f5610c8f4a016345ea9d9c54c3068f07c38047c44cbc7329ad8ce87330",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E22",
+      "path": "crates/axon-wasm/src/lib.rs",
+      "start_line": 1,
+      "end_line": 24,
+      "claim": "Browser-oriented WASM interpreter ABI.",
+      "sha256": "dd6c9b59499edbad65127f24d4d0c0259da66452952617dccb341ed7d955501e",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E23",
+      "path": "crates/axon-wasm/Cargo.toml",
+      "start_line": 8,
+      "end_line": 28,
+      "claim": "WASM dependency and build shape.",
+      "sha256": "86eee0261235a4260a0a762e8c844107ad7893b96e2854b17ef6dc2ec98b4cc7",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E24",
+      "path": "crates/axon-core/src/host.rs",
+      "start_line": 20,
+      "end_line": 29,
+      "claim": "Existing AxonHost host seam.",
+      "sha256": "5e34fc649e63e659b23f21b7c5cc6c41bc2287cc5d3d6abe77c075707dd92939",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E25",
+      "path": "crates/axon-core/src/host.rs",
+      "start_line": 84,
+      "end_line": 108,
+      "claim": "Default-deny exec/network in virtual hosts.",
+      "sha256": "5e34fc649e63e659b23f21b7c5cc6c41bc2287cc5d3d6abe77c075707dd92939",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E26",
+      "path": "crates/axon-cortex/src/lib.rs",
+      "start_line": 36,
+      "end_line": 66,
+      "claim": "Identity is not issuer authentication; Observed unknown.",
+      "sha256": "14af6e5cf1229b330d9b2c984ef93d7a085c4ee9cd08d436deb35865767ccdc5",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E27",
+      "path": "crates/axon-cortex/src/lib.rs",
+      "start_line": 91,
+      "end_line": 140,
+      "claim": "WorkspaceSnapshot records digests, scope, and parent.",
+      "sha256": "14af6e5cf1229b330d9b2c984ef93d7a085c4ee9cd08d436deb35865767ccdc5",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E28",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 268,
+      "end_line": 321,
+      "claim": "Snapshot collects hashes, not durable content objects.",
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E29",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 109,
+      "end_line": 127,
+      "claim": "Authorized action token pattern.",
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E30",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 615,
+      "end_line": 624,
+      "claim": "Deterministic episode name is not a unique trial ID.",
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E31",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 1237,
+      "end_line": 1317,
+      "claim": "Direct test subprocess and mixed output result parsing.",
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E32",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 1517,
+      "end_line": 1528,
+      "claim": "Fixture copy is top-level regular files only.",
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E33",
+      "path": "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-13-os-runtime.md",
+      "start_line": 13,
+      "end_line": 69,
+      "claim": "Existing H0/H1/H2/K confinement and recovery requirements.",
+      "sha256": "36d5e8ace88b205564764a7a5297cd3877ec8d1309f3769a2cc811c430ddec0b",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E34",
+      "path": "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-03-capabilities-executor.md",
+      "start_line": 13,
+      "end_line": 63,
+      "claim": "Server-side authority, immutable transactions, OutcomeUnknown.",
+      "sha256": "77e5f8e71b353b7872f3523c3ece9d875070ffd50e216d1b6e4ef5846cf37806",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E35",
+      "path": "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-04-air-runtime.md",
+      "start_line": 37,
+      "end_line": 55,
+      "claim": "Narrow host seam; avoid arbitrary exec and premature crate splits.",
+      "sha256": "97a2499a3674c8fec729ee67b1eea31fdf7635e2619bb3f3c212bd54bafed45e",
+      "evidence_class": "SOURCE_INSPECTION"
+    },
+    {
+      "id": "E36",
+      "path": "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-34-cognitive-scheduler-capability-registry.md",
+      "start_line": 120,
+      "end_line": 133,
+      "claim": "Capability registry does not bypass evidence admission.",
+      "sha256": "3199b3ce45aa4537916c06c32ddccb5f4d04909d7d23eb71a9b2496a73a73adf",
+      "evidence_class": "SOURCE_INSPECTION"
+    }
+  ]
+}

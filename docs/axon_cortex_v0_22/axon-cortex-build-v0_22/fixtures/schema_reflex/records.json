@@ -1,0 +1,392 @@
+{
+  "fixture_only": true,
+  "product_status": "NOT_RUN",
+  "source": "synthetic authored conformance fixture",
+  "snapshot": "snapshot-001",
+  "source_text": "inspect 😀 src/α.ts without changing files",
+  "tools": [
+    {
+      "tool_id": "inspect",
+      "description": "Inspect a registered source object.",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "inspect",
+              "scan"
+            ]
+          },
+          "verify": {
+            "type": "boolean"
+          },
+          "target": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          }
+        },
+        "required": [
+          "mode",
+          "verify",
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "tool_id": "status",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "span_catalogs": {
+    "inspect": {
+      "target": [
+        {
+          "start": 10,
+          "end": 18,
+          "offset_unit": "unicode_codepoint",
+          "source_digest": "d777a8884eed0c08afa911e6690745d6e3294c39023399404fcf7e427a8d8406",
+          "source_version": "snapshot-001"
+        }
+      ]
+    }
+  },
+  "plan": {
+    "fixture_only": true,
+    "profile": "schema-reflex-reference/1",
+    "snapshot_digest": "snapshot-001",
+    "source_digest": "d777a8884eed0c08afa911e6690745d6e3294c39023399404fcf7e427a8d8406",
+    "tools": {
+      "inspect": {
+        "schema_digest": "37c1991808be62e03c6f8afe09038454af8c0c1369d499f94988184409da120c",
+        "descriptor_digest": "eeb6bb77e9c7392a54745f0c3b59e3edafb64540a4cbc094be9912258b9f8a5f",
+        "fields": [
+          {
+            "name": "mode",
+            "qid": "inspect.mode",
+            "presence_qid": null,
+            "type": "string"
+          },
+          {
+            "name": "verify",
+            "qid": "inspect.verify",
+            "presence_qid": null,
+            "type": "boolean"
+          },
+          {
+            "name": "target",
+            "qid": "inspect.target",
+            "presence_qid": null,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "qid": "inspect.limit",
+            "presence_qid": "inspect.limit.present",
+            "type": "integer"
+          }
+        ]
+      },
+      "status": {
+        "schema_digest": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
+        "descriptor_digest": "e24caa9e2cf94f4eb85f05a86bdea98c2679d487f736cab367487b2f48819eef",
+        "fields": []
+      }
+    },
+    "questions": {
+      "inspect.mode": {
+        "id": "inspect.mode",
+        "type": "Choice",
+        "dependency": "ConditionallyRelevant",
+        "candidates": [
+          {
+            "candidate_id": "c0000",
+            "value": "inspect",
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "c0001",
+            "value": "scan",
+            "kind": "value",
+            "projection": null
+          }
+        ]
+      },
+      "inspect.verify": {
+        "id": "inspect.verify",
+        "type": "BinaryDecision",
+        "dependency": "ConditionallyRelevant",
+        "candidates": [
+          {
+            "candidate_id": "c0000",
+            "value": false,
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "c0001",
+            "value": true,
+            "kind": "value",
+            "projection": null
+          }
+        ]
+      },
+      "inspect.target": {
+        "id": "inspect.target",
+        "type": "Choice",
+        "dependency": "ConditionallyRelevant",
+        "candidates": [
+          {
+            "candidate_id": "c0000",
+            "value": "src/α.ts",
+            "kind": "value",
+            "projection": {
+              "source_digest": "d777a8884eed0c08afa911e6690745d6e3294c39023399404fcf7e427a8d8406",
+              "source_version": "snapshot-001",
+              "offset_unit": "unicode_codepoint",
+              "start": 10,
+              "end": 18,
+              "projection_rule_id": "exact-codepoint-copy/1"
+            }
+          },
+          {
+            "candidate_id": "NO_SUITABLE_CANDIDATE",
+            "kind": "none",
+            "value": null,
+            "projection": null
+          }
+        ]
+      },
+      "inspect.limit.present": {
+        "id": "inspect.limit.present",
+        "type": "BinaryDecision",
+        "dependency": "ConditionallyRelevant",
+        "candidates": [
+          {
+            "candidate_id": "c0000",
+            "value": false,
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "c0001",
+            "value": true,
+            "kind": "value",
+            "projection": null
+          }
+        ]
+      },
+      "inspect.limit": {
+        "id": "inspect.limit",
+        "type": "Choice",
+        "dependency": "ConditionallyRelevant",
+        "candidates": [
+          {
+            "candidate_id": "c0000",
+            "value": 1,
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "c0001",
+            "value": 2,
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "c0002",
+            "value": 3,
+            "kind": "value",
+            "projection": null
+          }
+        ]
+      },
+      "route": {
+        "id": "route",
+        "type": "Choice",
+        "dependency": "Independent",
+        "candidates": [
+          {
+            "candidate_id": "c0000",
+            "value": "inspect",
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "c0001",
+            "value": "status",
+            "kind": "value",
+            "projection": null
+          },
+          {
+            "candidate_id": "NO_SUITABLE_CANDIDATE",
+            "kind": "none",
+            "value": null,
+            "projection": null
+          }
+        ]
+      }
+    },
+    "catalog_digest": "b45baa207e934b864f62928cc96c40a9cfc096510a0098e88ff83da0574956c7",
+    "plan_digest": "8ce890adb869941cd93615303cf33e17cb423173922ea8400b22e5a79c55b1a4"
+  },
+  "response": {
+    "plan_digest": "8ce890adb869941cd93615303cf33e17cb423173922ea8400b22e5a79c55b1a4",
+    "snapshot_digest": "snapshot-001",
+    "catalog_digest": "b45baa207e934b864f62928cc96c40a9cfc096510a0098e88ff83da0574956c7",
+    "answers": {
+      "route": {
+        "selected_id": "c0000",
+        "probabilities": {
+          "c0000": 1.0,
+          "c0001": 0.0,
+          "NO_SUITABLE_CANDIDATE": 0.0
+        }
+      },
+      "inspect.mode": {
+        "selected_id": "c0000",
+        "probabilities": {
+          "c0000": 1.0,
+          "c0001": 0.0
+        }
+      },
+      "inspect.verify": {
+        "selected_id": "c0000",
+        "probabilities": {
+          "c0000": 1.0,
+          "c0001": 0.0
+        }
+      },
+      "inspect.target": {
+        "selected_id": "c0000",
+        "probabilities": {
+          "c0000": 1.0,
+          "NO_SUITABLE_CANDIDATE": 0.0
+        }
+      },
+      "inspect.limit.present": {
+        "selected_id": "c0000",
+        "probabilities": {
+          "c0000": 1.0,
+          "c0001": 0.0
+        }
+      }
+    }
+  },
+  "registry": {
+    "inspect": {
+      "schema_digest": "37c1991808be62e03c6f8afe09038454af8c0c1369d499f94988184409da120c",
+      "descriptor_digest": "eeb6bb77e9c7392a54745f0c3b59e3edafb64540a4cbc094be9912258b9f8a5f",
+      "constraints": [
+        {
+          "kind": "require_if",
+          "when": {
+            "mode": "scan"
+          },
+          "requires": [
+            "limit"
+          ]
+        }
+      ]
+    },
+    "status": {
+      "schema_digest": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
+      "descriptor_digest": "e24caa9e2cf94f4eb85f05a86bdea98c2679d487f736cab367487b2f48819eef",
+      "constraints": []
+    }
+  },
+  "binding": {
+    "batch_profile": "fixture-batch_profile",
+    "calibration_ref": "fixture-calibration_ref",
+    "device_class": "fixture-device_class",
+    "domain": "fixture-domain",
+    "encoder_digest": "fixture-encoder_digest",
+    "event": "fixture-event",
+    "generation": "fixture-generation",
+    "head_digest": "fixture-head_digest",
+    "input_projection_digest": "fixture-input_projection_digest",
+    "label_map_digest": "fixture-label_map_digest",
+    "precision": "fixture-precision",
+    "preprocessing_digest": "fixture-preprocessing_digest",
+    "runtime": "fixture-runtime",
+    "task_digest": "fixture-task_digest",
+    "tokenizer_digest": "fixture-tokenizer_digest"
+  },
+  "teacher_job": {
+    "budget_ref": "fixture-budget_ref",
+    "corpus_digest": "fixture-corpus_digest",
+    "data_policy_digest": "fixture-data_policy_digest",
+    "endpoint": "https://teacher.invalid/fixture",
+    "evaluator_epoch": "fixture-evaluator_epoch",
+    "grant_ref": "fixture-grant_ref",
+    "partition": "train",
+    "principal": "fixture-principal",
+    "project": "fixture-project",
+    "retention_policy_digest": "fixture-retention_policy_digest",
+    "task_digest": "fixture-task_digest",
+    "teacher_revision": "fixture-teacher_revision",
+    "tenant": "fixture-tenant"
+  },
+  "expected": {
+    "fixture_only": true,
+    "model_executed": false,
+    "execution_authorized": false,
+    "executed": false,
+    "verified_complete": false,
+    "joint_correctness": null,
+    "plan_digest": "8ce890adb869941cd93615303cf33e17cb423173922ea8400b22e5a79c55b1a4",
+    "snapshot_digest": "snapshot-001",
+    "source_digest": "d777a8884eed0c08afa911e6690745d6e3294c39023399404fcf7e427a8d8406",
+    "status": "CompleteComposition",
+    "tool_id": "inspect",
+    "args": {
+      "mode": "inspect",
+      "verify": false,
+      "target": "src/α.ts"
+    },
+    "schema_digest": "37c1991808be62e03c6f8afe09038454af8c0c1369d499f94988184409da120c",
+    "descriptor_digest": "eeb6bb77e9c7392a54745f0c3b59e3edafb64540a4cbc094be9912258b9f8a5f",
+    "provenance": {
+      "mode": {
+        "kind": "declared_typed_value",
+        "candidate_id": "c0000",
+        "catalog_digest": "b45baa207e934b864f62928cc96c40a9cfc096510a0098e88ff83da0574956c7"
+      },
+      "verify": {
+        "kind": "declared_typed_value",
+        "candidate_id": "c0000",
+        "catalog_digest": "b45baa207e934b864f62928cc96c40a9cfc096510a0098e88ff83da0574956c7"
+      },
+      "target": {
+        "source_digest": "d777a8884eed0c08afa911e6690745d6e3294c39023399404fcf7e427a8d8406",
+        "source_version": "snapshot-001",
+        "offset_unit": "unicode_codepoint",
+        "start": 10,
+        "end": 18,
+        "projection_rule_id": "exact-codepoint-copy/1"
+      }
+    },
+    "active_question_ids": [
+      "inspect.limit.present",
+      "inspect.mode",
+      "inspect.target",
+      "inspect.verify",
+      "route"
+    ],
+    "unused_question_ids": []
+  }
+}

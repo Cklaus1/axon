@@ -1,0 +1,38 @@
+{
+  "review_date": "2026-09-21",
+  "basis": "Supplied documents only; no live Axon/MiCode code or external model results were verified.",
+  "inputs": [
+    {
+      "file": "Axon_Cortex_Build_Files_v0_15.zip",
+      "sha256": "89422d4286b39243e1eef15dd96dafa8360fd4d303700a254522e6a1d5e630c8"
+    },
+    {
+      "file": "CX-36_Neural_Program_Compiler_Artifact_Runtime.md",
+      "sha256": "f3a50ba21b2c47893d3eea99eca72655a6c303592fe347f9f1233e3457783367"
+    }
+  ],
+  "baseline_document_validation": {
+    "result": "PASS",
+    "specs": 35,
+    "tasks": 152,
+    "gates": 247,
+    "markdown": 95,
+    "unassigned_gates": 20
+  },
+  "review_method": [
+    "design/consistency review",
+    "adversarial boundary review",
+    "amend source contracts",
+    "regenerate derived files",
+    "execute documentation and inert-format tests"
+  ],
+  "not_performed": [
+    "live source audit",
+    "Axon compile",
+    "MiCode execution",
+    "trained-model inference",
+    "runtime confinement test",
+    "cryptographic admission integration",
+    "product acceptance gates"
+  ]
+}

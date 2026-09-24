@@ -1,0 +1,256 @@
+{
+  "schema": "axon.research-requirements/1",
+  "package_version": "0.21",
+  "required_families": 8,
+  "requirements": [
+    {
+      "id": "R21-01",
+      "research": "RRSI",
+      "sources": [
+        "RES-RRSI"
+      ],
+      "aliases": [
+        "EVO"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Substantial owners already exist in CX-08/11/12/29/33; named regularizers and complete hypothesis-history/anti-overfit qualification need explicit integration.",
+      "tasks": [
+        "B234",
+        "B235",
+        "B236",
+        "B251"
+      ],
+      "gates": [
+        "G29-r21-evolution-history",
+        "G29-r21-protected-mutations",
+        "G08-r21-evolution-preregister",
+        "G08-r21-evolution-generalization",
+        "G11-r21-prune-protections",
+        "G11-r21-evolution-independent-admit",
+        "G12-r21-meta-policy-bounds",
+        "G12-r21-meta-policy-holdout"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-02",
+      "research": "CLM",
+      "sources": [
+        "RES-CLM"
+      ],
+      "aliases": [
+        "DEC"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "CX-05/20/24/25/34 already cover Reflex learners and registry; current axon-reflex core is a deterministic protocol placeholder, not CLM.",
+      "tasks": [
+        "B225",
+        "B226",
+        "B227",
+        "B230",
+        "B231",
+        "B252",
+        "B253"
+      ],
+      "gates": [
+        "G05-r21-decision-negotiation",
+        "G05-r21-decision-semantics",
+        "G34-r21-candidate-view",
+        "G34-r21-filter-before-score",
+        "G05-r21-clm-input-cache",
+        "G05-r21-clm-epoch-order",
+        "G06-r21-calibration-binding",
+        "G06-r21-candidate-stress",
+        "G25-r21-clm-training-lineage",
+        "G25-r21-clm-head-admission",
+        "G24-r21-ann-recall",
+        "G24-r21-ann-epoch",
+        "G22-r21-specialization-benefit",
+        "G22-r21-specialization-rollback"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-03",
+      "research": "Jev / RLCD",
+      "sources": [
+        "RES-JEV"
+      ],
+      "aliases": [
+        "DEC"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Already materially specified in v0.19/v0.20; extend and qualify providers rather than invent a new decision plane.",
+      "tasks": [
+        "B225",
+        "B228",
+        "B230"
+      ],
+      "gates": [
+        "G05-r21-decision-negotiation",
+        "G05-r21-decision-semantics",
+        "G05-r21-jev-capabilities",
+        "G05-r21-jev-error-boundary",
+        "G06-r21-calibration-binding",
+        "G06-r21-candidate-stress"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-04",
+      "research": "CheckEval",
+      "sources": [
+        "RES-CHECKEVAL"
+      ],
+      "aliases": [
+        "EVL"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Existing protected evaluation owners and source check events; add frozen evidence-linked checklist semantics without replacing deterministic checks.",
+      "tasks": [
+        "B232",
+        "B233"
+      ],
+      "gates": [
+        "G01-r21-checklist-totality",
+        "G01-r21-checklist-freeze",
+        "G21-r21-whole-task-truth",
+        "G21-r21-judge-independence"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-05",
+      "research": "TinyRouter / TRINITY / Semantic Router",
+      "sources": [
+        "RES-ROUTING"
+      ],
+      "aliases": [
+        "RTR"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Existing CX-06/34 routing and source AI gateway; named learned routing adapters and measured model-role switching remain unqualified.",
+      "tasks": [
+        "B237",
+        "B238",
+        "B248",
+        "B253"
+      ],
+      "gates": [
+        "G34-r21-route-session",
+        "G34-r21-route-control",
+        "G06-r21-router-bakeoff",
+        "G06-r21-router-recursion",
+        "G34-r21-research-revocation",
+        "G34-r21-research-fallback",
+        "G22-r21-specialization-benefit",
+        "G22-r21-specialization-rollback"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-06",
+      "research": "CliffCompaction",
+      "sources": [
+        "RES-CLIFF"
+      ],
+      "aliases": [
+        "CVM"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Existing CX-28 working-set contract; add original-event projections, pin closure, explicit mismatch behavior and consuming-model budgets.",
+      "tasks": [
+        "B239",
+        "B240",
+        "B245"
+      ],
+      "gates": [
+        "G28-r21-context-originals",
+        "G28-r21-context-retention",
+        "G28-r21-context-pins",
+        "G28-r21-context-recovery",
+        "G10-r21-research-replay",
+        "G10-r21-evidence-integrity"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-07",
+      "research": "TypeLLM/pijev",
+      "sources": [
+        "RES-PIJEV"
+      ],
+      "aliases": [
+        "DEC"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Existing order/calibration work partially covers this; add finite-sampling limits, label-aligned aggregation and wrapper-bound qualification.",
+      "tasks": [
+        "B229",
+        "B230"
+      ],
+      "gates": [
+        "G06-r21-permutation-alignment",
+        "G06-r21-permutation-scope",
+        "G06-r21-calibration-binding",
+        "G06-r21-candidate-stress"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    },
+    {
+      "id": "R21-08",
+      "research": "RLM-Cascade",
+      "sources": [
+        "RES-RLM"
+      ],
+      "aliases": [
+        "SPX"
+      ],
+      "baseline_status": "PARTIAL_EXISTING_OWNERS",
+      "source_assessment": "Existing CX-26 composition and source patch proposal/verification; add bounded response cascade and effects barrier, initially without speculative tools.",
+      "tasks": [
+        "B241",
+        "B242",
+        "B244",
+        "B254"
+      ],
+      "gates": [
+        "G26-r21-cascade-budget",
+        "G26-r21-cascade-verification",
+        "G03-r21-speculation-no-effects",
+        "G03-r21-speculation-terminal",
+        "G13-r21-budget-authority",
+        "G13-r21-economic-controls",
+        "G26-r21-bon-total-cost",
+        "G26-r21-bon-selected-bytes"
+      ],
+      "runtime_implementation": "NOT_ESTABLISHED_BY_PACKAGE",
+      "qualification_required": true
+    }
+  ],
+  "cross_cutting_tasks": [
+    "B223",
+    "B224",
+    "B226",
+    "B243",
+    "B245",
+    "B246",
+    "B247",
+    "B248",
+    "B249",
+    "B250"
+  ],
+  "optional_tasks": [
+    "B251",
+    "B252",
+    "B253",
+    "B254"
+  ]
+}

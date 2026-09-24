@@ -1,0 +1,54 @@
+{
+  "schema": "axon.research-input-lock/1",
+  "review_date": "2026-09-24",
+  "inputs": [
+    {
+      "id": "SOURCE",
+      "filename": "axon-ai-context-20260924.zip",
+      "sha256": "68c2a7d5a49acdd2e91229210adbacf62bcb1f18e2647b013594d744e1711fac",
+      "files": 1213,
+      "included_raw_archive": false
+    },
+    {
+      "id": "BASELINE",
+      "filename": "Axon_Cortex_Build_Files_v0_20(1).zip",
+      "sha256": "b401e6fe03cb69b0c401e82850a7f24f12e66a1138bee6b3a6857fa7db482a43",
+      "files": 194,
+      "included_raw_archive": false
+    }
+  ],
+  "source_git_commit": null,
+  "source_pin_kind": "UPLOADED_ARCHIVE_AND_PER_FILE_SHA256",
+  "protected_files": [
+    {
+      "path": "specs/CX-36-neural-program-artifact-contract.md",
+      "sha256": "3c7591109dbf1e4720ce0dade1f48c43d2f8ba6ba478e01a36d64954cd9e9968"
+    },
+    {
+      "path": "schemas/json/neural-program-source.schema.json",
+      "sha256": "7098d826351687ab5c2df843f08c768691693c815dd64942a516b256ba474f3e"
+    },
+    {
+      "path": "schemas/json/neural-program-manifest.schema.json",
+      "sha256": "ab4220f4d53884507db9cedca64fe6732b852d7bfeee1305182b1c2b99143369"
+    },
+    {
+      "path": "tools/neural_contract_reference.py",
+      "sha256": "d129ba91a35c963774c6fc6f278be15aaeb03e84f620b4245011f14fe1f47955"
+    },
+    {
+      "path": "fixtures/neural_programs/minimal.np",
+      "sha256": "2f65a139e656219a2e7175352f0b0e7002b16f674ac9dcfe99209f55992ba760"
+    },
+    {
+      "path": "schemas/json/ace-execution.schema.json",
+      "sha256": "3ae2275978974c1c0d2cc42488e9f121888e1e09c2f2245b66da089149998b5b"
+    },
+    {
+      "path": "schemas/json/ace-runtime.schema.json",
+      "sha256": "202ed5e69be59ede87cda7cc0c3522f9d224adb76da34cd66c58d901377bf43c"
+    }
+  ],
+  "repo_changes_performed": false,
+  "micode_source_supplied": false
+}

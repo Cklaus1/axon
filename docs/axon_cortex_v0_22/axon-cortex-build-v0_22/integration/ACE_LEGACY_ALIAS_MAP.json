@@ -1,0 +1,35 @@
+{
+  "schema": "axon.ace-legacy-alias-map/1",
+  "status": "HISTORICAL_READ_COMPATIBILITY_ONLY",
+  "current_name": "ACE — Axon Cognitive Execution",
+  "legacy_name": "ANEA — Axon Neural Execution Architecture",
+  "schema_aliases": {
+    "axon.anea-execution/1": "axon.ace-execution/1",
+    "axon.anea-projection/1": "axon.ace-projection/1"
+  },
+  "gate_aliases": {
+    "G00-anea-coverage": "G00-ace-coverage",
+    "G00-anea-owner-map": "G00-ace-owner-map",
+    "G04-anea-joins": "G04-ace-joins",
+    "G04-anea-lowering": "G04-ace-lowering",
+    "G05-anea-features": "G05-ace-features",
+    "G05-anea-results": "G05-ace-results",
+    "G05-anea-scoring": "G05-ace-scoring",
+    "G06-anea-provenance": "G06-ace-provenance",
+    "G13-anea-attempts": "G13-ace-attempts",
+    "G13-anea-locality": "G13-ace-locality",
+    "G15-anea-parity": "G15-ace-parity",
+    "G16-anea-core": "G16-ace-core",
+    "G16-anea-peer": "G16-ace-peer",
+    "G20-anea-three-family": "G20-ace-three-family",
+    "G23-anea-lifecycle": "G23-ace-lifecycle",
+    "G28-anea-reuse": "G28-ace-reuse",
+    "G32-anea-attempt-lineage": "G32-ace-attempt-lineage",
+    "G34-anea-dispatch": "G34-ace-dispatch",
+    "G34-anea-fallback": "G34-ace-fallback"
+  },
+  "note": "Aliases permit reading historical v0.17/v0.2 ANEA records. New records MUST emit ACE identifiers; historical raw vocabulary is preserved in receipts.",
+  "producer_vocabulary_aliases": {
+    "micode.anea-fixture/1": "micode.ace-fixture/1"
+  }
+}

@@ -1,0 +1,599 @@
+{
+  "schema": "axon-review-tests/1",
+  "run_at": "2026-09-22T01:47:42.682486+00:00",
+  "scope": "DOCUMENTATION_AND_INERT_FORMAT_ONLY",
+  "result": "PASS",
+  "tests_run": 144,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "product_gates_executed": 0,
+  "model_inference_executed": false,
+  "live_source_audit_performed": false,
+  "cases": [
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_all_absence_variants_preserved_without_values",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_all_request_bindings_checked",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_all_state_bindings_participate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_answer_dependencies_are_committed_and_not_cyclic",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_argmax_and_tie_rule",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_attempt_success_and_failed_observed_producer",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_binary_event_is_bound",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_branch_order_and_unused_failure",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_candidate_content_and_order_hashes",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_correctness_names_event_and_domain",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_duplicate_candidates",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_duplicate_terminal_and_canceled_late_result",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_feature_requires_exact_deployment",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_generated_estimate_not_native_argmax",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_independent_cannot_consume_sibling",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_label_only_has_no_invented_probability",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_missing_duplicate_unknown_active_result",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_native_head_does_not_require_kv",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_no_fabricated_uniform_failure",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_non_normalized_duplicate_and_unknown_scores",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_np_is_generate_proposal_with_explicit_artifact",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_observation_or_rematerialization_not_native",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_ordinal_distribution_not_expectation_only",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_ordinal_expected_value_and_order",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_origin_must_match_physical_mechanism",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_parser_duplicate_nonfinite_invalid_utf8_size_depth",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_partial_scores_cannot_satisfy_required",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_probability_is_not_boolean",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_state_requires_authorization_and_live_lease_flags",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_support_evidence_and_explicit_emulation",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_three_result_families",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_top_k_is_not_complete",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_tuple_axis_corruption",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_unknown_cost_does_not_reset_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_unknown_fields_and_variants",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_unknown_required_feature",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_execution.ACEProjectionTests.test_unknown_reservation_root_switch_and_hidden_producer",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_changed_legacy_source",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_changed_owner_schema",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_changed_reviewed_source_schema",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_clean_crosswalk",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_core_cannot_depend_on_three_family",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_false_product_pass",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_historical_raw_score_vocabulary_is_preserved",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_immutable_original_decision",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_invented_neural_accounting_class",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_legacy_gate_alias_cannot_be_rewritten_as_current_key",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_missing_requirement",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_rewritten_source_requirement",
+      "result": "PASS"
+    },
+    {
+      "test": "test_ace_package.ACEPackageTests.test_unknown_requirement_owner",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_absolute",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_adapter_missing_dependencies",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_archive_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_archive_timestamp_not_semantic_identity",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_backslash",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_checksum_substitution",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_compressed",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_declared_size_mismatch",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_directory_member",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_domain_separated_identity",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_duplicate_asset_inventory",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_duplicate_member",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_embedded_admission_rejected",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_empty_path_segment",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_encrypted_flag",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_executable",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_extension_does_not_determine_validity",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_extra_member",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_fixture_as_active_kind",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_fixture_cannot_invoke",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_local_header_mismatch",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_manifest_in_own_inventory",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_member_count_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_missing_member",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_noncanonical_manifest",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_payload_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_prefix_polyglot",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_self_id_rejected",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_source_budget_before_read",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_source_manifest_contract_mismatch",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_source_role_mismatch",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_source_semantic_digest_mismatch",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_symlink",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_target_revision_changes_identity",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_trailing_bytes",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_traversal",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_truncated_archive",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_unicode_path",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_uppercase_path",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_valid_but_not_admitted",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.PackageTests.test_zip_comment",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_absent_input_schema",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_bom",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_byte_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_canonical_known_unicode_vector",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_depth_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_duplicate_clause_id",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_duplicate_key",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_effect_ceiling_enum",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_escaped_duplicate_key",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_exponent",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_float",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_huge_integer",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_invalid_utf8",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_lone_surrogate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_must_without_validator",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_mutable_schema_ref",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_node_budget",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_nonfinite",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_not_valid_json",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_pretty_source_preserves_semantic_digest",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_unknown_field",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_unknown_version",
+      "result": "PASS"
+    },
+    {
+      "test": "test_neural_contract.SourceTests.test_valid_source",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_bad_format_fixture",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_complete_hash_inventory",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_false_product_pass",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_false_task_completion",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_fence_unclosed",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_gate_description_drift",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_hash_tamper",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_missing_link",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_missing_protocol_in_master",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_missing_source_gate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_optional_hosted_import_on_critical_path",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_orphan_gate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_profile_activates_default",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_profile_unknown_task",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_reserved_id_duplicate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_spec_frontmatter_drift",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_stale_master",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_stale_task_view",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_task_cycle",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_unchanged_sources_and_full_orders",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_unknown_gate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_unknown_task_dependency",
+      "result": "PASS"
+    },
+    {
+      "test": "test_package_validation.DocumentationTests.test_untracked_file",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_calibration_key_changes_with_candidate_policy",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_calibration_key_rejects_missing_domain",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_iia_is_not_encoded_as_universal_gate",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_pairwise_and_two_way_luce_agree_for_same_utilities",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_proper_scores_reward_better_calibration",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_stage1_score_cannot_be_called_full_joint_probability",
+      "result": "PASS"
+    },
+    {
+      "test": "test_rlcd_contracts.RLCDContractTests.test_stage_lineage_is_explicit",
+      "result": "PASS"
+    }
+  ],
+  "test_code_sha256": {
+    "tests/test_ace_execution.py": "e3c79a4db76168894b9eaca632b9d40d0522a264068909663b33051674cf6fce",
+    "tests/test_ace_package.py": "a907c2843fc6f7fc6ec1366666d6321253e34dfb102f0ccd142b3ae3c8f62b82",
+    "tests/test_neural_contract.py": "1bb52698b48f9504a0e2b19f9f6bae3f1bcc0f4e93f6dceddd773f876255b34b",
+    "tests/test_package_validation.py": "8c5b5f85769bc831e40ff216d2b417befdee9ed959e9a9687fcbaf54e62fb127",
+    "tests/test_rlcd_contracts.py": "884878eba2d682559d6cd4579a10d60cc79e6a68c841f8263dd208dc60691b7d"
+  },
+  "log_sha256": "32c84f5a37577b8d4f074d2ddb67c9fed598d7df3d7cc2d3d37a02fcdabe493d"
+}

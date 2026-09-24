@@ -1,0 +1,131 @@
+{
+  "schema": "axon.research-sources/1",
+  "package_version": "0.21",
+  "reviewed_on": "2026-09-24",
+  "sources": [
+    {
+      "id": "RES-RRSI",
+      "name": "RRSI",
+      "urls": [
+        "https://arxiv.org/abs/2609.24972v1",
+        "https://arxiv.org/html/2609.24972v1",
+        "https://github.com/google-research/rrsi"
+      ],
+      "revision": "arXiv v1, 2026-09-21",
+      "pin_status": "PAPER_VERSION_PINNED_CODE_PIN_REQUIRED",
+      "verified": "Primary paper/HTML and repository documentation reviewed",
+      "lesson": "Regularize harness proposals and selection rather than optimizing a repeatedly exposed task set without controls.",
+      "limits": "Author experiments are not Axon evidence; adopted gates add independent authority and explicit sequential-testing policy."
+    },
+    {
+      "id": "RES-CLM",
+      "name": "Contrastive Language Models (CLM)",
+      "urls": [
+        "https://github.com/Contrastive-LM/CLM",
+        "https://huggingface.co/Contrastive-LM/CLM-v0.1-8B"
+      ],
+      "revision": "cca045ffdb07b3ebcfe6938537cdeac5e14899c9",
+      "pin_status": "REPO_COMMIT_PINNED_MODEL_REVISION_REQUIRED",
+      "verified": "Repository/model card and pinned embedder source inspected",
+      "lesson": "Independent state/action encodings enable reusable action vectors and conditional candidate ranking.",
+      "limits": "Not generative, not automatically calibrated or universally optimal; upstream max_tokens truncation and shared text cache require an Axon adapter."
+    },
+    {
+      "id": "RES-JEV",
+      "name": "Jev / RLCD",
+      "urls": [
+        "https://typesafe.ai/blog/introducing-system-one-models-and-jev",
+        "https://di-zhang-llm.github.io/blog/what-is-rlcd-the-secret-behind-jev/"
+      ],
+      "revision": null,
+      "pin_status": "DOCUMENTATION_REVIEWED_PROVIDER_REVISION_REQUIRED",
+      "verified": "Primary research explanation plus retained v0.19/v0.20 references",
+      "lesson": "Typed probabilistic micro-decisions deserve a specialized backend rather than long generated explanations.",
+      "limits": "Compatible API shape does not establish calibration, training method or correct use on a new domain."
+    },
+    {
+      "id": "RES-CHECKEVAL",
+      "name": "CheckEval",
+      "urls": [
+        "https://arxiv.org/abs/2403.18771v3"
+      ],
+      "revision": "arXiv v3, 2025-10-31",
+      "pin_status": "PAPER_VERSION_PINNED",
+      "verified": "Primary paper abstract/version record reviewed",
+      "lesson": "Decompose evaluation into frozen, traceable checklist questions.",
+      "limits": "Text-evaluation reliability does not certify code correctness; Axon retains deterministic checks and an explicit unknown evidence state."
+    },
+    {
+      "id": "RES-ROUTING",
+      "name": "TinyRouter / TRINITY / vLLM Semantic Router",
+      "urls": [
+        "https://github.com/harrrshall/tinyrouter",
+        "https://arxiv.org/abs/2512.04695v2",
+        "https://vllm-sr.ai/docs/overview/signal-driven-decisions/",
+        "https://github.com/vllm-project/semantic-router"
+      ],
+      "revision": "TRINITY arXiv v2; other live documentation unpinned",
+      "pin_status": "MIXED_PAPER_VERSION_AND_DOCUMENTATION_CODE_PINS_REQUIRED",
+      "verified": "Primary research and official routing documentation reviewed",
+      "lesson": "Separate policy eligibility, learned model/role selection and runtime dispatch.",
+      "limits": "Treat named systems as alternatives, not required combined dependencies or permission authorities; Axon workload benefits remain unmeasured."
+    },
+    {
+      "id": "RES-CLIFF",
+      "name": "CliffCompaction",
+      "urls": [
+        "https://github.com/nguyenvuthientrang/cliffcompaction"
+      ],
+      "revision": null,
+      "pin_status": "DOCUMENTATION_REVIEWED_CODE_PIN_REQUIRED",
+      "verified": "Repository behavior and proxy workflow reviewed",
+      "lesson": "Construct bounded context from original history; avoid recursively compacting compactions.",
+      "limits": "Upstream tool/image-dropping heuristics, prefix assumptions and environment-installation commands are not automatically safe for Axon."
+    },
+    {
+      "id": "RES-PIJEV",
+      "name": "TypeLLM/pijev (Permutation Invariant Jev)",
+      "urls": [
+        "https://github.com/TypeLLM/pijev"
+      ],
+      "revision": "bca3a73d6419b794d63cd780ba4a0254579d7ccc",
+      "pin_status": "REPO_COMMIT_PINNED_PROVIDER_REVISION_REQUIRED",
+      "verified": "README and exact default-branch commit inspected",
+      "lesson": "Label-aligned averaging across declared option permutations can reduce order sensitivity.",
+      "limits": "Convex-loss averaging is relative to the average included predictions, not perfect calibration, the best member, or exact invariance for finite sampling."
+    },
+    {
+      "id": "RES-RLM",
+      "name": "RLM-Cascade",
+      "urls": [
+        "https://arxiv.org/abs/2606.22840v1",
+        "https://arxiv.org/html/2606.22840v1"
+      ],
+      "revision": "arXiv v1, 2026-06-22",
+      "pin_status": "PAPER_VERSION_PINNED_CODE_AND_MODELS_REQUIRED",
+      "verified": "Primary paper/HTML reviewed",
+      "lesson": "Use bounded draft/verify/skip response paths and bypass schema-critical tool-selection where appropriate.",
+      "limits": "Small author workloads do not imply universal savings or target-distribution equivalence; Axon initially permits isolated proposals only."
+    },
+    {
+      "id": "RES-CURSOR",
+      "name": "Cursor harness token efficiency (supporting economics reference)",
+      "urls": [
+        "https://cursor.com/blog/improved-token-efficiency"
+      ],
+      "revision": "2026-09-23 post",
+      "pin_status": "DOCUMENTATION_REVIEWED",
+      "verified": "Author engineering post reviewed",
+      "lesson": "Evaluate cache-aware, price-weighted costs over complete tasks rather than one request.",
+      "limits": "Supporting reference only, not a ninth required research runtime."
+    }
+  ],
+  "unavailable": [
+    {
+      "url": "https://contrastive-lm.notion.site/",
+      "status": "UNAVAILABLE_VIA_BROWSER_404",
+      "claim": "No independent inspection of Notion text; do not infer missing material from README."
+    }
+  ],
+  "replication_status": "NO_MODEL_OR_PAPER_BENCHMARKS_EXECUTED"
+}

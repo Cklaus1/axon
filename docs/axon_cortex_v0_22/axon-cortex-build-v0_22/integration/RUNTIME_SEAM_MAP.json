@@ -1,0 +1,205 @@
+{
+  "schema": "axon.runtime-seam-plan/1",
+  "package_version": "0.21",
+  "source_scope": "UPLOADED_SNAPSHOT_STATIC_REVIEW",
+  "runtime_patch_delivered": false,
+  "seams": [
+    {
+      "tasks": [
+        "B223",
+        "B224",
+        "B249"
+      ],
+      "existing": [
+        "scripts/cortex_package_gate.sh",
+        "governance/cortex_gate_execution_registry.json",
+        "governance/cortex-v015/CX-35-reflex-serving.md"
+      ],
+      "change": "Preserve historical gate registry and source IDs. Review a new package-gate invocation using tools/repo_gate_v021.py; stage documents under a new path only after approval.",
+      "tests": "Existing gate compatibility plus dry-run/no-mutation and old/new profile checks. No product PASS derived from document tests.",
+      "existing_file_hashes": {
+        "scripts/cortex_package_gate.sh": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+        "governance/cortex_gate_execution_registry.json": "f56d80d7278c296543619d7d5b6f8300cda25fadca9b4aefcd7a6245dbcd00f3",
+        "governance/cortex-v015/CX-35-reflex-serving.md": "33dba9877983b2ce989f07db3da38fdae7f590b89b0744f18378e9ca1f276b5b"
+      }
+    },
+    {
+      "tasks": [
+        "B225",
+        "B227",
+        "B228",
+        "B229",
+        "B230"
+      ],
+      "existing": [
+        "crates/axon-reflex/src/lib.rs",
+        "crates/axon-reflex/src/bin/sidecar.rs",
+        "crates/axon-reflex/tests/principal_isolation.rs",
+        "crates/axon-reflex/tests/protocol_hardening.rs"
+      ],
+      "change": "Preserve ReflexBackend, legacy Decision and Refusal behavior. Add negotiated research capability handling and provider adapters under the existing crate; any new files are proposed, not already implemented.",
+      "tests": "Old client/new service and new client/old service; bounds and duplicate fields; wrong principal; epoch reload; CLM truncation/cache; incomplete Jev/pijev replies.",
+      "existing_file_hashes": {
+        "crates/axon-reflex/src/lib.rs": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+        "crates/axon-reflex/src/bin/sidecar.rs": "1dfdf6d691c35ff8aeec26f132fc022942980fb136a1db3e87d3239ae2c0027a",
+        "crates/axon-reflex/tests/principal_isolation.rs": "c468207b299cddae856505476bfbc2b3a10f4ab10e157767d8b8b803744b063d",
+        "crates/axon-reflex/tests/protocol_hardening.rs": "f2f6e585ec889e7c74f0e0d0dbb73dc049115b9b25653adf67e3ec8ec67cf446"
+      }
+    },
+    {
+      "tasks": [
+        "B226",
+        "B237",
+        "B238",
+        "B248"
+      ],
+      "existing": [
+        "crates/axon-ai/src/lib.rs",
+        "crates/axon-core/src/kernel.rs",
+        "crates/cortex-policy-adapter/src/main.rs"
+      ],
+      "change": "Connect eligible model/role candidate views to existing CX-34 design and current AI gateway. The actual learned registry adapter is build work, not presumed to exist. Keep policy adapter and kernel grants authoritative.",
+      "tests": "Private candidate filtering before provider calls; revoked/unhealthy/incompatible routes; cache/session transfer; bounded selector recursion and fallback.",
+      "existing_file_hashes": {
+        "crates/axon-ai/src/lib.rs": "92c2dcdd9d9bd35ac549ede1673d6ebda582283601c569605800b9beae0bdb96",
+        "crates/axon-core/src/kernel.rs": "3bb71267bf53535441bc51de7b215e957947d639f0cddfed50e77480e0f25ae6",
+        "crates/cortex-policy-adapter/src/main.rs": "d0f315d416e14632c14a2a8ff7fe28c9257fc0faf831de2deeda651812859587"
+      }
+    },
+    {
+      "tasks": [
+        "B232",
+        "B233",
+        "B241",
+        "B242",
+        "B250"
+      ],
+      "existing": [
+        "crates/axon-cortex/src/generate.rs",
+        "crates/axon-cortex/src/select.rs",
+        "crates/axon-cortex/src/runner.rs",
+        "crates/axon-cortex/src/episode.rs",
+        "crates/axon-cortex/tests/conformance.rs"
+      ],
+      "change": "Use PatchGenerator and deterministic authorization/check paths. Extend proposal records and evaluation evidence without altering claimed/observed or final verification semantics. Insert one selected verified-proposal barrier, not a second executor.",
+      "tests": "Actual final checks and hidden-check isolation; repaired digest mismatch; permission denial; cancellation/unknown effect; duplicate commit; full task outcome.",
+      "existing_file_hashes": {
+        "crates/axon-cortex/src/generate.rs": "623854e6968bc8cb3b95515f2794d1b134ec3fce6359039bba2e15a1892165e7",
+        "crates/axon-cortex/src/select.rs": "1068dd7e11cb9861388774396f9bae154e4514d40e54ca8c216fa0c76c24b51b",
+        "crates/axon-cortex/src/runner.rs": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+        "crates/axon-cortex/src/episode.rs": "2e0061d1c4f9a062622bbd1f287df382dff07601c63a50960a14d274cf3f64b6",
+        "crates/axon-cortex/tests/conformance.rs": "027c707af0747b3c7325d931ce06d14fee91a96c78c6d4055548a186659b6acf"
+      }
+    },
+    {
+      "tasks": [
+        "B239",
+        "B240",
+        "B245"
+      ],
+      "existing": [
+        "crates/axon-cortex/src/generate.rs",
+        "crates/axon-cortex/src/episode.rs",
+        "crates/axon-core/src/replay.rs"
+      ],
+      "change": "Connect CX-28 original-history projection to prompt assembly and existing record/replay seams. Retention and event authority remain with their owners. Do not assume a complete context VM already exists in these files.",
+      "tests": "Consuming-tokenizer budgets; required pin/tool-pair closure; repeated compaction and prefix mismatch; retained/deleted source references; no fresh provider calls during replay.",
+      "existing_file_hashes": {
+        "crates/axon-cortex/src/generate.rs": "623854e6968bc8cb3b95515f2794d1b134ec3fce6359039bba2e15a1892165e7",
+        "crates/axon-cortex/src/episode.rs": "2e0061d1c4f9a062622bbd1f287df382dff07601c63a50960a14d274cf3f64b6",
+        "crates/axon-core/src/replay.rs": "0e37658160f5bbef237b519e65e2ab351c2a89bc996b698359605a285dade230"
+      }
+    },
+    {
+      "tasks": [
+        "B234",
+        "B235",
+        "B236",
+        "B251"
+      ],
+      "existing": [
+        "crates/axon-core/src/improve.rs",
+        "crates/axon-core/src/rewrite_dsl.rs",
+        "crates/axon-cortex/src/runner.rs",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py"
+      ],
+      "change": "Add harness-experiment orchestration under CX-29/CX-08 with independent admission. Existing compiler improvement remains a separate intervention class. Reuse frozen task runners and task/attempt evidence; do not pretend compiler rewrite search is RRSI.",
+      "tests": "Protected-path/semantic changes; hypothesis history and repeated-trial IDs; holdout exposure; budget/noise-aware comparison; independent admission and pruning regressions.",
+      "existing_file_hashes": {
+        "crates/axon-core/src/improve.rs": "81388ec8e2ab1811ef86c923606fdb638977d66586c59748e385961c5dbcc052",
+        "crates/axon-core/src/rewrite_dsl.rs": "79380286679455ac37e31d07d07c8ae4c5b4a41bc08835b995393cd4497f3be8",
+        "crates/axon-cortex/src/runner.rs": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py": "502c7443aec5e0974d9191501f2225ddc12f011cd115ec1a3d23a89627a95001"
+      }
+    },
+    {
+      "tasks": [
+        "B231",
+        "B246",
+        "B252",
+        "B253"
+      ],
+      "existing": [
+        "crates/axon-reflex/src/lib.rs",
+        "crates/axon-cortex/benchmarks/real_model.py",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py"
+      ],
+      "change": "Implement CX-20/CX-25 qualification and learning lifecycle as explicit new work. Existing source does not demonstrate CLM head training or ANN routing. Retain immutable encoder/head/data identities and candidate disposition.",
+      "tests": "Task/repository splits and unchosen-not-negative labels; model-weight pins; qualification versus serving epoch; exact versus ANN shortlist recall; safe rollback.",
+      "existing_file_hashes": {
+        "crates/axon-reflex/src/lib.rs": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+        "crates/axon-cortex/benchmarks/real_model.py": "e5e2fa9e68386005442c0f49fa6557ccc52dd2c85792c02157ad46883138addb",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py": "502c7443aec5e0974d9191501f2225ddc12f011cd115ec1a3d23a89627a95001"
+      }
+    },
+    {
+      "tasks": [
+        "B243",
+        "B244",
+        "B245"
+      ],
+      "existing": [
+        "crates/axon-ai/src/lib.rs",
+        "crates/axon-core/src/kernel.rs",
+        "crates/axon-core/src/replay.rs",
+        "crates/axon-audit/src/lib.rs",
+        "crates/axon-cortex/benchmarks/real_model.py",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py"
+      ],
+      "change": "Extend observed usage categories while preserving the kernel spend authority and existing audit/replay. Use stable identity joins instead of positional joins. Treat total task costs as evidence, not a second debit path.",
+      "tests": "Overlapping input categories; duplicate call IDs; cancelled charges; unknown liabilities; cross-principal joins; all-assigned-task denominator; replay without billing again.",
+      "existing_file_hashes": {
+        "crates/axon-ai/src/lib.rs": "92c2dcdd9d9bd35ac549ede1673d6ebda582283601c569605800b9beae0bdb96",
+        "crates/axon-core/src/kernel.rs": "3bb71267bf53535441bc51de7b215e957947d639f0cddfed50e77480e0f25ae6",
+        "crates/axon-core/src/replay.rs": "0e37658160f5bbef237b519e65e2ab351c2a89bc996b698359605a285dade230",
+        "crates/axon-audit/src/lib.rs": "25b2e2267eb8a63f500cc57c3bdcc23234ab186882a38f621ed4fe13dc759732",
+        "crates/axon-cortex/benchmarks/real_model.py": "e5e2fa9e68386005442c0f49fa6557ccc52dd2c85792c02157ad46883138addb",
+        "crates/axon-cortex/benchmarks/analyse_real_model.py": "502c7443aec5e0974d9191501f2225ddc12f011cd115ec1a3d23a89627a95001"
+      }
+    },
+    {
+      "tasks": [
+        "B247"
+      ],
+      "existing": [],
+      "change": "Await actual MiCode source/support pack before creating its source patch or task-ID mapping. Included addendum is a proposed consumer requirement only.",
+      "tests": "Actual owner/provider/consumer pins, unsupported-profile refusal, cancellation and next-turn recovery, independent permission and completion.",
+      "existing_file_hashes": {}
+    },
+    {
+      "tasks": [
+        "B254"
+      ],
+      "existing": [
+        "crates/axon-cortex/src/generate.rs",
+        "crates/axon-cortex/src/runner.rs"
+      ],
+      "change": "Optional best-of-N proposal orchestration only after bounded live pilot. No direct speculative tools.",
+      "tests": "All branch costs charged; exact selected-byte verification; concurrency, cancellation and at-most-once commit under actual source runtime.",
+      "existing_file_hashes": {
+        "crates/axon-cortex/src/generate.rs": "623854e6968bc8cb3b95515f2794d1b134ec3fce6359039bba2e15a1892165e7",
+        "crates/axon-cortex/src/runner.rs": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68"
+      }
+    }
+  ]
+}

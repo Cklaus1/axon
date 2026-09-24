@@ -1,0 +1,126 @@
+{
+  "schema": "axon.ace-decisions/1",
+  "status": "DOCUMENT_RESOLUTION_ONLY",
+  "decisions": [
+    {
+      "id": "D01",
+      "original": {
+        "id": "D01",
+        "title": "Live repository, authority and type/host seams",
+        "source_basis": "CX-EXISTING; CX-15; MX-BUILD",
+        "gap": "No live branch/commit or current implementation was provided. B00/B01 and T00 remain required.",
+        "proposed_resolution": "Map current types, AxonHost, interpreter/native guarantees, grant/effect owners, provider registry, trace store and consuming call sites; run approved baseline gates.",
+        "blocks": "All product claims; implementation touching unmapped enforcement",
+        "status": "Unresolved: repository evidence required"
+      },
+      "resolution_status": "LIVE_EVIDENCE_REQUIRED",
+      "resolution": "No live Axon/MiCode checkout was supplied. B174 and the selected profile must bind real definitions, consumers and enforcement before implementation claims.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D02",
+      "original": {
+        "id": "D02",
+        "title": "AIR/MX vocabulary bridge",
+        "source_basis": "CX-04 minimal node kinds; MX-05 canonical classes; CX-34 strategy classes",
+        "gap": "The source vocabularies are not identical and no complete NEURAL_PROGRAM mapping is supplied.",
+        "proposed_resolution": "Keep node kind, accounting class, operation kind and capability class distinct; approve a versioned lossless host-call mapping before live export. Do not label learned calls pure Rule.",
+        "blocks": "Live Neural Program/AIR/MX export when mapping is missing",
+        "status": "Proposed conservative separation; exact mapping pending"
+      },
+      "resolution_status": "SCOPED_DOCUMENT_RESOLUTION",
+      "resolution": "P02 and ACE_VOCABULARY_MAP fix the initial host mapping without adding opcodes. Other mappings are Unsupported; live type/effect adaptation remains a product gate.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D03",
+      "original": {
+        "id": "D03",
+        "title": ".nps syntax, .np container and identity encoding",
+        "source_basis": "CX-36 §§3–5; CX-23 §4",
+        "gap": "CX-36 freezes semantic obligations, not exact syntax/container/canonical bytes.",
+        "proposed_resolution": "Evaluate the reference JSON source + ZIP container + self-excluding logical-manifest digest against existing package conventions; approve or replace with equivalent semantics.",
+        "blocks": "Production writer/loader and cross-language byte identity",
+        "status": "Reference encoding proposed, not upstream approved"
+      },
+      "resolution_status": "SUPERSEDED_BY_REVIEWED_CX36",
+      "resolution": "Reviewed CX-36 r0.2 supplies strict JSON, bounded ZIP_STORED, canonical/domain-separated identity and detached release. Original reference encoding is not active.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D04",
+      "original": {
+        "id": "D04",
+        "title": "Probability and lifecycle enum reconciliation",
+        "source_basis": "CX-05/CX-24/PROTOCOLS; CX-36 §18",
+        "gap": "Different raw-origin tags and lifecycle state names coexist.",
+        "proposed_resolution": "Preserve raw producer vocabulary/version; register aliases only when semantics match. Separate registry state, evaluation/admission stage, permitted run mode and proof of authorization.",
+        "blocks": "Bridge conversion of unknown or ambiguous variants",
+        "status": "Lossless reference fixtures supplied; canonical allocation pending"
+      },
+      "resolution_status": "SCOPED_DOCUMENT_RESOLUTION",
+      "resolution": "P03/P04/P08 fix score-origin aliases, result families and lifecycle/run-mode separation for the declared subset. Unknown provider/native variants refuse; authentication/admission still requires live owner evidence.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D05",
+      "original": {
+        "id": "D05",
+        "title": "Prompt-only versus learned Neural Program",
+        "source_basis": "CX-23 §5; CX-36 §§1,4,34",
+        "gap": "Prompt/prefix and constrained-decoding compile modes are listed, but .np is defined as a learned executable.",
+        "proposed_resolution": "Qualify learned prefixes/adapters by learned-asset and evidence criteria. Treat plain prompt/constraint recipes as Generate/Reflex assets until explicit owner amendment.",
+        "blocks": "Claiming prompt-only recipes as CX-36 learned artifacts",
+        "status": "Conservative interpretation proposed; owner adjudication required"
+      },
+      "resolution_status": "RESOLVED_BY_REVIEWED_ELIGIBILITY",
+      "resolution": "Only learned executable assets qualify as Neural Programs. Plain prompts/constraints remain recipes; conformance_fixture is inert, never a trained model.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D06",
+      "original": {
+        "id": "D06",
+        "title": "Import CX-36 IDs and resolve actual build sequencing",
+        "source_basis": "CX-36 §§29,31–32; Cortex task_manifest and BUILD_PLAN",
+        "gap": "Cortex archive ends at CX-34/B151; B152–B164 are separately suggested. B148 depends on late B137/B143 despite early-reference-scheduler narrative.",
+        "proposed_resolution": "Preserve B77–B83 implementation ownership; import CX-36 as a canonical refinement with reviewed IDs. Follow existing prerequisites or approve bounded contract-only task splits; do not manufacture CX-35 or change dependencies silently.",
+        "blocks": "Cross-owner runtime/scheduler tasks whose prerequisites are unimplemented",
+        "status": "Impact manifest supplied; allocation/task splitting pending"
+      },
+      "resolution_status": "RESOLVED_IN_DOCUMENT_DAG",
+      "resolution": "v0.16 already allocated CX-36/B152–B173 and corrected early contract dependencies. Preserve those and add B174–B187. CX-35 remains reserved.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D07",
+      "original": {
+        "id": "D07",
+        "title": "Native learned pilot backend and actual quality envelope",
+        "source_basis": "CX-23 first slice; CX-36 §33; CX-22",
+        "gap": "No learned dataset, model assets, hardware or empirical quality threshold supplied.",
+        "proposed_resolution": "Select a licensed locally supportable learned-function backend after data eligibility and baseline measurement; preregister quality, scope, budget and stop rule. ProgramAsWeights optional.",
+        "blocks": "Live compile/inference/performance and production qualification",
+        "status": "Unresolved: actual data/hardware/evidence required"
+      },
+      "resolution_status": "LIVE_DATA_HARDWARE_REQUIRED",
+      "resolution": "No real trained artifact, workload or hardware evidence is supplied. AN1 needs no custom model; optional AN3/AN4 require actual licensed assets, baselines and preregistration.",
+      "product_status": "NOT_RUN"
+    },
+    {
+      "id": "D08",
+      "original": {
+        "id": "D08",
+        "title": "Artifact trust, registry views and protection profiles",
+        "source_basis": "CX-11/CX-34; CX-36 §§18,23; MX-32",
+        "gap": "Manifests do not establish real signer trust, loader isolation, registry enforcement or source-data authorization.",
+        "proposed_resolution": "Bind source/asset digests to existing trust store, admission issuer, run-mode authorization, project scope and actual egress/sandbox enforcement; test denial and revocation.",
+        "blocks": "Production admission, remote compile, activation or protected execution",
+        "status": "Reference validation only; current mechanisms must be inspected"
+      },
+      "resolution_status": "LIVE_TRUST_ENFORCEMENT_REQUIRED",
+      "resolution": "Hashes/fixtures do not establish issuer trust, isolation, grants or admission. Existing policy/registry/host owners must supply actual evidence before protected dispatch.",
+      "product_status": "NOT_RUN"
+    }
+  ]
+}

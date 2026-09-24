@@ -10,15 +10,32 @@
 # recorded BLOCKED with a reason — never downgraded to a weaker check.
 #
 # Usage:  sudo scripts/b263_qualify.sh [--evidence-dir DIR] [--keep]
-# Exit:   0 all assertions PASS or BLOCKED-with-reason; 1 any FAIL.
+#
+# Exit status — four outcomes, never conflated. The LAST stdout line always
+# names the outcome as `b263_qualify: <OUTCOME> — <detail>`:
+#   0  PASS               every assertion PASSED (none blocked, none failed)
+#   1  FAIL               at least one assertion FAILED
+#   2  usage / host-state error (bad argument, stale axonb263 processes)
+#   3  PASS_WITH_BLOCKED  no FAIL, but at least one assertion is BLOCKED.
+#                         Qualification is NOT earned; this is never 0.
+#   4  SKIP               a prerequisite is absent (not root, no /dev/kvm, no
+#                         firecracker/jailer, no built guest artifacts, no
+#                         profile user): NOTHING was asserted and no evidence
+#                         file is written. A non-result, never a pass.
+# It used to exit 0 for PASS_WITH_BLOCKED and 2 for a missing prerequisite, so a
+# caller reading the exit status saw "qualified" for a run with four BLOCKED
+# rows, and could not tell "not root" from "bad argument".
 #
 # Evidence: <evidence-dir>/<UTC timestamp>.json, schema axon-b263-evidence/1.
+# Default dir: $B263_EVIDENCE_DIR, else ${CARGO_TARGET_DIR:-<repo>/target}/b263-evidence.
+# (It was hard-coded to one developer's main checkout, so a run from any other
+# worktree wrote its evidence somewhere unrelated to the tree it measured.)
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LAUNCH="$REPO/scripts/fc_linux_profile.sh"
 FIX="$REPO/profiles/linux-microvm/fixtures"
-EVIDENCE_DIR="/home/cklaus/projects/aicoding/axon/.axon-v022/evidence/b263"
+EVIDENCE_DIR="${B263_EVIDENCE_DIR:-${CARGO_TARGET_DIR:-$REPO/target}/b263-evidence}"
 KEEP=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -27,7 +44,16 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown arg $1" >&2; exit 2 ;;
     esac
 done
-[[ "$(id -u)" == 0 ]] || { echo "b263_qualify: must run as root" >&2; exit 2; }
+skip() { echo "b263_qualify: SKIP — $1 (nothing asserted, no evidence written)"; exit 4; }
+[[ "$(id -u)" == 0 ]] || skip "must run as root (jailer drops to the profile uid)"
+[[ -e /dev/kvm ]] || skip "/dev/kvm absent"
+for b in /usr/local/bin/firecracker /usr/local/bin/jailer; do
+    [[ -x "$b" ]] || skip "$b absent"
+done
+for t in debugfs mkfs.ext4 ip pgrep python3; do
+    command -v "$t" >/dev/null 2>&1 || skip "required tool '$t' not on PATH"
+done
+id -u axonb263 >/dev/null 2>&1 || skip "profile user axonb263 missing (useradd --system --user-group axonb263)"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 START_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -71,7 +97,7 @@ residue() {  # residue ID -> prints space-separated leftovers (empty = clean)
 
 # ── pre-flight: host facts ────────────────────────────────────────────────────
 MANIFEST="$REPO/dist/guest-linux/manifest.json"
-[[ -f "$MANIFEST" ]] || { echo "build first: AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh" >&2; exit 2; }
+[[ -f "$MANIFEST" ]] || skip "no built guest artifacts at $MANIFEST (build first: AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh)"
 pgrep -u axonb263 >/dev/null && { echo "stale axonb263 processes exist; reap them first" >&2; exit 2; }
 
 HOSTIP="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
@@ -488,5 +514,22 @@ print(json.dumps(ev["counts"]))
 PY
 say "evidence: $EVF"
 [[ $KEEP == 1 ]] && say "work dir kept: $WORK"
-grep -q '"status": "FAIL"' "$RESULTS" && exit 1
+NP="$(grep -c '"status": "PASS"' "$RESULTS")"
+NF="$(grep -c '"status": "FAIL"' "$RESULTS")"
+NB="$(grep -c '"status": "BLOCKED"' "$RESULTS")"
+BLOCKED_NAMES="$(python3 -c 'import json,sys
+print(",".join(json.loads(l)["name"] for l in open(sys.argv[1]) if json.loads(l)["status"]=="BLOCKED"))' "$RESULTS")"
+if [[ "$NF" -gt 0 ]]; then
+    echo "b263_qualify: FAIL — $NF failed, $NP passed, $NB blocked; evidence $EVF"
+    exit 1
+fi
+if [[ "$NP" -eq 0 ]]; then
+    echo "b263_qualify: FAIL — zero assertions passed (a run that measured nothing is not a pass)"
+    exit 1
+fi
+if [[ "$NB" -gt 0 ]]; then
+    echo "b263_qualify: PASS_WITH_BLOCKED — $NP passed, $NB BLOCKED ($BLOCKED_NAMES): qualification NOT earned; evidence $EVF"
+    exit 3
+fi
+echo "b263_qualify: PASS — $NP assertions passed, none blocked; evidence $EVF"
 exit 0

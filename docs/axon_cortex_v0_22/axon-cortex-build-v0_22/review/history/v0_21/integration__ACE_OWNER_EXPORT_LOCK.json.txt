@@ -1,0 +1,167 @@
+{
+  "schema": "axon.ace-owner-export/1",
+  "document_version": "0.21",
+  "profile": "axon.ace-execution/1",
+  "projection": "axon.ace-projection/1",
+  "runtime_projection": "urn:axon:ace-runtime:1",
+  "cx36_revision": "0.2",
+  "product_status": "NOT_RUN",
+  "files": [
+    {
+      "path": "schemas/ACE_EXECUTION_PROFILE.md",
+      "sha256": "1eff17357c804fc63327e8fc7326e26acffd08fe28f93590d35bf60a9ed39f68"
+    },
+    {
+      "path": "schemas/json/ace-execution.schema.json",
+      "sha256": "3ae2275978974c1c0d2cc42488e9f121888e1e09c2f2245b66da089149998b5b"
+    },
+    {
+      "path": "schemas/json/ace-runtime.schema.json",
+      "sha256": "202ed5e69be59ede87cda7cc0c3522f9d224adb76da34cd66c58d901377bf43c"
+    },
+    {
+      "path": "integration/ACE_VOCABULARY_MAP.json",
+      "sha256": "3849f58e4096ceda00033a4a5d49c14d1a7ddb7460c2b322833791244d1d6b3b"
+    },
+    {
+      "path": "integration/ACE_LEGACY_ALIAS_MAP.json",
+      "sha256": "0f9c1256f691e873ebb8b3ca1925d4695f6bceb938da3c64ce05d51aaef18c15"
+    },
+    {
+      "path": "specs/CX-36-neural-program-artifact-contract.md",
+      "sha256": "3c7591109dbf1e4720ce0dade1f48c43d2f8ba6ba478e01a36d64954cd9e9968"
+    },
+    {
+      "path": "specs/CX-37-ace-provider-runtime.md",
+      "sha256": "8d6a312ffbe5d5cdb278bef9ecd63abcd4ad1cb471a248d4276b960bd87c2505"
+    },
+    {
+      "path": "schemas/json/neural-program-source.schema.json",
+      "sha256": "7098d826351687ab5c2df843f08c768691693c815dd64942a516b256ba474f3e"
+    },
+    {
+      "path": "schemas/json/neural-program-manifest.schema.json",
+      "sha256": "ab4220f4d53884507db9cedca64fe6732b852d7bfeee1305182b1c2b99143369"
+    },
+    {
+      "path": "tools/ace_contract_reference.py",
+      "sha256": "64021270183cd3d4958797f648b380e546d34ac9c25267f28e6db3516dc85732"
+    },
+    {
+      "path": "schemas/SCHEMA_DECISION_PROFILE.md",
+      "sha256": "31916f99a26c005d13c7639d4feab914c3ec5aafca2ce309e42d04e75eb5e1fb"
+    },
+    {
+      "path": "schemas/LIGHTWEIGHT_REFLEX_PROFILE.md",
+      "sha256": "fb13123c6f8d87c0a51d950075b9396b1ac4b348b88d73408f461948528bd942"
+    },
+    {
+      "path": "tools/schema_reflex_reference.py",
+      "sha256": "53bde92288e276b76966e092c05122b78444237baf116d6643971390fce0bb67"
+    },
+    {
+      "path": "fixtures/schema_reflex/records.json",
+      "sha256": "1cf0692825d47267e64c45d6421648ffb766aecba3c83c7e0d88fd63f7f6c772"
+    },
+    {
+      "path": "fixtures/schema_reflex/experiment-template.json",
+      "sha256": "2e6ef68371f916eb69cd22e1129dcfa649a16ad7f6e505a4597eb3cd1a20fc9d"
+    },
+    {
+      "path": "integration/SCHEMA_REFLEX_REQUIREMENTS.json",
+      "sha256": "27fe407d10a94fafc65c55bad4e690ac2d51f6ab443f34631665812d17a3bd34"
+    },
+    {
+      "path": "task_manifest.json",
+      "sha256": "faafd5426e881b8eacab64025a0fd2f4ea07204345024998d8643693b216359a"
+    },
+    {
+      "path": "gate_manifest.json",
+      "sha256": "2d162e79fb6c3cc1effc61cf5174f2469089a2186ca2e1ef9040465324bbf90b"
+    },
+    {
+      "path": "specs/CX-00-system-contract.md",
+      "sha256": "ee2775e46d4ff7d076e40f4487ac9bb7224b0ccf6b8336349994e2cebc23879a"
+    },
+    {
+      "path": "specs/CX-03-capabilities-executor.md",
+      "sha256": "06c3bea5e8c9782b9c6b7a96c6482c179782627e0f8850b7144db243195b8dd6"
+    },
+    {
+      "path": "specs/CX-05-reflex-inference.md",
+      "sha256": "7ae6a9cdcc9ef23ed0d95095f83859efc4671b1a8ec099732e82945e49362d69"
+    },
+    {
+      "path": "specs/CX-06-routing-calibration.md",
+      "sha256": "10e6d190a1f7700aa5b740686dd5eeccfdd44f6cc42dd2462b1f3695c7961328"
+    },
+    {
+      "path": "specs/CX-10-replay-learning-data.md",
+      "sha256": "3df8444384dfd238273e87d3962e344509b8df6bfee3897d7039def73195c437"
+    },
+    {
+      "path": "specs/CX-16-micode-experience-bridge.md",
+      "sha256": "4a81d723623a131a27e2c4112c1354dce3e7f1224788135d6835da251e1f3a55"
+    },
+    {
+      "path": "specs/CX-20-reflex-research-lab.md",
+      "sha256": "d7df8bcccdb3a4412cac0f75a37a00bac391a4b5822757cb0fed85ca21678d97"
+    },
+    {
+      "path": "specs/CX-22-cognitive-specialization-compiler.md",
+      "sha256": "0acfb4eaaecf7e6e762a0f11756d9a718ae517a057cfd5dd22411cd79956a8b6"
+    },
+    {
+      "path": "specs/CX-23-neural-program-runtime-skill-compiler.md",
+      "sha256": "a1e11d0fcbfd62ab7ddf5bbcc2d118abe1c589c72cd0e9b25409217d4c634e6f"
+    },
+    {
+      "path": "specs/CX-25-reflex-learning-plane.md",
+      "sha256": "f9a4cdf98423e431d7938f3ce69cc2ada2cd7c9a007ac13861123ddec7d407d8"
+    },
+    {
+      "path": "specs/CX-26-decision-composition-runtime.md",
+      "sha256": "44fcfa4a6867db3ab0f979efd0d3b48a33b013a8537eb6513ab388bfb214600e"
+    },
+    {
+      "path": "specs/CX-28-semantic-working-set-manager.md",
+      "sha256": "e19df16f2a00843fd5acad9294b2feae684828e123a50e3091a6fc5b7ddbe989"
+    },
+    {
+      "path": "specs/CX-34-cognitive-scheduler-capability-registry.md",
+      "sha256": "36f8b033dfd0a6c04894a66b20a3e77cae5f2eacb804acb8e301219c4f280036"
+    },
+    {
+      "path": "schemas/RESEARCH_DECISION_PROFILE.md",
+      "sha256": "17257910edba347ec8c849fa02fa33acacc80b9253732b4d7b9e86efe0cd5fa9"
+    },
+    {
+      "path": "schemas/json/research-decision.schema.json",
+      "sha256": "ccb7c488e5f54b1c283a78bbc70d206784ddad3925ec982e6618bdf36d401495"
+    },
+    {
+      "path": "integration/SOURCE_OWNER_MAP.json",
+      "sha256": "2a3af8088b755f6a9a72785b8f22fb37b34dca57635d15541fdcd92d082c1d94"
+    },
+    {
+      "path": "integration/RESEARCH_REQUIREMENTS.json",
+      "sha256": "7ed1476f6d3712c972a86b880d1b9c7cdf1f4306a1626b9bba69b8b5a2b24d88"
+    },
+    {
+      "path": "integration/RESEARCH_SOURCES.json",
+      "sha256": "09d20c8c053f4d532c1fd5fb4fb9d48f375b5973058a39247bd6b50233572254"
+    },
+    {
+      "path": "integration/V021_INPUT_LOCK.json",
+      "sha256": "196c7798621ef934775581812d833242c2c87cb0d75340c8f3fa28e41bac2943"
+    },
+    {
+      "path": "integration/MICODE_V015_PROPOSED_DELTA.md",
+      "sha256": "8a27f578f361807acefa8b1fffd493b713ac32148274908c3d1143c9a7ab6d29"
+    },
+    {
+      "path": "integration/RUNTIME_SEAM_MAP.json",
+      "sha256": "c0276e05769de96f0558c5eb7a0ef24d8f94744099af109a73161f8588332d85"
+    }
+  ]
+}

@@ -1,0 +1,195 @@
+{
+  "schema": "acf-package-validation/1",
+  "result": "PASS",
+  "scope": "Proposal consistency and synthetic contract fixtures ONLY",
+  "counts": {
+    "tasks": 14,
+    "proposed_product_gates": 55,
+    "source_evidence_ranges": 36,
+    "json_schemas": 3,
+    "fixture_and_parser_cases": 22,
+    "canonical_identity_checks": 1
+  },
+  "product_gates_executed": 0,
+  "rust_tests_executed": 0,
+  "backend_tests_executed": 0,
+  "errors": [],
+  "cases": [
+    {
+      "case": "contracts/examples/request_offline.json",
+      "expected_valid": true,
+      "observed_valid": true,
+      "result": "PASS",
+      "diagnostics": []
+    },
+    {
+      "case": "contracts/examples/profile_source_inspected.json",
+      "expected_valid": true,
+      "observed_valid": true,
+      "result": "PASS",
+      "diagnostics": []
+    },
+    {
+      "case": "contracts/examples/receipt_exit_zero_unverified.json",
+      "expected_valid": true,
+      "observed_valid": true,
+      "result": "PASS",
+      "diagnostics": []
+    },
+    {
+      "case": "contracts/examples/receipt_outcome_unknown.json",
+      "expected_valid": true,
+      "observed_valid": true,
+      "result": "PASS",
+      "diagnostics": []
+    },
+    {
+      "case": "contracts/examples/request_extra_field.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "Additional properties are not allowed ('sudo' was unexpected)"
+      ]
+    },
+    {
+      "case": "contracts/examples/request_negative_budget.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "-1 is less than the minimum of 1"
+      ]
+    },
+    {
+      "case": "contracts/examples/request_float_budget.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "floating point is not admitted in ACF v1 fixtures"
+      ]
+    },
+    {
+      "case": "contracts/examples/request_missing_trial.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "'trial_id' is a required property"
+      ]
+    },
+    {
+      "case": "contracts/examples/request_unknown_checkpoint.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "'universal_live_migration' is not one of ['none', 'logical_workspace', 'filesystem', 'machine_state']"
+      ]
+    },
+    {
+      "case": "contracts/examples/request_unsafe_integer.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "9007199254740992 is greater than the maximum of 9007199254740991"
+      ]
+    },
+    {
+      "case": "contracts/examples/profile_verified_no_evidence.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "[] should be non-empty"
+      ]
+    },
+    {
+      "case": "contracts/examples/receipt_worker_claims_verified.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "0 is less than the minimum of 1",
+        "'supervisor_observed' was expected",
+        "[] should be non-empty"
+      ]
+    },
+    {
+      "case": "contracts/examples/receipt_unknown_cost_zero.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "0 is not of type 'null'"
+      ]
+    },
+    {
+      "case": "contracts/examples/receipt_unknown_success.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "'completed' was expected",
+        "0 is less than the minimum of 1",
+        "'supervisor_observed' was expected",
+        "[] should be non-empty",
+        "'passed' is not one of ['not_run', 'unknown']",
+        "0 is not of type 'null'"
+      ]
+    },
+    {
+      "case": "contracts/examples/receipt_zero_checks_pass.json",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS",
+      "diagnostics": [
+        "0 is less than the minimum of 1"
+      ]
+    },
+    {
+      "case": "escaped_duplicate",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS"
+    },
+    {
+      "case": "nested_duplicate",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS"
+    },
+    {
+      "case": "non_finite",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS"
+    },
+    {
+      "case": "infinite_numeric",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS"
+    },
+    {
+      "case": "unpaired_surrogate",
+      "expected_valid": false,
+      "observed_valid": false,
+      "result": "PASS"
+    },
+    {
+      "case": "valid_siblings",
+      "expected_valid": true,
+      "observed_valid": true,
+      "result": "PASS"
+    },
+    {
+      "case": "words_in_strings",
+      "expected_valid": true,
+      "observed_valid": true,
+      "result": "PASS"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schema": "axon.schema-reflex-research-sources/1",
+  "reviewed_at": "2026-09-22",
+  "retrieval_scope": "Source snapshots and prior integration review supplied in this conversation; not freshly re-fetched by this update.",
+  "product_evidence": false,
+  "sources": [
+    {
+      "id": "JIMOTHY-TRAIN",
+      "repository": "AndrewPrifer/jimothy",
+      "path": "docs/automatic-training.md",
+      "blob_sha1": "87cb07247184918bb5f166a7a97ca02507b0c090",
+      "url": "https://github.com/AndrewPrifer/jimothy/blob/master/docs/automatic-training.md",
+      "supports": "Frozen features; separated data roles; corrected finite threshold search; advisory null recommendation; reference-label agreement."
+    },
+    {
+      "id": "JIMOTHY-DATA",
+      "repository": "AndrewPrifer/jimothy",
+      "path": "docs/data-format.md",
+      "blob_sha1": "8a6e5e49946c39461bdab43873b0869b82aa9155",
+      "url": "https://github.com/AndrewPrifer/jimothy/blob/master/docs/data-format.md",
+      "supports": "One fixed question per bundle; retraining on task change; ID joins; provenance; no automatic state selection."
+    },
+    {
+      "id": "WEBMCP-README",
+      "repository": "sdras/jev-webmcp-extension",
+      "path": "README.md",
+      "blob_sha1": "cd796d670746838bf094ba89198659c66203f75f",
+      "url": "https://github.com/sdras/jev-webmcp-extension/blob/main/README.md",
+      "supports": "Schema-to-questions; source spans; optional-presence questions; annotations; first-element array limitation."
+    },
+    {
+      "id": "WEBMCP-DECODE",
+      "repository": "sdras/jev-webmcp-extension",
+      "path": "src/core/decode.js",
+      "blob_sha1": "8014cf900991bd5b2e233f8af9e614854c48cacb",
+      "url": "https://github.com/sdras/jev-webmcp-extension/blob/main/src/core/decode.js",
+      "supports": "Static missing-answer default and minimum-confidence observations; no extension execution/security audit claimed."
+    }
+  ],
+  "interpretation": "Bounded adapters, stricter decoding, deployment identity, evaluator custody and consumer gates are proposed Axon/MiCode requirements, not upstream feature claims."
+}

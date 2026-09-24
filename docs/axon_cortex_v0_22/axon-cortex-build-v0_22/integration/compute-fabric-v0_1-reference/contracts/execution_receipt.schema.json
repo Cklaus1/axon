@@ -1,0 +1,237 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "acf-execution-receipt/1"
+    },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "trial_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "backend_profile_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "input_workspace_ref": {
+      "type": "string",
+      "pattern": "^acf1:[0-9a-f]{64}$"
+    },
+    "output_workspace_ref": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^acf1:[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^acf1:[0-9a-f]{64}$"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "failed",
+        "canceled",
+        "timed_out",
+        "outcome_unknown",
+        "denied",
+        "unsupported"
+      ]
+    },
+    "process_exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 255
+    },
+    "verification": {
+      "enum": [
+        "not_requested",
+        "not_run",
+        "passed",
+        "failed",
+        "unknown"
+      ]
+    },
+    "matched_checks": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_source": {
+      "enum": [
+        "supervisor_observed",
+        "provider_reported",
+        "worker_reported"
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "usage_state": {
+      "enum": [
+        "estimated",
+        "metered",
+        "provider_reported",
+        "settled",
+        "unknown"
+      ]
+    },
+    "cost_micro": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "unresolved_liability_micro": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "schema",
+    "operation_id",
+    "task_id",
+    "trial_id",
+    "attempt_id",
+    "execution_id",
+    "backend_profile_ref",
+    "input_workspace_ref",
+    "output_workspace_ref",
+    "policy_digest",
+    "status",
+    "process_exit_code",
+    "verification",
+    "matched_checks",
+    "evidence_source",
+    "evidence_refs",
+    "usage_state",
+    "cost_micro",
+    "unresolved_liability_micro"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verification": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "verification"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          },
+          "process_exit_code": {
+            "const": 0
+          },
+          "matched_checks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "evidence_source": {
+            "const": "supervisor_observed"
+          },
+          "evidence_refs": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "outcome_unknown"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "enum": [
+              "not_run",
+              "unknown"
+            ]
+          },
+          "process_exit_code": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "usage_state": {
+            "const": "unknown"
+          }
+        },
+        "required": [
+          "usage_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "cost_micro": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ACF minimal registered-check receipt; process completion differs from verification"
+}
