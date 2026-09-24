@@ -100,7 +100,7 @@ flowchart LR
 
 Rough sizes, to calibrate where the mass is: `checker.rs` ~8k lines, `main.rs` ~7.9k (the CLI, 25
 verbs), `interp.rs` ~5.1k, `parser.rs` ~4.8k, `builtins.rs` ~3.1k, `resolver.rs` ~3k. `axon-core` is
-~99k lines; the workspace has 19 crates.
+~99k lines; the workspace had 19 crates when this was measured (2026-09-17). The v0.22 candidate line adds three (`axon-loop-contracts`, `axon-loop`, `axon-fabric`); re-count with the §8 commands before citing.
 
 **Known debt worth knowing before you touch the front end:** type information is derived *three
 separate times* — authoritatively in `infer.rs`, again inside `checker.rs`, and a third time by a
@@ -121,15 +121,77 @@ codegen-disagrees-with-HM bug is a live category.
 | `axon-ai` | live model routing — provider codecs, gateway URL, keys, tiers |
 | `axon-audit` | the capability audit ledger (append-only, integrity-checked) |
 | `axon-web` | the approval-flow UI: a thin JSON proxy over the Phase-10 CLI verbs |
-| `axon-cortex` | the Cortex control-plane slice: typed contracts, an authority-checked repair episode, and its conformance run. A library plus its gates — **no CLI verb calls it yet**, so nothing here is on a user's path |
-| `cortex-policy-adapter` | the Axon side of the MiCode↔Cortex policy boundary. Reads one authorization request as JSON on stdin, asks `axon-cortex`, writes one decision on stdout. A separate executable rather than a library so neither repository depends on the other; the workspace deliberately does NOT cross, because the decisions Cortex is good at need identity and scope, not file bytes |
+| `axon-cortex` | the Cortex control-plane slice: typed contracts, an authority-checked repair episode, and its conformance run. Its production caller is the crate's own `cortex` binary (`cortex repair` / `cortex locate`, `src/bin/cortex.rs`); no `axon` CLI verb calls it. Check dispatch goes through a `CheckExecutor` seam (`runner.rs`): `LocalInterpreterExecutor` (default) or, under `cortex repair --fabric-journal`, `FabricSubmitExecutor`, which SPAWNS the sha256-pinned `axon-fabric` binary rather than linking it (`axon-fabric` depends on this crate, so a library edge would be a cycle). `Runner::new` now pins the interpreter's sha256 on first use and refuses a changed binary thereafter |
+| `cortex-policy-adapter` | the Axon side of the MiCode↔Cortex policy boundary. Reads one authorization request as JSON on stdin, asks `axon-cortex`, writes one decision on stdout. A separate executable rather than a library so neither repository depends on the other; the workspace deliberately does NOT cross, because the decisions Cortex is good at need identity and scope, not file bytes. See "Axon ↔ MiCode" below: the v0.22 MiCode consumer is not releasable until MiCode `tui` (`ed082601`) is merged |
 | `axon-reflex` | the CX-35 serving boundary: one backend-neutral client over three deployment modes — Embedded (in-process), LocalSidecar (one JSON frame per line on stdin/stdout, the same seam `cortex-policy-adapter` uses) and RemoteService (HTTP/1.1 on a socket). A consumer holds a client and a protocol version; it never names a backend, so no downstream depends on any inference vendor. All three modes share ONE authority core — three copies of a principal check is three places for it to drift. Phase 1 enforces exactly one invariant, mutation-verified per mode: cross-principal state reuse is a REFUSAL, never a cache miss. There is no real inference backend yet |
-| `axon-vm` | confidential microVM substrate, attestation, cross-VM quorum |
+| `axon-vm` | confidential microVM substrate, attestation, cross-VM quorum. Since v0.22 (B262) it has a **library target** (`axon_vm::run_in_firecracker`, `src/lib.rs` + `src/firecracker.rs`) as well as the CLI. The library is the moved launch path only: it does **not** enforce the gates `cmd_run` applies before launch — null-grant refusal, override-may-only-narrow, kernel attestation / no-TOFU baseline, extended-TCB compare, quorum. Latent, because nothing but `main.rs` and `tests/lib_launch.rs` calls it; any future library caller inherits none of those gates. Its profile (`BACKEND_PROFILE`, `axon-metal-fc-nojailer`) is a jailer-less Firecracker running the custom Axon guest kernel, NOT Linux, not qualified as protected. See `crates/axon-vm/README.md` |
+| `axon-loop-contracts` | **v0.22, partial.** Pure closed-loop contract types (`axon.closed-loop.*/1`, `acf-compute-request/1`, `acf-execution-receipt/1`), strict parse, the `cl22:` canonical digest, no-I/O checks. Depends on `axon-cortex` for `parse_strict` only; `axon-cortex` must never depend on it. No I/O, no authentication. See its README |
+| `axon-loop` | **v0.22, partial.** File-backed closed-loop store + `axon-loop` binary: fenced per-scope policy pointer and authority epoch, frozen experiment register, EVO proposal, EVL evaluation, CX-11 *policy* admission, TEL economics, MiCode episode intake. Depends on `axon-loop-contracts`. Its only in-workspace library caller is `axon-fabric` (authority-epoch reads); the `axon-loop` binary is driven by MiCode over files and by tests, and the interop harness `scripts/loop_interop_gate.sh` was invoked by nothing at `279da778`. Carries a SECOND, **unkeyed** hash-chained ledger beside `axon-audit`'s keyed one (open conflict D-C1). See its README |
+| `axon-fabric` | **v0.22 M1, partial.** Durable operation journal (intent fsynced before effect, `OutcomeUnknown` on crash), aggregate reservations, and the `axon-fabric submit` path (`acf-compute-request/1` → `acf-execution-receipt/1`) over three truthful backend profiles. Depends on `axon-loop-contracts`, `axon-loop`, `axon-cortex`, `axon-os`, `axon-vm` — the top of the Cortex family. Only production caller: `cortex repair --fabric-journal`, through a process seam. Admission runs `axon-os` `supervise_requiring` over a no-op probe with a HARD-CODED `Profile::Restricted` grant, not the request's grant (open conflict D-C2); cost is unmetered (`usage_state: unknown`). See its README |
 | `axon-os` | supervisor: bounded jobs, operator kill, compliance monitor |
 | `axon-wasm` | the interpreter as a wasm cdylib (browser tier) |
 | `axon-guest-kernel` / `axon-guest-init` | freestanding kernel + guest init (R17) |
 | `axon-gfx` / `axon-gfx-mock` | native FFI graphics module and its mock twin (R13) |
 | `axon-attest` · `axon-ledger` · `axon-signal` · `axon-certcheck` · `axon-domain` · `axon-intent` · `axon-surface` | attestation, provenance ledger, signals, certificate checking, domain modules, intent compilation, surface syntax |
+
+### The Cortex family on the v0.22 candidate line
+
+Dependency direction (acyclic; `A → B` means A depends on B), from
+`Cargo.toml` at `279da778`:
+
+```
+axon-fabric          → axon-loop-contracts, axon-loop, axon-cortex, axon-os, axon-vm (lib)
+axon-loop            → axon-loop-contracts            (dev: axon-reflex)
+axon-loop-contracts  → axon-cortex                    (parse_strict + ContractError only)
+axon-reflex          → axon-cortex, axon-loop-contracts (shortlist.rs)
+axon-os              → axon-audit → axon-attest
+axon-vm              → axon-attest
+axon-cortex          → axon-ai (optional, feature `ai`)
+
+axon-cortex ··spawns the sha256-pinned axon-fabric BINARY (no Cargo edge)··> axon-fabric
+```
+
+The last line is how a cycle is avoided: the lowest crate reaches the highest
+one at run time through a process seam, the same doctrine as
+`cortex-policy-adapter`. The cost is duplication across the seam — there are
+two `acf1:` canonicalisers (`axon-fabric/src/submit.rs` `executable_digest` / `workspace_digest`, built on `axon_loop_contracts::canonical_bytes`, and
+`axon-cortex/src/runner.rs` `fabric_executable_digest` /
+`fabric_workspace_digest`, the latter relying on serde_json's sorted map). One
+must go (open conflict D-C3).
+
+**"Admission" means two different things here, and they must not be confused.**
+`axon-os::gate::admit` / `axon-intent`'s `admit.rs` are EFFECT admission: is
+this job's effect row a subset of its grant? `axon-loop/src/admission.rs` is
+CX-11 POLICY admission: does a frozen experiment's rule ACCEPT a candidate
+policy? An ACCEPT, and the active-policy pointer it may move, is **never a
+grant** — it confers no effect authority, and no code path may treat it as one
+(open conflict D-C6). `axon-loop`'s `trusted_admitters` / `trusted_observers`
+are operator-configured CX-11 premises read from `config.json`, not
+authentication and not effect authority.
+
+**Authority vocabularies.** Three existed before v0.22
+(`axon-core::kernel::PrincipalRegistry`, `axon-os::grant::Grant`,
+`axon-cortex::EditGrant`/`Authorized`). The candidate adds a fourth: the
+contracts' `principal_ref` / `grant_ref` are opaque strings that the Fabric
+uses only to format an `authority_ref`, and `cortex --fabric-journal`
+hard-codes principal `cortex:repair` and a zero `policy_digest`
+(`acf1:000…`). Open conflict D-C2, Stage 2. The open conflicts are recorded in
+`governance/cortex-v015/IMPLEMENTATION_MAP.md` §4a and
+`governance/cortex-v015/DISCREPANCIES.md` D-014 … D-018.
+
+### Axon ↔ MiCode
+
+The bridge is file/JSON-only in both directions: MiCode asks
+`cortex-policy-adapter` for authorization decisions (protocol v1, unchanged by
+v0.22), and writes closed-loop episode sidecars that `axon-loop intake episode`
+reads. Neither workspace has a Cargo dependency on the other.
+
+**The MiCode v0.22 consumer is not releasable.** It lives on MiCode branch
+`v022/micode`, based on `checkpoint/v014-reconciled`, which lacks MiCode `tui`
+commit `ed082601` (a credential reaches only its own provider host) and 15
+other `tui` commits. Operator decision D3 (2026-09-24) deferred that merge;
+until `tui` is merged into the v0.22 MiCode line, no release or qualification
+claim for the MiCode side holds.
 
 ---
 
