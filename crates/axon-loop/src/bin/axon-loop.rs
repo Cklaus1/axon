@@ -27,11 +27,17 @@
 //! axon-loop --store DIR evl     evaluate   --in evl-request.json
 //! axon-loop --store DIR admit              --in admit-request.json
 //! axon-loop             tel     summarize  --in tel-request.json
+//! axon-loop --store DIR intake  episode    --in sidecar.json --context FILE|DIR
+//!                                          --ack FILE|DIR [--source-episode FILE]
 //! ```
+//!
+//! `intake episode`: `--context`/`--ack` may name MiCode's `context/` /
+//! `policy-ack/` directory, in which case the file is the one the sidecar
+//! names (`context_ref` / `projection_ref`); nothing is searched for.
 
 use axon_loop::error::LoopError;
 use axon_loop::store::{contract_from_value, strict_record, Store};
-use axon_loop::{admission, evl, evo, plan, pointer, tel};
+use axon_loop::{admission, evl, evo, intake, plan, pointer, tel};
 use axon_loop_contracts::{
     parse, LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyTransition, Ref, Refusal, Scope,
     TaskFamily, TenantId,
@@ -229,6 +235,54 @@ fn run(a: &Args) -> Result<Value, LoopError> {
             let s = tel::summarize(eps.iter().map(|e| (&e.usage, Some(e.status))))?;
             Ok(json!({"schema":"axon.loop.tel-summary/1","summary":s,
                       "token_breakdown":"unavailable: Usage v1 has no token fields"}))
+        }
+        ["intake", "episode"] => {
+            a.only(&["in", "context", "ack", "source-episode"])?;
+            let episode = a.input()?;
+            // Parse strictly once here only to learn which receipt/ack the
+            // sidecar names when a DIRECTORY is given; intake re-parses.
+            let named: LoopEpisode = parse(&episode)?;
+            let pick = |flag: &str, r: Option<&Ref>| -> Result<Option<String>, LoopError> {
+                let Some(p) = a.flags.get(flag) else {
+                    return Ok(None);
+                };
+                let p = std::path::Path::new(p);
+                let file = if p.is_dir() {
+                    let r = r.ok_or_else(|| {
+                        LoopError::Refused(format!(
+                            "--{flag} is a directory but the episode names no ref for it"
+                        ))
+                    })?;
+                    p.join(format!("{}.json", r.hex()))
+                } else {
+                    p.to_path_buf()
+                };
+                std::fs::read_to_string(&file)
+                    .map(Some)
+                    .map_err(|e| LoopError::Io(format!("{}: {e}", file.display())))
+            };
+            let context = pick("context", Some(&named.context_ref))?
+                .ok_or_else(|| LoopError::Usage("missing --context".into()))?;
+            let ack = pick("ack", named.projection_ref.as_ref())?
+                .ok_or_else(|| LoopError::Usage("missing --ack".into()))?;
+            let source = match a.flags.get("source-episode") {
+                Some(p) => Some(std::fs::read_to_string(p)?),
+                None => None,
+            };
+            let out = intake::intake_episode(
+                &a.store()?,
+                &intake::IntakeInput {
+                    episode: &episode,
+                    context: &context,
+                    ack: &ack,
+                    source_episode: source.as_deref(),
+                },
+            )?;
+            Ok(
+                json!({"schema":"axon.loop.intake-result/1","episode_ref":out.record.episode_ref,
+                      "ledger_seq":out.ledger_seq,"recorded_now":out.recorded_now,
+                      "record":out.record}),
+            )
         }
         _ => Err(LoopError::Usage(format!(
             "unknown verb {:?}; see `axon-loop` module docs for the verb list",

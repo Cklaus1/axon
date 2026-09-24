@@ -17,6 +17,8 @@
 //! * [`admission`] — the frozen plan rule applied deterministically:
 //!   ACCEPT / REJECT / INCONCLUSIVE (B277).
 //! * [`tel`] — whole-task economics over `Usage`; unknown stays unknown (B270).
+//! * [`intake`] — a MiCode episode sidecar joined to a stored policy and its
+//!   context receipt, recorded in the ledger (B269 Axon side).
 //!
 //! Every contract type comes from `axon-loop-contracts`; this crate adds only
 //! its own STORE records (pointer, admission, evaluation, hypothesis, plan).
@@ -31,6 +33,7 @@ pub mod epoch;
 pub mod error;
 pub mod evl;
 pub mod evo;
+pub mod intake;
 pub mod ledger;
 pub mod plan;
 pub mod pointer;

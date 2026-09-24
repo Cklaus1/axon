@@ -86,6 +86,13 @@ pub enum Event {
         scope: Scope,
         revocation: Revocation,
     },
+    /// A MiCode closed-loop episode sidecar joined to this store's policy and
+    /// the task's context receipt (`crate::intake`). Records evidence; moves
+    /// no pointer and grants nothing.
+    EpisodeIntake {
+        scope: Scope,
+        intake: Box<crate::intake::IntakeRecord>,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -126,7 +133,15 @@ fn corrupt(msg: impl Into<String>) -> LoopError {
 }
 
 /// Directories that only ever hold ledger-dependent state.
-const DEPENDENT: &[&str] = &["plans", "admissions", "evaluations", "baselines", "scopes"];
+const DEPENDENT: &[&str] = &[
+    "plans",
+    "admissions",
+    "evaluations",
+    "baselines",
+    "scopes",
+    "episodes",
+    "contexts",
+];
 
 impl<'s> Tx<'s> {
     pub fn begin(store: &'s Store) -> Result<Tx<'s>> {
