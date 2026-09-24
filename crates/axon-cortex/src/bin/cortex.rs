@@ -89,12 +89,19 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          --check-registry, which rechecks the authority epoch,
                          journals intent/launch/terminal to FILE and returns an
                          acf-execution-receipt/1. Requires --check-registry,
-                         --fabric-store, --fabric-tenant, --fabric-family and
-                         --fabric-epoch. Receipts appear under `receipts` in
-                         --json. A refused or verdict-less dispatch is exit 22.
+                         --fabric-store, --fabric-tenant, --fabric-family,
+                         --fabric-epoch, --fabric-grant-registry,
+                         --fabric-principal, --fabric-grant-ref and
+                         --fabric-policy-digest (none is defaulted). Receipts
+                         appear under `receipts` in --json. A refused or
+                         verdict-less dispatch is exit 22.
   --fabric-store DIR     the axon-loop store holding the authority epoch
   --fabric-tenant T / --fabric-family F   the scope within it
   --fabric-epoch N       the epoch this run was authorized under
+  --fabric-grant-registry FILE  the operator's axon-fabric-grant-registry/1
+  --fabric-principal P / --fabric-grant-ref G   who the checks run as, and
+                         the registry grant (bound to P) they run under
+  --fabric-policy-digest acf1:HEX   the governing policy (all-zero refused)
   --check-registry FILE  a `cortex-check-registry/1` JSON file naming the
                          checker by path AND sha256 (entry id
                          `axon-test-local`). Verified on load; a mismatch or a
@@ -137,6 +144,10 @@ struct FabricArgs {
     tenant: Option<String>,
     family: Option<String>,
     epoch: Option<u64>,
+    grant_registry: Option<std::path::PathBuf>,
+    principal: Option<String>,
+    grant_ref: Option<String>,
+    policy_digest: Option<String>,
 }
 
 impl FabricArgs {
@@ -147,6 +158,10 @@ impl FabricArgs {
             "--fabric-store" => self.store = Some(val(flag).into()),
             "--fabric-tenant" => self.tenant = Some(val(flag)),
             "--fabric-family" => self.family = Some(val(flag)),
+            "--fabric-grant-registry" => self.grant_registry = Some(val(flag).into()),
+            "--fabric-principal" => self.principal = Some(val(flag)),
+            "--fabric-grant-ref" => self.grant_ref = Some(val(flag)),
+            "--fabric-policy-digest" => self.policy_digest = Some(val(flag)),
             "--fabric-epoch" => {
                 let raw = val(flag);
                 self.epoch = Some(raw.parse().unwrap_or_else(|_| {
@@ -164,7 +179,6 @@ impl FabricArgs {
 fn fabric_executor(
     f: &FabricArgs,
     check_registry: Option<&std::path::Path>,
-    workspace: &std::path::Path,
 ) -> Option<std::sync::Arc<FabricSubmitExecutor>> {
     let journal = f.journal.clone()?;
     let need = |v: Option<String>, name: &str| {
@@ -184,9 +198,15 @@ fn fabric_executor(
         expected_epoch: f
             .epoch
             .unwrap_or_else(|| usage("--fabric-journal requires --fabric-epoch")),
-        principal_ref: "cortex:repair".into(),
-        grant_ref: format!("cortex-workspace:{}", workspace.display()),
-        policy_digest: format!("acf1:{}", "0".repeat(64)),
+        // Authority is OPERATOR input, never defaulted: this used to hard-code
+        // principal `cortex:repair` and an all-zero policy digest (D-016).
+        grant_registry: f
+            .grant_registry
+            .clone()
+            .unwrap_or_else(|| usage("--fabric-journal requires --fabric-grant-registry")),
+        principal_ref: need(f.principal.clone(), "--fabric-principal"),
+        grant_ref: need(f.grant_ref.clone(), "--fabric-grant-ref"),
+        policy_digest: need(f.policy_digest.clone(), "--fabric-policy-digest"),
         task_id: "cortex-repair".into(),
     };
     match FabricSubmitExecutor::new(cfg) {
@@ -370,7 +390,7 @@ fn main() {
             },
         };
 
-    let fabric = fabric_executor(&fabric_args, check_registry.as_deref(), &workspace);
+    let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let mut runner = registered_runner(
         &axon_bin,
         check_registry.as_deref(),
@@ -715,7 +735,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
              as evidence, and the target becomes a function of the answer",
         );
     }
-    let fabric = fabric_executor(&fabric_args, check_registry.as_deref(), &workspace);
+    let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let runner = registered_runner(
         &axon_bin,
         check_registry.as_deref(),

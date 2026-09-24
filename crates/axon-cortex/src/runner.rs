@@ -2182,9 +2182,16 @@ pub struct FabricDispatch {
     /// dispatch unless the store's CURRENT epoch equals it — at submit and
     /// again immediately before launch.
     pub expected_epoch: u64,
+    /// The operator's `axon-fabric-grant-registry/1` file. The Fabric
+    /// resolves `grant_ref` for `principal_ref` from it; the check runs under
+    /// the effect ceiling that grant induces.
+    pub grant_registry: PathBuf,
+    /// Who the checks run as (a claim the grant registry must bind to
+    /// `grant_ref`). Operator input; never defaulted.
     pub principal_ref: String,
     pub grant_ref: String,
-    /// `acf1:<hex>` digest of the governing policy.
+    /// `acf1:<hex>` digest of the governing policy. Operator input; the
+    /// all-zero placeholder is refused here and by the Fabric.
     pub policy_digest: String,
     pub task_id: String,
 }
@@ -2220,6 +2227,26 @@ impl FabricSubmitExecutor {
     pub const PROFILE: &'static str = "fabric-submit";
 
     pub fn new(cfg: FabricDispatch) -> Result<Self, String> {
+        for (name, v) in [
+            ("principal_ref", &cfg.principal_ref),
+            ("grant_ref", &cfg.grant_ref),
+        ] {
+            if v.trim().is_empty() {
+                return Err(format!("fabric dispatch needs a non-empty {name}"));
+            }
+        }
+        let hex = cfg.policy_digest.strip_prefix("acf1:").unwrap_or("");
+        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(format!(
+                "policy_digest `{}` is not `acf1:` + 64 lowercase hex",
+                cfg.policy_digest
+            ));
+        }
+        if hex.bytes().all(|b| b == b'0') {
+            return Err(
+                "policy_digest is the all-zero placeholder; name the governing policy".into(),
+            );
+        }
         let reg = CheckRegistry::load(&cfg.registry_file)?;
         let fab = reg
             .get(FABRIC_SUBMIT_ID)
@@ -2369,6 +2396,8 @@ impl CheckExecutor for FabricSubmitExecutor {
             .arg(&c.journal)
             .arg("--check-registry")
             .arg(&c.registry_file)
+            .arg("--grant-registry")
+            .arg(&c.grant_registry)
             .arg("--store")
             .arg(&c.store)
             .arg("--tenant")

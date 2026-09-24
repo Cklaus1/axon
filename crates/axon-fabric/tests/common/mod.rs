@@ -97,8 +97,58 @@ pub fn spawn_count(spawns: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// The default test grant: nothing but the filesystem, unscoped — so the
+/// check runs under `AXON_ALLOWED_EFFECTS=IO`.
+pub const GRANT_FS: &str = "\
+profile = \"restricted\"
+[grant]
+fs_read = [\"*\"]
+fs_write = [\"*\"]
+max_label = \"internal\"
+[grant.budget]
+cost_micro = 1000
+";
+
+/// A grant that withholds nothing (developer profile, every axis `*`): the
+/// only kind the Linux profile can honour (no guest policy channel, x1).
+pub const GRANT_OPEN: &str = "\
+profile = \"developer\"
+[grant]
+max_label = \"internal\"
+[grant.budget]
+cost_micro = 1000
+";
+
+pub const PRINCIPAL: &str = "principal:test";
+
+/// Write `<dir>/<name>.axgrant` and return (file name, sha256).
+pub fn write_grant(dir: &Path, name: &str, body: &str) -> (String, String) {
+    let file = format!("{name}.axgrant");
+    std::fs::write(dir.join(&file), body).unwrap();
+    let sha = sha256_file(&dir.join(&file));
+    (file, sha)
+}
+
+/// Write a grant registry binding each (grant_ref, principal, body).
+pub fn write_grant_registry(path: &Path, grants: &[(&str, &str, &str)]) {
+    let dir = path.parent().unwrap();
+    let entries: Vec<Value> = grants
+        .iter()
+        .map(|(gref, principal, body)| {
+            let (file, sha) = write_grant(dir, &gref.replace(':', "_"), body);
+            json!({"grant_ref": gref, "principal_ref": principal, "path": file, "sha256": sha})
+        })
+        .collect();
+    std::fs::write(
+        path,
+        json!({"schema": "axon-fabric-grant-registry/1", "grants": entries}).to_string(),
+    )
+    .unwrap();
+}
+
 pub struct Env {
     pub dir: tempfile::TempDir,
+    pub grant_registry: PathBuf,
     pub ws: PathBuf,
     pub journal: PathBuf,
     pub store: PathBuf,
@@ -126,7 +176,18 @@ impl Env {
         .unwrap();
         let registry = dir.path().join("registry.json");
         write_registry(&registry, &exe, None);
+        let gdir = dir.path().join("grants");
+        std::fs::create_dir_all(&gdir).unwrap();
+        let grant_registry = gdir.join("grants.json");
+        write_grant_registry(
+            &grant_registry,
+            &[
+                ("grant:test", PRINCIPAL, GRANT_FS),
+                ("grant:open", PRINCIPAL, GRANT_OPEN),
+            ],
+        );
         Env {
+            grant_registry,
             journal: dir.path().join("ops.journal"),
             ws,
             store,
@@ -157,9 +218,8 @@ impl Env {
                 verify_ms: 1_000_000,
                 retries: 100,
             },
-            effect_ceiling: Some("IO".into()),
+            grants: axon_fabric::GrantRegistry::load(&self.grant_registry).unwrap(),
             linux: None,
-            path_scoped_grant: false,
             pre_launch_hook: None,
         }
     }
@@ -228,7 +288,7 @@ pub fn request(env: &Env, op: &str, filter: &str) -> Value {
         "task_id": "task-1",
         "trial_id": "trial-1",
         "attempt_id": "attempt-1",
-        "principal_ref": "principal:test",
+        "principal_ref": PRINCIPAL,
         "grant_ref": "grant:test",
         "approval_ref": null,
         "job_kind": "registered_check",

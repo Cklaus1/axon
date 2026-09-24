@@ -291,11 +291,11 @@ fn linux_profile_eligibility_is_bound_to_the_qualified_manifest() {
     for needs in [
         backend::AuthorityNeeds {
             guest_policy_channel: true,
-            path_scoped_grant: false,
+            ..Default::default()
         },
         backend::AuthorityNeeds {
-            guest_policy_channel: false,
             path_scoped_grant: true,
+            ..Default::default()
         },
     ] {
         assert!(backend::select(&req, Some(&ok), needs).is_err());
@@ -428,6 +428,8 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
         .arg(&env.journal)
         .arg("--check-registry")
         .arg(&env.registry)
+        .arg("--grant-registry")
+        .arg(&env.grant_registry)
         .arg("--store")
         .arg(&env.store)
         .args([
@@ -591,6 +593,9 @@ fn linux_run_request(env: &Env, op: &str, manifest_guest_axon: &str) -> serde_js
     r["job_kind"] = json!("interpreter_run");
     r["argv"] = json!(["f.ax"]);
     r["registered_executable_ref"] = json!(backend::LINUX_GUEST_AXON_ID);
+    // The Linux guest has no policy channel (x1): only a grant that
+    // withholds nothing is eligible.
+    r["grant_ref"] = json!("grant:open");
     r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
         backend::LINUX_GUEST_AXON_ID,
         manifest_guest_axon
@@ -606,7 +611,6 @@ fn linux_submit(env: &Env, op: &str, launcher: std::path::PathBuf) -> axon_fabri
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx);
-    cfg.effect_ceiling = None; // no guest policy channel (x1)
     submit(&linux_run_request(env, op, &guest).to_string(), &cfg).unwrap()
 }
 
@@ -677,7 +681,6 @@ fn a_changed_manifest_makes_the_linux_profile_ineligible_with_no_launch() {
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx.clone());
-    cfg.effect_ceiling = None;
     let s = submit(&linux_run_request(&env, "op-chg", &guest).to_string(), &cfg).unwrap();
     assert_eq!(s.receipt.status, ReceiptStatus::Unsupported);
     assert_eq!(env.launch_records(), 0);

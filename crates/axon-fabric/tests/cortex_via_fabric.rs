@@ -60,6 +60,16 @@ fn cortex(s: &Setup, args: &[&str], epoch: u64) -> (i32, Value, String) {
         .args(["--fabric-tenant", "tenant-t", "--fabric-family", "family-f"])
         .arg("--fabric-epoch")
         .arg(epoch.to_string())
+        .arg("--fabric-grant-registry")
+        .arg(&e.grant_registry)
+        .args([
+            "--fabric-principal",
+            PRINCIPAL,
+            "--fabric-grant-ref",
+            "grant:test",
+        ])
+        .arg("--fabric-policy-digest")
+        .arg(format!("acf1:{}", "c".repeat(64)))
         // --axon is ignored under a registry; point it somewhere useless to
         // prove the registered binary is what runs.
         .args(["--axon", "/bin/false", "--json"])
@@ -195,4 +205,97 @@ fn cortex_locate_through_the_fabric_reports_receipts() {
     assert_eq!(v["schema"], "cortex-locate/1");
     assert_eq!(v["receipts"].as_array().map(|a| a.len()), Some(1), "{v}");
     assert_eq!(v["passing"], serde_json::json!(["t_small"]));
+}
+
+/// D-016: fabric mode takes principal, grant_ref and policy digest as
+/// EXPLICIT operator input. It used to hard-code principal `cortex:repair`
+/// and an all-zero policy digest. Absent any of them — or with the zero
+/// placeholder — cortex refuses to start: nothing spawned, no journal.
+#[test]
+fn cortex_fabric_mode_refuses_to_start_without_explicit_authority() {
+    let flags = [
+        "--fabric-grant-registry",
+        "--fabric-principal",
+        "--fabric-grant-ref",
+        "--fabric-policy-digest",
+    ];
+    for missing in flags {
+        let s = setup();
+        let e = &s.env;
+        let mut cmd = Command::new(cortex_bin());
+        cmd.args([
+            "locate",
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+        ])
+        .arg("--workspace")
+        .arg(&e.ws)
+        .arg("--check-registry")
+        .arg(&s.registry)
+        .arg("--fabric-journal")
+        .arg(&e.journal)
+        .arg("--fabric-store")
+        .arg(&e.store)
+        .args(["--fabric-tenant", "tenant-t", "--fabric-family", "family-f"])
+        .args(["--fabric-epoch", "0"]);
+        let gr = e.grant_registry.display().to_string();
+        let digest = format!("acf1:{}", "c".repeat(64));
+        for (f, v) in [
+            ("--fabric-grant-registry", gr.as_str()),
+            ("--fabric-principal", PRINCIPAL),
+            ("--fabric-grant-ref", "grant:test"),
+            ("--fabric-policy-digest", digest.as_str()),
+        ] {
+            if f != missing {
+                cmd.args([f, v]);
+            }
+        }
+        let out = cmd.output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{missing}: {err}");
+        assert!(err.contains(missing), "{missing}: {err}");
+        assert_eq!(spawn_count(&e.spawns), 0, "{missing}: nothing spawned");
+        assert!(!e.journal.exists(), "{missing}: no journal");
+    }
+
+    // The zero placeholder is refused at construction (exit 22, nothing run).
+    let s = setup();
+    let e = &s.env;
+    let out = Command::new(cortex_bin())
+        .args([
+            "locate",
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+        ])
+        .arg("--workspace")
+        .arg(&e.ws)
+        .arg("--check-registry")
+        .arg(&s.registry)
+        .arg("--fabric-journal")
+        .arg(&e.journal)
+        .arg("--fabric-store")
+        .arg(&e.store)
+        .args(["--fabric-tenant", "tenant-t", "--fabric-family", "family-f"])
+        .args(["--fabric-epoch", "0"])
+        .arg("--fabric-grant-registry")
+        .arg(&e.grant_registry)
+        .args([
+            "--fabric-principal",
+            PRINCIPAL,
+            "--fabric-grant-ref",
+            "grant:test",
+        ])
+        .arg("--fabric-policy-digest")
+        .arg(format!("acf1:{}", "0".repeat(64)))
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(22), "{err}");
+    assert!(err.contains("placeholder"), "{err}");
+    assert_eq!(spawn_count(&e.spawns), 0, "nothing spawned");
+    assert!(!e.journal.exists(), "no journal");
 }

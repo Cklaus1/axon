@@ -14,7 +14,7 @@
 | **D-008** | cancellation killed only the direct child | **FIXED** — `process_group` + `killpg`; differential-verified | `fix/kill-the-process-group` |
 | D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
 | D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **open** — Stage 2 | — |
-| D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **open** — Stage 2 | — |
+| D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **fixed for the Fabric** (Stage 2 lane 2B); `axon-loop` plan approval still open | `crates/axon-fabric/tests/grant_authority.rs` |
 | D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **open** — Stage 2 | — |
 | D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
 | D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
@@ -683,7 +683,32 @@ package) forbids a second identity/approval system.
 
 **Proposed resolution.** Resolve `grant_ref` to an `axon_os::grant::Grant` and
 pass THAT to `supervise_requiring`; enforce the same grant at dispatch; make the
-policy digest a required operator input or refuse. **Stage 2. OPEN.**
+policy digest a required operator input or refuse.
+
+**Resolution (Stage 2, lane 2B).** `crates/axon-fabric/src/grants.rs`: an
+operator `axon-fabric-grant-registry/1` file maps `grant_ref` → a grant file
+pinned by sha256 and bound to one `principal_ref`; the file is parsed by
+`axon_os::parse_manifest` (no second grant parser). Unknown ref / unbound
+principal / edited file → `SubmitError::Unauthorized` (exit 7) before the
+journal is opened. `supervise_requiring` now runs under THAT grant with its
+`require_approval` policy (token = the grant file's `.approval` sibling,
+verified by axon-os) over a probe declaring the program's scanned effect row;
+`limits.max_cost_micro` must fit `grant.budget.cost_micro`. The executed check's
+`AXON_ALLOWED_EFFECTS` is derived from the admitted grant (`--effect-ceiling`
+removed); path-scoped and reproducible grants are `unsupported` (no backend can
+enforce them), and the Linux profile is eligible only for a grant withholding
+nothing (in-guest enforcement is Stage 3, B263 x1 — not claimed). The all-zero
+`policy_digest` is refused by the Fabric and by `FabricSubmitExecutor::new`;
+`cortex --fabric-journal` requires `--fabric-principal`, `--fabric-grant-ref`,
+`--fabric-grant-registry`, `--fabric-policy-digest` (exit 2 if absent).
+Tests: `tests/grant_authority.rs` (7) and
+`cortex_via_fabric.rs::cortex_fabric_mode_refuses_to_start_without_explicit_authority`,
+each refusal asserting no spawn, no launch record and (pre-journal refusals)
+no journal file. Mutation-checked: ceiling constant, hard-coded admitted grant,
+`require_approval` forced false, placeholder check, principal binding, digest
+check, empty scanned row, cortex hard-coded principal/digest — each fails a
+test. **Still OPEN:** the principal is bound, not authenticated;
+`axon-loop/src/plan.rs` self-asserted approval (lane 2A's crate).
 
 ## D-017 — D-C3 / D-C5: duplicated canonicaliser; second budget algebra
 

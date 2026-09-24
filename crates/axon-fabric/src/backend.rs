@@ -162,6 +162,12 @@ pub struct AuthorityNeeds {
     pub guest_policy_channel: bool,
     /// The grant scopes filesystem paths, which must be preserved.
     pub path_scoped_grant: bool,
+    /// The grant is `reproducible` (axon-os `hermetic`): the run must not see
+    /// ambient `AXON_*` variables and must use the virtual clock. No backend
+    /// here can guarantee that — the host interpreter executor inherits the
+    /// Fabric's environment, and the Linux guest's is not policed — so such a
+    /// grant is refused rather than run non-reproducibly.
+    pub reproducible: bool,
 }
 
 /// Why no backend was selected.
@@ -176,6 +182,13 @@ pub fn select(
     needs: AuthorityNeeds,
 ) -> Result<Profile, Unsupported> {
     let r = &req.required;
+    if needs.reproducible {
+        return Err(Unsupported(
+            "the grant is reproducible (hermetic), and no backend here can withhold the ambient \
+             environment or impose the virtual clock; refused rather than run non-reproducibly"
+                .into(),
+        ));
+    }
     if r.network_mode == NetworkMode::Brokered {
         return Err(Unsupported(
             "network_mode=brokered: no egress broker exists".into(),
@@ -235,6 +248,17 @@ pub fn select(
         )));
     }
     let p = LOCAL_INTERPRETER;
+    if needs.path_scoped_grant {
+        // The host interpreter's only policy input is `AXON_ALLOWED_EFFECTS`,
+        // a set of coarse effect names: it cannot carry a path or host
+        // allowlist, so admitting a scoped grant here would enforce a wider
+        // one than was admitted.
+        return Err(Unsupported(format!(
+            "{}: the grant scopes paths or hosts, and this backend enforces only coarse effect \
+             axes (AXON_ALLOWED_EFFECTS), not allowlists",
+            p.id
+        )));
+    }
     if !p.job_kinds.contains(&req.job_kind) {
         return Err(Unsupported(format!(
             "{}: job_kind {:?} unsupported (it runs registered checks only)",

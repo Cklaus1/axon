@@ -17,8 +17,29 @@ linking this crate, because this crate depends on `axon-cortex`.
 * **`submit`**: `acf-compute-request/1` in, `acf-execution-receipt/1` out.
   Before the journal's launch record it strictly parses the request, rechecks
   the authority **epoch** against an `axon-loop` store, applies isolation and
-  registered-executable checks, and runs an `axon-os` admission. The binary
-  also has `status` and `cancel`.
+  registered-executable checks, resolves the request's grant and runs an
+  `axon-os` admission under it. The binary also has `status` and `cancel`.
+* **`grants`** (D-016): the operator's `axon-fabric-grant-registry/1` file
+  maps `grant_ref` → a grant file pinned by sha256 and bound to one
+  `principal_ref`. The grant file is an axon-os `.axjob` without `program`
+  and is parsed by `axon_os::parse_manifest`, so profile semantics are
+  axon-os's own (misspelling refused, omitted dimensions materialised,
+  `reproducible` ORed on intersection, `require_approval` per the axon-os
+  table with the token at the grant file's `.approval` sibling). An unknown
+  ref, a principal it is not bound to, or an edited grant file is refused
+  (exit 7, `unauthorized`) before the journal is opened. The all-zero
+  `policy_digest` placeholder is refused (exit 3).
+* **Authority at execution.** Admission is `supervise_requiring` under the
+  resolved grant, over a probe that declares the program's SCANNED effect row
+  (`axon_os::runtime::scan_effects`). The check then runs under
+  `AXON_ALLOWED_EFFECTS` derived from that same grant (the mapping
+  `axon-os`'s sandbox wrapper uses; a grant withholding everything yields `""`
+  = deny every effect). There is no `--effect-ceiling` flag any more. Grants
+  the backends cannot enforce are `unsupported`, never weakened: a
+  path/host-scoped grant (the interpreter's ceiling is coarse effect names),
+  a reproducible (hermetic) grant (the executor inherits the Fabric's
+  environment), and on `linux-microvm-protected` any grant that withholds an
+  effect (no guest policy channel — in-guest enforcement is Stage 3, B263 x1).
 * **`backend`**: three backend profiles, chosen by what each one *is*, with no
   fallback between them:
   * `process_scoped/local-interpreter` runs registered checks and has no
@@ -34,17 +55,16 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 
 ## What it does NOT do
 
-* **It does not enforce the request's authority.** `principal_ref` and
-  `grant_ref` are opaque strings, used only to format `authority_ref`.
-  Admission (`submit.rs` `supervisor_admits`) runs `supervise_requiring` over
-  a no-op `AdmissionProbe` that declares an empty effect row. It uses a
-  **hard-coded `Profile::Restricted` grant** and `require_approval: false`,
-  whatever the request says. At dispatch the check is bounded only by an
-  optional `--effect-ceiling`, and with no ceiling it runs unbounded. So the
-  grant it admits is not the grant it enforces. Also, `cortex --fabric-journal`
-  hard-codes principal `cortex:repair` and `policy_digest acf1:000…`. This is
-  open conflict **D-C2**, Stage 2: `governance/cortex-v015/DISCREPANCIES.md`
-  D-016.
+* **It does not authenticate the principal.** The grant registry BINDS a
+  `principal_ref` to a `grant_ref`; it does not prove the caller is that
+  principal (a claim, like `AXON_PRINCIPAL`). `cortex --fabric-journal` now
+  takes `--fabric-principal`, `--fabric-grant-ref`, `--fabric-grant-registry`
+  and `--fabric-policy-digest` explicitly and refuses to start without them
+  (D-016 closed for the Fabric; `axon-loop` plan approval is not covered).
+* **The admission probe does not run the program.** Admission decides from
+  the scanned effect row; the executed check is bounded by the grant's
+  interpreter ceiling, which is process-scoped enforcement, not an OS
+  boundary. `grant.budget` bounds only `limits.max_cost_micro`.
 * **It does not meter cost.** Every receipt says `usage_state: unknown` and
   every settlement is `Billing::Unknown`. Unknown is reported as unknown, never
   as 0.
@@ -58,7 +78,6 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 
 | defect | where | evidence |
 |---|---|---|
-| Admission uses a fixed grant (D-C2) | `src/submit.rs` `supervisor_admits` | D-016 |
 | Duplicate `acf1:` canonicaliser across the cortex seam (D-C3) | `src/submit.rs:176-189` vs `axon-cortex/src/runner.rs` `fabric_*_digest` | D-017 |
 | Its own reservation algebra instead of `axon_os::ResourceLedger::carve` (D-C5) | `src/journal.rs` `reserve` | D-017 |
 | `LinuxProfileConfig::qualification()` accepts a record with BLOCKED > 0: it ignores the missing trusted issuer, host, freshness, engine digests and any signature. An unsigned JSON the operator can write enables protected dispatch | `src/backend.rs` `qualification` | D-020; B263 evidence 32 PASS / 0 FAIL / 4 BLOCKED |

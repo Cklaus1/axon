@@ -17,9 +17,11 @@
 //! files — no database dependency.
 
 pub mod backend;
+pub mod grants;
 pub mod journal;
 pub mod submit;
 
+pub use grants::{GrantRegistry, ResolvedGrant};
 pub use journal::{
     Begin, Billing, Intent, Journal, JournalError, OpState, OpView, RecoveryReport, ResourceVector,
     ScopeUsage, Settlement, JOURNAL_SCHEMA,
