@@ -15,7 +15,7 @@
 | D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
 | D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **open** — Stage 2 | — |
 | D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **fixed for the Fabric** (Stage 2 lane 2B); `axon-loop` plan approval still open | `crates/axon-fabric/tests/grant_authority.rs` |
-| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | D-C3 **fixed** (Stage 2 lane 2B); D-C5 see entry | `crates/axon-cortex/tests/fabric_acf1.rs` |
+| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **fixed** (Stage 2 lane 2B) | `crates/axon-cortex/tests/fabric_acf1.rs`, `crates/axon-fabric/tests/journal.rs` |
 | D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
 | D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
 | D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **open** — Stage 3 | — |
@@ -745,6 +745,30 @@ dropping the sort, and escaping DEL each fail a test. Measured honestly: the
 pre-fix serde_json-based cortex implementation was byte-correct for these
 inputs; the defect was the duplication and its reliance on the map type's
 order, not a wrong digest today.
+
+**D-C5 resolved (Stage 2, lane 2B).** `journal.rs` `Rec::Reserved` now decides
+committed ≤ ceiling with `axon_os::ledger::ResourceLedger::carve` (its first
+production caller), through its existing public API — `ledger.rs` unchanged.
+Two semantic mismatches, handled rather than forced: (1) `ResourceLedger` has
+three fixed axes (compute/budget/persist_bytes) and the journal four
+dimensions, so each dimension is carved on its own single-axis ledger and the
+refused dimension is reported by name (`BudgetExceeded.dimension`);
+(2) `carve`'s `used` never decreases, but the journal must release a
+never-launched cancel and settle liability to a known charge, so the ledger is
+rebuilt per check from the journal-derived committed total rather than stored.
+One gap in `carve` itself was found and guarded, not fixed (axon-os is outside
+this lane's remit beyond reachability): it checks with `saturating_add` and
+then adds UNCHECKED, so at a cap of `u64::MAX` an overflowing carve is admitted
+and then overflows (panic in debug, wrap in release). The journal refuses an
+overflowing sum before calling it. Tests:
+`each_dimension_is_carved_through_the_axon_os_ledger`,
+`an_overflowing_reservation_is_refused_not_wrapped`. Mutation-checked:
+bypassing `carve` and removing the overflow guard each fail a behavioural
+test. A parallel `used + want > cap` comparison is meant to AGREE with `carve`,
+so no behavioural test can catch it; `the_reservation_check_is_resource_ledger_carve`
+pins the structure instead (source check: `carve_within` calls
+`ResourceLedger::carve`, the reserve path calls `carve_within`, `fits_within`
+is gone) and fails on that mutation.
 
 ## D-018 — D-C6: "admission" is two concepts; an ACCEPT is never a grant
 

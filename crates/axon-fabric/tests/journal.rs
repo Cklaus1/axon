@@ -418,6 +418,91 @@ fn concurrent_reservations_cannot_overspend() {
     assert_eq!(j.scope_usage(&scope()).unwrap().held.exec_ms, 100);
 }
 
+/// D-C5: the committed ≤ ceiling check is axon-os `ResourceLedger::carve`,
+/// and the refusal names the dimension carve refused — for EACH of the four.
+/// A refused reserve writes nothing.
+#[test]
+fn each_dimension_is_carved_through_the_axon_os_ledger() {
+    for (dim, set) in [
+        (
+            "model_micro_usd",
+            (|r: &mut ResourceVector| r.model_micro_usd = 1_001) as fn(&mut _),
+        ),
+        ("exec_ms", |r: &mut ResourceVector| r.exec_ms = 101),
+        ("verify_ms", |r: &mut ResourceVector| r.verify_ms = 101),
+        ("retries", |r: &mut ResourceVector| r.retries = 11),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let j = fresh(dir.path());
+        let mut i = intent("op-over", dim.as_bytes(), 1);
+        set(&mut i.reservation);
+        j.begin(i).unwrap();
+        let before = j.len();
+        match j.reserve(&opid("op-over")) {
+            Err(JournalError::BudgetExceeded { dimension, .. }) => {
+                assert_eq!(dimension, dim, "carve's refused axis, by name")
+            }
+            other => panic!("{dim}: {other:?}"),
+        }
+        assert_eq!(j.len(), before, "{dim}: nothing written");
+        assert_eq!(j.view(&opid("op-over")).unwrap().state, OpState::Intended);
+    }
+}
+
+/// A parallel `used + want > cap` comparison and `carve` are MEANT to agree,
+/// so behaviour cannot tell them apart; the structure is what D-C5 is about.
+/// The reservation path must call `ResourceLedger::carve`, and the old
+/// parallel `fits_within` must not come back.
+#[test]
+fn the_reservation_check_is_resource_ledger_carve() {
+    let src = include_str!("../src/journal.rs");
+    let body = &src[src.find("fn carve_within(").unwrap()..src.find("fn saturating_add(").unwrap()];
+    assert!(
+        body.contains("ResourceLedger::new(") && body.contains(".carve(Carve {"),
+        "carve_within must decide through axon-os ResourceLedger::carve:\n{body}"
+    );
+    assert!(
+        !src.contains("fn fits_within"),
+        "no parallel ceiling algebra"
+    );
+    let reserved = &src[src.find("Rec::Reserved { op } =>").unwrap()..];
+    let reserved = &reserved[..reserved.find("Rec::Launched").unwrap()];
+    assert!(reserved.contains("carve_within("), "{reserved}");
+}
+
+/// `ResourceLedger::carve` alone would ADMIT an overflowing carve at a cap of
+/// u64::MAX (its check saturates) and then overflow its unchecked add. The
+/// journal refuses it, with nothing written and no panic.
+#[test]
+fn an_overflowing_reservation_is_refused_not_wrapped() {
+    let dir = tempfile::tempdir().unwrap();
+    let (j, _) = Journal::open(dir.path().join("j")).unwrap();
+    let max = ResourceVector {
+        model_micro_usd: u64::MAX,
+        exec_ms: u64::MAX,
+        verify_ms: u64::MAX,
+        retries: u64::MAX,
+    };
+    j.declare_budget(&scope(), max).unwrap();
+    let mut a = intent("op-a", b"a", 0);
+    a.reservation.exec_ms = u64::MAX;
+    j.begin(a).unwrap();
+    j.reserve(&opid("op-a")).unwrap();
+    let mut b = intent("op-b", b"b", 0);
+    b.reservation.exec_ms = 1;
+    j.begin(b).unwrap();
+    let before = j.len();
+    assert!(matches!(
+        j.reserve(&opid("op-b")),
+        Err(JournalError::BudgetExceeded {
+            dimension: "exec_ms",
+            ..
+        })
+    ));
+    assert_eq!(j.len(), before, "nothing written");
+    assert_eq!(j.scope_usage(&scope()).unwrap().held.exec_ms, u64::MAX);
+}
+
 #[test]
 fn every_dimension_is_a_ceiling() {
     let dir = tempfile::tempdir().unwrap();

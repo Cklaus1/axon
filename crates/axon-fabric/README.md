@@ -13,7 +13,13 @@ linking this crate, because this crate depends on `axon-cortex`.
   `OperationId` with a different input digest is a conflict. On reopen, a
   `Launched` op with no terminal record becomes `OutcomeUnknown`: its
   liability is kept and it is never re-executed. It carves aggregate
-  reservations over a combined model/exec/verify/retry budget.
+  reservations over a combined model/exec/verify/retry budget; the
+  committed ≤ ceiling check for each dimension is `axon_os::ledger::
+  ResourceLedger::carve` (D-C5), with an overflow guard `carve` lacks. The
+  journal keeps what the ledger has no notion of: durability, held vs
+  liability vs charged, `OutcomeUnknown`, and release on a never-launched
+  cancel (`carve`'s `used` never decreases, so it is re-derived per check
+  from the journal state rather than stored).
 * **`submit`**: `acf-compute-request/1` in, `acf-execution-receipt/1` out.
   Before the journal's launch record it strictly parses the request, rechecks
   the authority **epoch** against an `axon-loop` store, applies isolation and
@@ -85,7 +91,6 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 
 | defect | where | evidence |
 |---|---|---|
-| Its own reservation algebra instead of `axon_os::ResourceLedger::carve` (D-C5) | `src/journal.rs` `reserve` | D-017 |
 | `LinuxProfileConfig::qualification()` accepts a record with BLOCKED > 0: it ignores the missing trusted issuer, host, freshness, engine digests and any signature. An unsigned JSON the operator can write enables protected dispatch | `src/backend.rs` `qualification` | D-020; B263 evidence 32 PASS / 0 FAIL / 4 BLOCKED |
 | Linux dispatch is tested only through a **stand-in launcher**, so the tests say nothing about the VM | `tests/submit.rs:550-560` | `F_guest_vm.json` B280 |
 | The Linux profile's guest is unpoliced (no in-guest effect ceiling). Fabric refuses requests that need one, so only grant-free `interpreter_run` reaches it | `src/backend.rs` `select` | D-020, operator decision D5 |
