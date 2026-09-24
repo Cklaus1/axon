@@ -1172,3 +1172,45 @@ fn ab9_freeze_requires_the_registered_manifest() {
         "{e}"
     );
 }
+
+/// R3 (independent round 3, best effort): a store that ever had a ledger keeps
+/// `ledger.anchor`; deleting the ledger, head and EVERY dependent directory no
+/// longer silently reissues epoch 1 — unless the anchor is deleted too, which
+/// is out of model (documented in ledger.rs). A ledger swapped for another
+/// store's is also detected by the anchor.
+#[test]
+fn r3_anchor_prevents_silent_epoch_reissue() {
+    let w = world();
+    let root = w.s.root().to_path_buf();
+    assert!(root.join("ledger.anchor").exists());
+    std::fs::remove_file(root.join("ledger.jsonl")).unwrap();
+    std::fs::remove_file(root.join("ledger.head")).unwrap();
+    for d in [
+        "plans",
+        "admissions",
+        "evaluations",
+        "baselines",
+        "scopes",
+        "episodes",
+        "contexts",
+        "candidate-sets",
+        "task-manifests",
+    ] {
+        let _ = std::fs::remove_dir_all(root.join(d));
+    }
+    let e = pointer::load(&w.s, &scope()).unwrap_err();
+    assert!(
+        e.exit_code() == 2 && e.to_string().contains("ledger.anchor"),
+        "{e}"
+    );
+
+    // a ledger replaced by another store's (both files, consistent) is caught
+    let w1 = world();
+    let other = tempfile::tempdir().unwrap();
+    let s2 = store_with_config(other.path());
+    for f in ["ledger.jsonl", "ledger.head"] {
+        std::fs::copy(s2.root().join(f), w1.s.root().join(f)).unwrap();
+    }
+    let e = pointer::load(&w1.s, &scope()).unwrap_err();
+    assert_eq!(e.exit_code(), 2, "{e}");
+}

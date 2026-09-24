@@ -7,22 +7,46 @@
 //! `ledger.head` records `{seq, entry_ref}` of the last acknowledged entry.
 //!
 //! Everything else is either content-addressed data (`policies/`,
-//! `admissions/`, `evaluations/`, `plans/<id>/plan.json`, each re-checked
-//! against the digest the ledger names) or a PROJECTION of the ledger
-//! (`scopes/<t>/<f>/pointer.json`). A projection that differs from the replay
-//! of the ledger is corruption (exit 2), never trusted. So:
+//! `admissions/`, `evaluations/`, `plans/`, `candidate-sets/`,
+//! `task-manifests/`, …, each re-checked against the digest the ledger
+//! names) or a PROJECTION of the ledger (`scopes/<t>/<f>/pointer.json`).
 //!
-//! * editing `pointer.json` (active policy, history) is detected (A7b, F3b);
-//! * deleting or truncating the ledger is detected by the head, and deleting
-//!   ledger AND head while ledger-dependent state remains is detected too
-//!   (A7c) — a fence is never reissued;
+//! # What the chain does and does not detect (the threat model, precisely)
+//!
+//! The chain and head are UNKEYED sha256 in the same directory as the data.
+//! They detect ACCIDENTAL damage and edits by a writer who does not also
+//! rewrite the chain consistently:
+//!
+//! * a projection that differs from the replay of the ledger (edited
+//!   `pointer.json`, injected history) is corruption, exit 2 (A7b, F3b);
+//! * an edited, reordered or duplicated ledger line breaks the chain, exit 2;
+//! * truncating the ledger while the head is LEFT UNTOUCHED is detected
+//!   (the head names a later entry); deleting the head alone is detected;
+//! * deleting ledger AND head while any ledger-dependent directory remains,
+//!   or while `ledger.anchor` remains, is detected (A7c, R3 partial) — see
+//!   below;
 //! * a freeze cannot be undone by deleting a file (G6).
+//!
+//! It does NOT detect a writer with filesystem access who rewrites
+//! consistently: truncating the ledger AND rewriting the head to the new last
+//! entry (R2), restoring an older copy of the whole store (R1), appending a
+//! well-chained forged entry and recomputing the head (F1, F2), or deleting
+//! the ledger, head, anchor and every dependent directory (R3). Those need an
+//! external anchor (a signed or remotely witnessed head) and are OUT OF
+//! MODEL here: the store proves it is internally consistent, not who wrote
+//! it, and not that it is the latest version. Replay re-checks linkage; it
+//! does not re-validate event semantics.
+//!
+//! `ledger.anchor` (R3, best effort): written once with the first entry's
+//! ref and never rewritten. Its presence with no ledger is corruption, so a
+//! scope's fence cannot be silently reissued by deleting the ledger and the
+//! dependent directories; deleting the anchor as well is still undetectable
+//! (in-store, unkeyed — same limit as above).
 //!
 //! Every [`Tx`] holds the store's single exclusive lock for its whole life,
 //! verifies the chain, and rolls a crash forward: an entry appended before the
-//! head was updated was decided and made durable, so its head and projection
-//! are completed. Nothing here is authentication — the chain proves the
-//! ledger is internally consistent, not who wrote it.
+//! head was updated was decided and made durable, so its projection and head
+//! are completed.
 
 use crate::error::{LoopError, Result};
 use crate::evo::Hypothesis;
@@ -139,6 +163,19 @@ fn ledger_path(s: &Store) -> PathBuf {
 fn head_path(s: &Store) -> PathBuf {
     s.root().join("ledger.head")
 }
+fn anchor_path(s: &Store) -> PathBuf {
+    s.root().join("ledger.anchor")
+}
+
+crate::record_tag!(AnchorSchema, "axon.loop.ledger-anchor/1");
+
+/// Written once, with the first ledger entry; never rewritten (see module docs).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Anchor {
+    pub schema: AnchorSchema,
+    pub first_entry_ref: Ref,
+}
 
 fn corrupt(msg: impl Into<String>) -> LoopError {
     LoopError::Io(format!("store corrupt: {}", msg.into()))
@@ -203,6 +240,12 @@ impl<'s> Tx<'s> {
             None if n == 1 => tx.roll_forward()?,
             None if n > 1 => return Err(corrupt("ledger head missing")),
             None => {
+                if std::fs::symlink_metadata(anchor_path(store)).is_ok() {
+                    return Err(corrupt(
+                        "ledger missing but ledger.anchor exists: this store had a ledger; \
+                         a fence is never reissued",
+                    ));
+                }
                 for d in DEPENDENT {
                     let p = store.root().join(d);
                     if std::fs::symlink_metadata(&p).is_ok() {
@@ -211,6 +254,13 @@ impl<'s> Tx<'s> {
                         )));
                     }
                 }
+            }
+        }
+        if let Some(a) = store.read_json::<Anchor>(&anchor_path(store))? {
+            if tx.refs.first() != Some(&a.first_entry_ref) {
+                return Err(corrupt(
+                    "ledger.anchor names a different first entry: the ledger was replaced",
+                ));
             }
         }
         tx.check_projections()?;
@@ -228,6 +278,17 @@ impl<'s> Tx<'s> {
     }
 
     fn write_head(&self) -> Result<()> {
+        // The anchor is written BEFORE the first head (so a committed ledger
+        // always has one) and never rewritten.
+        if std::fs::symlink_metadata(anchor_path(self.store)).is_err() {
+            self.store.write_json(
+                &anchor_path(self.store),
+                &Anchor {
+                    schema: AnchorSchema,
+                    first_entry_ref: self.refs[0].clone(),
+                },
+            )?;
+        }
         let h = Head {
             schema: HeadSchema,
             seq: self.entries.len() as u64,
