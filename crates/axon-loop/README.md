@@ -77,11 +77,10 @@ No `axon` CLI verb reaches this crate.
 
 From red-team round 4, run independently against `dead41b` (operator-side
 evidence, `.axon-v022/redteam/axon-loop-r4-independent.md`, **not in the
-repository**). Stage 2 lane 2A fixes NS3 (scope-keyed records); the rows still listed below are open.
+repository**). Stage 2 lane 2A fixes NS3 (scope-keyed records) and NS4p/NS4w (a subject issuer is never accepted as the preflight observer of its own trials, mirroring the verifier rule). The rows still listed below are open.
 
 | id | severity | defect |
 |---|---|---|
-| NS4p / NS4w | MEDIUM | `evl` checks the preflight observer against `trusted_observers` and against the expecting parent, but never against the subject set (the request's `subject_issuers` plus the candidate's proposer). If an operator lists the proposer or the worker as an observer, that party can establish a verified pass over its own trials |
 | NS4b | LOW | An explicit `"trusted_observers": []` in `config.json` is refused as malformed (exit 3) by every writing verb, including a fenced pause. The cause: `skip_serializing_if = "Vec::is_empty"` combined with the strict canonical round-trip. It fails closed, but "I said none" becomes unparseable, which contradicts the project's rule that absent ≠ empty |
 
 Ownership conflicts D-C1 and D-C2 are also open. See

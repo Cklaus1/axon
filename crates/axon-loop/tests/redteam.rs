@@ -1214,3 +1214,40 @@ fn r3_anchor_prevents_silent_epoch_reissue() {
     let e = pointer::load(&w1.s, &scope()).unwrap_err();
     assert_eq!(e.exit_code(), 2, "{e}");
 }
+
+/// NS4p / NS4w (independent round 4, fixture `J-evl-obs-{proposer,worker}`):
+/// the operator lists the PROPOSER or the WORKER in `trusted_observers`, and
+/// every trial's preflight is observed by it. A subject observing its own
+/// preflight must not establish a pass, however the operator configured the
+/// observer set — the verifier exclusion (B281/G25), mirrored. Control: the
+/// same request observed by the evaluator (not a subject) still passes.
+#[test]
+fn ns4p_ns4w_a_subject_is_never_a_trusted_observer_of_its_own_trials() {
+    fn run(who: &str) -> Vec<u32> {
+        let w = world();
+        let mut cfg = w.s.config().unwrap();
+        cfg.trusted_observers.push(OpaqueRef::new(who).unwrap());
+        w.s.write_config(&cfg).unwrap();
+        freeze_plan_n(&w.s, "expj", &w.inc_ref, &w.cand_ref, 4, |_| {}).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let specs = pair(&w.inc, &w.cand, 4, 4, 4, Some(100), Some(50));
+        let mut v = evl_request("expj", &w.inc, &w.cand, &specs, &EvlOpts::default());
+        for t in v["trials"].as_array_mut().unwrap() {
+            let mut ctx: ExecutionContextReceipt = parse(&t["context"].to_string()).unwrap();
+            ctx.observed_issuer_ref = OpaqueRef::new(who).unwrap();
+            let mut ep: LoopEpisode = parse(&t["episode"].to_string()).unwrap();
+            ep.context_ref = digest(&ctx).unwrap();
+            t["context"] = serde_json::to_value(&ctx).unwrap();
+            t["episode"] = serde_json::to_value(&ep).unwrap();
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        rec.arms.iter().map(|a| a.verified_pass as u32).collect()
+    }
+    assert_eq!(run(PROPOSER), vec![0, 0], "NS4p: proposer self-observed");
+    assert_eq!(run(WORKER), vec![0, 0], "NS4w: worker self-observed");
+    assert_eq!(
+        run(EVALUATOR),
+        vec![4, 4],
+        "control: a non-subject observer"
+    );
+}
