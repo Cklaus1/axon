@@ -287,12 +287,14 @@ fn an_empty_mandatory_match_is_not_run_never_passed() {
         failed: vec![],
         passed: vec![],
         total: 0,
+        exit_code: None,
     };
     assert_eq!(empty.verdict("hidden_completion"), CheckVerdict::NotRun);
     let sibling_only = CheckReport {
         failed: vec![],
         passed: vec!["hidden_completion_edge".into()],
         total: 1,
+        exit_code: None,
     };
     assert_eq!(
         sibling_only.verdict("hidden_completion"),
@@ -302,6 +304,7 @@ fn an_empty_mandatory_match_is_not_run_never_passed() {
         failed: vec!["x".into()],
         passed: vec!["x".into()],
         total: 2,
+        exit_code: None,
     };
     assert_eq!(both.verdict("x"), CheckVerdict::Failed);
 

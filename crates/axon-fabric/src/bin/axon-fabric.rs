@@ -1,0 +1,193 @@
+//! `axon-fabric` — the Fabric submit CLI. JSON in, JSON out.
+//!
+//! ```text
+//! axon-fabric submit --request FILE|- --journal FILE --check-registry FILE
+//!                    --store DIR --tenant T --family F --expected-epoch N
+//!                    [--workspace DIR] [--effect-ceiling CSV]
+//!                    [--budget-micro N] [--budget-exec-ms N]
+//!                    [--linux-launcher SH --linux-manifest JSON
+//!                     --linux-evidence JSON [--linux-artifacts DIR]
+//!                     --linux-out-root DIR] [--path-scoped-grant]
+//! axon-fabric status --journal FILE --op ID
+//! axon-fabric cancel --journal FILE --op ID --reason TEXT
+//! ```
+//!
+//! Output on success: `{"schema":"axon-fabric-submit/1", "receipt": <acf-execution-receipt/1>,
+//! "check_report": …, "replayed": bool, "backend": …, "reason": …}`, exit 0 —
+//! whatever the receipt status (a receipt is an answer, including
+//! `unsupported`, `denied`, `failed`). A refusal that produced no receipt is
+//! `{"schema":"axon-fabric-refusal/1","kind":…,"reason":…}` with a nonzero
+//! exit (2 io/journal, 3 malformed, 4 unregistered, 5 conflict, 6 stale epoch).
+//!
+//! Every executable comes from the `--check-registry` file (path + sha256),
+//! never from the request.
+
+use std::io::Read;
+use std::path::PathBuf;
+
+use axon_fabric::backend::LinuxProfileConfig;
+use axon_fabric::submit::{scope, EpochSource, SubmitConfig};
+use axon_fabric::{Journal, ResourceVector};
+use axon_loop_contracts::{AuthorityEpoch, OperationId};
+use serde_json::json;
+
+fn refuse(kind: &str, reason: &str, code: i32) -> ! {
+    println!(
+        "{}",
+        json!({"schema": "axon-fabric-refusal/1", "kind": kind, "reason": reason})
+    );
+    std::process::exit(code)
+}
+
+struct Args(Vec<String>);
+
+impl Args {
+    fn opt(&self, flag: &str) -> Option<String> {
+        self.0
+            .iter()
+            .position(|a| a == flag)
+            .and_then(|i| self.0.get(i + 1).cloned())
+    }
+    fn req(&self, flag: &str) -> String {
+        self.opt(flag)
+            .unwrap_or_else(|| refuse("usage", &format!("{flag} is required"), 2))
+    }
+    fn flag(&self, flag: &str) -> bool {
+        self.0.iter().any(|a| a == flag)
+    }
+    fn num(&self, flag: &str, default: u64) -> u64 {
+        match self.opt(flag) {
+            None => default,
+            Some(v) => v
+                .parse()
+                .unwrap_or_else(|_| refuse("usage", &format!("{flag} must be a number"), 2)),
+        }
+    }
+}
+
+fn main() {
+    let mut argv = std::env::args().skip(1);
+    let cmd = argv.next().unwrap_or_default();
+    let a = Args(argv.collect());
+    match cmd.as_str() {
+        "submit" => submit(&a),
+        "status" => status(&a),
+        "cancel" => cancel(&a),
+        _ => refuse(
+            "usage",
+            "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
+            2,
+        ),
+    }
+}
+
+fn submit(a: &Args) {
+    let req_src = a.req("--request");
+    let text = if req_src == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+        s
+    } else {
+        std::fs::read_to_string(&req_src).unwrap_or_else(|e| refuse("io", &e.to_string(), 2))
+    };
+    let registry =
+        axon_cortex::runner::CheckRegistry::load(&PathBuf::from(a.req("--check-registry")))
+            .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    let sc =
+        scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));
+    let expected = AuthorityEpoch::new(a.num("--expected-epoch", u64::MAX))
+        .unwrap_or_else(|e| refuse("usage", &format!("--expected-epoch: {e}"), 2));
+    let linux = a.opt("--linux-launcher").map(|l| LinuxProfileConfig {
+        launcher: PathBuf::from(l),
+        manifest: PathBuf::from(a.req("--linux-manifest")),
+        artifacts_dir: a.opt("--linux-artifacts").map(PathBuf::from),
+        evidence: PathBuf::from(a.req("--linux-evidence")),
+        out_root: PathBuf::from(a.req("--linux-out-root")),
+    });
+    let cfg = SubmitConfig {
+        journal: PathBuf::from(a.req("--journal")),
+        registry,
+        epoch: EpochSource::LoopStore {
+            store: PathBuf::from(a.req("--store")),
+            scope: sc,
+        },
+        expected_epoch: expected,
+        workspace: PathBuf::from(a.opt("--workspace").unwrap_or_else(|| ".".into())),
+        budget: ResourceVector {
+            model_micro_usd: a.num("--budget-micro", 1_000_000),
+            exec_ms: a.num("--budget-exec-ms", 3_600_000),
+            verify_ms: a.num("--budget-verify-ms", 3_600_000),
+            retries: a.num("--budget-retries", 1_000),
+        },
+        effect_ceiling: a.opt("--effect-ceiling"),
+        linux,
+        path_scoped_grant: a.flag("--path-scoped-grant"),
+        pre_launch_hook: None,
+    };
+    match axon_fabric::submit(&text, &cfg) {
+        Ok(s) => println!(
+            "{}",
+            json!({
+                "schema": "axon-fabric-submit/1",
+                "receipt": s.receipt,
+                "check_report": s.check_report,
+                "replayed": s.replayed,
+                "backend": s.backend,
+                "reason": s.reason,
+            })
+        ),
+        Err(e) => refuse(e.kind(), &e.to_string(), e.exit_code()),
+    }
+}
+
+fn open(a: &Args) -> (Journal, OperationId) {
+    let op = OperationId::new(a.req("--op")).unwrap_or_else(|e| refuse("usage", &e.to_string(), 2));
+    let (j, _) = Journal::open(PathBuf::from(a.req("--journal")))
+        .unwrap_or_else(|e| refuse("journal", &e.to_string(), 2));
+    (j, op)
+}
+
+fn status(a: &Args) {
+    let (j, op) = open(a);
+    print_status(&j, &op);
+}
+
+fn print_status(j: &Journal, op: &OperationId) {
+    match j.view(op) {
+        None => refuse("unknown_op", &format!("no operation {op}"), 5),
+        Some(v) => println!(
+            "{}",
+            json!({
+                "schema": "axon-fabric-status/1",
+                "operation_id": op,
+                "state": v.state,
+                "launched": v.launched,
+                "billing": v.billing,
+                "reason": v.reason,
+                "outcome": v.outcome,
+                "scope_usage": j.scope_usage(&v.intent.scope).ok().map(|u| json!({
+                    "held": u.held, "liability": u.liability, "charged": u.charged,
+                    "ceiling": u.ceiling,
+                })),
+            })
+        ),
+    }
+}
+
+/// Cancel. A never-launched op is RELEASED; a launched one keeps its whole
+/// reservation as unresolved liability (cancel acknowledgement is not
+/// cleanup, and no cost evidence exists).
+fn cancel(a: &Args) {
+    let (j, op) = open(a);
+    let reason = a.req("--reason");
+    let Some(v) = j.view(&op) else {
+        refuse("unknown_op", &format!("no operation {op}"), 5)
+    };
+    let billing = v.launched.then_some(axon_fabric::Billing::Unknown);
+    match j.cancel(&op, &reason, billing) {
+        Ok(()) => print_status(&j, &op),
+        Err(e) => refuse("journal", &e.to_string(), 5),
+    }
+}

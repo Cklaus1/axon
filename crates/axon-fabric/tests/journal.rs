@@ -13,12 +13,26 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use axon_fabric::{
-    Begin, Billing, InputDigest, Intent, Journal, JournalError, OpKey, OpState, ResourceVector,
-    ScopeKey, Settlement,
+    Begin, Billing, Intent, Journal, JournalError, OpState, ResourceVector, Settlement,
+};
+use axon_loop_contracts::{
+    AttemptId, AuthorityEpoch, OperationId, Ref, Scope, TaskFamily, TaskId, TenantId, TrialId,
 };
 
-fn scope() -> ScopeKey {
-    ScopeKey::new("task-1").unwrap()
+fn opid(s: impl Into<String>) -> OperationId {
+    OperationId::new(s).unwrap()
+}
+
+fn digest_of(bytes: &[u8]) -> Ref {
+    use sha2::{Digest, Sha256};
+    Ref::new(format!("sha256:{:x}", Sha256::digest(bytes))).unwrap()
+}
+
+fn scope() -> Scope {
+    Scope {
+        tenant_id: TenantId::new("tenant-1").unwrap(),
+        task_family: TaskFamily::new("task-1").unwrap(),
+    }
 }
 
 fn ceiling() -> ResourceVector {
@@ -41,8 +55,12 @@ fn res(exec_ms: u64) -> ResourceVector {
 
 fn intent(op: &str, input: &[u8], exec_ms: u64) -> Intent {
     Intent {
-        op: OpKey::new(op).unwrap(),
-        input_digest: InputDigest::of(input),
+        op: OperationId::new(op).unwrap(),
+        task_id: TaskId::new("task-1").unwrap(),
+        trial_id: TrialId::new("trial-1").unwrap(),
+        attempt_id: AttemptId::new("attempt-1").unwrap(),
+        input_digest: digest_of(input),
+        authority_epoch: AuthorityEpoch::new(3).unwrap(),
         config: serde_json::json!({"profile": "process_scoped", "timeout_ms": 5000}),
         authority_ref: "grant:g-1".into(),
         scope: scope(),
@@ -73,7 +91,7 @@ fn crash_child() {
         ("op-reserved", "reserved"),
         ("op-launched", "launched"),
     ] {
-        let o = OpKey::new(op).unwrap();
+        let o = opid(op);
         j.begin(intent(op, op.as_bytes(), 20)).unwrap();
         if upto != "intent" {
             j.reserve(&o).unwrap();
@@ -143,16 +161,13 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability_kept() {
     let path = crash_at(dir.path(), "launched");
 
     let (j, rep) = Journal::open(&path).unwrap();
-    let launched = OpKey::new("op-launched").unwrap();
+    let launched = opid("op-launched");
     assert_eq!(rep.reconciled_unknown, vec![launched.clone()]);
     // The child recorded one op at each boundary before being killed.
-    assert_eq!(
-        rep.pending_intended,
-        vec![OpKey::new("op-intended").unwrap()]
-    );
+    assert_eq!(rep.pending_intended, vec![opid("op-intended")]);
     assert_eq!(
         rep.pending_reserved,
-        vec![OpKey::new("op-reserved").unwrap()],
+        vec![opid("op-reserved")],
         "reserved-but-never-launched stays reserved: no effect, budget held"
     );
     let v = j.view(&launched).unwrap();
@@ -199,17 +214,14 @@ fn sigkill_after_intent_only_leaves_an_intended_op_with_no_reservation() {
     let dir = tempfile::tempdir().unwrap();
     let path = crash_at(dir.path(), "intent");
     let (j, rep) = Journal::open(&path).unwrap();
-    assert_eq!(
-        rep.pending_intended,
-        vec![OpKey::new("op-intended").unwrap()]
-    );
+    assert_eq!(rep.pending_intended, vec![opid("op-intended")]);
     assert!(rep.reconciled_unknown.is_empty());
     assert_eq!(
         j.scope_usage(&scope()).unwrap().committed(),
         ResourceVector::default()
     );
     // Resumable: reserve + launch from here is legal.
-    let o = OpKey::new("op-intended").unwrap();
+    let o = opid("op-intended");
     j.reserve(&o).unwrap();
     j.mark_launched(&o).unwrap();
     j.complete(&o, Billing::Known(res(5))).unwrap();
@@ -221,21 +233,15 @@ fn sigkill_after_reserve_keeps_the_budget_held() {
     let dir = tempfile::tempdir().unwrap();
     let path = crash_at(dir.path(), "reserved");
     let (j, rep) = Journal::open(&path).unwrap();
-    assert_eq!(
-        rep.pending_reserved,
-        vec![OpKey::new("op-reserved").unwrap()]
-    );
+    assert_eq!(rep.pending_reserved, vec![opid("op-reserved")]);
     assert_eq!(j.scope_usage(&scope()).unwrap().held.exec_ms, 20);
     // Cancelling a never-launched op RELEASES it (no effect was dispatched).
-    j.cancel(&OpKey::new("op-reserved").unwrap(), "operator", None)
-        .unwrap();
+    j.cancel(&opid("op-reserved"), "operator", None).unwrap();
     let u = j.scope_usage(&scope()).unwrap();
     assert_eq!(u.committed(), ResourceVector::default(), "released: {u:?}");
     // A launched op cannot be released that way (tested elsewhere); a released
     // one cannot be relaunched.
-    assert!(j
-        .mark_launched(&OpKey::new("op-reserved").unwrap())
-        .is_err());
+    assert!(j.mark_launched(&opid("op-reserved")).is_err());
 }
 
 #[test]
@@ -244,7 +250,7 @@ fn a_torn_final_line_is_truncated_and_everything_before_it_survives() {
     let path = {
         let j = fresh(dir.path());
         j.begin(intent("op-a", b"a", 10)).unwrap();
-        j.reserve(&OpKey::new("op-a").unwrap()).unwrap();
+        j.reserve(&opid("op-a")).unwrap();
         j.path().to_path_buf()
     };
     let before = std::fs::metadata(&path).unwrap().len();
@@ -259,12 +265,9 @@ fn a_torn_final_line_is_truncated_and_everything_before_it_survives() {
     let (j, rep) = Journal::open(&path).unwrap();
     assert_eq!(rep.torn_tail_bytes, torn.len() as u64);
     assert_eq!(std::fs::metadata(&path).unwrap().len(), before);
-    assert_eq!(
-        j.view(&OpKey::new("op-a").unwrap()).unwrap().state,
-        OpState::Reserved
-    );
+    assert_eq!(j.view(&opid("op-a")).unwrap().state, OpState::Reserved);
     // And the journal is appendable again.
-    j.mark_launched(&OpKey::new("op-a").unwrap()).unwrap();
+    j.mark_launched(&opid("op-a")).unwrap();
 }
 
 #[test]
@@ -371,10 +374,7 @@ fn intent_is_on_disk_before_begin_returns() {
     let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
     assert_eq!(last["kind"], "intent");
     assert_eq!(last["intent"]["op"], "op-a");
-    assert_eq!(
-        last["intent"]["input_digest"],
-        InputDigest::of(b"a").as_str()
-    );
+    assert_eq!(last["intent"]["input_digest"], digest_of(b"a").as_str());
     assert_eq!(last["intent"]["authority_ref"], "grant:g-1");
     assert_eq!(last["intent"]["expected_version"], 7);
     assert_eq!(last["intent"]["reservation"]["exec_ms"], 10);
@@ -393,7 +393,7 @@ fn concurrent_reservations_cannot_overspend() {
             std::thread::spawn(move || {
                 let op = format!("op-{i}");
                 j.begin(intent(&op, op.as_bytes(), 10)).unwrap();
-                match j.reserve(&OpKey::new(op).unwrap()) {
+                match j.reserve(&opid(op)) {
                     Ok(()) => true,
                     Err(JournalError::BudgetExceeded { .. }) => false,
                     Err(e) => panic!("{e}"),
@@ -426,7 +426,7 @@ fn every_dimension_is_a_ceiling() {
     i.reservation.model_micro_usd = 1_001; // over the model ceiling only
     j.begin(i).unwrap();
     assert!(matches!(
-        j.reserve(&OpKey::new("op-model").unwrap()),
+        j.reserve(&opid("op-model")),
         Err(JournalError::BudgetExceeded { .. })
     ));
 }
@@ -436,7 +436,7 @@ fn failed_and_cancelled_work_is_charged_or_held_never_dropped() {
     let dir = tempfile::tempdir().unwrap();
     let j = fresh(dir.path());
     let run = |op: &str| {
-        let o = OpKey::new(op).unwrap();
+        let o = opid(op);
         j.begin(intent(op, op.as_bytes(), 20)).unwrap();
         j.reserve(&o).unwrap();
         j.mark_launched(&o).unwrap();
@@ -466,7 +466,7 @@ fn failed_and_cancelled_work_is_charged_or_held_never_dropped() {
     // Liability blocks new work exactly like a charge does: 47 + 60 > 100.
     j.begin(intent("op-big", b"big", 60)).unwrap();
     assert!(matches!(
-        j.reserve(&OpKey::new("op-big").unwrap()),
+        j.reserve(&opid("op-big")),
         Err(JournalError::BudgetExceeded { .. })
     ));
 
@@ -486,7 +486,7 @@ fn an_unknown_outcome_can_be_settled_but_not_completed() {
     let dir = tempfile::tempdir().unwrap();
     let path = crash_at(dir.path(), "launched");
     let (j, _) = Journal::open(&path).unwrap();
-    let o = OpKey::new("op-launched").unwrap();
+    let o = opid("op-launched");
     j.settle(&o, Settlement { actual: res(4) }).unwrap();
     let v = j.view(&o).unwrap();
     assert_eq!(
@@ -502,7 +502,7 @@ fn an_undeclared_scope_or_a_redeclared_ceiling_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let j = fresh(dir.path());
     let mut i = intent("op-x", b"x", 1);
-    i.scope = ScopeKey::new("nope").unwrap();
+    i.scope.task_family = TaskFamily::new("nope").unwrap();
     assert!(matches!(j.begin(i), Err(JournalError::UnknownScope(_))));
     j.declare_budget(&scope(), ceiling()).unwrap(); // same: idempotent
     let mut bigger = ceiling();

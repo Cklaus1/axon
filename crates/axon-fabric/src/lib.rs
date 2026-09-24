@@ -24,4 +24,4 @@ pub use journal::{
     Begin, Billing, Intent, Journal, JournalError, OpState, OpView, RecoveryReport, ResourceVector,
     ScopeUsage, Settlement, JOURNAL_SCHEMA,
 };
-pub use submit::{submit, EpochSource, SubmitConfig, SubmitError, Submission};
+pub use submit::{submit, EpochSource, Submission, SubmitConfig, SubmitError};

@@ -15,6 +15,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 axon-loop-contracts = { path = "../axon-loop-contracts" }
+axon-loop = { path = "../axon-loop" }
 axon-cortex = { path = "../axon-cortex" }
 axon-os = { path = "../axon-os" }
 axon-vm = { path = "../axon-vm" }

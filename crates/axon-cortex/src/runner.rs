@@ -1608,6 +1608,9 @@ pub struct CheckReport {
     pub failed: Vec<String>,
     pub passed: Vec<String>,
     pub total: usize,
+    /// The check process's own exit status, when a process was observed.
+    /// Never used to infer a verdict.
+    pub exit_code: Option<i32>,
 }
 
 /// The verdict for ONE named check. Three-valued on purpose: a check with no
@@ -1902,6 +1905,18 @@ enum Pin {
 /// never be reported as microVM-isolated.
 pub struct LocalInterpreterExecutor {
     pin: std::sync::Mutex<Pin>,
+    limits: ExecLimits,
+}
+
+/// Optional process limits for [`LocalInterpreterExecutor`]. All default to
+/// off, which is the pre-existing behaviour.
+#[derive(Debug, Clone, Default)]
+struct ExecLimits {
+    wall: Option<std::time::Duration>,
+    max_output: Option<usize>,
+    /// Value for `AXON_ALLOWED_EFFECTS` (the interpreter's own effect
+    /// ceiling). `None` leaves it unset (no ceiling).
+    effect_ceiling: Option<String>,
 }
 
 impl LocalInterpreterExecutor {
@@ -1914,13 +1929,45 @@ impl LocalInterpreterExecutor {
         let stamp = file_stamp(&e.path);
         Ok(LocalInterpreterExecutor {
             pin: std::sync::Mutex::new(Pin::Pinned(e, stamp)),
+            limits: ExecLimits::default(),
         })
+    }
+
+    /// Kill the check process at this wall-clock deadline; the dispatch then
+    /// returns an `ErrorKind::TimedOut` error (no verdict).
+    pub fn with_timeout(mut self, wall: std::time::Duration) -> Self {
+        self.limits.wall = Some(wall);
+        self
+    }
+
+    /// Retain at most this many bytes of each output stream. A stream that
+    /// exceeded it cannot be parsed reliably, so a truncated run yields no
+    /// verdict rather than a partial one.
+    pub fn with_max_output(mut self, bytes: usize) -> Self {
+        self.limits.max_output = Some(bytes.max(2));
+        self
+    }
+
+    /// Run under `AXON_ALLOWED_EFFECTS=<ceiling>` — the interpreter's effect
+    /// ceiling (process_scoped enforcement, not an OS boundary).
+    pub fn with_effect_ceiling(mut self, ceiling: impl Into<String>) -> Self {
+        self.limits.effect_ceiling = Some(ceiling.into());
+        self
+    }
+
+    /// Re-verify the registered executable (path + sha256) WITHOUT spawning
+    /// anything. A caller that journals a launch record calls this
+    /// immediately before, so a changed binary is refused before the launch
+    /// is recorded.
+    pub fn verify(&self) -> Result<PathBuf, CheckRefusal> {
+        self.verified_path()
     }
 
     /// Compatibility path for [`Runner::new`]: resolve and pin on first use.
     pub fn pin_on_first_use(exe: PathBuf) -> Self {
         LocalInterpreterExecutor {
             pin: std::sync::Mutex::new(Pin::Deferred(exe)),
+            limits: ExecLimits::default(),
         }
     }
 
@@ -1988,14 +2035,86 @@ impl CheckExecutor for LocalInterpreterExecutor {
         if let Some(f) = req.filter {
             cmd.arg("--filter").arg(f);
         }
-        let out = cmd.output()?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        parse_axon_test_json(&text, req.rel_path)
+        if let Some(c) = &self.limits.effect_ceiling {
+            cmd.env("AXON_ALLOWED_EFFECTS", c);
+        }
+        let (text, code, truncated) = run_limited(&mut cmd, &self.limits)?;
+        if truncated {
+            return Err(std::io::Error::other(format!(
+                "check output exceeded the {}-byte capture bound; a truncated run \
+                 yields no verdict",
+                self.limits.max_output.unwrap_or(0)
+            )));
+        }
+        let mut report = parse_axon_test_json(&text, req.rel_path)?;
+        report.exit_code = code;
+        Ok(report)
     }
+}
+
+/// Spawn `cmd`, drain both pipes (bounded, if asked), enforce the wall-clock
+/// deadline (if asked). Returns (stdout+stderr, exit code, truncated?).
+fn run_limited(
+    cmd: &mut std::process::Command,
+    limits: &ExecLimits,
+) -> std::io::Result<(String, Option<i32>, bool)> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let cap = limits.max_output;
+    let drain = |mut r: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut kept = Vec::new();
+            let mut total = 0usize;
+            let mut buf = [0u8; 8192];
+            loop {
+                match r.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        total += n;
+                        let room = cap.map(|c| c.saturating_sub(kept.len())).unwrap_or(n);
+                        kept.extend_from_slice(&buf[..n.min(room)]);
+                    }
+                }
+            }
+            (kept, cap.is_some_and(|c| total > c))
+        })
+    };
+    let out_h = drain(Box::new(child.stdout.take().expect("piped")));
+    let err_h = drain(Box::new(child.stderr.take().expect("piped")));
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait()? {
+            break Some(st);
+        }
+        if limits.wall.is_some_and(|w| start.elapsed() >= w) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let (o, ot) = out_h.join().unwrap_or_default();
+    let (e, et) = err_h.join().unwrap_or_default();
+    let Some(status) = status else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!(
+                "check killed at its {} ms wall-clock limit",
+                limits.wall.map(|w| w.as_millis()).unwrap_or(0)
+            ),
+        ));
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o),
+        String::from_utf8_lossy(&e)
+    );
+    Ok((text, status.code(), ot || et))
 }
 
 /// Parse `axon test --json` output. See `Runner::run_tests_json` for why the
@@ -2040,5 +2159,284 @@ pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<Check
         failed,
         passed,
         total,
+        exit_code: None,
     })
+}
+
+// ── fabric-2: check dispatch through the Fabric submit path ─────────────────
+
+/// Where a Fabric-dispatched check goes. Every field is OPERATOR input (the
+/// cortex command line), never model output.
+#[derive(Debug, Clone)]
+pub struct FabricDispatch {
+    /// Trusted registry naming `axon-fabric` (the submit binary) and
+    /// `axon-test-local` (the interpreter the Fabric runs the check with).
+    pub registry_file: PathBuf,
+    /// The Fabric's operation journal.
+    pub journal: PathBuf,
+    /// The axon-loop store that holds the authority epoch.
+    pub store: PathBuf,
+    pub tenant: String,
+    pub family: String,
+    /// The epoch this caller was authorized under. The Fabric refuses the
+    /// dispatch unless the store's CURRENT epoch equals it — at submit and
+    /// again immediately before launch.
+    pub expected_epoch: u64,
+    pub principal_ref: String,
+    pub grant_ref: String,
+    /// `acf1:<hex>` digest of the governing policy.
+    pub policy_digest: String,
+    pub task_id: String,
+}
+
+/// The registry id of the Fabric submit binary.
+pub const FABRIC_SUBMIT_ID: &str = "axon-fabric";
+
+/// A [`CheckExecutor`] that dispatches every check as an
+/// `acf-compute-request/1` through the REGISTERED `axon-fabric submit`
+/// binary. The Fabric resolves the interpreter from its own registry, checks
+/// the authority epoch at submit and again immediately before launch,
+/// journals intent → reserve → launch → terminal around the effect, and
+/// returns an `acf-execution-receipt/1` together with the check report.
+///
+/// The seam is the binary, not a library call: `axon-fabric` depends on this
+/// crate, so linking it here would be a cycle. The binary is itself pinned by
+/// sha256, so what adjudicates is still never chosen by request text.
+///
+/// Each dispatch gets a fresh operation id, and its `workspace_version_ref`
+/// binds the exact bytes of the checked file, so the receipt names the
+/// artifact it judged.
+pub struct FabricSubmitExecutor {
+    cfg: FabricDispatch,
+    submit_bin: std::sync::Mutex<Pin>,
+    interpreter_sha256: String,
+    seq: std::sync::atomic::AtomicU64,
+    nonce: String,
+    /// Every receipt returned so far, for evidence (`cortex --json`).
+    receipts: std::sync::Mutex<Vec<serde_json::Value>>,
+}
+
+impl FabricSubmitExecutor {
+    pub const PROFILE: &'static str = "fabric-submit";
+
+    pub fn new(cfg: FabricDispatch) -> Result<Self, String> {
+        let reg = CheckRegistry::load(&cfg.registry_file)?;
+        let fab = reg
+            .get(FABRIC_SUBMIT_ID)
+            .map_err(|e| e.to_string())?
+            .clone();
+        let interp = reg
+            .get(LOCAL_AXON_TEST_ID)
+            .map_err(|e| e.to_string())?
+            .sha256
+            .clone();
+        let stamp = file_stamp(&fab.path);
+        let seed = format!("{}-{:?}", std::process::id(), std::time::SystemTime::now());
+        let nonce = sha256_hex(seed.as_bytes())[..12].to_string();
+        Ok(FabricSubmitExecutor {
+            cfg,
+            submit_bin: std::sync::Mutex::new(Pin::Pinned(fab, stamp)),
+            interpreter_sha256: interp,
+            seq: std::sync::atomic::AtomicU64::new(0),
+            nonce,
+            receipts: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The receipts every dispatch so far produced, in order.
+    pub fn receipts(&self) -> Vec<serde_json::Value> {
+        self.receipts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    fn submit_path(&self) -> Result<PathBuf, CheckRefusal> {
+        let mut pin = self.submit_bin.lock().unwrap_or_else(|p| p.into_inner());
+        let Pin::Pinned(e, stamp) = &mut *pin else {
+            unreachable!("FabricSubmitExecutor is constructed pinned")
+        };
+        let now = file_stamp(&e.path);
+        if now.is_some() && now == *stamp {
+            return Ok(e.path.clone());
+        }
+        let bytes = std::fs::read(&e.path).map_err(|err| CheckRefusal::Unresolvable {
+            path: e.path.clone(),
+            reason: err.to_string(),
+        })?;
+        let found = sha256_hex(&bytes);
+        if found != e.sha256 {
+            return Err(CheckRefusal::DigestChanged {
+                path: e.path.clone(),
+                registered: e.sha256.clone(),
+                found,
+            });
+        }
+        *stamp = now;
+        Ok(e.path.clone())
+    }
+
+    fn request(&self, req: &CheckRequest<'_>) -> std::io::Result<serde_json::Value> {
+        let bytes = std::fs::read(req.workspace.join(req.rel_path))?;
+        let n = self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut argv = vec![req.rel_path.to_string()];
+        if let Some(f) = req.filter {
+            argv.push(f.to_string());
+        }
+        Ok(serde_json::json!({
+            "schema": "acf-compute-request/1",
+            "operation_id": format!("cortex-{}-{n}", self.nonce),
+            "task_id": self.cfg.task_id,
+            "trial_id": format!("trial-{}", self.nonce),
+            "attempt_id": format!("attempt-{n}"),
+            "principal_ref": self.cfg.principal_ref,
+            "grant_ref": self.cfg.grant_ref,
+            "approval_ref": null,
+            "job_kind": "registered_check",
+            "registered_executable_ref": LOCAL_AXON_TEST_ID,
+            "executable_digest": fabric_executable_digest(LOCAL_AXON_TEST_ID, &self.interpreter_sha256),
+            "workspace_version_ref": fabric_workspace_digest(req.rel_path, &bytes),
+            "semantic_state_ref": null,
+            "policy_digest": self.cfg.policy_digest,
+            "required": {
+                "engine": "axon_interpreter",
+                "hardware_isolation": false,
+                "os": "none",
+                "architecture": "x86_64",
+                "network_mode": "deny",
+                "checkpoint_kind": "none"
+            },
+            "limits": {
+                "cpu_millicores": 1000,
+                "memory_bytes": 1u64 << 30,
+                "disk_bytes": 1u64 << 30,
+                "wall_time_ms": 120_000,
+                "output_bytes": 4u64 << 20,
+                "max_cost_micro": 1,
+                "currency_code": "USD",
+                "price_schedule_ref": "unpriced:local-interpreter"
+            },
+            "argv": argv,
+            "result_schema_ref": "cortex-check-report/1"
+        }))
+    }
+}
+
+/// `acf1:` digest of `{"registered_executable_ref","sha256"}` — the Fabric's
+/// identity for a registered executable. serde_json's default map is sorted
+/// and compact and both values are plain ASCII, so these bytes equal the
+/// sorted-key canonical form of the object.
+pub fn fabric_executable_digest(id: &str, sha256: &str) -> String {
+    let v = serde_json::json!({"registered_executable_ref": id, "sha256": sha256});
+    format!(
+        "acf1:{}",
+        sha256_hex(serde_json::to_string(&v).expect("json").as_bytes())
+    )
+}
+
+/// `acf1:` digest of `{"path","sha256"}` — the Fabric's single-file
+/// workspace-version identity (the exact bytes a check judged). `path` is
+/// JSON-escaped by serde_json exactly as the canonical form escapes it for
+/// the ASCII paths the Runner uses.
+pub fn fabric_workspace_digest(rel_path: &str, bytes: &[u8]) -> String {
+    let v = serde_json::json!({"path": rel_path, "sha256": sha256_hex(bytes)});
+    format!(
+        "acf1:{}",
+        sha256_hex(serde_json::to_string(&v).expect("json").as_bytes())
+    )
+}
+
+impl CheckExecutor for FabricSubmitExecutor {
+    fn id(&self) -> String {
+        format!(
+            "{}:{}@epoch:{}",
+            Self::PROFILE,
+            self.cfg.journal.display(),
+            self.cfg.expected_epoch
+        )
+    }
+
+    fn run_checks(&self, req: &CheckRequest<'_>) -> std::io::Result<CheckReport> {
+        use std::io::Write;
+        let exe = self.submit_path()?;
+        let request = self.request(req)?;
+        let c = &self.cfg;
+        let mut child = std::process::Command::new(&exe)
+            .arg("submit")
+            .arg("--request")
+            .arg("-")
+            .arg("--journal")
+            .arg(&c.journal)
+            .arg("--check-registry")
+            .arg(&c.registry_file)
+            .arg("--store")
+            .arg(&c.store)
+            .arg("--tenant")
+            .arg(&c.tenant)
+            .arg("--family")
+            .arg(&c.family)
+            .arg("--expected-epoch")
+            .arg(c.expected_epoch.to_string())
+            .arg("--workspace")
+            .arg(req.workspace)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        child
+            .stdin
+            .take()
+            .expect("piped")
+            .write_all(request.to_string().as_bytes())?;
+        let out = child.wait_with_output()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| {
+            std::io::Error::other(format!(
+                "axon-fabric submit exited {:?} without a result ({e}): {}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        })?;
+        if let Some(r) = v.get("receipt").filter(|r| !r.is_null()) {
+            self.receipts
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(r.clone());
+        }
+        if v.get("schema").and_then(|s| s.as_str()) != Some("axon-fabric-submit/1") {
+            return Err(std::io::Error::other(format!(
+                "axon-fabric refused the check: {}",
+                v.get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("no reason")
+            )));
+        }
+        // No check report ⇒ no verdict (refused, timed out, outcome unknown…).
+        let rep = v
+            .get("check_report")
+            .filter(|r| !r.is_null())
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "Fabric receipt status {} carries no check report: {}",
+                    v["receipt"]["status"],
+                    v.get("reason").and_then(|r| r.as_str()).unwrap_or("")
+                ))
+            })?;
+        let names = |k: &str| -> Vec<String> {
+            rep[k]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Ok(CheckReport {
+            failed: names("failed"),
+            passed: names("passed"),
+            total: rep["total"].as_u64().unwrap_or(0) as usize,
+            exit_code: rep["exit_code"].as_i64().map(|c| c as i32),
+        })
+    }
 }

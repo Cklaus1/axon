@@ -228,10 +228,10 @@ pub enum JournalError {
         requested: Box<Intent>,
     },
     UnknownOp(OperationId),
-    UnknownScope(Scope),
+    UnknownScope(Box<Scope>),
     /// A budget scope was redeclared with a different ceiling.
     ScopeConflict {
-        scope: Scope,
+        scope: Box<Scope>,
         recorded: ResourceVector,
         requested: ResourceVector,
     },
@@ -242,7 +242,7 @@ pub enum JournalError {
     },
     /// The reservation does not fit. Nothing was written.
     BudgetExceeded {
-        scope: Scope,
+        scope: Box<Scope>,
         requested: ResourceVector,
         committed: ResourceVector,
         ceiling: ResourceVector,
@@ -264,11 +264,11 @@ impl std::fmt::Display for JournalError {
                 "operation {op} is already recorded with a different request; refusing"
             ),
             JournalError::UnknownOp(op) => write!(f, "unknown operation {op}"),
-            JournalError::UnknownScope(s) => write!(f, "unknown budget scope {s}"),
+            JournalError::UnknownScope(s) => write!(f, "unknown budget scope {s:?}"),
             JournalError::ScopeConflict { scope, .. } => {
                 write!(
                     f,
-                    "budget scope {scope} already declared with a different ceiling"
+                    "budget scope {scope:?} already declared with a different ceiling"
                 )
             }
             JournalError::InvalidTransition { op, from, to } => {
@@ -277,7 +277,7 @@ impl std::fmt::Display for JournalError {
             JournalError::BudgetExceeded { scope, .. } => {
                 write!(
                     f,
-                    "reservation exceeds the remaining budget of scope {scope}"
+                    "reservation exceeds the remaining budget of scope {scope:?}"
                 )
             }
         }
@@ -386,7 +386,7 @@ impl State {
                 Some(c) if c == ceiling => Change::None,
                 Some(c) => {
                     return Err(JournalError::ScopeConflict {
-                        scope: scope.clone(),
+                        scope: Box::new(scope.clone()),
                         recorded: *c,
                         requested: *ceiling,
                     })
@@ -395,7 +395,7 @@ impl State {
             },
             Rec::Intent { intent } => {
                 if !self.scopes.contains_key(&intent.scope) {
-                    return Err(JournalError::UnknownScope(intent.scope.clone()));
+                    return Err(JournalError::UnknownScope(Box::new(intent.scope.clone())));
                 }
                 if let Some(v) = self.ops.get(&intent.op) {
                     if v.intent != *intent {
@@ -425,7 +425,7 @@ impl State {
                 let after = usage.committed().checked_add(v.intent.reservation);
                 if !after.is_some_and(|a| a.fits_within(usage.ceiling)) {
                     return Err(JournalError::BudgetExceeded {
-                        scope: v.intent.scope.clone(),
+                        scope: Box::new(v.intent.scope.clone()),
                         requested: v.intent.reservation,
                         committed: usage.committed(),
                         ceiling: usage.ceiling,
@@ -540,7 +540,7 @@ impl State {
         let ceiling = *self
             .scopes
             .get(scope)
-            .ok_or_else(|| JournalError::UnknownScope(scope.clone()))?;
+            .ok_or_else(|| JournalError::UnknownScope(Box::new(scope.clone())))?;
         let mut u = ScopeUsage {
             ceiling,
             ..Default::default()
@@ -809,7 +809,12 @@ impl Journal {
         })
     }
 
-    pub fn fail(&self, op: &OperationId, reason: &str, billing: Billing) -> Result<(), JournalError> {
+    pub fn fail(
+        &self,
+        op: &OperationId,
+        reason: &str,
+        billing: Billing,
+    ) -> Result<(), JournalError> {
         self.append(Rec::Failed {
             op: op.clone(),
             reason: reason.to_string(),
