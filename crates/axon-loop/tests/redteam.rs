@@ -942,3 +942,73 @@ fn cw1_admit_is_one_ledger_entry() {
         "retry records decision and verdict together"
     );
 }
+
+/// AB6 / AB7 / AB8 (independent round 3): EVL runs the paired-trial context
+/// checks on every trial. An expired window, expected != observed, a parent
+/// echo, an untrusted observer, or no configured observers at all makes the
+/// trial `unknown` — never a verified pass.
+#[test]
+fn ab6_ab7_ab8_context_checks_gate_every_trial() {
+    fn tweak(t: &mut serde_json::Value, f: &dyn Fn(&mut ExecutionContextReceipt)) {
+        let mut ctx: ExecutionContextReceipt = parse(&t["context"].to_string()).unwrap();
+        f(&mut ctx);
+        let mut ep: LoopEpisode = parse(&t["episode"].to_string()).unwrap();
+        ep.context_ref = digest(&ctx).unwrap();
+        t["context"] = serde_json::to_value(&ctx).unwrap();
+        t["episode"] = serde_json::to_value(&ep).unwrap();
+    }
+    type Tweak = Box<dyn Fn(&mut ExecutionContextReceipt)>;
+    let cases: Vec<(&str, Tweak)> = vec![
+        ("AB6 expired", Box::new(|c| c.expires_ms = c.created_ms + 1)),
+        (
+            "AB7 mismatch",
+            Box::new(|c| c.expected.is_primary_worktree = !c.observed.is_primary_worktree),
+        ),
+        (
+            "AB8 parent echo",
+            Box::new(|c| c.observed_issuer_ref = c.expected_issuer_ref.clone()),
+        ),
+        (
+            "untrusted observer",
+            Box::new(|c| c.observed_issuer_ref = OpaqueRef::new("anyone:at-all").unwrap()),
+        ),
+    ];
+    for (name, f) in cases {
+        let w = world();
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+        let mut v = evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default());
+        for t in v["trials"].as_array_mut().unwrap() {
+            tweak(t, &*f);
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        for a in &rec.arms {
+            assert_eq!(
+                a.verified_pass, 0,
+                "{name}: a failing context produced a pass"
+            );
+            assert!(
+                a.trials
+                    .iter()
+                    .all(|t| t.reason.contains("context not admissible")),
+                "{name}: {:?}",
+                a.trials
+            );
+        }
+    }
+    // No observers configured at all: fail closed.
+    let w = world();
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_observers.clear();
+    w.s.write_config(&cfg).unwrap();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (rec, _) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    assert!(rec.arms.iter().all(|a| a.verified_pass == 0));
+}

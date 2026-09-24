@@ -15,6 +15,8 @@ pub const VERIFIER: &str = "fixture:independent-verifier";
 pub const PROPOSER: &str = "agent:proposer";
 pub const EVALUATOR: &str = "evl:evaluator";
 pub const WORKER: &str = "agent:worker";
+/// The bundle context's independent observer (its parent is `fixture:parent`).
+pub const OBSERVER: &str = "fixture:observer";
 
 pub fn bundle() -> Value {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -93,6 +95,7 @@ pub fn store_with_config(dir: &Path) -> Store {
         schema: ConfigSchema,
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
         trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
+        trusted_observers: vec![OpaqueRef::new(OBSERVER).unwrap()],
     })
     .unwrap();
     register_candidates(&s);
@@ -106,6 +109,7 @@ pub fn store_without_candidates(dir: &Path) -> Store {
         schema: ConfigSchema,
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
         trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
+        trusted_observers: vec![OpaqueRef::new(OBSERVER).unwrap()],
     })
     .unwrap();
     // The lock file is created on first use; create it now so no-change

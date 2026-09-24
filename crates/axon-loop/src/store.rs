@@ -46,6 +46,12 @@ pub struct Config {
     pub schema: ConfigSchema,
     pub trusted_admitters: Vec<OpaqueRef>,
     pub trusted_verifiers: Vec<OpaqueRef>,
+    /// Independent preflight observers whose context receipts EVL accepts
+    /// (`check_context_current`). Absent/empty ⇒ no context is trusted, so no
+    /// trial is a verified pass (fail closed). Optional in the file so older
+    /// configs still parse; never serialized when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_observers: Vec<OpaqueRef>,
 }
 
 impl Config {
@@ -54,6 +60,9 @@ impl Config {
     }
     pub fn verifiers(&self) -> BTreeSet<OpaqueRef> {
         self.trusted_verifiers.iter().cloned().collect()
+    }
+    pub fn observers(&self) -> BTreeSet<OpaqueRef> {
+        self.trusted_observers.iter().cloned().collect()
     }
 }
 
@@ -309,6 +318,7 @@ impl Store {
                 schema: ConfigSchema,
                 trusted_admitters: Vec::new(),
                 trusted_verifiers: Vec::new(),
+                trusted_observers: Vec::new(),
             }),
         }
     }

@@ -9,6 +9,14 @@
 //!   controls, input workspace, current authority epoch of the scope);
 //! * `bind_acf` succeeds (exact request/receipt bytes, projection, ids,
 //!   workspaces, status semantics);
+//! * the trial's preflight context passes the bounded paired-trial profile
+//!   ([`axon_loop_contracts::check_paired_trial_context`]: expected ==
+//!   observed, the observer is NOT the expecting parent and IS in the store's
+//!   `trusted_observers`, the window `created_ms <= now < expires_ms` at
+//!   evaluation time, the current epoch, a non-primary worktree, concrete
+//!   paths). A trial failing it is TASK_NOT_STARTED evidence — `unknown`,
+//!   never a pass (AB6/AB7/AB8). Contexts must therefore be evaluated within
+//!   their validity window;
 //! * `verification.result == passed` with `matched_checks > 0`;
 //! * the verification issuer is in the store's `trusted_verifiers` and is NOT
 //!   a subject issuer (the request's list, plus the candidate's proposer).
@@ -23,9 +31,10 @@ use crate::ledger::{Event, Tx};
 use crate::store::{contract_from_value, strict_record, Store};
 use crate::tel::{self, Summary};
 use axon_loop_contracts::{
-    bind_acf, bind_episode, digest, ArmId, AuthorityEpoch, ComputeRequest, CorpusRole,
-    EpisodeStatus, ExecutionContextReceipt, ExecutionReceipt, LoopEpisode, OpaqueRef,
-    PolicyEnvelope, PolicyProjection, Ref, Scope, TaskId, TrialId, VerificationResult,
+    bind_acf, bind_episode, check_paired_trial_context, digest, ArmId, AuthorityEpoch,
+    ComputeRequest, CorpusRole, EpisodeStatus, ExecutionContextReceipt, ExecutionReceipt,
+    LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyProjection, Ref, Scope, TaskId, TrialId,
+    VerificationResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -162,6 +171,8 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         ));
     }
     let epoch = tx.pointer(&r.scope).epoch;
+    let observers = config.observers();
+    let now = crate::now_ms();
 
     let mut policies: BTreeMap<Ref, PolicyEnvelope> = BTreeMap::new();
     for (i, v) in r.policies.iter().enumerate() {
@@ -307,7 +318,15 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     .or_default()
                     .push((d.ep.usage.clone(), Some(d.ep.status)));
                 let policy = &policies[&a.policy_ref];
-                let (o, why) = judge(d, policy, &a.policy_ref, epoch, &verifiers, &subjects);
+                let (o, why) = match check_paired_trial_context(&d.ctx, now, epoch, &observers) {
+                    Err(e) => (
+                        Outcome::Unknown,
+                        format!(
+                            "context not admissible (TASK_NOT_STARTED evidence, never a pass): {e}"
+                        ),
+                    ),
+                    Ok(()) => judge(d, policy, &a.policy_ref, epoch, &verifiers, &subjects),
+                };
                 (o, why, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
             }
         };
