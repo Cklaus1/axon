@@ -370,9 +370,22 @@ fn check_source_episode(text: &str, ep: &LoopEpisode) -> Result<()> {
     if let Some(c) = ep.usage.cost_micro {
         let want = cost_micro_from_micro_cents(Some(mc)).expect("some");
         if c != want {
+            // G1: never repaired here. The join is refused; the message names
+            // which side's figure is the likely producer gap so the operator
+            // does not chase a wire bug.
+            let hint = if mc == 0 && c > 0 {
+                " — the canonical episode records ZERO spend while the sidecar \
+                 records a metered cost: the MiCode producer did not write \
+                 cost.micro_cents on the canonical episode (interop gap G1). \
+                 Axon does not substitute either figure; fix the producer"
+            } else {
+                " — the two figures disagree under the 1e-8 → 1e-6 round-up rule"
+            };
             return Err(refused(format!(
-                "unit conversion: canonical episode spent {mc} micro-cents (1e-8) = \
-                 {want} cost_micro (1e-6, rounded up), sidecar says {c}"
+                "unit conversion: canonical episode {} records {mc} micro-cents (1e-8) = \
+                 {want} cost_micro (1e-6, rounded up), but the sidecar says {c}{hint}; \
+                 source-episode join refused, nothing recorded",
+                ep.source_episode_ref
             )));
         }
     }
