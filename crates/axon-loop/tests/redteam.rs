@@ -635,7 +635,7 @@ fn d1_d8_d9_bad_ids_touch_nothing() {
     assert_eq!(snapshot(outer.path()), before);
     assert!(!outer.path().join("outside").exists() && !abs.exists());
     // D9: the only lock is <canonical store>/locks/root.lock
-    let s2 = Store::open(store.join(".").join("..").join("store")).unwrap();
+    let s2 = Store::open_dir(store.join(".").join("..").join("store")).unwrap();
     assert_eq!(s2.root(), s.root());
 }
 

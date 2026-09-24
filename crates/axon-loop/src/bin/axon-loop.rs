@@ -97,7 +97,7 @@ impl Args {
             .ok_or_else(|| LoopError::Usage(format!("missing --{k}")))
     }
     fn store(&self) -> Result<Store, LoopError> {
-        Store::open(
+        Store::open_dir(
             self.store
                 .clone()
                 .ok_or_else(|| LoopError::Usage("missing --store DIR".into()))?,

@@ -501,7 +501,7 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
 /// recheck. Models authority changing while the request is in flight.
 fn bump_between(cfg: &axon_fabric::SubmitConfig) {
     let axon_fabric::EpochSource::LoopStore { store, scope } = &cfg.epoch;
-    let st = axon_loop::Store::open(store).unwrap();
+    let st = axon_loop::Store::open_dir(store).unwrap();
     let cur = axon_loop::epoch::current(&st, scope).unwrap().get();
     let p = axon_loop::pointer::load(&st, scope).unwrap();
     let t: axon_loop_contracts::PolicyTransition = axon_loop_contracts::parse(

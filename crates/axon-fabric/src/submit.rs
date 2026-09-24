@@ -56,7 +56,7 @@ impl EpochSource {
     pub fn current(&self) -> Result<AuthorityEpoch, String> {
         match self {
             EpochSource::LoopStore { store, scope } => {
-                let st = axon_loop::Store::open(store).map_err(|e| e.to_string())?;
+                let st = axon_loop::Store::open_dir(store).map_err(|e| e.to_string())?;
                 axon_loop::epoch::current(&st, scope).map_err(|e| e.to_string())
             }
         }

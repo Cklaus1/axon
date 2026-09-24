@@ -90,7 +90,7 @@ pub fn incumbent() -> PolicyEnvelope {
 }
 
 pub fn store_with_config(dir: &Path) -> Store {
-    let s = Store::open(dir).unwrap();
+    let s = Store::open_dir(dir).unwrap();
     s.write_config(&Config {
         schema: ConfigSchema,
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
@@ -105,7 +105,7 @@ pub fn store_with_config(dir: &Path) -> Store {
 
 /// A configured store with NO candidate list registered (G2 negatives).
 pub fn store_without_candidates(dir: &Path) -> Store {
-    let s = Store::open(dir).unwrap();
+    let s = Store::open_dir(dir).unwrap();
     s.write_config(&Config {
         schema: ConfigSchema,
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],

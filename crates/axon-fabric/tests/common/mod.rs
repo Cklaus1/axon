@@ -79,11 +79,12 @@ impl Env {
         let spawns = dir.path().join("spawns.log");
         let exe = spawn_counting_wrapper(dir.path(), &spawns);
         let store = dir.path().join("loop-store");
-        let st = axon_loop::Store::open(&store).unwrap();
+        let st = axon_loop::Store::open_dir(&store).unwrap();
         st.write_config(&Config {
             schema: ConfigSchema,
             trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
             trusted_verifiers: vec![],
+            trusted_observers: vec![],
         })
         .unwrap();
         let registry = dir.path().join("registry.json");
@@ -128,7 +129,7 @@ impl Env {
 
     /// Advance the scope's authority epoch by one (a trusted pause).
     pub fn bump_epoch(&self) -> u64 {
-        let st = axon_loop::Store::open(&self.store).unwrap();
+        let st = axon_loop::Store::open_dir(&self.store).unwrap();
         let cur = axon_loop::epoch::current(&st, &scope()).unwrap().get();
         let p = axon_loop::pointer::load(&st, &scope()).unwrap();
         let t: PolicyTransition = axon_loop_contracts::parse(

@@ -112,7 +112,7 @@ fn map_open(p: &Path, e: std::io::Error) -> LoopError {
 }
 
 impl Store {
-    pub fn open(root: impl Into<PathBuf>) -> Result<Store> {
+    pub fn open_dir(root: impl Into<PathBuf>) -> Result<Store> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(&root)?;
