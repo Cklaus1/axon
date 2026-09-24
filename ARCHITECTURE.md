@@ -127,7 +127,7 @@ codegen-disagrees-with-HM bug is a live category.
 | `axon-vm` | confidential microVM substrate, attestation, cross-VM quorum. Since v0.22 (B262) it has a **library target** (`axon_vm::run_in_firecracker`, `src/lib.rs` + `src/firecracker.rs`) as well as the CLI. The library is the moved launch path only: it does **not** enforce the gates `cmd_run` applies before launch — null-grant refusal, override-may-only-narrow, kernel attestation / no-TOFU baseline, extended-TCB compare, quorum. Latent, because nothing but `main.rs` and `tests/lib_launch.rs` calls it; any future library caller inherits none of those gates. Its profile (`BACKEND_PROFILE`, `axon-metal-fc-nojailer`) is a jailer-less Firecracker running the custom Axon guest kernel, NOT Linux, not qualified as protected. See `crates/axon-vm/README.md` |
 | `axon-loop-contracts` | **v0.22, partial.** Pure closed-loop contract types (`axon.closed-loop.*/1`, `acf-compute-request/1`, `acf-execution-receipt/1`), strict parse, the `cl22:` canonical digest, no-I/O checks. Depends on `axon-cortex` for `parse_strict` only; `axon-cortex` must never depend on it. No I/O, no authentication. See its README |
 | `axon-loop` | **v0.22, partial.** File-backed closed-loop store + `axon-loop` binary: fenced per-scope policy pointer and authority epoch, frozen experiment register, EVO proposal, EVL evaluation, CX-11 *policy* admission, TEL economics, MiCode episode intake. Depends on `axon-loop-contracts`. Its only in-workspace library caller is `axon-fabric` (authority-epoch reads); the `axon-loop` binary is driven by MiCode over files and by tests, and the interop harness `scripts/loop_interop_gate.sh` was invoked by nothing at `279da778`; `gate.sh --strict` runs it since 54f41c3, CI does not. Its ledger is a SECOND hash chain beside `axon-audit`'s. It is HMAC-keyed on `axon-audit`'s primitive (`axon_attest::hmac_sha256`, per-entry MAC plus authenticated head) only when `AXON_ATTEST_KEY` is set, and unkeyed otherwise. Snapshot restore (R1) is still open (conflict D-C1 partly closed, D-015). See its README |
-| `axon-fabric` | **v0.22 M1, partial.** Durable operation journal (intent fsynced before effect, `OutcomeUnknown` on crash), aggregate reservations, and the `axon-fabric submit` path (`acf-compute-request/1` → `acf-execution-receipt/1`) over three truthful backend profiles. Depends on `axon-loop-contracts`, `axon-loop`, `axon-cortex`, `axon-os`, `axon-vm` — the top of the Cortex family. Only production caller: `cortex repair --fabric-journal`, through a process seam. Admission runs `axon-os` `supervise_requiring` over a no-op probe with a HARD-CODED `Profile::Restricted` grant, not the request's grant (open conflict D-C2); cost is unmetered (`usage_state: unknown`). See its README |
+| `axon-fabric` | **v0.22 M1, partial.** Durable operation journal (intent fsynced before effect, `OutcomeUnknown` on crash), aggregate reservations, and the `axon-fabric submit` path (`acf-compute-request/1` → `acf-execution-receipt/1`) over three truthful backend profiles. Depends on `axon-loop-contracts`, `axon-loop`, `axon-cortex`, `axon-os`, `axon-vm` — the top of the Cortex family. Only production caller: `cortex repair --fabric-journal`, through a process seam. `grant_ref` is resolved from an operator grant registry (sha256-pinned `.axjob`-format grant files, parsed by axon-os) and admission runs `axon-os` `supervise_requiring` under THAT grant; the executed check's `AXON_ALLOWED_EFFECTS` is derived from it (D-C2 closed for the Fabric). The principal is bound, not authenticated; cost is unmetered (`usage_state: unknown`). See its README |
 | `axon-os` | supervisor: bounded jobs, operator kill, compliance monitor |
 | `axon-wasm` | the interpreter as a wasm cdylib (browser tier) |
 | `axon-guest-kernel` / `axon-guest-init` | freestanding kernel + guest init (R17) |
@@ -153,11 +153,11 @@ axon-cortex ··spawns the sha256-pinned axon-fabric BINARY (no Cargo edge)··>
 
 The last line is how a cycle is avoided: the lowest crate reaches the highest
 one at run time through a process seam, the same doctrine as
-`cortex-policy-adapter`. The cost is duplication across the seam — there are
-two `acf1:` canonicalisers (`axon-fabric/src/submit.rs` `executable_digest` / `workspace_digest`, built on `axon_loop_contracts::canonical_bytes`, and
-`axon-cortex/src/runner.rs` `fabric_executable_digest` /
-`fabric_workspace_digest`, the latter relying on serde_json's sorted map). One
-must go (open conflict D-C3).
+`cortex-policy-adapter`. The seam once cost a duplicate `acf1:` canonicaliser on each
+side; there is now ONE, `axon_cortex::runner::acf1_canonical_bytes` (keys
+sorted explicitly, `cl22` escaping), in the lowest crate both sides link, and
+`axon-fabric`'s `executable_digest` / `workspace_digest` delegate to it (D-C3,
+closed in Stage 2).
 
 **"Admission" means two different things here, and they must not be confused.**
 `axon-os::gate::admit` / `axon-intent`'s `admit.rs` are EFFECT admission: is
@@ -171,11 +171,12 @@ authentication and not effect authority.
 
 **Authority vocabularies.** Three existed before v0.22
 (`axon-core::kernel::PrincipalRegistry`, `axon-os::grant::Grant`,
-`axon-cortex::EditGrant`/`Authorized`). The candidate adds a fourth: the
-contracts' `principal_ref` / `grant_ref` are opaque strings that the Fabric
-uses only to format an `authority_ref`, and `cortex --fabric-journal`
-hard-codes principal `cortex:repair` and a zero `policy_digest`
-(`acf1:000…`). Open conflict D-C2, Stage 2. The open conflicts are recorded in
+`axon-cortex::EditGrant`/`Authorized`). The candidate's
+contracts carry `principal_ref` / `grant_ref` as opaque strings; the Fabric
+now resolves them to an `axon_os::grant::Grant` through an operator registry
+rather than adding a fourth vocabulary, and `cortex --fabric-journal` takes
+principal, grant ref and a non-zero policy digest as required operator input
+(D-C2, closed for the Fabric in Stage 2; `axon-loop` plan approval is not). The open conflicts are recorded in
 `governance/cortex-v015/IMPLEMENTATION_MAP.md` §4a and
 `governance/cortex-v015/DISCREPANCIES.md` D-014 … D-018.
 

@@ -291,11 +291,11 @@ fn linux_profile_eligibility_is_bound_to_the_qualified_manifest() {
     for needs in [
         backend::AuthorityNeeds {
             guest_policy_channel: true,
-            path_scoped_grant: false,
+            ..Default::default()
         },
         backend::AuthorityNeeds {
-            guest_policy_channel: false,
             path_scoped_grant: true,
+            ..Default::default()
         },
     ] {
         assert!(backend::select(&req, Some(&ok), needs).is_err());
@@ -428,6 +428,8 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
         .arg(&env.journal)
         .arg("--check-registry")
         .arg(&env.registry)
+        .arg("--grant-registry")
+        .arg(&env.grant_registry)
         .arg("--store")
         .arg(&env.store)
         .args([
@@ -591,6 +593,9 @@ fn linux_run_request(env: &Env, op: &str, manifest_guest_axon: &str) -> serde_js
     r["job_kind"] = json!("interpreter_run");
     r["argv"] = json!(["f.ax"]);
     r["registered_executable_ref"] = json!(backend::LINUX_GUEST_AXON_ID);
+    // The Linux guest has no policy channel (x1): only a grant that
+    // withholds nothing is eligible.
+    r["grant_ref"] = json!("grant:open");
     r["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
         backend::LINUX_GUEST_AXON_ID,
         manifest_guest_axon
@@ -606,7 +611,6 @@ fn linux_submit(env: &Env, op: &str, launcher: std::path::PathBuf) -> axon_fabri
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx);
-    cfg.effect_ceiling = None; // no guest policy channel (x1)
     submit(&linux_run_request(env, op, &guest).to_string(), &cfg).unwrap()
 }
 
@@ -677,9 +681,163 @@ fn a_changed_manifest_makes_the_linux_profile_ineligible_with_no_launch() {
     std::fs::create_dir_all(&lx.out_root).unwrap();
     let mut cfg = env.cfg(0);
     cfg.linux = Some(lx.clone());
-    cfg.effect_ceiling = None;
     let s = submit(&linux_run_request(&env, "op-chg", &guest).to_string(), &cfg).unwrap();
     assert_eq!(s.receipt.status, ReceiptStatus::Unsupported);
     assert_eq!(env.launch_records(), 0);
     assert!(!lx.out_root.join("launches").exists(), "launcher never ran");
+}
+
+// ── G6: every `required` field is a requirement ─────────────────────────────
+
+fn journal_terminal(env: &Env, op: &str) -> Vec<String> {
+    env.journal_text()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["op"] == op || v["intent"]["op"] == op)
+        .map(|v| v["kind"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+/// An architecture, checkpoint kind or engine no backend offers is refused
+/// before any effect: an `unsupported` receipt, journalled (intent → failed →
+/// outcome, never reserved or launched) so a retry returns the same answer,
+/// and nothing spawned. `backend::select` used to ignore `architecture` and
+/// `checkpoint_kind` entirely, so these ran on the local interpreter.
+#[test]
+fn unsupported_architecture_checkpoint_or_engine_is_refused_before_effects() {
+    let host_arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        "aarch64"
+    };
+    let other_arch = if host_arch == "x86_64" {
+        "aarch64"
+    } else {
+        "x86_64"
+    };
+    for (name, field, value, why) in [
+        ("arch-wasm32", "architecture", "wasm32", "architecture"),
+        ("arch-other", "architecture", other_arch, "architecture"),
+        (
+            "ckpt-ws",
+            "checkpoint_kind",
+            "logical_workspace",
+            "checkpoint_kind",
+        ),
+        (
+            "ckpt-fs",
+            "checkpoint_kind",
+            "filesystem",
+            "checkpoint_kind",
+        ),
+        (
+            "ckpt-machine",
+            "checkpoint_kind",
+            "machine_state",
+            "checkpoint_kind",
+        ),
+        ("engine-wasm", "engine", "axon_wasm", "engine"),
+        ("engine-native", "engine", "native_process", "engine"),
+    ] {
+        let env = Env::new();
+        let op = format!("op-{name}");
+        let mut r = request(&env, &op, "t_ok");
+        r["required"]["architecture"] = json!(host_arch);
+        r["required"][field] = json!(value);
+        let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
+        assert_eq!(s.receipt.status, ReceiptStatus::Unsupported, "{name}");
+        assert_eq!(
+            s.receipt.verification,
+            ReceiptVerification::NotRun,
+            "{name}"
+        );
+        assert_eq!(s.backend, None, "{name}: no backend selected");
+        let reason = s.reason.unwrap_or_default();
+        assert!(reason.contains(why), "{name}: {reason}");
+        assert_eq!(spawn_count(&env.spawns), 0, "{name}: nothing spawned");
+        assert_eq!(env.launch_records(), 0, "{name}: no launch record");
+        assert_eq!(
+            journal_terminal(&env, &op),
+            ["intent", "failed", "outcome"],
+            "{name}: journalled as refused, never reserved or launched"
+        );
+        // The retry returns the recorded answer, still with no effect.
+        let again = submit(&r.to_string(), &env.cfg(0)).unwrap();
+        assert!(again.replayed, "{name}");
+        assert_eq!(again.receipt, s.receipt, "{name}");
+        assert_eq!(spawn_count(&env.spawns), 0, "{name}");
+    }
+
+    // The host's own architecture with no checkpoint still runs.
+    let env = Env::new();
+    let mut r = request(&env, "op-host", "t_ok");
+    r["required"]["architecture"] = json!(host_arch);
+    let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
+    assert_eq!(s.receipt.status, ReceiptStatus::Completed);
+    assert_eq!(spawn_count(&env.spawns), 1);
+}
+
+/// The Linux profile's own architecture/checkpoint constraints are checked
+/// even when it is qualified — no other backend substitutes for it.
+#[test]
+fn the_linux_profile_refuses_an_architecture_or_checkpoint_it_does_not_offer() {
+    let env = Env::new();
+    let manifest = json!({"artifacts":{"axon":{"sha256":"ab".repeat(32)}}}).to_string();
+    let ok = linux_cfg(&env, &manifest, "");
+    for (field, value) in [
+        ("architecture", "aarch64"),
+        ("architecture", "wasm32"),
+        ("checkpoint_kind", "machine_state"),
+    ] {
+        let mut r = linux_request(&env, "op-lx-g6");
+        r["job_kind"] = json!("interpreter_run");
+        r["argv"] = json!(["f.ax"]);
+        r["required"][field] = json!(value);
+        let req = axon_loop_contracts::parse::<axon_loop_contracts::ComputeRequest>(&r.to_string())
+            .unwrap();
+        let e = backend::select(&req, Some(&ok), Default::default()).unwrap_err();
+        assert!(e.0.contains("linux-microvm-protected"), "{}", e.0);
+        assert!(e.0.contains(field), "{}", e.0);
+    }
+}
+
+// ── D-C3: one acf1 canonicaliser across the cortex → fabric seam ────────────
+
+/// The Fabric computes the SAME digests the cortex side puts in its requests,
+/// for adversarial inputs too, and both equal the `cl22` canonical form of the
+/// same object. And the Fabric has no canonicaliser of its own: its digest
+/// functions delegate to `axon_cortex::runner::acf1_canonical_bytes` (a
+/// second implementation, kept equal only by this test, is what D-C3 was).
+#[test]
+fn one_acf1_canonicaliser_serves_both_sides_of_the_seam() {
+    for path in ["f.ax", "dir/é\"q\\\u{1}\u{7f}😀.ax", "a\u{2028}b\n.ax"] {
+        let bytes = path.as_bytes();
+        let fab = axon_fabric::submit::workspace_digest(path, bytes);
+        let cx = axon_cortex::runner::fabric_workspace_digest(path, bytes);
+        assert_eq!(fab.as_str(), cx, "{path:?}");
+        let v = json!({"path": path, "sha256": sha256_hex(bytes)});
+        let cl22 = axon_loop_contracts::canonical_bytes(&v).unwrap();
+        assert_eq!(
+            axon_cortex::runner::acf1_canonical_bytes(&[
+                ("path", path),
+                ("sha256", &sha256_hex(bytes))
+            ]),
+            cl22,
+            "{path:?}: the acf1 bytes are the cl22 canonical form"
+        );
+    }
+    let src = include_str!("../src/submit.rs");
+    let fns = &src[src.find("pub fn executable_digest").unwrap()..src.find("fn opaque(").unwrap()];
+    assert!(
+        fns.contains("axon_cortex::runner::fabric_executable_digest")
+            && fns.contains("axon_cortex::runner::fabric_workspace_digest")
+            && !fns.contains("canonical_bytes")
+            && !fns.contains("sha256_hex"),
+        "axon-fabric's acf1 digests must delegate to the single canonicaliser:\n{fns}"
+    );
+}
+
+fn sha256_hex(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(b))
 }

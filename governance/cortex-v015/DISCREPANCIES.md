@@ -14,8 +14,8 @@
 | **D-008** | cancellation killed only the direct child | **FIXED** — `process_group` + `killpg`; differential-verified | `fix/kill-the-process-group` |
 | D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
 | D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **partly resolved** (keyed under `AXON_ATTEST_KEY`: F1/F2/R2 detected); R1 + no-key default **open** | `v022/stage2-2a` |
-| D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **open** — Stage 2 | — |
-| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **open** — Stage 2 | — |
+| D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **fixed for the Fabric** (Stage 2 lane 2B); `axon-loop` plan approval still open | `crates/axon-fabric/tests/grant_authority.rs` |
+| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **fixed** (Stage 2 lane 2B) | `crates/axon-cortex/tests/fabric_acf1.rs`, `crates/axon-fabric/tests/journal.rs` |
 | D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
 | D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
 | D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **open** — Stage 3 | — |
@@ -738,7 +738,32 @@ package) forbids a second identity/approval system.
 
 **Proposed resolution.** Resolve `grant_ref` to an `axon_os::grant::Grant` and
 pass THAT to `supervise_requiring`; enforce the same grant at dispatch; make the
-policy digest a required operator input or refuse. **Stage 2. OPEN.**
+policy digest a required operator input or refuse.
+
+**Resolution (Stage 2, lane 2B).** `crates/axon-fabric/src/grants.rs`: an
+operator `axon-fabric-grant-registry/1` file maps `grant_ref` → a grant file
+pinned by sha256 and bound to one `principal_ref`; the file is parsed by
+`axon_os::parse_manifest` (no second grant parser). Unknown ref / unbound
+principal / edited file → `SubmitError::Unauthorized` (exit 7) before the
+journal is opened. `supervise_requiring` now runs under THAT grant with its
+`require_approval` policy (token = the grant file's `.approval` sibling,
+verified by axon-os) over a probe declaring the program's scanned effect row;
+`limits.max_cost_micro` must fit `grant.budget.cost_micro`. The executed check's
+`AXON_ALLOWED_EFFECTS` is derived from the admitted grant (`--effect-ceiling`
+removed); path-scoped and reproducible grants are `unsupported` (no backend can
+enforce them), and the Linux profile is eligible only for a grant withholding
+nothing (in-guest enforcement is Stage 3, B263 x1 — not claimed). The all-zero
+`policy_digest` is refused by the Fabric and by `FabricSubmitExecutor::new`;
+`cortex --fabric-journal` requires `--fabric-principal`, `--fabric-grant-ref`,
+`--fabric-grant-registry`, `--fabric-policy-digest` (exit 2 if absent).
+Tests: `tests/grant_authority.rs` (7) and
+`cortex_via_fabric.rs::cortex_fabric_mode_refuses_to_start_without_explicit_authority`,
+each refusal asserting no spawn, no launch record and (pre-journal refusals)
+no journal file. Mutation-checked: ceiling constant, hard-coded admitted grant,
+`require_approval` forced false, placeholder check, principal binding, digest
+check, empty scanned row, cortex hard-coded principal/digest — each fails a
+test. **Still OPEN:** the principal is bound, not authenticated;
+`axon-loop/src/plan.rs` self-asserted approval (lane 2A's crate).
 
 ## D-017 — D-C3 / D-C5: duplicated canonicaliser; second budget algebra
 
@@ -757,8 +782,48 @@ never-decreasing, still without a production caller). The journal adds
 durability, `OutcomeUnknown` and liability that `ResourceLedger` lacks, so the
 fix is to use `carve` for the arithmetic, not to delete the journal.
 
-**Resolution.** One canonicaliser; ceiling arithmetic via `carve`. **Stage 2.
-OPEN.**
+**Resolution.** One canonicaliser; ceiling arithmetic via `carve`.
+
+**D-C3 resolved (Stage 2, lane 2B).** The single implementation is
+`axon_cortex::runner::acf1_canonical_bytes` (flat string objects; keys sorted
+explicitly so serde_json `preserve_order` cannot move a digest; `cl22`
+escaping). It lives in `axon-cortex` because that is the lowest crate both
+sides link — `axon-cortex` gains no dependency. `axon_fabric::submit::
+{executable_digest, workspace_digest}` delegate to it. Tests:
+`axon-cortex/tests/fabric_acf1.rs` pins the bytes and digests to Python
+`json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)` output
+for an adversarial path (quote, backslash, C0, DEL, non-ASCII);
+`axon-fabric/tests/submit.rs::one_acf1_canonicaliser_serves_both_sides_of_the_seam`
+checks equality with the `cl22` form and that the Fabric has no canonicaliser
+of its own. Mutation-checked: re-introducing the Fabric's own implementation,
+dropping the sort, and escaping DEL each fail a test. Measured honestly: the
+pre-fix serde_json-based cortex implementation was byte-correct for these
+inputs; the defect was the duplication and its reliance on the map type's
+order, not a wrong digest today.
+
+**D-C5 resolved (Stage 2, lane 2B).** `journal.rs` `Rec::Reserved` now decides
+committed ≤ ceiling with `axon_os::ledger::ResourceLedger::carve` (its first
+production caller), through its existing public API — `ledger.rs` unchanged.
+Two semantic mismatches, handled rather than forced: (1) `ResourceLedger` has
+three fixed axes (compute/budget/persist_bytes) and the journal four
+dimensions, so each dimension is carved on its own single-axis ledger and the
+refused dimension is reported by name (`BudgetExceeded.dimension`);
+(2) `carve`'s `used` never decreases, but the journal must release a
+never-launched cancel and settle liability to a known charge, so the ledger is
+rebuilt per check from the journal-derived committed total rather than stored.
+One gap in `carve` itself was found and guarded, not fixed (axon-os is outside
+this lane's remit beyond reachability): it checks with `saturating_add` and
+then adds UNCHECKED, so at a cap of `u64::MAX` an overflowing carve is admitted
+and then overflows (panic in debug, wrap in release). The journal refuses an
+overflowing sum before calling it. Tests:
+`each_dimension_is_carved_through_the_axon_os_ledger`,
+`an_overflowing_reservation_is_refused_not_wrapped`. Mutation-checked:
+bypassing `carve` and removing the overflow guard each fail a behavioural
+test. A parallel `used + want > cap` comparison is meant to AGREE with `carve`,
+so no behavioural test can catch it; `the_reservation_check_is_resource_ledger_carve`
+pins the structure instead (source check: `carve_within` calls
+`ResourceLedger::carve`, the reserve path calls `carve_within`, `fits_within`
+is gone) and fails on that mutation.
 
 ## D-018 — D-C6: "admission" is two concepts; an ACCEPT is never a grant
 

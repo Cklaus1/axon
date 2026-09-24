@@ -3,7 +3,13 @@
 //!
 //! # Order of operations (each step a refusal, never a downgrade)
 //!
-//! 1. **Parse** the request strictly (`axon_loop_contracts::parse`).
+//! 1. **Parse** the request strictly (`axon_loop_contracts::parse`); the
+//!    all-zero `policy_digest` placeholder is refused. Then the **grant**:
+//!    `grant_ref` is resolved, for `principal_ref`, from the operator's
+//!    [`GrantRegistry`] to a real `axon_os::Grant` (file pinned by sha256,
+//!    parsed by axon-os's own manifest parser). An unknown ref, a principal
+//!    the ref is not bound to, or a changed grant file is refused before the
+//!    journal is opened — nothing recorded, nothing spawned.
 //! 2. **Dedup** against the journal: the same `operation_id` with the same
 //!    input digest returns the RECORDED receipt, never re-executes; with a
 //!    different digest it is a CONFLICT — nothing is written or spawned.
@@ -15,10 +21,15 @@
 //!    ID; the path + sha256 come from the operator's `CheckRegistry`, and
 //!    `executable_digest` must equal the registry-derived digest. argv is
 //!    DATA (a file and a filter) — it never names a program.
-//! 6. **Supervisor admission** through axon-os `supervise_requiring` with
-//!    the request's isolation requirement and a restricted grant, so the
-//!    same authority boundary (approval → isolation → intersect → admit)
-//!    every axon-os job crosses decides here too.
+//! 6. **Supervisor admission** through axon-os `supervise_requiring` under
+//!    THAT grant and its `require_approval` policy (token: the grant file's
+//!    `.approval` sibling, verified by axon-os against the program + grant),
+//!    with the program's scanned effect row and the request's isolation
+//!    requirement — approval → isolation → intersect → admit, as for every
+//!    axon-os job. The check then runs under `AXON_ALLOWED_EFFECTS` DERIVED
+//!    from the admitted grant ([`crate::grants::effect_ceiling`]), never from
+//!    an operator flag. The Linux profile has no guest policy channel (B263
+//!    x1, Stage 3): it is eligible only for a grant that withholds nothing.
 //! 7. **Journal**: intent (fsynced) → reserve (atomic budget carve) →
 //!    **epoch recheck + executable re-verify** → launch record → effect →
 //!    terminal record → receipt recorded.
@@ -41,6 +52,7 @@ use axon_loop_contracts::{
 use serde_json::{json, Value};
 
 use crate::backend::{self, Profile};
+use crate::grants::{GrantRegistry, ResolvedGrant};
 use crate::journal::{Begin, Billing, Intent, Journal, JournalError, OpState, ResourceVector};
 
 /// Where the current authority epoch comes from.
@@ -81,16 +93,12 @@ pub struct SubmitConfig {
     pub workspace: PathBuf,
     /// Aggregate ceiling for the scope (declared idempotently in the journal).
     pub budget: ResourceVector,
-    /// Interpreter effect ceiling for the check (`AXON_ALLOWED_EFFECTS`),
-    /// e.g. `Some("IO")`. `None` = no ceiling. The Linux profile has NO
-    /// guest policy channel (B263 limitation x1), so a request carrying a
-    /// ceiling is never eligible for it.
-    pub effect_ceiling: Option<String>,
+    /// The operator's grant registry: the ONLY source of a request's
+    /// authority. The interpreter effect ceiling and the Linux-profile
+    /// eligibility (B263 x1/x2) are derived from the grant resolved here.
+    pub grants: GrantRegistry,
     /// Where the Linux microVM profile's launcher and evidence live.
     pub linux: Option<crate::backend::LinuxProfileConfig>,
-    /// The caller's grant scopes filesystem paths (the Linux profile cannot
-    /// preserve that, B263 x2).
-    pub path_scoped_grant: bool,
     /// Test seam: called after the submit-time checks and the reservation,
     /// immediately before the dispatch-time epoch recheck. `None` in
     /// production (the CLI never sets it).
@@ -115,8 +123,13 @@ pub struct Submission {
 pub enum SubmitError {
     Malformed(String),
     Conflict(String),
-    StaleEpoch { expected: u64, current: String },
+    StaleEpoch {
+        expected: u64,
+        current: String,
+    },
     Unregistered(String),
+    /// `grant_ref` did not resolve to an operator grant for `principal_ref`.
+    Unauthorized(String),
     Journal(JournalError),
 }
 
@@ -127,6 +140,7 @@ impl SubmitError {
             SubmitError::Conflict(_) => "conflict",
             SubmitError::StaleEpoch { .. } => "stale_epoch",
             SubmitError::Unregistered(_) => "unregistered",
+            SubmitError::Unauthorized(_) => "unauthorized",
             SubmitError::Journal(_) => "journal",
         }
     }
@@ -137,6 +151,7 @@ impl SubmitError {
             SubmitError::Conflict(_) => 5,
             SubmitError::StaleEpoch { .. } => 6,
             SubmitError::Unregistered(_) => 4,
+            SubmitError::Unauthorized(_) => 7,
             SubmitError::Journal(_) => 2,
         }
     }
@@ -152,6 +167,7 @@ impl std::fmt::Display for SubmitError {
                 "stale authority epoch: request authorized at {expected}, store says {current}"
             ),
             SubmitError::Unregistered(s) => write!(f, "unregistered executable: {s}"),
+            SubmitError::Unauthorized(s) => write!(f, "unauthorized: {s}"),
             SubmitError::Journal(e) => write!(f, "journal: {e}"),
         }
     }
@@ -168,24 +184,31 @@ impl From<JournalError> for SubmitError {
     }
 }
 
+/// The all-zero `policy_digest` a caller writes when it has no policy to
+/// name. Refused: a receipt must not claim a governing policy that is none.
+pub const PLACEHOLDER_POLICY_DIGEST: &str =
+    "acf1:0000000000000000000000000000000000000000000000000000000000000000";
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// `acf1:` identity of a registered executable — MUST equal
-/// `axon_cortex::runner::fabric_executable_digest` (asserted in tests).
+/// `acf1:` identity of a registered executable. Delegates to THE acf1
+/// canonicaliser, `axon_cortex::runner::acf1_canonical_bytes`, which the
+/// cortex side of the seam builds its requests with — one implementation,
+/// not two kept equal by a test (D-C3).
 pub fn executable_digest(id: &str, e: &RegisteredExecutable) -> Acf1Ref {
-    let v = json!({"registered_executable_ref": id, "sha256": e.sha256});
-    let canon = axon_loop_contracts::canonical_bytes(&v).expect("small object");
-    Acf1Ref::new(format!("acf1:{}", sha256_hex(&canon))).expect("hex")
+    Acf1Ref::new(axon_cortex::runner::fabric_executable_digest(id, &e.sha256))
+        .expect("acf1 + sha256 hex")
 }
 
-/// `acf1:` identity of a single-file workspace version.
+/// `acf1:` identity of a single-file workspace version (same canonicaliser).
 pub fn workspace_digest(rel_path: &str, bytes: &[u8]) -> Acf1Ref {
-    let v = json!({"path": rel_path, "sha256": sha256_hex(bytes)});
-    let canon = axon_loop_contracts::canonical_bytes(&v).expect("small object");
-    Acf1Ref::new(format!("acf1:{}", sha256_hex(&canon))).expect("hex")
+    Acf1Ref::new(axon_cortex::runner::fabric_workspace_digest(
+        rel_path, bytes,
+    ))
+    .expect("acf1 + sha256 hex")
 }
 
 fn opaque(s: impl Into<String>) -> OpaqueRef {
@@ -312,26 +335,23 @@ fn check_target(req: &ComputeRequest, ws: &Path) -> Result<(String, Option<Strin
     Ok((file, filter))
 }
 
-/// The axon-os authority boundary, applied to this request: approval →
-/// isolation requirement → intersect → admit, via `supervise_requiring`.
-/// The "job" is a pure placeholder program: the check's own effects are
-/// bounded by the interpreter ceiling at dispatch; what this decides is
-/// whether THIS runtime may serve THIS requirement under THIS grant.
 /// An axon-os `Runtime` that performs NO effect: it states the selected
-/// backend's isolation and declares a pure program. `supervise_requiring`
-/// over it answers exactly one question — may this backend serve this
-/// requirement under this grant? — through the same code path every axon-os
-/// job takes. The real effect runs later, after the journal's launch record.
+/// backend's isolation and the program's SCANNED effect row
+/// (`axon_os::runtime::scan_effects`, deny-by-default: unreadable ⇒ every
+/// effect). `supervise_requiring` over it answers one question through the
+/// code path every axon-os job takes — may this program run on this backend
+/// under THIS grant, with THIS approval policy? The real effect runs later,
+/// after the journal's launch record, bounded by the same grant's ceiling.
 struct AdmissionProbe(axon_os::Isolation);
 
 impl axon_os::Runtime for AdmissionProbe {
     fn isolation(&self) -> axon_os::Isolation {
         self.0
     }
-    fn declared_effects(&self, _p: &Path) -> axon_os::DeclaredEffects {
-        axon_os::DeclaredEffects {
-            row: axon_os::EffectSet::default(),
-            max_label: axon_os::Label::Public,
+    fn declared_effects(&self, p: &Path) -> axon_os::DeclaredEffects {
+        match std::fs::read_to_string(p) {
+            Ok(src) => axon_os::runtime::scan_effects(&src),
+            Err(_) => axon_os::DeclaredEffects::unknown(),
         }
     }
     fn mint_principal(&self, _g: &axon_os::Grant) -> axon_os::PrincipalHandle {
@@ -352,11 +372,14 @@ impl axon_os::Runtime for AdmissionProbe {
     }
 }
 
+/// Admit `program` under the resolved grant. Returns the axon-os approval
+/// status on success.
 fn supervisor_admits(
     req: &ComputeRequest,
     profile: &Profile,
-    scratch: &Path,
-) -> Result<(), String> {
+    grant: &ResolvedGrant,
+    program: &Path,
+) -> Result<String, String> {
     use axon_os::IsolationRequirement;
     let requirement =
         if req.required.hardware_isolation && req.required.os == axon_loop_contracts::Os::Linux {
@@ -366,43 +389,38 @@ fn supervisor_admits(
         } else {
             IsolationRequirement::Any
         };
-    // Never read: the probe runtime declares the program's effects itself.
-    let job = scratch.join("fabric-admission.ax");
-    let manifest = axon_os::JobManifest {
-        program: job.clone(),
-        intent: format!("fabric {}", req.operation_id),
-        seed: 1,
-        grant: axon_os::profile::Profile::Restricted.default_grant(
-            axon_os::Label::Internal,
-            axon_os::Budget {
-                calls: 1,
-                tokens: 0,
-                cost_micro: req.limits.max_cost_micro as i64,
-            },
-        ),
-        require_approval: false,
-    };
+    // The request may not spend more than its grant allows.
+    let cap = grant.grant().budget.cost_micro;
+    if i64::try_from(req.limits.max_cost_micro).map_or(true, |c| c > cap) {
+        return Err(format!(
+            "limits.max_cost_micro {} exceeds grant `{}` budget.cost_micro {cap}",
+            req.limits.max_cost_micro, grant.grant_ref
+        ));
+    }
+    let manifest = grant.manifest_for(program, format!("fabric {}", req.operation_id));
     let rt = AdmissionProbe(profile.isolation);
+    // The job path is the GRANT FILE: its `.approval` sibling is the sign-off
+    // token axon-os verifies against (program, grant).
     let rec = axon_os::supervise_requiring(
         &manifest,
-        &scratch.join("fabric-admission.axjob"),
-        &manifest.grant.clone(),
+        &grant.path,
+        grant.grant(),
         req.operation_id.as_str(),
         requirement,
         &rt,
     );
     match rec.verdict {
-        axon_os::Verdict::Completed { .. } => Ok(()),
+        axon_os::Verdict::Completed { .. } => Ok(rec.approval),
         other => Err(format!("axon-os supervisor refused: {other:?}")),
     }
 }
 
 /// The host interpreter executor, pinned to exactly the resolved entry and
-/// bounded by the request's limits and the operator's effect ceiling.
+/// bounded by the request's limits and the ADMITTED grant's effect ceiling.
 fn host_executor(
     exe: &RegisteredExecutable,
     req: &ComputeRequest,
-    cfg: &SubmitConfig,
+    ceiling: &str,
 ) -> Result<LocalInterpreterExecutor, SubmitError> {
     let mut r = CheckRegistry::new();
     r.register_expected(
@@ -415,10 +433,8 @@ fn host_executor(
         .map_err(|e| SubmitError::Unregistered(e.to_string()))?
         .with_timeout(std::time::Duration::from_millis(req.limits.wall_time_ms))
         .with_max_output(req.limits.output_bytes as usize);
-    Ok(match &cfg.effect_ceiling {
-        Some(c) => local.with_effect_ceiling(c.clone()),
-        None => local,
-    })
+    // Always set — `""` is deny-every-effect, never "no ceiling".
+    Ok(local.with_effect_ceiling(ceiling))
 }
 
 /// Submit one request. See the module docs for the order of operations.
@@ -428,6 +444,19 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         axon_loop_contracts::parse(req_json).map_err(|e| SubmitError::Malformed(e.to_string()))?;
     let input_digest: Ref =
         axon_loop_contracts::digest(&req).map_err(|e| SubmitError::Malformed(e.to_string()))?;
+    if req.policy_digest.as_str() == PLACEHOLDER_POLICY_DIGEST {
+        return Err(SubmitError::Malformed(
+            "policy_digest is the all-zero placeholder; name the governing policy".into(),
+        ));
+    }
+
+    // 4a (first, so a refusal touches nothing — not even the journal file).
+    // The request's grant, from the operator's registry. Unknown ref, a
+    // principal it is not bound to, or a changed grant file: refused.
+    let grant = cfg
+        .grants
+        .resolve(req.grant_ref.as_str(), req.principal_ref.as_str())
+        .map_err(SubmitError::Unauthorized)?;
 
     let (journal, _recovery) = Journal::open(&cfg.journal)?;
     let scope = cfg.epoch.scope().clone();
@@ -457,8 +486,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     //    `unsupported` receipt — journalled (intent + failed, never launched)
     //    so a retry returns the same answer.
     let needs = backend::AuthorityNeeds {
-        guest_policy_channel: cfg.effect_ceiling.is_some(),
-        path_scoped_grant: cfg.path_scoped_grant,
+        guest_policy_channel: crate::grants::restricts_effects(grant.grant()),
+        path_scoped_grant: crate::grants::is_path_scoped(grant.grant()),
+        reproducible: grant.grant().reproducible,
     };
     let profile = match backend::select(&req, cfg.linux.as_ref(), needs) {
         Ok(p) => p,
@@ -532,33 +562,33 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     };
 
     // 6. Supervisor admission (axon-os).
-    let scratch = cfg
-        .journal
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    if let Err(why) = supervisor_admits(&req, &profile, &scratch) {
-        let r = receipt(
-            &req,
-            profile.id,
-            Obs {
-                status: ReceiptStatus::Denied,
-                exit: None,
-                verification: ReceiptVerification::NotRun,
-                matched: None,
-                evidence: vec![],
-                liability_micro: 0,
-            },
-        );
-        record_unlaunched(&journal, &req, &input_digest, cfg, &scope, &why, &r)?;
-        return Ok(Submission {
-            receipt: r,
-            check_report: None,
-            replayed: false,
-            backend: Some(profile.id),
-            reason: Some(why),
-        });
-    }
+    let program = cfg.workspace.join(&target.as_ref().expect("set above").0);
+    let ceiling = crate::grants::effect_ceiling(grant.grant());
+    let approval = match supervisor_admits(&req, &profile, &grant, &program) {
+        Ok(a) => a,
+        Err(why) => {
+            let r = receipt(
+                &req,
+                profile.id,
+                Obs {
+                    status: ReceiptStatus::Denied,
+                    exit: None,
+                    verification: ReceiptVerification::NotRun,
+                    matched: None,
+                    evidence: vec![],
+                    liability_micro: 0,
+                },
+            );
+            record_unlaunched(&journal, &req, &input_digest, cfg, &scope, &why, &r)?;
+            return Ok(Submission {
+                receipt: r,
+                check_report: None,
+                replayed: false,
+                backend: Some(profile.id),
+                reason: Some(why),
+            });
+        }
+    };
 
     // 7. Journal around the effect.
     let intent = Intent {
@@ -567,7 +597,17 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         trial_id: req.trial_id.clone(),
         attempt_id: req.attempt_id.clone(),
         input_digest: input_digest.clone(),
-        config: json!({"backend": profile.id, "limits": req.limits}),
+        config: json!({
+            "backend": profile.id,
+            "limits": req.limits,
+            "grant": {
+                "grant_ref": grant.grant_ref,
+                "sha256": grant.sha256,
+                "effect_ceiling": ceiling,
+                "reproducible": grant.grant().reproducible,
+                "approval": approval,
+            },
+        }),
         authority_ref: format!("{}|{}", req.principal_ref, req.grant_ref),
         authority_epoch: cfg.expected_epoch,
         scope: scope.clone(),
@@ -610,7 +650,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     let local = if is_linux {
         None
     } else {
-        Some(host_executor(&exe, &req, cfg)?)
+        Some(host_executor(&exe, &req, &ceiling)?)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {
         journal.cancel(&req.operation_id, &format!("executable changed: {e}"), None)?;

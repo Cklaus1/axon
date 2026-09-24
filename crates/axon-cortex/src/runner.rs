@@ -2182,9 +2182,16 @@ pub struct FabricDispatch {
     /// dispatch unless the store's CURRENT epoch equals it — at submit and
     /// again immediately before launch.
     pub expected_epoch: u64,
+    /// The operator's `axon-fabric-grant-registry/1` file. The Fabric
+    /// resolves `grant_ref` for `principal_ref` from it; the check runs under
+    /// the effect ceiling that grant induces.
+    pub grant_registry: PathBuf,
+    /// Who the checks run as (a claim the grant registry must bind to
+    /// `grant_ref`). Operator input; never defaulted.
     pub principal_ref: String,
     pub grant_ref: String,
-    /// `acf1:<hex>` digest of the governing policy.
+    /// `acf1:<hex>` digest of the governing policy. Operator input; the
+    /// all-zero placeholder is refused here and by the Fabric.
     pub policy_digest: String,
     pub task_id: String,
 }
@@ -2220,6 +2227,26 @@ impl FabricSubmitExecutor {
     pub const PROFILE: &'static str = "fabric-submit";
 
     pub fn new(cfg: FabricDispatch) -> Result<Self, String> {
+        for (name, v) in [
+            ("principal_ref", &cfg.principal_ref),
+            ("grant_ref", &cfg.grant_ref),
+        ] {
+            if v.trim().is_empty() {
+                return Err(format!("fabric dispatch needs a non-empty {name}"));
+            }
+        }
+        let hex = cfg.policy_digest.strip_prefix("acf1:").unwrap_or("");
+        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(format!(
+                "policy_digest `{}` is not `acf1:` + 64 lowercase hex",
+                cfg.policy_digest
+            ));
+        }
+        if hex.bytes().all(|b| b == b'0') {
+            return Err(
+                "policy_digest is the all-zero placeholder; name the governing policy".into(),
+            );
+        }
         let reg = CheckRegistry::load(&cfg.registry_file)?;
         let fab = reg
             .get(FABRIC_SUBMIT_ID)
@@ -2322,28 +2349,77 @@ impl FabricSubmitExecutor {
     }
 }
 
-/// `acf1:` digest of `{"registered_executable_ref","sha256"}` — the Fabric's
-/// identity for a registered executable. serde_json's default map is sorted
-/// and compact and both values are plain ASCII, so these bytes equal the
-/// sorted-key canonical form of the object.
-pub fn fabric_executable_digest(id: &str, sha256: &str) -> String {
-    let v = serde_json::json!({"registered_executable_ref": id, "sha256": sha256});
-    format!(
-        "acf1:{}",
-        sha256_hex(serde_json::to_string(&v).expect("json").as_bytes())
-    )
+/// THE `acf1:` canonicaliser for the Fabric's flat identity objects — the one
+/// implementation both sides of the cortex → fabric process seam use
+/// (`axon_fabric::submit::{executable_digest, workspace_digest}` delegate
+/// here; D-C3). It lives in this crate because it is the lowest one both
+/// sides link: `axon-fabric` depends on `axon-cortex`, never the reverse.
+///
+/// Bytes: a JSON object of string values with keys sorted by code point, no
+/// whitespace, strings escaped by the `cl22` rule (Python
+/// `json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)`):
+/// `"` `\` and C0 controls escaped (`\b \f \n \r \t` short, the rest
+/// `\u00xx` lowercase), everything else — DEL and non-ASCII included — raw.
+/// Key order is SORTED HERE, not inherited from a map type, so enabling
+/// serde_json's `preserve_order` anywhere in the build cannot change a digest.
+/// A duplicate key is a caller bug and panics.
+pub fn acf1_canonical_bytes(fields: &[(&str, &str)]) -> Vec<u8> {
+    fn string(s: &str, out: &mut Vec<u8>) {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        out.push(b'"');
+        for &b in s.as_bytes() {
+            match b {
+                b'"' => out.extend_from_slice(b"\\\""),
+                b'\\' => out.extend_from_slice(b"\\\\"),
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                b'\t' => out.extend_from_slice(b"\\t"),
+                0x08 => out.extend_from_slice(b"\\b"),
+                0x0c => out.extend_from_slice(b"\\f"),
+                0x00..=0x1f => {
+                    out.extend_from_slice(b"\\u00");
+                    out.push(HEX[(b >> 4) as usize]);
+                    out.push(HEX[(b & 0xf) as usize]);
+                }
+                _ => out.push(b),
+            }
+        }
+        out.push(b'"');
+    }
+    let mut sorted: Vec<&(&str, &str)> = fields.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    assert!(
+        sorted.windows(2).all(|w| w[0].0 != w[1].0),
+        "acf1 identity object with a duplicate key"
+    );
+    let mut out = vec![b'{'];
+    for (i, (k, v)) in sorted.into_iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        string(k, &mut out);
+        out.push(b':');
+        string(v, &mut out);
+    }
+    out.push(b'}');
+    out
 }
 
-/// `acf1:` digest of `{"path","sha256"}` — the Fabric's single-file
-/// workspace-version identity (the exact bytes a check judged). `path` is
-/// JSON-escaped by serde_json exactly as the canonical form escapes it for
-/// the ASCII paths the Runner uses.
+/// `"acf1:" + sha256(acf1_canonical_bytes(fields))`.
+pub fn acf1_digest(fields: &[(&str, &str)]) -> String {
+    format!("acf1:{}", sha256_hex(&acf1_canonical_bytes(fields)))
+}
+
+/// `acf1:` identity of a registered executable:
+/// `{"registered_executable_ref","sha256"}`.
+pub fn fabric_executable_digest(id: &str, sha256: &str) -> String {
+    acf1_digest(&[("registered_executable_ref", id), ("sha256", sha256)])
+}
+
+/// `acf1:` identity of a single-file workspace version (the exact bytes a
+/// check judged): `{"path","sha256"}`.
 pub fn fabric_workspace_digest(rel_path: &str, bytes: &[u8]) -> String {
-    let v = serde_json::json!({"path": rel_path, "sha256": sha256_hex(bytes)});
-    format!(
-        "acf1:{}",
-        sha256_hex(serde_json::to_string(&v).expect("json").as_bytes())
-    )
+    acf1_digest(&[("path", rel_path), ("sha256", &sha256_hex(bytes))])
 }
 
 impl CheckExecutor for FabricSubmitExecutor {
@@ -2369,6 +2445,8 @@ impl CheckExecutor for FabricSubmitExecutor {
             .arg(&c.journal)
             .arg("--check-registry")
             .arg(&c.registry_file)
+            .arg("--grant-registry")
+            .arg(&c.grant_registry)
             .arg("--store")
             .arg(&c.store)
             .arg("--tenant")

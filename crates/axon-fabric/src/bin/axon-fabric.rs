@@ -2,12 +2,13 @@
 //!
 //! ```text
 //! axon-fabric submit --request FILE|- --journal FILE --check-registry FILE
+//!                    --grant-registry FILE
 //!                    --store DIR --tenant T --family F --expected-epoch N
-//!                    [--workspace DIR] [--effect-ceiling CSV]
+//!                    [--workspace DIR]
 //!                    [--budget-micro N] [--budget-exec-ms N]
 //!                    [--linux-launcher SH --linux-manifest JSON
 //!                     --linux-evidence JSON [--linux-artifacts DIR]
-//!                     --linux-out-root DIR] [--path-scoped-grant]
+//!                     --linux-out-root DIR]
 //! axon-fabric status --journal FILE --op ID
 //! axon-fabric cancel --journal FILE --op ID --reason TEXT
 //! ```
@@ -17,10 +18,14 @@
 //! whatever the receipt status (a receipt is an answer, including
 //! `unsupported`, `denied`, `failed`). A refusal that produced no receipt is
 //! `{"schema":"axon-fabric-refusal/1","kind":…,"reason":…}` with a nonzero
-//! exit (2 io/journal, 3 malformed, 4 unregistered, 5 conflict, 6 stale epoch).
+//! exit (2 io/journal, 3 malformed, 4 unregistered, 5 conflict, 6 stale epoch,
+//! 7 unauthorized: `grant_ref` not resolvable for `principal_ref`).
 //!
 //! Every executable comes from the `--check-registry` file (path + sha256),
-//! never from the request.
+//! never from the request. Every grant comes from the `--grant-registry` file
+//! (`axon-fabric-grant-registry/1`, grant files pinned by sha256); the
+//! interpreter effect ceiling is DERIVED from the resolved grant — there is no
+//! flag that sets or removes it.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -51,9 +56,6 @@ impl Args {
     fn req(&self, flag: &str) -> String {
         self.opt(flag)
             .unwrap_or_else(|| refuse("usage", &format!("{flag} is required"), 2))
-    }
-    fn flag(&self, flag: &str) -> bool {
-        self.0.iter().any(|a| a == flag)
     }
     fn num(&self, flag: &str, default: u64) -> u64 {
         match self.opt(flag) {
@@ -95,6 +97,8 @@ fn submit(a: &Args) {
     let registry =
         axon_cortex::runner::CheckRegistry::load(&PathBuf::from(a.req("--check-registry")))
             .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    let grants = axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
+        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
     let sc =
         scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));
     let expected = AuthorityEpoch::new(a.num("--expected-epoch", u64::MAX))
@@ -121,9 +125,8 @@ fn submit(a: &Args) {
             verify_ms: a.num("--budget-verify-ms", 3_600_000),
             retries: a.num("--budget-retries", 1_000),
         },
-        effect_ceiling: a.opt("--effect-ceiling"),
+        grants,
         linux,
-        path_scoped_grant: a.flag("--path-scoped-grant"),
         pre_launch_hook: None,
     };
     match axon_fabric::submit(&text, &cfg) {

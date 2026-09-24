@@ -66,13 +66,52 @@ pub struct ResourceVector {
 }
 
 impl ResourceVector {
-    fn checked_add(self, o: Self) -> Option<Self> {
-        Some(ResourceVector {
-            model_micro_usd: self.model_micro_usd.checked_add(o.model_micro_usd)?,
-            exec_ms: self.exec_ms.checked_add(o.exec_ms)?,
-            verify_ms: self.verify_ms.checked_add(o.verify_ms)?,
-            retries: self.retries.checked_add(o.retries)?,
-        })
+    /// The dimensions, named, in a fixed order.
+    fn dims(self) -> [(&'static str, u64); 4] {
+        [
+            ("model_micro_usd", self.model_micro_usd),
+            ("exec_ms", self.exec_ms),
+            ("verify_ms", self.verify_ms),
+            ("retries", self.retries),
+        ]
+    }
+
+    /// Carve `req` on top of `committed` under `ceiling` through axon-os's
+    /// ledger algebra (`ResourceLedger::carve`, D-C5) rather than a parallel
+    /// comparison. `ResourceLedger` has three fixed axes and the Fabric has
+    /// four dimensions, so each dimension is carved on its own single-axis
+    /// ledger (`compute`); the refused dimension is reported by name.
+    ///
+    /// One guard `carve` does not provide: it checks with `saturating_add`
+    /// and then adds UNCHECKED, so at a cap of `u64::MAX` an overflowing carve
+    /// passes the check and then panics (debug) or wraps (release). An
+    /// overflowing sum is refused here first, as the journal always did.
+    fn carve_within(
+        committed: Self,
+        req: Self,
+        ceiling: Self,
+        lineage: &str,
+    ) -> Result<(), &'static str> {
+        use axon_os::ledger::{Carve, ResourceLedger};
+        for (((name, used), (_, want)), (_, cap)) in committed
+            .dims()
+            .into_iter()
+            .zip(req.dims())
+            .zip(ceiling.dims())
+        {
+            if used.checked_add(want).is_none() {
+                return Err(name);
+            }
+            let mut l = ResourceLedger::new(lineage, cap, 0, 0);
+            l.compute_used = used;
+            l.carve(Carve {
+                compute: want,
+                budget: 0,
+                persist_bytes: 0,
+            })
+            .map_err(|_| name)?;
+        }
+        Ok(())
     }
     fn saturating_add(self, o: Self) -> Self {
         ResourceVector {
@@ -81,12 +120,6 @@ impl ResourceVector {
             verify_ms: self.verify_ms.saturating_add(o.verify_ms),
             retries: self.retries.saturating_add(o.retries),
         }
-    }
-    fn fits_within(self, ceiling: Self) -> bool {
-        self.model_micro_usd <= ceiling.model_micro_usd
-            && self.exec_ms <= ceiling.exec_ms
-            && self.verify_ms <= ceiling.verify_ms
-            && self.retries <= ceiling.retries
     }
 }
 
@@ -243,9 +276,11 @@ pub enum JournalError {
     /// The reservation does not fit. Nothing was written.
     BudgetExceeded {
         scope: Box<Scope>,
-        requested: ResourceVector,
-        committed: ResourceVector,
-        ceiling: ResourceVector,
+        /// `[requested, committed, ceiling]`, boxed to keep the error small.
+        vectors: Box<[ResourceVector; 3]>,
+        /// The first dimension that did not fit, as `ResourceLedger::carve`
+        /// reported it.
+        dimension: &'static str,
     },
 }
 
@@ -274,10 +309,12 @@ impl std::fmt::Display for JournalError {
             JournalError::InvalidTransition { op, from, to } => {
                 write!(f, "operation {op}: cannot go from {from:?} to {to}")
             }
-            JournalError::BudgetExceeded { scope, .. } => {
+            JournalError::BudgetExceeded {
+                scope, dimension, ..
+            } => {
                 write!(
                     f,
-                    "reservation exceeds the remaining budget of scope {scope:?}"
+                    "reservation exceeds the remaining {dimension} budget of scope {scope:?}"
                 )
             }
         }
@@ -422,13 +459,16 @@ impl State {
                     return Err(bad(&v, "reserved"));
                 }
                 let usage = self.usage(&v.intent.scope)?;
-                let after = usage.committed().checked_add(v.intent.reservation);
-                if !after.is_some_and(|a| a.fits_within(usage.ceiling)) {
+                if let Err(dimension) = ResourceVector::carve_within(
+                    usage.committed(),
+                    v.intent.reservation,
+                    usage.ceiling,
+                    v.intent.op.as_str(),
+                ) {
                     return Err(JournalError::BudgetExceeded {
                         scope: Box::new(v.intent.scope.clone()),
-                        requested: v.intent.reservation,
-                        committed: usage.committed(),
-                        ceiling: usage.ceiling,
+                        vectors: Box::new([v.intent.reservation, usage.committed(), usage.ceiling]),
+                        dimension,
                     });
                 }
                 v.state = OpState::Reserved;
