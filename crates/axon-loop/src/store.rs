@@ -72,6 +72,75 @@ pub struct Store {
     /// and checked by [`Store::guard`], so a lock or record can only ever land
     /// inside the one canonical store directory.
     root: PathBuf,
+    /// D-015: the ledger MAC key, when the operator configured one (see
+    /// [`crate::ledger`]'s threat model). `None` = the historical unkeyed store.
+    key: Option<LedgerKey>,
+}
+
+/// The operator key source, shared with `axon-vm`'s attestation: hex, at least
+/// 16 bytes. There is deliberately no ephemeral fallback: a per-process key
+/// cannot verify what a previous process wrote, so "no key" means an unkeyed
+/// store, stated as such, never a key that silently authenticates nothing.
+pub const LEDGER_KEY_ENV: &str = "AXON_ATTEST_KEY";
+
+/// The ledger MAC key: `HMAC-SHA256(operator_key, domain)`, so the ledger's
+/// MACs are never interchangeable with any other use of the operator key.
+/// `Debug` is redacted.
+#[derive(Clone)]
+pub struct LedgerKey([u8; 32]);
+
+impl std::fmt::Debug for LedgerKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LedgerKey(<redacted>)")
+    }
+}
+
+impl LedgerKey {
+    /// Derive the ledger key from operator key bytes (>= 16 bytes).
+    pub fn derive(operator_key: &[u8]) -> Result<LedgerKey> {
+        if operator_key.len() < 16 {
+            return Err(LoopError::Usage(format!(
+                "{LEDGER_KEY_ENV} is shorter than 16 bytes: refusing to key the ledger with it"
+            )));
+        }
+        Ok(LedgerKey(axon_attest::hmac_sha256(
+            operator_key,
+            b"axon-loop ledger key v1",
+        )))
+    }
+
+    /// `HMAC-SHA256(ledger_key, data)`, the primitive `axon-audit` keys its chain with.
+    pub fn mac(&self, data: &[u8]) -> [u8; 32] {
+        axon_attest::hmac_sha256(&self.0, data)
+    }
+
+    /// The key from [`LEDGER_KEY_ENV`]: unset or blank ⇒ `None` (unkeyed);
+    /// set but not hex, or shorter than 16 bytes ⇒ a refusal (exit 2), never a
+    /// silent fall back to unkeyed.
+    pub fn from_env() -> Result<Option<LedgerKey>> {
+        match std::env::var(LEDGER_KEY_ENV) {
+            Ok(v) if !v.trim().is_empty() => {
+                let bytes = decode_hex(v.trim()).ok_or_else(|| {
+                    LoopError::Usage(format!("{LEDGER_KEY_ENV} is not valid hex"))
+                })?;
+                LedgerKey::derive(&bytes).map(Some)
+            }
+            Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(LoopError::Usage(format!(
+                "{LEDGER_KEY_ENV} is not valid hex"
+            ))),
+        }
+    }
+}
+
+pub(crate) fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -112,11 +181,22 @@ fn map_open(p: &Path, e: std::io::Error) -> LoopError {
 }
 
 impl Store {
+    /// Open a store, keyed by [`LEDGER_KEY_ENV`] when the operator set it.
     pub fn open_dir(root: impl Into<PathBuf>) -> Result<Store> {
+        Self::open_dir_keyed(root, LedgerKey::from_env()?)
+    }
+
+    /// Open a store with an explicit ledger key (`None` = unkeyed). The key
+    /// decides how the ledger is verified; the files never do.
+    pub fn open_dir_keyed(root: impl Into<PathBuf>, key: Option<LedgerKey>) -> Result<Store> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(&root)?;
-        Ok(Store { root })
+        Ok(Store { root, key })
+    }
+
+    pub fn ledger_key(&self) -> Option<&LedgerKey> {
+        self.key.as_ref()
     }
 
     pub fn root(&self) -> &Path {

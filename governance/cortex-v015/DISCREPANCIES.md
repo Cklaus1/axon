@@ -13,7 +13,7 @@
 | D-007 | four governance registries already exist | consolidation proposed | — |
 | **D-008** | cancellation killed only the direct child | **FIXED** — `process_group` + `killpg`; differential-verified | `fix/kill-the-process-group` |
 | D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
-| D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **open** — Stage 2 | — |
+| D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **partly resolved** (keyed under `AXON_ATTEST_KEY`: F1/F2/R2 detected); R1 + no-key default **open** | `v022/stage2-2a` |
 | D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **open** — Stage 2 | — |
 | D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **open** — Stage 2 | — |
 | D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
@@ -654,7 +654,54 @@ already paid for.
 
 **Proposed resolution.** Keep the typed event log, anchor its head on
 `axon-audit`'s keyed primitives (or witness each entry's ref in an
-`axon-audit` keyed chain). **Stage 2. OPEN.**
+`axon-audit` keyed chain). **Stage 2.**
+
+**Resolution (Stage 2, lane 2A): partly resolved.** The typed event log is
+kept, and it is now keyed with `axon-audit`'s mechanism. The key comes from
+the operator key `axon-vm` already uses, `AXON_ATTEST_KEY` (hex, at least 16
+bytes). A malformed value is refused rather than dropping to unkeyed. The
+MACs reuse `axon-audit`'s own primitive and shape:
+
+* Each entry carries `mac = HMAC(k, digest(entry without mac))`. This is
+  `axon-audit`'s keyed `entry_hash`.
+* `ledger.head` carries `mac = HMAC(k, seq ‖ entry_ref)`. This is
+  `compute_tip`.
+
+The MACs use `axon_attest::hmac_sha256`, and `k` is domain-separated from the
+operator key. The key decides how the store is verified, never the files: a
+keyed opener refuses an unauthenticated line or head, and an unkeyed opener
+refuses a keyed ledger.
+
+**Measured.** This used `tests/keyed_ledger.rs` plus the independent rt4i
+harness, regenerated keyed. Under a key:
+
+| attack | result |
+|---|---|
+| F1 (forged well-chained append + recomputed head + projection) | exit 2 |
+| F1 with the head left alone | exit 2. Without the per-entry MAC it would have been rolled forward as a crash tail |
+| F2 (forged evaluation line + head, then the real admit) | admit exit 2 |
+| R2 (truncate + rewrite head) | exit 2 |
+
+Unkeyed controls of the same attacks still succeed. Two mutations were run:
+
+* Removing the head-MAC check fails the R2 test.
+* Removing the entry-MAC check fails the F1 roll-forward test.
+
+**Still open:**
+
+* **No key.** This is the default. There is deliberately no ephemeral key,
+  because a per-process key cannot verify what the previous process wrote.
+  F1, F2 and R2 stay undetectable.
+* **A key holder.** Anyone holding the key can mint any ledger.
+* **R1.** Restoring a genuine older keyed state needs a monotonic external
+  witness. Witnessing each head in an `axon-audit` `Ledger` was considered and
+  not done: that `Ledger` takes no inter-process lock, so concurrent
+  `axon-loop` processes would corrupt the witness chain. The OPEN state is
+  pinned by `r1_restoring_a_genuine_older_keyed_state_is_still_out_of_model`.
+* **R3/NS6c and PF1.** Unchanged.
+* **Writer identity.** No writer identity is stamped from trusted runtime
+  context (the `axon-ledger` `authenticated_admins` rule). This part is
+  **open**.
 
 ## D-016 — D-C2: a fourth authority vocabulary; admission under a grant that is not enforced
 

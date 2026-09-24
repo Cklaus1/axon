@@ -43,15 +43,28 @@ No `axon` CLI verb reaches this crate.
   pointer it moves, is **never a grant** and confers no effect authority. That
   is what `axon-os::gate::admit` decides (D-C6,
   `governance/cortex-v015/DISCREPANCIES.md` D-018).
-* **The ledger is not forgery-resistant.** It is **unkeyed** sha256 stored in
-  the same directory as the data. Its own module doc puts the following out of
-  model:
-  * a consistent truncate-and-rewrite-head (R2);
-  * whole-store rollback (R1);
-  * a well-chained forged append (F1/F2).
+* **The ledger is keyed only when the operator provides a key (D-015).**
+  With `AXON_ATTEST_KEY` set (hex, at least 16 bytes: the same key and rule
+  `axon-vm` attests under), each ledger entry and `ledger.head` carry an
+  HMAC made with `axon_attest::hmac_sha256`, the primitive `axon-audit`'s
+  keyed chain uses. Its shape is the same too: a per-entry MAC plus an
+  authenticated `(count, last)` tip. Under a key, these are refused with
+  exit 2:
+  * a well-chained forged append with a rewritten head (F1);
+  * a forged evaluation line (F2);
+  * a truncation with a rewritten head (R2).
 
-  `axon-audit` already has a keyed chain with an authenticated tip. This is
-  open conflict **D-C1**, Stage 2 (D-015).
+  A wrong key, a keyed store opened without its key, and an unkeyed store
+  opened with a key are also refused. A malformed key value is refused
+  outright rather than silently running unkeyed.
+
+  Still out of model:
+  * **No key (the default).** There is deliberately no ephemeral key, so
+    F1, F2 and R2 are undetectable, as before.
+  * **Anyone holding the key.**
+  * **Restoring a genuine older keyed state (R1).** This needs a monotonic
+    external witness and is **OPEN**.
+  * **Deleting the anchor as well (R3/NS6c).**
 * **Plan approval is not `axon-os` approval.** `operator_approved` is a
   self-asserted bool, and `approval_ref` is only checked for being non-null
   (D-016).

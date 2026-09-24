@@ -13,9 +13,9 @@
 //!
 //! # What the chain does and does not detect (the threat model, precisely)
 //!
-//! The chain and head are UNKEYED sha256 in the same directory as the data.
-//! They detect ACCIDENTAL damage and edits by a writer who does not also
-//! rewrite the chain consistently:
+//! The chain is `cl22:` sha256 over each entry, including `prev`. It detects
+//! ACCIDENTAL damage and edits by a writer who does not rewrite the chain
+//! consistently:
 //!
 //! * a projection that differs from the replay of the ledger (edited
 //!   `pointer.json`, injected history) is corruption, exit 2 (A7b, F3b);
@@ -27,17 +27,59 @@
 //!   below;
 //! * a freeze cannot be undone by deleting a file (G6).
 //!
-//! It does NOT detect a writer with filesystem access who rewrites
-//! consistently: truncating the ledger AND rewriting the head to the new last
-//! entry (R2), restoring an older copy of the whole store (R1), appending a
-//! well-chained forged entry and recomputing the head (F1, F2), or deleting
-//! the ledger, head, anchor and every dependent directory (R3). Those need an
-//! external anchor (a signed or remotely witnessed head) and are OUT OF
-//! MODEL here: the store proves it is internally consistent, not who wrote
-//! it, and not that it is the latest version. Replay re-checks linkage; it
-//! does not re-validate event semantics.
+//! ## Keyed mode (D-015): the operator key closes F1, F2 and R2
 //!
-//! `ledger.anchor` (R3, best effort): written once with the first entry's
+//! When the operator sets `AXON_ATTEST_KEY` (hex, >= 16 bytes; the same key
+//! and key rule `axon-vm` attests under), the ledger is authenticated the way
+//! `axon-audit`'s keyed chain is, with the same primitive
+//! (`axon_attest::hmac_sha256`) and the same two-part shape:
+//!
+//! * every entry carries `mac` = HMAC(k, "axon-loop entry v1" ‖ the `cl22:`
+//!   digest of the entry without its `mac`) — `axon-audit`'s keyed
+//!   `entry_hash`. The per-entry MAC is not redundant with the head: an
+//!   appended entry the head does not yet name is ROLLED FORWARD as a crash
+//!   tail, so without it one forged line would be adopted and re-headed;
+//! * `ledger.head` carries `mac` = HMAC(k, "axon-loop head v1" ‖ seq ‖
+//!   entry_ref) — `axon-audit`'s `compute_tip` over (count, last hash). A
+//!   prefix of a valid keyed chain is itself valid, so truncation is only
+//!   detectable because the COUNT is authenticated.
+//!
+//! `k` is derived as HMAC(operator key, "axon-loop ledger key v1"), so these
+//! MACs are never interchangeable with any other use of the operator key.
+//! The KEY decides the verification, never the files: a keyed opener refuses
+//! an entry or head without a valid `mac`, and an unkeyed opener refuses a
+//! ledger that has one (exit 2) rather than silently verifying less. Under a
+//! key the following are DETECTED (exit 2), and pinned by tests:
+//!
+//! * F1 — a well-chained forged entry appended, head recomputed;
+//! * F2 — a hand-written evaluation record plus its journalled ledger line;
+//! * R2 — truncation plus a head rewritten to the new last entry;
+//! * a forged line appended with the head left alone (the roll-forward path).
+//!
+//! What stays OUT OF MODEL, precisely:
+//!
+//! * **No key configured.** There is deliberately no ephemeral key: a
+//!   per-process key cannot verify what the previous process wrote, and would
+//!   only look like authentication. Unkeyed, F1/F2/R2 are undetectable, as
+//!   before; the store says what it is.
+//! * **Whoever holds the key**, or can read where the operator keeps it (the
+//!   environment of an `axon-loop` process), can mint any ledger. The key
+//!   authenticates "written by a key holder", not which key holder.
+//! * **R1 — restoring an older, fully consistent keyed store** (ledger, head
+//!   and projections copied from an earlier moment), or truncating to an
+//!   earlier point and restoring the genuine head file that was current then.
+//!   Every byte is genuine; only freshness is wrong, and freshness needs a
+//!   MONOTONIC witness outside the store. Candidate: append each head to an
+//!   external `axon-audit` keyed ledger and refuse a store head older than the
+//!   last witnessed one. Not done: `axon-audit`'s `Ledger` takes no
+//!   inter-process lock, so concurrent writers would corrupt the witness
+//!   chain. **R1 is OPEN.**
+//! * **R3/NS6c** — deleting ledger, head, anchor and every dependent
+//!   directory is indistinguishable from a fresh store (same witness gap).
+//! * Replay re-checks linkage and authenticity; it does not re-validate event
+//!   SEMANTICS. A key holder's well-formed but wrong event is served.
+//!
+//! //! `ledger.anchor` (R3, best effort): written once with the first entry's
 //! ref and never rewritten. Its presence with no ledger is corruption, so a
 //! scope's fence cannot be silently reissued by deleting the ledger and the
 //! dependent directories; deleting the anchor as well is still undetectable
@@ -51,7 +93,7 @@
 use crate::error::{LoopError, Result};
 use crate::evo::Hypothesis;
 use crate::pointer::{PointerFile, PointerRecord, Revocation};
-use crate::store::{Lock, Store};
+use crate::store::{LedgerKey, Lock, Store, LEDGER_KEY_ENV};
 use axon_loop_contracts::{AuthorityEpoch, PolicyTransition, Ref, Scope};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -139,6 +181,10 @@ pub struct Entry {
     pub prev: Ref,
     pub recorded_ms: u64,
     pub event: Event,
+    /// Keyed mode only (D-015): hex HMAC over the digest of this entry
+    /// without `mac`. Absent in an unkeyed store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -147,6 +193,66 @@ pub struct Head {
     pub schema: HeadSchema,
     pub seq: u64,
     pub entry_ref: Ref,
+    /// Keyed mode only (D-015): hex HMAC over `(seq, entry_ref)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac: Option<String>,
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Length-checked, data-independent comparison of two MAC strings.
+fn mac_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+fn entry_mac(k: &LedgerKey, e: &Entry) -> Result<String> {
+    let bare = Entry {
+        mac: None,
+        ..e.clone()
+    };
+    let d = axon_loop_contracts::digest(&bare)?;
+    let mut data = b"axon-loop entry v1\0".to_vec();
+    data.extend_from_slice(d.as_str().as_bytes());
+    Ok(hex(&k.mac(&data)))
+}
+
+fn head_mac(k: &LedgerKey, seq: u64, entry_ref: &Ref) -> String {
+    let mut data = b"axon-loop head v1\0".to_vec();
+    data.extend_from_slice(&seq.to_le_bytes());
+    data.extend_from_slice(entry_ref.as_str().as_bytes());
+    hex(&k.mac(&data))
+}
+
+/// The key decides; the file's claim never does.
+fn check_entry_mac(k: Option<&LedgerKey>, e: &Entry) -> Result<()> {
+    match (k, &e.mac) {
+        (Some(k), Some(m)) if mac_eq(m, &entry_mac(k, e)?) => Ok(()),
+        (Some(_), _) => Err(corrupt(format!(
+            "ledger entry seq {} is not authenticated under the operator key \
+             (forged, or written without {LEDGER_KEY_ENV})",
+            e.seq
+        ))),
+        (None, Some(_)) => Err(corrupt(format!(
+            "ledger is keyed but no key is configured: set {LEDGER_KEY_ENV}"
+        ))),
+        (None, None) => Ok(()),
+    }
+}
+
+fn check_head_mac(k: Option<&LedgerKey>, h: &Head) -> Result<()> {
+    match (k, &h.mac) {
+        (Some(k), Some(m)) if mac_eq(m, &head_mac(k, h.seq, &h.entry_ref)) => Ok(()),
+        (Some(_), _) => Err(corrupt(
+            "ledger head is not authenticated under the operator key \
+             (rewritten, or written without the key)",
+        )),
+        (None, Some(_)) => Err(corrupt(format!(
+            "ledger head is keyed but no key is configured: set {LEDGER_KEY_ENV}"
+        ))),
+        (None, None) => Ok(()),
+    }
 }
 
 /// A ledger transaction: the store lock, plus the verified ledger.
@@ -200,9 +306,11 @@ impl<'s> Tx<'s> {
         let entries: Vec<Entry> = store.read_jsonl(&ledger_path(store))?;
         let head: Option<Head> = store.read_json(&head_path(store))?;
 
+        let key = store.ledger_key();
         let mut refs = Vec::with_capacity(entries.len());
         let mut prev = crate::null_policy_ref();
         for (i, e) in entries.iter().enumerate() {
+            check_entry_mac(key, e)?;
             if e.seq != i as u64 + 1 {
                 return Err(corrupt(format!("ledger seq {} at line {}", e.seq, i + 1)));
             }
@@ -221,6 +329,7 @@ impl<'s> Tx<'s> {
         let n = tx.entries.len() as u64;
         match head {
             Some(h) => {
+                check_head_mac(key, &h)?;
                 if h.seq > n {
                     return Err(corrupt(format!(
                         "ledger truncated: head at seq {}, ledger has {n}",
@@ -289,10 +398,16 @@ impl<'s> Tx<'s> {
                 },
             )?;
         }
+        let seq = self.entries.len() as u64;
+        let entry_ref = self.refs.last().expect("nonempty").clone();
         let h = Head {
             schema: HeadSchema,
-            seq: self.entries.len() as u64,
-            entry_ref: self.refs.last().expect("nonempty").clone(),
+            seq,
+            mac: self
+                .store
+                .ledger_key()
+                .map(|k| head_mac(k, seq, &entry_ref)),
+            entry_ref,
         };
         self.store.write_json(&head_path(self.store), &h)
     }
@@ -393,7 +508,7 @@ impl<'s> Tx<'s> {
     /// Append an event: ledger line (fsync), projection, then head.
     pub fn append(&mut self, event: Event) -> Result<u64> {
         let seq = self.entries.len() as u64 + 1;
-        let e = Entry {
+        let mut e = Entry {
             schema: EntrySchema,
             seq,
             prev: self
@@ -403,7 +518,11 @@ impl<'s> Tx<'s> {
                 .unwrap_or_else(crate::null_policy_ref),
             recorded_ms: crate::now_ms(),
             event,
+            mac: None,
         };
+        if let Some(k) = self.store.ledger_key() {
+            e.mac = Some(entry_mac(k, &e)?);
+        }
         let r = axon_loop_contracts::digest(&e)?;
         self.store.append_jsonl(&ledger_path(self.store), &e)?;
         self.entries.push(e.clone());
