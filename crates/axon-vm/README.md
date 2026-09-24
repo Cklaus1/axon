@@ -41,11 +41,12 @@ it uses `scripts/fc_linux_profile.sh` and the jailer.
   moved verbatim. The vsock UDS name is pid-keyed
   (`/tmp/axon-vm-vsock-<pid>.sock`), so two concurrent launches in one process
   collide.
-* **The live tests can skip silently.** `tests/lib_launch.rs` and
-  `tests/cli_parity.rs` print `SKIPPED` and return when firecracker, `/dev/kvm`
-  or the kernel is absent. Cargo then reports PASS, and the skip is not
-  counted by the repository's `harness_skip` / `AXON_HARNESS_STRICT`
-  mechanism. Converting these tests belongs to another Stage-1 lane.
+* **The live tests can still skip.** `tests/lib_launch.rs` and
+  `tests/cli_parity.rs` skip when firecracker, `/dev/kvm` or the kernel is
+  absent. Since 4c908c3 the skip is recorded to `target/harness-skips.log`,
+  listed at the end of every `gate.sh` run, and fatal under
+  `AXON_HARNESS_STRICT=1`; without that variable cargo still reports the test
+  as ok, so a green run is not proof the guest booted.
 * **The positive control relies on the vacuous allow path.** `lib_launch.rs`
   uses IO+FS → `Exited(0)` as its positive guest-verdict control, and that
   depends on the custom kernel's allow path, which is still open finding F161.

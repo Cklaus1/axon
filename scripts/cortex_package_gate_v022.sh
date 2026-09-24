@@ -140,7 +140,14 @@ listed = man.get("files")
 if not isinstance(listed, dict):
     print("  integrity FAILED: `files` is not a map"); sys.exit(1)
 present = set()
-for d, _dirs, files in os.walk(pkg):
+for d, dirs, files in os.walk(pkg):
+    # os.walk does not descend into a symlinked directory and lists it under
+    # `dirs`, so checking islink on files alone let a linked directory carry
+    # unlisted content past this step and into the offline suite (red-team
+    # D-01). A symlink anywhere in the pack is refused.
+    for sub in dirs:
+        if os.path.islink(os.path.join(d, sub)):
+            bad.append(f"SYMLINK  {os.path.relpath(os.path.join(d, sub), pkg)}/ (directory)")
     for f in files:
         p = os.path.join(d, f); rel = os.path.relpath(p, pkg)
         if os.path.islink(p): bad.append(f"SYMLINK  {rel}")

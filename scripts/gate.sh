@@ -163,6 +163,21 @@ if c22=$(./scripts/cortex_package_gate_v022.sh 2>&1); then
 else
   printf '%s\n' "$c22" | tail -15; fail "cortex v0.22 package (integrity / honesty / validator)"
 fi
+# Negative control, run every time: a copy of the pack carrying a symlinked
+# directory must be refused at the integrity step, before any package code runs.
+# os.walk does not descend into a linked directory, so checking files alone once
+# let unlisted content reach the offline suite (red-team D-01). A guard nobody
+# re-proves decays, so the refusal is asserted here, not assumed.
+c22neg="$(mktemp -d)"
+cp -r docs/axon_cortex_v0_22/axon-cortex-build-v0_22 "$c22neg/pack"
+mkdir -p "$c22neg/outside" && ln -s "$c22neg/outside" "$c22neg/pack/tests/linked"
+c22n_rc=0; c22n=$(./scripts/cortex_package_gate_v022.sh --pkg "$c22neg/pack" 2>&1) || c22n_rc=$?
+rm -rf "$c22neg"
+case "$c22n_rc:$c22n" in
+  1:*"SYMLINK  tests/linked/ (directory)"*"no package code was executed"*)
+    echo "  OK negative control: a symlinked directory in the pack is refused before package code runs" ;;
+  *) printf '%s\n' "$c22n" | tail -8; fail "v0.22 package gate did not refuse a symlinked directory (rc=$c22n_rc)" ;;
+esac
 
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
@@ -788,13 +803,19 @@ echo ""
 # 49). That is a real decision about gate latency, not one to make as a side
 # effect of a bug fix. What this does is refuse to let the vacuity be silent.
 # ($SKIPLOG is truncated at the top of this script so this reflects THIS run.)
+# The skip list is printed in BOTH modes. It used to sit inside the non-strict
+# branch only, so a --strict run ended "✅ gate PASSED" while the v0.22 pack's
+# offline suite, loop_interop, b263 and the axon-vm live tests had skipped with
+# no line saying so (red-team D-02). A skip is a non-result: say it, every time.
+if [ -s "$SKIPLOG" ]; then
+  echo "── gate: skipped harnesses (non-results, NOT passes) ───────────────"
+  n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
+  echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
+  sort -u "$SKIPLOG" | sed 's/^/    · /'
+  echo "  Set AXON_HARNESS_STRICT=1 to make any skip fatal."
+fi
 if [ "$STRICT" != 1 ]; then
   echo "── gate: coverage notice ───────────────────────────────────────────"
-  if [ -s "$SKIPLOG" ]; then
-    n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
-    echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
-    sort -u "$SKIPLOG" | sed 's/^/    · /'
-  fi
   echo "  This run did NOT verify interp↔codegen / AOT-wasm parity (invariant I-2)."
   echo "  The test stage is --no-default-features, so the codegen parity wrappers"
   echo "  cannot assert. To actually check I-2:"

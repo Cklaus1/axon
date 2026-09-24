@@ -9,7 +9,8 @@ Callers:
   authority epochs.
 * The binary is driven by MiCode over files and by this crate's tests.
 * The paired interop harness `scripts/loop_interop_gate.sh` was invoked by
-  nothing at `279da778`.
+  nothing at `279da778`; since 54f41c3 `gate.sh --strict` runs it (CI does
+  not). It does not pin the MiCode revision it tests against (red-team D-04).
 
 No `axon` CLI verb reaches this crate.
 

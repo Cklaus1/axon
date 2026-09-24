@@ -129,7 +129,7 @@
       ],
       "gate_compiles": true,
       "gate_tests": true,
-      "verified_by": "The required command includes tests/lib_launch.rs, whose live boot RETURNS EARLY reporting ok when firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent (FG-043, open) \u2014 a green run of this command does not prove the library launch path booted anything."
+      "verified_by": "The required command includes tests/lib_launch.rs, whose live boot RETURNS EARLY reporting ok when firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent. Since 4c908c3 (FG-043 fixed) that skip is recorded to target/harness-skips.log, listed at the end of every gate run, and fatal under AXON_HARNESS_STRICT=1; without that variable a green run of this command still does not prove the library launch path booted anything, and its positive control remains the FG-041 vacuous allow path."
     },
     "cortex-policy-adapter": {
       "class": "A",
@@ -332,7 +332,7 @@
       "required": [
         "cargo test --locked -p axon-loop"
       ],
-      "verified_by": "NOTE: tests/intake_dec_driver.rs::produce_policy is #[ignore] and runs only under scripts/loop_interop_gate.sh, which no gate or CI invokes \u2014 the Axon<->MiCode interop leg is NOT covered by the required command.",
+      "verified_by": "NOTE: tests/intake_dec_driver.rs::produce_policy is #[ignore] and runs only under scripts/loop_interop_gate.sh, which `gate.sh --strict` invokes (54f41c3) and CI does not \u2014 the Axon<->MiCode interop leg is NOT covered by this required command, and when the MiCode worktree is absent the strict stage records a SKIP (a non-result).",
       "gate_compiles": true,
       "gate_tests": true
     },
@@ -362,7 +362,7 @@
       "required": [
         "cargo test --locked -p axon-fabric"
       ],
-      "prerequisite": "tests/common/mod.rs:14 and tests/cortex_via_fabric.rs:17 hard-code <repo>/target/debug/axon and <repo>/target/debug/cortex and ignore CARGO_TARGET_DIR. In gate.sh both exist by this stage (the codegen axon is rebuilt at gate.sh:368; the cortex bin is built by `cargo test -p axon-cortex` at gate.sh:202), but only when CARGO_TARGET_DIR is unset. With it set, the 3 cortex_via_fabric tests FAIL (loudly, not skipped). Verified 2026-09-24: 35 passed / 1 ignored with either the no-default or the codegen axon present.",
+      "prerequisite": "the interpreter and cortex binaries must be built first; tests locate them via AXON_BIN / CORTEX_BIN, then the test's own target dir, then <repo>/target/debug (d8116b3) and FAIL, never skip, when absent. gate.sh builds both before this stage. Caveat (red-team D-05): the final <repo>/target/debug fallback is not logged, so a run under a custom CARGO_TARGET_DIR can use a different build without saying so. Verified 2026-09-24: 35 passed / 1 ignored.",
       "verified_by": "journal.rs::crash_child is #[ignore] by design \u2014 it is the child-process body the sigkill_after_* restart tests spawn, so it IS exercised. The linux-microvm-protected dispatch is tested only against a stand-in launcher; the real scripts/fc_linux_profile.sh + b263_qualify.sh need root/jailer and are invoked by no gate.",
       "gate_compiles": true,
       "gate_tests": true

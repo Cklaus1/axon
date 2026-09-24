@@ -32,6 +32,11 @@
 > * **Nothing automated runs it.** `gate.sh` and CI invoke neither
 >   `fc_linux_profile.sh` nor `b263_qualify.sh`, since both need root. The
 >   `axon-fabric` tests use a stand-in launcher.
+>   *(Superseded 2026-09-24, 54f41c3: `gate.sh --strict` now runs
+>   `b263_qualify.sh`. It fails the gate on PASS_WITH_BLOCKED — which, with
+>   x1–x4 recorded BLOCKED unconditionally, is the only result a fully
+>   equipped host can currently produce — and records a SKIP (non-result)
+>   when root, KVM or the guest artifacts are absent. CI still does not run it.)*
 >
 > **Do not describe or treat this profile as a qualified protected microVM.**
 > Recorded as `governance/cortex-v015/DISCREPANCIES.md` D-020.
