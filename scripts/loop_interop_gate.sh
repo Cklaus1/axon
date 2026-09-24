@@ -11,13 +11,47 @@
 # Negative cases assert ABSENCE of effect: zero tool additions, zero provider
 # requests, store bytes unchanged, nothing recorded.
 #
-# Env: MICODE_DIR (default ../micode-v022-wt), KEEP=1 keeps the temp dir.
-# Exit 0 iff every assertion passed and at least one ran.
+# Env: MICODE_DIR (default ../micode-v022-wt), KEEP=1 keeps the temp dir,
+#      CARGO_TARGET_DIR (Axon side; default <axon>/target),
+#      MICODE_TARGET_DIR (MiCode side; default $CARGO_TARGET_DIR/micode when
+#      CARGO_TARGET_DIR is set, else <micode>/target).
+#
+# Exit / output contract (the harness convention, scripts/lib/harness_skip.sh):
+#   0 + final line "loop_interop_gate: PASS — N assertions"  every assertion held
+#   0 + final line "loop_interop_gate: SKIP — …"             the DEFAULT MiCode
+#       worktree is absent: a NON-RESULT, not a pass. Under
+#       AXON_HARNESS_STRICT=1 this is exit 3 instead.
+#   1 + final line "loop_interop_gate: FAIL — …"             an assertion failed
+#       or none ran
+#   2  prerequisite broken in a way that is NOT absence: an explicitly named
+#      MICODE_DIR that does not exist, a build failure, the provider not starting.
+# All builds pass --locked: this is a release-significant harness.
 set -uo pipefail
 
 AXON_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MICODE_DIR="${MICODE_DIR:-$(cd "$AXON_DIR/../micode-v022-wt" 2>/dev/null && pwd)}"
-[ -n "$MICODE_DIR" ] && [ -d "$MICODE_DIR" ] || { echo "FATAL: MICODE_DIR not found" >&2; exit 2; }
+# shellcheck source=lib/harness_skip.sh
+. "$AXON_DIR/scripts/lib/harness_skip.sh"
+if [ -n "${MICODE_DIR:-}" ]; then
+  # Named explicitly: absence is a misconfiguration, never a skip.
+  [ -d "$MICODE_DIR" ] || { echo "FATAL: MICODE_DIR=$MICODE_DIR does not exist" >&2; exit 2; }
+  MICODE_DIR="$(cd "$MICODE_DIR" && pwd)"
+else
+  MICODE_DIR="$(cd "$AXON_DIR/../micode-v022-wt" 2>/dev/null && pwd)"
+  if [ -z "$MICODE_DIR" ]; then
+    if [ "${AXON_HARNESS_STRICT:-}" = 1 ]; then
+      echo "loop_interop_gate: FAIL — SKIP under AXON_HARNESS_STRICT=1: no MiCode worktree at $AXON_DIR/../micode-v022-wt (set MICODE_DIR)"
+      exit 3
+    fi
+    harness_skip loop_interop_gate \
+      "no MiCode worktree at $AXON_DIR/../micode-v022-wt and MICODE_DIR unset" \
+      "this is a NON-RESULT: zero interop assertions ran" \
+      "MiCode peer absent (set MICODE_DIR to a MiCode v0.22 checkout)"
+  fi
+fi
+AXON_TGT="${CARGO_TARGET_DIR:-$AXON_DIR/target}"
+if [ -n "${MICODE_TARGET_DIR:-}" ]; then MICODE_TGT="$MICODE_TARGET_DIR"
+elif [ -n "${CARGO_TARGET_DIR:-}" ]; then MICODE_TGT="$CARGO_TARGET_DIR/micode"
+else MICODE_TGT="$MICODE_DIR/target"; fi
 
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); echo "  PASS  $*"; }
@@ -36,12 +70,15 @@ trap cleanup EXIT
 
 # ── build both sides ───────────────────────────────────────────────────────
 section "build"
-( cd "$AXON_DIR" && env -u CARGO_TARGET_DIR cargo build -q -p axon-loop --bins ) \
+( cd "$AXON_DIR" && CARGO_TARGET_DIR="$AXON_TGT" cargo build --locked -q -p axon-loop --bins ) \
   || { echo "FATAL: axon-loop build failed" >&2; exit 2; }
-( cd "$MICODE_DIR" && env -u CARGO_TARGET_DIR cargo build -q -p micode --bin micode ) \
-  || { echo "FATAL: micode build failed" >&2; exit 2; }
-AXL="$AXON_DIR/target/debug/axon-loop"
-MICODE="$MICODE_DIR/target/debug/micode"
+( cd "$MICODE_DIR" && CARGO_TARGET_DIR="$MICODE_TGT" cargo build --locked -q -p micode --bin micode ) \
+  || { echo "FATAL: micode build failed (--locked: is MiCode's Cargo.lock tracked and current?)" >&2; exit 2; }
+AXL="$AXON_TGT/debug/axon-loop"
+MICODE="$MICODE_TGT/debug/micode"
+[ -x "$AXL" ] || { echo "FATAL: built axon-loop not at $AXL" >&2; exit 2; }
+[ -x "$MICODE" ] || { echo "FATAL: built micode not at $MICODE" >&2; exit 2; }
+echo "micode dir $MICODE_DIR"
 echo "axon   $(git -C "$AXON_DIR" rev-parse --short HEAD) $(git -C "$AXON_DIR" status --porcelain | grep -q . && echo '(dirty)')"
 echo "micode $(git -C "$MICODE_DIR" rev-parse --short HEAD) $(git -C "$MICODE_DIR" status --porcelain | grep -q . && echo '(dirty)')"
 
@@ -173,12 +210,12 @@ check "incumbent: store bytes unchanged" eq "$(store_hash)" "$H0"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "2. Axon produces the policy: DEC → put → baseline → activate → resolve"
-( cd "$AXON_DIR" && env -u CARGO_TARGET_DIR \
+( cd "$AXON_DIR" && CARGO_TARGET_DIR="$AXON_TGT" \
     INTAKE_DEC_OUT="$WORK/dec-policy.json" INTAKE_DEC_CANDIDATES="$CANDIDATES" \
     INTAKE_DEC_TENANT="$TENANT" INTAKE_DEC_FAMILY="$FAMILY" INTAKE_DEC_POLICY_ID=pol-dec-freq-1 \
     INTAKE_DEC_PROVIDER=deterministic-frequency INTAKE_DEC_LIMIT=2 INTAKE_DEC_USAGE="read:5,grep:3" \
     INTAKE_DEC_MODEL="$MODEL" \
-    cargo test -q -p axon-loop --test intake_dec_driver -- --ignored --exact produce_policy ) \
+    cargo test --locked -q -p axon-loop --test intake_dec_driver -- --ignored --exact produce_policy ) \
     >"$WORK/dec.log" 2>&1
 check "DEC driver produced a policy" test -s "$WORK/dec-policy.json"
 check "DEC shortlist is [read, grep] (frequency ranking, limit 2)" eq "$(jq -c .shortlist "$WORK/dec-policy.json")" '["read","grep"]'
@@ -358,4 +395,9 @@ check "tampered cost: nothing recorded" eq "$(ledger_n)" "$N"
 section "summary"
 TOTAL=$((PASS+FAIL))
 echo "assertions: $TOTAL  pass: $PASS  fail: $FAIL"
-[ "$TOTAL" -gt 0 ] && [ "$FAIL" -eq 0 ]
+if [ "$TOTAL" -gt 0 ] && [ "$FAIL" -eq 0 ]; then
+  echo "loop_interop_gate: PASS — $TOTAL assertions (axon $(git -C "$AXON_DIR" rev-parse --short HEAD), micode $(git -C "$MICODE_DIR" rev-parse --short HEAD))"
+  exit 0
+fi
+echo "loop_interop_gate: FAIL — $FAIL of $TOTAL assertions failed"
+exit 1
