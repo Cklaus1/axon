@@ -44,6 +44,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/child_exit.sh"
 
 SEED="${AXON_SEED:-42}"
 N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
@@ -218,13 +219,15 @@ nan_case() {
   local name="$1" expr="$2" expect="$3"
   local src="$WORK/$name.ax"
   printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
-  local i_out n_out
-  i_out="$("$AXON" run "$src" 2>/dev/null)"
+  local i_out n_out i_st n_st
+  i_out="$("$AXON" run "$src" 2>/dev/null)"; i_st=$?
   if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed after 3 attempts:"
     echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
-  n_out="$("$WORK/$name.bin" 2>/dev/null)"
+  n_out="$("$WORK/$name.bin" 2>/dev/null)"; n_st=$?
+  # nan_case compared stdout only; a kill after printing matched (child_exit.sh).
+  if ! same_exit_or_fail "  $name" "$i_st" "$n_st"; then fail=1; return; fi
   if [ "$i_out" != "$n_out" ]; then
     echo "  FAIL $name: interp='$i_out' native='$n_out' (NaN/inf format divergence)"; fail=1; return
   fi

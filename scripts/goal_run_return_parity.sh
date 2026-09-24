@@ -18,6 +18,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/child_exit.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -53,7 +54,11 @@ AX
   # different wrong answers in the band compare EQUAL and print a false PASS.
   # Today's optima (100, 100, 51) happen to sit outside the band; that is luck
   # about the objective, not a property of the check.
-  iout="$(AXON_SEED=42 "$AXON" run "$PROG" 2>/dev/null | grep -v '^axon: run-id ')"
+  # The interpreter's status is captured BEFORE the grep: piping it straight
+  # into a filter (no pipefail) discarded it, so a killed interpreter that had
+  # already printed its score passed.
+  iraw="$(AXON_SEED=42 "$AXON" run "$PROG" 2>/dev/null)"; ist=$?
+  iout="$(printf '%s\n' "$iraw" | grep -v '^axon: run-id ')"
 
   # Native.
   BIN="$WORK/g_bin_$tgt"
@@ -63,7 +68,8 @@ AX
     # "skipping" — see scripts/lib/harness_skip.sh.
     native_build_failed goal_run_return_parity "goal_run_return" "$berr" || exit 1
   fi
-  nout="$(AXON_SEED=42 "$BIN" 2>/dev/null)"
+  nout="$(AXON_SEED=42 "$BIN" 2>/dev/null)"; nst=$?
+  if ! same_exit_or_fail "goal_run_return_parity target=$tgt" "$ist" "$nst"; then fail=1; continue; fi
 
   if [ -z "$iout" ]; then
     echo "goal_run_return_parity: FAIL — target=$tgt interp printed nothing"

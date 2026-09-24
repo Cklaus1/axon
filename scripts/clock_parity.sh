@@ -77,7 +77,10 @@ monotonic
 EOF
 
 # ── 1/5: interpreter produces the exact expected values ──────────────────────
-AXON_CLOCK=1700000000000 "$AXON" run "$PROG" 2>/dev/null > "$WORK/i1.txt"
+AXON_CLOCK=1700000000000 "$AXON" run "$PROG" 2>/dev/null > "$WORK/i1.txt"; I1_ST=$?
+# The exit status is part of the result: a run killed after writing its values
+# leaves a byte-identical file (scripts/lib/child_exit.sh).
+[ "$I1_ST" -eq 0 ] || bad interp_exit "interpreter run did not exit 0 (exit $I1_ST)"
 if cmp -s "$WORK/i1.txt" "$WANT"; then
   ok "interp: exact values (start anchored, sleep advances, monotonic)"
 else
@@ -86,7 +89,8 @@ $(diff "$WANT" "$WORK/i1.txt" || true)"
 fi
 
 # ── 2/5: determinism — a second interpreter run is byte-identical ────────────
-AXON_CLOCK=1700000000000 "$AXON" run "$PROG" 2>/dev/null > "$WORK/i2.txt"
+AXON_CLOCK=1700000000000 "$AXON" run "$PROG" 2>/dev/null > "$WORK/i2.txt"; I2_ST=$?
+[ "$I2_ST" -eq 0 ] || bad interp_exit2 "second interpreter run did not exit 0 (exit $I2_ST)"
 if cmp -s "$WORK/i1.txt" "$WORK/i2.txt"; then
   ok "interp: two runs byte-identical"
 else
@@ -99,8 +103,9 @@ fi
 # report the virtual start. If this check ever passes trivially it means the
 # virtual clock leaked into unconfigured runs, which would be far worse than the
 # bug this feature fixes.
-"$AXON" run "$PROG" 2>/dev/null > "$WORK/r1.txt"
-"$AXON" run "$PROG" 2>/dev/null > "$WORK/r2.txt"
+"$AXON" run "$PROG" 2>/dev/null > "$WORK/r1.txt"; R1_ST=$?
+"$AXON" run "$PROG" 2>/dev/null > "$WORK/r2.txt"; R2_ST=$?
+[ "$R1_ST" -eq 0 ] && [ "$R2_ST" -eq 0 ] || bad unconfigured_exit "an unconfigured run did not exit 0 (exits $R1_ST, $R2_ST)"
 r1_first="$(head -1 "$WORK/r1.txt")"
 if [ "$r1_first" = "1700000000000" ]; then
   bad clock_leaked "an unconfigured run reported the virtual start time"
@@ -116,7 +121,8 @@ fi
 #
 # A legitimate configuration and the reason "enabled" is a separate flag rather
 # than a non-zero sentinel. Both reads return the start; the delta is 0.
-AXON_CLOCK=5000:0 "$AXON" run "$PROG" 2>/dev/null > "$WORK/t0.txt"
+AXON_CLOCK=5000:0 "$AXON" run "$PROG" 2>/dev/null > "$WORK/t0.txt"; T0_ST=$?
+[ "$T0_ST" -eq 0 ] || bad tick_zero_exit "AXON_CLOCK=5000:0 run did not exit 0 (exit $T0_ST)"
 t0_expect="$(printf '5000\n5250\n250\nmonotonic\n')"
 if [ "$(cat "$WORK/t0.txt")" = "$t0_expect" ]; then
   ok "tick=0: clock advances only on sleep"
@@ -131,7 +137,8 @@ fi
 #
 # `AXON_CLOCK=lol` leaves the clock OFF. Silently picking a start would produce a
 # deterministic run whose timeline nobody chose — worse than ignoring the var.
-AXON_CLOCK=lol "$AXON" run "$PROG" 2>/dev/null > "$WORK/bad.txt"
+AXON_CLOCK=lol "$AXON" run "$PROG" 2>/dev/null > "$WORK/bad.txt"; BAD_ST=$?
+[ "$BAD_ST" -eq 0 ] || bad malformed_exit "AXON_CLOCK=lol run did not exit 0 (exit $BAD_ST)"
 bad_first="$(head -1 "$WORK/bad.txt")"
 if [ "${bad_first:-0}" -gt 1600000000000 ]; then
   ok "malformed AXON_CLOCK ignored (real clock, no invented timeline)"
@@ -157,12 +164,13 @@ fn main() -> i64 {
     0
 }
 AXEOF
-tl_out="$(AXON_CLOCK=1000 "$AXON" run "$TL" 2>/dev/null)"
-if [ "$tl_out" = "same-timeline" ]; then
+tl_out="$(AXON_CLOCK=1000 "$AXON" run "$TL" 2>/dev/null)"; tl_st=$?
+# Status too: a run killed after printing its line is not a pass.
+if [ "$tl_out" = "same-timeline" ] && [ "$tl_st" -eq 0 ]; then
   ok "now_ms and temporal_now share one timeline"
 else
   bad two_timelines "temporal_now is on a different clock than now_ms (got: '$tl_out') \
-— a virtual now_ms compared against a real created_ms is meaningless"
+— a virtual now_ms compared against a real created_ms is meaningless (exit $tl_st)"
 fi
 
 # ── 4/5 + 5/5: native parity ────────────────────────────────────────────────
@@ -185,7 +193,8 @@ if [ $BUILD_EXIT -ne 0 ]; then
   bad native_build "axon build failed (exit $BUILD_EXIT):
 $BUILD_OUT"
 else
-  AXON_CLOCK=1700000000000 "$WORK/clocknat" 2>/dev/null > "$WORK/n1.txt"
+  AXON_CLOCK=1700000000000 "$WORK/clocknat" 2>/dev/null > "$WORK/n1.txt"; N1_ST=$?
+  [ "$N1_ST" -eq 0 ] || bad native_exit "native run did not exit 0 (exit $N1_ST)"
   if cmp -s "$WORK/n1.txt" "$WANT"; then
     ok "native: exact values"
   else

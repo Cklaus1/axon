@@ -15,6 +15,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/child_exit.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -58,7 +59,7 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
 fi
 AXON="${AXON:-target/debug/axon}"
 
-interp_out="$("$AXON" run "$PROG" 2>/dev/null)"
+interp_out="$("$AXON" run "$PROG" 2>/dev/null)"; interp_st=$?
 
 BIN="$WORK/strutf_bin"
 if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
@@ -67,7 +68,12 @@ if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
   # "skipping" — see scripts/lib/harness_skip.sh.
   native_build_failed str_utf8_parity "str_utf8" "$berr" || exit 1
 fi
-native_out="$("$BIN" 2>/dev/null)"
+native_out="$("$BIN" 2>/dev/null)"; native_st=$?
+
+# The EXIT STATUS is compared too, not just stdout: output written before a
+# SIGKILL/OOM kill is byte-identical, and this harness used to report OK for a
+# native binary that printed correctly and then died with 137 (scripts/lib/child_exit.sh).
+same_exit_or_fail str_utf8_parity "$interp_st" "$native_st" || exit 1
 
 if [ "$interp_out" != "$native_out" ]; then
   echo "str_utf8_parity: FAIL — native str_reverse/str_replace differ from the interpreter (#38/#39):"

@@ -142,9 +142,17 @@ while [[ $SECONDS -lt $DEADLINE ]]; do
     kill -0 "$QEMU_PID" 2>/dev/null || break
     sleep 0.05
 done
+# Did QEMU end ON ITS OWN, before we stopped it? Only that exit status says
+# anything about QEMU; the one after our own `kill` is our SIGTERM (143).
+EXITED_ON_ITS_OWN=0
+kill -0 "$QEMU_PID" 2>/dev/null || EXITED_ON_ITS_OWN=1
 kill "$QEMU_PID" 2>/dev/null
 wait "$QEMU_PID" 2>/dev/null
-QEMU_EXIT=0
+QEMU_EXIT=$?
+# `QEMU_EXIT=0` used to be HARD-CODED here, which made the check below dead
+# code: a QEMU that crashed or was OOM-killed could never fail it. Only an exit
+# QEMU chose itself is judged; one we caused by stopping it is not.
+[[ $EXITED_ON_ITS_OWN -eq 1 ]] || QEMU_EXIT=0
 set -e
 
 # timeout exits 124 when it times out; QEMU exits 0 normally. Both are OK — the
