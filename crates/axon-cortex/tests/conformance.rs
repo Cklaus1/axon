@@ -18,18 +18,32 @@ use std::path::PathBuf;
 /// conformance run is this build's stop condition, and a skip would report a
 /// smoke test that never ran as a passing one.
 fn axon_bin() -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // Order: `AXON_BIN`, then the target directory this test's own `cortex`
+    // binary was built into (how a custom CARGO_TARGET_DIR is honoured), then
+    // the workspace `target/debug/`. It FAILS, never skips, when none exists,
+    // and an `AXON_BIN` naming a missing file is an error, not a cue to fall
+    // back — a fallback that cannot say which binary it ran is an unlogged
+    // substitution.
+    if let Some(p) = std::env::var_os("AXON_BIN") {
+        let p = PathBuf::from(p);
+        assert!(p.exists(), "AXON_BIN={} does not exist", p.display());
+        return p;
+    }
+    let own = PathBuf::from(env!("CARGO_BIN_EXE_cortex"))
+        .parent()
+        .expect("profile dir")
+        .join("axon");
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root")
-        .to_path_buf();
-    let bin = root.join("target/debug/axon");
+        .join("target/debug/axon");
+    let bin = if own.exists() { own } else { workspace };
     assert!(
         bin.exists(),
-        "the conformance run needs the interpreter at {}; build it with \
-         `cargo build -p axon-core --no-default-features --bin axon`. \
-         Failing rather than skipping: a smoke test that did not run is not a \
-         smoke test that passed.",
+        "needs the interpreter at {} (or set AXON_BIN); build it with \
+         `cargo build -p axon-core --no-default-features --bin axon`. Failing \
+         rather than skipping: a test that did not run is not a test that passed.",
         bin.display()
     );
     bin

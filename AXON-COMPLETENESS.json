@@ -2070,8 +2070,9 @@
       "claimed": "live_boot_through_the_library_reports_the_guest_verdict \u2014 reported 'ok' by cargo test: the library boots the guest, IO+FS exits 0 and IO-only is a Violation (exit 8).",
       "reality": "live_prereqs() returns None and the test RETURNS EARLY, reporting ok, whenever firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent \u2014 an eprintln is the only trace, and cargo prints 'ok'. The kernel path ignores CARGO_TARGET_DIR. Not routed through harness_skip / AXON_HARNESS_STRICT, so a skip is indistinguishable from a pass in the gate's tally. When it does run, its positive control is the FG-041 vacuous allow path.",
       "reproduced": "2026-09-24 at 279da77: `cargo test --locked -p axon-vm --test lib_launch -- --nocapture --test-threads=1` with CARGO_TARGET_DIR=/home/cklaus/.cache/axon-v022-targets/s1-a -> 'lib_launch: SKIPPED live boot (firecracker=true, kvm=true, kernel=false)' followed by 'test live_boot_through_the_library_reports_the_guest_verdict ... ok', 'test result: ok. 3 passed'.",
-      "fix": "OPEN (Stage 1 lane B owns the test change). Route the absent-prerequisite case through the SKIP-is-not-PASS mechanism (harness_skip log + AXON_HARNESS_STRICT failure) and honour CARGO_TARGET_DIR for the kernel path.",
-      "status": "open",
+      "fix": "lib_launch's absent-prerequisite path now records to target/harness-skips.log and panics under AXON_HARNESS_STRICT=1; the kernel is located via AXON_GUEST_KERNEL, then CARGO_TARGET_DIR, then the workspace target. Verified: `AXON_HARNESS_STRICT=1 cargo test --locked -p axon-vm` fails live_boot with 'SKIPPED under AXON_HARNESS_STRICT=1'; with AXON_GUEST_KERNEL set it boots and passes. Its positive control is still the FG-041 vacuous allow path (open).",
+      "status": "fixed",
+      "commit": "4c908c3",
       "severity": "reporting"
     }
   ]
