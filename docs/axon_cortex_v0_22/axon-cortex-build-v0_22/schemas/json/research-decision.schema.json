@@ -1,0 +1,270 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "axon.research-decision/1"
+    },
+    "fixture_only": {
+      "const": true
+    },
+    "product_result": {
+      "const": "NOT_RUN"
+    },
+    "principal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "retention_scope": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "domain_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "status": {
+      "enum": [
+        "DECIDED",
+        "ABSTAIN",
+        "REFUSED",
+        "TRANSPORT_ERROR",
+        "CANCELLED",
+        "UNSUPPORTED"
+      ]
+    },
+    "state_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "revision_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "text_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "revision_sha256",
+          "text_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 256
+    },
+    "candidate_set_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "presentation_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "pipeline": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "model_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "encoder_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tokenizer_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "pooling": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "head_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "wrapper_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "projection_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "precision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "provider",
+        "model_revision",
+        "encoder_revision",
+        "tokenizer_revision",
+        "pooling",
+        "head_sha256",
+        "wrapper_sha256",
+        "projection_sha256",
+        "precision",
+        "epoch"
+      ],
+      "additionalProperties": false
+    },
+    "probabilities_ppm": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      }
+    },
+    "raw_scores_micros": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "chosen_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "calibration": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "pipeline_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "artifact_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "domain_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "correctness_ppm": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "required": [
+            "pipeline_sha256",
+            "artifact_sha256",
+            "domain_id",
+            "correctness_ppm"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "COMPLETE",
+            "UNKNOWN"
+          ]
+        },
+        "observed_micro": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "reserved_micro": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "status",
+        "observed_micro",
+        "reserved_micro"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "fixture_only",
+    "product_result",
+    "principal",
+    "retention_scope",
+    "task_id",
+    "attempt_id",
+    "request_id",
+    "domain_id",
+    "status",
+    "state_sha256",
+    "candidates",
+    "candidate_set_sha256",
+    "presentation_sha256",
+    "pipeline",
+    "probabilities_ppm",
+    "raw_scores_micros",
+    "chosen_id",
+    "calibration",
+    "usage"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:research-decision-fixture:1",
+  "title": "Provisional research decision reference record (not an existing accepted wire message)"
+}

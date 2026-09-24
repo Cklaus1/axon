@@ -1,0 +1,54 @@
+{
+  "schema": "axon.research-decision/1",
+  "fixture_only": true,
+  "product_result": "NOT_RUN",
+  "principal": "tenant-a/user-7",
+  "retention_scope": "workspace-a/session-1",
+  "task_id": "task-1",
+  "attempt_id": "attempt-1",
+  "request_id": "call-1",
+  "domain_id": "fixture-tool-routing",
+  "status": "DECIDED",
+  "state_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "candidates": [
+    {
+      "id": "read",
+      "revision_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "text_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "id": "search",
+      "revision_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "text_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ],
+  "pipeline": {
+    "provider": "deterministic-fixture",
+    "model_revision": "none",
+    "encoder_revision": "none",
+    "tokenizer_revision": "fixture-token-counts",
+    "pooling": "none",
+    "head_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "wrapper_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "projection_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "precision": "integer-ppm-fixture",
+    "epoch": 1
+  },
+  "probabilities_ppm": {
+    "read": 700000,
+    "search": 300000
+  },
+  "raw_scores_micros": {
+    "read": 700,
+    "search": 300
+  },
+  "chosen_id": "read",
+  "calibration": null,
+  "usage": {
+    "status": "COMPLETE",
+    "observed_micro": 0,
+    "reserved_micro": 100
+  },
+  "candidate_set_sha256": "b13cef9a2d5c6edbda5a37d77b9ef57bcf5fb0640491120300b35ddf2b10529e",
+  "presentation_sha256": "53285167531bd95e7f128d9d09dd07721bb3afdd8ab59b930a28cc21e8ab680e"
+}

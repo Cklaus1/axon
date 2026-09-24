@@ -1,0 +1,21 @@
+{
+  "schema": "acf-execution-receipt/1",
+  "operation_id": "operation-example-01",
+  "task_id": "task-example-01",
+  "trial_id": "trial-example-01",
+  "attempt_id": "attempt-example-01",
+  "execution_id": "execution-fixture-01",
+  "backend_profile_ref": "fixture:no-real-backend",
+  "input_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "output_workspace_ref": null,
+  "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "status": "completed",
+  "process_exit_code": 0,
+  "verification": "not_run",
+  "matched_checks": 0,
+  "evidence_source": "worker_reported",
+  "evidence_refs": [],
+  "usage_state": "unknown",
+  "cost_micro": null,
+  "unresolved_liability_micro": 100000
+}

@@ -1,0 +1,2369 @@
+{
+  "spec_version": "0.2.0",
+  "status": "proposed_not_implemented",
+  "requirements": [
+    {
+      "id": "ANEA-001-R01",
+      "title": "Integrate, do not duplicate",
+      "text": "The builder MUST map each changed contract to the supplied CX/MX owner and then to a live repository definition AND consuming call site, with revision, engine and gate evidence. The supplied build packages are proposals, not proof that those owners are implemented. Existing repository governance and approved intent take precedence over this proposed supplement. Unresolved ownership or enforcement MUST block the affected implementation, not be replaced by a new ANEA subsystem.",
+      "owner": "CX-00/CX-36",
+      "source_refs": [
+        "CX-36",
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-23",
+        "CX-34",
+        "MX-05",
+        "MX-17",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "CX:B77",
+        "CX:B148",
+        "MX:T00",
+        "MX:T56"
+      ],
+      "integration_stage": "I0",
+      "positive_case": "An integration map names owner, source section, symbol, consumer, repository revision and tested gate.",
+      "negative_case": "A type declaration without a use site, a config-only feature or a second scheduler is rejected as completion evidence."
+    },
+    {
+      "id": "ANEA-001-R02",
+      "title": "Separate the interoperability and learned-artifact proofs",
+      "text": "The same typed Reflex decision MAY be compared through hosted constrained generation, open token/sequence scoring and a learned decision head. This is the three-family interoperability profile, not the definition of a Neural Program and not a prerequisite to Cortex M1/M2. A claim that all three families were demonstrated MUST have live evidence for all three. The separate CX-36 learned-function pilot MUST use a real admitted-for-experiment artifact; a fixed-label classifier smoke test alone cannot satisfy it.",
+      "owner": "CX-00/CX-36",
+      "source_refs": [
+        "CX-36",
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-23",
+        "CX-34",
+        "MX-05",
+        "MX-17",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "CX:B77",
+        "CX:B148",
+        "MX:T00",
+        "MX:T56"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A three-family report uses one decision contract; a separate BuildLog pilot loads and executes a learned artifact.",
+      "negative_case": "A fixed-label fixture is presented as G36-SELF-HOST, or missing native hardware is used to block the existing-model hosted core."
+    },
+    {
+      "id": "ANEA-001-R03",
+      "title": "Respect reserved formats and non-goals",
+      "text": "`.nps` MUST mean Neural Program Source and `.np` MUST mean compiled immutable Neural Program Artifact. Neither is generic Axon source, an AIR graph file nor raw weights. This revision MUST NOT introduce `.npkg`, `.axnp`, a universal token ISA, new AIR classes, a mandatory public registry, a new foundation model, a Linux fork or a compositor. ProgramAsWeights MAY appear only for its external backend/importer/reference; no vendor is the architectural default.",
+      "owner": "CX-00/CX-36",
+      "source_refs": [
+        "CX-36",
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-23",
+        "CX-34",
+        "MX-05",
+        "MX-17",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "CX:B77",
+        "CX:B148",
+        "MX:T00",
+        "MX:T56"
+      ],
+      "integration_stage": "I0",
+      "positive_case": "An Axon host program references an immutable .np; its .nps source is distinct.",
+      "negative_case": "A generic graph is saved as .np, or a ProgramAsWeights-only requirement is placed in the shared ABI."
+    },
+    {
+      "id": "ANEA-001-R04",
+      "title": "Separate inference from authority",
+      "text": "Learned results MUST remain data. Grants, PermissionGate Ask/Deny, capability/effect ceilings, protected verification and action commit MUST remain with the existing deterministic owners. Deterministic checks and authoritative source projection MUST be preferred when they already compute the required result; model judgment cannot replace them merely to exercise inference.",
+      "owner": "CX-00/CX-36",
+      "source_refs": [
+        "CX-36",
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-23",
+        "CX-34",
+        "MX-05",
+        "MX-17",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "CX:B77",
+        "CX:B148",
+        "MX:T00",
+        "MX:T56"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A model-proposed command requires fresh deterministic object resolution and authorization.",
+      "negative_case": "A generated ALLOW, VerifiedComplete, path or capability ID directly grants execution."
+    },
+    {
+      "id": "ANEA-001-R05",
+      "title": "Separate document, fixture, live and release claims",
+      "text": "Evidence MUST distinguish source review, package consistency, fixture conformance, actual inference, integrated call-site execution, task qualification and measured improvement. Only PASS on the required subject/revision satisfies a product gate; FAIL, SKIPPED, UNAVAILABLE and INCONCLUSIVE do not. Planned product gates remain NOT_RUN in this pack. Automatic activation is disabled by default.",
+      "owner": "CX-00/CX-36",
+      "source_refs": [
+        "CX-36",
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-23",
+        "CX-34",
+        "MX-05",
+        "MX-17",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "CX:B77",
+        "CX:B148",
+        "MX:T00",
+        "MX:T56"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "An unavailable model is recorded as UNAVAILABLE with the supported profile unchanged.",
+      "negative_case": "A green schema validator or synthetic digest is used as runtime, trust, training or quality evidence."
+    },
+    {
+      "id": "ANEA-002-R01",
+      "title": "Versioned owner-specific exchange",
+      "text": "Every exchange MUST preserve the owner\u2019s schema/version, request and operation identities, causal/run linkage, effective implementation and relevant artifact identities. Adapters MUST declare a versioned mapping to the canonical contracts and reject unknown mandatory variants or lossy conversions. A version bump cannot convert an existing Choice envelope into BinaryProbability, OrdinalDistribution or a Neural Program receipt.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "Round-trip each supported family through the bridge with all semantic fields intact.",
+      "negative_case": "An ordinal mean is deserialized as a Choice, or an unknown mandatory field is dropped."
+    },
+    {
+      "id": "ANEA-002-R02",
+      "title": "Independent features, not capability tiers",
+      "text": "Capabilities MUST be negotiated independently per effective deployment and mode: question families, modalities, score forms/completeness, candidate/input limits, isolation, state reuse, cancellation, usage and immutable revision availability. Unavailable fields stay unknown. A head-only deployment is valid; advertised support requires scoped evidence and disclosed emulation.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "A head-only service rejects generation yet executes its declared function.",
+      "negative_case": "Native heads imply full logits/KV access, or an emulated state handle is labeled physical cache reuse."
+    },
+    {
+      "id": "ANEA-002-R03",
+      "title": "Admission and lifecycle are owner-controlled",
+      "text": "CX-34 registry state and CX-11 admission MUST determine eligibility for the requested mode. Candidate, shadow, canary and active are not interchangeable. An authorized experiment may load a candidate without making it active; normal dispatch cannot select an unadmitted candidate. Admission is rechecked for immutable artifact, project, tenant, policy, deployment and current revocation state.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I5",
+      "positive_case": "A candidate runs in an explicitly scoped no-effect experiment and is excluded from normal routing.",
+      "negative_case": "A candidate self-publishes active or an imported artifact bypasses receiving-project admission."
+    },
+    {
+      "id": "ANEA-002-R04",
+      "title": "Strict bounded boundary validation",
+      "text": "All untrusted messages MUST reject ambiguous duplicate keys, unknown closed-enum values, non-finite numbers, excess size/depth and schema/type mismatches. Validation MUST preserve missing/null/Unknown distinctions and then check request/effective-input/artifact bindings. Parsing a schema does not authenticate the producer.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "A valid typed reply is correlated to the actual request and immutable artifact.",
+      "negative_case": "A malformed, oversized, wrong-epoch or otherwise valid reply for a different request becomes success."
+    },
+    {
+      "id": "ANEA-002-R05",
+      "title": "Terminality and unknown remote work",
+      "text": "The adapter MUST accept at most one terminal outcome per attempt and keep late results out of committed state. Root cancellation propagates to children, with local cancellation, confirmed remote stop and unknown remote execution distinguished. Durable compile jobs MUST reconcile job identity after transport timeout; they cannot be blindly resubmitted as though never accepted.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A timed-out compile is reconciled through its durable job reference.",
+      "negative_case": "A late result overwrites a committed reply or retries cause duplicate unknown compile jobs."
+    },
+    {
+      "id": "ANEA-002-R06",
+      "title": "Preserve errors and abstention families",
+      "text": "Refusal, error, abstention, cancellation, deadline and unknown execution MUST remain distinct. Reflex absence states (NoneSuitable, NeedMoreObservation, UnauthorizedCandidate, InferenceUnavailable) and scheduler NONE/UNKNOWN/OBSERVE_MORE/ESCALATE/BLOCKED MUST map explicitly without inventing an answer. Diagnostic names require repository allocation; this pack does not allocate Axon exit codes.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "A missing suitable candidate requests observation rather than fabricating a selection.",
+      "negative_case": "Authentication failure is represented as no-match, or unavailable scores become a uniform distribution."
+    },
+    {
+      "id": "ANEA-002-R07",
+      "title": "Record every attempt and transformation",
+      "text": "Every inference, optional reasoning step, retry, repair, fallback, projection, normalization and candidate remapping MUST be observable and charged to its root budget. Physical attempts and downstream tool actions MUST have separate identities. A hidden repair model cannot improve reported validity by removing failed attempts from denominators.",
+      "owner": "CX-05/CX-23/CX-36",
+      "source_refs": [
+        "CX-05",
+        "CX-23",
+        "CX-36",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B58",
+        "CX:B77",
+        "CX:B79"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "An invalid first reply and bounded repair both remain in evidence and usage.",
+      "negative_case": "Only the repaired success is retained or repair escapes the root call/deadline cap."
+    },
+    {
+      "id": "ANEA-003-R01",
+      "title": "Typed and effect-aware AIR",
+      "text": "Each invocation MUST bind canonical input/output types, capability and semantic-contract identity, dependencies, context visibility, model/resource/effect limits and source lineage. AIR validation MUST reject cycles, missing inputs, unauthorized effects and unbounded loops. Inference retains its declared AI/network/cost effects even when the output is typed.",
+      "owner": "CX-04/CX-15",
+      "source_refs": [
+        "CX-04",
+        "CX-15",
+        "CX-26",
+        "CX-36",
+        "MX-05"
+      ],
+      "upstream_task_refs": [
+        "CX:B01",
+        "CX:B14",
+        "CX:B55",
+        "CX:B60",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "An AIR host call validates types and retains inference effects.",
+      "negative_case": "A learned call is marked pure Rule or a dependency cycle is admitted."
+    },
+    {
+      "id": "ANEA-003-R02",
+      "title": "Library-first, existing compiler only",
+      "text": "The first implementation MUST use existing interpreter/host/library seams. New syntax/native lowering requires CX-15 evidence: authoritative type-map audit, two concrete workflows justifying syntax, desugaring, diagnostics, formatting/docs and parity or explicit refusal. This profile MUST NOT introduce a second type inference engine or VM.",
+      "owner": "CX-04/CX-15",
+      "source_refs": [
+        "CX-04",
+        "CX-15",
+        "CX-26",
+        "CX-36",
+        "MX-05"
+      ],
+      "upstream_task_refs": [
+        "CX:B01",
+        "CX:B14",
+        "CX:B55",
+        "CX:B60",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A typed host wrapper works in the reference engine; unsupported native execution refuses.",
+      "negative_case": "A new keyword or codegen type heuristic is required before the hosted path can run."
+    },
+    {
+      "id": "ANEA-003-R03",
+      "title": "Physical plan records without a second scheduler",
+      "text": "CX-34 selection and AIR lowering MUST record capability class, admitted artifact/revision, actual mechanism (schema generation, validated text, candidate-token scoring, sequence scoring, learned head or learned function), required features, effective-input and validator references, budget and fallback edges. These are separate fields; a native mechanism does not by itself identify a Neural Program artifact.",
+      "owner": "CX-04/CX-15",
+      "source_refs": [
+        "CX-04",
+        "CX-15",
+        "CX-26",
+        "CX-36",
+        "MX-05"
+      ],
+      "upstream_task_refs": [
+        "CX:B01",
+        "CX:B14",
+        "CX:B55",
+        "CX:B60",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A learned head is reported as SpecializedReflex with a pinned head, while a .np invocation reports NeuralProgram and its exact artifact.",
+      "negative_case": "A schema endpoint is treated as a complete candidate-score oracle or all native heads become .np automatically."
+    },
+    {
+      "id": "ANEA-003-R04",
+      "title": "Preserve dependency and visibility semantics",
+      "text": "Use AIR dependency kinds Independent, ConditionallyRelevant and AnswerDependent. A dependent question MUST wait for actual committed input unless bounded hypothesis branches are explicitly declared. Independent questions cannot inherit sibling answers. Speculative branch results cannot be consumed outside their branch.",
+      "owner": "CX-04/CX-15",
+      "source_refs": [
+        "CX-04",
+        "CX-15",
+        "CX-26",
+        "CX-36",
+        "MX-05"
+      ],
+      "upstream_task_refs": [
+        "CX:B01",
+        "CX:B14",
+        "CX:B55",
+        "CX:B60",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "An action-target question is retained only for its matching selected action.",
+      "negative_case": "A sibling answer leaks through a shared conversation or a speculative result initiates a write."
+    },
+    {
+      "id": "ANEA-003-R05",
+      "title": "Keep opcodes, model tokens and object IDs distinct",
+      "text": "Compact encodings MUST preserve source-to-AIR-to-host-to-physical-execution mapping. Runtime operation IDs, tokenizer IDs, object references and artifact identities MUST remain separate namespaces. One-token aliases are backend encodings, not new Axon semantic instructions.",
+      "owner": "CX-04/CX-15",
+      "source_refs": [
+        "CX-04",
+        "CX-15",
+        "CX-26",
+        "CX-36",
+        "MX-05"
+      ],
+      "upstream_task_refs": [
+        "CX:B01",
+        "CX:B14",
+        "CX:B55",
+        "CX:B60",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "The trace maps source call to AIR operation and tokenizer-local candidate mapping.",
+      "negative_case": "Token number 42 is treated as global program identity or a model-visible memory address."
+    },
+    {
+      "id": "ANEA-003-R06",
+      "title": "Reject unsupported semantics",
+      "text": "Unsupported operations, type refinements, score requirements, modality/state formats or vocabulary mappings MUST refuse explicitly. A backend cannot emulate simulation with narrative prose, binary probability with a Boolean, learned execution with base generation or verification with model opinion without a separately declared capability/contract and admission.",
+      "owner": "CX-04/CX-15",
+      "source_refs": [
+        "CX-04",
+        "CX-15",
+        "CX-26",
+        "CX-36",
+        "MX-05"
+      ],
+      "upstream_task_refs": [
+        "CX:B01",
+        "CX:B14",
+        "CX:B55",
+        "CX:B60",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "The unsupported profile produces a stable refusal and no result coercion.",
+      "negative_case": "Fallback silently changes the operation or evidence strength to fit an available model."
+    },
+    {
+      "id": "ANEA-004-R01",
+      "title": "Candidate integrity and construction identity",
+      "text": "Each request MUST bind unique opaque candidate IDs, typed values/descriptions, construction/authorization/ordering policy, exact ordered manifest and order digest. Dynamic candidate construction and recall are separately evaluated. Control candidates may appear only when registered by the family policy; the model cannot invent them.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "Runtime-generated candidates and their reserved absence option round-trip under permutation tests.",
+      "negative_case": "A copied ID with a different value, duplicate ID, reordered manifest or model-invented control option is accepted."
+    },
+    {
+      "id": "ANEA-004-R02",
+      "title": "Probability origin and result-family fidelity",
+      "text": "Adapters MUST preserve Choice, BinaryProbability and OrdinalDistribution separately and retain raw origin, physical computation and calibration layer. Generated estimates, provider-reported distributions, token likelihoods and head distributions MUST not be relabeled as one another. No generic confidence field replaces correctness, applicability, OOD and output distributions.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "A fractional ordinal expectation and its full rubric distribution survive round-trip.",
+      "negative_case": "A binary positive-event probability is rounded into a Boolean or a generated estimate becomes a native logit."
+    },
+    {
+      "id": "ANEA-004-R03",
+      "title": "Complete and valid distributions",
+      "text": "A complete candidate distribution MUST cover the supplied candidates exactly once, contain finite [0,1] values and normalize within the registered tolerance. A truncated top-k list MUST fail a complete-score requirement. Any normalization/repair is versioned and traced; unavailable evidence is explicit rather than invented.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "A full distribution validates, including zero-probability candidates.",
+      "negative_case": "A missing candidate, duplicate entry, NaN or nonunit mass passes as complete evidence."
+    },
+    {
+      "id": "ANEA-004-R04",
+      "title": "Scoped calibration",
+      "text": "Calibrated estimates MUST reference a current artifact/evidence domain, raw origin, transformation, input/definition/candidate-order/model/encoder regime and protected evaluation. Changes invalidate evidence unless explicitly covered. Absence is Uncalibrated; out-of-domain is Inapplicable. A source tag alone is not proof of calibration or correctness.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A matching calibration artifact is used only in its evaluated domain.",
+      "negative_case": "A high softmax or stale calibration after renderer/order/model change clears release routing."
+    },
+    {
+      "id": "ANEA-004-R05",
+      "title": "Abstention, absence and thresholds",
+      "text": "Threshold consumers MUST declare the estimate used, its domain and missingness behavior. Reflex absence outcomes and scheduler control outcomes MUST remain distinct, with authorized fallback/observation paths. A high conditional probability cannot hide that no suitable candidate was supplied.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "A candidate-omission control causes abstention or bounded observation.",
+      "negative_case": "An absent correct option is counted as successful model choice because the selected label had high probability."
+    },
+    {
+      "id": "ANEA-004-R06",
+      "title": "Explicit selection policy",
+      "text": "The portable Choice subset MAY permit implementation-defined selection while reporting actual mode. Required argmax MUST use complete actual candidate scores and a specified tie rule; schema-only provider choice cannot satisfy it. Sampling requires a declared transformation and reproducibility limits. More general Reflex consumers may use a distribution without a selected label.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I1",
+      "positive_case": "Complete scores satisfy argmax; provider choice satisfies only a compatible Choice contract.",
+      "negative_case": "A schema result claims argmax without scores or an ordinal distribution is forced into a selected label."
+    },
+    {
+      "id": "ANEA-004-R07",
+      "title": "Tokenizer-bound one-token lowering",
+      "text": "One-token scoring MUST validate each distinct legal label at the exact assistant boundary, including chat template, prefix stability, whitespace, special/reserved tokens and termination. Prompt-visible aliases and their cost/bias belong to the implementation identity. The optimization does not compress arbitrary objects or open text into one token.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I3",
+      "positive_case": "Pinned aliases round-trip under the deployed tokenizer and boundary.",
+      "negative_case": "Isolated-string token counts are accepted despite boundary token merging or alias collision."
+    },
+    {
+      "id": "ANEA-004-R08",
+      "title": "Complete multi-token semantics",
+      "text": "Multi-token candidates MUST use a declared complete sequence/termination convention, evaluated aliases, constrained generation or refusal. First-token comparisons are not complete candidate scoring. Length normalization and grammar/trie selection are different computations and cannot claim exact sequence probabilities without evidence.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I3",
+      "positive_case": "Prefix-sharing Unicode labels are scored by complete declared sequences.",
+      "negative_case": "Only the first token of retry/retry_later is scored, or grammar decoding invents all-candidate likelihoods."
+    },
+    {
+      "id": "ANEA-004-R09",
+      "title": "Typed output is not verified truth",
+      "text": "Schema validation MUST be followed by task refinements and independent source/numeric checks where available. Missing information remains Unknown. Diagnostic values, source spans, numeric units/ranges and evidence strength MUST not be inferred from valid JSON alone. Learned validation results cannot certify completion.",
+      "owner": "CX-05/CX-06",
+      "source_refs": [
+        "CX-05",
+        "CX-06",
+        "CX-24",
+        "CX-PROTOCOLS",
+        "REFLEX-CONFORMANCE",
+        "REFLEX-RUNTIME"
+      ],
+      "upstream_task_refs": [
+        "CX:B17",
+        "CX:B18",
+        "CX:B19",
+        "CX:B58",
+        "CX:B59"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A diagnostic field copies and validates source evidence while missing locations remain null/Unknown.",
+      "negative_case": "The output invents a file, line, code or fix and passes merely because its shape is valid."
+    },
+    {
+      "id": "ANEA-005-R01",
+      "title": "Authorized exact materialization",
+      "text": "Each call MUST link the selected working set and exact effective model input, including omissions, compression, redaction, instructions and committed values. PIN obligations cannot be semantically dropped. References do not supply unseen facts: materialization or explicitly validated features are required.",
+      "owner": "CX-05/CX-28",
+      "source_refs": [
+        "CX-02",
+        "CX-05",
+        "CX-10",
+        "CX-13",
+        "CX-28",
+        "REFLEX-RUNTIME",
+        "MX-26"
+      ],
+      "upstream_task_refs": [
+        "CX:B58",
+        "CX:B80",
+        "CX:B107",
+        "CX:B109",
+        "CX:B110",
+        "MX:T108",
+        "MX:T111"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A receipt distinguishes the full repository state from the smaller authorized input seen by the model.",
+      "negative_case": "A document handle is treated as knowledge, decisive evidence is silently truncated or protected clauses are compressed away."
+    },
+    {
+      "id": "ANEA-005-R02",
+      "title": "Bind state compatibility",
+      "text": "StateHandle reuse MUST bind state/working-set identity, backend instance/epoch, model/base/tokenizer/adapter/renderer/preprocessing identity, relevant quantization/attention/position/cache settings, principal/tenant, expiry and current authorization. Changing any semantics-affecting binding invalidates reuse unless a tested compatibility profile covers it.",
+      "owner": "CX-05/CX-28",
+      "source_refs": [
+        "CX-02",
+        "CX-05",
+        "CX-10",
+        "CX-13",
+        "CX-28",
+        "REFLEX-RUNTIME",
+        "MX-26"
+      ],
+      "upstream_task_refs": [
+        "CX:B58",
+        "CX:B80",
+        "CX:B107",
+        "CX:B109",
+        "CX:B110",
+        "MX:T108",
+        "MX:T111"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "Exact-key reuse succeeds while a changed adapter creates separate state.",
+      "negative_case": "Same display-model name permits stale, cross-tenant or different-template state reuse."
+    },
+    {
+      "id": "ANEA-005-R03",
+      "title": "Opaque accounted lifecycle",
+      "text": "Leases, ownership, lifetime, revocation and bounded CPU/device memory MUST be enforced by existing runtime owners, with idempotent release. A logical release is not proof that a provider erased physical bytes. Durable records contain stable references, never raw pointers or unsupported cross-cell heap handles.",
+      "owner": "CX-05/CX-28",
+      "source_refs": [
+        "CX-02",
+        "CX-05",
+        "CX-10",
+        "CX-13",
+        "CX-28",
+        "REFLEX-RUNTIME",
+        "MX-26"
+      ],
+      "upstream_task_refs": [
+        "CX:B58",
+        "CX:B80",
+        "CX:B107",
+        "CX:B109",
+        "CX:B110",
+        "MX:T108",
+        "MX:T111"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "Release/restart/eviction leaves accounted, explainable state and safe reacquisition.",
+      "negative_case": "An expired pointer is resumed or physical erasure is claimed from a local reference drop."
+    },
+    {
+      "id": "ANEA-005-R04",
+      "title": "Distinguish actual reuse from emulation",
+      "text": "Receipts MUST distinguish actual reusable backend state, implicit provider prefix reuse, replay/materialization and no reuse, with unknown observations preserved. One request, batching or matching prefixes are not proof of one neural pass, no transmission, no billing or no decode work.",
+      "owner": "CX-05/CX-28",
+      "source_refs": [
+        "CX-02",
+        "CX-05",
+        "CX-10",
+        "CX-13",
+        "CX-28",
+        "REFLEX-RUNTIME",
+        "MX-26"
+      ],
+      "upstream_task_refs": [
+        "CX:B58",
+        "CX:B80",
+        "CX:B107",
+        "CX:B109",
+        "CX:B110",
+        "MX:T108",
+        "MX:T111"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A stateless adapter reports emulated handle and full submitted input honestly.",
+      "negative_case": "Repeated prompts are labeled KV resume or all input/network cost disappears from reporting."
+    },
+    {
+      "id": "ANEA-005-R05",
+      "title": "No implicit state interchange",
+      "text": "Cross-model or cross-architecture KV/latent transfer MUST be unsupported unless a separately admitted translation profile exists. Same-model cross-engine interchange also requires explicit compatibility evidence. Portable semantic context is the default fallback, subject to current permissions and remaining budget.",
+      "owner": "CX-05/CX-28",
+      "source_refs": [
+        "CX-02",
+        "CX-05",
+        "CX-10",
+        "CX-13",
+        "CX-28",
+        "REFLEX-RUNTIME",
+        "MX-26"
+      ],
+      "upstream_task_refs": [
+        "CX:B58",
+        "CX:B80",
+        "CX:B107",
+        "CX:B109",
+        "CX:B110",
+        "MX:T108",
+        "MX:T111"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "An incompatible state handle is rejected and authorized context is rematerialized.",
+      "negative_case": "A Qwen state or world-model latent is silently reused under another architecture."
+    },
+    {
+      "id": "ANEA-005-R06",
+      "title": "Staleness, isolation and recomputation",
+      "text": "Async context decisions MUST be discarded when their intent/state/catalog bindings change. Independent branch state MUST be isolated. Dropping context as recomputable requires CX-28 RecomputeContract; mutable/effectful data cannot be silently regenerated. Missing artifacts, stale state or permission changes must fail safely without losing protected pins.",
+      "owner": "CX-05/CX-28",
+      "source_refs": [
+        "CX-02",
+        "CX-05",
+        "CX-10",
+        "CX-13",
+        "CX-28",
+        "REFLEX-RUNTIME",
+        "MX-26"
+      ],
+      "upstream_task_refs": [
+        "CX:B58",
+        "CX:B80",
+        "CX:B107",
+        "CX:B109",
+        "CX:B110",
+        "MX:T108",
+        "MX:T111"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A stale selector result is discarded; a read-only immutable object is recomputed under its contract.",
+      "negative_case": "A tool result survives without its call identity, or recomputation resends a real side effect."
+    },
+    {
+      "id": "ANEA-006-R01",
+      "title": "Hard constraints before utility and again at dispatch",
+      "text": "Authorized-compatible candidates MUST be enumerated only after type, authority, data-egress, evidence, applicability, project, hardware and admission checks. The chosen entry MUST be revalidated at dispatch for revocation/staleness. Cost, confidence, information value or cache warmth cannot override those constraints.",
+      "owner": "CX-34",
+      "source_refs": [
+        "CX-03",
+        "CX-06",
+        "CX-11",
+        "CX-13",
+        "CX-34",
+        "CX-36",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B148",
+        "CX:B149",
+        "CX:B150",
+        "CX:B151",
+        "MX:T148",
+        "MX:T149",
+        "MX:T150",
+        "MX:T151"
+      ],
+      "integration_stage": "I5",
+      "positive_case": "Revoking a capability between rank and dispatch blocks execution.",
+      "negative_case": "A cheap remote or unauthorized candidate remains eligible because utility is high."
+    },
+    {
+      "id": "ANEA-006-R02",
+      "title": "Explainable scoped scheduling",
+      "text": "Scheduler receipts MUST record policy revision, candidate snapshot, hard exclusions, known/unknown estimates, consequence/reversibility, hardware/cache/load, utility components, chosen capability and realized outcome. A deterministic reference policy uses stable ties; any learned/stochastic policy records its admitted identity and randomness and is not claimed bit-reproducible without evidence.",
+      "owner": "CX-34",
+      "source_refs": [
+        "CX-03",
+        "CX-06",
+        "CX-11",
+        "CX-13",
+        "CX-34",
+        "CX-36",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B148",
+        "CX:B149",
+        "CX:B150",
+        "CX:B151",
+        "MX:T148",
+        "MX:T149",
+        "MX:T150",
+        "MX:T151"
+      ],
+      "integration_stage": "I5",
+      "positive_case": "The same pinned deterministic inputs reproduce routing; load changes have recorded causal inputs.",
+      "negative_case": "Opaque routing silently switches models or reports unsupported quality/latency estimates."
+    },
+    {
+      "id": "ANEA-006-R03",
+      "title": "Shared root budgets",
+      "text": "All branches, generation, reasoning, scoring, repairs, fallbacks, shadow work and compile jobs MUST reserve/account against configured root and experiment budgets. Deadlines govern result acceptance; remote compute/billing cancellation limits stay explicit. Unknown cost is not zero, and a hard bound is refused if it cannot be enforced conservatively.",
+      "owner": "CX-34",
+      "source_refs": [
+        "CX-03",
+        "CX-06",
+        "CX-11",
+        "CX-13",
+        "CX-34",
+        "CX-36",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B148",
+        "CX:B149",
+        "CX:B150",
+        "CX:B151",
+        "MX:T148",
+        "MX:T149",
+        "MX:T150",
+        "MX:T151"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A speculative batch exhausts remaining reservation and cannot launch a hidden fallback.",
+      "negative_case": "Timeout frees the entire billable budget while remote work may still be running."
+    },
+    {
+      "id": "ANEA-006-R04",
+      "title": "Versioned semantic fallback",
+      "text": "A fallback MUST be a new governed capability invocation under an explicit bounded acyclic graph, preserving or narrowing constraints. CX-36 targets are NONE, SpecializedReflex, GeneralReflex, Generate, Think or Human. Missing/invalid specialization MUST NOT run its unadapted base while reporting NeuralProgram success. Any more permissive target vocabulary requires an owner amendment. Refusal is not a signal to evade policy through another provider.",
+      "owner": "CX-34",
+      "source_refs": [
+        "CX-03",
+        "CX-06",
+        "CX-11",
+        "CX-13",
+        "CX-34",
+        "CX-36",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B148",
+        "CX:B149",
+        "CX:B150",
+        "CX:B151",
+        "MX:T148",
+        "MX:T149",
+        "MX:T150",
+        "MX:T151"
+      ],
+      "integration_stage": "I5",
+      "positive_case": "A missing adapter emits failed .np invocation then a separately identified permitted Generate call.",
+      "negative_case": "The base succeeds under the missing artifact ID, or fallback widens privacy/authority."
+    },
+    {
+      "id": "ANEA-006-R05",
+      "title": "Truthful operator and UI state",
+      "text": "MiCode/CLI views MUST distinguish requested capability/model, selected plan, each attempt, actual accepted producer/artifact, fallback, uncertainty and unknown usage. Authentication recovery links/instructions use configured provider ownership, never invented URLs. A request failure cannot leave the next turn bound to a stale hidden model while showing another.",
+      "owner": "CX-34",
+      "source_refs": [
+        "CX-03",
+        "CX-06",
+        "CX-11",
+        "CX-13",
+        "CX-34",
+        "CX-36",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B148",
+        "CX:B149",
+        "CX:B150",
+        "CX:B151",
+        "MX:T148",
+        "MX:T149",
+        "MX:T150",
+        "MX:T151"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "A seeded auth failure and allowed fallback are visible in trace and subsequent UI state.",
+      "negative_case": "The selector says model A, the result came from B, or an error is suppressed behind a success badge."
+    },
+    {
+      "id": "ANEA-006-R06",
+      "title": "Keep inference, shadowing and effects separate",
+      "text": "Shadow/challenger outputs MUST not modify active tools, context, routing, completion, worker steering or persistent application state. Inference itself may consume resources/disclose input and needs authorization. Effect commit/recovery remains with CX-03/MiCode; idempotency strings alone do not establish exactly-once remote actions.",
+      "owner": "CX-34",
+      "source_refs": [
+        "CX-03",
+        "CX-06",
+        "CX-11",
+        "CX-13",
+        "CX-34",
+        "CX-36",
+        "MX-32"
+      ],
+      "upstream_task_refs": [
+        "CX:B148",
+        "CX:B149",
+        "CX:B150",
+        "CX:B151",
+        "MX:T148",
+        "MX:T149",
+        "MX:T150",
+        "MX:T151"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A shadow reply is logged but cannot steer the worker or cause duplicate actions.",
+      "negative_case": "A replay, fallback or late model reply repeats a push, email, shell effect or privileged OS setting."
+    },
+    {
+      "id": "ANEA-007-R01",
+      "title": "Parallel visibility and identity",
+      "text": "Question batching MUST preserve QuestionId, declared dependency/visibility, candidate manifests, prompt-role boundaries and compatible security/resource context. Duplicate/unknown result IDs fail; array position is not identity. Independent/conditional branches may co-schedule only as permitted by AIR.",
+      "owner": "CX-04/CX-05/CX-26",
+      "source_refs": [
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-26",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B18",
+        "CX:B60",
+        "CX:B61",
+        "CX:B94",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "Out-of-order completions map correctly by ID.",
+      "negative_case": "Reordered provider arrays attach answers to another question or cross-tenant branches share mutable state."
+    },
+    {
+      "id": "ANEA-007-R02",
+      "title": "Branch-aware joins and failure policy",
+      "text": "A join MUST require all active-branch results and cross-field invariants. Missing active fields block construction; failure in an unused speculative branch is tolerated only by an explicit versioned policy. Optional/default fields are typed and cannot hide abstention or fabricate success. Partial diagnostic results remain separate from committed results.",
+      "owner": "CX-04/CX-05/CX-26",
+      "source_refs": [
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-26",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B18",
+        "CX:B60",
+        "CX:B61",
+        "CX:B94",
+        "CX:B95"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "An unused failed EditTarget is tolerated when Check is selected and policy permits it.",
+      "negative_case": "A missing CheckTarget is ignored, or an unused speculative target becomes an effect."
+    },
+    {
+      "id": "ANEA-007-R03",
+      "title": "No unproved fusion or joint probability",
+      "text": "Combining isolated questions into a conversational prompt, changing visibility or composing marginal probabilities MUST NOT be called a transparent compiler optimization. Such changes require registered policy variants, fresh conformance/calibration/whole-task tests and joint-risk treatment. Replaying recorded replies is not evidence of fresh-model equivalence.",
+      "owner": "CX-04/CX-05/CX-26",
+      "source_refs": [
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-26",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B18",
+        "CX:B60",
+        "CX:B61",
+        "CX:B94",
+        "CX:B95"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A prompt-fusion challenger is evaluated as a changed policy with its own evidence.",
+      "negative_case": "Independent marginals are multiplied into certified action correctness or fusion bypasses evaluation."
+    },
+    {
+      "id": "ANEA-007-R04",
+      "title": "Optional native canvas profile",
+      "text": "Diffusion/infill canvases MAY be investigated after the core contracts. A profile MUST define pinned framing, slot types, lengths, dependencies, conditioning, cancellation and output validation. The screenshot/conversation is a research lead, not an adopted backend or timing guarantee. Unsupported canvases refuse or lower through an explicitly declared equivalent supported path.",
+      "owner": "CX-04/CX-05/CX-26",
+      "source_refs": [
+        "CX-04",
+        "CX-05",
+        "CX-15",
+        "CX-26",
+        "REFLEX-CONFORMANCE"
+      ],
+      "upstream_task_refs": [
+        "CX:B18",
+        "CX:B60",
+        "CX:B61",
+        "CX:B94",
+        "CX:B95"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A registered canvas experiment reports actual iterations and slot-validation failures.",
+      "negative_case": "One/few-pass multi-slot correctness is promised without an implemented/evaluated backend."
+    },
+    {
+      "id": "ANEA-008-R01",
+      "title": "Complete Neural Program manifest",
+      "text": "Every .np MUST contain or cryptographically bind all CX-36 \u00a74 fields: artifact/content/format identity; name/semantic contract; input/output schemas; compiler revision; backend/version; required base/tokenizer/learned-asset identities; runtime manifest/compatibility; applicability; authority ceiling; optional explicit reliability receipt; evaluation receipts; transfer scope; fallback; source/training lineage/corpus roles; creation time. Renderer/template/preprocessing identities from CX-23 MUST also be bound when applicable. A Choice implementation/head manifest is not a substitute.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B79",
+        "CX:B80",
+        "CX:B82",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B158"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A self-describing .np binds its source, assets, schemas, compiler and evaluation lineage.",
+      "negative_case": "The package passes because it contains a head digest while provenance, applicability or fallback fields are missing."
+    },
+    {
+      "id": "ANEA-008-R02",
+      "title": "Immutable identity and dependency closure",
+      "text": "Artifact identity MUST be content-addressed (`np://sha256/<digest>` in the source contract). Aliases resolve to exact immutable identities before use and may not mutate existing artifacts. All behavior-affecting dependencies and target variants MUST be bound. Transport archive checksum, logical artifact identity and authenticated admission are distinct. Lock existing package infrastructure rather than adding a competing lockfile authority.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B79",
+        "CX:B80",
+        "CX:B82",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B158"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "Changing a bound asset changes artifact identity; alias movement cannot alter a recorded invocation.",
+      "negative_case": "Only a mutable production alias or provider display name is stored in the receipt."
+    },
+    {
+      "id": "ANEA-008-R03",
+      "title": "Fail-closed safe loading",
+      "text": "The loader MUST bound and validate archive/container, manifest, all referenced assets, input/output schemas, compatibility, base/adapter identity, provenance and applicable admission. Reject traversal, symlinks, duplicate entries, corruption, unsupported formats and executable installation hooks. Loading never runs package code; auxiliary executable capabilities require separate ordinary admission.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B79",
+        "CX:B80",
+        "CX:B82",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B158"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A valid fixture archive is inspected without executing or extracting unsafe code.",
+      "negative_case": "A traversal entry, unhashed auxiliary asset, installer script or corrupted specialization loads successfully."
+    },
+    {
+      "id": "ANEA-008-R04",
+      "title": "Versioning and migration",
+      "text": "Format/schema/semantic-contract versions MUST be separate. Migration MUST preserve meaning and identity lineage; a semantics-changing conversion creates a new candidate. Existing B77\u2013B83 contracts are extended, not declared obsolete. CX-36 naming takes precedence for generic PAW terminology; historical external references remain accurate.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B79",
+        "CX:B80",
+        "CX:B82",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B158"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "An old proposal/profile is explicitly mapped to the new owner without rewriting historical receipts.",
+      "negative_case": "A new format number silently changes the task contract or generic vendor naming survives as the core abstraction."
+    },
+    {
+      "id": "ANEA-008-R05",
+      "title": "Portable artifact class, scoped execution",
+      "text": "Each target variant MUST bind its assets, runtime/hardware compatibility and evidence for the same semantic contract. Shared logical capability identity does not make distinct artifacts identical. Scope/authority/transfer evidence cannot widen merely because bytes are portable. A receiving project MUST re-admit under its own contract.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B79",
+        "CX:B80",
+        "CX:B82",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B158"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "Two targets share a contract but have bound variant identities/evidence.",
+      "negative_case": "A CPU/GPU export or cross-repository copy inherits untested runtime or global authority."
+    },
+    {
+      "id": "ANEA-009-R01",
+      "title": "Eligible data and traceable evaluation",
+      "text": "Training/dev/calibration/locked-test/transfer/curriculum roles, family grouping, deduplication, data rights, redaction and label provenance MUST be recorded per lineage. Raw logs are not automatically training records; teacher/synthetic labels are not observed ground truth. Protected labels are inaccessible to learners. Evidence from one repository is not transfer evidence.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A source episode exports only eligible redacted data with family/split lineage.",
+      "negative_case": "A canary secret, related fork across protected splits or locked-test label enters training."
+    },
+    {
+      "id": "ANEA-009-R02",
+      "title": "Measure complete quality and economics",
+      "text": "Reports MUST retain validity, factual/diagnostic correctness, coverage/abstention, OOD/transfer, hallucination rate, fallback, downstream utility, latency distributions, cold/hot load, memory, input/reasoning/output/speculative work, compile/training/maintenance and deployment costs. Fixed numeric targets require preregistration, not invented universal numbers.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A candidate with lower decode cost but higher load/fallback cost reports both.",
+      "negative_case": "Failures drop from denominators or one answer token is equated with negligible total compute."
+    },
+    {
+      "id": "ANEA-009-R03",
+      "title": "Protected statistical and causal claims",
+      "text": "Before protected outcomes are inspected, freeze population, partitions, metrics, quality/resource constraints, controls, stopping/submission budgets and evaluation ownership. Matched comparisons change only declared treatments where feasible; confounding is explicit. Observational/counterfactual/quasi-experimental/realized evidence MUST retain strength. Inconclusive is a valid result, not forced promotion.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A native-versus-hosted comparison names differing effective-input representation and limits causal attribution.",
+      "negative_case": "Changed prompts, state and verifier are attributed solely to a faster head or repeated locked-test probing tunes the candidate."
+    },
+    {
+      "id": "ANEA-009-R04",
+      "title": "Separate deterministic optimization from learned substitution",
+      "text": "Compiler parity applies to deterministic supported semantics with recorded model boundaries, effects, failures and budgets. Changing model, question, candidate construction, context policy, decomposition or learned artifact is a candidate policy/representation change requiring fresh evaluation/admission. No learner may change its own verifier, authority, protected corpus roles, approval threshold or rollback definition.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A batching-preservation proof and a retrained-model experiment carry different evidence claims.",
+      "negative_case": "Fresh learned behavior is declared equivalent solely because replaying old replies matches output."
+    },
+    {
+      "id": "ANEA-009-R05",
+      "title": "Independent promotion and rollback",
+      "text": "Candidates MUST move through scoped offline/shadow/canary/admission states under existing lifecycle owners. Every state transition and deployment activation requires the appropriate external authority, subject hash and policy. Shadow is no-effect; canary is bounded/reversible; rejection, suspension, quarantine, narrowing and retirement preserve negative lineage. Self-publishing active is forbidden.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "An evaluated candidate is rejected with evidence or admitted for bounded canary, then rolled back.",
+      "negative_case": "Training success publishes active weights or a canary begins without scoped admission."
+    },
+    {
+      "id": "ANEA-009-R06",
+      "title": "Evidence closure with privacy",
+      "text": "CognitiveOperationRecord, EffectiveInputReceipt, WorkingSetReceipt, NeuralProgramInvocationReceipt and scheduler records MUST link through CX-32/MX-30 typed edges, claim strengths and protected verification. Retain contradictions and propagate source/data-use invalidations to dependent claims. Authorized graph visibility does not grant export/training/execute permission. Routine telemetry must not spill secrets or private reasoning.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "A quarantined source marks dependent artifact evidence for reevaluation without erasing history.",
+      "negative_case": "Only positive edges are exported or graph access bypasses data-egress rules."
+    },
+    {
+      "id": "ANEA-009-R07",
+      "title": "Replay modes and identity",
+      "text": "Receipt replay of recorded replies, fresh inference, resettable environment rerun and counterfactual simulation MUST be different modes. Capture exact artifact/backend/base/runtime/input/effective input/sampling/hardware/output/validation or a specific non-replayability reason. Retrying/replaying learned execution must not replay effects without fresh authorization.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "Recorded inference replays without network/actions and differs clearly from a fresh-model run.",
+      "negative_case": "A seed or receipt hash is advertised as universal bit-for-bit replay, or replay silently executes tools."
+    },
+    {
+      "id": "ANEA-009-R08",
+      "title": "Two pilots with truthful claims",
+      "text": "The interoperability pilot MUST test a bounded Reflex contract, including dynamic-candidate controls for any claimed dynamic support. The CX-36 pilot SHOULD be BuildLog \u2192 DiagnosticSummary, with actual learned artifact, eligible examples, source validation, offline/load failures, matched incumbent and simpler baseline, transfer/fallback and admission-or-rejection evidence. A fixed classifier only proves its declared scope.",
+      "owner": "CX-11/CX-22/CX-32",
+      "source_refs": [
+        "CX-10",
+        "CX-11",
+        "CX-20",
+        "CX-21",
+        "CX-22",
+        "CX-29",
+        "CX-30",
+        "CX-31",
+        "CX-32",
+        "CX-33",
+        "CX-36",
+        "MX-13",
+        "MX-27",
+        "MX-30",
+        "MX-31"
+      ],
+      "upstream_task_refs": [
+        "CX:B21",
+        "CX:B74",
+        "CX:B76",
+        "CX:B81",
+        "CX:B116",
+        "CX:B140",
+        "CX:B144",
+        "MX:T116",
+        "MX:T117",
+        "MX:T140",
+        "MX:T144"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "Both pilot reports state exactly which profile/gates they establish.",
+      "negative_case": "The three-label IssueClass test alone is counted as Neural Program compiler/runtime self-hosting."
+    },
+    {
+      "id": "ANEA-010-R01",
+      "title": "Head compatibility contract",
+      "text": "A head profile MUST bind base checkpoint, tokenizer/input processor, feature extraction layer/pooling/position, dimensions/shapes/dtypes/layout, quantization/adapter configuration, canonical encoder/template, label order or dynamic candidate-conditioning recipe, output semantics, learned parameters and evaluation. Fixed K output cannot claim arbitrary dynamic candidate support. Mismatches refuse.",
+      "owner": "CX-14/CX-23/CX-36",
+      "source_refs": [
+        "CX-14",
+        "CX-20",
+        "CX-22",
+        "CX-23",
+        "CX-36"
+      ],
+      "upstream_task_refs": [
+        "CX:B20",
+        "CX:B75",
+        "CX:B78",
+        "CX:B79",
+        "CX:B81"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A fixed three-class head accepts only its exact label/schema binding; a dynamic head has separate evidence.",
+      "negative_case": "A reordered label list, incompatible backbone or arbitrary new candidates use the same fixed head."
+    },
+    {
+      "id": "ANEA-010-R02",
+      "title": "Genuine native evidence, optional profile",
+      "text": "A native claim MUST execute real learned parameters/features on unseen qualified inputs with versioned evidence. Lookup tables keyed by test ID, fixture logits and text generation behind a head method are not native learned execution. The three-family native profile is optional for early Cortex releases; unavailable hardware is reported, not fabricated. An actual learned-function artifact remains required for any claimed CX-36 pilot success.",
+      "owner": "CX-14/CX-23/CX-36",
+      "source_refs": [
+        "CX-14",
+        "CX-20",
+        "CX-22",
+        "CX-23",
+        "CX-36"
+      ],
+      "upstream_task_refs": [
+        "CX:B20",
+        "CX:B75",
+        "CX:B78",
+        "CX:B79",
+        "CX:B81"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A native experiment records real parameters/features and scoped held-out results.",
+      "negative_case": "Fixture bytes count as training or the core is blocked until a foundation model is built."
+    },
+    {
+      "id": "ANEA-010-R03",
+      "title": "Private representations allowed",
+      "text": "A backend MAY expose a head/function without exposing hidden states or KV. Direct tensor/latent access requires a separate authorized transport/ownership/lifetime/device/privacy profile. Public raw hidden-state access is not required for .np portability or head execution.",
+      "owner": "CX-14/CX-23/CX-36",
+      "source_refs": [
+        "CX-14",
+        "CX-20",
+        "CX-22",
+        "CX-23",
+        "CX-36"
+      ],
+      "upstream_task_refs": [
+        "CX:B20",
+        "CX:B75",
+        "CX:B78",
+        "CX:B79",
+        "CX:B81"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A head-only backend conforms without a hidden-state API.",
+      "negative_case": "ANEA requires tensor export or treats representation access as permission to disclose source data."
+    },
+    {
+      "id": "ANEA-010-R04",
+      "title": "Token-native research requires admission",
+      "text": "Dedicated token vocabulary, embeddings and output parameters MAY be trained as an optional profile. Pin tokenizer/model/template/encoding/mapping/learning evidence; verify exact boundary behavior and reserved-token safety. A tokenizer edit alone does not demonstrate learned semantics. Token compression claims count instructions, mappings, reasoning and total work.",
+      "owner": "CX-14/CX-23/CX-36",
+      "source_refs": [
+        "CX-14",
+        "CX-20",
+        "CX-22",
+        "CX-23",
+        "CX-36"
+      ],
+      "upstream_task_refs": [
+        "CX:B20",
+        "CX:B75",
+        "CX:B78",
+        "CX:B79",
+        "CX:B81"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A token-native candidate is compared against existing-token aliases with equal task evidence.",
+      "negative_case": "Adding <AX_DECIDE> is advertised as automatic understanding or a guaranteed speedup."
+    },
+    {
+      "id": "ANEA-010-R05",
+      "title": "Scoped object references, not magic knowledge",
+      "text": "Compact references MUST resolve under existing object/capability owners, immutable identity, principal/tenant and expiry. The runtime can invoke a referenced artifact without showing its implementation to a model; a model reasoning about document contents still needs authorized evidence/features. IDs never mint objects, data access or authority.",
+      "owner": "CX-14/CX-23/CX-36",
+      "source_refs": [
+        "CX-14",
+        "CX-20",
+        "CX-22",
+        "CX-23",
+        "CX-36"
+      ],
+      "upstream_task_refs": [
+        "CX:B20",
+        "CX:B75",
+        "CX:B78",
+        "CX:B79",
+        "CX:B81"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "An authorized runtime resolves an artifact handle and enforces its admission.",
+      "negative_case": "An arbitrary emitted ID reads an unseen document or permanently allocates a global vocabulary object."
+    },
+    {
+      "id": "ANEA-010-R06",
+      "title": "Explicit research profiles",
+      "text": "Canvas, model-understood bytecode, latent calls, cross-model state translation and world-model rollouts MUST remain separately versioned research profiles. Each needs input/action/state semantics, units/horizon where relevant, limits, validity and uncertainty rules, conformance and empirical evidence. Unsupported profiles refuse; simulated results are not observed facts.",
+      "owner": "CX-14/CX-23/CX-36",
+      "source_refs": [
+        "CX-14",
+        "CX-20",
+        "CX-22",
+        "CX-23",
+        "CX-36"
+      ],
+      "upstream_task_refs": [
+        "CX:B20",
+        "CX:B75",
+        "CX:B78",
+        "CX:B79",
+        "CX:B81"
+      ],
+      "integration_stage": "I8",
+      "positive_case": "A rollout profile reports state/action space and counterfactual evidence strength.",
+      "negative_case": "Prose simulation is passed off as a native world-model rollout or unrestricted state interoperability."
+    },
+    {
+      "id": "ANEA-SEC-R01",
+      "title": "Untrusted input remains data",
+      "text": "Only trusted adapter code constructs privileged instructions. Source files, logs, labels, replayed conversations, model replies and package descriptions MUST NOT change policy, credentials, effect grants, routing/admission rules or protected evaluation. Fake system/tool delimiters stay data.",
+      "owner": "CX-03/MiCode PermissionGate",
+      "source_refs": [
+        "CX-03",
+        "CX-13",
+        "CX-23",
+        "CX-36",
+        "MX-14",
+        "MX-27"
+      ],
+      "upstream_task_refs": [
+        "CX:B07",
+        "CX:B09",
+        "CX:B79",
+        "MX:T00"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "Adversarial build-log role labels remain inert and source-span validated.",
+      "negative_case": "A logged tool call or package README becomes executable instructions."
+    },
+    {
+      "id": "ANEA-SEC-R02",
+      "title": "Actual locality and egress",
+      "text": "Local-only MUST apply to inference, tokenization, telemetry, redirects, model fetch, fallbacks, caches and compile service use, under real enforcement. Offline readiness requires all validated assets and tested network-disabled execution. Localhost names or existing program files alone are insufficient.",
+      "owner": "CX-03/MiCode PermissionGate",
+      "source_refs": [
+        "CX-03",
+        "CX-13",
+        "CX-23",
+        "CX-36",
+        "MX-14",
+        "MX-27"
+      ],
+      "upstream_task_refs": [
+        "CX:B07",
+        "CX:B09",
+        "CX:B79",
+        "MX:T00"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "With network disabled, prepared assets support declared local execution; missing assets fail.",
+      "negative_case": "The .np loads but fetches its missing base/tokenizer remotely despite local-only policy."
+    },
+    {
+      "id": "ANEA-SEC-R03",
+      "title": "Bound all work and hostile inputs",
+      "text": "Existing budgets MUST bound request/response/archive/parser sizes, context/candidates, reasoning/generation, jobs, retries, concurrency, queue depth, device/host memory, traces and artifacts. Checks occur before work and on failure/cancellation paths. No archive install hooks or unbounded training jobs may run through an inference API.",
+      "owner": "CX-03/MiCode PermissionGate",
+      "source_refs": [
+        "CX-03",
+        "CX-13",
+        "CX-23",
+        "CX-36",
+        "MX-14",
+        "MX-27"
+      ],
+      "upstream_task_refs": [
+        "CX:B07",
+        "CX:B09",
+        "CX:B79",
+        "MX:T00"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "A hostile archive and oversized context fail before allocation/execution.",
+      "negative_case": "A failed inference leaks leases or a compressed archive expands without limits."
+    },
+    {
+      "id": "ANEA-SEC-R04",
+      "title": "Authenticated resolution and current policy",
+      "text": "Caller-supplied hashes, tenant labels and copied handles are not authentication. Existing issuer/registry checks MUST bind current principal/session/epoch/project and narrow authority at dispatch and effect commit. Recovered jobs cannot resume under revoked permissions.",
+      "owner": "CX-03/MiCode PermissionGate",
+      "source_refs": [
+        "CX-03",
+        "CX-13",
+        "CX-23",
+        "CX-36",
+        "MX-14",
+        "MX-27"
+      ],
+      "upstream_task_refs": [
+        "CX:B07",
+        "CX:B09",
+        "CX:B79",
+        "MX:T00"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "A copied valid state/artifact ID is denied to another tenant.",
+      "negative_case": "A syntactically valid receipt or hash bypasses signer/admission checks."
+    },
+    {
+      "id": "ANEA-NP-R01",
+      "title": "Source semantic completeness",
+      "text": "A .nps parser MUST represent name/contract/input/output, MUST/SHOULD/non-goals, positive/negative examples, invariants, allowed ambiguity, evaluation references, privacy/locality, deployment, fallback and authority ceiling. The exact syntax is versioned independently; no example grammar in this pack is automatically a language extension. Generated sources remain proposals until reviewed.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A source with every CX-36 semantic field round-trips into the canonical source contract.",
+      "negative_case": "A required non-goal or locality clause disappears on parsing, rendering or regeneration."
+    },
+    {
+      "id": "ANEA-NP-R02",
+      "title": "Two compilation paths with the same artifact boundary",
+      "text": "Support spec-driven .nps compilation and experience-driven compilation from eligible verified episodes plus contract/partitions. Both MUST produce candidate immutable artifacts via data validation, family split, backend selection, training/compile, reliability fit, locked evaluation, packaging and admission. No compile call activates a capability.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "Both paths reach candidate .np with full lineage and external admission pending.",
+      "negative_case": "Experience compilation skips data eligibility or immediately updates an active alias."
+    },
+    {
+      "id": "ANEA-NP-R03",
+      "title": "Compiler data and job lineage",
+      "text": "Compile manifests MUST bind source revision, source episode IDs, family/group splits, label producer, synthetic/observed status, corpus roles, backend/compiler config, job identity and resulting artifact. Protected evaluation refs are access-controlled references, not embedded learner-readable labels. Remote compile requires separate egress and job reconciliation.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A compile receipt traces each eligible dataset and preserves synthetic-label flags.",
+      "negative_case": "A teacher-generated example becomes observed truth or locked labels are included with model assets."
+    },
+    {
+      "id": "ANEA-NP-R04",
+      "title": "NeuralProgramBackend ownership and deployment modes",
+      "text": "The CX-23 implementation of compile/load/execute/unload/inspect/health MUST implement the CX-36 contract for each advertised Embedded, LocalSidecar or RemoteService mode. Deployment is explicit in receipts; not all modes need ship at once. ProgramAsWeightsBackend/PawArtifactImporter is optional and vendor-specific fields stay in the adapter.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A local backend exposes the typed lifecycle without requiring ProgramAsWeights.",
+      "negative_case": "Core schemas require .paw assets, provider templates or a remote compiler account."
+    },
+    {
+      "id": "ANEA-NP-R05",
+      "title": "Applicability distinct from loading and correctness",
+      "text": "Every promoted artifact MUST bind an applicability domain, authority ceiling, transfer scope and governed fallback. Loading success is not applicability. Validate domain/schema/size/family guards before protected use; out-of-scope inputs abstain or follow fallback even if scores are high. Keep output_distribution, correctness_estimate, applicability_estimate, ood_estimate and calibration_domain distinct, explicitly absent when unavailable.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A valid Rust artifact abstains on an unsupported language/schema despite high score.",
+      "negative_case": "A loaded artifact executes everywhere or one generic confidence is used for all uncertainty."
+    },
+    {
+      "id": "ANEA-NP-R06",
+      "title": "Shared-base and offline dependency closure",
+      "text": "The runtime SHOULD share compatible resident bases across artifacts with pinned identities, isolated adapters, bounded memory, hot-swap/eviction accounting and no implicit adapter composition. Offline readiness MUST be the validated closure of artifact, base, tokenizer, template, runtime and auxiliary assets. Test at least two programs for any shared-base claim.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "Two compatible artifacts share a measured base; corruption/eviction remains explicit.",
+      "negative_case": "A missing specialization runs the base or untested composition shares state across artifacts/tenants."
+    },
+    {
+      "id": "ANEA-NP-R07",
+      "title": "Invocation receipt closure",
+      "text": "Each NeuralProgramInvocationReceipt MUST bind immutable artifact and capability, input/effective-input/output digests, schema validation, applicability, backend/base/runtime/deployment/hardware, sampling/replay limits, cost/latency, uncertainty, fallback and downstream evidence. A failure receipt cannot identify a substituted artifact as successful; aliases alone are insufficient.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I4",
+      "positive_case": "A failed .np and separate fallback receipt retain correct artifact/class identities.",
+      "negative_case": "Success cites a mutable alias, wrong output digest or different base revision."
+    },
+    {
+      "id": "ANEA-NP-R08",
+      "title": "Source evolution preserves approved meaning",
+      "text": "Generated or optimized .nps wording, examples, schema, applicability and backend proposals MUST preserve approved semantic contract or raise a new ImprovementIntent and approval revision. Inference mechanisms may change; required facts, non-goals, authority and evidence cannot be weakened to make training pass.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A new backend preserves the contract; changed output semantics triggers review.",
+      "negative_case": "The builder removes never-invent-facts or adds tool execution to improve scores."
+    },
+    {
+      "id": "ANEA-NP-R09",
+      "title": "Registry and lifecycle views are not new authority",
+      "text": "The Neural Program Registry named by CX-36 MUST be a class-specific view/integration of CX-34 with CX-11-controlled admission, not an independent publication path. Retain candidate/shadow/canary/active/deprecated/quarantined/retired status and explicit mappings to existing lifecycle events. Active routing excludes quarantined/deprecated-for-use entries as current policy requires.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I5",
+      "positive_case": "Quarantine removes an artifact from eligible active candidates without deleting history.",
+      "negative_case": "A neural registry marks an artifact active while the shared registry/admission rejects it."
+    },
+    {
+      "id": "ANEA-NP-R10",
+      "title": "Low-risk self-host pilot and allowed rejection",
+      "text": "The first proposed CX-36 pilot is BuildLog \u2192 DiagnosticSummary in MiCode, preserving source filenames/locations/codes/causal errors without invented facts, fixes or tools. Run eligible offline replay, authorized no-effect shadow, protected evaluation and admission-or-rejection with evidence. G36-SELF-HOST may close with an evidence-backed rejection; no false promotion is required. A document fixture alone cannot close it.",
+      "owner": "CX-36/CX-23",
+      "source_refs": [
+        "CX-36",
+        "CX-23",
+        "CX-22",
+        "CX-11"
+      ],
+      "upstream_task_refs": [
+        "CX:B77",
+        "CX:B78",
+        "CX:B79",
+        "CX:B80",
+        "CX:B81",
+        "CX:B82",
+        "CX36:B152",
+        "CX36:B153",
+        "CX36:B154",
+        "CX36:B155",
+        "CX36:B156",
+        "CX36:B158",
+        "CX36:B163",
+        "CX36:B164"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "A real candidate is rejected for hallucinated diagnostics with full lineage and incumbent retained.",
+      "negative_case": "A failed quality experiment is hidden, or a synthetic .np fixture is called a self-hosted compiler success."
+    },
+    {
+      "id": "ANEA-MX-R01",
+      "title": "Bind implementation to approved intent and existing build loop",
+      "text": "Every implementation run MUST bind approved IntentIR, BuildSpec semantic/document digests, task-DAG revision, /build-loop identity and allowed paths/budgets. The source of truth is approved IntentIR, not an independently edited build spec. A semantic/authority/acceptance change emits IntentConflict or PlanChangeProposal and requires the configured approval/new revision.",
+      "owner": "MX-17/CX-19",
+      "source_refs": [
+        "MX-17",
+        "MX-05",
+        "MX-12",
+        "MX-13",
+        "MX-27",
+        "MX-29",
+        "MX-30",
+        "MX-31",
+        "MX-32",
+        "CX-19",
+        "CX-29",
+        "CX-32",
+        "CX-33"
+      ],
+      "upstream_task_refs": [
+        "MX:T56",
+        "MX:T59",
+        "MX:T94",
+        "MX:T95",
+        "MX:T116",
+        "MX:T117",
+        "MX:T127",
+        "MX:T140",
+        "MX:T144",
+        "MX:T148",
+        "CX:B116",
+        "CX:B140"
+      ],
+      "integration_stage": "I0",
+      "positive_case": "A seeded contract conflict pauses the affected task and resumes only under the approved revision.",
+      "negative_case": "The meta loop weakens a MUST or rewrites acceptance to mark a milestone green."
+    },
+    {
+      "id": "ANEA-MX-R02",
+      "title": "Lossless bridge vocabulary",
+      "text": "MX-12/MX-05 exports MUST preserve canonical cognitive vocabulary version, structured operation kind, capability class, deployment/lowering and exact artifact identities as separate axes. Missing mappings refuse; VERIFY and NEURAL_PROGRAM cannot be silently added as new canonical classes. Neural artifact import is not local authority.",
+      "owner": "MX-17/CX-19",
+      "source_refs": [
+        "MX-17",
+        "MX-05",
+        "MX-12",
+        "MX-13",
+        "MX-27",
+        "MX-29",
+        "MX-30",
+        "MX-31",
+        "MX-32",
+        "CX-19",
+        "CX-29",
+        "CX-32",
+        "CX-33"
+      ],
+      "upstream_task_refs": [
+        "MX:T56",
+        "MX:T59",
+        "MX:T94",
+        "MX:T95",
+        "MX:T116",
+        "MX:T117",
+        "MX:T127",
+        "MX:T140",
+        "MX:T144",
+        "MX:T148",
+        "CX:B116",
+        "CX:B140"
+      ],
+      "integration_stage": "I5",
+      "positive_case": "A Neural Program invocation round-trips with class/operation metadata under an approved mapping.",
+      "negative_case": "A learned function is exported as deterministic RULE or an unknown AIR vocabulary tag is silently accepted."
+    },
+    {
+      "id": "ANEA-MX-R03",
+      "title": "Instrument self-application before optimizing",
+      "text": "From the first integrated call, emit CognitiveOperationRecord with exact component/revision/effective input/context/candidates/authority/resource/downstream outcome and privacy/corpus metadata. Initially observe, replay and shadow only. Existing PermissionGate, verifier, protected data roles, provenance and rollback stay outside ordinary self-optimization.",
+      "owner": "MX-17/CX-19",
+      "source_refs": [
+        "MX-17",
+        "MX-05",
+        "MX-12",
+        "MX-13",
+        "MX-27",
+        "MX-29",
+        "MX-30",
+        "MX-31",
+        "MX-32",
+        "CX-19",
+        "CX-29",
+        "CX-32",
+        "CX-33"
+      ],
+      "upstream_task_refs": [
+        "MX:T56",
+        "MX:T59",
+        "MX:T94",
+        "MX:T95",
+        "MX:T116",
+        "MX:T117",
+        "MX:T127",
+        "MX:T140",
+        "MX:T144",
+        "MX:T148",
+        "CX:B116",
+        "CX:B140"
+      ],
+      "integration_stage": "I2",
+      "positive_case": "Initial hosted inference already emits enough lineage for a later challenger.",
+      "negative_case": "Instrumentation waits until native-head training finishes or a shadow candidate mutates active context."
+    },
+    {
+      "id": "ANEA-MX-R04",
+      "title": "Preserve evidence and causal bridge",
+      "text": "MX-30/MX-31 exports MUST preserve CX-32 edge types, claim strength, negative evidence, exact effective input and CX-33 treatment/control/stopping/reversibility lineage. A measured speedup on different prompts/hardware is not automatically an identified causal backend effect.",
+      "owner": "MX-17/CX-19",
+      "source_refs": [
+        "MX-17",
+        "MX-05",
+        "MX-12",
+        "MX-13",
+        "MX-27",
+        "MX-29",
+        "MX-30",
+        "MX-31",
+        "MX-32",
+        "CX-19",
+        "CX-29",
+        "CX-32",
+        "CX-33"
+      ],
+      "upstream_task_refs": [
+        "MX:T56",
+        "MX:T59",
+        "MX:T94",
+        "MX:T95",
+        "MX:T116",
+        "MX:T117",
+        "MX:T127",
+        "MX:T140",
+        "MX:T144",
+        "MX:T148",
+        "CX:B116",
+        "CX:B140"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A matched replay report preserves its controls/confounders and invalidation edges.",
+      "negative_case": "Export discards contradicting episodes or relabels counterfactual results as realized verification."
+    },
+    {
+      "id": "ANEA-MX-R05",
+      "title": "Project-local readmission and transfer namespaces",
+      "text": "Imported/shared artifacts MUST re-enter each target ProjectImprovementContract with local acceptance/privacy/authority/rollback. MX-19 T0\u2013T5 coding benchmark tiers and MX-29 P0\u2013P5 repository transfer tiers MUST retain their namespace and definition; numbers alone do not map them. Negative transfer narrows scope or quarantines, not deletes evidence.",
+      "owner": "MX-17/CX-19",
+      "source_refs": [
+        "MX-17",
+        "MX-05",
+        "MX-12",
+        "MX-13",
+        "MX-27",
+        "MX-29",
+        "MX-30",
+        "MX-31",
+        "MX-32",
+        "CX-19",
+        "CX-29",
+        "CX-32",
+        "CX-33"
+      ],
+      "upstream_task_refs": [
+        "MX:T56",
+        "MX:T59",
+        "MX:T94",
+        "MX:T95",
+        "MX:T116",
+        "MX:T117",
+        "MX:T127",
+        "MX:T140",
+        "MX:T144",
+        "MX:T148",
+        "CX:B116",
+        "CX:B140"
+      ],
+      "integration_stage": "I6",
+      "positive_case": "A P1 artifact remains repository-local and is separately evaluated in another project.",
+      "negative_case": "P1 is renamed T1 or shared registry presence activates it across repositories."
+    },
+    {
+      "id": "ANEA-MX-R06",
+      "title": "Consumer integration and independent completion",
+      "text": "A shipped profile MUST have a real Axon/MiCode consumer and user-visible fallback/error/recovery path on the integrated revision. A definition-only anchor does not prove use. PermissionGate and protected AcceptanceContract remain authoritative; model output, completion critic, schema tests and ANEA pack validation cannot set VerifiedComplete.",
+      "owner": "MX-17/CX-19",
+      "source_refs": [
+        "MX-17",
+        "MX-05",
+        "MX-12",
+        "MX-13",
+        "MX-27",
+        "MX-29",
+        "MX-30",
+        "MX-31",
+        "MX-32",
+        "CX-19",
+        "CX-29",
+        "CX-32",
+        "CX-33"
+      ],
+      "upstream_task_refs": [
+        "MX:T56",
+        "MX:T59",
+        "MX:T94",
+        "MX:T95",
+        "MX:T116",
+        "MX:T117",
+        "MX:T127",
+        "MX:T140",
+        "MX:T144",
+        "MX:T148",
+        "CX:B116",
+        "CX:B140"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "A diagnostic .np output is consumed as data and final closure still comes from protected verification.",
+      "negative_case": "An orphan adapter or generated DONE token is counted as a complete integration."
+    },
+    {
+      "id": "ANEA-GOV-R01",
+      "title": "Explicit precedence and unresolved-source ledger",
+      "text": "The reviewer MUST distinguish source-derived requirements, ANEA proposals and live unknowns. CX-36 is canonical for Neural Program terminology/artifact/ABI within this proposed alignment; earlier owners remain for behavior outside that scope. Conflicts about AIR mappings, lifecycle/probability enums, format encoding or task sequencing are recorded with both source anchors and conservative blocked behavior. No source is silently rewritten.",
+      "owner": "Repository governance / CX-00",
+      "source_refs": [
+        "CX-00",
+        "CX-15",
+        "CX-36",
+        "CX-TASKS",
+        "CX-BUILD",
+        "MX-BUILD"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "MX:T00"
+      ],
+      "integration_stage": "I0",
+      "positive_case": "Every finding is mapped to a revised requirement or explicit owner decision.",
+      "negative_case": "A conflicting source passage is erased or an unspecified CX-35 is fabricated."
+    },
+    {
+      "id": "ANEA-GOV-R02",
+      "title": "No duplicate task or circular owner dependency",
+      "text": "Existing B/T work packages MUST be extended with bounded ANEA slices; suggested CX-36 B152\u2013B164 require namespace/allocation review. Cross-references are not automatically prerequisite edges. Do not create CX-23 \u2192 CX-36 \u2192 CX-23 or B77 \u2192 B156 \u2192 B77 cycles. Follow existing dependencies until approved task splitting changes them.",
+      "owner": "Repository governance / CX-00",
+      "source_refs": [
+        "CX-00",
+        "CX-15",
+        "CX-36",
+        "CX-TASKS",
+        "CX-BUILD",
+        "MX-BUILD"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "MX:T00"
+      ],
+      "integration_stage": "I0",
+      "positive_case": "A task impact manifest distinguishes existing, suggested and local stage IDs and validates acyclic local ordering.",
+      "negative_case": "A late registry task is moved early silently or both old and new tasks build separate runtimes."
+    },
+    {
+      "id": "ANEA-GOV-R03",
+      "title": "Semantic evidence anchors and synchronized artifacts",
+      "text": "Requirement, gate, task, protocol, handoff and generated full document MUST update together. Source evidence uses file digest plus section/semantic anchor; live implementation uses symbol plus consuming-call-site/gate evidence, not line-only assertions. A shift test and wrong-body test must challenge any code anchor mechanism adopted by the actual repository.",
+      "owner": "Repository governance / CX-00",
+      "source_refs": [
+        "CX-00",
+        "CX-15",
+        "CX-36",
+        "CX-TASKS",
+        "CX-BUILD",
+        "MX-BUILD"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "MX:T00"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "Inserting harmless lines preserves semantic anchor resolution while moving the call to another owner fails.",
+      "negative_case": "A definition-only or drifting line number turns a proposed feature into implemented status."
+    },
+    {
+      "id": "ANEA-GOV-R04",
+      "title": "Document gates cannot pass product gates",
+      "text": "Pack validators MUST report only the exact offline checks performed. Product gate targets and acceptance scenarios remain NOT_RUN until executed against the integrated repository with authenticated subject-bound evidence. Coverage checks verify references, not behavior; learned quality/admission/OS enforcement cannot be established by JSON fixtures.",
+      "owner": "Repository governance / CX-00",
+      "source_refs": [
+        "CX-00",
+        "CX-15",
+        "CX-36",
+        "CX-TASKS",
+        "CX-BUILD",
+        "MX-BUILD"
+      ],
+      "upstream_task_refs": [
+        "CX:B00",
+        "CX:B01",
+        "MX:T00"
+      ],
+      "integration_stage": "I7",
+      "positive_case": "Validation reports schema/test counts and explicitly zero live model/product gates.",
+      "negative_case": "Scenario coverage or placeholder provenance changes G36/production state to PASS."
+    }
+  ]
+}

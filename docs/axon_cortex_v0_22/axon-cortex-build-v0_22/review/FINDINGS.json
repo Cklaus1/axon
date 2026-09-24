@@ -1,0 +1,667 @@
+{
+  "schema": "axon-review-findings/1",
+  "review_date": "2026-09-21",
+  "status_meaning": "AMENDED means folded into proposed documents. Product gates are NOT_RUN. Reviews are two passes by the same assistant, not independent external audits.",
+  "findings": [
+    {
+      "id": "NP-D01",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 9\u201310/29; v0.15 CX-23 and CX-34",
+      "finding": "The proposal creates compiler/runtime/registry contracts already owned elsewhere. Parallel implementations would diverge.",
+      "resolution": "CX-23 keeps lifecycle, CX-36 owns naming/source/package contracts, CX-34 registry and CX-11 admission. No synthesized CX-35.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md",
+        "build/OWNERSHIP_AND_COMPATIBILITY.md"
+      ],
+      "gate_targets": [
+        "G36-naming",
+        "G23-format-owner"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-D02",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Original CX-36 section 3: exact .nps syntax MAY evolve; sections 4\u20135 package/identity notation",
+      "finding": "There is not enough syntax, schema, canonicalization or inventory detail to implement compatible loaders.",
+      "resolution": "Adopt explicit proposed v1 strict JSON .nps plus bounded stored-ZIP .np and machine schemas/reference fixtures.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/json/neural-program-source.schema.json",
+        "schemas/json/neural-program-manifest.schema.json"
+      ],
+      "gate_targets": [
+        "G36-source",
+        "G36-container"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "INERT_FORMAT_TESTS"
+    },
+    {
+      "id": "NP-D03",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 4\u20135/9: artifact id/content digest and evaluation receipts bundled with executable identity",
+      "finding": "An implementation can create self-hash or evaluation-subject cycles and change executable identity after testing.",
+      "resolution": "Domain-separated manifest digest excludes self id; inventory binds assets; freeze package before evaluation; detached releases bind admission and calibration.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "schemas/PROTOCOLS.md"
+      ],
+      "gate_targets": [
+        "G36-identity",
+        "G11-release-binding"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "INERT_IDENTITY_TESTS; PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-D04",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 1/6: learned typed output and ValidJson examples",
+      "finding": "Schema validity can be confused with correct extraction/repair or proof of a refinement.",
+      "resolution": "Return ProposedValue with separate structure/source/semantic validation and explicit missing/refusal/truncation states.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-23-neural-program-runtime-skill-compiler.md"
+      ],
+      "gate_targets": [
+        "G36-typed-io",
+        "G36-source-bound"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-D05",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "medium",
+      "source_basis": "Original CX-36 sections 10/24: combined backend methods and hardware/model-format list",
+      "finding": "Training privileges, serialization formats and hardware placement are conflated.",
+      "resolution": "Separate compiler/runtime logical interfaces and negotiated operations; bind one runtime target/profile per executable identity.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "build/NEURAL_PROGRAMS.md"
+      ],
+      "gate_targets": [
+        "G36-jobs",
+        "G15-neural-contract"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-D06",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 14\u201315/25: applicability must reject OOD and deterministic replay",
+      "finding": "Perfect OOD recognition and cross-runtime deterministic replay are not established by the source.",
+      "resolution": "Hard-check known applicability; measure undetected shift; distinguish recorded replay from fresh numerical/statistical reproduction and unavailable replay.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "build/REVIEW_INVARIANTS.md"
+      ],
+      "gate_targets": [
+        "G36-applicability",
+        "G36-replay"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-D07",
+      "scope": "CX-36",
+      "pass": "design",
+      "severity": "medium",
+      "source_basis": "Original CX-36 sections 19/33: specialization ladder and first BuildLog pilot",
+      "finding": "A linear ladder and mandatory model success can displace better exact software or select-only solutions.",
+      "resolution": "Targets are alternatives. Benchmark parser/select-copy plus learned/generative baselines; rejection is a valid pilot outcome; measure omissions as well as hallucinations.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "build/NEURAL_PROGRAMS.md",
+        "specs/CX-22-cognitive-specialization-compiler.md"
+      ],
+      "gate_targets": [
+        "G36-self-host",
+        "G36-source-bound"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A01",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "Original CX-36 section 23: validate archive/package without concrete parser policy",
+      "finding": "Hostile package can use traversal, duplicate members, misleading metadata, executables or unbounded allocation before trust is checked.",
+      "resolution": "Specify allowlisted stored-ZIP, exact inventory, path/header/type/hash/size checks, staging and isolated trusted loaders; add inert negative fixtures.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "tools/neural_contract_reference.py",
+        "tests/test_neural_contract.py"
+      ],
+      "gate_targets": [
+        "G36-container"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "INERT_FORMAT_TESTS; PRODUCTION_PARSER_FUZZING_NOT_RUN"
+    },
+    {
+      "id": "NP-A02",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "Original CX-36 sections 4/18/23: embedded evaluation/registry status",
+      "finding": "Attacker forges PASS/signatures in an otherwise digest-valid package or loads a candidate into active service.",
+      "resolution": "Integrity is not issuer authentication; detached release with trusted admission, candidate-only isolation and current dispatch status.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-11-crystallization-admission.md"
+      ],
+      "gate_targets": [
+        "G36-trust",
+        "G11-release-binding"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A03",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "Original CX-36 sections 11/13/16: optional remote backend and fallback",
+      "finding": "Compile, download, telemetry or fallback can leak private source after local inference fails, or grant a denied operation under another backend.",
+      "resolution": "Preparation and invocation have separate grants; external compile/publish explicit; inherited budgets and hard constraints apply to each fallback; offline enforced at host.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "build/REVIEW_INVARIANTS.md"
+      ],
+      "gate_targets": [
+        "G36-import",
+        "G36-offline",
+        "G36-fallback",
+        "G03-fallback-recheck"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A04",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "Original CX-36 sections 12/25: shared-base hot-swap/cache",
+      "finding": "Concurrent invocations can mix adapters, task prefix state or tenants, while receipts name the old model.",
+      "resolution": "Per-invocation exact revision binding and scoped caches; immutable in-flight handles, synchronized swaps and negative contamination tests.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "build/REFLEX_RUNTIME.md"
+      ],
+      "gate_targets": [
+        "G36-adapter-isolation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A05",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 16/19/25: fallback and lifecycle",
+      "finding": "Cycles, timeout retries and ambiguous remote compile completion can multiply cost or double-run work.",
+      "resolution": "Global request budget, fallback depth/visited set, cancellation receipts, idempotency scope and unknown-result reconciliation.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md"
+      ],
+      "gate_targets": [
+        "G36-fallback",
+        "G36-jobs",
+        "G34-bounded-fallback"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A06",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "Original CX-36 sections 19/23: previous-good rollback/immutable artifacts",
+      "finding": "Revocation after validation or a revoked previous-good release can cause unsafe reactivation. Code rollback can be falsely described as reversal of external effects.",
+      "resolution": "Dispatch checks current release/closure generation; rollback eligibility is checked again; in-flight outcomes reconciled; fail stopped if no eligible target.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-11-crystallization-admission.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md"
+      ],
+      "gate_targets": [
+        "G36-rollback",
+        "G34-revocation-race"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A07",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 15/19/21: calibrated reliability and learning lineage",
+      "finding": "High self-reported confidence, teacher agreement or leaked examples can be laundered into P(correct) or protected release evidence.",
+      "resolution": "Name the predicted event/cohort; keep raw score origin and calibration separate; grouped eligible data, non-test fits and selective policy evaluation.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "schemas/PROTOCOLS.md"
+      ],
+      "gate_targets": [
+        "G36-reliability",
+        "G20-target-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A08",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "Original CX-36 sections 21/25: immutable lineage and replay",
+      "finding": "Replay requirements can force unauthorized indefinite retention or imply erased payloads remain reproducible.",
+      "resolution": "Retain authorized minimal evidence, permit scoped tombstones/deletion, mark replay unavailable and invalidate dependent claims as appropriate.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "specs/CX-10-replay-learning-data.md"
+      ],
+      "gate_targets": [
+        "G36-replay",
+        "G10-retention-replay"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "NP-A09",
+      "scope": "CX-36",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "Original CX-36 initial BuildLog pilot: preserve source facts",
+      "finding": "A valid span can point to irrelevant text; a format-correct summary may omit the only causal error or normalize numbers incorrectly.",
+      "resolution": "Validate snapshot/digest/byte range and exact copying separately from relevance/coverage; retain Unknown and include adversarial distractor/omission fixtures in product plan.",
+      "amended_files": [
+        "specs/CX-36-neural-program-artifact-contract.md",
+        "build/NEURAL_PROGRAMS.md"
+      ],
+      "gate_targets": [
+        "G36-source-bound"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-D01",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "critical",
+      "source_basis": "Supplied v0.15 AXON_CORTEX_MASTER.md vs individual CX-32/CX-33/CX-34 and manifests",
+      "finding": "The master mainly contains v0.14 material/counts and only appends a v0.15 summary; a builder reading it misses authoritative new contracts.",
+      "resolution": "Generate master from every current modular Markdown document with source digests; validator rejects stale derived views.",
+      "amended_files": [
+        "tools/package_views.py",
+        "tools/validate_package.py",
+        "AXON_CORTEX_MASTER.md"
+      ],
+      "gate_targets": [
+        "G00-assurance-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "DOCUMENT_MUTATION_TESTS"
+    },
+    {
+      "id": "BL-D02",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Supplied gate_manifest.json compared to task_manifest.json",
+      "finding": "Twenty declared acceptance gates have no work package assigned; original validator nevertheless passes.",
+      "resolution": "Assign each original orphan gate to a concrete task and require zero orphan/unknown gate references.",
+      "amended_files": [
+        "task_manifest.json",
+        "build/TASKS.md",
+        "review/BASELINE_GAPS.json",
+        "tools/validate_package.py"
+      ],
+      "gate_targets": [
+        "G00-assurance-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "DOCUMENT_MUTATION_TESTS"
+    },
+    {
+      "id": "BL-D03",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Supplied schemas/PROTOCOLS.md vs CX-32\u2013CX-34 and v0.15 summary",
+      "finding": "Evidence/causal/scheduler type shapes are not folded into the shared protocols; claims outpace interface definitions.",
+      "resolution": "Add owner-linked logical record shapes, separate model confidence provenance and wire/source schemas, and require exact protocol linkages.",
+      "amended_files": [
+        "schemas/PROTOCOLS.md",
+        "build/OWNERSHIP_AND_COMPATIBILITY.md"
+      ],
+      "gate_targets": [
+        "G32-closure-snapshot",
+        "G33-estimate-class",
+        "G34-bounded-fallback"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-D04",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Supplied B116/B118/B141/B143/B148 dependency chains",
+      "finding": "Early instrumentation/registry work waits on the later learned subsystems it should make possible. No literal cycle, but unnecessary critical-path coupling.",
+      "resolution": "Decouple incumbent instrumentation and minimal evidence/registry adapters; add bounded release profiles and complete dependency closures.",
+      "amended_files": [
+        "task_manifest.json",
+        "release_profiles.json",
+        "build/IMPLEMENTATION_RELEASE_SLICES.md"
+      ],
+      "gate_targets": [
+        "G00-assurance-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "DOCUMENT_DAG_TESTS"
+    },
+    {
+      "id": "BL-D05",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "high",
+      "source_basis": "Supplied tools/validate_package.py and validation reports",
+      "finding": "Validation is largely structural and does not establish generated-view parity, gate coverage, exact examples or complete hash inventory. Published report truncates topological lists.",
+      "resolution": "New validator checks schemas, source/manifests/views, complete DAGs, task gate ownership, inert example validation and package inventory. Actual mutation tests replace asserted self-test receipts.",
+      "amended_files": [
+        "tools/validate_package.py",
+        "tools/package_views.py",
+        "tests/test_package_validation.py"
+      ],
+      "gate_targets": [
+        "G00-assurance-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "DOCUMENT_MUTATION_TESTS"
+    },
+    {
+      "id": "BL-D06",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "medium",
+      "source_basis": "v0.15 stage labels and broad bootstrap prompts",
+      "finding": "Contract intake stages, whole-subsystem maturity and optional research can be read as one huge implementation commitment.",
+      "resolution": "Define contract-vs-task dependencies, exit-task release slices, explicit intake before implementation, and no forced successful research candidate.",
+      "amended_files": [
+        "build/IMPLEMENTATION_RELEASE_SLICES.md",
+        "build/BOOTSTRAP_PROMPT.md",
+        "build/BUILD_PROTOCOL.md"
+      ],
+      "gate_targets": [
+        "G00-assurance-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-D07",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "medium",
+      "source_basis": "CX-05/CX-06 and protocols probability origins",
+      "finding": "Calibration is treated in some notation as a raw source; generic confidence can hide the prediction event.",
+      "resolution": "Keep generated/token/head distribution origin separate from calibrator, applicability/OOD score and empirical event-specific correctness.",
+      "amended_files": [
+        "schemas/PROTOCOLS.md",
+        "specs/CX-06-routing-calibration.md",
+        "build/REFLEX_CALIBRATION_LAB.md"
+      ],
+      "gate_targets": [
+        "G06-reliability-event",
+        "G20-target-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-D08",
+      "scope": "build package",
+      "pass": "design",
+      "severity": "medium",
+      "source_basis": "CX-31 P0\u2013P5 and prior T0\u2013T5 tiers",
+      "finding": "Transfer labels can imply an unjustified total ordering from one repo/language/family to all others.",
+      "resolution": "Report repo/family/language/task novelty as separate dimensions with contamination status, grouped uncertainty and receiving-project admission.",
+      "amended_files": [
+        "specs/CX-31-cross-project-learning-plane.md",
+        "schemas/PROTOCOLS.md"
+      ],
+      "gate_targets": [
+        "G31-transfer-dimensions"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A01",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "CX-24 proposed observe_derived output and semantic composition",
+      "finding": "Schema/span-correct learned extraction can be stored as observed fact, then support a false verified claim.",
+      "resolution": "Use ExtractedClaim and explicit source/semantic validation; no strength-upgrade solely from a format receipt.",
+      "amended_files": [
+        "specs/CX-24-semantic-perception-retrieval.md",
+        "specs/CX-32-universal-evidence-graph.md"
+      ],
+      "gate_targets": [
+        "G24-extraction-strength",
+        "G00-assurance-separation"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A02",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "CX-33 counterfactual gate permits validated estimator as realized evidence",
+      "finding": "A well-calibrated simulated outcome can be labeled realized and feed self-promotion.",
+      "resolution": "Estimates remain estimates regardless of validation; only actual experiment outcomes receive realized class; distinguish upstream matching from treatment-altered effective input.",
+      "amended_files": [
+        "specs/CX-33-causal-active-experimentation-plane.md",
+        "build/CAUSAL_ACTIVE_EXPERIMENTATION.md"
+      ],
+      "gate_targets": [
+        "G33-estimate-class"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A03",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "CX-11/CX-32/CX-34 independent admission and source invalidation",
+      "finding": "A candidate passes checks against evidence that changes/is revoked before publication or dispatch.",
+      "resolution": "Snapshot evidence closure and generation; bind subject and deployment target; revalidate eligibility at dispatch and rollback; no stale registry lease.",
+      "amended_files": [
+        "specs/CX-11-crystallization-admission.md",
+        "specs/CX-32-universal-evidence-graph.md",
+        "specs/CX-34-cognitive-scheduler-capability-registry.md"
+      ],
+      "gate_targets": [
+        "G11-release-binding",
+        "G32-closure-snapshot",
+        "G34-revocation-race"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A04",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "critical",
+      "source_basis": "CX-29 early low-risk routing/context policies; CX-13 shadow guarantees",
+      "finding": "Read-only/shadow can transmit secrets, create persistent state or materially change evaluation context; low-risk label hides deployment consequences.",
+      "resolution": "Risk is per proposed change/effect/project; no-task-effect shadow has egress/storage/resource grants; mandatory controls prefilter all backend fallbacks.",
+      "amended_files": [
+        "specs/CX-13-os-runtime.md",
+        "specs/CX-29-reflexive-self-application-plane.md",
+        "build/REVIEW_INVARIANTS.md"
+      ],
+      "gate_targets": [
+        "G13-shadow-egress",
+        "G29-change-risk",
+        "G03-fallback-recheck"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A05",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "CX-28 context pins, recompute and async selection",
+      "finding": "Pins exceed budget, recomputation is unavailable/stale, or a delayed context decision drops required evidence.",
+      "resolution": "Hard pins cannot disappear to make room; stop/escalate on overflow; materialize exact model-visible receipts and revalidate snapshot/authority before use.",
+      "amended_files": [
+        "specs/CX-28-semantic-working-set-manager.md",
+        "build/REVIEW_INVARIANTS.md"
+      ],
+      "gate_targets": [
+        "G28-pin-overflow",
+        "G10-retention-replay"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A06",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "CX-20/21 locked tests and CX-29 recursive proposals",
+      "finding": "Repeated aggregate eval feedback can overfit locked tasks despite no raw test access; self-optimization can recursively spend its own budget.",
+      "resolution": "Protected submission/feedback ledger, role separation, preregistered thresholds, fresh final cohorts when needed; lineage-aware depth/fanout/global budget.",
+      "amended_files": [
+        "specs/CX-01-evaluation.md",
+        "specs/CX-20-reflex-research-lab.md",
+        "specs/CX-29-reflexive-self-application-plane.md"
+      ],
+      "gate_targets": [
+        "G01-feedback-budget",
+        "G29-recursion-budget"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A07",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "CX-27 supervision and baseline builder prompts",
+      "finding": "Supervisor confidence or inability to find more work becomes completion authority; stop loops or revival defeat operator intent.",
+      "resolution": "Supervisor only proposes finish; protected evidence required, terminal cancellation latch and bounded intervention/fallback.",
+      "amended_files": [
+        "specs/CX-27-semantic-supervisor-plane.md",
+        "build/COMPLETION_CRITIC.md",
+        "build/REVIEW_INVARIANTS.md"
+      ],
+      "gate_targets": [
+        "G27-finality",
+        "G34-bounded-fallback"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A08",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "CX-05 state reuse and earlier model-state discussion",
+      "finding": "Uniform interfaces can imply question isolation, cross-model cache portability or snapshot/fork guarantees a backend does not implement.",
+      "resolution": "Negotiated feature profiles, exact model/runtime/prompt/isolation scope and typed unsupported response; no latent-state compiler added by implication.",
+      "amended_files": [
+        "specs/CX-05-reflex-inference.md",
+        "schemas/PROTOCOLS.md",
+        "build/REFLEX_RUNTIME.md"
+      ],
+      "gate_targets": [
+        "G05-feature-profile"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A09",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "CX-16 MiCode bridge and CX-10 evidence/data trust",
+      "finding": "First-party imported episodes become treated as authoritative confinement, ground truth or immutable approval.",
+      "resolution": "Source authentication grants only provenance; local host/validator contracts and bridge versions remain explicit; unsupported stronger semantics refuse.",
+      "amended_files": [
+        "specs/CX-29-reflexive-self-application-plane.md",
+        "review/MICODE_MIGRATION.md",
+        "build/OWNERSHIP_AND_COMPATIBILITY.md"
+      ],
+      "gate_targets": [
+        "G19-contract-approval",
+        "G23-format-owner"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    },
+    {
+      "id": "BL-A10",
+      "scope": "build package",
+      "pass": "adversarial",
+      "severity": "high",
+      "source_basis": "CX-21 whole-system benchmark and new correctness-head decisions",
+      "finding": "Selecting easy examples/abstaining on the rest inflates retained accuracy and may mask worse system utility.",
+      "resolution": "Evaluate full operational policy, coverage, fallback cost, abstention, final task evidence and locked thresholds; do not promote from confidence alone.",
+      "amended_files": [
+        "specs/CX-21-coding-frontier-benchmark-lab.md",
+        "specs/CX-06-routing-calibration.md"
+      ],
+      "gate_targets": [
+        "G21-policy-outcome",
+        "G36-reliability"
+      ],
+      "document_status": "AMENDED",
+      "verification_scope": "PRODUCT_GATE_NOT_RUN"
+    }
+  ]
+}

@@ -1,0 +1,972 @@
+[
+  {
+    "path": "axon-cortex-build-v0_20/AXON_CORTEX_MASTER.md",
+    "bytes": 1110621,
+    "sha256": "5b54b4ead7789fee533da79d922d6f6a6a42c58772f535c5b7172f3d86df9d24"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_10.md",
+    "bytes": 720,
+    "sha256": "20aaa0327d553993f0f473b88755aa7de7c10e34844667438cb15651b878e941"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_11.md",
+    "bytes": 2020,
+    "sha256": "905d132cb5beffe9b935fc421a4eea3f346e4049f1a5f29d745a77c9be0df921"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_12.md",
+    "bytes": 1294,
+    "sha256": "fc71b6045bf1c27a63418475a94282d49bbdd01bd1ddf8b3d4dffe36fc389e56"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_13.md",
+    "bytes": 1156,
+    "sha256": "236b91bb093c41f07da24c4ac04950f9b83e1e072615d503788f75373923df2e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_14.md",
+    "bytes": 1476,
+    "sha256": "fcd27a5b6ff4d3b4d0115f83d37e4d2dd2690350aaee0d851ee83d08f1880b21"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_15.md",
+    "bytes": 754,
+    "sha256": "5c211d1b4b1fcc27e64ba35d2c76810f02464dcc851fdc72afcf3f7e8d524b2a"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_16.md",
+    "bytes": 2166,
+    "sha256": "54c9b532f64aa9840f99073350b1555bfb24b53809558a7009286e73dfac4d8f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_17.md",
+    "bytes": 1270,
+    "sha256": "ab48dad9974b2344292df2b859849c0fb359e60c011067c4a98212086cd50e38"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_18.md",
+    "bytes": 721,
+    "sha256": "d29d0adf8e35d254180b266737101b80d33ef70c6f3e917963090fe282142490"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_19.md",
+    "bytes": 895,
+    "sha256": "bee94af700ac931588bcea1b721b5de1ed21125742b2ad4bb86f5c850c17eafd"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_20.md",
+    "bytes": 1245,
+    "sha256": "348a6c3e251a72bc2b82e41b0257b1e4b65910e103caa8b23beefbeb6409d2ce"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_3.md",
+    "bytes": 1211,
+    "sha256": "3d77fbd7b165fbc93503a2f647945acdb3aa0f0b4715518cbdb9ea1d7164b4fb"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_4.md",
+    "bytes": 1938,
+    "sha256": "ef35fe77797631aa507dbb16520f930f5953d369fb820f89c59a7855b36b5022"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_5.md",
+    "bytes": 1633,
+    "sha256": "401e88c085074a1ac6c23ebed85543ba71be088c6349f144a7aa094302cdd527"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_6.md",
+    "bytes": 1326,
+    "sha256": "eb641a72b55fe36b4114270725ec8bdd6f9685c77680884cf740c9100cb741d6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_7.md",
+    "bytes": 1027,
+    "sha256": "88777b30cfe56e3c7b8c2606e1889aa5d7d5911546621edbc569616078484674"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_8.md",
+    "bytes": 875,
+    "sha256": "c31353344c7263828f4f1878cd16d46d18f15fcb7fc9afd8d85b423f471d5a71"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/CHANGELOG_v0_9.md",
+    "bytes": 2041,
+    "sha256": "87a6a0e0db6c14f6b2b7036178c897dfc3f18053621b2682b054e83aa4d9a299"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/DECISIONS.md",
+    "bytes": 23167,
+    "sha256": "aafab6fe8264709e0c89f2af4d38e5e7c202c3762a07b1ecf4d17a25c9d2f4b8"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/EXISTING_AXON_MAP.md",
+    "bytes": 6740,
+    "sha256": "9af46134bf0c9859c330df48c2318c48ba55fc6cc8e5e3b9c864b1a707a1bc8b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/GLOSSARY.md",
+    "bytes": 14164,
+    "sha256": "f1cfed2352b2e216d1bd18d3bf7a87e31cdee60a745fab8d0fcfda034811c965"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/README.md",
+    "bytes": 2925,
+    "sha256": "8e4a41706425dfa787dba46ffc9b3b281a79714d761412c59a82d5210488d5b4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/REVIEW.md",
+    "bytes": 27323,
+    "sha256": "a39fc5dfb18529e58d1987d3742e4093e19aecaa2e65b58b52fecf53931674b1"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/SHA256SUMS_v0_20.json",
+    "bytes": 20598,
+    "sha256": "3e42263b71fe574aff718cff74e5cde0fcce93094150a39dac983b3177488ada"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/SOURCES.md",
+    "bytes": 25460,
+    "sha256": "d7bc1c230414be91e443ca322a87c6b2c5e2cdaf01f535b6f23288f92e299a22"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/ACCEPTANCE_GATES.md",
+    "bytes": 114179,
+    "sha256": "7c5ca5f13ddd4c6956e232726a18c466a5cf62dfef8f836974d61036cb83aea4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/ACE_INTEGRATION.md",
+    "bytes": 6391,
+    "sha256": "a9a75ac3900a5d505b1010269cbdc7b68c05e025faa310dc6eb43c9271b23e3a"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/ACE_RUNTIME.md",
+    "bytes": 2531,
+    "sha256": "5a00b9628ffb2c5b973d79cf5bffcf819d3b89d272c48285e6bc8ab73eb82a3a"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/APPLY_ACE_AND_MICODE.md",
+    "bytes": 2989,
+    "sha256": "b5a257dcdf7f7cd072e043ba6ee317f11fced5a8e18285764f4130ee00e59b66"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/APPLY_V020_WITH_MICODE_V014.md",
+    "bytes": 2002,
+    "sha256": "6161e97990fea84dcc4daa7d3fcfe5d3b9a71b119d1ea46cc19cccb6496bde56"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/BOOTSTRAP_PROMPT.md",
+    "bytes": 7056,
+    "sha256": "8ccd4544b8e47f0bb6c95c83e1d37c87403e509842472225e71cc99243e1c8b4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/BUILD_PLAN.md",
+    "bytes": 27749,
+    "sha256": "c61f01c469231d3993339a793a219ffee6d571ff2f7840913657216f1b32f09e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/BUILD_PROTOCOL.md",
+    "bytes": 13020,
+    "sha256": "1f0e1bf3ce811d1f8c037d43c52247ae797fd3c5f006eaf7d9fa50b9be695c6e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/CAUSAL_ACTIVE_EXPERIMENTATION.md",
+    "bytes": 1183,
+    "sha256": "aa43ddb7a1e70bb0a2143bd47a932f43ed7a4df0d43deae6c8de975b6ffe116c"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/CODING_FRONTIER_LAB.md",
+    "bytes": 3634,
+    "sha256": "1621a12e050376001fbaa753bbc236772a15cbbdfed39bf45e1a6aef7cd9ab00"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/COGNITIVE_SCHEDULER_REGISTRY.md",
+    "bytes": 2184,
+    "sha256": "f465c267cb4abd2f242c6e1b5d718a879a3e09496e0d0ce4d9750cb9f3f3e512"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/COGNITIVE_SPECIALIZATION.md",
+    "bytes": 3445,
+    "sha256": "89e68901f501a5bda359ab9487debb7ffc558285fe90746735d86e9ffe5ab136"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/COMPLETION_CRITIC.md",
+    "bytes": 1995,
+    "sha256": "8d9a8a67bf417ef892afe709ff32262dca66c9550b6a6348a7e03cda9a595dad"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/CROSS_PROJECT_LEARNING.md",
+    "bytes": 1370,
+    "sha256": "05f9adfadee23f384e95b5eae49b01f148c5c811939447105ea9ff3a46c4802b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/DECISION_COMPOSITION.md",
+    "bytes": 3335,
+    "sha256": "548f783202d9a542277181484412740b371214adc605c55f19fb766f577198a3"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/DEPENDENCY_ADOPTION.md",
+    "bytes": 4921,
+    "sha256": "9e0b1e67b41452b4cc5c522933acbf6390a80446ce84149d8ae213243ba0bca6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/EXPERIMENT_REGISTER.md",
+    "bytes": 10934,
+    "sha256": "5498a87e3f0fccc4949c15b0f92e97ddcd8a6db365f2b3cfd9a0894133057ffe"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/IMPLEMENTATION_RELEASE_SLICES.md",
+    "bytes": 4585,
+    "sha256": "d2d1c5199c819e5d332f606ba0b7b8f813bbcf54b6e67bf1f530d7b86aaac4c0"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/INTENT_COMPILER.md",
+    "bytes": 4980,
+    "sha256": "f2db8790bdd96410b6bb43ac8c5d0a4b4772e3e4bc9fa2f8c5241fb5a5a0749d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/KNOWLEDGE_INGESTION.md",
+    "bytes": 1875,
+    "sha256": "8dcea0cfc4794060f33ad90f24440a4dd306e1e33504821cbcb287310863a230"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/LIGHTWEIGHT_REFLEX_DISTILLATION.md",
+    "bytes": 3552,
+    "sha256": "765e7288795ab688556f15bcc800a0f38e3af4d1926e8de51ccabc3c5b807dc9"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/LOOPS.md",
+    "bytes": 15673,
+    "sha256": "af9700b3f187021b6760770f848ada84e9fcd5a56749f189b482e8d6b9a87fc0"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/MICODE_EXPERIENCE_BRIDGE.md",
+    "bytes": 3970,
+    "sha256": "5a3cd77a2970d4a9fea3bdee97fce8307c63e16ab9bcb2c0ccd6c9af113f56f2"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/NEURAL_PROGRAMS.md",
+    "bytes": 6977,
+    "sha256": "c77198e804c9be5b7efe926e1af44224cd3c5ca3bc174f5c691ec9b7877bd921"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/OWNERSHIP_AND_COMPATIBILITY.md",
+    "bytes": 5731,
+    "sha256": "646f92aa18d2f2dcae8a756ae2ed31555743ff6f171f5b8e3eef237376c5f50a"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_BACKEND_BAKEOFF.md",
+    "bytes": 9096,
+    "sha256": "f6b837a65bddd02d1eb291e86d990cf7815e976e06b1bfc4ae74c57c65e5f0c8"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_CALIBRATION_LAB.md",
+    "bytes": 7204,
+    "sha256": "146453b5e7c6d4412db1d1bc918bb342eeb06e17a68550d8694ea482761e5423"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_CONFORMANCE.md",
+    "bytes": 8948,
+    "sha256": "1d7c18e47186997929a3be845a52653a3fb434681c1afa6834c71e65aeb98492"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_DECISION_CORPUS.md",
+    "bytes": 7650,
+    "sha256": "85afa2bfbcd61194067c52d58c109b4928f666d8b5e3888e02c325f7a8874e82"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_KEV_PILOT.md",
+    "bytes": 4081,
+    "sha256": "2a749d21a730a85657691275517af4b348f52cb80810f427c6efcea66d6617f2"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_LEARNING_PLANE.md",
+    "bytes": 2176,
+    "sha256": "f97bcc810d6e34e77990c8f4f6405b366a87b5d9d9ba0c72e45cc921687d8cde"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REFLEX_RUNTIME.md",
+    "bytes": 6763,
+    "sha256": "a2dcb6087c948b8d895d9da12d18abe149b07d00c3d207518633369bdb718d08"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REPOSITORY_OPTIMIZATION.md",
+    "bytes": 3414,
+    "sha256": "7caaa1630760006cdc2f307c5d74fb81860bf0e6adddf7c67c70ac3ba68496c0"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/REVIEW_INVARIANTS.md",
+    "bytes": 7270,
+    "sha256": "45fdd2d1e0aad90d9e1c900136c1a6559e144c10fb80f6f6f7954e47dbb4a29b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/RLCD_DECISION_MODELS.md",
+    "bytes": 4886,
+    "sha256": "17f6c0b95c495739bf96f348275c9d65c073a8f8866d293b69fc3e837f740479"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SCHEMA_DECISION_FRONTEND.md",
+    "bytes": 3095,
+    "sha256": "59e0fcfd41322f1c739b96eb7cdb1a1e9946fc225db19e37651c09d53872e9e3"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SELF_APPLICATION.md",
+    "bytes": 4975,
+    "sha256": "746b99fb5bb6348f25ef7351fbb91cdcde0ab964542c0b06d4d9e6e5096fdad9"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SELF_OPTIMIZING_OS.md",
+    "bytes": 5682,
+    "sha256": "9d2895f490298ad30d3fa2eca44e0d1dd0e3092192a190d5c72f26b8a8c830e3"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SEMANTIC_ALIGNMENT_LOOP.md",
+    "bytes": 1935,
+    "sha256": "a01f8e9c971323beba4f1f2b3acaf0fece37f59f04ad62faeada57844f314c76"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SEMANTIC_PERCEPTION_RETRIEVAL.md",
+    "bytes": 1722,
+    "sha256": "58cd78a881c82adf7e307dac05a3a63f28bb7bf15e2cdb102e5b18e07d7f6595"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SEMANTIC_SUPERVISOR_PLANE.md",
+    "bytes": 1354,
+    "sha256": "4afae32974bd84e54f1d6395db9696df709ccf474a5ad4db9a827a5b0206890d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/SEMANTIC_WORKING_SET_MANAGER.md",
+    "bytes": 2270,
+    "sha256": "6df25e6dad985f5c3bc2194e9f67e742fa1dfbd7fa2148d6ef3d42e5a0e62d22"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/STATUS.md",
+    "bytes": 894,
+    "sha256": "d401d2064ae46e1476abf0c2a365e4df8739e2ff6c095d1895b43edeb1814263"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/TASKS.md",
+    "bytes": 85997,
+    "sha256": "b300e48807b126198c5fa14e5775cf649c8d97192502871b27a00669e24f464d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/build/UNIVERSAL_EVIDENCE_GRAPH.md",
+    "bytes": 703,
+    "sha256": "7a6dcc47b94ce826119cb4a57f81f7b859f428dad151bf5bd503a2e7606cf436"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/examples/SAFE_REPAIR_EPISODE.md",
+    "bytes": 4237,
+    "sha256": "f3013df1ec15d9bc7065ea82c1b2d2dba6256ebd8b9fa97d8c553429454e37cc"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/ace/README.md",
+    "bytes": 657,
+    "sha256": "64edc8d8393d27cacf6fc3febccd73fe767b0b8e5d591df415da4aa86d3d19f4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/ace/records.json",
+    "bytes": 14250,
+    "sha256": "a528bc65726981aeccd6364114bc7245043826dd9458f1532c3cb40b0365f3ff"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/neural_programs/README.md",
+    "bytes": 1037,
+    "sha256": "2342305c49490f85ab1c0b1d6654a93a89ea4263953d57ca25e3c850889c43d5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/neural_programs/minimal-manifest.json",
+    "bytes": 2510,
+    "sha256": "e0e2dceaddde2369053b5bab81a418fdc1a781ccd5bd1110fb27830d033a29f6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/neural_programs/minimal-source.nps",
+    "bytes": 2552,
+    "sha256": "f4d4d95773a0e159a435a81dcd7084c6b0ac68fe00d365eb267075458e26d8f4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/neural_programs/minimal.np",
+    "bytes": 5470,
+    "sha256": "2f65a139e656219a2e7175352f0b0e7002b16f674ac9dcfe99209f55992ba760"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/schema_reflex/README.md",
+    "bytes": 940,
+    "sha256": "1f8db68d1b363b8e253a3f17dc844822c6e2472fee42a16da956361291d9705e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/schema_reflex/experiment-template.json",
+    "bytes": 1124,
+    "sha256": "2e6ef68371f916eb69cd22e1129dcfa649a16ad7f6e505a4597eb3cd1a20fc9d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/fixtures/schema_reflex/records.json",
+    "bytes": 11201,
+    "sha256": "1cf0692825d47267e64c45d6421648ffb766aecba3c83c7e0d88fd63f7f6c772"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/gate_manifest.json",
+    "bytes": 157505,
+    "sha256": "d5310fdb3bff55ed6d3ef575afe3dba7e1d5a18c76e54a7945678b746c07ff7b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/ACE_DECISIONS.json",
+    "bytes": 8062,
+    "sha256": "64fd7f057db2b322162b1d9e218c40e19faf62ade62830dc4bb78fcc490392c7"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/ACE_LEGACY_ALIAS_MAP.json",
+    "bytes": 1476,
+    "sha256": "0f9c1256f691e873ebb8b3ca1925d4695f6bceb938da3c64ce05d51aaef18c15"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/ACE_OWNER_EXPORT_LOCK.json",
+    "bytes": 4972,
+    "sha256": "b4916f5b4dc5fc09fbae7dfc7404434b5cdd8c7a44dfb0c7c258d07d8587c16f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/ACE_REQUIREMENT_CROSSWALK.json",
+    "bytes": 96394,
+    "sha256": "d87a561b834e86ddb2634d95d019d533dae9680fae4872880b19631555d2ec36"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/ACE_SOURCE_LOCK.json",
+    "bytes": 3509,
+    "sha256": "71a751e8b5af501e0f8b72d3c5427034d1e22ff6aad1f80d1e7c8f550cd7353b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/ACE_VOCABULARY_MAP.json",
+    "bytes": 3133,
+    "sha256": "3849f58e4096ceda00033a4a5d49c14d1a7ddb7460c2b322833791244d1d6b3b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/SCHEMA_REFLEX_REQUIREMENTS.json",
+    "bytes": 11611,
+    "sha256": "27fe407d10a94fafc65c55bad4e690ac2d51f6ab443f34631665812d17a3bd34"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/anea-v0_2-reference/ANEA_SPEC.txt",
+    "bytes": 54920,
+    "sha256": "4ac4dcc6369ca02365b1cc40b77e43fa9ef696c124497ae31eb4ddfa34710ba6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/anea-v0_2-reference/OPEN_DECISIONS.json",
+    "bytes": 5358,
+    "sha256": "40ca52f3a81dacaa4522bafbadabb74ec97462acd5f561e181212106c48a057a"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/anea-v0_2-reference/REQUIREMENTS.json",
+    "bytes": 95987,
+    "sha256": "feafdc2a911448b0727b7b300ac77a6dfe4e69eef8448ffa6a9e98e769d0eda4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/anea-v0_2-reference/integration/CONTRACT_MAPPING.txt",
+    "bytes": 8504,
+    "sha256": "daaa7217f6a272be72a2b6713d773256ad3af1ed5e5b6072069ceeb5323d49ce"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/integration/anea-v0_2-reference/integration/UPSTREAM_AMENDMENTS.txt",
+    "bytes": 5852,
+    "sha256": "4140c5e9ca14af1095af9733bb5d0b0ff6401ab99c5ac6ab80a1c3265b0fdf80"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/package_validation.json",
+    "bytes": 14803,
+    "sha256": "da02dd00ed98e6fdec46e88ce0f0b935d7c2c4a6a972ab40fd8a2056f253702f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/release_profiles.json",
+    "bytes": 5587,
+    "sha256": "9dde1aacbc9f75c9b0c950a4396016d1065a9f1febe5d4c8c236a634bc350d00"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/ACE_REVIEW.md",
+    "bytes": 3189,
+    "sha256": "61dc4792c45999243ee607f4988ba2c8a06507933a5f33853c61a530a1435885"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/ACE_V1_REVIEW.md",
+    "bytes": 630,
+    "sha256": "dc62e7225980976b569f721e43b344762b033060979a7167149dc890c2968cdc"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/BASELINE_GAPS.json",
+    "bytes": 3830,
+    "sha256": "3a602ef2648b033a6143f1968f618ed224d57d2518069af0ef2bc8a58917e4a5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/BASELINE_VALIDATION.json",
+    "bytes": 2759,
+    "sha256": "63487f02da9396bde84be5b6cd93128cba383dccba9ea2d52bbecb1231b68570"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/BUILD_ADVERSARIAL_REVIEW.md",
+    "bytes": 7043,
+    "sha256": "ee24987edb0a1333a15ef262eaf481373265f333db65c4ef309c33a609c4dce7"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/BUILD_DESIGN_REVIEW.md",
+    "bytes": 5612,
+    "sha256": "390b8fb5880be3940c7df39a0532c70dfe360e560335139e297632eca4bbf9aa"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/CHANGES_v0_20.json",
+    "bytes": 17401,
+    "sha256": "463a3f2dd62b5122ac8593eabc21fbd1b098f748c37f2fab5228579fdbb31b22"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/CHANGE_MATRIX.md",
+    "bytes": 4985,
+    "sha256": "bc9ec59c9a678b8dfed82994ba82f1ebbe55c7e2f752893eaf3bc69faa251a5b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/CX36_ADVERSARIAL_REVIEW.md",
+    "bytes": 6553,
+    "sha256": "ff2407550165a5058f8d7a3b43875f4021cd73bd2f3f09c20603b0ba8903b4e5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/CX36_DESIGN_REVIEW.md",
+    "bytes": 5190,
+    "sha256": "6be195fcc8d4d0b79ac275d40ac385b60106460cf3f0ac90639a297074a7cdd6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/FINDINGS.json",
+    "bytes": 29017,
+    "sha256": "d76198567e0537ae292127817dd9638c46d281438aead59d9602337ae6e1bccf"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/INPUTS.json",
+    "bytes": 1069,
+    "sha256": "d955107232cc4cc69507880f93dec6501b1f8945c664f84d29c7a27791900f89"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/INPUTS_v0_19.json",
+    "bytes": 1332,
+    "sha256": "4da32d880adc9a4338fc937f9f4a3dda117cd1031777fe1a63bf73e4eadb2e6b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/INPUTS_v0_20.json",
+    "bytes": 1182,
+    "sha256": "cccb1f131ffc2cf9ee1818ec4985d0229fc62a40eb2f3173e7c8e06bf4ccc31e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/JIMOTHY_WEBMCP_ADVERSARIAL_REVIEW.md",
+    "bytes": 3782,
+    "sha256": "53a856b3bab75244ff144790843cd52d16782f0ad5942f69e8d5c93bdc148289"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/JIMOTHY_WEBMCP_DESIGN_REVIEW.md",
+    "bytes": 4975,
+    "sha256": "0870e088ba077b55be2e06e482c13ab5a1b5990257863b4b19ee1bafa895b5b6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/JIMOTHY_WEBMCP_INPUT_REVIEW.txt",
+    "bytes": 37652,
+    "sha256": "74c12e6192293b73613856dda5191fc54a078ad5025ad1e96c441ae2c12e4949"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/JIMOTHY_WEBMCP_SOURCES.json",
+    "bytes": 2112,
+    "sha256": "b7c9472054e2fe3b6ca99c2a91da73c62247417cab7c63f1772b60df238e59d6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/MICODE_MIGRATION.md",
+    "bytes": 1277,
+    "sha256": "6bcf1f0ff752f50388f8f598aab3b1b048c5e41a53d2534306331a906f270877"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/REVIEW_REPORT.md",
+    "bytes": 2470,
+    "sha256": "d01cb11d7d382112fd198a32db86eeaf569f8ff95a9a8ca9efd06815e08b6edd"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/RLCD_JEV_ADVERSARIAL_REVIEW.md",
+    "bytes": 4123,
+    "sha256": "7305963ae703816b37ce57b4736af14c4831ddfb80c8e557f282a3acc93a9039"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/RLCD_JEV_REVIEW.md",
+    "bytes": 2940,
+    "sha256": "ff22b81669fbf21976b627e28309cb1fc30fc2b821ebb967bb1bcffb4461eea5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/TEST_LOG.txt",
+    "bytes": 29120,
+    "sha256": "58f2c5faef65903d779ab77d5a04b1528835336e7c2ccce1f873454a5374acd3"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/TEST_RESULTS.json",
+    "bytes": 33062,
+    "sha256": "0afb333948c4c34ce3ab59adafc37c0910331d276e9d363a7153f788fb94cd82"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/history/v0_16/TEST_LOG.txt",
+    "bytes": 8224,
+    "sha256": "9e20984c3ab814dc8af8106e050dd610f21c3cf4de2c4c433697b73c17604560"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/history/v0_16/TEST_RESULTS.json",
+    "bytes": 10526,
+    "sha256": "bc072318682329d99d842fc5f51321930121046fc8f87f29a139959dbfc8f75f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/history/v0_16/package_validation.json",
+    "bytes": 7182,
+    "sha256": "85d742f78cada59c8897a3c81515e84bc31768214e1be48885ad91ec7f6b0581"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/history/v0_19_TEST_LOG.txt",
+    "bytes": 15381,
+    "sha256": "32c84f5a37577b8d4f074d2ddb67c9fed598d7df3d7cc2d3d37a02fcdabe493d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/history/v0_19_TEST_RESULTS.json",
+    "bytes": 18228,
+    "sha256": "4fdca4fb0833903a2ddcd08e7f00a528caf048d1c12198ab021b2dc9ec126023"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/review/history/v0_19_package_validation.json",
+    "bytes": 12410,
+    "sha256": "8e13b3a1e96db9bbff3566cd0514329c24a5a4d6464f446debddc640026e9ebf"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/ACE_EXECUTION_PROFILE.md",
+    "bytes": 23599,
+    "sha256": "1eff17357c804fc63327e8fc7326e26acffd08fe28f93590d35bf60a9ed39f68"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/LIGHTWEIGHT_REFLEX_PROFILE.md",
+    "bytes": 12879,
+    "sha256": "fb13123c6f8d87c0a51d950075b9396b1ac4b348b88d73408f461948528bd942"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/PROTOCOLS.md",
+    "bytes": 31008,
+    "sha256": "764331b1504dac2cd0c9b301af0dcbedcf7b2ac23506e5dda82a0c3046369a55"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/SCHEMA_DECISION_PROFILE.md",
+    "bytes": 10273,
+    "sha256": "31916f99a26c005d13c7639d4feab914c3ec5aafca2ce309e42d04e75eb5e1fb"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/json/ace-execution.schema.json",
+    "bytes": 27609,
+    "sha256": "3ae2275978974c1c0d2cc42488e9f121888e1e09c2f2245b66da089149998b5b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/json/ace-runtime.schema.json",
+    "bytes": 4882,
+    "sha256": "202ed5e69be59ede87cda7cc0c3522f9d224adb76da34cd66c58d901377bf43c"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/json/neural-program-manifest.schema.json",
+    "bytes": 11456,
+    "sha256": "ab4220f4d53884507db9cedca64fe6732b852d7bfeee1305182b1c2b99143369"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/schemas/json/neural-program-source.schema.json",
+    "bytes": 10398,
+    "sha256": "7098d826351687ab5c2df843f08c768691693c815dd64942a516b256ba474f3e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/source_manifest.json",
+    "bytes": 1016,
+    "sha256": "baa1ee71051b90fe6a39f22a114a943555e20eeb04c0b518b3755545316a68a5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/spec_manifest.json",
+    "bytes": 12547,
+    "sha256": "36642db725425fe88e246eaf0e84890e56838c52abb792facdcebebf9036e254"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-00-system-contract.md",
+    "bytes": 9467,
+    "sha256": "be405fe1747cd348836b6de914707e6ec67618fd8a3484d60f24cf53f3984864"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-01-evaluation.md",
+    "bytes": 7266,
+    "sha256": "3ddd8c02b1e59d54254455d8b8415a6ac4acf094a0a4167727e433228082c41f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-02-world-observation.md",
+    "bytes": 6120,
+    "sha256": "cb5c278d5a24a37a6ae2ac339a79702c1f40211fec2ec4f903ce3c4857cc0b94"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-03-capabilities-executor.md",
+    "bytes": 7237,
+    "sha256": "383fb2483cb02f4e1a476e264ef8fe571ee615d1eb2f0e640185a006a2c7b4f4"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-04-air-runtime.md",
+    "bytes": 7211,
+    "sha256": "af93ea61de6e8f17d59c42bd9a0a1e413d6e417dbe83c13799b09630e07742bf"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-05-reflex-inference.md",
+    "bytes": 19033,
+    "sha256": "91787cf9688287d32b1b7de6f157de243ce92874fc3b7dd9f37786798c3f770c"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-06-routing-calibration.md",
+    "bytes": 11927,
+    "sha256": "d79569ac2c5ace9f8b06449170b993c3967bd0668138638cc34c5cfa72f8ee12"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-07-predictive-world.md",
+    "bytes": 5675,
+    "sha256": "413b79e9feebb3909f3a39af66e9dc3f791b26640fdec6edd54c00788e019cc2"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-08-planning-experiments.md",
+    "bytes": 4818,
+    "sha256": "ec6fb5c55a3b938db09875df042b7907368d7742da9ca0bab85b48cf94fb1a7a"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-09-representation-abstraction.md",
+    "bytes": 4861,
+    "sha256": "af27260929ff00106cb74152fcde875eeccc19073f184754dc246845a9e1fd8e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-10-replay-learning-data.md",
+    "bytes": 10668,
+    "sha256": "d7f9e32919fe5b6b0343a62eb03d289c5fd92bbde9b495f73784726147f91b3f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-11-crystallization-admission.md",
+    "bytes": 7936,
+    "sha256": "12b7168fa19e3e83b319edae82517474b2d8f1525e02484ced60488b5251914c"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-12-learning-meta.md",
+    "bytes": 6385,
+    "sha256": "88368523c0547797395597cc168860410991bbe6377d6c993a98f7c86d907974"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-13-os-runtime.md",
+    "bytes": 8478,
+    "sha256": "4ecd7232ed20677f8d6a7b68944d1bb755a6661c5c30352dbd974509710d3650"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-14-parallel-model-research.md",
+    "bytes": 14665,
+    "sha256": "d25b9c6472c7a70f3da62cde5b3cfad9f7b46dee51943f8bb06403e3db8c7a25"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-15-language-compiler-proof.md",
+    "bytes": 9911,
+    "sha256": "d8790aeb2a45989629bb2e080e13f202dcee587f788bf061d5c1aa9571b7aec7"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-16-micode-experience-bridge.md",
+    "bytes": 10085,
+    "sha256": "8bedb2334a86417e4cc9b63a47eeb7d383043f1bc7adccb87bca07ba0f9bbb68"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-17-external-repository-knowledge.md",
+    "bytes": 5645,
+    "sha256": "f55684f7bfb1b9a111acf0b2e118b476dd1cd3cd48406215250b9d972b3e4c6f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-18-capability-synthesis-native-promotion.md",
+    "bytes": 5378,
+    "sha256": "92ff851f292a16027927142c52fe58ebe641fc0f3e9fb9b948e3537a9d27b12f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-19-intent-compiler.md",
+    "bytes": 9458,
+    "sha256": "5ca5297cedc2cfd50293ea0f50504f60681916818534123f6fc54e786947669d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-20-reflex-research-lab.md",
+    "bytes": 26550,
+    "sha256": "d4add4691fa3c0c55aa3e589d0fd4304813c9ac079e782a0687d279d7f2e3cff"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-21-coding-frontier-benchmark-lab.md",
+    "bytes": 17391,
+    "sha256": "2c01fb93c7368323015709a354cb5c977996ec222010513a8aab341c444db4c5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-22-cognitive-specialization-compiler.md",
+    "bytes": 11925,
+    "sha256": "93b4a2fc29081941038762d9e564999d5c32583cede4b652d2def812a0e9c875"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-23-neural-program-runtime-skill-compiler.md",
+    "bytes": 12024,
+    "sha256": "a1e11d0fcbfd62ab7ddf5bbcc2d118abe1c589c72cd0e9b25409217d4c634e6f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-24-semantic-perception-retrieval.md",
+    "bytes": 8607,
+    "sha256": "9c3720de5d461ad8b5fb87c92f176df1dd8207a6757a2fb8d96057684f1ab7e1"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-25-reflex-learning-plane.md",
+    "bytes": 6771,
+    "sha256": "23a97a2b3e52291e7e1eb276526b3fbe62b4a82fe1ddc16cb40b743bc766321b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-26-decision-composition-runtime.md",
+    "bytes": 12330,
+    "sha256": "9eec0f6d2b6340c95469913914c91852e79b3e179d5645349c60b5c48595add8"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-27-semantic-supervisor-plane.md",
+    "bytes": 9539,
+    "sha256": "61847e5161f83684faea35db758507286d4941d7cc9f86c3932cef498aed9f42"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-28-semantic-working-set-manager.md",
+    "bytes": 11738,
+    "sha256": "2d3c6b6413b10241478a02ed75dfbe1c13e0b4243afe94737b9cbd3d69dca49f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-29-reflexive-self-application-plane.md",
+    "bytes": 14168,
+    "sha256": "1ef9edcb9464332f20d5d317043564a5035d6e0e74010677581d38754d39e75e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-30-repository-improvement-plane.md",
+    "bytes": 8176,
+    "sha256": "5df09174abaa87c5897763be7f02f49da71f0ec3f86fb5aad2c9c86550200dff"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-31-cross-project-learning-plane.md",
+    "bytes": 8072,
+    "sha256": "d16540629c4d98cb247f7d48ca2d30b8f62e1b36c726f22e6de54950de46d14e"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-32-universal-evidence-graph.md",
+    "bytes": 7894,
+    "sha256": "d07ab42120a6049ca451c08d021235355e3d0b0a73729b8096cc032c8b6e020f"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-33-causal-active-experimentation-plane.md",
+    "bytes": 7469,
+    "sha256": "9bd34963ea2a3ed8ee08dc9927b02f615411e310944ed6bb53ab384db18a1eb0"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-34-cognitive-scheduler-capability-registry.md",
+    "bytes": 10004,
+    "sha256": "3346937dfabd24b6f23d654bd6eaa22288a0173cbfa2cd441e6add3d879e37fa"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-36-neural-program-artifact-contract.md",
+    "bytes": 31590,
+    "sha256": "3c7591109dbf1e4720ce0dade1f48c43d2f8ba6ba478e01a36d64954cd9e9968"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/CX-37-ace-provider-runtime.md",
+    "bytes": 14225,
+    "sha256": "8d6a312ffbe5d5cdb278bef9ecd63abcd4ad1cb471a248d4276b960bd87c2505"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/specs/INDEX.md",
+    "bytes": 6257,
+    "sha256": "3ef858d0463194060329d867d973d0374e4105bf37bcec47ad8bb1bd76354779"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/task_manifest.json",
+    "bytes": 135802,
+    "sha256": "ae5626d0a23c94b4f5ce5aee9073bb00f1adcf4c2d3b4981e1fe9c179f9ef8c8"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/templates/SPEC_TEMPLATE.md",
+    "bytes": 1687,
+    "sha256": "8a11a8b9aee52e33dc398b274c315819967e8d1e8d67f49cb7618c1f742036a5"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/templates/WORK_PACKAGE.md",
+    "bytes": 1916,
+    "sha256": "bb7c39b4cdb5d68750a54ba1f74187440d31d006d80da885996e6947a65b16d0"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_ace_execution.py",
+    "bytes": 12136,
+    "sha256": "e3c79a4db76168894b9eaca632b9d40d0522a264068909663b33051674cf6fce"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_ace_package.py",
+    "bytes": 3194,
+    "sha256": "a907c2843fc6f7fc6ec1366666d6321253e34dfb102f0ccd142b3ae3c8f62b82"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_neural_contract.py",
+    "bytes": 9919,
+    "sha256": "1bb52698b48f9504a0e2b19f9f6bae3f1bcc0f4e93f6dceddd773f876255b34b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_package_validation.py",
+    "bytes": 5455,
+    "sha256": "8c5b5f85769bc831e40ff216d2b417befdee9ed959e9a9687fcbaf54e62fb127"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_rlcd_contracts.py",
+    "bytes": 1765,
+    "sha256": "884878eba2d682559d6cd4579a10d60cc79e6a68c841f8263dd208dc60691b7d"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_schema_reflex_package.py",
+    "bytes": 2142,
+    "sha256": "2212e83141abf1aab5309fb9944f9b113b7fbd0112d16d0bdccdcfa884b18a72"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tests/test_schema_reflex_reference.py",
+    "bytes": 15858,
+    "sha256": "fb8ed01c9f1828c0cbff5422da4960b074044ff8afc8869b35dd748b944503c2"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/ace_contract_reference.py",
+    "bytes": 15349,
+    "sha256": "64021270183cd3d4958797f648b380e546d34ac9c25267f28e6db3516dc85732"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/ace_integration_checks.py",
+    "bytes": 6713,
+    "sha256": "673738b7c57340b7839e4777f78559432c800698126d3986d5920839e9214b6b"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/neural_contract_reference.py",
+    "bytes": 11264,
+    "sha256": "d129ba91a35c963774c6fc6f278be15aaeb03e84f620b4245011f14fe1f47955"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/package_views.py",
+    "bytes": 6629,
+    "sha256": "4f21949f0013a49b910c97654e08783a13c9849dfa5b858e8b38f27f095175fa"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/requirements-review.txt",
+    "bytes": 19,
+    "sha256": "756cc9e506ae4ee1a6f6c0507088b5cfc0dc8ba350fb2d2d46f1ffa72033adb6"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/rlcd_contract_reference.py",
+    "bytes": 2324,
+    "sha256": "54a49b3d795c87985ab0e608b08be2382a02b3fdffe2a9536cfa899dc7aaad91"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/run_review_tests.py",
+    "bytes": 2047,
+    "sha256": "80a5def459fd6d0b2d099259e2a4588c52577f9b5582505213d868d24c0cdded"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/schema_reflex_package_checks.py",
+    "bytes": 4087,
+    "sha256": "6eb39f3d486a55fe4591a0e23cefaf0a1a8318916026d45e8c5099262a8b6f56"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/schema_reflex_reference.py",
+    "bytes": 23420,
+    "sha256": "53bde92288e276b76966e092c05122b78444237baf116d6643971390fce0bb67"
+  },
+  {
+    "path": "axon-cortex-build-v0_20/tools/validate_package.py",
+    "bytes": 10411,
+    "sha256": "451c88d51fdd5003d63a4945c4046002fd2e4489b315edce0c00486dd4868194"
+  }
+]

@@ -1,0 +1,40 @@
+{
+  "schema": "axon.paired-upgrade-plan/1",
+  "package_version": "0.22",
+  "mode": "READ_ONLY",
+  "sources": {
+    "axon": {
+      "reviewed_files": 1213,
+      "matched_files": 1213,
+      "changed_paths": [],
+      "missing_paths": [],
+      "unsafe_paths": [],
+      "extra_paths": [],
+      "excluded_metadata_or_build_directories": [],
+      "source_matches_reviewed_inventory": true,
+      "intake_review_required": false,
+      "git_cleanliness": "NOT_ESTABLISHED; inspect current git status/diff/staged/untracked work separately",
+      "writes_performed": false,
+      "source_scripts_executed": false
+    },
+    "micode": {
+      "reviewed_files": 859,
+      "matched_files": 859,
+      "changed_paths": [],
+      "missing_paths": [],
+      "unsafe_paths": [],
+      "extra_paths": [],
+      "excluded_metadata_or_build_directories": [],
+      "source_matches_reviewed_inventory": true,
+      "intake_review_required": false,
+      "git_cleanliness": "NOT_ESTABLISHED; inspect current git status/diff/staged/untracked work separately",
+      "writes_performed": false,
+      "source_scripts_executed": false
+    }
+  },
+  "source_mutated": false,
+  "product_gates_executed": 0,
+  "runtime_qualification": "NOT_RUN",
+  "next_step": "Reconcile B255; preserve live evidence and local work; use build/UPGRADE_V022.md",
+  "proposed_documentation_destination": "docs/axon_cortex_v0_22/axon-cortex-build-v0_22"
+}

@@ -1,0 +1,77 @@
+{
+  "status": "Unapproved engineering proposals; source files unchanged",
+  "decisions": [
+    {
+      "id": "D01",
+      "title": "Live repository, authority and type/host seams",
+      "source_basis": "CX-EXISTING; CX-15; MX-BUILD",
+      "gap": "No live branch/commit or current implementation was provided. B00/B01 and T00 remain required.",
+      "proposed_resolution": "Map current types, AxonHost, interpreter/native guarantees, grant/effect owners, provider registry, trace store and consuming call sites; run approved baseline gates.",
+      "blocks": "All product claims; implementation touching unmapped enforcement",
+      "status": "Unresolved: repository evidence required"
+    },
+    {
+      "id": "D02",
+      "title": "AIR/MX vocabulary bridge",
+      "source_basis": "CX-04 minimal node kinds; MX-05 canonical classes; CX-34 strategy classes",
+      "gap": "The source vocabularies are not identical and no complete NEURAL_PROGRAM mapping is supplied.",
+      "proposed_resolution": "Keep node kind, accounting class, operation kind and capability class distinct; approve a versioned lossless host-call mapping before live export. Do not label learned calls pure Rule.",
+      "blocks": "Live Neural Program/AIR/MX export when mapping is missing",
+      "status": "Proposed conservative separation; exact mapping pending"
+    },
+    {
+      "id": "D03",
+      "title": ".nps syntax, .np container and identity encoding",
+      "source_basis": "CX-36 \u00a7\u00a73\u20135; CX-23 \u00a74",
+      "gap": "CX-36 freezes semantic obligations, not exact syntax/container/canonical bytes.",
+      "proposed_resolution": "Evaluate the reference JSON source + ZIP container + self-excluding logical-manifest digest against existing package conventions; approve or replace with equivalent semantics.",
+      "blocks": "Production writer/loader and cross-language byte identity",
+      "status": "Reference encoding proposed, not upstream approved"
+    },
+    {
+      "id": "D04",
+      "title": "Probability and lifecycle enum reconciliation",
+      "source_basis": "CX-05/CX-24/PROTOCOLS; CX-36 \u00a718",
+      "gap": "Different raw-origin tags and lifecycle state names coexist.",
+      "proposed_resolution": "Preserve raw producer vocabulary/version; register aliases only when semantics match. Separate registry state, evaluation/admission stage, permitted run mode and proof of authorization.",
+      "blocks": "Bridge conversion of unknown or ambiguous variants",
+      "status": "Lossless reference fixtures supplied; canonical allocation pending"
+    },
+    {
+      "id": "D05",
+      "title": "Prompt-only versus learned Neural Program",
+      "source_basis": "CX-23 \u00a75; CX-36 \u00a7\u00a71,4,34",
+      "gap": "Prompt/prefix and constrained-decoding compile modes are listed, but .np is defined as a learned executable.",
+      "proposed_resolution": "Qualify learned prefixes/adapters by learned-asset and evidence criteria. Treat plain prompt/constraint recipes as Generate/Reflex assets until explicit owner amendment.",
+      "blocks": "Claiming prompt-only recipes as CX-36 learned artifacts",
+      "status": "Conservative interpretation proposed; owner adjudication required"
+    },
+    {
+      "id": "D06",
+      "title": "Import CX-36 IDs and resolve actual build sequencing",
+      "source_basis": "CX-36 \u00a7\u00a729,31\u201332; Cortex task_manifest and BUILD_PLAN",
+      "gap": "Cortex archive ends at CX-34/B151; B152\u2013B164 are separately suggested. B148 depends on late B137/B143 despite early-reference-scheduler narrative.",
+      "proposed_resolution": "Preserve B77\u2013B83 implementation ownership; import CX-36 as a canonical refinement with reviewed IDs. Follow existing prerequisites or approve bounded contract-only task splits; do not manufacture CX-35 or change dependencies silently.",
+      "blocks": "Cross-owner runtime/scheduler tasks whose prerequisites are unimplemented",
+      "status": "Impact manifest supplied; allocation/task splitting pending"
+    },
+    {
+      "id": "D07",
+      "title": "Native learned pilot backend and actual quality envelope",
+      "source_basis": "CX-23 first slice; CX-36 \u00a733; CX-22",
+      "gap": "No learned dataset, model assets, hardware or empirical quality threshold supplied.",
+      "proposed_resolution": "Select a licensed locally supportable learned-function backend after data eligibility and baseline measurement; preregister quality, scope, budget and stop rule. ProgramAsWeights optional.",
+      "blocks": "Live compile/inference/performance and production qualification",
+      "status": "Unresolved: actual data/hardware/evidence required"
+    },
+    {
+      "id": "D08",
+      "title": "Artifact trust, registry views and protection profiles",
+      "source_basis": "CX-11/CX-34; CX-36 \u00a7\u00a718,23; MX-32",
+      "gap": "Manifests do not establish real signer trust, loader isolation, registry enforcement or source-data authorization.",
+      "proposed_resolution": "Bind source/asset digests to existing trust store, admission issuer, run-mode authorization, project scope and actual egress/sandbox enforcement; test denial and revocation.",
+      "blocks": "Production admission, remote compile, activation or protected execution",
+      "status": "Reference validation only; current mechanisms must be inspected"
+    }
+  ]
+}

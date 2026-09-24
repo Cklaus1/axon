@@ -1,0 +1,115 @@
+{
+  "schema": "axon.ace-vocabulary-map/1",
+  "profile": "axon.ace-execution/1",
+  "status": "PROPOSED_DOCUMENT_CONTRACT",
+  "product_status": "NOT_RUN",
+  "rows": [
+    {
+      "id": "reflex.general",
+      "air_node_kind": "Decide",
+      "cognitive_class": "REFLEX",
+      "operation_kind": "DECIDE",
+      "capability_class": "GENERAL_REFLEX",
+      "mechanisms": [
+        "structured_generation",
+        "candidate_token_scoring",
+        "sequence_scoring",
+        "learned_head"
+      ]
+    },
+    {
+      "id": "reflex.specialized",
+      "air_node_kind": "Decide",
+      "cognitive_class": "REFLEX",
+      "operation_kind": "DECIDE",
+      "capability_class": "SPECIALIZED_REFLEX",
+      "mechanisms": [
+        "candidate_token_scoring",
+        "sequence_scoring",
+        "learned_head"
+      ]
+    },
+    {
+      "id": "generation.proposal",
+      "air_node_kind": "Generate",
+      "cognitive_class": "GENERATE",
+      "operation_kind": "TRANSFORM",
+      "capability_class": "GENERATE",
+      "mechanisms": [
+        "structured_generation",
+        "validated_text"
+      ]
+    },
+    {
+      "id": "neural.transform",
+      "air_node_kind": "Generate",
+      "cognitive_class": "GENERATE",
+      "operation_kind": "TRANSFORM",
+      "capability_class": "NEURAL_PROGRAM",
+      "mechanisms": [
+        "learned_function"
+      ]
+    },
+    {
+      "id": "rule.projection",
+      "air_node_kind": "Rule",
+      "cognitive_class": "RULE",
+      "operation_kind": "PROJECT",
+      "capability_class": "RULE",
+      "mechanisms": [
+        "deterministic_projection"
+      ]
+    }
+  ],
+  "dependencies": {
+    "independent": "Independent",
+    "conditionally_relevant": "ConditionallyRelevant",
+    "answer_dependent": "AnswerDependent"
+  },
+  "unsupported_by_default": [
+    "neural_reflex_mapping",
+    "raw_tensor_transport",
+    "cross_model_state_translation",
+    "token_isa",
+    "diffusion_canvas",
+    "world_transition_abi"
+  ],
+  "raw_origin_aliases": [
+    {
+      "producer_vocabulary": "micode.anea-fixture/1",
+      "tag": "TokenLikelihood",
+      "required_mechanism": "candidate_token_scoring",
+      "canonical": "NativeOptionLogit"
+    },
+    {
+      "producer_vocabulary": "micode.ace-fixture/1",
+      "tag": "TokenLikelihood",
+      "required_mechanism": "candidate_token_scoring",
+      "canonical": "NativeOptionLogit"
+    },
+    {
+      "producer_vocabulary": "micode.anea-fixture/1",
+      "tag": "SequenceLikelihood",
+      "required_mechanism": "sequence_scoring",
+      "canonical": "SequenceLikelihood"
+    },
+    {
+      "producer_vocabulary": "micode.ace-fixture/1",
+      "tag": "SequenceLikelihood",
+      "required_mechanism": "sequence_scoring",
+      "canonical": "SequenceLikelihood"
+    },
+    {
+      "producer_vocabulary": "micode.anea-fixture/1",
+      "tag": "DecisionHeadDistribution",
+      "required_mechanism": "learned_head",
+      "canonical": "LearnedDecisionHead"
+    },
+    {
+      "producer_vocabulary": "micode.ace-fixture/1",
+      "tag": "DecisionHeadDistribution",
+      "required_mechanism": "learned_head",
+      "canonical": "LearnedDecisionHead"
+    }
+  ]
+}

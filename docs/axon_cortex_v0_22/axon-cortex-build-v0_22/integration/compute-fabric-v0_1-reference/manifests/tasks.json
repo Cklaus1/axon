@@ -1,0 +1,257 @@
+{
+  "schema": "acf-tasks/1",
+  "tasks": [
+    {
+      "id": "ACF-T00",
+      "milestone": "M0",
+      "title": "Rebase and preserve the source baseline",
+      "depends_on": [],
+      "work": "Read the actual checkout, dirty/untracked work, current Cortex/MiCode package versions, AGENTS.md, and source bindings. Produce a delta map; do not overwrite existing work.",
+      "proposed_paths": "governance/reviews/ACF-intake.md; source-binding report",
+      "gates": [
+        "ACF-G00",
+        "ACF-G01"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T01",
+      "milestone": "M0",
+      "title": "Contracts, profiles and authority convergence",
+      "depends_on": [
+        "ACF-T00"
+      ],
+      "work": "Define versioned ComputeJob/profile/receipt contracts and a supervisor-owned admission path. Keep Runtime, AxonHost, existing Grant semantics and old manifests intact.",
+      "proposed_paths": "optional crates/axon-compute/src/{protocol,profile,admission}.rs; axon-os/src/fabric.rs",
+      "gates": [
+        "ACF-G02",
+        "ACF-G03",
+        "ACF-G04",
+        "ACF-G05",
+        "ACF-G06",
+        "ACF-G07"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T02",
+      "milestone": "M1",
+      "title": "Safe legacy process adapter",
+      "depends_on": [
+        "ACF-T01"
+      ],
+      "work": "Preserve interpreter behavior; use unique private staging, bounded output/deadline and truthful process_scoped profile. No arbitrary native confinement claim.",
+      "proposed_paths": "axon-os/src/runtime.rs and runtime tests",
+      "gates": [
+        "ACF-G08",
+        "ACF-G09",
+        "ACF-G10"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T03",
+      "milestone": "M1",
+      "title": "Durable lifecycle, reservations and reconciliation",
+      "depends_on": [
+        "ACF-T01",
+        "ACF-T02"
+      ],
+      "work": "Implement journal-before-effect, idempotency, fenced leases, aggregate resources, cancellation and outstanding cleanup/billing obligations.",
+      "proposed_paths": "compute lifecycle/journal/budget modules; supervisor integration",
+      "gates": [
+        "ACF-G11",
+        "ACF-G12",
+        "ACF-G13",
+        "ACF-G14",
+        "ACF-G15",
+        "ACF-G16"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T04",
+      "milestone": "M1",
+      "title": "Immutable workspace store and safe materializer",
+      "depends_on": [
+        "ACF-T01",
+        "ACF-T03"
+      ],
+      "work": "Store and verify actual file content and metadata, isolate tenants and worktrees, preserve scoped observation digests and pin retention references.",
+      "proposed_paths": "compute workspace/artifact modules; Cortex observation projection",
+      "gates": [
+        "ACF-G17",
+        "ACF-G18",
+        "ACF-G19",
+        "ACF-G20"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T05",
+      "milestone": "M1",
+      "title": "Extract axon-vm library without CLI drift",
+      "depends_on": [
+        "ACF-T00"
+      ],
+      "work": "Move reusable launch/config/result logic from main.rs into a library; own cleanup resources. Preserve existing CLI, exit codes and attestation gates.",
+      "proposed_paths": "crates/axon-vm/src/lib.rs plus modules; existing main.rs remains thin",
+      "gates": [
+        "ACF-G21",
+        "ACF-G22"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T06",
+      "milestone": "M1",
+      "title": "Harden and verify the Linux microVM profile",
+      "depends_on": [
+        "ACF-T01",
+        "ACF-T03",
+        "ACF-T04",
+        "ACF-T05"
+      ],
+      "work": "Pin a working Linux guest/init policy path; enforce full scopes and host resources; prove real registered workload execution and no-NIC/offline confinement.",
+      "proposed_paths": "axon-vm Linux backend; axon-guest-init protocol; host-image build and KVM tests",
+      "gates": [
+        "ACF-G23",
+        "ACF-G24",
+        "ACF-G25",
+        "ACF-G26",
+        "ACF-G27",
+        "ACF-G28"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T07",
+      "milestone": "M1",
+      "title": "Cortex registered CheckExecutor vertical slice",
+      "depends_on": [
+        "ACF-T03",
+        "ACF-T04",
+        "ACF-T06"
+      ],
+      "work": "Inject a typed check executor into Runner, preserving action authorization and protected grader semantics. Link independent execution/verifier receipts to episodes.",
+      "proposed_paths": "axon-cortex/src/runner.rs; new executor seam; cortex-policy-adapter compatibility tests",
+      "gates": [
+        "ACF-G29",
+        "ACF-G30",
+        "ACF-G31",
+        "ACF-G32",
+        "ACF-G33"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T08",
+      "milestone": "M2",
+      "title": "Logical branches and atomic promotion",
+      "depends_on": [
+        "ACF-T04",
+        "ACF-T07"
+      ],
+      "work": "Run alternatives from one durable base with separate trials/worktrees, carved budgets, fixed verifiers and fenced CAS promotion. No real external side effects by default.",
+      "proposed_paths": "compute branch/promotion modules; Cortex experiment evidence",
+      "gates": [
+        "ACF-G34",
+        "ACF-G35",
+        "ACF-G36",
+        "ACF-G37"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T09",
+      "milestone": "M3",
+      "title": "Optional machine checkpoint/restore/fork",
+      "depends_on": [
+        "ACF-T06",
+        "ACF-T08"
+      ],
+      "work": "Implement only tested profile combinations, capture completeness, durable publication, compatibility, current-authority rebind and restore failure cleanup.",
+      "proposed_paths": "axon-vm checkpoint backend; compute checkpoint manifests and KVM conformance",
+      "gates": [
+        "ACF-G38",
+        "ACF-G39",
+        "ACF-G40",
+        "ACF-G41"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T10",
+      "milestone": "M3",
+      "title": "Optional bounded hosted WASM profile",
+      "depends_on": [
+        "ACF-T01",
+        "ACF-T03",
+        "ACF-T07"
+      ],
+      "work": "Select/pin the host engine separately; preserve browser ABI; prove real Axon parity, interruption, memory and host-import constraints.",
+      "proposed_paths": "feature-gated WASM host adapter; existing axon-wasm/browser tests",
+      "gates": [
+        "ACF-G42",
+        "ACF-G43",
+        "ACF-G44"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T11",
+      "milestone": "M3",
+      "title": "Optional scoped egress and secret broker",
+      "depends_on": [
+        "ACF-T01",
+        "ACF-T03",
+        "ACF-T06"
+      ],
+      "work": "Keep service credentials outside guests where protocol supports brokering; enforce actual egress boundaries and snapshot/session sensitivity.",
+      "proposed_paths": "trusted network/secret broker; driver host enforcement",
+      "gates": [
+        "ACF-G45",
+        "ACF-G46",
+        "ACF-G47"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T12",
+      "milestone": "M3",
+      "title": "One optional remote driver after protocol conformance",
+      "depends_on": [
+        "ACF-T03",
+        "ACF-T04",
+        "ACF-T07",
+        "ACF-T11"
+      ],
+      "work": "Use a fake remote only for protocol tests, then select/pin one real provider and validate export, retries, cancellation, usage and deletion semantics.",
+      "proposed_paths": "isolated feature-gated remote adapter; recorded source/version intake",
+      "gates": [
+        "ACF-G48",
+        "ACF-G49",
+        "ACF-G50",
+        "ACF-G51"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "ACF-T13",
+      "milestone": "M4",
+      "title": "Measured routing and scoped operator surfaces",
+      "depends_on": [
+        "ACF-T08",
+        "ACF-T12"
+      ],
+      "work": "Keep hard admission outside learning, benchmark completed-task economics and add attach/takeover only for specifically verified profiles.",
+      "proposed_paths": "compute routing metrics; optional ASI OS resource UI/API",
+      "gates": [
+        "ACF-G52",
+        "ACF-G53",
+        "ACF-G54"
+      ],
+      "status": "Not started"
+    }
+  ]
+}

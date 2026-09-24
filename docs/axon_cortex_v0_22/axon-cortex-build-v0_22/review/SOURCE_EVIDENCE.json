@@ -1,0 +1,267 @@
+{
+  "schema": "axon.static-source-evidence/1",
+  "scope": "TARGETED_STATIC_REVIEW_NOT_RUNTIME_PROOF",
+  "source_archive_sha256": "68c2a7d5a49acdd2e91229210adbacf62bcb1f18e2647b013594d744e1711fac",
+  "evidence": [
+    {
+      "id": "SRC01",
+      "source": "SOURCE",
+      "path": "Cargo.toml",
+      "start_line": 25,
+      "end_line": 37,
+      "sha256": "bdbac15c9d8087ad1de2c236660804cc16e1a69f83c3b5a61431db2e02def1d6",
+      "locator": "version = \"0.1.0\"",
+      "excerpt": "0025 ]\n0026 resolver = \"2\"\n0027 \n0028 [workspace.package]\n0029 version = \"0.1.0\"\n0030 edition = \"2021\"\n0031 authors = [\"cklaus\"]\n0032 license = \"MIT\"\n0033 \n0034 [workspace.dependencies]\n0035 logos = \"0.14\"\n0036 serde = { version = \"1\", features = [\"derive\"] }\n0037 serde_json = \"1\""
+    },
+    {
+      "id": "SRC02",
+      "source": "SOURCE",
+      "path": "crates/axon-reflex/src/lib.rs",
+      "start_line": 42,
+      "end_line": 50,
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "locator": "pub const PROTOCOL",
+      "excerpt": "0042 \n0043 /// Wire/protocol version. A client and a backend that disagree must refuse\n0044 /// rather than guess at a shape.\n0045 pub const PROTOCOL: &str = \"axon-reflex/1\";\n0046 \n0047 /// Maximum bytes in one request or response frame.\n0048 ///\n0049 /// Matches `cortex-policy-adapter`'s `MAX_REQUEST`. Nothing bounded a payload\n0050 /// before: the sidecar's line reader and the HTTP body reader both grew without"
+    },
+    {
+      "id": "SRC03",
+      "source": "SOURCE",
+      "path": "crates/axon-reflex/src/lib.rs",
+      "start_line": 166,
+      "end_line": 191,
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "locator": "pub trait ReflexBackend",
+      "excerpt": "0166 \n0167 /// The backend-neutral, mode-neutral surface.\n0168 pub trait ReflexBackend {\n0169     fn mode(&self) -> Mode;\n0170     fn encode_state(&mut self, input: &str, scope: &PrincipalScope)\n0171         -> Result<StateHandle, Refusal>;\n0172     fn decide(\n0173         &mut self,\n0174         handle: &StateHandle,\n0175         question: &str,\n0176         scope: &PrincipalScope,\n0177     ) -> Result<Decision, Refusal>;\n0178     fn release_state(\n0179         &mut self,\n0180         handle: &StateHandle,\n0181         scope: &PrincipalScope,\n0182     ) -> Result<(), Refusal>;\n0183 }\n0184 \n0185 // \u2500\u2500 the shared decision core \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n0186 //\n0187 // ONE implementation of the invariant, used by all three modes: embedded calls\n0188 // it directly, the sidecar binary calls it, and the remote test server calls\n0189 // it. Three copies of an authority check is three places for it to drift, and\n0190 // the engine-parity work that motivated this crate is a long record of exactly\n0191 // that drift."
+    },
+    {
+      "id": "SRC04",
+      "source": "SOURCE",
+      "path": "crates/axon-reflex/src/lib.rs",
+      "start_line": 201,
+      "end_line": 217,
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "locator": "_input: &str",
+      "excerpt": "0201     pub fn new() -> Self {\n0202         Self::default()\n0203     }\n0204 \n0205     pub fn encode_state(&mut self, _input: &str, scope: &PrincipalScope) -> StateHandle {\n0206         self.next += 1;\n0207         let id = format!(\"st-{}\", self.next);\n0208         self.states.insert(id.clone(), scope.principal.clone());\n0209         StateHandle {\n0210             id,\n0211             principal: scope.principal.clone(),\n0212         }\n0213     }\n0214 \n0215     /// The invariant, in one place.\n0216     ///\n0217     /// Existence is checked before ownership. An earlier comment here claimed"
+    },
+    {
+      "id": "SRC05",
+      "source": "SOURCE",
+      "path": "crates/axon-reflex/src/lib.rs",
+      "start_line": 234,
+      "end_line": 249,
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "locator": "decided(",
+      "excerpt": "0234         &mut self,\n0235         id: &str,\n0236         question: &str,\n0237         scope: &PrincipalScope,\n0238     ) -> Result<Decision, Refusal> {\n0239         self.authorize(id, &scope.principal)?;\n0240         // Deterministic by construction: a fixed function of the question.\n0241         // Phase 1 is about the SEAM, not about inference quality, and a\n0242         // stochastic stub would make the cross-mode comparison meaningless.\n0243         Ok(Decision {\n0244             choice: format!(\"decided({question})\"),\n0245             principal: scope.principal.clone(),\n0246         })\n0247     }\n0248 \n0249     pub fn release_state(&mut self, id: &str, scope: &PrincipalScope) -> Result<(), Refusal> {"
+    },
+    {
+      "id": "SRC06",
+      "source": "SOURCE",
+      "path": "crates/axon-reflex/src/lib.rs",
+      "start_line": 119,
+      "end_line": 164,
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "locator": "pub enum Refusal",
+      "excerpt": "0119 /// Why a request was not served. Closed, so the set of things a backend may\n0120 /// refuse is enumerable rather than open-ended.\n0121 #[derive(Debug, Clone, PartialEq, Eq)]\n0122 pub enum Refusal {\n0123     /// The caller is not the principal the handle belongs to.\n0124     ///\n0125     /// Distinct from `UnknownState` ON PURPOSE. This says \"it exists and is\n0126     /// not yours\"; that says \"there is nothing here\". Collapsing them would\n0127     /// turn an authority violation into a retryable miss.\n0128     CrossPrincipal { owner: String, caller: String },\n0129     /// No such handle \u2014 a genuine miss, safe to re-encode.\n0130     UnknownState { id: String },\n0131     /// The backend cannot honour a declared control in this mode. Stated at\n0132     /// the boundary rather than degraded quietly.\n0133     Unsupported { control: String, mode: &'static str },\n0134     /// The transport failed. An infrastructure failure is NOT a decision and\n0135     /// NOT an abstention.\n0136     Transport(String),\n0137     /// Protocol mismatch between client and backend.\n0138     Protocol(String),\n0139 }\n0140 \n0141 impl std::fmt::Display for Refusal {\n0142     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n0143         match self {\n0144             Refusal::CrossPrincipal { owner, caller } => write!(\n0145                 f,\n0146                 \"cross-principal reuse refused: state belongs to `{owner}`, caller is `{caller}` \\\n0147                  \u2014 this is a refusal, not a cache miss\"\n0148             ),\n0149             Refusal::UnknownState { id } => write!(f, \"no such state handle: {id}\"),\n0150             Refusal::Unsupported { control, mode } => {\n0151                 write!(f, \"control `{control}` is not supported in {mode} mode\")\n0152             }\n0153             Refusal::Transport(e) => write!(f, \"transport failure: {e}\"),\n0154             Refusal::Protocol(e) => write!(f, \"protocol: {e}\"),\n0155         }\n0156     }\n0157 }\n0158 \n0159 /// A decision. Carries the principal it was decided under, so an audit reading\n0160 /// the response alone can attribute it.\n0161 #[derive(Debug, Clone, PartialEq, Eq)]\n0162 pub struct Decision {\n0163     pub choice: String,\n0164     pub principal: String,"
+    },
+    {
+      "id": "SRC07",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/select.rs",
+      "start_line": 108,
+      "end_line": 144,
+      "sha256": "1068dd7e11cb9861388774396f9bae154e4514d40e54ca8c216fa0c76c24b51b",
+      "locator": "pub fn select_action_with",
+      "excerpt": "0108 }\n0109 \n0110 /// Selection with what the loop has learned so far.\n0111 pub fn select_action_with(\n0112     obs: &Observation,\n0113     target: &SymbolRef,\n0114     ctx: &SelectionContext,\n0115 ) -> Selection {\n0116     let compiles = match fact(obs, \"compiles\") {\n0117         Some(Observed::Known { value }) => value == \"true\",\n0118         Some(Observed::Unknown { reason }) => {\n0119             return Selection::Blocked(format!(\n0120                 \"cannot choose an action: `compiles` is unknown ({reason})\"\n0121             ))\n0122         }\n0123         None => {\n0124             return Selection::Blocked(\n0125                 \"cannot choose an action: the observation carries no `compiles` fact\".to_string(),\n0126             )\n0127         }\n0128     };\n0129 \n0130     if !compiles {\n0131         return Selection::Act(CortexAction::Inspect {\n0132             target: target.clone(),\n0133         });\n0134     }\n0135 \n0136     // It compiles. Whether it compiles CLEANLY decides between confirming\n0137     // behaviour and claiming completion \u2014 which is exactly why the observer\n0138     // carries warnings separately instead of reporting \"no errors\" as \"nothing\n0139     // to report\".\n0140     // It compiles, and a claim of completion has already been refused: the\n0141     // program is syntactically fine and semantically wrong. This is the one\n0142     // state where a repair is warranted, and the body is left EMPTY on purpose\n0143     // \u2014 the selector does not invent it. The loop reports NeedsInput and a\n0144     // generator fills it, keeping the creative step outside the control loop."
+    },
+    {
+      "id": "SRC08",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/generate.rs",
+      "start_line": 123,
+      "end_line": 146,
+      "sha256": "623854e6968bc8cb3b95515f2794d1b134ec3fce6359039bba2e15a1892165e7",
+      "locator": "pub trait PatchGenerator",
+      "excerpt": "0123 }\n0124 \n0125 /// Supplies the one thing the control loop cannot.\n0126 pub trait PatchGenerator {\n0127     /// Stable identity of this generator \u2014 model name and version, or the name\n0128     /// of a deterministic strategy. Recorded in the episode, so two runs of the\n0129     /// same loop with different generators are distinguishable afterwards.\n0130     fn id(&self) -> String;\n0131 \n0132     /// Propose a body for `target`, given what was observed.\n0133     ///\n0134     /// Receives the observation rather than the file, so a generator sees what\n0135     /// Cortex saw \u2014 including the omissions and the Unknown facts. Handing it\n0136     /// the raw workspace would make it a second observer with a different view,\n0137     /// and then a disagreement between them would have no arbiter.\n0138     fn propose(\n0139         &self,\n0140         observation: &Observation,\n0141         target: &SymbolRef,\n0142         constraints: &PatchConstraints,\n0143     ) -> Result<ProposedPatch, GenerationFailure>;\n0144 }\n0145 \n0146 /// Check a proposal against its constraints."
+    },
+    {
+      "id": "SRC09",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 100,
+      "end_line": 111,
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "locator": "const POLICY_PREFIXES",
+      "excerpt": "0100 /// function already reasons in path prefixes, so this reuses the idiom instead\n0101 /// of adding a second matching rule. Cortex repairs `.ax` symbols; these trees\n0102 /// are policy and evidence surfaces, not repair targets.\n0103 const POLICY_PREFIXES: &[&str] = &[\"scripts/\", \"governance/\", \".github/\"];\n0104 \n0105 /// Exact paths that are never writable \u2014 evidence artifacts that live at the\n0106 /// repository root and so have no protecting prefix.\n0107 const POLICY_PATHS: &[&str] = &[\"AXON-COMPLETENESS.json\", \"AXON-COMPLETENESS.md\"];\n0108 \n0109 /// Proof that a specific action passed authorization.\n0110 ///\n0111 /// The field is private and there is no public constructor, so the only way to"
+    },
+    {
+      "id": "SRC10",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 450,
+      "end_line": 477,
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "locator": "pub fn authorize_action",
+      "excerpt": "0450     /// nonsense combinations the string API could express are not decided here\n0451     /// \u2014 they cannot be built. `ClaimDone` carries no path, so no path check is\n0452     /// skipped for it; there is nothing to skip.\n0453     pub fn authorize_action<'a>(\n0454         &mut self,\n0455         action: &'a CortexAction,\n0456         grant: Option<&EditGrant>,\n0457         principal: &str,\n0458         current_snapshot: &WorkspaceSnapshot,\n0459     ) -> Result<Authorized<'a>, Refusal> {\n0460         let r = self.check_typed_authority(action, grant, principal, current_snapshot);\n0461         match r {\n0462             // BOTH halves recorded. `ActionDenied`'s own doc claims it is\n0463             // \"recorded with the same weight as an allowed one\", and the\n0464             // weight was zero on one side: `ActionAllowed` was defined,\n0465             // documented, and never constructed, so an episode could show what\n0466             // it was stopped from doing and never what it was permitted to do.\n0467             // `grant_id` was written at three production sites and read\n0468             // nowhere \u2014 this is the field it existed for.\n0469             Ok(()) => {\n0470                 self.episode.push(EpisodeEvent::ActionAllowed {\n0471                     action: action.name().to_string(),\n0472                     // An action needing no grant records the ABSENCE rather\n0473                     // than borrowing a name: \"no grant was required\" and \"a\n0474                     // grant authorised this\" are different facts.\n0475                     grant_id: grant\n0476                         .map(|g| g.grant_id.clone())\n0477                         .unwrap_or_else(|| \"<none required>\".to_string()),"
+    },
+    {
+      "id": "SRC11",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 597,
+      "end_line": 630,
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "locator": "pub fn run_episode",
+      "excerpt": "0597     ///\n0598     /// Conflating them is how a loop that is stuck gets read as a loop that was\n0599     /// merely rushed.\n0600     pub fn run_episode(\n0601         &mut self,\n0602         target: &crate::action::SymbolRef,\n0603         grant: Option<&EditGrant>,\n0604         principal: &str,\n0605         hidden_check: &str,\n0606         budget: usize,\n0607         generator: Option<&dyn crate::generate::PatchGenerator>,\n0608     ) -> EpisodeOutcome {\n0609         // Every (workspace state, action) pair already tried. A SET, not just\n0610         // the previous step: the loop alternates patch \u2192 claim \u2192 patch, so a\n0611         // last-step comparison cannot see a two-step cycle and the episode\n0612         // would spin until the budget ran out \u2014 reporting \"out of budget\" for\n0613         // what is really \"going in circles\".\n0614         let mut seen: Vec<(String, String, usize)> = Vec::new();\n0615         // The episode NAMES this run. Every Runner was built with the same\n0616         // constant, so the id could not tell two repairs apart \u2014 which is what\n0617         // an id is for. Derived from the target and the adjudicator, so it is\n0618         // deterministic (a replay of the same request produces the same id)\n0619         // and distinguishing (a different target or a different grader does\n0620         // not).\n0621         self.episode.episode_id = format!(\n0622             \"cortex-repair:{}:{}:{}\",\n0623             target.path, target.symbol, hidden_check\n0624         );\n0625         let mut ctx = crate::select::SelectionContext::default();\n0626         // Attempts that did not stick, and the body most recently applied.\n0627         // Carried across steps so the generator is not asked the same question\n0628         // with no record of what its last answer was.\n0629         // The grant, with its state-pin advanced across transitions THIS\n0630         // episode performed. Everything that confers authority \u2014 the principal,"
+    },
+    {
+      "id": "SRC12",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/episode.rs",
+      "start_line": 42,
+      "end_line": 67,
+      "sha256": "2e0061d1c4f9a062622bbd1f287df382dff07601c63a50960a14d274cf3f64b6",
+      "locator": "Claimed",
+      "excerpt": "0042     ///\n0043     /// A PROCESS RAN. Nothing else belongs in this variant. Two events used to\n0044     /// be pushed here that were not checks at all \u2014 a candidate's own claim of\n0045     /// completion, and the identity of whichever generator proposed a patch \u2014\n0046     /// each with `exit_code: 0, passed: true` invented, because the variant had\n0047     /// no other shape to carry them. `Claimed` and `Proposed` exist so that is\n0048     /// no longer necessary.\n0049     CheckRun {\n0050         name: String,\n0051         exit_code: i32,\n0052         passed: bool,\n0053     },\n0054     /// The candidate asserted it is finished. NOT evidence that it is.\n0055     ///\n0056     /// Carries no exit code and no `passed`, deliberately: nothing ran, so\n0057     /// there is nothing to report an outcome for. `verify()` adjudicates the\n0058     /// claim against a check the candidate cannot modify, and that adjudication\n0059     /// is a separate `Verified` event.\n0060     ///\n0061     /// This used to be pushed as `CheckRun { name: \"claim_done\", exit_code: 0,\n0062     /// passed: claim.done }` \u2014 a self-report rendered as a check that ran and\n0063     /// returned success. The crate's own first rule says a missing fact cannot\n0064     /// be silently rendered as a present one; this is that rule applied to the\n0065     /// crate's own evidence trail.\n0066     Claimed { rationale: String },\n0067     /// WHO proposed a patch, recorded before it is applied."
+    },
+    {
+      "id": "SRC13",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/episode.rs",
+      "start_line": 165,
+      "end_line": 185,
+      "sha256": "2e0061d1c4f9a062622bbd1f287df382dff07601c63a50960a14d274cf3f64b6",
+      "locator": "fn verified_ok",
+      "excerpt": "0165     /// The contract this restores is stated by the crate's own test\n0166     /// `cli_ships_evidence_a_reader_can_verify`: \"its own verdict agrees with\n0167     /// the exit code \u2014 two independent readers of the same run must not be able\n0168     /// to disagree.\"\n0169     pub fn verified_ok(&self) -> bool {\n0170         self.events\n0171             .iter()\n0172             .rev()\n0173             .find_map(|e| match e {\n0174                 EpisodeEvent::Verified { passed, .. } => Some(*passed),\n0175                 _ => None,\n0176             })\n0177             .unwrap_or(false)\n0178     }\n0179 \n0180     /// Every action the catalog refused. Reviewers read this first.\n0181     pub fn denials(&self) -> Vec<&str> {\n0182         self.events\n0183             .iter()\n0184             .filter_map(|e| match e {\n0185                 EpisodeEvent::ActionDenied { action, .. } => Some(action.as_str()),"
+    },
+    {
+      "id": "SRC14",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/src/episode.rs",
+      "start_line": 118,
+      "end_line": 139,
+      "sha256": "2e0061d1c4f9a062622bbd1f287df382dff07601c63a50960a14d274cf3f64b6",
+      "locator": "pub fn digest",
+      "excerpt": "0118     /// Order is part of the identity: the same events in a different sequence\n0119     /// are a different episode, because \"checked then patched\" and \"patched\n0120     /// then checked\" are different claims about what was verified.\n0121     pub fn digest(&self) -> Result<String, ContractError> {\n0122         // The ID is covered. It is documented as \"identity of the whole\n0123         // episode\" and hashed only the events, so the one field that could\n0124         // distinguish two runs was outside the thing that attests them \u2014 and\n0125         // every Runner was constructed with the same constant id besides, so\n0126         // two repairs of different files with coincidentally identical event\n0127         // sequences were indistinguishable by both.\n0128         let body = crate::to_canonical_json(&(&self.episode_id, &self.events))?;\n0129         Ok(content_digest(body.as_bytes()))\n0130     }\n0131 \n0132     /// Did an independent verifier pass this episode?\n0133     ///\n0134     /// THE LAST `Verified` event is the verdict. Absent verification is NOT\n0135     /// success \u2014 an episode with no `Verified` event returns `false`, the same\n0136     /// absent-vs-passed rule the contracts enforce for observations.\n0137     ///\n0138     /// This used to be `.any(|e| matches!(e, Verified { passed: true, .. }))`,\n0139     /// which reported an episode verified when an EARLIER, SUPERSEDED check had"
+    },
+    {
+      "id": "SRC15",
+      "source": "SOURCE",
+      "path": "crates/cortex-policy-adapter/src/main.rs",
+      "start_line": 257,
+      "end_line": 286,
+      "sha256": "d0f315d416e14632c14a2a8ff7fe28c9257fc0faf831de2deeda651812859587",
+      "locator": "authorize_action",
+      "excerpt": "0257     // `typed` is bound OUTSIDE the match so the action outlives the decision.\n0258     // That is the Authorized witness doing its job rather than an inconvenience:\n0259     // it borrows the action, so the thing authorized cannot be dropped while a\n0260     // proof of its authorization is still held, and cannot be swapped for a\n0261     // copy that drifted.\n0262     let decision = match &typed {\n0263         Ok(a) => runner\n0264             .authorize_action(a, Some(&grant), req_principal, &current)\n0265             .map(|_authorized| ()),\n0266         Err(refusal) => Err(refusal.clone()),\n0267     };\n0268 \n0269     let out = match decision {\n0270         // Mapped to () above: this adapter DECIDES, it does not execute. That\n0271         // boundary is the point \u2014 Cortex answers \"may I?\", the caller acts.\n0272         // WHAT WAS CHECKED, not merely the verdict.\n0273         //\n0274         // Cortex answers Ok immediately for any action that needs no write\n0275         // authority, BEFORE the principal, staleness, traversal and\n0276         // policy-file checks. So `inspect` with a principal the grant does not\n0277         // belong to, a snapshot that never existed, and a `..` path returned\n0278         // the same four bytes as a granted write \u2014 measured. \"The grant\n0279         // authorised this\" and \"no authority question was asked\" were the same\n0280         // token, which is this crate's own absent-vs-passed collapse sitting\n0281         // in its security boundary.\n0282         Ok(()) => serde_json::json!({\n0283             \"protocol_version\": PROTOCOL_VERSION,\n0284             \"decision\": \"allow\",\n0285             \"basis\": if typed.as_ref().map(|a| a.requires_write_authority()).unwrap_or(false) {\n0286                 \"granted: the principal, the grant's state and the path were all checked\""
+    },
+    {
+      "id": "SRC16",
+      "source": "SOURCE",
+      "path": "crates/axon-ai/src/lib.rs",
+      "start_line": 567,
+      "end_line": 588,
+      "sha256": "92c2dcdd9d9bd35ac549ede1673d6ebda582283601c569605800b9beae0bdb96",
+      "locator": "complete_with_model_usage",
+      "excerpt": "0567 /// interpreter uses this on a LIVE call so the cost reflects what the model\n0568 /// actually charged, not a prompt-length estimate. Under AXON_AI_MOCK the count\n0569 /// is the same deterministic estimate the pre-dispatch meter uses (reproducible).\n0570 pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {\n0571     ai_complete_inner_model_usage(prompt, model)\n0572 }\n0573 \n0574 // -- Layer-3 ASI: typed structured-output (\"Uncertain<T>\") ---------------------\n0575 //\n0576 // These helpers force Anthropic to return its answer through a tool-use call\n0577 // whose JSON schema demands `{value, confidence}`.  This makes the LLM's\n0578 // self-reported confidence cross into Axon's type system as `Uncertain<T>`,\n0579 // so user code can branch on `.confidence > threshold`.\n0580 \n0581 /// Build the Anthropic Messages API request body for typed structured output.\n0582 ///\n0583 /// `value_type` should be `\"integer\"` for i64 or `\"number\"` for f64; the rest\n0584 /// of the schema is identical.  Exposed as `pub` so unit tests can pin the\n0585 /// JSON shape without going over the wire.\n0586 pub fn build_typed_uncertain_body(prompt: &str, value_type: &str) -> serde_json::Value {\n0587     serde_json::json!({\n0588         \"model\": \"claude-sonnet-4-6\","
+    },
+    {
+      "id": "SRC17",
+      "source": "SOURCE",
+      "path": "crates/axon-core/src/kernel.rs",
+      "start_line": 686,
+      "end_line": 731,
+      "sha256": "3bb71267bf53535441bc51de7b215e957947d639f0cddfed50e77480e0f25ae6",
+      "locator": "struct LlmGateway",
+      "excerpt": "0686 /// budget, with a graceful fallback + latch on overrun. `rate_micro` is \u00b5$ per\n0687 /// 1000 tokens (integer \u00b5$ keeps the arithmetic exact + tests deterministic).\n0688 #[derive(Debug, Clone)]\n0689 pub struct LlmGateway {\n0690     pub model: String,\n0691     pub rate_micro: i64,\n0692     /// The principal whose budget bounds this gateway's spend (Slice 1 handle).\n0693     /// The OWNER's handle token (T42: a token, not an index \u2014 see\n0694     /// [`PrincipalRegistry`]). Stored so budget debits hit the right principal.\n0695     pub principal: i64,\n0696     pub fallback: String,\n0697     pub halted: bool,\n0698     /// \u00b5$ spent through THIS gateway (for observability; the authoritative cap is\n0699     /// the principal's budget).\n0700     pub spent_micro: i64,\n0701 }\n0702 \n0703 impl LlmGateway {\n0704     pub fn new(model: String, rate_micro: i64, principal: i64, fallback: String) -> Self {\n0705         LlmGateway {\n0706             model,\n0707             rate_micro,\n0708             principal,\n0709             fallback,\n0710             halted: false,\n0711             spent_micro: 0,\n0712         }\n0713     }\n0714 \n0715     /// \u00b5$ cost of a call of `tokens` tokens (rate is per 1000 tokens). Negative\n0716     /// token counts clamp to 0.\n0717     pub fn call_cost(&self, tokens: i64) -> i64 {\n0718         let t = tokens.max(0);\n0719         self.rate_micro * t / 1000\n0720     }\n0721 }\n0722 \n0723 /// R12b: a principal-scoped, budgeted objective runner. A `KernelGoal` records\n0724 /// the `@[adaptive]` metric `name` and `target` to optimize, the owning Slice-1\n0725 /// `principal` (whose `Budget` bounds total spend), how many evaluations have\n0726 /// been charged so far (`evals_spent`), and the best score observed. The interp\n0727 /// runs the EXISTING optimizer (`run_goal`) for `min(requested, budget_remaining)`\n0728 /// evaluations, debits the principal's budget, and refuses to exceed it (E1604,\n0729 /// exit 7). Authority (Slice 1) and spend are ONE model \u2014 a goal can never spend\n0730 /// beyond its principal's grant. See governance/specs/R12b-kernel-goal.md.\n0731 #[derive(Debug, Clone)]"
+    },
+    {
+      "id": "SRC18",
+      "source": "SOURCE",
+      "path": "crates/axon-core/src/replay.rs",
+      "start_line": 483,
+      "end_line": 504,
+      "sha256": "0e37658160f5bbef237b519e65e2ab351c2a89bc996b698359605a285dade230",
+      "locator": "pub struct ReplayHost",
+      "excerpt": "0483 // \u2500\u2500 ReplayHost \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n0484 \n0485 /// Serves host calls from a recorded journal, in order, performing nothing.\n0486 pub struct ReplayHost {\n0487     events: Vec<HostEvent>,\n0488     cursor: AtomicUsize,\n0489 }\n0490 \n0491 impl ReplayHost {\n0492     pub fn new(events: Vec<HostEvent>) -> Self {\n0493         Self {\n0494             events,\n0495             cursor: AtomicUsize::new(0),\n0496         }\n0497     }\n0498 \n0499     pub fn from_path(path: &std::path::Path) -> Result<Self, String> {\n0500         Ok(Self::new(read_journal(path)?))\n0501     }\n0502 \n0503     /// How many recorded events were not consumed. A replay that stops early is\n0504     /// as much a divergence as one that asks for too much \u2014 it just cannot be"
+    },
+    {
+      "id": "SRC19",
+      "source": "SOURCE",
+      "path": "scripts/cortex_package_gate.sh",
+      "start_line": 2,
+      "end_line": 13,
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "locator": "axon_cortex_v0_15",
+      "excerpt": "0002 # cortex_package_gate.sh \u2014 continuous check for the vendored Cortex v0.15 build package.\n0003 #\n0004 # WHY THIS EXISTS.\n0005 #\n0006 # `docs/axon_cortex_v0_15/axon-cortex-build-v0_15/` is a 114-file documentation\n0007 # package: 35 specs, 152 work packages and 247 PROPOSED product gates. Every one\n0008 # of those 247 carries `\"product_result\": \"NOT_RUN\"` and\n0009 # `\"implementation_status\": \"Not implemented in this package\"`, and every work\n0010 # package is `\"status\": \"Not started\"`. The package is scrupulous about saying so.\n0011 #\n0012 # That honesty is the property most easily destroyed on intake. This repository\n0013 # already has the defect at smaller scale: 7 of the 37 `scripts/*.sh` cited as"
+    },
+    {
+      "id": "SRC20",
+      "source": "SOURCE",
+      "path": "scripts/cortex_package_gate.sh",
+      "start_line": 16,
+      "end_line": 28,
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "locator": "cortex-package-sha256/1",
+      "excerpt": "0016 # gate IDs, each one edit away from reading as executed, would multiply it.\n0017 #\n0018 # So this gate asserts two things on every run:\n0019 #\n0020 #   1. INTEGRITY. `SHA256SUMS_v0_15.json` (schema `cortex-package-sha256/1`) is\n0021 #      checked in BOTH directions -- every listed file hashes to its recorded\n0022 #      digest, AND no unlisted file has appeared under the package root. One\n0023 #      direction alone would miss a file being ADDED. The manifest itself is the\n0024 #      single legitimate unlisted file (it cannot contain its own hash).\n0025 #      The package's own `tools/validate_package.py` is also run -- it is a real\n0026 #      check that, before this script, ran nowhere: the same orphaned-verification\n0027 #      class described above.\n0028 #"
+    },
+    {
+      "id": "SRC21",
+      "source": "SOURCE",
+      "path": "scripts/cortex_package_gate.sh",
+      "start_line": 111,
+      "end_line": 122,
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "locator": "--report",
+      "excerpt": "0111 # rather than a data file so that adding one requires a reviewable code edit.\n0112 # Removing it means re-vendoring the file with its upstream bytes.\n0113 # Deliberately EMPTY. A deviation was briefly needed here: the intake run of\n0114 # `tools/validate_package.py` defaults `--report` to <root>/package_validation.json,\n0115 # which is itself hash-listed, so verifying the package MUTATED it and the\n0116 # mutated copy was committed. The cause is fixed in two places instead \u2014 the\n0117 # pristine bytes are restored, and this gate passes `--report` to target/ so the\n0118 # footgun cannot re-fire \u2014 which leaves this map with nothing legitimate to\n0119 # hold. It stays as a named, reviewable mechanism rather than an implicit one:\n0120 # a future deviation must be added here with a reason, not tolerated silently.\n0121 DEVIATIONS: dict[str, tuple[str, str]] = {}\n0122 "
+    },
+    {
+      "id": "SRC22",
+      "source": "SOURCE",
+      "path": "scripts/cortex_package_gate.sh",
+      "start_line": 174,
+      "end_line": 184,
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "locator": "min(c.values(), default=0)",
+      "excerpt": "0174 r = json.load(open(sys.argv[1], encoding=\"utf-8\"))\n0175 if r.get(\"result\") != \"PASS\":\n0176     print(\"  validator result:\", r.get(\"result\"), r.get(\"errors\")); sys.exit(1)\n0177 c = r.get(\"counts\", {})\n0178 if not c or min(c.values(), default=0) <= 0:\n0179     print(f\"  NON-VACUITY: validator counted nothing: {c}\"); sys.exit(1)\n0180 print(f\"  validator PASS; counts={c}; product_gates_executed={r.get('product_gates_executed')}\")\n0181 PY\n0182 [ $? -eq 0 ] || note_fail \"package validator self-report\"\n0183 \n0184 # The validator must not have written into the package. Re-hash the one file it"
+    },
+    {
+      "id": "SRC23",
+      "source": "SOURCE",
+      "path": "scripts/cortex_package_gate.sh",
+      "start_line": 187,
+      "end_line": 201,
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "locator": "rel = \"package_validation.json\"",
+      "excerpt": "0187 import hashlib, json, os, sys\n0188 pkg, sums = sys.argv[1], sys.argv[2]\n0189 rel = \"package_validation.json\"\n0190 try:\n0191     want = json.load(open(sums, encoding=\"utf-8\"))[\"files\"][rel]\n0192 except (OSError, ValueError, KeyError) as e:\n0193     print(f\"  cannot read the recorded digest for {rel}: {e}\"); sys.exit(1)\n0194 # Same pinned deviation as the integrity pass: what matters here is that the file\n0195 # did not change ACROSS the validator run, so compare against whichever digest the\n0196 # integrity pass already accepted.\n0197 PINNED = \"cb2deaf7a7fb64da94d3fca150690715aa6e3b5325b649857ffb03297c01e421\"\n0198 got = hashlib.sha256(open(os.path.join(pkg, rel), \"rb\").read()).hexdigest()\n0199 if got not in (want, PINNED):\n0200     print(f\"  {rel} changed while the validator ran (it wrote into the vendored package)\"); sys.exit(1)\n0201 PY"
+    },
+    {
+      "id": "SRC24",
+      "source": "SOURCE",
+      "path": "crates/axon-cortex/benchmarks/real_model.py",
+      "start_line": 169,
+      "end_line": 182,
+      "sha256": "e5e2fa9e68386005442c0f49fa6557ccc52dd2c85792c02157ad46883138addb",
+      "locator": "cache_read",
+      "excerpt": "0169                 \"n\": c[\"proposal_number\"],\n0170                 \"priors\": c[\"prior_rejections\"],\n0171                 \"input\": c[\"input_tokens\"],\n0172                 \"output\": c[\"output_tokens\"],\n0173                 \"cache_create\": c[\"cache_create\"],\n0174                 \"cache_read\": c[\"cache_read\"],\n0175                 \"cost_usd\": c[\"cost_usd\"],\n0176                 \"api_ms\": c[\"duration_api_ms\"],\n0177             }\n0178             for c in calls\n0179         ],\n0180         \"cost_usd\": round(sum(c[\"cost_usd\"] or 0 for c in calls), 4),\n0181         \"api_ms\": sum(c[\"duration_api_ms\"] or 0 for c in calls),\n0182         \"wall_s\": round(wall, 1),"
+    },
+    {
+      "id": "SRC25",
+      "source": "SOURCE",
+      "path": "governance/cortex-v015/CX-35-reflex-serving.md",
+      "start_line": 11,
+      "end_line": 25,
+      "sha256": "33dba9877983b2ce989f07db3da38fdae7f590b89b0744f18378e9ca1f276b5b",
+      "locator": "#",
+      "excerpt": "0011 # CX-35 \u2014 Reflex Serving and Model-State Runtime\n0012 \n0013 ## 0. What this document is, and where it lives\n0014 \n0015 This is a **new CX spec written in the live repository**, at\n0016 `governance/cortex-v015/CX-35-reflex-serving.md`. It is deliberately NOT placed\n0017 inside the vendored package, because `scripts/cortex_package_gate.sh` verifies\n0018 `SHA256SUMS_v0_15.json` **in both directions** \u2014 \"every listed file hashes to\n0019 its recorded digest, AND no unlisted file has appeared under the package root\"\n0020 (`scripts/cortex_package_gate.sh:22-27`). A CX-35 written under\n0021 `docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/` would break the intake\n0022 gate on its first run. It follows that:\n0023 \n0024 * `specs/INDEX.md` and `spec_manifest.json` inside the package cannot be\n0025   updated to list CX-35. The package's spec set stops at CX-34"
+    },
+    {
+      "id": "SRC26",
+      "source": "SOURCE",
+      "path": "governance/cortex_gate_execution_registry.json",
+      "start_line": 9,
+      "end_line": 16,
+      "sha256": "f56d80d7278c296543619d7d5b6f8300cda25fadca9b4aefcd7a6245dbcd00f3",
+      "locator": "\"gates\"",
+      "excerpt": "0009     \"5. If a future upstream release re-vendors the package WITH results filled in, the honesty check will accept a non-NOT_RUN product_result only for gates that have a valid row here, and only when the result is in allowed_product_result.\",\n0010     \"Removing a gate's implementation means removing its row.\"\n0011   ],\n0012   \"gates\": [],\n0013   \"tasks\": [],\n0014   \"tasks_note\": \"A work package status other than 'Not started' needs a row in `tasks` with task_id and allowed_status. A status in {Done, Complete, Completed, Landed} additionally requires every one of that task's gate_targets to have a valid row in `gates` -- so 'Done' cannot launder an unexecuted gate.\",\n0015   \"checked_by\": \"scripts/cortex_package_gate.sh\"\n0016 }"
+    }
+  ]
+}

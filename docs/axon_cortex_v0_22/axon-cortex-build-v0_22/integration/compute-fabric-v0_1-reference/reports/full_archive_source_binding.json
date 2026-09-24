@@ -1,0 +1,7 @@
+{
+  "schema": "acf-source-drift/1",
+  "checked": 1213,
+  "result": "MATCH",
+  "drift": [],
+  "note": "New checkout files and excluded archive content require separate intake. Never overwrite to make this check pass."
+}
