@@ -17,6 +17,35 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_axon-vm"))
 }
 
+/// Same convention as `crates/axon-core/tests/cli_run.rs::note_harness_skip`:
+/// a skipped case is appended to the workspace `target/harness-skips.log`
+/// (reported by `scripts/gate.sh`'s coverage notice) and is FATAL under
+/// `AXON_HARNESS_STRICT=1`. The >=25 case-count floor guards a zero-case run;
+/// this makes the one host-dependent case legible as a non-result too.
+fn note_skip(what: &str) {
+    let log = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/harness-skips.log");
+    if let Some(d) = log.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{what}");
+    }
+}
+
+fn strict_skips_are_fatal(skipped: &[String]) {
+    if !skipped.is_empty() && std::env::var("AXON_HARNESS_STRICT").as_deref() == Ok("1") {
+        panic!(
+            "SKIPPED under AXON_HARNESS_STRICT=1:\n  {}\nThese cases measured NOTHING.",
+            skipped.join("\n  ")
+        );
+    }
+}
+
 fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cli_parity")
 }
@@ -274,6 +303,7 @@ fn axon_vm_cli_matches_pre_extraction_goldens() {
     let dir = golden_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let mut failures = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     let all = cases();
     for c in &all {
         // The no-firecracker case relies on firecracker NOT being at a fixed
@@ -282,10 +312,13 @@ fn axon_vm_cli_matches_pre_extraction_goldens() {
             && (Path::new("/usr/local/bin/firecracker").exists()
                 || Path::new("/opt/firecracker/firecracker").exists())
         {
-            eprintln!(
-                "cli_parity: {} skipped (firecracker at a fixed path)",
+            let what = format!(
+                "axon-vm cli_parity case {} (firecracker present at a fixed path, \
+                 so the no-firecracker golden cannot be reproduced on this host)",
                 c.name
             );
+            eprintln!("cli_parity: SKIPPED — {what}");
+            skipped.push(what);
             continue;
         }
         let got = run_case(c);
@@ -304,10 +337,16 @@ fn axon_vm_cli_matches_pre_extraction_goldens() {
         }
     }
     assert!(all.len() >= 25, "parity suite shrank to {}", all.len());
+    // Recorded before the drift assertion, escalated after it: a strict-mode
+    // skip panic must not mask a real drift in the cases that DID run.
+    for w in &skipped {
+        note_skip(w);
+    }
     assert!(
         failures.is_empty(),
         "{} CLI parity case(s) drifted:\n{}",
         failures.len(),
         failures.join("\n")
     );
+    strict_skips_are_fatal(&skipped);
 }

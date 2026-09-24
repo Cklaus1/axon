@@ -1,9 +1,10 @@
 //! B262: the library launch API, exercised directly (not through the CLI).
 //!
 //! The live cases boot the custom `axon-guest-kernel` under Firecracker/KVM via
-//! `axon_vm::run_in_firecracker`. They SKIP (with a printed reason, and the
-//! skip is visible in the output) when firecracker, /dev/kvm or the built
-//! kernel is absent — they never pass vacuously as a "launch succeeded".
+//! `axon_vm::run_in_firecracker`. They SKIP when firecracker, /dev/kvm or the
+//! built kernel is absent — and the skip is COUNTED (target/harness-skips.log)
+//! and FATAL under `AXON_HARNESS_STRICT=1`, so it never passes vacuously as a
+//! "launch succeeded". Set `AXON_GUEST_KERNEL` to point at a built kernel.
 
 use std::path::{Path, PathBuf};
 
@@ -41,22 +42,87 @@ fn run_result_ok_describes_the_guest() {
     assert!(!r(0, GuestOutcome::Timeout).ok());
 }
 
+/// Record a skipped live case the way `crates/axon-core/tests/cli_run.rs`
+/// does: appended to the workspace `target/harness-skips.log` (which
+/// `scripts/gate.sh` truncates per run and reports in its coverage notice) and
+/// FATAL under `AXON_HARNESS_STRICT=1`. A bare `eprintln!` + `return` reported
+/// this test GREEN on every host without the kernel artifact — a boot-and-deny
+/// test that measured nothing was indistinguishable from one that passed.
+fn note_skip(what: &str) {
+    let log = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/harness-skips.log");
+    if let Some(d) = log.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{what}");
+    }
+    if std::env::var("AXON_HARNESS_STRICT").as_deref() == Ok("1") {
+        panic!(
+            "SKIPPED under AXON_HARNESS_STRICT=1: {what}\n\
+             This test measured NOTHING. Provide the prerequisite or drop \
+             AXON_HARNESS_STRICT."
+        );
+    }
+}
+
+/// Where the freestanding guest kernel is looked for, in order:
+/// `AXON_GUEST_KERNEL` (explicit), then `x86_64-axon-metal/release/` under the
+/// target dir THIS test was built into (so a custom `CARGO_TARGET_DIR` is
+/// honoured — the binary under test lives there), then the workspace `target/`
+/// (where `scripts/build-guest-image.sh` puts it by default).
+fn kernel_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(p) = std::env::var_os("AXON_GUEST_KERNEL") {
+        v.push(PathBuf::from(p));
+        return v; // explicit means explicit: no silent fallback
+    }
+    let rel = "x86_64-axon-metal/release/axon-guest-kernel";
+    // CARGO_BIN_EXE_axon-vm = <target>/<profile>/axon-vm
+    if let Some(target) = Path::new(env!("CARGO_BIN_EXE_axon-vm"))
+        .parent()
+        .and_then(Path::parent)
+    {
+        v.push(target.join(rel));
+    }
+    v.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(rel),
+    );
+    v
+}
+
 fn live_prereqs() -> Option<PathBuf> {
-    let kernel = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/x86_64-axon-metal/release/axon-guest-kernel");
+    let cands = kernel_candidates();
+    let kernel = cands.iter().find(|p| p.exists()).cloned();
     let fc = ["/usr/local/bin/firecracker", "/opt/firecracker/firecracker"]
         .iter()
         .any(|p| Path::new(p).exists())
         || axon_vm::firecracker::which_firecracker().is_ok();
-    if !fc || !Path::new("/dev/kvm").exists() || !kernel.exists() {
-        eprintln!(
-            "lib_launch: SKIPPED live boot (firecracker={fc}, kvm={}, kernel={})",
-            Path::new("/dev/kvm").exists(),
-            kernel.exists()
-        );
-        return None;
+    let kvm = Path::new("/dev/kvm").exists();
+    match kernel {
+        Some(k) if fc && kvm => Some(k.canonicalize().unwrap()),
+        _ => {
+            let what = format!(
+                "axon-vm lib_launch live boot (firecracker={fc}, kvm={kvm}, kernel={}; \
+                 looked in {})",
+                kernel.is_some(),
+                cands
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            eprintln!("lib_launch: SKIPPED — {what}");
+            note_skip(&what);
+            None
+        }
     }
-    Some(kernel.canonicalize().unwrap())
 }
 
 fn launch(kernel: &Path, effects: &[&str]) -> axon_vm::RunResult {
