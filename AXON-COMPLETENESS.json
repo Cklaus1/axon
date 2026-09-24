@@ -530,7 +530,7 @@
         "scripts/gate.sh",
         "crates/axon-guest-kernel/src/main.rs"
       ],
-      "gap": "The SYSCALL GATE is now proven live and gated: kernel_enforce_test.sh boots the freestanding kernel under Firecracker and shows the openat DENIED (exit 8) when FS is withheld and PERMITTED when granted \u2014 a real negative control. It was invoked by nothing until now, on a host where all its prerequisites were present. STILL OPEN: hypercall.rs is an empty TODO stub while main.rs unconditionally prints 'hypercall substrate active', so a boot transcript reads as if it shipped; and AXON_KERNEL.md cites qemu_boot_test.sh as proof of this crate, which that script never references."
+      "gap": "The SYSCALL GATE is now proven live and gated: kernel_enforce_test.sh boots the freestanding kernel under Firecracker and shows the openat DENIED (exit 8) when FS is withheld and PERMITTED when granted \u2014 a real negative control. It was invoked by nothing until now, on a host where all its prerequisites were present. STILL OPEN: hypercall.rs is an empty TODO stub while main.rs unconditionally prints 'hypercall substrate active', so a boot transcript reads as if it shipped; and AXON_KERNEL.md cites qemu_boot_test.sh as proof of this crate, which that script never references. CORRECTION (v0.22 Stage 1, reproduced 2026-09-24): the PERMIT direction is VACUOUS \u2014 see FG-041. Under an FS-granting policy run_program (enforce.rs:331-342) prints 'open permitted' and calls clean_halt() WITHOUT issuing the syscall, because sysretq has no ring-3 segments yet; kernel_enforce_test.sh case 2 greps that print and reports 'the gate PERMITTED the openat'. Only the DENY direction is live evidence. production_proof=yes rests on the deny case alone."
     },
     {
       "area": "authority",
@@ -571,7 +571,7 @@
       "evidence": [
         "crates/axon-os"
       ],
-      "gap": "AUDITED. verify_approval is an UNKEYED sha256 over public inputs, presented to the operator as 'someone signed this and the signature does not hold' \u2014 anyone who can write <job>.approval mints a valid token. `axon-os verify` prints 'intact' for a fully forged record (the chain is seeded from the record's OWN stored manifest_digest, never compared to the .axjob). The run record holds ONE event whose caps_used is the CEILING, advertised as N events of observed activity. The signed Budget line gates nothing: only `calls` is propagated and even that is debited by no ordinary builtin. scan_effects returns Label::Internal in BOTH branches, so the confidentiality denial states a fact about the program derived from a constant."
+      "gap": "AUDITED. verify_approval is an UNKEYED sha256 over public inputs, presented to the operator as 'someone signed this and the signature does not hold' \u2014 anyone who can write <job>.approval mints a valid token. `axon-os verify` prints 'intact' for a fully forged record (the chain is seeded from the record's OWN stored manifest_digest, never compared to the .axjob). The run record holds ONE event whose caps_used is the CEILING, advertised as N events of observed activity. The signed Budget line gates nothing: only `calls` is propagated and even that is debited by no ordinary builtin. scan_effects returns Label::Internal in BOTH branches, so the confidentiality denial states a fact about the program derived from a constant. v0.22 CANDIDATE (d1e2900, 925fa85): runtime.rs adds Isolation labels and IsolationRequirement with the weakest default, run() delegating to run_requiring(Any) so existing callers are unchanged (tests/legacy_adapter.rs). Its only new non-test caller is axon-fabric's NON-BINDING admission probe (see crate axon-fabric)."
     },
     {
       "area": "compiler",
@@ -622,7 +622,7 @@
       "evidence": [
         "crates/axon-vm"
       ],
-      "gap": "AUDITED. `run --quorum` mints an unpredictable run_id with no --run-id flag, then filters votes by it \u2014 approvals are always 0, so the gate is unsatisfiable and reports it as 'insufficient approvals' rather than as unusable. Fail-closed, so not a safety hole. attest with no --verify-digest sets ok:true having compared nothing; key_source (operator vs ephemeral \u2014 'the whole security story' per its own comment) is stderr-only and absent from the JSON."
+      "gap": "AUDITED. `run --quorum` mints an unpredictable run_id with no --run-id flag, then filters votes by it \u2014 approvals are always 0, so the gate is unsatisfiable and reports it as 'insufficient approvals' rather than as unusable. Fail-closed, so not a safety hole. attest with no --verify-digest sets ok:true having compared nothing; key_source (operator vs ephemeral \u2014 'the whole security story' per its own comment) is stderr-only and absent from the JSON. v0.22 CANDIDATE (1643073): a library target was added (src/lib.rs, src/firecracker.rs) with CLI-golden parity. Its only production reference is axon-fabric's BACKEND_PROFILE constant for a backend eligible for nothing. The library entry run_in_firecracker BYPASSES cmd_run's grant/attestation gates (latent, no caller) and leaks the child on a post-spawn error (ACF-G22, pre-existing). tests/lib_launch.rs silently passes with no boot when the kernel artifact is absent (FG-043), and when it does boot its positive control is the vacuous FG-041 allow path."
     },
     {
       "area": "platform",
@@ -685,7 +685,7 @@
       "evidence": [
         "scripts/kernel_enforce_test.sh"
       ],
-      "gap": "PARTLY CLOSED \u2014 and note WHERE: every stage from gate.sh:256 to :506 is inside `if [ \"$STRICT\" = 1 ]`, so the parity suite, EVERY acceptance gate, the codegen-gated tests and all of this session's wirings run ONLY under `gate.sh --strict`. A default `gate.sh` run prints 10 banners and its own coverage notice says so: 'This run did NOT verify interp<->codegen / AOT-wasm parity (invariant I-2)'. The gate is honest; a reader who quotes 'gate PASSED' without that notice is not. Wired this session after being run first: kernel_enforce_test.sh (the only live proof of the guest-kernel syscall gate, PASSES both directions), all_examples_parity.sh (the broadest sweep in the repo \u2014 it caught the llvm_sizeof Result-payload corruption \u2014 76 examples native==interp), and the three domain round-trips. STILL UNWIRED: gfx_wgpu_render_gate.sh and browser_webgpu_clear.sh (both legs of the corrected platform-verification claim), qemu_boot_test.sh, fc_boot_test.sh, axon_kernel_gate.sh, axon_safety_gate.sh, r30_acceptance_gate.sh, perf_bench.sh, r1_build_measure.sh, build_outcome_regression.sh, wasm_aot_link_probe.sh, axon_session_demo.sh. reference_gate.sh is unwired but its property IS covered, by cli_run's axon_reference_is_in_sync_with_the_binary \u2014 wiring it would duplicate rather than add."
+      "gap": "PARTLY CLOSED \u2014 and note WHERE: every stage from gate.sh:256 to :506 is inside `if [ \"$STRICT\" = 1 ]`, so the parity suite, EVERY acceptance gate, the codegen-gated tests and all of this session's wirings run ONLY under `gate.sh --strict`. A default `gate.sh` run prints 10 banners and its own coverage notice says so: 'This run did NOT verify interp<->codegen / AOT-wasm parity (invariant I-2)'. The gate is honest; a reader who quotes 'gate PASSED' without that notice is not. Wired this session after being run first: kernel_enforce_test.sh (the only live proof of the guest-kernel syscall gate, PASSES both directions), all_examples_parity.sh (the broadest sweep in the repo \u2014 it caught the llvm_sizeof Result-payload corruption \u2014 76 examples native==interp), and the three domain round-trips. STILL UNWIRED: gfx_wgpu_render_gate.sh and browser_webgpu_clear.sh (both legs of the corrected platform-verification claim), qemu_boot_test.sh, fc_boot_test.sh, axon_kernel_gate.sh, axon_safety_gate.sh, r30_acceptance_gate.sh, perf_bench.sh, r1_build_measure.sh, build_outcome_regression.sh, wasm_aot_link_probe.sh, axon_session_demo.sh. reference_gate.sh is unwired but its property IS covered, by cli_run's axon_reference_is_in_sync_with_the_binary \u2014 wiring it would duplicate rather than add. CORRECTION: 'PASSES both directions' for kernel_enforce_test.sh is FG-041 \u2014 only the deny direction is exercised; the permit case asserts a syscall that is never issued."
     },
     {
       "area": "authority",
@@ -791,7 +791,60 @@
         "crates/axon-reflex/tests/principal_isolation.rs",
         "governance/cortex-v015/CX-35-reflex-serving.md"
       ],
-      "gap": "PHASE 1 ONLY, and the honest scope is narrow. What exists: one backend-neutral trait over three deployment modes (Embedded, LocalSidecar over stdin/stdout, RemoteService over HTTP/1.1), sharing ONE authority core so the principal check cannot drift between modes \u2014 three copies of a check is three places for it to diverge, which is exactly what the engine-parity work spent a day undoing. One invariant is enforced and mutation-verified per mode: cross-principal state reuse is a refusal, never a cache miss. What does NOT exist: any real inference backend (the decision function is a fixed string), model lifecycle, calibration, abstention, batching, placement, hot-swap, cancellation, and every other control CX-35 names. production_proof is `no` because nothing in the product calls this yet \u2014 it is a seam with a proven invariant, not a serving system."
+      "gap": "PHASE 1 ONLY, and the honest scope is narrow. What exists: one backend-neutral trait over three deployment modes (Embedded, LocalSidecar over stdin/stdout, RemoteService over HTTP/1.1), sharing ONE authority core so the principal check cannot drift between modes \u2014 three copies of a check is three places for it to diverge, which is exactly what the engine-parity work spent a day undoing. One invariant is enforced and mutation-verified per mode: cross-principal state reuse is a refusal, never a cache miss. What does NOT exist: any real inference backend (the decision function is a fixed string), model lifecycle, calibration, abstention, batching, placement, hot-swap, cancellation, and every other control CX-35 names. production_proof is `no` because nothing in the product calls this yet \u2014 it is a seam with a proven invariant, not a serving system. v0.22 CANDIDATE (a328fd3): src/shortlist.rs adds B272 DEC shortlist over an already-authorized eligible set (abstains rather than widening; research providers Unsupported). It has NO production caller (its only non-unit consumer is axon-loop's #[ignore]d intake_dec_driver, driven by the orphaned loop_interop_gate.sh), is not wired into the axon-reflex/1 sidecar protocol, and bypasses the shared principal-authority core."
+    },
+    {
+      "area": "cortex",
+      "subsystem": "crate axon-loop",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "unknown",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-loop/src/ledger.rs",
+        "crates/axon-loop/src/plan.rs",
+        "crates/axon-loop/tests/redteam.rs",
+        "crates/axon-loop/tests/intake_dec_driver.rs",
+        "scripts/loop_interop_gate.sh"
+      ],
+      "tests": "cargo test --locked -p axon-loop @279da77: 86 passed, 0 failed, 1 ignored (lib 1, candidates 7, cli 4, evl_admission 7, intake 13, plan_evo_tel 10, pointer 11, redteam 33; bin 0). The 1 ignored is tests/intake_dec_driver.rs::produce_policy, a producer driven only by scripts/loop_interop_gate.sh, and that script is invoked by NOTHING (not gate.sh, not CI). Crash-recovery tests (pointer.rs crash_between_ledger_append_and_publish_rolls_forward, redteam.rs c10_*) are in-process simulations, not SIGKILL.",
+      "qualification": "NOT_RUN \u2014 no pilot (B272-B279) and no B285 qualification has run; measured_improvement_supported is not established.",
+      "gap": "v0.22 CANDIDATE, NOT RELEASE-READY. What exists: fenced policy pointer + authority epoch, frozen experiment register, EVO one-edit proposal, paired-trial EVL, admission rule grammar, TEL cost roll-up, MiCode sidecar intake, and the axon-loop CLI. production_proof=no: no production binary or workflow calls it \u2014 its only non-test callers are its own CLI and scripts/loop_interop_gate.sh, which is orphaned. OPEN, each a Stage-2 item deliberately NOT fixed here: (1) D-C1 \u2014 a SECOND authority ledger, UNKEYED sha256 in the same directory as the data (src/ledger.rs:14-38 states it), while axon-audit already has a keyed chain with an authenticated tip; its own threat model lists as OUT OF MODEL consistent rewrite of ledger+head (R2), whole-store rollback (R1), appended well-chained forged entries (F1/F2) and ledger+anchor deletion (R3, anchor is best-effort; PF1 in the r4 red team), all closed by axon-audit's keyed head (UPGRADE_V0_22.md \u00a76 D-C1). (2) NS3a/b/c \u2014 candidate-sets/ and task-manifests/ are content-addressed by list digest ONLY, so a trusted admitter registering the identical list for another scope bricks the first scope (activate/propose/freeze exit 2 'store corrupt') (.axon-v022/redteam/axon-loop-r4-independent.md). (3) NS4p/NS4w \u2014 the preflight OBSERVER is never checked against the subject set, so a proposer/worker listed in trusted_observers verifies its own trials (4/4 passes). (4) NS4b \u2014 an explicit trusted_observers: [] is unparseable (skip_serializing_if + canonical round-trip, store.rs:53), so every writing verb exits 3 including a fenced pause: 'I said none' is refused while 'I did not say' is accepted. (5) Approval is SELF-ASSERTED: plan.rs:52 operator_approved is a bool the submitter sets and approval_ref (plan.rs:77) is checked only for non-null \u2014 it reuses none of axon-os approval verification, a second weaker approval notion (E_hardening H03). Ledger events also stamp caller-supplied identity (R6). Not in ARCHITECTURE.md; governance/IMPLEMENTATION_MAP.md:102 still says 'No new crates'."
+    },
+    {
+      "area": "platform",
+      "subsystem": "crate axon-fabric",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "unknown",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-fabric/src/submit.rs",
+        "crates/axon-fabric/src/backend.rs",
+        "crates/axon-fabric/tests/submit.rs",
+        "crates/axon-fabric/tests/journal.rs",
+        "crates/axon-cortex/src/bin/cortex.rs",
+        "crates/axon-cortex/src/runner.rs"
+      ],
+      "tests": "cargo test --locked -p axon-fabric @279da77: 35 passed, 0 failed, 1 ignored (lib 2, cortex_via_fabric 3, journal 14, submit 16; bin 0). PREREQUISITE: tests/common/mod.rs:14 and tests/cortex_via_fabric.rs:17 hard-code <repo>/target/debug/axon and <repo>/target/debug/cortex and IGNORE CARGO_TARGET_DIR \u2014 run cold with CARGO_TARGET_DIR set, all 3 cortex_via_fabric tests FAIL ('needs the interpreter'); 35/35 once both binaries exist there (verified with the no-default AND the codegen axon). The 1 ignored is journal.rs::crash_child, the child-process body the SIGKILL restart tests (sigkill_after_*) spawn via current_exe \u2014 it IS exercised, by them. The linux-microvm-protected dispatch tests (submit.rs:550+) run against a STAND-IN launcher script, never scripts/fc_linux_profile.sh.",
+      "qualification": "BLOCKED \u2014 the only B263 evidence record (.axon-v022/evidence/b263/20260924T080432Z.json) is PASS_WITH_BLOCKED: 32 PASS, 0 FAIL, 4 BLOCKED (x1 guest policy channel, x2 scope preservation, x3 L0 hypervisor under WSL2, x4 NO trusted evidence issuer \u2014 unsigned). See FG-042: qualification() nevertheless returns Ok for it.",
+      "gap": "v0.22 CANDIDATE, NOT RELEASE-READY. What exists: durable operation journal with aggregate reservations and SIGKILL-reconciliation, the submit path, and three truthfully-described backends (axon-metal is eligible for nothing). production_proof=no, stated precisely: the ONLY product caller is `cortex --fabric-journal`, an OPT-IN mode (cortex.rs:86-189) that spawns the axon-fabric BINARY named by path+sha256 in a check registry (runner.rs:2193-2410); default cortex never reaches it, and nothing in gate.sh/CI runs that mode except this crate's own cortex_via_fabric tests. OPEN, all Stage-2/3 items NOT fixed here: (1) D-C2/R5 admission is NOT BINDING \u2014 supervise_requiring admits an AdmissionProbe that declares an empty effect row and returns Completed without running, under a HARD-CODED Profile::Restricted grant with require_approval:false (submit.rs:325-392); the request's principal_ref/grant_ref are opaque strings only concatenated into authority_ref (submit.rs:571,872), and the executed check gets only an OPTIONAL effect ceiling. (2) G6 \u2014 Required.architecture and Required.checkpoint_kind (axon-loop-contracts compute.rs:69,71) are parsed and never consulted by backend::select. (3) F / FG-042 \u2014 LinuxProfileConfig::qualification() (backend.rs:116) checks schema, profile name, FAIL==0 and manifest sha only: it ignores BLOCKED, the absent trusted issuer, evidence freshness and engine digests, so protected dispatch is enabled by an unsigned PASS_WITH_BLOCKED record (reproduced). (4) The linux backend is tested only against a stand-in launcher. (5) R4 / B263 x1-x2 \u2014 the Linux guest has no policy channel and bypasses axon-guest-init: no effect ceiling reaches the guest while the profile is named 'protected' (refused only when the caller declares guest_policy_channel). (6) Cost is NEVER metered: cost_micro is always None (submit.rs:254-256), the ceiling is a declared liability. (7) B261 workspace materializer and B271 logical branches/workspace CAS are ABSENT. Not in ARCHITECTURE.md."
+    },
+    {
+      "area": "cortex",
+      "subsystem": "crate axon-loop-contracts",
+      "implementation": "partial",
+      "production_proof": "no",
+      "mutation": "unknown",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-loop-contracts/src/episode.rs",
+        "crates/axon-loop-contracts/src/ids.rs",
+        "crates/axon-loop-contracts/tests/redteam.rs",
+        "crates/axon-loop-contracts/schemas/README.md"
+      ],
+      "tests": "cargo test --locked -p axon-loop-contracts @279da77: 49 passed, 0 failed, 0 ignored (lib 9, fixtures 24, redteam 16).",
+      "gap": "v0.22 CANDIDATE. Pure types, strict parsing (deny_unknown_fields, JSON-safe integers), the cl22 canonical digest and no-I/O semantic checks, consumed by axon-loop, axon-fabric and axon-reflex/src/shortlist.rs. production_proof=no: it is reached in the product only through those crates, none of which has a default production caller (see their rows). OPEN: (1) Usage v1 has NO token or resource breakdown (episode.rs:80-98 records the deviation: the closed package schema has no such fields; they need a negotiated /2), so an episode cannot say what a cost was made of. (2) Refs are UNAUTHENTICATED: a cl22 Ref is a content hash and OpaqueRef issuer/principal/grant labels authenticate nothing (ids.rs:141-174) \u2014 hash equality proves the bytes, not the issuer; any authority built on these types must bind identity elsewhere. (3) Direction smell (D_architecture): the 'pure' contracts crate depends on axon-cortex solely for parse_strict, so every consumer links axon-cortex. (4) A second acf1 canonicaliser lives in axon-fabric submit.rs:177 beside cortex runner.rs:2326 (D-C3)."
     }
   ],
   "controls": [
@@ -1990,6 +2043,36 @@
       "status": "fixed",
       "severity": "security",
       "commit": "105444e"
+    },
+    {
+      "id": "FG-041",
+      "where": "scripts/kernel_enforce_test.sh",
+      "claimed": "Case 2: 'the gate PERMITTED the openat (FS granted)'; overall 'PASS \u2014 the syscall gate denies/permits by policy, live, end-to-end'; gate.sh:586 prints 'syscall gate enforced live, both directions'; AXON_KERNEL.md says the gate PERMITS it.",
+      "reality": "Under an FS-granting policy the guest kernel never issues the openat. run_program (crates/axon-guest-kernel/src/enforce.rs:331-342) prints 'K5: policy GRANTS FS \u2014 open permitted' and calls clean_halt(); the allow return path (sysretq) needs ring-3 segments the boot GDT does not define. Case 2 greps that print line, so it asserts a permitted syscall that provably did not happen. Only the deny direction is evidence. Previously triaged as OSK-P7-C2 / P7-KRN-02 (F161, MEDIUM) in governance/reviews/2026-08-01-triage/full-185.json and never entered here. The v0.22 candidate now RELIES on it: crates/axon-vm/tests/lib_launch.rs uses IO+FS -> Exited(0) as its positive 'guest verdict' control.",
+      "reproduced": "2026-09-24 at 279da77 on this host (firecracker + /dev/kvm + kernel artifact present): kernel_enforce_test.sh exit 0, prints '\u2713 the gate PERMITTED the openat'. fc_boot_test.sh --policy '{\"allowed_effects\":[\"IO\",\"FS\"]}' serial output: 'K5: policy GRANTS FS \u2014 open permitted; program would proceed' / '(full interpreter ELF load + VFS is the remaining work) \u2014 halting' / '-EXIT0' \u2014 no 'syscall' line, no dispatch.",
+      "fix": "OPEN (Stage 3, not this lane). Restate case 2 as 'grant branch reached, no syscall issued (allow path deferred)' or implement the ring-3 allow path; correct gate.sh:586, AXON_KERNEL.md and the lib_launch positive control. Do not count the permit case as enforcement evidence until then.",
+      "status": "open",
+      "severity": "reporting"
+    },
+    {
+      "id": "FG-042",
+      "where": "crates/axon-fabric/src/backend.rs",
+      "claimed": "LinuxProfileConfig::qualification(): 'Eligible only if the manifest in use is byte-identical to the one the evidence record qualified, and that record has zero FAIL assertions' \u2014 i.e. a passing qualification makes the linux-microvm-protected backend eligible for protected (hardware_isolation=true) dispatch.",
+      "reality": "It checks schema, profile name, counts.FAIL==0 and the manifest sha256 only. It ignores counts.BLOCKED, the record's result (PASS_WITH_BLOCKED), the absence of any trusted evidence issuer (the record is unsigned; x4 BLOCKED), evidence freshness, and engine/guest digests against the build in use. A self-authored JSON file with FAIL:0 and a matching sha enables protected dispatch; the unit test fixture (tests/submit.rs:250) is exactly such a file.",
+      "reproduced": "2026-09-24: a probe crate calling qualification() with manifest=profiles/linux-microvm/manifest.json (sha 1847a962\u2026) and evidence=.axon-v022/evidence/b263/20260924T080432Z.json (counts PASS 32 / FAIL 0 / BLOCKED 4, result PASS_WITH_BLOCKED, x4_trusted_evidence_issuer BLOCKED 'The record is unsigned') returned Ok(LinuxQualification{..}).",
+      "fix": "OPEN (Stage 3). Require BLOCKED==0 or an explicit operator waiver per BLOCKED id, a trusted issuer signature, a freshness bound and engine digests before qualification() returns Ok; add negative tests for each.",
+      "status": "open",
+      "severity": "security"
+    },
+    {
+      "id": "FG-043",
+      "where": "crates/axon-vm/tests/lib_launch.rs",
+      "claimed": "live_boot_through_the_library_reports_the_guest_verdict \u2014 reported 'ok' by cargo test: the library boots the guest, IO+FS exits 0 and IO-only is a Violation (exit 8).",
+      "reality": "live_prereqs() returns None and the test RETURNS EARLY, reporting ok, whenever firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent \u2014 an eprintln is the only trace, and cargo prints 'ok'. The kernel path ignores CARGO_TARGET_DIR. Not routed through harness_skip / AXON_HARNESS_STRICT, so a skip is indistinguishable from a pass in the gate's tally. When it does run, its positive control is the FG-041 vacuous allow path.",
+      "reproduced": "2026-09-24 at 279da77: `cargo test --locked -p axon-vm --test lib_launch -- --nocapture --test-threads=1` with CARGO_TARGET_DIR=/home/cklaus/.cache/axon-v022-targets/s1-a -> 'lib_launch: SKIPPED live boot (firecracker=true, kvm=true, kernel=false)' followed by 'test live_boot_through_the_library_reports_the_guest_verdict ... ok', 'test result: ok. 3 passed'.",
+      "fix": "OPEN (Stage 1 lane B owns the test change). Route the absent-prerequisite case through the SKIP-is-not-PASS mechanism (harness_skip log + AXON_HARNESS_STRICT failure) and honour CARGO_TARGET_DIR for the kernel path.",
+      "status": "open",
+      "severity": "reporting"
     }
   ]
 }
