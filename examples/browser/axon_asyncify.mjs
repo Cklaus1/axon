@@ -17,6 +17,29 @@ const DATA_SIZE = 256 * 1024; // Asyncify stack-save buffer (header = two i32s)
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+// verifyArtifact(wasmBytes, stampJson) -> throws unless the bytes are the -O2
+// build that build-interactive.sh stamped. The browser artifact is GENERATED and
+// gitignored, so whatever file sits in examples/browser is whatever the last local
+// build left behind. On 2026-09-24 that was a stale UNOPTIMIZED module that exhausts
+// host memory on any program. A page must refuse a module it cannot vouch for,
+// rather than run it (governance/incidents/2026-09-24-asyncify-linear-memory.md).
+export async function verifyArtifact(wasmBytes, stampJson) {
+  if (!stampJson || stampJson.schema !== 'axon-asyncify-artifact/1') {
+    throw new Error('axon_asyncify: no build stamp for this .wasm — it was not produced by ' +
+      'examples/browser/build-interactive.sh. Rebuild it rather than run an unknown module.');
+  }
+  if (stampJson.opt !== 'O2') {
+    throw new Error(`axon_asyncify: artifact was built at -${stampJson.opt}; only -O2 is safe ` +
+      '(an unoptimized asyncify module exhausts host memory). Rebuild it.');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', wasmBytes);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (hex !== stampJson.sha256) {
+    throw new Error('axon_asyncify: .wasm does not match its build stamp (stale or replaced ' +
+      'after the build). Rebuild it: examples/browser/build-interactive.sh');
+  }
+}
+
 // runAxon(wasmBytes, source, hostAwait) -> { exitCode, output }
 //   wasmBytes : ArrayBuffer | Uint8Array of the asyncified axon-wasm module
 //   source    : the .ax program text
