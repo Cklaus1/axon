@@ -93,6 +93,12 @@ pub enum Event {
         scope: Scope,
         intake: Box<crate::intake::IntakeRecord>,
     },
+    /// A trusted admitter registered the eligible candidate LIST behind a
+    /// `candidate_set_ref` (bytes in `candidate-sets/`; see `crate::candidates`).
+    CandidateSet {
+        scope: Scope,
+        candidate_set_ref: Ref,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -141,6 +147,7 @@ const DEPENDENT: &[&str] = &[
     "scopes",
     "episodes",
     "contexts",
+    "candidate-sets",
 ];
 
 impl<'s> Tx<'s> {
@@ -441,5 +448,13 @@ impl Tx<'_> {
                 _ => None,
             })
             .collect()
+    }
+}
+
+impl Tx<'_> {
+    pub fn candidate_set_event(&self, scope: &Scope, r: &Ref) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(&e.event, Event::CandidateSet { scope: s, candidate_set_ref } if s == scope && candidate_set_ref == r)
+        })
     }
 }

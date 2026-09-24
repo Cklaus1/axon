@@ -3,7 +3,7 @@
 #
 # Real bytes, both directions, no fixture parser on either side:
 #   Axon DEC (axon-reflex decide_builtin → to_policy_envelope)
-#     → axon-loop policy put / pointer baseline / pointer transition / pointer resolve
+#     → axon-loop candidates put / policy put / pointer baseline / pointer transition / pointer resolve
 #     → the REAL `micode exec` binary consumes the resolved policy (fixture LLM
 #       provider on 127.0.0.1 that records every request body; no credentials)
 #     → MiCode writes context receipt + policy-ack + episode sidecar
@@ -184,6 +184,18 @@ check "DEC driver produced a policy" test -s "$WORK/dec-policy.json"
 check "DEC shortlist is [read, grep] (frequency ranking, limit 2)" eq "$(jq -c .shortlist "$WORK/dec-policy.json")" '["read","grep"]'
 check "Axon candidate_set_ref == MiCode's (two independent cl22 implementations agree)" \
   eq "$(jq -r .candidate_set_ref "$WORK/dec-policy.json")" "$MICODE_CSR"
+# G2: register MiCode's authorized candidate LIST (from its own ack) so Axon can
+# check shortlist ⊆ candidates itself. Its cl22 must be the policy's view.
+jq -n --argjson c "$(jq -c '.candidates|sort' "$INC_ACK")" --arg t "$TENANT" --arg f "$FAMILY" \
+  '{schema:"axon.loop.candidate-set/1",scope:{tenant_id:$t,task_family:$f},candidates:$c,issuer_ref:"op:gate-admitter"}' \
+  > "$WORK/candidates.json"
+H_PRE_PUT="$(store_hash)"
+axl policy put --in "$WORK/dec-policy.json" >/dev/null 2>"$WORK/put-unreg.err"
+check "G2: policy put REFUSES a view with no registered candidate list (exit 4)" eq "$?" 4
+check "G2: refusal names the unregistered candidate_set_ref" grep -q "not a registered candidate list" "$WORK/put-unreg.err"
+check "G2: store unchanged by the refused put" eq "$(store_hash)" "$H_PRE_PUT"
+CSR="$(axl candidates put --in "$WORK/candidates.json" | jq -r .candidate_set_ref)"
+check "candidates put: registered list digests to MiCode's candidate_set_ref" eq "$CSR" "$MICODE_CSR"
 PUT="$(axl policy put --in "$WORK/dec-policy.json")"; check "policy put exit 0" eq "$?" 0
 POL_REF="$(jq -r .policy_ref <<<"$PUT")"
 jq -n --arg p "$POL_REF" --arg t "$TENANT" --arg f "$FAMILY" \
@@ -250,6 +262,7 @@ SRC_RC=$?
 if [ "$(jq -r .cost.micro_cents "$SRC_EP")" = 0 ]; then
   check "KNOWN GAP G1: canonical episode cost.micro_cents=0 vs sidecar 75 → intake refuses the join (exit 4)" eq "$SRC_RC" 4
   check "KNOWN GAP G1: refusal is the unit-conversion check, not a digest mismatch" grep -q "unit conversion" "$WORK/src.err"
+  check "KNOWN GAP G1: refusal names the producer gap (canonical cost ZERO, G1)" bash -c "grep -q 'ZERO spend' '$WORK/src.err' && grep -q G1 '$WORK/src.err'"
 else
   check "canonical episode cost joins the sidecar under the round-up rule" eq "$SRC_RC" 0
 fi
@@ -270,18 +283,17 @@ i=0
 for name in added-tool authority-expansion unknown-field dup-key; do
   i=$((i+1))
   H="$(store_hash)"
-  axl policy put --in "$WORK/bad-$name.json" >/dev/null 2>&1
+  axl policy put --in "$WORK/bad-$name.json" >/dev/null 2>"$WORK/put-bad-$name.err"
   PRC=$?
   if [ "$name" = added-tool ]; then
-    # KNOWN GAP G2: the store holds only candidate_set_ref (a digest); it has no
-    # candidate LIST to check shortlist ⊆ candidates against, so `policy put`
-    # stores this. MiCode is the enforcement point (below). Asserted as-is so
-    # the gate turns red the day put starts checking and this label must change.
-    check "$name: KNOWN GAP G2: Axon policy put ACCEPTS a tool-adding shortlist (exit 0)" eq "$PRC" 0
+    # G2 CLOSED: Axon checks shortlist ⊆ the registered candidate list itself;
+    # MiCode is no longer the sole enforcement point.
+    check "$name: G2: Axon policy put REFUSES a tool-adding shortlist (exit 4)" eq "$PRC" 4
+    check "$name: G2: refusal names the added tool" grep -q teleport "$WORK/put-bad-$name.err"
   else
     check "$name: Axon policy put refuses it (exit 3/4)" bash -c "[ $PRC -eq 3 ] || [ $PRC -eq 4 ]"
-    check "$name: store bytes unchanged" eq "$(store_hash)" "$H"
   fi
+  check "$name: store bytes unchanged" eq "$(store_hash)" "$H"
   expected_context "$WORK/exp-bad-$name.json" "trial-bad-$i" challenger-1 "$HEAD_SHA" "$RES_EPOCH"
   snap_cl
   run_micode "bad-$name" MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-bad-$name.json" MICODE_AXON_ACTIVE_POLICY="$WORK/bad-$name.json"

@@ -19,7 +19,8 @@
 //! axon-loop --store DIR pointer transition --in transition.json
 //! axon-loop --store DIR pointer revoke     --tenant T --family F --policy REF --reason REF --issuer ID
 //! axon-loop --store DIR pointer baseline   --in baseline.json   (incumbent-of-record; activate from paused)
-//! axon-loop --store DIR policy  put        --in policy.json
+//! axon-loop --store DIR candidates put     --in candidate-set.json   (trusted admitter; the list behind a candidate_set_ref)
+//! axon-loop --store DIR policy  put        --in policy.json      (shortlist must be within a registered candidate list)
 //! axon-loop --store DIR plan    register   --in plan.json
 //! axon-loop --store DIR plan    freeze     --experiment ID
 //! axon-loop --store DIR plan    show       --experiment ID
@@ -181,8 +182,14 @@ fn run(a: &Args) -> Result<Value, LoopError> {
         ["policy", "put"] => {
             a.only(&["in"])?;
             let p: PolicyEnvelope = parse(&a.input()?)?;
-            let r = a.store()?.put_cas("policies", &p)?;
+            let r = axon_loop::candidates::put_policy(&a.store()?, &p)?;
             Ok(json!({"schema":"axon.loop.policy-put/1","policy_ref":r}))
+        }
+        ["candidates", "put"] => {
+            a.only(&["in"])?;
+            let c = axon_loop::candidates::CandidateSet::parse(&a.input()?)?;
+            let r = axon_loop::candidates::put(&a.store()?, &c)?;
+            Ok(json!({"schema":"axon.loop.candidates-put/1","candidate_set_ref":r}))
         }
         ["plan", "register"] => {
             a.only(&["in"])?;

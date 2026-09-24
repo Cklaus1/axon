@@ -245,6 +245,7 @@ fn evo_refuses_protected_roles_and_excludes_ineligible() {
 fn evo_refuses_incumbent_outside_eligible_set() {
     let d = tempfile::tempdir().unwrap();
     let s = store_with_config(d.path());
+    let before = snapshot(d.path());
     let inc = incumbent();
     let mut v = evo_request(&inc, 1, "c", vec![discovery_episode(&inc, "d1")]);
     v["eligible"] = serde_json::json!(["read", "search"]);
@@ -255,9 +256,7 @@ fn evo_refuses_incumbent_outside_eligible_set() {
     v["incumbent"]["authority_expansion"] = serde_json::json!(true);
     let req = evo::parse_request(&v.to_string()).unwrap();
     assert!(evo::propose(&s, &req).is_err());
-    assert!(snapshot(d.path())
-        .keys()
-        .all(|k| k.ends_with("config.json") || k.ends_with("root.lock")));
+    assert_eq!(snapshot(d.path()), before);
 }
 
 fn usage(state: UsageState, cost: Option<u64>, liab: u64, attempt: char) -> Usage {

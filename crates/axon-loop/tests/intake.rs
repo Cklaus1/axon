@@ -137,8 +137,20 @@ struct Case {
 fn case(micro_cents: Option<u64>) -> Case {
     let dir = tempfile::tempdir().unwrap();
     let s = store_with_config(dir.path());
+    let names: Vec<CandidateId> = CANDIDATES
+        .iter()
+        .map(|c| CandidateId::new(*c).unwrap())
+        .collect();
+    let cs = axon_loop::candidates::CandidateSet::parse(
+        &json!({"schema":"axon.loop.candidate-set/1","scope":scope_json(),"candidates":names,"issuer_ref":common::ADMITTER}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        axon_loop::candidates::put(&s, &cs).unwrap(),
+        candidate_set_ref()
+    );
     let p = policy(&["grep", "read"]);
-    s.put_cas("policies", &p).unwrap();
+    axon_loop::candidates::put_policy(&s, &p).unwrap();
     // Create the lock file up front so the no-change snapshots compare data.
     drop(axon_loop::ledger::Tx::begin(&s).unwrap());
     let ctx = context(0, &"b".repeat(40));
@@ -363,4 +375,35 @@ fn the_same_trial_with_different_bytes_is_a_conflict() {
     let mut ep = c.ep.clone();
     ep["corpus_role"] = json!("discovery");
     assert!(matches!(run(&c, &ep, false), Err(LoopError::Conflict(_))));
+}
+
+/// G1: a canonical episode that records ZERO spend against a metered sidecar
+/// is still refused (never repaired), and the message names the producer gap.
+#[test]
+fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
+    let c = case(Some(7_500));
+    let src = source_episode(0);
+    let mut ep = c.ep.clone();
+    ep["source_episode_ref"] = json!(digest_value(&src).unwrap());
+    let before = snapshot(c.s.root());
+    let e = intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &c.ctx.to_string(),
+            ack: &c.ack.to_string(),
+            source_episode: Some(&src.to_string()),
+        },
+    )
+    .unwrap_err();
+    let m = e.to_string();
+    assert!(matches!(e, LoopError::Refused(_)), "{m}");
+    assert!(
+        m.contains("unit conversion")
+            && m.contains("G1")
+            && m.contains("ZERO spend")
+            && m.contains("nothing recorded"),
+        "{m}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
 }

@@ -49,10 +49,37 @@ pub fn eligible() -> Vec<CandidateId> {
     ids(&["read", "search", "edit", "write"])
 }
 
+/// The fixture candidate view: a REAL list (sorted), whose `cl22:` every
+/// fixture policy carries as `candidate_set_ref`, registered in every
+/// fixture store by [`store_with_config`] (G2).
+pub fn candidate_list() -> Vec<CandidateId> {
+    let mut v = eligible();
+    v.sort();
+    v
+}
+
+pub fn candidate_set_ref() -> Ref {
+    let names: Vec<String> = candidate_list().iter().map(|c| c.to_string()).collect();
+    digest_value(&json!(names)).unwrap()
+}
+
+pub fn candidate_set_doc(list: &[CandidateId]) -> Value {
+    json!({"schema":"axon.loop.candidate-set/1","scope":scope(),"candidates":list,"issuer_ref":ADMITTER})
+}
+
+pub fn register_candidates(s: &Store) -> Ref {
+    let c = axon_loop::candidates::CandidateSet::parse(
+        &candidate_set_doc(&candidate_list()).to_string(),
+    )
+    .unwrap();
+    axon_loop::candidates::put(s, &c).unwrap()
+}
+
 pub fn policy(id: &str, shortlist: &[&str]) -> PolicyEnvelope {
     let mut p: PolicyEnvelope = member("policy");
     p.policy_id = PolicyId::new(id).unwrap();
     p.shortlist = ids(shortlist);
+    p.candidate_set_ref = candidate_set_ref();
     p
 }
 
@@ -68,6 +95,22 @@ pub fn store_with_config(dir: &Path) -> Store {
         trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
     })
     .unwrap();
+    register_candidates(&s);
+    s
+}
+
+/// A configured store with NO candidate list registered (G2 negatives).
+pub fn store_without_candidates(dir: &Path) -> Store {
+    let s = Store::open(dir).unwrap();
+    s.write_config(&Config {
+        schema: ConfigSchema,
+        trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
+        trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
+    })
+    .unwrap();
+    // The lock file is created on first use; create it now so no-change
+    // snapshots compare data only.
+    drop(axon_loop::ledger::Tx::begin(&s).unwrap());
     s
 }
 
@@ -148,6 +191,7 @@ pub fn trial(t: &Trial) -> Value {
     proj.sidecar_policy_ref = pref.clone();
 
     let mut ep: LoopEpisode = member("episode");
+    ep.candidate_set_ref = t.policy.candidate_set_ref.clone();
     ep.identity = identity;
     ep.policy_ref = pref;
     ep.authority_epoch = epoch;

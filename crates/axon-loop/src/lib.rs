@@ -29,6 +29,7 @@
 //! does not prove the document came from that party.
 
 pub mod admission;
+pub mod candidates;
 pub mod epoch;
 pub mod error;
 pub mod evl;

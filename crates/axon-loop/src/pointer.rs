@@ -195,6 +195,7 @@ pub fn designate_baseline(store: &Store, b: &BaselineRecord) -> Result<Ref> {
     if env.scope != b.scope {
         return Err(refused("baseline policy is for another scope"));
     }
+    crate::candidates::require_shortlist(&tx, &env)?;
     if crate::evo::proposer_in(&tx, &b.scope, &b.policy_ref).is_some() {
         return Err(refused(
             "an EVO candidate cannot be an incumbent-of-record; it must be admitted",
@@ -357,6 +358,8 @@ pub fn transition(store: &Store, t: &PolicyTransition) -> Result<PointerRecord> 
                 check_activate(&tx, &cur, t, &target, &adm_ref, &config.admitters())?;
             }
             let env: PolicyEnvelope = store.get_contract("policies", &target)?;
+            // G2: every activation route (baseline, admission, rollback).
+            crate::candidates::require_shortlist(&tx, &env)?;
             if env.scope != *scope {
                 return Err(refused("target envelope is for another scope"));
             }

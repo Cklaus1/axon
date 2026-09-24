@@ -328,6 +328,9 @@ pub fn freeze(store: &Store, id: &str) -> Result<Ref> {
 pub(crate) fn check_candidate(tx: &Tx, plan: &PilotPlan, inc: &Ref, cand: &Ref) -> Result<()> {
     let ie: PolicyEnvelope = tx.store.get_contract("policies", inc)?;
     let ce: PolicyEnvelope = tx.store.get_contract("policies", cand)?;
+    // G2: both shortlists within the registered candidate list.
+    crate::candidates::require_shortlist(tx, &ie)?;
+    crate::candidates::require_shortlist(tx, &ce)?;
     if crate::evo::proposer_in(tx, &plan.scope, cand).is_none() {
         return Err(refused(format!(
             "candidate {cand} was not produced by EVO in this scope (no proposer on record)"

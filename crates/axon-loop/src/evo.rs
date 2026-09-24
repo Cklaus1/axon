@@ -277,6 +277,16 @@ pub fn propose(store: &Store, req: &EvoRequest) -> Result<Proposal> {
     }
 
     let mut tx = Tx::begin(store)?;
+    // G2: the eligible set is the REGISTERED candidate list for the
+    // incumbent's view, never only the caller's claim. A caller list that
+    // differs from it is refused (it could widen the mutation space).
+    let registered = crate::candidates::resolve(&tx, &scope, &incumbent.candidate_set_ref)?;
+    if registered.eligible() != eligible {
+        return Err(refused(
+            "eligible differs from the registered candidate list for the incumbent's candidate_set_ref",
+        ));
+    }
+    crate::candidates::require_shortlist(&tx, &incumbent)?;
     let past: Vec<Hypothesis> = tx.hypotheses(&scope, None);
     let mut tried: BTreeSet<Vec<CandidateId>> = past
         .iter()
