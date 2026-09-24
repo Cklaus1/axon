@@ -207,6 +207,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-fabric"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "axon-gfx"
 version = "0.1.0"
 dependencies = [

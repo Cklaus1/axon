@@ -23,6 +23,7 @@ members = [
   "crates/axon-vm",
   "crates/axon-guest-kernel",
   "crates/axon-attest",
+  "crates/axon-fabric",
 ]
 resolver = "2"
 
