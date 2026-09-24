@@ -11,10 +11,31 @@
 //!
 //! ABI (all lengths are byte counts; pointers index the module's linear memory):
 //!   axon_alloc(len) -> ptr        — reserve `len` bytes; JS writes the source there
-//!   axon_eval(ptr, len) -> i32    — parse+run the source; returns the exit code;
-//!                                   captures the program's stdout for read-back
+//!   axon_eval(ptr, len) -> i32    — ONE-SHOT: parse+run the source, then RECLAIM
+//!                                   (free) the buffer; returns the exit code and
+//!                                   captures the program's stdout for read-back.
+//!                                   The pointer is DANGLING once this returns — a
+//!                                   caller that re-enters (Asyncify rewind) must
+//!                                   use `axon_eval_borrowed` instead.
+//!   axon_eval_borrowed(ptr, len)  — same evaluation, but BORROWS the buffer: the
+//!     -> i32                        caller keeps ownership and may re-enter with
+//!                                   the SAME pointer (an Asyncify unwind/rewind
+//!                                   cycle re-enters once per suspend). The caller
+//!                                   frees exactly once, via `axon_free`, after the
+//!                                   evaluation reaches its terminal state.
+//!   axon_free(ptr, len)           — release a buffer from `axon_alloc` that was
+//!                                   used with `axon_eval_borrowed`. Never call it
+//!                                   on a buffer already passed to `axon_eval`.
 //!   axon_output_ptr() -> ptr      — start of the captured output (valid until the
-//!   axon_output_len() -> len        next axon_eval)
+//!   axon_output_len() -> len        next axon_eval/axon_eval_borrowed)
+//!
+//! Ownership, stated once: `axon_alloc` hands JS a buffer. EITHER give it to
+//! `axon_eval` (which consumes and frees it — one evaluation, no re-entry), OR
+//! keep it, drive it with `axon_eval_borrowed` as many times as the Asyncify
+//! state machine needs, and `axon_free` it exactly once at the end. Mixing the
+//! two — re-entering `axon_eval` with an already-consumed pointer — is a
+//! use-after-free that corrupts the allocator and grows linear memory without
+//! bound (it is what R15 §13 B3's rewind loop originally did).
 //!
 //! Typical JS:
 //!   const p = inst.exports.axon_alloc(bytes.length);
@@ -32,8 +53,10 @@ thread_local! {
 }
 
 /// Reserve `len` bytes of linear memory and hand JS the pointer. JS fills it with
-/// the `.ax` source, then passes the same (ptr, len) to `axon_eval`, which
-/// reclaims the buffer. Returns a null pointer for a zero-length request.
+/// the `.ax` source, then either passes the same (ptr, len) to `axon_eval` (which
+/// reclaims the buffer — a single evaluation), or drives it with
+/// `axon_eval_borrowed` and releases it with `axon_free` exactly once when the
+/// evaluation is finished. Returns a null pointer for a zero-length request.
 #[no_mangle]
 pub extern "C" fn axon_alloc(len: usize) -> *mut u8 {
     if len == 0 {
@@ -41,7 +64,7 @@ pub extern "C" fn axon_alloc(len: usize) -> *mut u8 {
     }
     let mut buf = Vec::<u8>::with_capacity(len);
     let ptr = buf.as_mut_ptr();
-    std::mem::forget(buf); // ownership passes to JS; axon_eval reclaims it
+    std::mem::forget(buf); // ownership passes to JS (axon_eval or axon_free reclaims)
     ptr
 }
 
@@ -98,20 +121,82 @@ fn render_diag(d: &axon_core::PipelineDiagnostic) -> String {
 /// Returns the exit code: 0 ok; 1 a parse error; 2 a refused check (incl. a
 /// sandbox/capability violation); the interpreter's runtime-flow codes — 3 verify
 /// / 4 corrigible / 5 ai-policy / 6 refine / 7 goal-budget / 101 panic — otherwise.
-/// Reclaims the source buffer that `axon_alloc` handed out.
+///
+/// **One-shot.** This RECLAIMS the source buffer `axon_alloc` handed out, so `ptr`
+/// is dangling on return and must never be passed here (or to `axon_free`) again.
+/// A caller that re-enters the module — the Asyncify unwind/rewind loop, which
+/// calls back in once per suspend — must use `axon_eval_borrowed` + `axon_free`.
 ///
 /// # Safety
 /// `ptr`/`len` must be a buffer previously returned by `axon_alloc(len)` that JS
-/// filled with exactly `len` bytes of UTF-8 source. Calling otherwise is UB.
+/// filled with exactly `len` bytes of UTF-8 source, and that has not already been
+/// consumed by a previous `axon_eval`/`axon_free`. Calling otherwise is UB.
 #[no_mangle]
 pub unsafe extern "C" fn axon_eval(ptr: *mut u8, len: usize) -> i32 {
     // Reclaim the source buffer (alloc'd by axon_alloc with capacity == len).
+    // This CONSUMES the caller's buffer: `ptr` is dangling when we return, so a
+    // caller that must re-enter (Asyncify rewind) has to use
+    // `axon_eval_borrowed` + `axon_free` instead of calling this twice.
     let src_bytes = if ptr.is_null() || len == 0 {
         Vec::new()
     } else {
         unsafe { Vec::from_raw_parts(ptr, len, len) }
     };
-    let src = String::from_utf8_lossy(&src_bytes).into_owned();
+    eval_source(&String::from_utf8_lossy(&src_bytes))
+}
+
+/// Parse, check, and run the `.ax` source at `(ptr, len)` **without taking
+/// ownership** of the buffer: the caller keeps it and may call this again with the
+/// SAME pointer. That is what an Asyncify unwind/rewind cycle needs — the module
+/// suspends inside `axon_host_await`, JS awaits a Promise, calls
+/// `asyncify_start_rewind`, and re-enters here to resume. Under the one-shot
+/// `axon_eval` the second entry would read (and re-free) a freed buffer.
+///
+/// The caller must release the buffer with `axon_free(ptr, len)` exactly once,
+/// after the evaluation has reached its terminal state (Asyncify state back to 0).
+///
+/// Returns the same exit codes as [`axon_eval`].
+///
+/// # Safety
+/// `ptr`/`len` must be a live buffer previously returned by `axon_alloc(len)` and
+/// filled with exactly `len` bytes of UTF-8 source. It must NOT have been passed
+/// to `axon_eval` (which frees it). Calling otherwise is UB.
+#[no_mangle]
+pub unsafe extern "C" fn axon_eval_borrowed(ptr: *const u8, len: usize) -> i32 {
+    // BORROW the source: a slice, never Vec::from_raw_parts — reconstructing a Vec
+    // here would hand ownership of caller memory to Rust and free it on drop,
+    // which is exactly the double-free this entry point exists to avoid.
+    let src_bytes: &[u8] = if ptr.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    };
+    // from_utf8_lossy borrows when the input is valid UTF-8; the interpreter needs
+    // an owned String, so this copies — the caller's buffer is left untouched.
+    eval_source(&String::from_utf8_lossy(src_bytes))
+}
+
+/// Release a buffer handed out by `axon_alloc` that was driven with
+/// `axon_eval_borrowed`. Call exactly once, when the evaluation is finished.
+///
+/// # Safety
+/// `ptr`/`len` must be a buffer from `axon_alloc(len)` that has NOT already been
+/// freed — neither by `axon_eval` nor by a previous `axon_free`. A null pointer or
+/// zero length is a no-op (it matches what `axon_alloc(0)` returns).
+#[no_mangle]
+pub unsafe extern "C" fn axon_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    // Reconstruct with the same (len, capacity) axon_alloc used, and drop it.
+    drop(unsafe { Vec::from_raw_parts(ptr, len, len) });
+}
+
+/// The shared evaluation core behind `axon_eval` and `axon_eval_borrowed`: it only
+/// ever sees a borrowed `&str`, so ownership of the caller's buffer is decided by
+/// the entry point, not here.
+fn eval_source(src: &str) -> i32 {
+    let src = src.to_owned();
 
     // Static check FIRST — the wedge's capability diagnostics must be visible in
     // the playground, and the browser must refuse what the CLI refuses.

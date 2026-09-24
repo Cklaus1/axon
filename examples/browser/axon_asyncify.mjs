@@ -64,15 +64,46 @@ export async function runAxon(wasmBytes, source, hostAwait) {
   const srcPtr = X.axon_alloc(srcBytes.length);
   new Uint8Array(mem.buffer, srcPtr, srcBytes.length).set(srcBytes);
 
-  let ret = X.axon_eval(srcPtr, srcBytes.length);
-  while (X.asyncify_get_state() === 1) {
-    // The module unwound at host_await. Stop the unwind, await the host, rewind.
-    X.asyncify_stop_unwind();
-    pendingReply = await hostAwait(pendingReq);
-    X.asyncify_start_rewind(dataAddr);
-    ret = X.axon_eval(srcPtr, srcBytes.length);
+  // Drive the source with the BORROWING entry point: this loop re-enters the
+  // module once per suspend, and the one-shot `axon_eval` frees the buffer it is
+  // given — so re-entering it would read and re-free freed memory (a double-free
+  // that corrupts the wasm allocator). We keep ownership of srcPtr for the whole
+  // evaluation and `axon_free` it once, in a finally, so the error path releases too.
+  //
+  // REQUIRED ABI. This loop re-enters the module once per suspend, so it needs the
+  // BORROWING entry point: the one-shot `axon_eval` frees the buffer it is handed,
+  // and re-entering it would read and re-free freed memory. There is deliberately no
+  // fallback to the one-shot ABI — it cannot be made correct here. Even giving each
+  // re-entry a freshly allocated copy (so no buffer is freed twice) traps with
+  // `RuntimeError: unreachable` on the first rewind, because allocating during the
+  // rewind perturbs the very allocator state the unwound frames resume against. A
+  // module without these exports is simply too old for this driver, and saying so is
+  // better than a silent double-free or a confusing wasm trap.
+  if (typeof X.axon_eval_borrowed !== 'function' || typeof X.axon_free !== 'function') {
+    throw new Error(
+      'axon_asyncify: this .wasm predates the axon_eval_borrowed/axon_free ABI and ' +
+      'cannot be driven across a suspend (the one-shot axon_eval frees the source ' +
+      'buffer this loop must re-enter with). Rebuild it: examples/browser/build-interactive.sh'
+    );
   }
 
-  const output = dec.decode(new Uint8Array(mem.buffer, X.axon_output_ptr(), X.axon_output_len()));
-  return { exitCode: ret, output };
+  let ret;
+  try {
+    ret = X.axon_eval_borrowed(srcPtr, srcBytes.length);
+    while (X.asyncify_get_state() === 1) {
+      // The module unwound at host_await. Stop the unwind, await the host, rewind.
+      X.asyncify_stop_unwind();
+      pendingReply = await hostAwait(pendingReq);
+      X.asyncify_start_rewind(dataAddr);
+      ret = X.axon_eval_borrowed(srcPtr, srcBytes.length);
+    }
+
+    const output = dec.decode(new Uint8Array(mem.buffer, X.axon_output_ptr(), X.axon_output_len()));
+    return { exitCode: ret, output };
+  } finally {
+    // Exactly once, after the evaluation has reached its terminal state. We hold the
+    // buffer for the whole evaluation (axon_eval_borrowed never takes it), and the
+    // finally means the error path releases it too.
+    X.axon_free(srcPtr, srcBytes.length);
+  }
 }
