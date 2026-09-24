@@ -3917,13 +3917,21 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     make_uncertain_tagged(value, confidence, SRC_TAG_USER)
 }
 
+/// An `Uncertain` whose value came from a MODEL (`ai_extract_uncertain_*`, on
+/// the mock, replay and live paths alike). Stamps 1, as codegen does. These
+/// paths used `make_uncertain` and so stamped 0 — a model's answer read as
+/// user-constructed under `axon run`, the fail-open direction for a provenance
+/// field (UPGRADE_V0_20.md D-014).
+fn make_uncertain_ai(value: Value, confidence: f64) -> Value {
+    make_uncertain_tagged(value, confidence, SRC_TAG_AI)
+}
+
 /// `source_tag` values, as stamped by codegen. These are OBSERVABLE — the
 /// checker lists `source_tag` as a field of `Uncertain<T>` and both engines
 /// let a program read `u.source_tag` — so the interpreter must stamp the same
 /// number codegen does, or a program that branches on provenance takes a
 /// different branch under `axon run` than under `axon build`.
 pub(crate) const SRC_TAG_USER: i64 = 0;
-#[allow(dead_code)] // codegen stamps 1; the interp AI path is E0910-refused natively
 pub(crate) const SRC_TAG_AI: i64 = 1;
 pub(crate) const SRC_TAG_RUNTIME: i64 = 2;
 

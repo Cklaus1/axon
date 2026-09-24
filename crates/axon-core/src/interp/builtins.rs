@@ -76,7 +76,7 @@ fn replay_uncertain(cached: &str, who: &str, as_float: bool) -> Value {
         }
     });
     match parsed {
-        Some((v, c)) => Value::Ok(Box::new(make_uncertain(v, c))),
+        Some((v, c)) => Value::Ok(Box::new(make_uncertain_ai(v, c))),
         None => Value::Err(Box::new(Value::Str(format!(
             "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"<value>|<confidence>\") \
              — delete the cache to re-record rather than replaying a corrupt one"
@@ -5980,7 +5980,7 @@ impl<'p> Interp<'p> {
             "ai_extract_uncertain_i64" => {
                 want(1)?;
                 if ai_mock_enabled() {
-                    ok!(Value::Ok(Box::new(make_uncertain(Value::Int(1), 0.9))));
+                    ok!(Value::Ok(Box::new(make_uncertain_ai(Value::Int(1), 0.9))));
                 }
                 // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
                 // typed extract made a live, unrecorded model call even under a
@@ -5998,7 +5998,7 @@ impl<'p> Interp<'p> {
                         match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
                             Ok((v, c)) => {
                                 ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
-                                Value::Ok(Box::new(make_uncertain(Value::Int(v), c)))
+                                Value::Ok(Box::new(make_uncertain_ai(Value::Int(v), c)))
                             }
                             Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }
@@ -6012,7 +6012,7 @@ impl<'p> Interp<'p> {
             "ai_extract_uncertain_f64" => {
                 want(1)?;
                 if ai_mock_enabled() {
-                    ok!(Value::Ok(Box::new(make_uncertain(Value::Float(1.0), 0.9))));
+                    ok!(Value::Ok(Box::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
                 }
                 // Same replay bypass as the i64 variant above.
                 if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
@@ -6024,7 +6024,7 @@ impl<'p> Interp<'p> {
                         match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
                             Ok((v, c)) => {
                                 ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
-                                Value::Ok(Box::new(make_uncertain(Value::Float(v), c)))
+                                Value::Ok(Box::new(make_uncertain_ai(Value::Float(v), c)))
                             }
                             Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }

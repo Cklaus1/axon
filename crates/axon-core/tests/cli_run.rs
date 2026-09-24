@@ -31927,3 +31927,91 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
          sentence is not evidence about this failure. stderr:\n{err}"
     );
 }
+
+#[test]
+fn ai_extract_uncertain_is_stamped_ai_sourced_on_every_interp_path() {
+    // Found reconciling the Cortex v0.20 package (UPGRADE_V0_20.md D-014):
+    // CX-05 requires a value's ORIGIN to travel with it, and `source_tag` is
+    // Axon's field for exactly that (0 user-constructed, 1 AI, 2 runtime).
+    // Codegen stamps 1 for `ai_extract_uncertain_*` (codegen/builtins.rs, the
+    // `source_tag=1` store). The interpreter built every one of these through
+    // `make_uncertain`, which stamps 0 — so under `axon run` a MODEL-produced
+    // value read as user-constructed, and a program gating on
+    // `u.source_tag == 0` ("trust only what the user typed") accepted it.
+    // The comment on SRC_TAG_AI said the interp AI path was E0910-refused
+    // natively; it is not — the fixture builds natively.
+    //
+    // All three interp paths are covered because each built the value
+    // separately: mock, replay-hit, and live (live needs a key, so it is the
+    // one path not driven here; it shares the fixed constructor).
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
+                 Ok(u) => println(to_str(u.source_tag))\n    \
+                 Err(e) => println(e)\n  }\n  \
+               match ai_extract_uncertain_f64(\"how warm? 2.5\") {\n    \
+                 Ok(u) => println(to_str(u.source_tag))\n    \
+                 Err(e) => println(e)\n  }\n  \
+               println(to_str(uncertain_new(1, 0.5).source_tag))\n  0\n}\n";
+    let f = tmp_ax("ai_extract_src_tag", src);
+
+    // Mock path. `uncertain_new` is the control: a fix that stamped 1
+    // everywhere would break it.
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        ["1", "1", "0"],
+        "mock path: AI-sourced values must carry source_tag 1"
+    );
+
+    // Replay-hit path: a pre-recorded cache, no mock, no key. The cache key is
+    // sha256(model \0 prompt) with the BUILTIN NAME as the model.
+    let cache = std::env::temp_dir().join(format!("axon_srctag_replay_{}", std::process::id()));
+    let key = |model: &str, prompt: &str| {
+        use sha2::{Digest, Sha256};
+        let d = Sha256::digest(format!("{model}\u{0}{prompt}").as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let _ = std::fs::remove_file(&cache);
+    let rows = [
+        (key("ai_extract_uncertain_i64", "how many? 3"), "3|0.8"),
+        (key("ai_extract_uncertain_f64", "how warm? 2.5"), "2.5|0.7"),
+    ];
+    // Line format written by `ai_replay_store`: `<key> <tokens> <hex(response)>`.
+    let body: String = rows
+        .iter()
+        .map(|(k, r)| {
+            let hex: String = r.bytes().map(|b| format!("{b:02x}")).collect();
+            format!("{k} 0 {hex}\n")
+        })
+        .collect();
+    std::fs::write(&cache, body).unwrap();
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env_remove("AXON_AI_MOCK")
+        .env("AXON_AI_REPLAY", &cache)
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&cache);
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        got,
+        ["1", "1", "0"],
+        "replay path: a recorded AI answer is still AI-sourced. stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
