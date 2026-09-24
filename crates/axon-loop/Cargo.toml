@@ -17,3 +17,6 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+# The interop gate's policy producer (tests/intake_dec_driver.rs) is the real
+# DEC `to_policy_envelope`, not a hand-written envelope.
+axon-reflex = { path = "../axon-reflex" }
