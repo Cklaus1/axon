@@ -247,22 +247,54 @@ pub enum EpisodeOutcome {
 }
 
 pub struct Runner {
+    /// The interpreter `observe` runs `axon check` with. NOT the check
+    /// executor: registered checks go through `check_executor`, which spawns
+    /// only a registry-pinned binary.
     pub axon_bin: PathBuf,
     pub workspace: PathBuf,
     pub episode: Episode,
     /// The previous snapshot's id, so each new snapshot records its parent and
     /// an episode's state chain is auditable rather than a set of orphans.
     last_snapshot_id: Option<String>,
+    /// B264: the seam every check dispatch goes through.
+    check_executor: Box<dyn CheckExecutor>,
 }
 
 impl Runner {
+    /// Convenience constructor kept for existing callers.
+    ///
+    /// The check executor is a [`LocalInterpreterExecutor`] over `axon_bin`
+    /// registered LAZILY: the binary is resolved and its sha256 pinned on the
+    /// FIRST check dispatch, and every later dispatch is refused if it has
+    /// changed. Lazily because callers that never run a check (the policy
+    /// adapter authorizes and exits) should not pay for hashing an interpreter
+    /// binary. A caller that needs the pin taken BEFORE anything else happens —
+    /// the `cortex` CLI does — registers explicitly and uses
+    /// [`Runner::with_check_executor`].
     pub fn new(axon_bin: impl Into<PathBuf>, workspace: impl Into<PathBuf>) -> Self {
+        let axon_bin = axon_bin.into();
+        let exec = LocalInterpreterExecutor::pin_on_first_use(axon_bin.clone());
+        Self::with_check_executor(axon_bin, workspace, Box::new(exec))
+    }
+
+    /// Construct with an explicit, already-registered check executor.
+    pub fn with_check_executor(
+        axon_bin: impl Into<PathBuf>,
+        workspace: impl Into<PathBuf>,
+        check_executor: Box<dyn CheckExecutor>,
+    ) -> Self {
         Runner {
             axon_bin: axon_bin.into(),
             workspace: workspace.into(),
             episode: Episode::new("cortex-repair-1"),
             last_snapshot_id: None,
+            check_executor,
         }
+    }
+
+    /// Which executor adjudicates this runner's checks (for evidence/logs).
+    pub fn check_executor_id(&self) -> String {
+        self.check_executor.id()
     }
 
     /// Snapshot the workspace region, content-addressed.
@@ -1261,60 +1293,22 @@ impl Runner {
     /// summary, so "the filter matched nothing" is distinguishable from "every
     /// test passed" — those are byte-identical in the human transcript, and
     /// both exit 0.
+    ///
+    /// B264: this is now the ONE place a check is dispatched, and it goes
+    /// through the [`CheckExecutor`] seam rather than spawning `axon_bin`
+    /// directly. The parsing contract above lives in
+    /// [`parse_axon_test_json`]; the executor decides WHAT runs.
     fn run_tests_json(
         &self,
         rel_path: &str,
         filter: Option<&str>,
     ) -> std::io::Result<(Vec<String>, Vec<String>, usize)> {
-        let mut cmd = std::process::Command::new(&self.axon_bin);
-        cmd.arg("test")
-            .arg(self.workspace.join(rel_path))
-            .arg("--json");
-        if let Some(f) = filter {
-            cmd.arg("--filter").arg(f);
-        }
-        let out = cmd.output()?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let (mut failed, mut passed, mut total) = (Vec::new(), Vec::new(), None);
-        for line in text.lines() {
-            let line = line.trim();
-            if !line.starts_with('{') {
-                continue;
-            }
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            if v.get("type").and_then(|t| t.as_str()) == Some("summary") {
-                total = v.get("total").and_then(|t| t.as_u64()).map(|t| t as usize);
-                continue;
-            }
-            let (Some(name), Some(status)) = (
-                v.get("name").and_then(|n| n.as_str()),
-                v.get("status").and_then(|s| s.as_str()),
-            ) else {
-                continue;
-            };
-            match status {
-                "ok" => passed.push(name.to_string()),
-                "failed" => failed.push(name.to_string()),
-                // An unknown status is neither. Guessing which it resembles is
-                // how a new status becomes a silent wrong answer.
-                _ => {}
-            }
-        }
-        // No summary means the run did not finish — a compile error, a crash,
-        // a missing binary. That is an ERROR, never "no tests failed".
-        let Some(total) = total else {
-            return Err(std::io::Error::other(format!(
-                "`axon test --json` produced no summary for {rel_path}; the run \
-                 did not complete, which is not the same as nothing failing"
-            )));
-        };
-        Ok((failed, passed, total))
+        let report = self.check_executor.run_checks(&CheckRequest {
+            workspace: &self.workspace,
+            rel_path,
+            filter,
+        })?;
+        Ok((report.failed, report.passed, report.total))
     }
 
     /// Run ONE named check and report how many tests the name matched.    /// Run ONE named check and report how many tests the name matched.
@@ -1590,4 +1584,461 @@ fn observed_compiles(obs: &Observation) -> Option<bool> {
             Observed::Known { value } => Some(value == "true"),
             Observed::Unknown { .. } => None,
         })
+}
+
+// ── B264: the registered-check seam ─────────────────────────────────────────
+
+/// What a check dispatch asks for. There is deliberately NO executable and NO
+/// argv here: the caller names a file and (optionally) a test filter, which are
+/// DATA passed as single argv values. Which program runs, and with which flags,
+/// is fixed by the [`CheckExecutor`] and its registration — a model-produced or
+/// caller-produced string can never become the program that adjudicates.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckRequest<'a> {
+    pub workspace: &'a Path,
+    pub rel_path: &'a str,
+    pub filter: Option<&'a str>,
+}
+
+/// What a check dispatch produced. `total` is the run's OWN summary count, so
+/// "the filter matched nothing" (`total == 0`, or no entry for a name) stays
+/// distinguishable from "everything passed".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReport {
+    pub failed: Vec<String>,
+    pub passed: Vec<String>,
+    pub total: usize,
+}
+
+/// The verdict for ONE named check. Three-valued on purpose: a check with no
+/// verdict (it matched nothing, or it did not run) is never `Passed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckVerdict {
+    Passed,
+    Failed,
+    /// No test by that exact name produced a verdict.
+    NotRun,
+}
+
+impl CheckReport {
+    /// The verdict for exactly `name`. Mandatory-check semantics: absent is
+    /// `NotRun`, and a name that both passed and failed (a substring filter can
+    /// select duplicates) is `Failed`.
+    pub fn verdict(&self, name: &str) -> CheckVerdict {
+        if self.failed.iter().any(|n| n == name) {
+            CheckVerdict::Failed
+        } else if self.passed.iter().any(|n| n == name) {
+            CheckVerdict::Passed
+        } else {
+            CheckVerdict::NotRun
+        }
+    }
+}
+
+/// The seam through which the Runner runs a registered check (B264).
+///
+/// An `Err` means NO VERDICT WAS PRODUCED — refused before spawning, could not
+/// spawn, or the run did not complete. It is never an empty-but-successful
+/// report; callers already treat `Err` as "did not run" / exit 22.
+pub trait CheckExecutor: Send {
+    /// A stable, human-readable identity (profile + pinned digest) for evidence.
+    fn id(&self) -> String;
+    fn run_checks(&self, req: &CheckRequest<'_>) -> std::io::Result<CheckReport>;
+}
+
+/// An executable pinned by canonical path AND sha256 at registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredExecutable {
+    /// Canonical absolute path (symlinks resolved at registration, so swapping
+    /// a symlink afterwards cannot redirect the spawn).
+    pub path: PathBuf,
+    /// Lowercase hex sha256 of the file's bytes at registration.
+    pub sha256: String,
+}
+
+/// Why a registered check refused to run. Every refusal happens BEFORE any
+/// process is spawned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckRefusal {
+    /// The registry has no entry for the requested executor id.
+    Unregistered { id: String },
+    /// The executable could not be resolved or read.
+    Unresolvable { path: PathBuf, reason: String },
+    /// The bytes at the registered path are not the bytes that were registered.
+    DigestChanged {
+        path: PathBuf,
+        registered: String,
+        found: String,
+    },
+}
+
+impl std::fmt::Display for CheckRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CheckRefusal::Unregistered { id } => {
+                write!(
+                    f,
+                    "check executor `{id}` is not registered; refusing to run"
+                )
+            }
+            CheckRefusal::Unresolvable { path, reason } => write!(
+                f,
+                "check executable {} cannot be resolved: {reason}",
+                path.display()
+            ),
+            CheckRefusal::DigestChanged {
+                path,
+                registered,
+                found,
+            } => write!(
+                f,
+                "check executable {} changed since registration (registered sha256 \
+                 {registered}, now {found}); refusing to run it",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl From<CheckRefusal> for std::io::Error {
+    fn from(r: CheckRefusal) -> Self {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, r.to_string())
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Resolve `exe` the way `Command::new` would (a bare name searches PATH),
+/// then canonicalize. Done ONCE, at registration.
+fn resolve_executable(exe: &Path) -> Result<PathBuf, CheckRefusal> {
+    let unresolvable = |reason: String| CheckRefusal::Unresolvable {
+        path: exe.to_path_buf(),
+        reason,
+    };
+    let candidate = if exe.components().count() == 1 && !exe.as_os_str().is_empty() {
+        let path_var = std::env::var_os("PATH").unwrap_or_default();
+        std::env::split_paths(&path_var)
+            .map(|d| d.join(exe))
+            .find(|p| p.is_file())
+            .ok_or_else(|| unresolvable("not found on PATH".into()))?
+    } else {
+        exe.to_path_buf()
+    };
+    let canon = candidate
+        .canonicalize()
+        .map_err(|e| unresolvable(e.to_string()))?;
+    if !canon.is_file() {
+        return Err(unresolvable("not a regular file".into()));
+    }
+    Ok(canon)
+}
+
+/// Cheap identity of a file's current bytes: (dev, ino, size, mtime, ctime).
+/// `ctime` cannot be set by an unprivileged process and changes on every
+/// write, chmod or rename, so an unchanged stamp means the pinned sha256 still
+/// describes the file; any change forces a full re-hash. (Measured: a
+/// debug-build sha256 of the 79 MB debug interpreter takes ~1.1 s, which per
+/// check dispatch was not acceptable.)
+type Stamp = Option<[i128; 7]>;
+
+#[cfg(unix)]
+fn file_stamp(p: &Path) -> Stamp {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(p).ok()?;
+    Some([
+        m.dev() as i128,
+        m.ino() as i128,
+        m.size() as i128,
+        m.mtime() as i128,
+        m.mtime_nsec() as i128,
+        m.ctime() as i128,
+        m.ctime_nsec() as i128,
+    ])
+}
+#[cfg(not(unix))]
+fn file_stamp(_p: &Path) -> Stamp {
+    None // no fast path: always re-hash
+}
+
+/// A trusted registry of check executables: id → (canonical path, sha256).
+///
+/// Entries come from two places only: an operator-supplied registry FILE whose
+/// digests are stated up front (and verified on load), or an explicit
+/// `register_pinned` call that pins whatever the path holds at that moment.
+/// Neither takes its program from a check request.
+#[derive(Debug, Clone, Default)]
+pub struct CheckRegistry {
+    entries: Vec<(String, RegisteredExecutable)>,
+}
+
+/// The id the local interpreter executor is registered under.
+pub const LOCAL_AXON_TEST_ID: &str = "axon-test-local";
+
+impl CheckRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Resolve `exe`, hash it, and pin it under `id` (trust on registration).
+    pub fn register_pinned(&mut self, id: &str, exe: &Path) -> Result<(), CheckRefusal> {
+        let path = resolve_executable(exe)?;
+        let bytes = std::fs::read(&path).map_err(|e| CheckRefusal::Unresolvable {
+            path: path.clone(),
+            reason: e.to_string(),
+        })?;
+        self.insert(
+            id,
+            RegisteredExecutable {
+                path,
+                sha256: sha256_hex(&bytes),
+            },
+        );
+        Ok(())
+    }
+
+    /// Register `exe` under `id` only if its bytes hash to `expected_sha256`
+    /// (the operator stated the digest out of band).
+    pub fn register_expected(
+        &mut self,
+        id: &str,
+        exe: &Path,
+        expected_sha256: &str,
+    ) -> Result<(), CheckRefusal> {
+        let path = resolve_executable(exe)?;
+        let bytes = std::fs::read(&path).map_err(|e| CheckRefusal::Unresolvable {
+            path: path.clone(),
+            reason: e.to_string(),
+        })?;
+        let found = sha256_hex(&bytes);
+        let want = expected_sha256.trim().to_ascii_lowercase();
+        if found != want {
+            return Err(CheckRefusal::DigestChanged {
+                path,
+                registered: want,
+                found,
+            });
+        }
+        self.insert(
+            id,
+            RegisteredExecutable {
+                path,
+                sha256: found,
+            },
+        );
+        Ok(())
+    }
+
+    /// Load `{"schema":"cortex-check-registry/1","executors":[{"id","path","sha256"}]}`.
+    /// Every entry is verified against its stated digest; one bad entry fails
+    /// the whole load (a partially trusted registry is not a registry).
+    pub fn load(file: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| format!("cannot read check registry {}: {e}", file.display()))?;
+        let v: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("check registry {} is not JSON: {e}", file.display()))?;
+        if v.get("schema").and_then(|s| s.as_str()) != Some("cortex-check-registry/1") {
+            return Err(format!(
+                "check registry {} must have schema `cortex-check-registry/1`",
+                file.display()
+            ));
+        }
+        let base = file.parent().unwrap_or(Path::new("."));
+        let mut reg = CheckRegistry::new();
+        for e in v
+            .get("executors")
+            .and_then(|x| x.as_array())
+            .ok_or("check registry has no `executors` array")?
+        {
+            let field = |k: &str| {
+                e.get(k)
+                    .and_then(|x| x.as_str())
+                    .ok_or_else(|| format!("check registry entry missing `{k}`"))
+            };
+            let (id, path, sha) = (field("id")?, field("path")?, field("sha256")?);
+            let p = Path::new(path);
+            let p = if p.is_relative() && p.components().count() > 1 {
+                base.join(p)
+            } else {
+                p.to_path_buf()
+            };
+            reg.register_expected(id, &p, sha)
+                .map_err(|r| r.to_string())?;
+        }
+        Ok(reg)
+    }
+
+    fn insert(&mut self, id: &str, e: RegisteredExecutable) {
+        self.entries.retain(|(k, _)| k != id);
+        self.entries.push((id.to_string(), e));
+    }
+
+    pub fn get(&self, id: &str) -> Result<&RegisteredExecutable, CheckRefusal> {
+        self.entries
+            .iter()
+            .find(|(k, _)| k == id)
+            .map(|(_, e)| e)
+            .ok_or_else(|| CheckRefusal::Unregistered { id: id.to_string() })
+    }
+}
+
+enum Pin {
+    /// Registered and pinned; the stamp is the file identity the digest was
+    /// last verified at.
+    Pinned(RegisteredExecutable, Stamp),
+    /// `Runner::new` compatibility: resolve + pin on first dispatch.
+    Deferred(PathBuf),
+    /// Registration failed; every dispatch refuses with this reason.
+    Failed(CheckRefusal),
+}
+
+/// The one real [`CheckExecutor`]: the local tree-walking interpreter,
+/// `<registered axon> test <file> --json [--filter F]`.
+///
+/// Profile: `process_scoped/local-interpreter`. It runs as a child process of
+/// the Runner with the Runner's own authority — it is NOT a sandbox and must
+/// never be reported as microVM-isolated.
+pub struct LocalInterpreterExecutor {
+    pin: std::sync::Mutex<Pin>,
+}
+
+impl LocalInterpreterExecutor {
+    pub const PROFILE: &'static str = "process_scoped/local-interpreter";
+
+    /// Use the registry's `axon-test-local` entry. An absent entry is a
+    /// refusal NOW, not at first dispatch.
+    pub fn from_registry(reg: &CheckRegistry) -> Result<Self, CheckRefusal> {
+        let e = reg.get(LOCAL_AXON_TEST_ID)?.clone();
+        let stamp = file_stamp(&e.path);
+        Ok(LocalInterpreterExecutor {
+            pin: std::sync::Mutex::new(Pin::Pinned(e, stamp)),
+        })
+    }
+
+    /// Compatibility path for [`Runner::new`]: resolve and pin on first use.
+    pub fn pin_on_first_use(exe: PathBuf) -> Self {
+        LocalInterpreterExecutor {
+            pin: std::sync::Mutex::new(Pin::Deferred(exe)),
+        }
+    }
+
+    /// Resolve the pin (if deferred) and verify the file is still the
+    /// registered bytes. Returns the path to spawn. Spawns NOTHING.
+    fn verified_path(&self) -> Result<PathBuf, CheckRefusal> {
+        let mut pin = self.pin.lock().unwrap_or_else(|p| p.into_inner());
+        if let Pin::Deferred(exe) = &*pin {
+            let mut reg = CheckRegistry::new();
+            *pin = match reg.register_pinned(LOCAL_AXON_TEST_ID, exe) {
+                Ok(()) => {
+                    let e = reg.get(LOCAL_AXON_TEST_ID)?.clone();
+                    let s = file_stamp(&e.path);
+                    Pin::Pinned(e, s)
+                }
+                Err(r) => Pin::Failed(r),
+            };
+        }
+        match &mut *pin {
+            Pin::Failed(r) => Err(r.clone()),
+            Pin::Deferred(_) => unreachable!("resolved above"),
+            Pin::Pinned(e, stamp) => {
+                let now = file_stamp(&e.path);
+                if now.is_some() && now == *stamp {
+                    return Ok(e.path.clone());
+                }
+                let bytes = std::fs::read(&e.path).map_err(|err| CheckRefusal::Unresolvable {
+                    path: e.path.clone(),
+                    reason: err.to_string(),
+                })?;
+                let found = sha256_hex(&bytes);
+                if found != e.sha256 {
+                    return Err(CheckRefusal::DigestChanged {
+                        path: e.path.clone(),
+                        registered: e.sha256.clone(),
+                        found,
+                    });
+                }
+                *stamp = now;
+                Ok(e.path.clone())
+            }
+        }
+    }
+}
+
+impl CheckExecutor for LocalInterpreterExecutor {
+    fn id(&self) -> String {
+        let pin = self.pin.lock().unwrap_or_else(|p| p.into_inner());
+        match &*pin {
+            Pin::Pinned(e, _) => {
+                format!("{}:{}@sha256:{}", Self::PROFILE, e.path.display(), e.sha256)
+            }
+            Pin::Deferred(p) => format!("{}:{} (unpinned)", Self::PROFILE, p.display()),
+            Pin::Failed(r) => format!("{}: refused ({r})", Self::PROFILE),
+        }
+    }
+
+    fn run_checks(&self, req: &CheckRequest<'_>) -> std::io::Result<CheckReport> {
+        // Refusal happens here, before any Command is built.
+        let exe = self.verified_path()?;
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("test")
+            .arg(req.workspace.join(req.rel_path))
+            .arg("--json");
+        if let Some(f) = req.filter {
+            cmd.arg("--filter").arg(f);
+        }
+        let out = cmd.output()?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        parse_axon_test_json(&text, req.rel_path)
+    }
+}
+
+/// Parse `axon test --json` output. See `Runner::run_tests_json` for why the
+/// machine-readable form and why a missing summary is an error.
+pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<CheckReport> {
+    let (mut failed, mut passed, mut total) = (Vec::new(), Vec::new(), None);
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) == Some("summary") {
+            total = v.get("total").and_then(|t| t.as_u64()).map(|t| t as usize);
+            continue;
+        }
+        let (Some(name), Some(status)) = (
+            v.get("name").and_then(|n| n.as_str()),
+            v.get("status").and_then(|s| s.as_str()),
+        ) else {
+            continue;
+        };
+        match status {
+            "ok" => passed.push(name.to_string()),
+            "failed" => failed.push(name.to_string()),
+            // An unknown status is neither. Guessing which it resembles is
+            // how a new status becomes a silent wrong answer.
+            _ => {}
+        }
+    }
+    // No summary means the run did not finish — a compile error, a crash,
+    // a missing binary. That is an ERROR, never "no tests failed".
+    let Some(total) = total else {
+        return Err(std::io::Error::other(format!(
+            "`axon test --json` produced no summary for {rel_path}; the run \
+             did not complete, which is not the same as nothing failing"
+        )));
+    };
+    Ok(CheckReport {
+        failed,
+        passed,
+        total,
+    })
 }

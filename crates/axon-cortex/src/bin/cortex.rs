@@ -32,7 +32,9 @@
 //! to it.
 
 use axon_cortex::action::SymbolRef;
-use axon_cortex::runner::{EditGrant, EpisodeOutcome, Runner};
+use axon_cortex::runner::{
+    CheckRegistry, EditGrant, EpisodeOutcome, LocalInterpreterExecutor, Runner, LOCAL_AXON_TEST_ID,
+};
 
 const USAGE: &str = "\
 cortex repair --file PATH --check NAME [--symbol NAME] [options]
@@ -76,7 +78,15 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          same grant check and the same hidden check a model's
                          would face. Knowing the answer is a reason to skip the
                          model, not the adjudication.
-  --axon PATH            the axon binary to check with (default: axon)
+  --axon PATH            the axon binary to check with (default: axon). It is
+                         resolved and its sha256 PINNED at startup; a check is
+                         refused, before anything is spawned, if those bytes
+                         change during the run.
+  --check-registry FILE  a `cortex-check-registry/1` JSON file naming the
+                         checker by path AND sha256 (entry id
+                         `axon-test-local`). Verified on load; a mismatch or a
+                         missing entry exits 22 with nothing run. When given,
+                         the registered binary replaces --axon.
   --json                 machine-readable outcome on stdout
 ";
 
@@ -95,6 +105,48 @@ fn usage(msg: &str) -> ! {
 fn no_target(reason: &str) -> ! {
     eprintln!("could not localize a repair target: {reason}");
     std::process::exit(25)
+}
+
+/// Build the Runner with its check executor REGISTERED before any check runs
+/// (B264). The checker is resolved from a trusted registry — the operator's
+/// `--check-registry` file, whose digests are stated up front, or else the
+/// operator's `--axon`, resolved once and pinned by sha256 now. Nothing a
+/// check request carries can choose the program.
+///
+/// A registration failure exits 22 (environment) with nothing spawned: the
+/// same code an unrunnable checker has always had, because it is the same
+/// fact — no verdict can be produced.
+fn registered_runner(
+    axon_bin: &std::path::Path,
+    check_registry: Option<&std::path::Path>,
+    workspace: &std::path::Path,
+) -> Runner {
+    let reg = match check_registry {
+        Some(file) => CheckRegistry::load(file),
+        None => {
+            let mut r = CheckRegistry::new();
+            r.register_pinned(LOCAL_AXON_TEST_ID, axon_bin)
+                .map(|()| r)
+                .map_err(|e| e.to_string())
+        }
+    };
+    let exec = reg.and_then(|r| {
+        let exe = r
+            .get(LOCAL_AXON_TEST_ID)
+            .map_err(|e| e.to_string())?
+            .path
+            .clone();
+        LocalInterpreterExecutor::from_registry(&r)
+            .map(|x| (exe, x))
+            .map_err(|e| e.to_string())
+    });
+    match exec {
+        Ok((exe, x)) => Runner::with_check_executor(exe, workspace, Box::new(x)),
+        Err(e) => {
+            eprintln!("the checks could not be run: {e}");
+            std::process::exit(22);
+        }
+    }
 }
 
 fn main() {
@@ -121,6 +173,7 @@ fn main() {
     let mut budget: usize = 8;
     let mut generator_spec = "none".to_string();
     let mut axon_bin = std::path::PathBuf::from("axon");
+    let mut check_registry: Option<std::path::PathBuf> = None;
     let mut write_prefixes: Vec<String> = Vec::new();
     let mut json = false;
     let mut candidates: usize = 3;
@@ -138,6 +191,9 @@ fn main() {
             "--principal" => principal = val("--principal"),
             "--generator" => generator_spec = val("--generator"),
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
+            "--check-registry" => {
+                check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
+            }
             "--write-prefix" => write_prefixes.push(val("--write-prefix")),
             "--candidates" => {
                 let raw = val("--candidates");
@@ -205,7 +261,7 @@ fn main() {
             },
         };
 
-    let mut runner = Runner::new(&axon_bin, &workspace);
+    let mut runner = registered_runner(&axon_bin, check_registry.as_deref(), &workspace);
     // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
     // was redundant with the check below and strictly worse: it accepted any
     // FUNCTION, so a `--check` naming an ordinary function passed it and was
@@ -502,6 +558,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     let mut workspace = std::path::PathBuf::from(".");
     let (mut file, mut check) = (String::new(), String::new());
     let mut axon_bin = std::path::PathBuf::from("axon");
+    let mut check_registry: Option<std::path::PathBuf> = None;
     let mut json = false;
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -513,6 +570,9 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
             "--file" => file = val("--file"),
             "--check" => check = val("--check"),
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
+            "--check-registry" => {
+                check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
+            }
             "--json" => json = true,
             other => usage(&format!("unknown argument `{other}`")),
         }
@@ -531,7 +591,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
              as evidence, and the target becomes a function of the answer",
         );
     }
-    let runner = Runner::new(&axon_bin, &workspace);
+    let runner = registered_runner(&axon_bin, check_registry.as_deref(), &workspace);
     let src = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {file}: {e}")));
     // An unrunnable checker is reported as such, never as an empty spectrum:
