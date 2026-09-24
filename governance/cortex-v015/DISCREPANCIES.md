@@ -12,6 +12,14 @@
 | D-006 | approval row: required work already landed | package update proposed | — |
 | D-007 | four governance registries already exist | consolidation proposed | — |
 | **D-008** | cancellation killed only the direct child | **FIXED** — `process_group` + `killpg`; differential-verified | `fix/kill-the-process-group` |
+| D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
+| D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **open** — Stage 2 | — |
+| D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **open** — Stage 2 | — |
+| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **open** — Stage 2 | — |
+| D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
+| D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
+| D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **open** — Stage 3 | — |
+| D-021 | v0.22 package `EXISTING_AXON_MAP.md` repeats two stale claims | package update proposed | — |
 
 None of the four fixes is on `main` yet: a `gate.sh --strict` run is in flight
 and several parity harnesses rebuild, so integrating mid-run would invalidate
@@ -577,3 +585,224 @@ engines — neither engine performs an effect the interpreter would forbid — a
 it does not make the CAPABILITY equivalent. A natively built binary still
 cannot enforce an effect ceiling, record a journal, or replay an AI call. Every
 matrix row says `explicitly-refused`, not `enforced`, for exactly that reason.
+
+---
+
+# v0.22 candidate records (D-014 … D-021)
+
+Filed 2026-09-24 against `v022/integration@279da778` on branch
+`v022/stage1-c` (Stage 1, "candidate honesty"). Every live-code citation is
+`git show 279da778:<path>`. Supporting analysis lives in the operator's
+untracked `.axon-v022/` directory — `analysis/D_architecture.json`,
+`analysis/E_hardening.json`, `analysis/F_guest_vm.json`,
+`redteam/axon-loop-r4-independent.md`, `evidence/b263/*.json`,
+`integration/gate_279da77.log`. **Those files are NOT in the repository**;
+they are cited as operator-side evidence and a reader without that directory
+cannot re-check them from this tree. Evidence class for each record: verified
+by reading the named source at `279da778` unless stated otherwise. Stage 1
+fixes none of the code defects below; it records them so the candidate cannot
+read greener than it is.
+
+## D-014 — "No new crates" and the crate table are false on the v0.22 line
+
+**Document passages.** `governance/cortex-v015/IMPLEMENTATION_MAP.md` §4:
+*"No new crates. Every gap below has an existing owner."* `ARCHITECTURE.md` §4
+listed no `axon-loop-contracts` / `axon-loop` / `axon-fabric`, and said of
+`axon-cortex`: *"no CLI verb calls it yet, so nothing here is on a user's
+path"*.
+
+**Live implementation.** Workspace `Cargo.toml` at `279da778` has three more
+members: `crates/axon-loop-contracts`, `crates/axon-loop`,
+`crates/axon-fabric`. The `axon-cortex` sentence was already false on `main`:
+the crate's own `cortex` binary (`src/bin/cortex.rs`, commit `d50d6af`, an
+ancestor of `main`) is its production caller; what remains true is that no
+`axon` CLI verb calls it. The candidate also records the crates in neither
+`AXON-COMPLETENESS.json` nor `governance/release-verification.json`, so
+`gate.sh` fails at "a completeness claim is not backed by evidence" (3 UNBACKED
+crates, `integration/gate_279da77.log`) — those two files are owned by another
+Stage-1 lane and are not changed here.
+
+**Resolution.** Docs corrected on this branch: `ARCHITECTURE.md` §4 rows +
+"Cortex family on the v0.22 candidate line"; `IMPLEMENTATION_MAP.md` carries a
+dated SUPERSEDED note and §4a. The crates are defensible (CX-11, CX-29/CX-33
+and ACF-01 had no code owner on `main`); the duplications they introduce are
+D-015 … D-018.
+
+**Owner.** Repository owner. **State.** Recorded.
+
+## D-015 — D-C1: a second, unkeyed hash-chained ledger
+
+**Document passage.** `IMPLEMENTATION_MAP.md` §4: *"Lineage chain (CX-10) →
+`axon-audit`'s `Ledger` — prev-hash chain, keyed tip, truncation detection, all
+built and tested"*, and *not* a new chain.
+
+**Live implementation.** `crates/axon-loop/src/ledger.rs:1-45` is a new
+`cl22:`-chained `ledger.jsonl` + `ledger.head` whose doc states the chain is
+*"UNKEYED sha256 in the same directory as the data"* and lists as OUT OF MODEL
+a consistent truncate-and-rewrite-head (R2), whole-store rollback (R1) and a
+well-chained forged append (F1/F2). `crates/axon-audit/src/lib.rs:237`
+`open_keyed` (HMAC) and `compute_tip` already close F1/F2/R2 for a holder of the
+key. Every "trusted" set in `axon-loop` is an operator premise from
+`config.json`, and the ledger stamps no writer identity from trusted runtime
+context — weaker than the repository's own `axon-ledger` rule (claim is not
+authority; `authenticated_admins`).
+
+**Why it matters.** `axon-loop`'s ledger is described as the store's ONE source
+of authority. An authority ledger whose forgery resistance is declared out of
+model, next to one that has it, is a regression of an invariant the repository
+already paid for.
+
+**Proposed resolution.** Keep the typed event log, anchor its head on
+`axon-audit`'s keyed primitives (or witness each entry's ref in an
+`axon-audit` keyed chain). **Stage 2. OPEN.**
+
+## D-016 — D-C2: a fourth authority vocabulary; admission under a grant that is not enforced
+
+**Document passage.** `IMPLEMENTATION_MAP.md` §5 risk 2: *"A fourth authority
+vocabulary. Three exist … build on `axon_os::grant::Grant`."* ACF-01 (v0.22
+package) forbids a second identity/approval system.
+
+**Live implementation.**
+* `crates/axon-loop-contracts/src/compute.rs:96-97` — `principal_ref` /
+  `grant_ref` are `OpaqueRef` strings; `crates/axon-fabric/src/submit.rs` uses
+  them only to format `authority_ref`.
+* `crates/axon-fabric/src/submit.rs` `supervisor_admits` / `AdmissionProbe`
+  (≈ lines 315-398) — admission is `axon_os::supervise_requiring` over a runtime
+  that declares an EMPTY effect row and runs nothing, under
+  `Profile::Restricted.default_grant(..)` with `require_approval: false`,
+  whatever the request says. The check actually executed later is bounded only
+  by an OPTIONAL `effect_ceiling` (`SubmitConfig.effect_ceiling: Option<String>`
+  → `AXON_ALLOWED_EFFECTS`); `None` means no ceiling. The grant admitted is not
+  the grant enforced.
+* `crates/axon-cortex/src/bin/cortex.rs:187-189` — under `--fabric-journal`,
+  `principal_ref: "cortex:repair"` and `policy_digest: acf1:000…0` are
+  hard-coded.
+* `crates/axon-loop/src/plan.rs:52,77,166` — plan approval is a self-asserted
+  `operator_approved: bool` plus a non-null `approval_ref`; it does not reuse
+  `axon-os` approval verification.
+
+**Proposed resolution.** Resolve `grant_ref` to an `axon_os::grant::Grant` and
+pass THAT to `supervise_requiring`; enforce the same grant at dispatch; make the
+policy digest a required operator input or refuse. **Stage 2. OPEN.**
+
+## D-017 — D-C3 / D-C5: duplicated canonicaliser; second budget algebra
+
+**D-C3.** Two `acf1:` implementations either side of the cortex → fabric process
+seam: `crates/axon-fabric/src/submit.rs:176-189` (`executable_digest`, `workspace_digest`, built on `axon_loop_contracts::canonical_bytes`) and
+`crates/axon-cortex/src/runner.rs:2326-2345` (`fabric_executable_digest`,
+`fabric_workspace_digest`: `serde_json::to_string` relying on sorted-map order,
+correct only for the ASCII values the Runner produces; equality asserted in
+tests, not by construction). The seam itself is accepted (a Cargo edge would
+be a cycle); the duplicate is not.
+
+**D-C5.** `crates/axon-fabric/src/journal.rs:796` `reserve` implements its own
+per-scope committed ≤ ceiling arithmetic beside
+`crates/axon-os/src/ledger.rs:36,72` `ResourceLedger::carve` (checked,
+never-decreasing, still without a production caller). The journal adds
+durability, `OutcomeUnknown` and liability that `ResourceLedger` lacks, so the
+fix is to use `carve` for the arithmetic, not to delete the journal.
+
+**Resolution.** One canonicaliser; ceiling arithmetic via `carve`. **Stage 2.
+OPEN.**
+
+## D-018 — D-C6: "admission" is two concepts; an ACCEPT is never a grant
+
+**Live implementation.** `crates/axon-loop/src/admission.rs:1-8` is CX-11
+POLICY admission (a frozen experiment rule → ACCEPT / REJECT / INCONCLUSIVE,
+which may move the fenced active-policy pointer). `crates/axon-os/src/gate.rs:51`
+`admit` and `crates/axon-intent/src/admit.rs` are EFFECT admission (effects ⊆
+grant).
+
+**Invariant recorded.** An ACCEPT admission, or an active-policy pointer, confers
+NO effect authority. No code path may read one as a grant. Verified at
+`279da778` by reading: `axon-fabric` reads only the authority EPOCH from the
+loop store, never the pointer or an admission, as authority. No test pins this
+yet, so it holds by inspection only. **State.** Invariant recorded; OPEN until
+a test enforces it.
+
+## D-019 — the `axon-vm` library entry point bypasses `cmd_run`'s pre-launch gates
+
+**Document passage.** The `axon-vm` CLI's hardening (null-grant refusal,
+override-may-only-narrow, no-TOFU kernel attestation, extended-TCB compare,
+quorum), listed in `CLAUDE.md`/`ARCHITECTURE.md` as properties of `axon-vm`.
+
+**Live implementation.** B262 moved the launch path to
+`crates/axon-vm/src/firecracker.rs` (`run_in_firecracker`, exported from
+`src/lib.rs`). Those gates stay in `src/main.rs` `cmd_run`; the library applies
+none of them, and `MmdsPayload.allowed_effects` stays an `Option`. The guest
+still fails closed on a null policy, so the impact today is "may boot an
+unattested kernel". It is **latent**: the only callers are `main.rs` and
+`tests/lib_launch.rs`; `axon-fabric` references only `BACKEND_PROFILE`.
+Pre-existing and moved verbatim: after the Firecracker child is spawned, any
+`?` error path leaks the child and its sockets (ACF-G22); the vsock UDS name
+is pid-keyed.
+
+**Resolution.** Move the gates into the library, or make `LaunchSpec` require
+a verified grant/attestation token; clean up on every post-spawn error.
+**Stage 3. OPEN.** Source: `F_guest_vm.json` B262.
+
+## D-020 — `linux-microvm-protected` is an enclosure, not a policed guest, and its eligibility check ignores BLOCKED
+
+**Document passage.** The profile name, and `crates/axon-fabric/src/backend.rs`
+`LinuxProfileConfig::qualification`: *"Eligible only if the manifest in use is
+byte-identical to the one the evidence record qualified, and that record has
+zero FAIL assertions."*
+
+**Live implementation / evidence.**
+* Qualification record `evidence/b263/20260924T080432Z.json` (operator-side,
+  not in repo): **32 PASS / 0 FAIL / 4 BLOCKED**, `result: PASS_WITH_BLOCKED`,
+  `host: WSL2-nested` (operator decision D2; L0 Hyper-V outside the boundary).
+  BLOCKED: x1 guest policy channel (ACF-G25), x2 scope preservation (ACF-G26),
+  x3 L0 boundary, x4 trusted evidence issuer — the record is **unsigned**,
+  produced by an unauthenticated local root shell. Two earlier runs
+  (`075735Z`, `075923Z`) had FAILs.
+* `qualification()` checks schema, profile name, `FAIL == 0` and manifest sha.
+  It ignores BLOCKED (including x4), host, freshness, source rev, engine
+  digests and signatures, so an unsigned operator-writable JSON enables
+  protected dispatch.
+* The guest runs `profiles/linux-microvm/guest-init.sh`, NOT `axon-guest-init`:
+  no MMDS, no effect ceiling, no in-guest policy. Only the VM boundary is
+  enforced. Fabric honestly refuses requests needing an effect ceiling or
+  path-scoped grant on this backend (`backend.rs` refusal branch), which is
+  why it can only carry grant-free `interpreter_run`.
+* `profiles/linux-microvm/manifest.json`: `axon_tree_dirty_at_build: true` —
+  the guest `axon` is not reproducible from a commit.
+* Firecracker and jailer are fixed paths in `scripts/fc_linux_profile.sh`,
+  not digest-checked at launch.
+* `acpi=off` deviation, recorded in the README and `kernel-overlay.config`,
+  not in `manifest.json` fields.
+* `axon-fabric` tests exercise Linux dispatch through a STAND-IN launcher
+  (`crates/axon-fabric/tests/submit.rs:550-560`); they say nothing about the VM.
+  Neither `fc_linux_profile.sh` nor `b263_qualify.sh` is invoked by `gate.sh`
+  or CI.
+
+**Resolution.** Profile README relabelled "enclosure-only, NOT qualified as
+protected" on this branch. Code: require BLOCKED = 0 (or explicit waiver) plus
+issuer, freshness and engine digests; pin firecracker/jailer; rebuild from a
+clean tree; add the in-guest policy channel via `axon-guest-init` (operator
+decision D5). **Stage 3. OPEN.**
+
+## D-021 — the v0.22 package's `EXISTING_AXON_MAP.md` repeats two stale claims
+
+**Package passages** (`docs/axon_cortex_v0_22/axon-cortex-build-v0_22/EXISTING_AXON_MAP.md`
+rows 14-15, byte-identical to the v0.15 rows):
+
+> Principal/kernel registry — *"Audit identity is not authorization; check each
+> executor use …"* (as work to do)
+>
+> Sandbox APIs — *"Empty scoped list is not deny-all; …"*
+
+**Live implementation.**
+* `""` IS deny-all and `"*"` is unrestricted for `sandbox_create_scoped`
+  (D-001, and the capability-policy section of `CLAUDE.md`). Acting on the
+  package row would reintroduce empty = unscoped — a hole that was measured
+  and closed.
+* "Audit identity is not authorization" has LANDED for the ledger: `axon-ledger`
+  treats `--as` / `AXON_PRINCIPAL` as a claim and takes admin authority from the
+  real uid (`crates/axon-ledger/src/main.rs:559-583`, `authenticated_admins`;
+  `AXON_LEDGER_DEV_IMPERSONATE=1` is the only escape). What is NOT done is
+  applying that rule to the v0.22 stores (D-015, D-016).
+
+**Resolution.** Do not copy either row forward. Package update proposed; the
+package is third-party input and vendored byte-for-byte, so it is not edited.
+**Owner.** Repository owner.
