@@ -7,9 +7,13 @@
 #                    TCB ~15K LOC, @[pure]/@[verify] syscall gate, <10ms boot.
 #                    Requires: rustup component add rust-src + lld.
 #
-#   linux          — falls back to Linux 6.1 microvm_defconfig (~7 MB bzImage).
-#                    TCB ~35M LOC, seccomp enforcement.  Takes ~3 min to build.
-#                    Requires: gcc make flex bison bc; AXON_KERNEL_VERSION to pin.
+#   linux          — the pinned "protected Linux microVM" profile (B263):
+#                    Linux 6.1.188 + Firecracker v1.10.1's CI guest config, and
+#                    a read-only squashfs root (static busybox + static axon).
+#                    Pins: profiles/linux-microvm/kernel.pin (digest-checked).
+#                    Outputs: dist/guest-linux/{vmlinux,rootfs.sqfs,manifest.json}.
+#                    Requires: gcc make flex bison bc libelf-dev squashfs-tools
+#                    busybox-static + rust target x86_64-unknown-linux-musl.
 #
 # Outputs:
 #   dist/guest/vmlinuz          — kernel image (ELF or bzImage)
@@ -19,7 +23,7 @@
 #
 # Usage:
 #   ./scripts/build-guest-image.sh [--kernel-only] [--initrd-only]
-#   AXON_KERNEL_BACKEND=linux ./scripts/build-guest-image.sh  # legacy path
+#   AXON_KERNEL_BACKEND=linux ./scripts/build-guest-image.sh [--kernel-only|--rootfs-only]
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -61,41 +65,119 @@ build_kernel_axon() {
 
 # ── Linux fallback kernel ──────────────────────────────────────────────────────
 
+#
+# The pinned "protected Linux microVM" profile (B263). This replaces an
+# unpinned legacy path (AXON_KERNEL_VERSION default 6.1.94, microvm_defconfig
+# + ad-hoc `scripts/config` edits, no digest checks) that had never been built.
+#
+# Everything consumed here is pinned in profiles/linux-microvm/kernel.pin and
+# VERIFIED before use: a tarball, config or busybox whose digest differs fails
+# the build rather than producing an image that merely looks like the
+# qualified one. Outputs go to dist/guest-linux/ (gitignored); their digests
+# are written to dist/guest-linux/manifest.json, copied to the committed
+# profiles/linux-microvm/manifest.json.
+#
+#   vmlinux       uncompressed ELF kernel (Firecracker's x86_64 boot format)
+#   rootfs.sqfs   read-only squashfs root: static busybox + static axon + /init
+#
+# No initramfs and no axon-guest-init on this path: the profile is OFFLINE (no
+# NIC, no MMDS), so the MMDS policy fetch axon-guest-init performs has nothing
+# to talk to. The job and its result travel on a separate workspace drive —
+# see profiles/linux-microvm/README.md.
+
+LDIST="dist/guest-linux"
+PROFILE_DIR="profiles/linux-microvm"
+
+require_sha() {  # require_sha <file> <expected> <label>
+    local got
+    got="$(sha256sum "$1" | cut -d' ' -f1)"
+    if [[ "$got" != "$2" ]]; then
+        echo "[build-guest-image] ERROR: $3 sha256 mismatch: got $got, pinned $2" >&2
+        exit 1
+    fi
+}
+
+load_pin() {
+    # shellcheck source=/dev/null
+    source "$PROFILE_DIR/kernel.pin"
+    mkdir -p "$LDIST"
+}
+
 build_kernel_linux() {
-    local KVER="${AXON_KERNEL_VERSION:-6.1.94}"
-    local KSRC="$DIST/linux-$KVER"
-    local BZIMAGE="$KSRC/arch/x86/boot/bzImage"
+    load_pin
+    local KSRC="$LDIST/linux-$KERNEL_VERSION"
+    local TARBALL="$LDIST/linux-$KERNEL_VERSION.tar.xz"
+    local CONFIG="$PROFILE_DIR/$KERNEL_CONFIG"
 
-    if [[ -f "$DIST/vmlinuz" ]]; then
-        echo "[build-guest-image] vmlinuz exists, skipping Linux kernel build"
-        return
+    require_sha "$CONFIG" "$KERNEL_CONFIG_SHA256" "kernel config"
+    if [[ ! -f "$TARBALL" ]]; then
+        echo "[build-guest-image] Downloading Linux $KERNEL_VERSION..."
+        curl -fsSL -o "$TARBALL.part" "$KERNEL_URL"
+        mv "$TARBALL.part" "$TARBALL"
+    fi
+    require_sha "$TARBALL" "$KERNEL_TARBALL_SHA256" "kernel tarball"
+
+    # Always re-extract: a pre-existing tree could carry edits the pin cannot see.
+    rm -rf "$KSRC"
+    tar -xf "$TARBALL" -C "$LDIST"
+    require_sha "$PROFILE_DIR/$KERNEL_OVERLAY" "$KERNEL_OVERLAY_SHA256" "kernel config overlay"
+    cp "$CONFIG" "$KSRC/.config"
+    grep -E '^CONFIG_' "$PROFILE_DIR/$KERNEL_OVERLAY" >> "$KSRC/.config"
+
+    echo "[build-guest-image] Building Linux $KERNEL_VERSION (Firecracker v1.10.1 CI config)..."
+    (
+        cd "$KSRC"
+        make ARCH=x86_64 olddefconfig > /dev/null
+        KBUILD_BUILD_TIMESTAMP="1970-01-01" KBUILD_BUILD_USER=axon \
+        KBUILD_BUILD_HOST=b263 KBUILD_BUILD_VERSION=1 \
+            make ARCH=x86_64 -j"$(nproc)" vmlinux 2>&1 | tail -3
+    )
+    [[ -f "$KSRC/vmlinux" ]] || { echo "[build-guest-image] ERROR: vmlinux not built" >&2; exit 1; }
+    cp "$KSRC/vmlinux" "$LDIST/vmlinux"
+    cp "$KSRC/.config" "$LDIST/effective.config"
+    echo "[build-guest-image] vmlinux → $LDIST/vmlinux ($(du -sh "$LDIST/vmlinux" | cut -f1))"
+}
+
+build_rootfs_linux() {
+    load_pin
+    require_sha "$BUSYBOX_SRC" "$BUSYBOX_SHA256" "busybox"
+
+    echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
+    RUSTFLAGS="-C target-feature=+crt-static" \
+        cargo build --locked -p axon-core \
+            --target x86_64-unknown-linux-musl \
+            --no-default-features --bin axon --release --quiet
+    local AXON_BIN="target/x86_64-unknown-linux-musl/release/axon"
+    if ! file "$AXON_BIN" | grep -q 'static'; then
+        echo "[build-guest-image] ERROR: $AXON_BIN is not statically linked" >&2
+        exit 1
     fi
 
-    if [[ ! -d "$KSRC" ]]; then
-        echo "[build-guest-image] Downloading Linux $KVER..."
-        KMAJOR="${KVER%%.*}"
-        wget -q -O "$DIST/linux-$KVER.tar.xz" \
-            "https://cdn.kernel.org/pub/linux/kernel/v${KMAJOR}.x/linux-${KVER}.tar.xz"
-        tar -xf "$DIST/linux-$KVER.tar.xz" -C "$DIST"
-        rm -f "$DIST/linux-$KVER.tar.xz"
-    fi
+    local STAGE
+    STAGE="$(mktemp -d)"
+    trap 'rm -rf "${STAGE:-}"' EXIT
+    mkdir -p "$STAGE"/{bin,usr/bin,proc,sys,dev,tmp,work}
+    cp "$BUSYBOX_SRC" "$STAGE/bin/busybox"
+    local applet
+    for applet in $("$STAGE/bin/busybox" --list); do
+        [[ "$applet" == busybox ]] || ln -s busybox "$STAGE/bin/$applet"
+    done
+    cp "$AXON_BIN" "$STAGE/usr/bin/axon"
+    cp "$PROFILE_DIR/guest-init.sh" "$STAGE/init"
+    chmod 0755 "$STAGE/init" "$STAGE/usr/bin/axon" "$STAGE/bin/busybox"
 
-    echo "[build-guest-image] Configuring Linux for Firecracker microVM..."
-    pushd "$KSRC" > /dev/null
-    make ARCH=x86_64 microvm_defconfig
-    scripts/config --enable VIRTIO_NET
-    scripts/config --enable HW_RANDOM_VIRTIO
-    scripts/config --enable KVM_GUEST
-    scripts/config --enable PARAVIRT_CLOCK
-    scripts/config --enable VSOCK
-    scripts/config --enable VIRTIO_VSOCK
-    scripts/config --enable TMPFS
-    scripts/config --disable MODULES
-    scripts/config --disable DEBUG_KERNEL
-    make ARCH=x86_64 -j"$(nproc)" bzImage 2>&1 | tail -3
-    popd > /dev/null
-    cp "$BZIMAGE" "$DIST/vmlinuz"
-    echo "[build-guest-image] vmlinuz → $DIST/vmlinuz ($(du -sh "$DIST/vmlinuz" | cut -f1))"
+    rm -f "$LDIST/rootfs.sqfs"
+    # -all-time/-mkfs-time 0 + -all-root: the image is a function of its inputs.
+    mksquashfs "$STAGE" "$LDIST/rootfs.sqfs" -noappend -all-root -no-xattrs \
+        -mkfs-time 0 -all-time 0 -comp gzip -quiet
+    cp "$AXON_BIN" "$LDIST/axon"
+    echo "[build-guest-image] rootfs → $LDIST/rootfs.sqfs ($(du -sh "$LDIST/rootfs.sqfs" | cut -f1))"
+}
+
+write_manifest_linux() {
+    python3 scripts/linux_profile_manifest.py "$LDIST" "$PROFILE_DIR"
+    cp "$LDIST/manifest.json" "$PROFILE_DIR/manifest.json"
+    echo "[build-guest-image] manifest → $LDIST/manifest.json (+ $PROFILE_DIR/manifest.json)"
 }
 
 build_kernel() {
@@ -163,6 +245,20 @@ build_initramfs() {
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
+if [[ "$BACKEND" == "linux" ]]; then
+    case "${KERNEL_ONLY:-}" in
+        --kernel-only) build_kernel_linux ;;
+        --rootfs-only) build_rootfs_linux ;;
+        *) build_kernel_linux; build_rootfs_linux ;;
+    esac
+    write_manifest_linux
+    echo ""
+    echo "[build-guest-image] Done (backend=linux, profile=linux-microvm-protected)."
+    echo "  Kernel: $LDIST/vmlinux   Rootfs: $LDIST/rootfs.sqfs"
+    echo "  Launch: scripts/fc_linux_profile.sh --program prog.ax --out DIR"
+    exit 0
+fi
 
 case "${KERNEL_ONLY:-}" in
     --kernel-only) build_kernel ;;
