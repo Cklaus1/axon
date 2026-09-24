@@ -15,7 +15,7 @@
 | D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
 | D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **open** — Stage 2 | — |
 | D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **fixed for the Fabric** (Stage 2 lane 2B); `axon-loop` plan approval still open | `crates/axon-fabric/tests/grant_authority.rs` |
-| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **open** — Stage 2 | — |
+| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | D-C3 **fixed** (Stage 2 lane 2B); D-C5 see entry | `crates/axon-cortex/tests/fabric_acf1.rs` |
 | D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
 | D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
 | D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **open** — Stage 3 | — |
@@ -727,8 +727,24 @@ never-decreasing, still without a production caller). The journal adds
 durability, `OutcomeUnknown` and liability that `ResourceLedger` lacks, so the
 fix is to use `carve` for the arithmetic, not to delete the journal.
 
-**Resolution.** One canonicaliser; ceiling arithmetic via `carve`. **Stage 2.
-OPEN.**
+**Resolution.** One canonicaliser; ceiling arithmetic via `carve`.
+
+**D-C3 resolved (Stage 2, lane 2B).** The single implementation is
+`axon_cortex::runner::acf1_canonical_bytes` (flat string objects; keys sorted
+explicitly so serde_json `preserve_order` cannot move a digest; `cl22`
+escaping). It lives in `axon-cortex` because that is the lowest crate both
+sides link — `axon-cortex` gains no dependency. `axon_fabric::submit::
+{executable_digest, workspace_digest}` delegate to it. Tests:
+`axon-cortex/tests/fabric_acf1.rs` pins the bytes and digests to Python
+`json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)` output
+for an adversarial path (quote, backslash, C0, DEL, non-ASCII);
+`axon-fabric/tests/submit.rs::one_acf1_canonicaliser_serves_both_sides_of_the_seam`
+checks equality with the `cl22` form and that the Fabric has no canonicaliser
+of its own. Mutation-checked: re-introducing the Fabric's own implementation,
+dropping the sort, and escaping DEL each fail a test. Measured honestly: the
+pre-fix serde_json-based cortex implementation was byte-correct for these
+inputs; the defect was the duplication and its reliance on the map type's
+order, not a wrong digest today.
 
 ## D-018 — D-C6: "admission" is two concepts; an ACCEPT is never a grant
 

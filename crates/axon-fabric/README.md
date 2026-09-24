@@ -50,6 +50,10 @@ linking this crate, because this crate depends on `axon-cortex`.
     `interpreter_run` only, and only while its manifest sha256 matches the
     qualification record.
 
+`acf1:` identities (`executable_digest`, `workspace_digest`) delegate to the
+single canonicaliser `axon_cortex::runner::acf1_canonical_bytes`, which the
+cortex side builds its requests with (D-C3, fixed in Stage 2).
+
 Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 `axon-cortex`, `axon-os`, `axon-vm`. It is the top of the Cortex family.
 
@@ -81,7 +85,6 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 
 | defect | where | evidence |
 |---|---|---|
-| Duplicate `acf1:` canonicaliser across the cortex seam (D-C3) | `src/submit.rs:176-189` vs `axon-cortex/src/runner.rs` `fabric_*_digest` | D-017 |
 | Its own reservation algebra instead of `axon_os::ResourceLedger::carve` (D-C5) | `src/journal.rs` `reserve` | D-017 |
 | `LinuxProfileConfig::qualification()` accepts a record with BLOCKED > 0: it ignores the missing trusted issuer, host, freshness, engine digests and any signature. An unsigned JSON the operator can write enables protected dispatch | `src/backend.rs` `qualification` | D-020; B263 evidence 32 PASS / 0 FAIL / 4 BLOCKED |
 | Linux dispatch is tested only through a **stand-in launcher**, so the tests say nothing about the VM | `tests/submit.rs:550-560` | `F_guest_vm.json` B280 |

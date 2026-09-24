@@ -153,11 +153,11 @@ axon-cortex ··spawns the sha256-pinned axon-fabric BINARY (no Cargo edge)··>
 
 The last line is how a cycle is avoided: the lowest crate reaches the highest
 one at run time through a process seam, the same doctrine as
-`cortex-policy-adapter`. The cost is duplication across the seam — there are
-two `acf1:` canonicalisers (`axon-fabric/src/submit.rs` `executable_digest` / `workspace_digest`, built on `axon_loop_contracts::canonical_bytes`, and
-`axon-cortex/src/runner.rs` `fabric_executable_digest` /
-`fabric_workspace_digest`, the latter relying on serde_json's sorted map). One
-must go (open conflict D-C3).
+`cortex-policy-adapter`. The seam once cost a duplicate `acf1:` canonicaliser on each
+side; there is now ONE, `axon_cortex::runner::acf1_canonical_bytes` (keys
+sorted explicitly, `cl22` escaping), in the lowest crate both sides link, and
+`axon-fabric`'s `executable_digest` / `workspace_digest` delegate to it (D-C3,
+closed in Stage 2).
 
 **"Admission" means two different things here, and they must not be confused.**
 `axon-os::gate::admit` / `axon-intent`'s `admit.rs` are EFFECT admission: is

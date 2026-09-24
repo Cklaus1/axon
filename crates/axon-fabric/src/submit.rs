@@ -194,19 +194,21 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// `acf1:` identity of a registered executable — MUST equal
-/// `axon_cortex::runner::fabric_executable_digest` (asserted in tests).
+/// `acf1:` identity of a registered executable. Delegates to THE acf1
+/// canonicaliser, `axon_cortex::runner::acf1_canonical_bytes`, which the
+/// cortex side of the seam builds its requests with — one implementation,
+/// not two kept equal by a test (D-C3).
 pub fn executable_digest(id: &str, e: &RegisteredExecutable) -> Acf1Ref {
-    let v = json!({"registered_executable_ref": id, "sha256": e.sha256});
-    let canon = axon_loop_contracts::canonical_bytes(&v).expect("small object");
-    Acf1Ref::new(format!("acf1:{}", sha256_hex(&canon))).expect("hex")
+    Acf1Ref::new(axon_cortex::runner::fabric_executable_digest(id, &e.sha256))
+        .expect("acf1 + sha256 hex")
 }
 
-/// `acf1:` identity of a single-file workspace version.
+/// `acf1:` identity of a single-file workspace version (same canonicaliser).
 pub fn workspace_digest(rel_path: &str, bytes: &[u8]) -> Acf1Ref {
-    let v = json!({"path": rel_path, "sha256": sha256_hex(bytes)});
-    let canon = axon_loop_contracts::canonical_bytes(&v).expect("small object");
-    Acf1Ref::new(format!("acf1:{}", sha256_hex(&canon))).expect("hex")
+    Acf1Ref::new(axon_cortex::runner::fabric_workspace_digest(
+        rel_path, bytes,
+    ))
+    .expect("acf1 + sha256 hex")
 }
 
 fn opaque(s: impl Into<String>) -> OpaqueRef {

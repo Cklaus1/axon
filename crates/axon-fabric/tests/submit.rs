@@ -800,3 +800,44 @@ fn the_linux_profile_refuses_an_architecture_or_checkpoint_it_does_not_offer() {
         assert!(e.0.contains(field), "{}", e.0);
     }
 }
+
+// ── D-C3: one acf1 canonicaliser across the cortex → fabric seam ────────────
+
+/// The Fabric computes the SAME digests the cortex side puts in its requests,
+/// for adversarial inputs too, and both equal the `cl22` canonical form of the
+/// same object. And the Fabric has no canonicaliser of its own: its digest
+/// functions delegate to `axon_cortex::runner::acf1_canonical_bytes` (a
+/// second implementation, kept equal only by this test, is what D-C3 was).
+#[test]
+fn one_acf1_canonicaliser_serves_both_sides_of_the_seam() {
+    for path in ["f.ax", "dir/é\"q\\\u{1}\u{7f}😀.ax", "a\u{2028}b\n.ax"] {
+        let bytes = path.as_bytes();
+        let fab = axon_fabric::submit::workspace_digest(path, bytes);
+        let cx = axon_cortex::runner::fabric_workspace_digest(path, bytes);
+        assert_eq!(fab.as_str(), cx, "{path:?}");
+        let v = json!({"path": path, "sha256": sha256_hex(bytes)});
+        let cl22 = axon_loop_contracts::canonical_bytes(&v).unwrap();
+        assert_eq!(
+            axon_cortex::runner::acf1_canonical_bytes(&[
+                ("path", path),
+                ("sha256", &sha256_hex(bytes))
+            ]),
+            cl22,
+            "{path:?}: the acf1 bytes are the cl22 canonical form"
+        );
+    }
+    let src = include_str!("../src/submit.rs");
+    let fns = &src[src.find("pub fn executable_digest").unwrap()..src.find("fn opaque(").unwrap()];
+    assert!(
+        fns.contains("axon_cortex::runner::fabric_executable_digest")
+            && fns.contains("axon_cortex::runner::fabric_workspace_digest")
+            && !fns.contains("canonical_bytes")
+            && !fns.contains("sha256_hex"),
+        "axon-fabric's acf1 digests must delegate to the single canonicaliser:\n{fns}"
+    );
+}
+
+fn sha256_hex(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(b))
+}
