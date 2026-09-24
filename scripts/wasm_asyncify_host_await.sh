@@ -37,7 +37,12 @@ RAW=target/wasm32-unknown-unknown/release/axon_wasm.wasm
 ASYNC="$WORK/axon_wasm.async.wasm"
 # Modern wasm features rustc emits must be enabled for binaryen 108 to validate.
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
-if ! wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>/dev/null; then
+# -O2 IS REQUIRED, not a nicety: the UNOPTIMIZED asyncify output runs away —
+# `axon_eval` never returns and linear memory grows until the host is exhausted,
+# even for a program with no `host_await` at all (measured on wasm-opt 120 and 127,
+# whose asyncify output is byte-identical). With -O2 the same module runs every
+# fixture in well under the cap. Do not drop the -O level to "keep the build fast".
+if ! wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>/dev/null; then
   echo "wasm_asyncify_host_await: wasm-opt --asyncify failed — skipping"; exit 0
 fi
 # Asyncify REWIND re-enters every saved wasm frame, so a deep suspend point needs
@@ -46,6 +51,41 @@ fi
 # works at --stack-size=2000+; this is a host stack-size knob, not an Asyncify limit.)
 NODE="node --stack-size=4000"
 DRIVER="scripts/wasm_asyncify_driver.js"
+
+# HOST SAFETY (R15 §13 B3). Every driver run below goes through `drive`, which
+# bounds it with an OS-enforced memory ceiling AND a wall-clock deadline. This is
+# not belt-and-braces: a source-ownership defect in the rewind loop once grew this
+# exact driver's memory at ~0.5 GiB/s until the WSL VM died. A runtime bug must
+# fail its test, never the machine.
+#
+# The V8 heap flag is NOT the protection — `--max-old-space-size` does not bound
+# Wasm linear memory (measured: a node process capped at 512MB old-space reached
+# 24.8 GiB RSS). The cgroup ceiling is what bounds peak memory; the deadline is
+# what bounds a program that allocates gracefully. We set a V8 cap too, as a
+# secondary layer that fails earlier and more cheaply when the bug IS in the heap.
+. "$ROOT/scripts/lib_bounded_run.sh"
+ASYNCIFY_MEM_MAX="${ASYNCIFY_MEM_MAX:-1G}"   # per-run memory ceiling
+ASYNCIFY_DEADLINE="${ASYNCIFY_DEADLINE:-60}" # per-run wall-clock seconds, in s
+
+# drive <stdout-file> <stderr-file> <ax-file> <replies> -> sets DRIVE_CODE,
+# DRIVE_CLASS. DRIVE_CODE is the driver's own exit status for a normal run, or
+# 137/124 when a safeguard fired. A safeguard firing is ALWAYS a nonzero status
+# and is classified RESOURCE_EXHAUSTED / TIMEOUT — never silently a pass.
+drive() {
+  local so="$1" se="$2" ax="$3" replies="$4"
+  bounded_run "$ASYNCIFY_MEM_MAX" "$ASYNCIFY_DEADLINE" \
+    node --stack-size=4000 --max-old-space-size=512 "$DRIVER" "$ASYNC" "$ax" "$replies" \
+    >"$so" 2>"$se"
+  DRIVE_CODE=$?
+  DRIVE_CLASS="$BOUNDED_RUN_CLASS"
+  if [ "$DRIVE_CLASS" = "RESOURCE_EXHAUSTED" ] || [ "$DRIVE_CLASS" = "TIMEOUT" ]; then
+    echo "wasm_asyncify_host_await: FAIL ($(basename "$ax")): safeguard fired — $DRIVE_CLASS" >&2
+    echo "  peak=$(( ${BOUNDED_RUN_PEAK:-0} / 1048576 ))MB ceiling=$ASYNCIFY_MEM_MAX deadline=${ASYNCIFY_DEADLINE}s" >&2
+    echo "  This means the driver consumed unbounded memory or never terminated." >&2
+    echo "  stderr tail: $(tail -3 "$se" 2>/dev/null | tr '\n' ' ')" >&2
+  fi
+  return $DRIVE_CODE
+}
 
 # (1) Two-turn program: each host_await suspends across an async (Promise) reply.
 cat > "$WORK/greet.ax" <<'AX'
@@ -56,7 +96,8 @@ fn main() -> i64 {
     0
 }
 AX
-out="$($NODE "$DRIVER" "$ASYNC" "$WORK/greet.ax" $'World\nHi' 2>"$WORK/err")"; code=$?
+drive "$WORK/out" "$WORK/err" "$WORK/greet.ax" $'World\nHi'; code=$?
+out="$(cat "$WORK/out")"
 reqs="$(grep '^REQ:' "$WORK/err" | sed 's/^REQ://' | tr '\n' '|')"
 if [ "$out" != "Hi, World!" ] || [ "$code" != "0" ] || [ "$reqs" != "name?|greet?|" ]; then
   echo "wasm_asyncify_host_await: FAIL (greet): out='$out' code=$code reqs='$reqs'; err: $(cat "$WORK/err")"; exit 1
@@ -77,7 +118,8 @@ fn main() -> i64 {
     0
 }
 AX
-lout="$($NODE "$DRIVER" "$ASYNC" "$WORK/loop.ax" $'a\nb\nc' 2>/dev/null)"; lcode=$?
+drive "$WORK/lout" "$WORK/lerr" "$WORK/loop.ax" $'a\nb\nc'; lcode=$?
+lout="$(cat "$WORK/lout")"
 if [ "$lout" != $'r=a\nr=b\nr=c' ] || [ "$lcode" != "0" ]; then
   echo "wasm_asyncify_host_await: FAIL (loop): code=$lcode out:"; echo "$lout" | sed 's/^/    /'; exit 1
 fi
@@ -91,7 +133,8 @@ fn main() -> i64 {
     0
 }
 AX
-oout="$($NODE "$DRIVER" "$ASYNC" "$WORK/opt.ax" $'P\nQ' 2>/dev/null)"; ocode=$?
+drive "$WORK/oout" "$WORK/oerr" "$WORK/opt.ax" $'P\nQ'; ocode=$?
+oout="$(cat "$WORK/oout")"
 if [ "$oout" != $'got P\ngot Q' ] || [ "$ocode" != "0" ]; then
   echo "wasm_asyncify_host_await: FAIL (opt): code=$ocode out:"; echo "$oout" | sed 's/^/    /'; exit 1
 fi
@@ -106,7 +149,8 @@ echo "  OK  opt: host_await_opt async → Some(P)/Some(Q)"
 # it, which put an answer in the channel where 3 means "@[verify] failed" to
 # anything reading the run (governance/EXIT_CODES.md).
 if [ -f examples/interactive/guess.ax ]; then
-  gout="$($NODE "$DRIVER" "$ASYNC" examples/interactive/guess.ax $'5\n9\n7' 2>/dev/null)"; gcode=$?
+  drive "$WORK/gout" "$WORK/gerr" examples/interactive/guess.ax $'5\n9\n7'; gcode=$?
+  gout="$(cat "$WORK/gout")"
   if ! echo "$gout" | grep -q 'Correct — 3 tries!' || [ "$gcode" != "0" ]; then
     echo "wasm_asyncify_host_await: FAIL (guess loop): code=$gcode out:"; echo "$gout" | sed 's/^/    /'; exit 1
   fi

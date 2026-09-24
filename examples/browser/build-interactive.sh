@@ -21,5 +21,7 @@ RAW="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
 # instruments only the axon_host_await import so host_await is the single suspend point.
 FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types --enable-multivalue"
 echo "wasm-opt --asyncify → $OUT"
-wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$OUT"
+# -O2 IS REQUIRED: the unoptimized asyncify output runs away (axon_eval never
+# returns; linear memory grows until the host is exhausted) on wasm-opt 120/127.
+wasm-opt $FEATURES -O2 --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$OUT"
 echo "done: $OUT ($(wc -c < "$OUT") bytes)"
