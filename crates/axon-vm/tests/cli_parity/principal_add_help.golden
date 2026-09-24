@@ -1,0 +1,23 @@
+exit: Some(0)
+--- stdout ---
+Register a new principal
+
+Usage: axon-vm principal add [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  Principal name (must be unique)
+
+Options:
+      --budget-tokens <BUDGET_TOKENS>
+          Token budget (default: 10000) [default: 10000]
+      --allowed-effects <ALLOWED_EFFECTS>
+          Allowed effect rows, comma-separated (e.g. "AI,Net") [default: AI]
+      --mem-mib <MEM_MIB>
+          Memory limit in MiB (default: 128) [default: 128]
+      --cpu-pct <CPU_PCT>
+          CPU share percentage 0-100 (default: 50) [default: 50]
+  -h, --help
+          Print help
+
+--- stderr ---
+

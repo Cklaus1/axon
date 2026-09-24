@@ -1,0 +1,12 @@
+exit: Some(10)
+--- stdout ---
+
+--- stderr ---
+[axon-vm] ATTESTATION FAILED: no pinned kernel baseline
+[axon-vm]   measured: ca5e3e91e7ec9ea017b59edb38e8b10ca1ee0a13207afbdc5caa9aacf414012b
+[axon-vm]   expected: (none — $TMP/.axon/kernel_baseline.sha256 is absent)
+[axon-vm]   pin it explicitly:  axon-vm attest --kernel $TMP/k --pin-baseline
+[axon-vm]   or pass:            --expect-digest <sha256>
+[axon-vm]   or, for dev only:   --no-attest
+axon-vm: attestation failed: no pinned baseline (refusing to trust on first use)
+

@@ -1,0 +1,6 @@
+exit: Some(13)
+--- stdout ---
+
+--- stderr ---
+QUORUM BLOCKED: no votes for run `r1` (0 vote(s) present for other runs)
+

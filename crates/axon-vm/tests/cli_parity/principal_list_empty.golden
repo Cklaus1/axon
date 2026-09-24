@@ -1,0 +1,6 @@
+exit: Some(0)
+--- stdout ---
+no principals registered (axon-vm principal add <name>)
+
+--- stderr ---
+

@@ -1,0 +1,29 @@
+exit: Some(0)
+--- stdout ---
+Collect `.vote` response files from a directory and check strict-majority quorum.
+
+Exit 0 = "QUORUM MET". Exit 13 = "QUORUM BLOCKED" (insufficient approvals or empty). Exit 14 = "QUORUM BLOCKED" (attestation mismatch across voters).
+
+Usage: axon-vm quorum check [OPTIONS] --responses-dir <RESPONSES_DIR> --n <N> --run-id <RUN_ID>
+
+Options:
+      --responses-dir <RESPONSES_DIR>
+          Directory containing `.vote` response files
+
+      --n <N>
+          Required fleet size (operator-configured; NOT the number of files present)
+
+      --run-id <RUN_ID>
+          The run this quorum decides. AUDIT T49: required, because votes used to aggregate across DIFFERENT runs — approvals collected for a dry-run counted toward a production deploy. Votes naming another run are not counted
+
+      --expect-tcb <EXPECT_TCB>
+          Pin the expected voter TCB digest (R31 `axtcb1-ext:`). AUDIT T49: without it the check only requires votes to AGREE on an identity they declared themselves, which forged votes trivially do
+
+      --json
+          Emit JSON output
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+
