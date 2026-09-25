@@ -202,18 +202,42 @@ fn absolutize(p: PathBuf) -> PathBuf {
 }
 
 /// Best-effort SIGKILL of the child's process GROUP (negative pid), so a shell
-/// that forked a grandchild is taken down too. Uses the POSIX `kill` utility to
-/// avoid a libc dependency; the pipe-close in `run_bounded` is the load-bearing
-/// guard, this just stops orphaned grandchildren.
+/// that forked a grandchild is taken down too, via `killpg(2)`. The pipe-close
+/// in `run_bounded` is the load-bearing guard; this stops orphaned grandchildren.
 #[cfg(unix)]
 fn kill_group(pid: i32) {
-    let _ = Command::new("kill")
-        .arg("-KILL")
-        .arg(format!("-{pid}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    // `killpg(2)` DIRECTLY — never an external `kill -KILL -<pid>`.
+    //
+    // That form was here, and it took down whole machines. procps `kill`
+    // parses `-<pid>` as ANOTHER OPTION, not a process group: it reads the
+    // leading digit(s) of it as a SIGNAL NUMBER and then uses that as the pid.
+    // Traced with strace on this host:
+    //
+    //     kill -CONT -5881   ->  kill(-5, SIGCONT)
+    //     kill -CONT -6032   ->  kill(-6, SIGCONT)
+    //     kill -CONT -12345  ->  kill(-1, SIGCONT)      <- EVERY process
+    //     kill -CONT -- -5881 -> kill(-5881, SIGCONT)   <- what was meant
+    //
+    // So a timed-out child with pid 5881 sent SIGKILL to process GROUP 5, and
+    // many pids sent it to `-1` — every process the caller may signal, which as
+    // root is all of them. That is what happened at 2026-09-25 11:39:18: the
+    // journal records cron, dbus, journald, sshd, docker, tailscaled and seven
+    // more services "code=killed, status=9/KILL" in the same second the gate
+    // reached this test, with 105 GB of memory free and no OOM. It happened
+    // again when this test was run on its own, and closed every WSL window.
+    //
+    // The syscall takes the group id as a typed integer, so there is nothing to
+    // misparse; and it refuses a non-positive id outright, because `killpg(0)`
+    // is the CALLER's own group and a negative value is not a group at all.
+    if pid <= 1 {
+        return;
+    }
+    // SAFETY: killpg takes a process-group id and a signal; `pid` is the pgid
+    // of a child we spawned with `process_group(0)`. ESRCH (already gone) is
+    // not actionable here.
+    unsafe {
+        libc::killpg(pid, libc::SIGKILL);
+    }
 }
 #[cfg(not(unix))]
 fn kill_group(_pid: i32) {}
@@ -643,6 +667,55 @@ Summarize ./data/report.txt into ./out/summary.txt.
         assert_eq!(a, b, "mock synthesis is byte-identical (A5 building block)");
         assert!(a.contains("read_file(\"./data/report.txt\")"));
         assert!(a.contains("write_file(\"./out/summary.txt\""));
+    }
+
+    /// The timeout kill must reach ONLY the child's own process group.
+    ///
+    /// `kill_group` used to shell out to `kill -KILL -<pid>`. procps parses
+    /// `-<pid>` as another option and turns its leading digits into a signal
+    /// number, so the syscall actually made was `kill(-5, SIGKILL)` or
+    /// `kill(-1, SIGKILL)` — SIGKILL to an unrelated group, or to every process
+    /// the caller may signal. As root under WSL that killed systemd's services
+    /// and every terminal window; the journal recorded thirteen services
+    /// `status=9/KILL` in one second, with ~105 GB of memory free and no OOM.
+    ///
+    /// The earlier test (below) could not see this. It asserts the runaway
+    /// child DIED, which is also true when `-1` killed everything. So this one
+    /// asserts the other half: a BYSTANDER in a different process group, owned
+    /// by this test, SURVIVES the kill. Under the old implementation the
+    /// bystander would have been SIGKILLed along with everything else.
+    #[cfg(unix)]
+    #[test]
+    fn the_timeout_kill_reaches_only_the_childs_own_group() {
+        use std::os::unix::process::CommandExt;
+        // A bystander in its OWN process group, alive for the whole test.
+        let mut bystander = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn bystander");
+        let bystander_pid = bystander.id() as i32;
+
+        let mut cmd = Command::new("sleep");
+        cmd.arg("5");
+        let out = run_bounded(&mut cmd, Duration::from_millis(150)).expect("spawn runaway");
+        assert!(out.timed_out, "the runaway itself must still be killed");
+
+        // NOT `kill(pid, 0)`: a SIGKILLed child we have not reaped is a zombie,
+        // and kill(pid, 0) SUCCEEDS on a zombie — so that probe reported the
+        // bystander "alive" even when the kill had reached it. Found by
+        // mutation: a deliberately mis-targeted kill hit the bystander and this
+        // test still passed. `try_wait` reaps and says HOW it ended.
+        let before_cleanup = bystander.try_wait().expect("poll bystander");
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+        let _ = bystander_pid;
+        assert!(
+            before_cleanup.is_none(),
+            "a process in an UNRELATED group was killed by the timeout kill \
+             ({before_cleanup:?}) — the kill escaped the child's process group \
+             (the kill(-1) bug)"
+        );
     }
 
     #[test]
