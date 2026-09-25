@@ -18,7 +18,7 @@
 //! `mod.rs` to support this extraction).
 
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use inkwell::FloatPredicate;
+use inkwell::{FloatPredicate, IntPredicate};
 
 use crate::ast;
 use crate::types::Type;
@@ -1186,6 +1186,46 @@ impl<'ctx> super::Codegen<'ctx> {
         let (l_val, l_conf) = extract(self, lhs, lt_sem)?;
         let (r_val, r_conf) = extract(self, rhs, rt_sem)?;
 
+        // Provenance of the result = the LEAST trusted operand: AI (1) beats
+        // Runtime (2) beats User (0). A non-Uncertain operand counts as User.
+        // This was a constant 0, so `u + 0` laundered a model's answer into a
+        // user-constructed value; the interpreter's `combine_source_tags` is the
+        // reference and this must match it (UPGRADE_V0_20.md D-014). Emitted
+        // through the `w_*` wrappers (R1e: one IR path).
+        let tag_of = |this: &Self,
+                      val: BasicValueEnum<'ctx>,
+                      sem: &Option<Type>|
+         -> inkwell::values::IntValue<'ctx> {
+            match (sem, val) {
+                (Some(Type::Uncertain(_)), BasicValueEnum::StructValue(sv)) => {
+                    build_wrappers::w_extract_value(&this.ir.builder, sv, 2, "unc_t")
+                        .into_int_value()
+                }
+                _ => i64_ty.const_zero(),
+            }
+        };
+        let l_tag = tag_of(self, lhs, lt_sem);
+        let r_tag = tag_of(self, rhs, rt_sem);
+        let b = &self.ir.builder;
+        let ai = i64_ty.const_int(1, false);
+        let rt = i64_ty.const_int(2, false);
+        let any_ai = build_wrappers::w_or(
+            b,
+            build_wrappers::w_int_compare(b, IntPredicate::EQ, l_tag, ai, "l_ai"),
+            build_wrappers::w_int_compare(b, IntPredicate::EQ, r_tag, ai, "r_ai"),
+            "any_ai",
+        );
+        let any_rt = build_wrappers::w_or(
+            b,
+            build_wrappers::w_int_compare(b, IntPredicate::EQ, l_tag, rt, "l_rt"),
+            build_wrappers::w_int_compare(b, IntPredicate::EQ, r_tag, rt, "r_rt"),
+            "any_rt",
+        );
+        let rt_or_user =
+            build_wrappers::w_select(b, any_rt, rt.into(), i64_ty.const_zero().into(), "tag_rt");
+        let result_tag =
+            build_wrappers::w_select(b, any_ai, ai.into(), rt_or_user, "tag_res").into_int_value();
+
         // min(l_conf, r_conf): select the smaller of the two via OLT compare.
         let cmp = self
             .ir
@@ -1230,7 +1270,7 @@ impl<'ctx> super::Codegen<'ctx> {
             .context
             .struct_type(&[result_inner_llvm, f64_ty.into(), i64_ty.into()], false);
 
-        // Build { value, confidence, source_tag = 0 }.
+        // Build { value, confidence, source_tag = least-trusted operand's }.
         let mut sv = result_struct_ty.get_undef();
         sv = self
             .ir
@@ -1247,7 +1287,7 @@ impl<'ctx> super::Codegen<'ctx> {
         sv = self
             .ir
             .builder
-            .build_insert_value(sv, i64_ty.const_zero(), 2, "unc_is")
+            .build_insert_value(sv, result_tag, 2, "unc_is")
             .ok()?
             .into_struct_value();
         Some(sv.into())

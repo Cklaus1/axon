@@ -31929,7 +31929,87 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
 }
 
 #[test]
-fn ai_extract_uncertain_is_stamped_ai_sourced_on_every_interp_path() {
+fn uncertain_arithmetic_keeps_the_least_trusted_source_tag() {
+    // D-014, second half (found by the v0.20 adversarial review, reproduced):
+    // every binop result was built with `make_uncertain` → tag 0, in BOTH
+    // engines, so `u + 0` turned a model's answer into a "user-constructed"
+    // value — raw tag 1, after `+ 0` tag 0 — and a program trusting only
+    // `source_tag == 0` accepted it. A derived value now carries the LEAST
+    // trusted operand's tag: AI (1) > runtime (2) > user (0). Plain literals
+    // count as user. The user×user row is the control: a fix that stamped 1
+    // everywhere would break it.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"n? 3\") {\n    \
+                 Ok(u) => {\n      \
+                   println(to_str((u + 0).source_tag))\n      \
+                   println(to_str((1 + u).source_tag))\n      \
+                   println(to_str((u * uncertain_new(2, 0.99)).source_tag))\n      \
+                   println(to_str((uncertain_dyn_i64(2, 0.5) - u).source_tag))\n    }\n    \
+                 Err(e) => println(e)\n  }\n  \
+               println(to_str((uncertain_dyn_i64(2, 0.5) * 3).source_tag))\n  \
+               println(to_str((uncertain_dyn_i64(2, 0.5) + uncertain_new(1, 0.9)).source_tag))\n  \
+               println(to_str((uncertain_new(1, 0.5) + uncertain_new(2, 0.9)).source_tag))\n  \
+               println(to_str((uncertain_new(1, 0.5) + 4).source_tag))\n  0\n}\n";
+    let f = tmp_ax("uncertain_binop_tag", src);
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        ["1", "1", "1", "1", "2", "2", "0", "0"],
+        "derived Uncertain must keep the least-trusted operand's source_tag. stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // Native must agree: codegen's `emit_binop_uncertain` stored a constant 0.
+    // The native mock is `AXON_AI_MOCK` in the produced binary (axon-ai returns
+    // {1|1.0, 0.9} and codegen stamps 1), so the same env drives both engines.
+    let out_bin = std::env::temp_dir().join(format!("axon_ubtag_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("run native");
+    let _ = std::fs::remove_file(&out_bin);
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        ngot, got,
+        "native must agree with the interpreter on derived provenance"
+    );
+}
+
+#[test]
+fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
     // Found reconciling the Cortex v0.20 package (UPGRADE_V0_20.md D-014):
     // CX-05 requires a value's ORIGIN to travel with it, and `source_tag` is
     // Axon's field for exactly that (0 user-constructed, 1 AI, 2 runtime).
@@ -31941,9 +32021,11 @@ fn ai_extract_uncertain_is_stamped_ai_sourced_on_every_interp_path() {
     // The comment on SRC_TAG_AI said the interp AI path was E0910-refused
     // natively; it is not — the fixture builds natively.
     //
-    // All three interp paths are covered because each built the value
-    // separately: mock, replay-hit, and live (live needs a key, so it is the
-    // one path not driven here; it shares the fixed constructor).
+    // Each interp path built the value separately. Mock and replay-hit are
+    // driven here and are mutation-pinned. The LIVE path needs a key and the
+    // network, so it is NOT driven: reverting only its constructor survives this
+    // test (measured by the v0.20 adversarial review). It uses the same
+    // `make_uncertain_ai` call, which is the whole of the protection.
     let src = "fn main() -> i64 {\n  \
                match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
                  Ok(u) => println(to_str(u.source_tag))\n    \

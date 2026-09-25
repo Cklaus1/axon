@@ -22,6 +22,34 @@ pub(super) fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
     None
 }
 
+/// An operand's provenance tag: its `source_tag` if it is an `Uncertain`, else
+/// user-constructed (a plain literal or variable the program itself holds).
+fn uncertain_source_tag(v: &Value) -> i64 {
+    match v {
+        Value::Struct { name, fields } if name == "Uncertain" => match fields.get("source_tag") {
+            Some(Value::Int(t)) => *t,
+            _ => SRC_TAG_USER,
+        },
+        _ => SRC_TAG_USER,
+    }
+}
+
+/// The provenance of a value DERIVED from two operands is the LEAST trusted of
+/// theirs: AI beats runtime beats user. Every binop result was stamped
+/// user-constructed, so `u + 0` turned a model's answer into a "user" value — the
+/// same laundering D-014 fixed at the constructor, one step later (found by the
+/// v0.20 adversarial review, reproduced: raw 1, after `+ 0` 0). Must match
+/// codegen's `emit_binop_uncertain`.
+pub(crate) fn combine_source_tags(a: i64, b: i64) -> i64 {
+    if a == SRC_TAG_AI || b == SRC_TAG_AI {
+        SRC_TAG_AI
+    } else if a == SRC_TAG_RUNTIME || b == SRC_TAG_RUNTIME {
+        SRC_TAG_RUNTIME
+    } else {
+        SRC_TAG_USER
+    }
+}
+
 /// The inner present `value` of a `Temporal<T>`, or `None` otherwise. Used by the
 /// Temporal binary-op soft-typing path.
 fn soft_temporal_inner(v: &Value) -> Option<Value> {
@@ -585,11 +613,12 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         let lu = uncertain_parts(&l);
         let ru = uncertain_parts(&r);
         if lu.is_some() || ru.is_some() {
+            let tag = combine_source_tags(uncertain_source_tag(&l), uncertain_source_tag(&r));
             let (lv, lc) = lu.unwrap_or_else(|| (l.clone(), 1.0));
             let (rv, rc) = ru.unwrap_or_else(|| (r.clone(), 1.0));
             let inner = eval_binop_vals(op, lv, rv)?;
             let new_conf = lc.min(rc);
-            return Ok(make_uncertain(inner, new_conf));
+            return Ok(make_uncertain_tagged(inner, new_conf, tag));
         }
     }
 
