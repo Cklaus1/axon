@@ -34,20 +34,18 @@ may interrupt the DAG only for host safety, evidence integrity, false greens /
 false terminals, or required release correctness. When one closes, recompute the
 DAG and continue.
 
-## Current recovery step (2026-09-25)
+## Current step (2026-09-25)
 
-1. Port the proven host-safety fixes from the donor line onto `v022/stage2-port`,
-   semantically, one commit each, with provenance
-   (`UPGRADE_V0_22_DONOR_PORT.md` maps every donor ID to its destination ID):
-   Asyncify `-O2`, borrowed-source ABI + `axon_free`, bounded runner (cgroup memory +
-   swap + deadline + descendant containment), exit-status laundering fixes, the
-   browser artifact stamp guard, build/wasm-opt failure ≠ SKIP, and the
-   `source_tag` / reflex fixes where still applicable.
-2. Re-certify Stage 2 under hard containment: the previous Stage-2 strict run
-   (`axon-s2/.axon-runs/stage2-strict-20260924T200938Z-2849197`) is **lost** — it died
-   with WSL during the 2026-09-24 Asyncify incident while running the (then
-   unoptimized) asyncify test. Never re-run that gate uncontained.
-3. Recompute the v0.22 DAG from the manifests and continue with Stage 3.
+* **Stage 2 ACCEPTED** at `048367ea` (tag `v022/stage2-accepted`; `.axon-v022/stage2/STAGE2_RESULT.json`):
+  strict gate 157/157 suites, 3076 tests, under run_managed `--mem-max 16G --swap-max 2G --deadline 18000`;
+  release_check fails only on FG-041/FG-042, which are Stage 3 by design (Stage 1's criterion).
+* **D3 satisfied** on MiCode `v022/micode-tui-merge` `e4943f88` (tui@65286581, incl. ed082601).
+* **Stage 3 ACTIVE** on `v022/stage3` (base `048367ea`), lanes L1 (Fabric qualification, FG-042),
+  L2 (HardwareIsolated), L3 (axon-vm admit + cleanup, D-019/ACF-G22), L5a (guest policy channel, D5);
+  then L4 (kernel allow-path relabel, FG-041, KVM), L5b (engine pins + launcher policy, root/KVM),
+  L5c (Fabric wiring), S3-6 (signed re-qualification — BLOCKED_USER_INPUT on the operator's
+  evidence signature and x3 waiver; see operator_decisions D6–D8 defaults).
+* Stage 7 needs operator pilot parameters (BLOCKED_USER_INPUT); everything before it proceeds.
 
 ## Standing operator decisions (from `.axon-v022/coordination/operator_decisions.json`)
 
