@@ -2042,6 +2042,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "ea7de7b3"
+    },
+    {
+      "id": "FG-042",
+      "where": "crates/axon-intent/src/synth.rs",
+      "claimed": "Timeout cleanup is correct: `run_bounded_kills_a_runaway_at_the_timeout` proves a runaway child is killed at the timeout and the call returns promptly, with no leaked child.",
+      "reality": "The child died because the timeout path could kill unrelated process groups, or every process the caller could signal. `kill_group` shelled out to `kill -KILL -<pid>`. procps parses a leading-dash operand as another OPTION and turns its digits into a signal number, which it then uses as the target: the syscall actually made was kill(-5, SIGKILL) for pid 5881, and kill(-1, SIGKILL) for many pids. As root under WSL this killed systemd services and every terminal window. The test asserted only that the target died. That is also true when everything dies, so it passed against the bug.",
+      "reproduced": "strace on the dev host, harmless signal: `/usr/bin/kill -CONT -5881` -> kill(-5, SIGCONT); `-12345` -> kill(-1, SIGCONT); `-- -5881` -> kill(-5881, SIGCONT). The persistent journal for the crashed boot records thirteen services `code=killed, status=9/KILL` in one second (2026-09-25 11:39:18 EDT): cron, earlyoom, systemd-oomd, dbus, rsyslog, ssh, containerd, unattended-upgrades, haproxy, snapd, docker, systemd-journald, tailscaled. That is the same second a strict gate log stopped at this test binary, with ~105 GB free, swap untouched, and no kernel OOM. Both lost gates stopped at the identical line. Running this test alone closed every WSL window.",
+      "fix": "kill_group now calls libc::killpg(pid, SIGKILL). The group id is a typed integer, so nothing can be misparsed, and pid <= 1 is refused outright. strace over the whole suite: only kill(-<childpgid>, SIGKILL) and kill(<childpid>, SIGKILL), and zero kill(-1) or kill(0). New regression `the_timeout_kill_reaches_only_the_childs_own_group` asserts a bystander in an UNRELATED group SURVIVES, using try_wait as the oracle. Its first draft used kill(pid, 0), which succeeds on a zombie, and a mutation that deliberately killed the bystander still passed. The final test fails on a contained mis-scoped kill (`unix_wait_status(9)`) and passes on the fix. A workspace guard (crates/axon-core/tests/process_control_guard.rs) now fails any Rust code that shells out to kill/pkill/killall. It catches the exact shipped call, which was confirmed by reintroducing it. Shell scripts keep bash's BUILTIN kill, verified with strace to parse `kill -SIG \"-$pgid\"` correctly.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "45ebcc19"
     }
   ]
 }

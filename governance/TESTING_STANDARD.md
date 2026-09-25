@@ -96,6 +96,40 @@ These are the places *this* codebase silently breaks. Every relevant change test
 
 ---
 
+## Destructive operations: test the effect AND the containment boundary
+
+Any test of an operation that DESTROYS something — kills a process, empties a
+cgroup, deletes files, drops rows, revokes a grant — must assert two things:
+
+1. **the intended effect happened** (the target is gone), and
+2. **the boundary held** (something just outside the target is still intact).
+
+"The target disappeared" alone is never evidence of SCOPED destruction, because
+destroying everything also makes the target disappear.
+
+| operation | effect | containment |
+|---|---|---|
+| timeout kill | the runaway child dies | an unrelated bystander process group survives |
+| cgroup teardown | the target cgroup empties | a sibling cgroup stays populated |
+| cleanup of a temp tree | the target files are removed | a neighbouring fixture is intact |
+| prune / revoke | the named records go | a record just outside the filter remains |
+
+**The incident this rule comes from.** `axon-intent`'s timeout kill shelled out
+to `kill -KILL -<pid>`. procps parses that operand as another option and turns
+its digits into a signal number, so the syscall made was `kill(-5, SIGKILL)` or
+`kill(-1, SIGKILL)`: every process on the machine. Run as root under WSL, it
+killed systemd's services and every terminal, twice, and was first misread as
+memory pressure. Its test asserted only that the runaway child died. That is
+true of `kill(-1)` too, so the test passed against the bug.
+
+**The oracle must be sound.** The first containment test for that fix probed the
+bystander with `kill(pid, 0)`, which SUCCEEDS on a zombie. A mutation that
+deliberately SIGKILLed the bystander still passed. Use an oracle that
+distinguishes "alive" from "dead but not yet reaped", such as `try_wait` /
+`waitpid(WNOHANG)`. Then mutation-test the containment assertion itself: inject
+a deliberately mis-scoped destruction that you control and confine (never the
+real, unbounded bug) and confirm the test fails.
+
 ## Coverage expectations
 
 Not a line-coverage number (gameable). Instead, **behavioral coverage** — every branch of the spec's
