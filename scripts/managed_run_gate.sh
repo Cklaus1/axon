@@ -168,6 +168,11 @@ CG_BEFORE=$(ls -d /sys/fs/cgroup/axon_run_* 2>/dev/null | wc -l)
 D3D=$("$RM" start gate_selftest_scope -- bash -c 'exit 0') || fail "start failed"
 for _ in $(seq 1 100); do [ "$(cat "$D3D/status")" != running ] && break; sleep 0.1; done
 [ "$(cat "$D3D/status")" = "exited:0" ] || fail "expected exited:0, got '$(cat "$D3D/status")'"
+# The supervisor writes the status FIRST and releases the scope after (so the
+# verdict is durable even if cleanup fails). Counting cgroups the moment status
+# flips therefore raced the release — measured flaking 0 -> 1 under load. Wait
+# for the supervisor to finish; the leak check then measures the final state.
+for _ in $(seq 1 100); do [ -s "$D3D/receipt" ] && ! kill -0 "$(cat "$D3D/supervisor_pid" 2>/dev/null)" 2>/dev/null && break; sleep 0.1; done
 CG_AFTER=$(ls -d /sys/fs/cgroup/axon_run_* 2>/dev/null | wc -l)
 # Only meaningful where cgroups are actually in use; on a host without them the
 # scope is a process group and there is nothing to leak.
@@ -205,6 +210,50 @@ for _ in $(seq 1 100); do [ -s "$D3E/receipt" ] && break; sleep 0.1; done
 [ "$(sed -n 's/^tests_failed=//p' "$D3E/receipt")" = 2 ] \
   || fail "receipt tests_failed=$(sed -n 's/^tests_failed=//p' "$D3E/receipt"), expected 2 — cargo failures must count and non-cargo text must not"
 rm -rf "$D3E"
+
+# ── 3f. supervisor-owned limits: a memory ceiling and a deadline that FIRE ──
+# The limits are passed to `start`, so a contained gate is still a plain
+# `gate.sh` command (a `timeout …` prefix made a green strict gate uncitable).
+# Only meaningful where cgroups exist; elsewhere `start` must REFUSE a ceiling.
+waitrc() { for _ in $(seq 1 300); do [ -s "$1/receipt" ] && return 0; sleep 0.1; done; return 1; }
+if [ "$(cat "$D/scope" 2>/dev/null | cut -d: -f1)" = cgroup ] || [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  # (a) a 64M ceiling OOM-kills an allocator; the cgroup's own record makes it
+  #     uncitable EVEN THOUGH a wrapper turns the kill into exit 0.
+  D3F=$("$RM" start gate_selftest_oom --mem-max 64M --swap-max 0 -- \
+        bash -c 'python3 -c "b=bytearray(); [b.extend(bytes(1<<20)) for _ in range(2048)]" & wait; exit 0') \
+    || fail "start with --mem-max failed"
+  waitrc "$D3F" || fail "no receipt for the OOM self-test"
+  grep -q '^mem_max=67108864$' "$D3F/receipt" || fail "receipt does not record the memory ceiling"
+  [ "$(sed -n 's/^oom_kills=//p' "$D3F/receipt")" != 0 ] \
+    || fail "a 64M ceiling did not OOM-kill a 2 GiB allocator (oom_kills=0) — the ceiling is not applied"
+  # Assert the REASON, not just a refusal: this self-test run is uncitable for
+  # other reasons too (live tree, no suites), so a bare "verify fails" check
+  # passed with the OOM clause deleted (measured).
+  # Capture first: under pipefail, `verify | grep -q` fails whenever verify
+  # refuses — which it always does here — so the grep's answer was discarded.
+  V3F="$("$RM" verify "$D3F" 2>&1)"
+  printf '%s' "$V3F" | grep -q 'memory ceiling OOM-killed' \
+    || fail "verify did not refuse on the OOM evidence (a wrapper made the job exit 0)"
+  rm -rf "$D3F"
+  # (b) a 2s deadline stops a long job; the supervisor survives to record it.
+  D3G=$("$RM" start gate_selftest_deadline --deadline 2 -- bash -c "sleep $VICTIM_SLEEP") \
+    || fail "start with --deadline failed"
+  waitrc "$D3G" || fail "no receipt: the deadline killed the supervisor, not just the job"
+  grep -q '^deadline_hit=yes$' "$D3G/receipt" || fail "deadline did not fire (receipt: $(grep deadline "$D3G/receipt"))"
+  [ "$(count_sleep "$VICTIM_SLEEP")" -eq 0 ] || fail "the deadline left the job's process alive"
+  [ "$(count_sleep "$CONTROL_SLEEP")" -ge 1 ] || fail "the deadline killed an unrelated bystander"
+  V3G="$("$RM" verify "$D3G" 2>&1)"
+  printf '%s' "$V3G" | grep -q 'wall-clock deadline fired' \
+    || fail "verify did not refuse on the deadline evidence"
+  rm -rf "$D3G"
+  # (c) limits do not change what the job IS: gate detection still reads the
+  #     command's first token, so a limited gate.sh run stays a gate run.
+  D3H=$("$RM" start gate_selftest_limited_gate --mem-max 64M --deadline 60 -- ./scripts/gate.sh --strict --help) \
+    || fail "start failed"
+  waitrc "$D3H" || fail "no receipt"
+  grep -q '^gate_run=yes$' "$D3H/receipt" || fail "a limited gate.sh run was not recorded as a gate run"
+  "$RM" cancel "$D3H" >/dev/null 2>&1; rm -rf "$D3H"
+fi
 
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has

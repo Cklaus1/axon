@@ -72,13 +72,38 @@ scope_alive() {
   esac
 }
 
+# Resolve "16G" / "512M" / "1073741824" to bytes.
+to_bytes() {
+  case "$1" in
+    *[gG]) echo $(( ${1%[gG]} * 1024 * 1024 * 1024 )) ;;
+    *[mM]) echo $(( ${1%[mM]} * 1024 * 1024 )) ;;
+    *[kK]) echo $(( ${1%[kK]} * 1024 )) ;;
+    ''|*[!0-9]*) return 1 ;;
+    *) echo "$1" ;;
+  esac
+}
+
 cmd_start() {
   local name="$1"; shift
-  local snapshot_ref=""
-  if [ "${1:-}" = "--snapshot" ]; then
-    shift; snapshot_ref="${1:?--snapshot needs a committish}"; shift
-  fi
-  [ "${1:-}" = "--" ] && shift
+  local snapshot_ref="" mem_max="" swap_max="" deadline=""
+  # RESOURCE LIMITS are owned by the supervisor, not prefixed onto the command.
+  # A `timeout 5h ./scripts/gate.sh --strict` job is (correctly) NOT a gate run
+  # to write_receipt — the first token must BE gate.sh — so a contained gate
+  # used to be an uncitable one (measured: a green strict gate at 1fd1eb36 was
+  # refused by release_check for exactly this). And setting memory.max by hand
+  # after `start` returns leaves a window in which the job runs uncapped. Both
+  # are closed by stating the limits HERE, applied before the child exists.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --snapshot) shift; snapshot_ref="${1:?--snapshot needs a committish}"; shift ;;
+      --mem-max)  shift; mem_max="$(to_bytes "${1:-}")" || die "--mem-max needs a size (e.g. 16G)"; shift ;;
+      --swap-max) shift; swap_max="$(to_bytes "${1:-}")" || die "--swap-max needs a size (e.g. 2G)"; shift ;;
+      --deadline) shift; case "${1:-}" in ''|*[!0-9]*) die "--deadline needs whole seconds" ;; esac
+                  deadline="$1"; shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
   [ $# -gt 0 ] || die "no command given"
 
   local id="${name}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -129,6 +154,27 @@ cmd_start() {
     local cg="/sys/fs/cgroup/axon_run_$id"
     mkdir "$cg" 2>/dev/null && echo "cgroup:$cg" > "$dir/scope"
   fi
+  # A requested memory ceiling is applied to the cgroup NOW, before the
+  # supervisor or the child joins it. Where no cgroup exists the request is
+  # REFUSED, not degraded: V8/allocator limits do not bound Wasm or native
+  # memory (measured: 24.8 GiB RSS under --max-old-space-size=512), so a run
+  # that asked for a ceiling and silently lacks one is exactly the unprotected
+  # run the 2026-09-24 Asyncify incident was.
+  if [ -n "$mem_max$swap_max" ]; then
+    local scope_now; scope_now="$(cat "$dir/scope")"
+    [ "${scope_now#cgroup:}" != "$scope_now" ] \
+      || { echo "cancelled" > "$dir/status"; die "--mem-max/--swap-max need a cgroup v2 scope, and none is available here; refusing to run unprotected"; }
+    local cgp="${scope_now#cgroup:}"
+    if [ -n "$mem_max" ]; then echo "$mem_max" > "$cgp/memory.max" \
+      || { echo "cancelled" > "$dir/status"; die "could not set memory.max on $cgp"; }; fi
+    if [ -n "$swap_max" ]; then echo "$swap_max" > "$cgp/memory.swap.max" \
+      || { echo "cancelled" > "$dir/status"; die "could not set memory.swap.max on $cgp"; }; fi
+  fi
+  {
+    echo "mem_max=${mem_max:-none}"
+    echo "swap_max=${swap_max:-none}"
+    echo "deadline_secs=${deadline:-none}"
+  } > "$dir/limits"
 
   # The supervisor is launched with `setsid`, in its OWN SESSION, as a mode of
   # this same script. It is not an ordinary background subshell.
@@ -277,8 +323,44 @@ cmd_supervise() {
   # legitimately empty while the supervisor is still starting, so "empty" had
   # to mean both "starting" and "gone".
   : > "$dir/.ready.tmp"; mv -f "$dir/.ready.tmp" "$dir/ready"
+  # DEADLINE WATCHDOG. It kills the JOB — every process in the scope except the
+  # supervisor and itself — never the supervisor, which must survive to record
+  # the verdict. (cgroup.kill would take the supervisor down with the job,
+  # leaving a run whose completion is never recorded.)
+  local deadline wd=""
+  deadline="$(sed -n 's/^deadline_secs=//p' "$dir/limits" 2>/dev/null)"
+  if [ -n "$deadline" ] && [ "$deadline" != none ]; then
+    local sup=$BASHPID
+    (
+      sleep "$deadline"
+      kill -0 "$child" 2>/dev/null || exit 0
+      echo yes > "$dir/deadline_hit"
+      local me=$BASHPID spins=0
+      while [ $spins -lt 50 ]; do
+        local left=0
+        case "$scope" in
+          cgroup:*)
+            for p in $(cat "${scope#cgroup:}/cgroup.procs" 2>/dev/null); do
+              [ "$p" = "$sup" ] || [ "$p" = "$me" ] && continue
+              kill -9 "$p" 2>/dev/null && left=1
+            done ;;
+          *) kill -9 -- "-$child" 2>/dev/null && left=1 ;;
+        esac
+        [ $left -eq 0 ] && break
+        sleep 0.2; spins=$((spins + 1))
+      done
+    ) &
+    wd=$!
+  fi
   wait "$child"
   local code=$?
+  [ -n "$wd" ] && kill "$wd" 2>/dev/null
+  # Record the cgroup's OWN account of what it killed while the cgroup still
+  # exists. No wrapper inside the job can rewrite memory.events, so an OOM kill
+  # is evidence even when the job's status came back 0.
+  case "$scope" in
+    cgroup:*) awk '/^oom_kill /{print $2}' "${scope#cgroup:}/memory.events" 2>/dev/null > "$dir/oom_kills" ;;
+  esac
   date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/finished_at"
   # Never overwrite an explicit `cancelled`: the canceller's verdict is the
   # true one, and `wait` would otherwise report the signal as a plain exit.
@@ -482,6 +564,9 @@ write_receipt() {
     echo "env_axon_names=$(env | grep -oE '^AXON_[A-Z0-9_]+' | sort | tr '\n' ',' | sed 's/,$//')"
     echo "env_axon_digest=$(env | grep -E '^AXON_' | sort | sha256sum | cut -d' ' -f1)"
     echo "cargo_profile=${CARGO_PROFILE:-debug}"
+    cat "$dir/limits" 2>/dev/null
+    echo "oom_kills=$(cat "$dir/oom_kills" 2>/dev/null || echo unknown)"
+    echo "deadline_hit=$(cat "$dir/deadline_hit" 2>/dev/null || echo no)"
     echo "child_exit=$code"
     echo "started_at=$(cat "$dir/started_at" 2>/dev/null)"
     echo "finished_at=$(cat "$dir/finished_at" 2>/dev/null)"
@@ -594,6 +679,21 @@ cmd_verify() {
       echo "  NOT CITABLE: $r_failed test(s) failed"
       bad=1
     fi
+    # A FIRED SAFEGUARD IS NEVER A PASS, whatever the status says. A wrapper
+    # inside the job can turn a child's OOM kill into exit 0 (measured: a
+    # `bash -c '... & wait'` shape does), but it cannot rewrite the cgroup's
+    # own memory.events, and it cannot unset the watchdog's deadline record.
+    local r_oom r_deadline
+    r_oom="$(sed -n 's/^oom_kills=//p' "$dir/receipt")"
+    r_deadline="$(sed -n 's/^deadline_hit=//p' "$dir/receipt")"
+    case "$r_oom" in
+      ''|0|unknown) ;;
+      *) echo "  NOT CITABLE: the memory ceiling OOM-killed $r_oom process(es) in this run"; bad=1 ;;
+    esac
+    if [ "$r_deadline" = "yes" ]; then
+      echo "  NOT CITABLE: the wall-clock deadline fired; the job did not finish on its own"
+      bad=1
+    fi
 
     # The log must still be the log this receipt was written for.
     local now_log
@@ -633,5 +733,5 @@ case "${1:-}" in
   cancel) shift; cmd_cancel "$@" ;;
   scope-alive) shift; scope_alive "$@" && echo alive || echo empty ;;
   verify) shift; cmd_verify "$@" ;;
-  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] -- <cmd...>|status <dir>|verify <dir> [--for <commit>]|cancel <dir>|scope-alive <dir>}" ;;
+  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] [--mem-max SIZE] [--swap-max SIZE] [--deadline SECS] -- <cmd...>|status <dir>|verify <dir> [--for <commit>]|cancel <dir>|scope-alive <dir>}" ;;
 esac
