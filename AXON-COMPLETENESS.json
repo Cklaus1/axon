@@ -2075,6 +2075,42 @@
       "status": "fixed",
       "commit": "4c908c3",
       "severity": "reporting"
+    },
+    {
+      "id": "FG-044",
+      "where": "scripts/run_managed.sh",
+      "claimed": "A managed-run receipt's tests_passed / tests_failed are the job's test counts.",
+      "reality": "write_receipt summed `[0-9]+ passed` / `[0-9]+ failed` from ANYWHERE in the log, so any line a nested tool printed (e.g. `claims_gate: 5 passed, 1 failed`, emitted inside cargo's own test output) was added to cargo's tally. A tool printing 'N passed' inflates tests_passed with phantom passes.",
+      "reproduced": "Real run `cargo test --locked -p axon-core --no-default-features --no-fail-fast` at 7ac00f3: cargo summary lines total 1547 passed / 2 failed, receipt recorded 1552 / 3 (the claims_gate line added 5/1). Synthetic log with 900 non-cargo 'passed' lines: receipt tests_passed=907 instead of 7.",
+      "fix": "Tally only `^test result:` lines. managed_run_gate.sh check 3e asserts both directions (non-cargo text not counted; cargo failures still counted) and fails the original code (907) and a mutant that drops cargo failures (0). Found during the Cortex v0.20 upgrade (UPGRADE_V0_20.md \u00a79.6).",
+      "status": "fixed",
+      "severity": "reporting",
+      "commit": "d4859f1d",
+      "ported_from": "FG-041@upgrade/cortex-v0_20 (donor commit 900fdc2)"
+    },
+    {
+      "id": "FG-045",
+      "where": "scripts/lib/child_exit.sh",
+      "claimed": "interp/native parity: both engines produced the same result (exec, parse_float_bool, parse_int_err, str_count, str_utf8, to_str, goal_run_return, fuzz nan_case and clock parity harnesses; plus timer_irq_qemu_test.sh).",
+      "reality": "The harnesses compared captured STDOUT and never read the child's exit status. A process that printed its normal output and was then killed (SIGKILL, cgroup OOM kill, timeout) produced byte-identical stdout, so the harness reported OK. timer_irq_qemu_test.sh hard-coded QEMU_EXIT=0 after `wait`, making its QEMU-crash check dead code.",
+      "reproduced": "exec_parity.sh with the native binary wrapped to print its output then `kill -9 $$`: probe saw native exit 137, harness printed 'exec_parity: OK \u2026 exec matches the interpreter', exit 0. Same SIGKILL-after-output mutant: 8/8 affected harnesses exit 0 before the fix (fuzz via nan_case in isolation). A self-SIGKILLing qemu-system-x86_64 on PATH could not fail the timer test's exit check.",
+      "fix": "scripts/lib/child_exit.sh: parity compares exit STATUS as well as stdout and fails on any timeout or >128 status even when both engines agree (two OOM-killed engines agree and prove nothing); >128 is not assumed to be a signal because Axon programs can exit 137/200 themselves. The QEMU test reads the real wait status when QEMU exited on its own. Mutation: 8/8 mutants now fail; all 9 harnesses pass on real code; every run under a cgroup memory cap + timeout. Found while auditing for exit-status laundering after the Asyncify linear-memory incident.",
+      "status": "fixed",
+      "severity": "correctness",
+      "commit": "55f70aa1",
+      "ported_from": "FG-042@upgrade/cortex-v0_20 (donor commit 9e8e4da)"
+    },
+    {
+      "id": "FG-046",
+      "where": "scripts/wasm_asyncify_host_await.sh",
+      "claimed": "The browser-async (Asyncify host_await) harness either ran or legitimately SKIPPED because a tool is absent.",
+      "reality": "A PRESENT tool that FAILED was reported as a skip: an axon-wasm build failure or a wasm-opt --asyncify failure printed 'skipping' and exited 0, so a broken toolchain or a failed instrumentation pass read as not-applicable.",
+      "reproduced": "PATH-shadowed wasm-opt that exits 1: harness exit 0, last line 'wasm-opt --asyncify failed \u2014 skipping'. Also a wasm-opt exiting 0 with no output and one emitting an uninstrumented module.",
+      "fix": "Absent tools still skip via harness_skip; a present tool that fails is FAIL with its stderr, and an artifact lacking the asyncify exports is FAIL. All three mutants now fail; the real toolchain passes. Found closing the 2026-09-24 Asyncify incident (governance/incidents/2026-09-24-asyncify-linear-memory.md).",
+      "status": "fixed",
+      "severity": "correctness",
+      "commit": "9c5912e0",
+      "ported_from": "FG-043@upgrade/cortex-v0_20 (donor commit ebf389e)"
     }
   ]
 }

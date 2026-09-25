@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**2 OPEN, 41 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**2 OPEN, 44 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-041 — scripts/kernel_enforce_test.sh (reporting, **OPEN**)
 
@@ -505,4 +505,25 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** live_prereqs() returns None and the test RETURNS EARLY, reporting ok, whenever firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent — an eprintln is the only trace, and cargo prints 'ok'. The kernel path ignores CARGO_TARGET_DIR. Not routed through harness_skip / AXON_HARNESS_STRICT, so a skip is indistinguishable from a pass in the gate's tally. When it does run, its positive control is the FG-041 vacuous allow path.
 - **Reproduced:** 2026-09-24 at 279da77: `cargo test --locked -p axon-vm --test lib_launch -- --nocapture --test-threads=1` with CARGO_TARGET_DIR=/home/cklaus/.cache/axon-v022-targets/s1-a -> 'lib_launch: SKIPPED live boot (firecracker=true, kvm=true, kernel=false)' followed by 'test live_boot_through_the_library_reports_the_guest_verdict ... ok', 'test result: ok. 3 passed'.
 - **Fix:** lib_launch's absent-prerequisite path now records to target/harness-skips.log and panics under AXON_HARNESS_STRICT=1; the kernel is located via AXON_GUEST_KERNEL, then CARGO_TARGET_DIR, then the workspace target. Verified: `AXON_HARNESS_STRICT=1 cargo test --locked -p axon-vm` fails live_boot with 'SKIPPED under AXON_HARNESS_STRICT=1'; with AXON_GUEST_KERNEL set it boots and passes. Its positive control is still the FG-041 vacuous allow path (open). (`4c908c3`)
+
+### FG-044 — scripts/run_managed.sh (reporting, fixed)
+
+- **Claimed:** A managed-run receipt's tests_passed / tests_failed are the job's test counts.
+- **Reality:** write_receipt summed `[0-9]+ passed` / `[0-9]+ failed` from ANYWHERE in the log, so any line a nested tool printed (e.g. `claims_gate: 5 passed, 1 failed`, emitted inside cargo's own test output) was added to cargo's tally. A tool printing 'N passed' inflates tests_passed with phantom passes.
+- **Reproduced:** Real run `cargo test --locked -p axon-core --no-default-features --no-fail-fast` at 7ac00f3: cargo summary lines total 1547 passed / 2 failed, receipt recorded 1552 / 3 (the claims_gate line added 5/1). Synthetic log with 900 non-cargo 'passed' lines: receipt tests_passed=907 instead of 7.
+- **Fix:** Tally only `^test result:` lines. managed_run_gate.sh check 3e asserts both directions (non-cargo text not counted; cargo failures still counted) and fails the original code (907) and a mutant that drops cargo failures (0). Found during the Cortex v0.20 upgrade (UPGRADE_V0_20.md §9.6). (`d4859f1d`)
+
+### FG-045 — scripts/lib/child_exit.sh (correctness, fixed)
+
+- **Claimed:** interp/native parity: both engines produced the same result (exec, parse_float_bool, parse_int_err, str_count, str_utf8, to_str, goal_run_return, fuzz nan_case and clock parity harnesses; plus timer_irq_qemu_test.sh).
+- **Reality:** The harnesses compared captured STDOUT and never read the child's exit status. A process that printed its normal output and was then killed (SIGKILL, cgroup OOM kill, timeout) produced byte-identical stdout, so the harness reported OK. timer_irq_qemu_test.sh hard-coded QEMU_EXIT=0 after `wait`, making its QEMU-crash check dead code.
+- **Reproduced:** exec_parity.sh with the native binary wrapped to print its output then `kill -9 $$`: probe saw native exit 137, harness printed 'exec_parity: OK … exec matches the interpreter', exit 0. Same SIGKILL-after-output mutant: 8/8 affected harnesses exit 0 before the fix (fuzz via nan_case in isolation). A self-SIGKILLing qemu-system-x86_64 on PATH could not fail the timer test's exit check.
+- **Fix:** scripts/lib/child_exit.sh: parity compares exit STATUS as well as stdout and fails on any timeout or >128 status even when both engines agree (two OOM-killed engines agree and prove nothing); >128 is not assumed to be a signal because Axon programs can exit 137/200 themselves. The QEMU test reads the real wait status when QEMU exited on its own. Mutation: 8/8 mutants now fail; all 9 harnesses pass on real code; every run under a cgroup memory cap + timeout. Found while auditing for exit-status laundering after the Asyncify linear-memory incident. (`55f70aa1`)
+
+### FG-046 — scripts/wasm_asyncify_host_await.sh (correctness, fixed)
+
+- **Claimed:** The browser-async (Asyncify host_await) harness either ran or legitimately SKIPPED because a tool is absent.
+- **Reality:** A PRESENT tool that FAILED was reported as a skip: an axon-wasm build failure or a wasm-opt --asyncify failure printed 'skipping' and exited 0, so a broken toolchain or a failed instrumentation pass read as not-applicable.
+- **Reproduced:** PATH-shadowed wasm-opt that exits 1: harness exit 0, last line 'wasm-opt --asyncify failed — skipping'. Also a wasm-opt exiting 0 with no output and one emitting an uninstrumented module.
+- **Fix:** Absent tools still skip via harness_skip; a present tool that fails is FAIL with its stderr, and an artifact lacking the asyncify exports is FAIL. All three mutants now fail; the real toolchain passes. Found closing the 2026-09-24 Asyncify incident (governance/incidents/2026-09-24-asyncify-linear-memory.md). (`9c5912e0`)
 

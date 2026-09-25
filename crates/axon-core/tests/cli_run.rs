@@ -3057,6 +3057,9 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
         ("fs prefix", "sandbox_scope_fs.ax"),
         ("path traversal", "sandbox_scope_traversal.ax"),
         ("net host", "sandbox_scope_net.ax"),
+        // An EMPTY host list is deny-all, not "unscoped" (D-001; the vendored
+        // Cortex packages still say the opposite in four places).
+        ("empty net list", "sandbox_scope_net_empty.ax"),
         // file_copy: arg 1 is a WRITE. The runtime classified the whole call
         // as one kind and had no arm for file_copy at all, so both its read
         // and its write escaped a scoped sandbox.
@@ -3086,6 +3089,16 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
             !msg.contains("ESCAPED"),
             "[{label}] the out-of-scope access must never happen: {msg}"
         );
+        // Exit 8 alone does not say WHICH check fired. For the empty list it was
+        // measured: with "" misread as unscoped, `http_get` went out (and failed
+        // offline), then the job's `println` tripped the Net-only ceiling —
+        // ALSO exit 8. So the reason is asserted: the HOST was refused.
+        if label == "empty net list" {
+            assert!(
+                msg.contains("not permitted to reach host `evil.example.com`"),
+                "[{label}] must be refused BY THE HOST SCOPE, not by some later check: {msg}"
+            );
+        }
     }
     // The in-scope write must still succeed — a scope that denies everything
     // would pass the assertions above while being useless.

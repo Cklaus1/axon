@@ -20,6 +20,13 @@
 | D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
 | D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **open** — Stage 3 | — |
 | D-021 | v0.22 package `EXISTING_AXON_MAP.md` repeats two stale claims | package update proposed | — |
+| **D-022** | interp stamped AI-sourced `Uncertain` as user-constructed, at the constructor and through arithmetic (both engines) | **FIXED** — ported; mutation-verified | ported from `D-014@upgrade/cortex-v0_20` |
+| **D-023** | reflex reply parse was last-wins; an id-less request was served as id 0 | **FIXED** — ported; mutation-verified | ported from `D-015@upgrade/cortex-v0_20` |
+| D-024 | CX-35 claimed by the repo (axon-reflex) and reserved by the package; CX-37 overlaps it | open — owner decision | ported from `D-016@upgrade/cortex-v0_20` |
+| D-025 | model self-reported confidence gates `@[verify]` / `deploy --gate verify` | open — owner decision | ported from `D-017@upgrade/cortex-v0_20` |
+| D-026 | typed approval/record structs silently drop unknown fields | open — fold into R24's `axon-approval/2` | ported from `D-018@upgrade/cortex-v0_20` |
+| D-027 | `axon trace --replay` re-runs LIVE AI calls under a "replaying" banner | open | ported from `D-019@upgrade/cortex-v0_20` |
+| D-028 | estimated token usage is indistinguishable from reported | open | ported from `D-020@upgrade/cortex-v0_20` |
 
 None of the four fixes is on `main` yet: a `gate.sh --strict` run is in flight
 and several parity harnesses rebuild, so integrating mid-run would invalidate
@@ -926,3 +933,26 @@ rows 14-15, byte-identical to the v0.15 rows):
 **Resolution.** Do not copy either row forward. Package update proposed; the
 package is third-party input and vendored byte-for-byte, so it is not edited.
 **Owner.** Repository owner.
+
+
+---
+
+# Records ported from the superseded v0.20 donor line (D-022 … D-028)
+
+These were filed on `upgrade/cortex-v0_20` (`/home/cklaus/projects/axon`) as
+D-014 … D-020. On this line those IDs already name v0.22 findings, so the donor
+records were given **new** IDs here rather than reused. The full donor text, with
+its measurements, is at `D-014@upgrade/cortex-v0_20` … in that branch's copy of
+this file (`git show upgrade/cortex-v0_20:governance/cortex-v015/DISCREPANCIES.md`),
+and the complete ID map is in `UPGRADE_V0_22_DONOR_PORT.md`.
+
+* **D-022** (donor D-014): fixed on this line by the ported commits
+  `6de01247` (constructor) and `ea9ba38d` (binop propagation, both engines).
+* **D-023** (donor D-015): fixed on this line by `624dec42`.
+* **D-024 … D-028** (donor D-016 … D-020): carried as OPEN. Nothing about them
+  changes by being ported; each still needs the decision or work its donor record
+  names. D-026's proposed schema name is NOT `axon-approval/2` as a new schema:
+  that name is allocated by `governance/specs/R24-defended-approval-boundary.md`.
+* **D-001** carried: the v0.22 package still says "empty scope = unscoped". The
+  repo behaviour (`""` = deny-all) stands, and is now pinned by the ported
+  `sandbox_scope_net_empty.ax` case, which asserts the refusal *reason*, not just exit 8.
