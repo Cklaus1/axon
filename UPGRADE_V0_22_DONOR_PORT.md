@@ -34,7 +34,7 @@ this one.
 |---|---|
 | `7fce4d2`, `90c4c61` | v0.20 package vendoring + its package-gate section. Superseded by the v0.22 package gate (Stage 6 / B283–B284). The `90c4c61` hardening (never run package code after an integrity failure; clear stale validator reports; refuse symlinks; `--ref*` self-grep) **applies to the v0.22 package gate too**: tracked as a Stage-6 input, not dropped |
 | `81ab860`, `432d858`, `4b97b71`, `313f971` | v0.20 upgrade record and matrix. Superseded by `.axon-v022/UPGRADE_V0_22.md` |
-| `a25c581` | `CLAUDE.md` Design Reference path. Stage-1 records the same failure (`claude_md_claims_are_true`); ported separately as its own commit |
+| `a25c581` | `CLAUDE.md` Design Reference path. **Already fixed on v0.22** independently (it names the vendored `AI_Language_Plan.md`); nothing to port |
 | `cb9bc1b`, `0b664bd`, `376a7e7` | donor completeness entries. Re-issued here under new IDs (below), not cherry-picked |
 
 ## False greens (`AXON-COMPLETENESS.json`)
