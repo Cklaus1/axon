@@ -69,6 +69,14 @@ fn intent(op: &str, input: &[u8], exec_ms: u64) -> Intent {
     }
 }
 
+fn receipt(origin: &str, sequence: u64, actual: ResourceVector) -> Settlement {
+    Settlement {
+        origin: origin.into(),
+        sequence,
+        actual,
+    }
+}
+
 fn fresh(dir: &Path) -> Journal {
     let (j, rep) = Journal::open(dir.join("ops.journal")).unwrap();
     assert!(rep.reconciled_unknown.is_empty());
@@ -557,13 +565,13 @@ fn failed_and_cancelled_work_is_charged_or_held_never_dropped() {
 
     // Settling a liability with evidence converts it to a charge; the op's
     // STATE is unchanged.
-    j.settle(&b, Settlement { actual: res(3) }).unwrap();
+    j.settle(&b, receipt("meter-1", 1, res(3))).unwrap();
     assert_eq!(j.view(&b).unwrap().state, OpState::Failed);
     let u = j.scope_usage(&scope()).unwrap();
     assert_eq!(u.liability.exec_ms, 20);
     assert_eq!(u.charged.exec_ms, 10);
     // A known-cost op cannot be "settled" again.
-    assert!(j.settle(&a, Settlement { actual: res(0) }).is_err());
+    assert!(j.settle(&a, receipt("meter-1", 2, res(0))).is_err());
 }
 
 #[test]
@@ -572,7 +580,7 @@ fn an_unknown_outcome_can_be_settled_but_not_completed() {
     let path = crash_at(dir.path(), "launched");
     let (j, _) = Journal::open(&path).unwrap();
     let o = opid("op-launched");
-    j.settle(&o, Settlement { actual: res(4) }).unwrap();
+    j.settle(&o, receipt("meter-1", 1, res(4))).unwrap();
     let v = j.view(&o).unwrap();
     assert_eq!(
         v.state,
@@ -595,5 +603,185 @@ fn an_undeclared_scope_or_a_redeclared_ceiling_is_refused() {
     assert!(matches!(
         j.declare_budget(&scope(), bigger),
         Err(JournalError::ScopeConflict { .. })
+    ));
+}
+
+// ── G13-r22-billing-settlement ──────────────────────────────────────────────
+//
+// Duplicate accounting receipts are idempotent only under identical
+// origin/sequence/content; unresolved usage stays unknown with its full
+// reservation as liability.
+
+/// An op launched with reservation `res(exec_ms)` that failed with an
+/// UNKNOWN cost.
+fn unknown_cost_op(j: &Journal, op: &str, exec_ms: u64) -> OperationId {
+    let o = opid(op);
+    j.begin(intent(op, op.as_bytes(), exec_ms)).unwrap();
+    j.reserve(&o).unwrap();
+    j.mark_launched(&o).unwrap();
+    j.fail(&o, "timeout", Billing::Unknown).unwrap();
+    o
+}
+
+#[test]
+fn g13_unknown_billing_keeps_the_full_reservation_as_liability_never_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ops.journal");
+    {
+        let j = fresh(dir.path());
+        let o = unknown_cost_op(&j, "op-unknown", 30);
+        assert_eq!(j.view(&o).unwrap().billing, Some(Billing::Unknown));
+        let u = j.scope_usage(&scope()).unwrap();
+        // EVERY dimension of the reservation is held, none of it charged.
+        assert_eq!(u.liability, res(30));
+        assert_eq!(u.charged, ResourceVector::default());
+        assert_eq!(u.committed(), res(30));
+        // 30 + 71 > 100: the unknown cost blocks work exactly as a charge
+        // would. Were unknown treated as 0, this 71 would fit.
+        j.begin(intent("op-next", b"next", 71)).unwrap();
+        assert!(matches!(
+            j.reserve(&opid("op-next")),
+            Err(JournalError::BudgetExceeded { .. })
+        ));
+    }
+    // The liability survives a reopen: it is replayed, not re-derived as 0.
+    let (j, _) = Journal::open(&path).unwrap();
+    assert_eq!(j.scope_usage(&scope()).unwrap().liability, res(30));
+}
+
+#[test]
+fn g13_identical_settlement_receipt_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ops.journal");
+    {
+        let j = fresh(dir.path());
+        let o = unknown_cost_op(&j, "op-a", 20);
+        assert_eq!(
+            j.settle(&o, receipt("meter-1", 7, res(3))).unwrap(),
+            axon_fabric::journal::Settle::Recorded
+        );
+        let n = j.len();
+        // The identical receipt again: nothing written, same answer.
+        assert_eq!(
+            j.settle(&o, receipt("meter-1", 7, res(3))).unwrap(),
+            axon_fabric::journal::Settle::AlreadySettled
+        );
+        assert_eq!(j.len(), n, "an identical duplicate writes nothing");
+        let v = j.view(&o).unwrap();
+        assert!(!v.disputed());
+        assert_eq!(v.billing, Some(Billing::Known(res(3))));
+        assert_eq!(j.scope_usage(&scope()).unwrap().charged, res(3));
+    }
+    let (j, _) = Journal::open(&path).unwrap();
+    assert_eq!(
+        j.settle(&opid("op-a"), receipt("meter-1", 7, res(3)))
+            .unwrap(),
+        axon_fabric::journal::Settle::AlreadySettled,
+        "idempotence holds across a reopen"
+    );
+}
+
+#[test]
+fn g13_duplicate_receipt_with_different_content_is_refused_and_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ops.journal");
+    let a = opid("op-a");
+    let b = opid("op-b");
+    {
+        let j = fresh(dir.path());
+        unknown_cost_op(&j, "op-a", 20);
+        unknown_cost_op(&j, "op-b", 10);
+        j.settle(&a, receipt("meter-1", 7, res(3))).unwrap();
+
+        // Same origin + sequence, different content.
+        let n = j.len();
+        assert!(matches!(
+            j.settle(&a, receipt("meter-1", 7, res(50))),
+            Err(JournalError::SettlementConflict { .. })
+        ));
+        assert_eq!(j.len(), n + 1, "the refused receipt is RECORDED");
+        let v = j.view(&a).unwrap();
+        assert!(v.disputed());
+        assert_eq!(
+            v.billing,
+            Some(Billing::Unknown),
+            "a dispute is not a known cost"
+        );
+        assert_eq!(v.settlement.as_ref().unwrap().actual, res(3));
+
+        // A second, differently-numbered receipt for the same op is also a
+        // conflict — it would double-count the op.
+        assert!(matches!(
+            j.settle(&a, receipt("meter-1", 8, res(3))),
+            Err(JournalError::SettlementConflict { .. })
+        ));
+        // Reusing receipt meter-1#7 for ANOTHER op is a conflict too.
+        assert!(matches!(
+            j.settle(&b, receipt("meter-1", 7, res(3))),
+            Err(JournalError::SettlementConflict { .. })
+        ));
+        let vb = j.view(&b).unwrap();
+        assert!(vb.disputed());
+        assert_eq!(vb.billing, Some(Billing::Unknown));
+        assert!(vb.settlement.is_none());
+
+        // The identical original receipt is still idempotent.
+        let n = j.len();
+        assert_eq!(
+            j.settle(&a, receipt("meter-1", 7, res(3))).unwrap(),
+            axon_fabric::journal::Settle::AlreadySettled
+        );
+        assert_eq!(j.len(), n);
+    }
+    // Conservative accounting, and it replays identically from disk: a is
+    // held at max(reservation 20, claims 3, 50, 3) = 50 exec_ms; b at
+    // max(reservation 10, claim 3) = 10. Nothing is "charged".
+    let (j, _) = Journal::open(&path).unwrap();
+    let u = j.scope_usage(&scope()).unwrap();
+    assert_eq!(u.charged, ResourceVector::default());
+    assert_eq!(u.liability.exec_ms, 60);
+    assert_eq!(j.view(&a).unwrap().disputes.len(), 2);
+    assert_eq!(j.view(&b).unwrap().disputes.len(), 1);
+}
+
+#[test]
+fn g13_settlement_without_origin_is_refused_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let j = fresh(dir.path());
+    let o = unknown_cost_op(&j, "op-a", 20);
+    let n = j.len();
+    assert!(matches!(
+        j.settle(&o, receipt("", 1, res(3))),
+        Err(JournalError::InvalidSettlement(_))
+    ));
+    assert_eq!(j.len(), n);
+    assert_eq!(j.view(&o).unwrap().billing, Some(Billing::Unknown));
+}
+
+#[test]
+fn g13_a_journal_holding_a_duplicate_settlement_line_is_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ops.journal");
+    {
+        let j = fresh(dir.path());
+        let o = unknown_cost_op(&j, "op-a", 20);
+        j.settle(&o, receipt("meter-1", 7, res(3))).unwrap();
+    }
+    // Append a second copy of the settled line with the next sequence: the
+    // live path never writes one, so the journal is refused, not trusted.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let last = text.lines().last().unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(last).unwrap();
+    assert_eq!(v["kind"], "settled");
+    v["seq"] = serde_json::json!(v["seq"].as_u64().unwrap() + 1);
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(f, "{v}").unwrap();
+    drop(f);
+    assert!(matches!(
+        Journal::open(&path),
+        Err(JournalError::Corrupt { .. })
     ));
 }
