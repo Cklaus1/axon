@@ -67,49 +67,129 @@ def cargo_counts(out):
     return passed, failed, ignored
 
 
-def classify_suite(out, rc, declared):
-    """The regression suite's status from its cargo output: PASS (no failures), KNOWN_BASELINE_DEFECT
-    (failures EXACTLY the declared pre-existing defects — ids, count and fingerprint), else FAIL.
-    A declared defect that now passes is a FAIL: the declaration is stale and must be removed."""
+def normalize_failure(text):
+    """The SEMANTIC part of a failure block: ANSI stripped; line:col, PIDs, thread
+    ids, temp paths and timings replaced — so a fingerprint survives line-number
+    churn and a different machine, and matches only what the failure says."""
+    t = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+    t = re.sub(r"\.rs:\d+:\d+", ".rs:<L>", t)
+    t = re.sub(r"\(\d+\)", "(<N>)", t)
+    t = re.sub(r"(/tmp|/var/tmp|/root|/home)/[^\s'\"]*", "<PATH>", t)
+    t = re.sub(r"\b\d+(\.\d+)?(ms|s)\b", "<T>", t)
+    return t
+
+
+def _failure_block(out, test):
+    blk = re.search(r"^---- (\S+::)?" + re.escape(test) + r" stdout ----\n(.*?)(?=^---- |^failures:$)", out, re.M | re.S)
+    return normalize_failure(blk.group(2)) if blk else ""
+
+
+def fingerprint_matches(dd, out):
+    """(ok, why) — the declared defect's failure, as it appears in `out`, has the
+    declared failure class, panic site and normalized message."""
+    fp = dd["fingerprint"]
+    text = _failure_block(out, dd["test"])
+    if not text:
+        return False, "no failure block for the declared test"
+    if fp.get("failure_class") == "panic" and "panicked at" not in text:
+        return False, "failure class is not a panic"
+    site = "panicked at " + fp["test_binary"] + ":<L>"
+    if site not in text:
+        return False, f"panic site is not {fp['test_binary']}"
+    if not re.search(fp["message_regex"], text):
+        return False, "normalized failure message does not match the declared signature"
+    return True, ""
+
+
+def classify_suite(out, rc, declared, reproduced=None):
+    """The regression suite's status from its cargo output. Exact-match, fail-closed:
+
+      PASS                               no failures (a declared defect that now passes is
+                                         reported in `stale_declarations`: remove it)
+      PASS_WITH_KNOWN_BASELINE_DEFECTS   failures are EXACTLY declared defects, each with its
+                                         declared fingerprint and still reproducing on its pinned
+                                         baseline (`reproduced`); never counted as passes
+      FAIL                               anything else: another test, a different signature, an
+                                         extra failure, or a declaration that no longer reproduces
+    """
     passed, failed, ignored = cargo_counts(out)
-    counts = {"counts": {"passed": passed, "failed": failed, "ignored": ignored}}
     fails = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED", out, re.M)))
-    # A declared defect that now PASSES is a stale declaration: fail, so it gets removed.
-    fixed = [dd["id"] for dd in declared
+    stale = [dd["id"] for dd in declared
              if re.search(r"^test (\S+::)?" + re.escape(dd["test"]) + r" \.\.\. ok$", out, re.M)]
+    base = {"counts": {"passed": passed, "known_baseline_defects": 0, "failed": failed,
+                       "ignored": ignored}, "stale_declarations": stale}
     if rc == 0 and failed == 0 and passed > 0 and not fails:
-        if fixed:
-            return counts | dict(status="FAIL", detail=f"declared baseline defect(s) {fixed} now PASS: remove the declaration")
+        note = f"{passed} passed, 0 failed, {ignored} ignored"
+        if stale:
+            note += f"; STALE declaration(s) {stale}: the defect no longer fails — remove it"
+        return base | dict(status="PASS", detail=note)
+    matched, why = [], []
+    names = {f.rsplit("::", 1)[-1]: f for f in fails}
+    for dd in declared:
+        if dd["test"] not in names:
+            continue
+        ok, reason = fingerprint_matches(dd, out)
+        if not ok:
+            why.append(f"{dd['id']}: {reason}")
+        elif reproduced is not None and not reproduced.get(dd["id"], False):
+            why.append(f"{dd['id']}: does not reproduce on its pinned baseline — the exception is void")
         else:
-            return counts | dict(status="PASS", detail=f"{passed} passed, 0 failed, {ignored} ignored")
-    else:
-        matched, why = [], []
-        names = {f.rsplit("::", 1)[-1]: f for f in fails}
-        for dd in declared:
-            fp = dd["fingerprint"]
-            if dd["test"] not in names:
-                continue
-            # The failure's own block: from its `---- <name> stdout ----` header to the next.
-            blk = re.search(r"^---- (\S+::)?" + re.escape(dd["test"]) + r" stdout ----\n(.*?)(?=^---- |^failures:$)", out, re.M | re.S)
-            text = blk.group(2) if blk else ""
-            if not re.search(fp["panic_site_regex"], text):
-                why.append(f"{dd['id']}: panic site does not match the declared fingerprint")
-            elif not re.search(fp["message_regex"], text):
-                why.append(f"{dd['id']}: failure message does not match the declared fingerprint")
+            matched.append(dd)
+    matched_tests = {dd["test"] for dd in matched}
+    undeclared = [f for f in fails if f.rsplit("::", 1)[-1] not in matched_tests]
+    expected = sum(dd["fingerprint"]["suite_failures_exactly"] for dd in matched)
+    if matched and not undeclared and not why and failed == expected == len(fails) and passed > 0:
+        base["counts"].update(failed=0, known_baseline_defects=failed)
+        return base | dict(
+            status="PASS_WITH_KNOWN_BASELINE_DEFECTS",
+            detail=f"{passed} pass, {failed} known baseline defect(s): " + ", ".join(dd["id"] for dd in matched),
+            declared_defects=[dd["id"] for dd in matched])
+    problems = why + ([f"undeclared failures: {', '.join(undeclared[:10])}"] if undeclared else []) \
+        + ([f"{failed} failures, {expected} declared"] if failed != expected else [])
+    return base | dict(status="FAIL", detail=f"exit {rc}; {passed} passed, {failed} failed; "
+                       + "; ".join(problems or ["no parsable failure"]))
+
+def reproduce_declared(declared, micode, axon_tgt, env, logdir):
+    """Re-run each declared defect's test at its pinned revision (a throwaway worktree
+    of the peer repository). Reproduced = the test FAILED with the declared fingerprint.
+    A TMPDIR on tmpfs cannot reproduce a filesystem-timing defect and counts as NOT
+    reproduced — the exception then does not apply."""
+    import shutil, tempfile
+    got, logrec = {}, []
+    tmp = env.get("TMPDIR", "/tmp")
+    fs = subprocess.run(["stat", "-f", "-c", "%T", tmp], capture_output=True, text=True).stdout.strip()
+    for dd in declared:
+        rp = dd.get("reproduction") or {}
+        entry = {"id": dd["id"], "revision": rp.get("revision"), "tmpdir_fs": fs}
+        if not rp or fs == "tmpfs":
+            entry["result"] = "NOT_REPRODUCED: " + ("no reproduction spec" if not rp else "TMPDIR is tmpfs")
+            got[dd["id"]] = False
+            logrec.append(entry)
+            continue
+        wt = tempfile.mkdtemp(prefix="s5repro-")
+        os.rmdir(wt)
+        add = subprocess.run(["git", "-C", micode, "worktree", "add", "-q", "--detach", wt, rp["revision"]],
+                             capture_output=True, text=True)
+        try:
+            if add.returncode != 0:
+                entry["result"] = f"NOT_REPRODUCED: cannot check out {rp['revision']}: {add.stderr.strip()[:120]}"
+                got[dd["id"]] = False
             else:
-                matched.append(dd)
-        undeclared = [f for f in fails if f.rsplit("::", 1)[-1] not in {dd["test"] for dd in matched}]
-        expected_total = sum(dd["fingerprint"]["suite_failures_exactly"] for dd in matched)
-        if matched and not undeclared and not why and failed == expected_total == len(fails) and passed > 0 and not fixed:
-            return counts | dict(status="KNOWN_BASELINE_DEFECT",
-                       detail=f"{passed} passed, {failed} failed — exactly the declared pre-existing defect(s): "
-                              + ", ".join(dd["id"] for dd in matched),
-                       declared_defects=[dd["id"] for dd in matched])
-        else:
-            problems_here = why + ([f"undeclared failures: {', '.join(undeclared[:10])}"] if undeclared else []) \
-                + ([f"{failed} failures, declared {expected_total}"] if failed != expected_total else []) \
-                + ([f"declared defect(s) now pass: {fixed}"] if fixed else [])
-            return counts | dict(status="FAIL", detail=f"exit {rc}; {passed} passed, {failed} failed; " + "; ".join(problems_here or ["no parsable failure"]))
+                e2 = dict(env, CARGO_TARGET_DIR=os.path.join(axon_tgt, "micode-baseline"))
+                e2.pop("RUSTUP_TOOLCHAIN", None)
+                rlog = os.path.join(logdir, f"reproduce-{dd['id']}.log")
+                rc, out, secs = run(["cargo", "test", "--locked", "-p", rp["package"], "--test", rp["test_target"],
+                                     "--", "--exact", dd["test"]], wt, e2, rlog)
+                failed_here = re.search(r"^test (\S+::)?" + re.escape(dd["test"]) + r" \.\.\. FAILED$", out, re.M)
+                ok, why = fingerprint_matches(dd, out) if failed_here else (False, "the test did not fail")
+                got[dd["id"]] = bool(ok)
+                entry.update(result="REPRODUCED" if ok else f"NOT_REPRODUCED: {why}", seconds=secs, log=rlog)
+        finally:
+            subprocess.run(["git", "-C", micode, "worktree", "remove", "--force", wt], capture_output=True)
+            shutil.rmtree(wt, ignore_errors=True)
+        logrec.append(entry)
+    return got, logrec
+
 
 def _suite_log(results, blocks=()):
     """A minimal cargo-test transcript: `results` = [(name, 'ok'|'FAILED')], one binary."""
@@ -125,32 +205,53 @@ def _suite_log(results, blocks=()):
 
 
 def self_test(declared):
-    """The classifier checked against the cases it exists to tell apart. Run before anything else:
-    a checker that cannot tell a declared defect from a new failure must not certify either."""
+    """The classifier against the cases it exists to tell apart. Run before anything else: a
+    checker that cannot tell a declared defect from a new failure must not certify either."""
     if not declared:
         return []
     d = declared[0]
-    good = ("thread '" + d["test"] + "' (1) panicked at crates/micode/tests/tui_terminal_lifecycle.rs:1805:13:\n"
-            "the goodbye hint names no `/resume <id>` line to type into MiCode: \"...\"")
+    fp = d["fingerprint"]
+    good = (f"thread '{d['test']}' (4242) panicked at {fp['test_binary']}:1805:13:\n"
+            "the goodbye hint names no `/resume <id>` line to type into MiCode: \"/tmp/.tmpX...\"")
+    moved = good.replace(":1805:13:", ":1999:7:")
+    ok_rep = {d["id"]: True}
     cases = [
-        ("all green", _suite_log([("a", "ok"), (d["test"], "ok")]), 0, "FAIL"),  # declared defect now passes
-        ("green, defect test absent", _suite_log([("a", "ok")]), 0, "PASS"),
-        ("exactly the declared defect", _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], good)]), 101, "KNOWN_BASELINE_DEFECT"),
-        ("declared defect plus another failure",
-         _suite_log([("a", "FAILED"), (d["test"], "FAILED")], [("a", "boom"), (d["test"], good)]), 101, "FAIL"),
-        ("same test, different message",
-         _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], good.replace("goodbye hint names no", "session 1 never completed"))]), 101, "FAIL"),
-        ("same test, different panic site",
-         _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], good.replace("tui_terminal_lifecycle.rs", "other.rs"))]), 101, "FAIL"),
-        ("another test only", _suite_log([("a", "FAILED"), (d["test"], "ok")], [("a", "boom")]), 101, "FAIL"),
+        ("expected test + expected fingerprint",
+         _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], good)]), 101, ok_rep,
+         "PASS_WITH_KNOWN_BASELINE_DEFECTS", False),
+        ("expected test + fingerprint at another line (normalized)",
+         _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], moved)]), 101, ok_rep,
+         "PASS_WITH_KNOWN_BASELINE_DEFECTS", False),
+        ("expected test + different fingerprint",
+         _suite_log([("a", "ok"), (d["test"], "FAILED")],
+                    [(d["test"], good.replace("goodbye hint names no", "session 1 never completed"))]),
+         101, ok_rep, "FAIL", False),
+        ("expected test + different panic site",
+         _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], good.replace("tui_terminal_lifecycle.rs", "other.rs"))]),
+         101, ok_rep, "FAIL", False),
+        ("different test + same text",
+         _suite_log([("other_test", "FAILED"), (d["test"], "ok")], [("other_test", good)]), 101, ok_rep,
+         "FAIL", True),
+        ("expected test + second new failure",
+         _suite_log([("a", "FAILED"), (d["test"], "FAILED")], [("a", "boom"), (d["test"], good)]), 101, ok_rep,
+         "FAIL", False),
+        ("declared defect no longer reproduces on its pinned baseline",
+         _suite_log([("a", "ok"), (d["test"], "FAILED")], [(d["test"], good)]), 101, {d["id"]: False},
+         "FAIL", False),
+        ("baseline defect unexpectedly passes (stale declaration)",
+         _suite_log([("a", "ok"), (d["test"], "ok")]), 0, ok_rep, "PASS", True),
+        ("green, declared test absent", _suite_log([("a", "ok")]), 0, ok_rep, "PASS", False),
     ]
     bad = []
-    for name, out, rc, want in cases:
-        got = classify_suite(out, rc, declared)["status"]
-        if got != want:
-            bad.append(f"classifier self-test '{name}': got {got}, want {want}")
+    for name, out, rc, rep, want, want_stale in cases:
+        got = classify_suite(out, rc, declared, rep)
+        if got["status"] != want:
+            bad.append(f"classifier self-test '{name}': got {got['status']}, want {want}")
+        if want_stale != bool(got["stale_declarations"]):
+            bad.append(f"classifier self-test '{name}': stale={got['stale_declarations']}, want stale={want_stale}")
+        if got["status"] == "PASS_WITH_KNOWN_BASELINE_DEFECTS" and got["counts"]["known_baseline_defects"] != 1:
+            bad.append(f"classifier self-test '{name}': a known defect was not counted separately")
     return bad
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -275,9 +376,14 @@ def main():
                 rec.update(status="FAIL", detail=f"exit {rc}; {passed} passed, {failed} failed, {ignored} ignored of {want} named (a renamed or filtered test is a failure)")
             rec["seconds"] = secs
         elif h["kind"] == "cargo-suite":
+            declared = manifest.get("declared_baseline_defects", [])
+            # Each declared defect must STILL reproduce on its pinned baseline, in
+            # THIS run, or its exception is void (fail closed).
+            reproduced, repro_log = reproduce_declared(declared, micode, axon_tgt, env, logdir)
             rc, out, secs = run(h["command"], repo_dir, env, log)
             rec["seconds"] = secs
-            rec.update(classify_suite(out, rc, manifest.get("declared_baseline_defects", [])))
+            rec["reproductions"] = repro_log
+            rec.update(classify_suite(out, rc, declared, reproduced))
         else:
             rec.update(status="FAIL", detail=f"unknown harness kind {h['kind']!r}")
         rec["log"] = log
@@ -297,7 +403,7 @@ def main():
     for r in results:
         if r["required"] and r["status"] != "PASS":
             problems.append(f"required harness {r['id']}: {r['status']} — {r.get('detail', '')}")
-        elif not r["required"] and hdef[r["id"]].get("gates_profile") and r["status"] not in ("PASS", "KNOWN_BASELINE_DEFECT"):
+        elif not r["required"] and hdef[r["id"]].get("gates_profile") and r["status"] not in ("PASS", "PASS_WITH_KNOWN_BASELINE_DEFECTS"):
             problems.append(f"regression harness {r['id']}: {r['status']} — {r.get('detail', '')}")
     properties = []
     for p in manifest["properties"]:
@@ -322,14 +428,18 @@ def main():
     }
     suite = next((r for r in results if hdef[r["id"]].get("role") == "regression"), None)
     defects = (suite or {}).get("declared_defects", [])
-    doc["stage5_requirements"] = "PASS" if all(
+    # Three INDEPENDENT quantities; a known defect is never counted as a pass.
+    doc["stage5_required"] = "PASS" if all(
         r["status"] == "PASS" for r in results if r["required"]) and all(
         p["status"] == "PASS" for p in properties if p["required"]) else "FAIL"
-    doc["micode_full_suite"] = {"status": "PASS" if suite and suite["status"] == "PASS" else
-                                ("NOT_FULLY_GREEN" if suite and suite["status"] == "KNOWN_BASELINE_DEFECT" else "FAIL"),
-                                "declared_defects_present": defects}
-    doc["verdict"] = ("FAIL" if problems else
-                      "VERIFIED_WITH_DECLARED_BASELINE_DEFECT" if defects else "VERIFIED")
+    doc["micode_full_suite"] = {
+        "status": (suite or {}).get("status", "NOT_RUN"),
+        "counts": (suite or {}).get("counts"),
+        "known_baseline_defects": defects,
+        "stale_declarations": (suite or {}).get("stale_declarations", []),
+        "reproductions": (suite or {}).get("reproductions", []),
+    }
+    doc["stage5_verdict"] = "NOT_VERIFIED" if problems else "VERIFIED"
     os.makedirs(os.path.dirname(os.path.abspath(a.results)), exist_ok=True)
     with open(a.results, "w") as f:
         json.dump(doc, f, indent=1, sort_keys=True)
@@ -344,9 +454,13 @@ def main():
         print(f"v022_stage5_verify: FAIL — {len(problems)} problem(s) (axon {ax[:10]}, micode {mc[:10]})")
         return 1
     nreq = sum(1 for r in results if r["required"])
-    print(f"v022_stage5_verify: {doc['verdict']} — Stage-5 requirements PASS ({nreq} required harnesses, "
-          f"{len(properties)} properties); MiCode full suite {doc['micode_full_suite']['status']}"
-          + (f" (declared pre-existing defect(s): {', '.join(defects)})" if defects else "")
+    ms = doc["micode_full_suite"]
+    c = ms.get("counts") or {}
+    print(f"v022_stage5_verify: {doc['stage5_verdict']} — stage5_required {doc['stage5_required']} "
+          f"({nreq} required harnesses, {len(properties)} properties); micode_full_suite {ms['status']} "
+          f"({c.get('passed', 0)} pass, {c.get('known_baseline_defects', 0)} known baseline defect(s)"
+          + (f": {', '.join(defects)}" if defects else "") + ")"
+          + (f"; STALE declaration(s): {', '.join(ms['stale_declarations'])}" if ms["stale_declarations"] else "")
           + f" (axon {ax}, micode {mc}, manifest {doc['manifest_sha256'][:16]})")
     return 0
 

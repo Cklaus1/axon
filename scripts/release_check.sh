@@ -88,26 +88,36 @@ for h in man["harnesses"]:
         (ok if st == "PASS" else bad)(f"required harness {h['id']}: {st}" + ("" if st == "PASS" else f" — {got.get('detail')}"))
     elif h.get("gates_profile"):
         present = set(got.get("declared_defects", []))
+        repro = {x["id"]: x.get("result", "") for x in got.get("reproductions", [])}
         if st == "PASS":
             ok(f"regression harness {h['id']}: PASS (fully green)")
-        elif st == "KNOWN_BASELINE_DEFECT" and present and present <= declared:
-            ok(f"regression harness {h['id']}: KNOWN_BASELINE_DEFECT {sorted(present)} — NOT a pass; suite NOT fully green")
+        elif st == "PASS_WITH_KNOWN_BASELINE_DEFECTS" and present and present <= declared \
+                and all(repro.get(x) == "REPRODUCED" for x in present):
+            c = got.get("counts", {})
+            ok(f"regression harness {h['id']}: PASS_WITH_KNOWN_BASELINE_DEFECTS — {c.get('passed')} pass, "
+               f"{c.get('known_baseline_defects')} known baseline defect(s) {sorted(present)}, each re-reproduced "
+               "on its pinned baseline this run; NOT counted as passes")
         else:
-            bad(f"regression harness {h['id']}: {st} — {got.get('detail')}")
+            bad(f"regression harness {h['id']}: {st} — {got.get('detail')} (reproductions: {repro})")
+        for x in got.get("stale_declarations", []):
+            out.append("stale " + x)
 li = hs.get("loop-interop", {})
 for sec in ("G3", "B256"):
     (ok if any(x.startswith(f"loop_interop_gate: {sec} section executed") for x in li.get("markers", [])) else bad)(f"loop_interop_gate {sec} section executed")
-(ok if d.get("stage5_requirements") == "PASS" else bad)("Stage-5 required properties: " + str(d.get("stage5_requirements")))
-(ok if not d.get("problems") and d.get("verdict") in ("VERIFIED", "VERIFIED_WITH_DECLARED_BASELINE_DEFECT") else bad)("no unclassified problem; verdict " + str(d.get("verdict")))
-out.append("defects " + ",".join(d.get("micode_full_suite", {}).get("declared_defects_present", [])))
-out.append("suite " + str(d.get("micode_full_suite", {}).get("status")))
+(ok if d.get("stage5_required") == "PASS" else bad)("stage5_required: " + str(d.get("stage5_required")))
+(ok if not d.get("problems") and d.get("stage5_verdict") == "VERIFIED" else bad)("stage5_verdict: " + str(d.get("stage5_verdict")))
+ms = d.get("micode_full_suite", {})
+out.append("defects " + ",".join(ms.get("known_baseline_defects", [])))
+c = ms.get("counts") or {}
+out.append(f"suite {ms.get('status')} ({c.get('passed')} pass, {c.get('known_baseline_defects')} known baseline defect(s), {c.get('failed')} failed)")
 print("\n".join(out))
 PY
 )"
-    DEFECTS=""; SUITE=""
+    DEFECTS=""; SUITE=""; STALE=""
     while IFS= read -r l; do
       case "$l" in "ok "*) sok "${l#ok }" ;; "FAIL "*) sbad "${l#FAIL }" ;;
-        "defects "*) DEFECTS="${l#defects }" ;; "suite "*) SUITE="${l#suite }" ;; esac
+        "defects "*) DEFECTS="${l#defects }" ;; "suite "*) SUITE="${l#suite }" ;;
+        "stale "*) STALE="$STALE ${l#stale }" ;; esac
     done <<< "$out"
     MCH="$(sed -n 's/^pair_micode_head=//p' "$run/receipt")"
   fi
@@ -116,11 +126,11 @@ PY
     if [ -n "$DEFECTS" ]; then
       n=$(tr ',' '\n' <<< "$DEFECTS" | grep -c .)
       echo "STAGE-5 VERIFIED — $n declared pre-existing MiCode defect(s) remain: $DEFECTS"
-      echo "  axon $(git rev-parse --short "$TARGET") + micode ${MCH:0:8}; MiCode full suite: $SUITE (not fully green)"
     else
       echo "STAGE-5 VERIFIED"
-      echo "  axon $(git rev-parse --short "$TARGET") + micode ${MCH:0:8}; MiCode full suite: $SUITE"
     fi
+    echo "  axon $(git rev-parse --short "$TARGET") + micode ${MCH:0:8}; micode_full_suite: $SUITE"
+    [ -n "$STALE" ] && echo "  STALE declaration(s):$STALE — the defect no longer fails; remove the declaration"
     echo "  a STAGE verdict only — no release qualification is implied"
     exit 0
   fi

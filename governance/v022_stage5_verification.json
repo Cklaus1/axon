@@ -37,7 +37,7 @@
         },
         {
           "pattern": "^loop_interop_gate: B256 section executed ([0-9]+) assertions, ([0-9]+) failed$",
-          "min_first": 14,
+          "min_first": 17,
           "second_equals": 0
         }
       ],
@@ -125,7 +125,7 @@
       "prerequisites": [
         "python3 -c 'import pytest'"
       ],
-      "establishes": "The MiCode workspace suite as a REGRESSION baseline for the pair. Not a Stage-5 property: its status is reported separately (PASS, or KNOWN_BASELINE_DEFECT when it fails exactly on declared pre-existing defects). Any other failure, an unexpected pass of a declared defect, or a changed fingerprint fails the profile. pytest is a PREREQUISITE: its absence is NOT_RUN, which fails the profile.",
+      "establishes": "The MiCode workspace suite as a REGRESSION baseline for the pair, reported separately from the Stage-5 requirements as PASS, PASS_WITH_KNOWN_BASELINE_DEFECTS (only the declared defects failed, exactly as fingerprinted, each re-reproduced on its pinned baseline this run) or FAIL. pytest is a PREREQUISITE: its absence is NOT_RUN, which fails the profile.",
       "role": "regression",
       "gates_profile": true
     }
@@ -355,7 +355,8 @@
     "FAIL": "executed and the property failed, or evidence is missing",
     "SKIP": "the harness reported a skip; for a required harness a Stage-5 FAILURE",
     "NOT_RUN": "a prerequisite or the peer is absent; for a required harness a Stage-5 FAILURE",
-    "KNOWN_BASELINE_DEFECT": "the MiCode regression suite failed EXACTLY on declared pre-existing defects (test id, failure count and fingerprint all as declared). Never counted as PASS, never contributes to a pass count; reported separately. The suite status is then NOT_FULLY_GREEN."
+    "PASS_WITH_KNOWN_BASELINE_DEFECTS": "the MiCode regression suite failed EXACTLY on declared pre-existing defects: same test id, same failure class, same normalized signature, the declared count, and each still reproducing on its pinned baseline revision in this run. Known defects are counted separately and never as passes. Anything else is FAIL.",
+    "quantities": "stage5_required (PASS|FAIL), micode_full_suite (PASS|PASS_WITH_KNOWN_BASELINE_DEFECTS|FAIL) and stage5_verdict (VERIFIED|NOT_VERIFIED) are reported independently"
   },
   "declared_baseline_defects": [
     {
@@ -369,14 +370,23 @@
         "how": "TMPDIR on ext4: fails 3/3; on tmpfs: passes 3/3"
       },
       "fingerprint": {
-        "panic_site_regex": "panicked at crates/micode/tests/tui_terminal_lifecycle\\.rs:[0-9]+:[0-9]+:",
+        "failure_class": "panic",
+        "test_binary": "crates/micode/tests/tui_terminal_lifecycle.rs",
         "message_regex": "the goodbye hint names no `/resume <id>` line to type into MiCode",
-        "suite_failures_exactly": 1
+        "suite_failures_exactly": 1,
+        "normalization": "ANSI stripped; .rs:line:col, (pid/thread ids), temp/home paths and timings replaced before matching (v022_stage5_verify.normalize_failure)"
       },
       "predates_v0_22": "identical failure on tui@65286581, before any v0.22 MiCode commit",
       "diagnosis": ".axon-v022/stage5/MICODE_TUI_QUIT_CHECKPOINT_RACE.md (strace: no checkpoint write attempted on ext4; a 1s pause before /quit passes 3/3)",
       "owner": "MiCode tui branch (TUI quit path / TurnCheckpointer)",
-      "removal_criterion": "Remove this entry when the tui quit path awaits the in-flight turn commit and the test passes on ext4. While declared, an UNEXPECTED PASS of this test fails the profile, so a fixed defect cannot stay declared."
+      "removal_criterion": "Remove this entry when the tui quit path awaits the in-flight turn commit (fix owned by micode-8b) and the test passes on ext4. While declared, a PASS of this test is reported as a STALE declaration in the results and by release_check, so it cannot linger unnoticed.",
+      "reproduction": {
+        "repo": "micode",
+        "revision": "65286581",
+        "package": "micode",
+        "test_target": "tui_terminal_lifecycle",
+        "tmpdir_filesystem": "ext4 (the defect is filesystem-timing dependent; a tmpfs TMPDIR hides it)"
+      }
     }
   ]
 }

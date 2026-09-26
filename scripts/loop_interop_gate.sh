@@ -575,16 +575,26 @@ section "9. B256: real MiCode negotiates closed-loop-profile/1 with the REAL cor
 # durable record MiCode writes under closed-loop/profile/.
 B256_PASS0=$PASS; B256_FAIL0=$FAIL
 PROF="$CL/profile"
-b256_run() {  # <label> <adapter path>; sets PREC (the record this run wrote)
+b256_run() {  # <label> <adapter path>; sets PREC (the record this run wrote), FIRSTREQ
   local before; before="$(list_dir "$PROF")"
+  local nbefore; nbefore="$(nreq)"
   run_micode "$1" MICODE_SEMANTIC_TOOLS=1 MICODE_POLICY_ADAPTER="$2" MICODE_POLICY_NEGOTIATE_PROFILE=1 \
     MICODE_POLICY_GRANT_SNAPSHOT=snap-gate MICODE_POLICY_WRITE_PREFIX=src/ MICODE_POLICY_SNAPSHOT=snap-gate
   PREC="$(new_file "$PROF" "$before")"
+  FIRSTREQ="$REQ/req-$(printf '%04d' $((nbefore + 1))).json"
+}
+# The profile outcome was durable BEFORE the run's first model call (B256:
+# negotiation resolves before any model call; nanosecond mtimes).
+before_model_call() {
+  [ -n "$PREC" ] && [ -f "$PREC" ] && [ -f "$FIRSTREQ" ] && python3 -c '
+import os,sys
+sys.exit(0 if os.stat(sys.argv[1]).st_mtime_ns <= os.stat(sys.argv[2]).st_mtime_ns else 1)' "$PREC" "$FIRSTREQ"
 }
 b256_run b256-real "$CPA"
 check "B256: micode exec succeeds with negotiation on" eq "$RC" 0
 check "B256: a profile record was written" test -n "$PREC"
 check "B256: outcome agreed with the real adapter" eq "$(jq -r .outcome "$PREC")" agreed
+check "B256: the agreed profile was recorded before the first model call" before_model_call
 check "B256: the accept is Axon's (peer axon, role accept)" eq "$(jq -c '[.accept.peer,.accept.role]' "$PREC")" '["axon","accept"]'
 check "B256: cortex-policy-adapter/1 agreed; axon-bridge/v0 NOT (Axon never claims MiCode's wire)" \
   eq "$(jq -c '.accept.adapters' "$PREC")" '["cortex-policy-adapter/1"]'
@@ -620,6 +630,9 @@ b256_run b256-nocommon "$WORK/nocommon-adapter.sh"
 check "B256: no common profile → micode still runs (incumbent protocol 1, authority retained)" eq "$RC" 0
 check "B256: no common profile is recorded as unsupported, never agreed" eq "$(jq -r .outcome "$PREC")" unsupported
 check "B256: ...with the real adapter's own code no_common_schema" eq "$(jq -r .unsupported.code "$PREC")" no_common_schema
+check "B256: no common profile resolved (and was recorded) before the first model call" before_model_call
+check "B256: no common profile is distinct from an old peer (not old_peer, no accept)" \
+  eq "$(jq -c '[.outcome,.accept]' "$PREC")" '["unsupported",null]'
 # A LYING peer: the real accept with a schema MiCode never offered.
 cat > "$WORK/lying-adapter.sh" <<SH
 #!/bin/sh
