@@ -71,6 +71,9 @@ GATES=(
   "G11-r22-policy-cas|axon-loop|pointer|concurrent_threads_exactly_one_wins replayed_transition_id_is_idempotent_and_conflicting_reuse_refused revoked_active_policy_makes_resolve_pause refusals_change_no_bytes a_replayed_activation_after_authority_moved_does_not_reactivate"
   "G11-r22-policy-cas|axon-loop|candidates|g2_baseline_and_activation_recheck_the_list"
   "G11-r22-policy-cas|axon-loop|cli|cli_two_processes_race_exactly_one_wins"
+  "G13-r22-unknown-reconcile|axon-fabric|submit|a_timeout_after_launch_is_unknown_with_liability_and_is_never_retried sigkill_after_launch_reconciles_to_outcome_unknown_with_liability"
+  "G13-r22-unknown-reconcile|axon-fabric|journal|g13_unknown_billing_keeps_the_full_reservation_as_liability_never_zero an_unknown_outcome_can_be_settled_but_not_completed"
+  "G13-r22-unknown-reconcile|axon-fabric|restart_matrix|a_crash_after_the_launch_record_is_unknown_never_rerun"
 )
 
 for row in "${GATES[@]}"; do

@@ -862,3 +862,56 @@ fn sha256_hex(b: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(b))
 }
+
+/// G13-r22-unknown-reconcile: a check that TIMES OUT after its launch record
+/// (it may have had effects) is never read as success, failure, or free: the
+/// receipt is TimedOut with verification unknown, its whole reservation stays
+/// outstanding liability (no refund, nothing "charged" as if known), the
+/// episode projection is OutcomeUnknown, and a re-send with the same
+/// operation id replays that answer — no exactly-once claim, no retry.
+#[test]
+fn a_timeout_after_launch_is_unknown_with_liability_and_is_never_retried() {
+    let env = Env::new();
+    let starts = env.dir.path().join("starts.log");
+    let slow = env.dir.path().join("axon-timeout.sh");
+    std::fs::write(
+        &slow,
+        format!(
+            "#!/bin/sh\necho start >> '{}'\nexec sleep 300\n",
+            starts.display()
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    write_registry(&env.registry, &slow, None);
+    let mut req = request(&env, "op-timeout", "t_ok");
+    req["executable_digest"] = json!(axon_cortex::runner::fabric_executable_digest(
+        "axon-test-local",
+        &sha256_file(&slow)
+    ));
+    req["limits"]["wall_time_ms"] = json!(300);
+    let s = submit(&req.to_string(), &env.cfg(0)).unwrap();
+    assert_eq!(s.receipt.status, ReceiptStatus::TimedOut, "{:?}", s.reason);
+    assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
+    assert_eq!(s.receipt.unresolved_liability_micro, 100);
+    assert_eq!(
+        axon_loop_contracts::project_receipt_status(s.receipt.status),
+        axon_loop_contracts::EpisodeStatus::OutcomeUnknown
+    );
+    let (j, _) = axon_fabric::Journal::open(&env.journal).unwrap();
+    let u = j.scope_usage(&scope()).unwrap();
+    assert_eq!(
+        u.liability.model_micro_usd, 100,
+        "outstanding, not refunded"
+    );
+    assert_eq!((u.held.model_micro_usd, u.charged.model_micro_usd), (0, 0));
+    drop(j);
+    let again = submit(&req.to_string(), &env.cfg(0)).unwrap();
+    assert!(again.replayed);
+    assert_eq!(again.receipt, s.receipt);
+    let runs = std::fs::read_to_string(&starts).unwrap().lines().count();
+    assert_eq!(runs, 1, "the timed-out check was retried");
+}

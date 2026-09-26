@@ -189,6 +189,15 @@
         "PASS"
       ],
       "note": "B278 mechanism. Activation checks the expected active policy, the monotonic epoch fence, the exact admitted candidate (activating anything but the admitted policy, or under an unknown admission, is refused), the candidate list and revocation immediately before publication; concurrent activations (threads and two real CLI processes) have exactly one winner; a replayed or stale activation never overwrites. Every refusal writes zero bytes. axon-loop pointer.rs, candidates.rs, cli.rs."
+    },
+    {
+      "gate_id": "G13-r22-unknown-reconcile",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B260. A check that times out after its launch record gives receipt TimedOut / verification Unknown, projected to episode OutcomeUnknown, with its whole reservation kept as outstanding liability (neither refunded nor charged as known); a re-send with the same operation id replays that answer and never re-runs it (the worker is started exactly once). A launched op whose supervisor dies (SIGKILL, abort) is OutcomeUnknown with liability kept and never re-run; unknown billing keeps the full reservation; an unknown outcome can be settled with evidence but never marked completed. axon-fabric submit.rs, journal.rs, restart_matrix.rs."
     }
   ],
   "tasks": [],
