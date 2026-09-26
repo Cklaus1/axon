@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 49 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 50 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -554,4 +554,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The trusted identity was only a STRING. Nothing in the evidence proved that the named verifier produced it: any actor able to reproduce the receipt JSON (every digest is reproducible from the documents) and write the trusted name into the sidecar was indistinguishable from the verifier. MiCode even copied the issuer name from its own config. The store config said so itself: 'Not authentication'.
 - **Reproduced:** Before 1ef1aa19, axon-loop intake recorded a sidecar whose verification.issuer_ref named the trusted verifier with no proof of origin; the new adversarial suite's self-signed and no-attestation cases were accepted with the attestation block removed (mutation run).
 - **Fix:** Detached Ed25519 acf-receipt-attestation/1 over an explicit domain-separated binding (schema, issuer, key id, request and receipt digests, receipt identity), signed by Fabric's OPERATOR-configured signer only for final receipts whose workload could not read the key; operator-held verifier_keys; intake and EVL accept a verdict only if it verifies, with the semantic joins still required. Mutation-tested at every guard; interop gate vs the pre-attestation MiCode fails exactly the attestation-dependent assertions. Residual: on a single-uid host the key is protected by file mode and by the closed-loop agent's tool scope (gate section 12), not by uid separation. (`1ef1aa19`)
+
+### FG-051 — crates/axon-fabric/src/signing.rs (security, fixed)
+
+- **Claimed:** Fabric signs only receipts whose check workload could not have read the signing key, deciding a replay from what the operation RAN under (journalled), never from the replaying call's configuration.
+- **Reality:** The journal is the CALLER's to name (--journal) and carries no integrity. A replay returns whatever receipt that file holds, and the 'ran under' it was judged by came from the same file. Anyone able to run the Fabric binary with the operator's check registry could write a journal holding a fabricated verdict, marked effect-free, and receive the verifier's genuine signature on it: a signing oracle introduced by the FG-050 fix itself.
+- **Reproduced:** Mutation run (the replay refusal in signing.rs disabled): crates/axon-fabric/tests/attestation.rs a_replay_is_never_signed_not_even_a_genuine_one fails at the forged-journal step, the real binary returning a receipt_attestation over a verdict the test flipped from passed to failed in a copied journal. Found by independent G01 re-audit 2.
+- **Fix:** No replay is ever signed (signing::attestation_decision, a pure function tested per branch including the protected-microVM one); a replay is served unattested with attestation_withheld naming why. Interop gate: the real Fabric replays unsigned; the impostor case runs afresh on its own journal. Consequence: a retried check that replays carries no attestation, so MiCode cites no verdict (toward Unknown, never toward a pass). (`50b5c059`)
 

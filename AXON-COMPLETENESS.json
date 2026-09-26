@@ -2156,6 +2156,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "1ef1aa19"
+    },
+    {
+      "id": "FG-051",
+      "where": "crates/axon-fabric/src/signing.rs",
+      "claimed": "Fabric signs only receipts whose check workload could not have read the signing key, deciding a replay from what the operation RAN under (journalled), never from the replaying call's configuration.",
+      "reality": "The journal is the CALLER's to name (--journal) and carries no integrity. A replay returns whatever receipt that file holds, and the 'ran under' it was judged by came from the same file. Anyone able to run the Fabric binary with the operator's check registry could write a journal holding a fabricated verdict, marked effect-free, and receive the verifier's genuine signature on it: a signing oracle introduced by the FG-050 fix itself.",
+      "reproduced": "Mutation run (the replay refusal in signing.rs disabled): crates/axon-fabric/tests/attestation.rs a_replay_is_never_signed_not_even_a_genuine_one fails at the forged-journal step, the real binary returning a receipt_attestation over a verdict the test flipped from passed to failed in a copied journal. Found by independent G01 re-audit 2.",
+      "fix": "No replay is ever signed (signing::attestation_decision, a pure function tested per branch including the protected-microVM one); a replay is served unattested with attestation_withheld naming why. Interop gate: the real Fabric replays unsigned; the impostor case runs afresh on its own journal. Consequence: a retried check that replays carries no attestation, so MiCode cites no verdict (toward Unknown, never toward a pass).",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "50b5c059"
     }
   ]
 }
