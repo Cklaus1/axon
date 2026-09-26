@@ -10,8 +10,16 @@
 >   `axon run` inside the VM. What is enforced is the VM boundary (jailer,
 >   empty netns, host cgroups, read-only rootfs). Fabric therefore refuses
 >   every request that needs an in-guest ceiling or a path-scoped grant (B263
->   x1/x2). An in-guest policy channel through `axon-guest-init` is planned for
->   Stage 3 (operator decision D5).
+>   x1/x2). **Stage 3 (D5), guest side only, not yet qualified:** the rootfs
+>   now carries a static `axon-guest-init` and `guest-init.sh` execs the
+>   workload under it; it reads `axon.policy=<base64 axon-vm-mmds/1 JSON>`
+>   from `/proc/cmdline` and REFUSES (exit 1, program never runs) when the
+>   policy is absent, `{}`, labels-only, malformed, has a duplicate key or the
+>   cmdline may be truncated. The no-policy bypass is compiled out of the
+>   image. Until the launcher passes the word (`fc_linux_profile.sh`, a
+>   separate lane), every run of a rebuilt image is refused — and x1 stays
+>   BLOCKED until a qualification run on real KVM shows the refusals and a
+>   policied run.
 > * **Qualification: 32 PASS / 0 FAIL / 4 BLOCKED** (`result:
 >   PASS_WITH_BLOCKED`) on a **WSL2 host with nested KVM** (decision D2; the L0
 >   Hyper-V hypervisor is outside the boundary). The four BLOCKED rows are: x1
@@ -130,7 +138,7 @@ fc_linux_profile.sh --verify-result DIR     # re-check the output binding of a f
 - `network-interfaces: []`. The VMM also joins an **empty network namespace** (lo only).
 - Drives: `vda` is `rootfs.sqfs` (`is_read_only`, file mode 0444, owned by root). `vdb` is `workspace.img` (ext4, rw, owned by the jail uid).
 - Guest command line: `console=ttyS0 reboot=k panic=1 pci=off acpi=off root=/dev/vda rootfstype=squashfs ro init=/init`.
-- Inside the guest, the workload runs under `env -i` in the cgroup `/job`, with `pids.max=32` and `memory.max` = guest RAM − 48 MiB.
+- Inside the guest, the workload runs under `env -i` in the cgroup `/job`, with `pids.max=32` and `memory.max` = guest RAM − 48 MiB, exec'd by `/usr/bin/axon-guest-init` (static musl, default features, sha256 pinned in `manifest.json` as `artifacts.axon-guest-init`), which applies the cmdline policy first.
 
 The kernel and rootfs are checked against the manifest twice: once in `--artifacts-dir` before anything is acquired, and again as the copies inside the chroot.
 
@@ -158,7 +166,7 @@ The kernel and rootfs are checked against the manifest twice: once in `--artifac
 
 ### Guest protocol (serial + workspace drive)
 
-`guest-init.sh` prints `B263-BOOT`, `B263-VERSION`, then `B263-LOADED axon=<sha> program=<sha>`, `B263-START`, `B263-OUT stdout=<sha> exit=<n>` and `B263-DONE`, and then calls `reboot -f`. A result is admissible only when the digest printed on serial, the digest re-extracted from the drive, and `result.json` all agree. `--verify-result` re-derives this check independently.
+`guest-init.sh` prints `B263-BOOT`, `B263-VERSION`, then `B263-LOADED axon=<sha> program=<sha> init=<sha>`, `B263-POLICY sha=<sha256 of the decoded policy JSON>` (or `absent` / `undecodable` / `ambiguous words=N`), `B263-START`, `B263-OUT stdout=<sha> exit=<n>` and `B263-DONE`, and then calls `reboot -f`. A result is admissible only when the digest printed on serial, the digest re-extracted from the drive, and `result.json` all agree. `--verify-result` re-derives this check independently.
 
 ### Cleanup semantics
 
