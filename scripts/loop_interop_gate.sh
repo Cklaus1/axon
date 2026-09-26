@@ -161,6 +161,8 @@ fn t_bad() { assert_eq(double(2), 5) }
 AX
 g add -A && g commit -q -m "task"
 HEAD_SHA="$(g rev-parse HEAD)"
+# The repository identity MiCode OBSERVES (G16-r22-preflight-start): its root commit.
+REPO_ID="git-root:$(g rev-list --max-parents=0 HEAD | sort | head -1)"
 REPO_REAL="$(cd "$REPO" && pwd -P)"
 CL="$REPO/.micode/axon/closed-loop"
 
@@ -168,12 +170,12 @@ TENANT=tenant-a; FAMILY=coding; MODEL=anthropic/claude-sonnet-5
 
 # expected_context <out> <trial> <arm> <base> <epoch>
 expected_context() {
-  jq -n --arg trial "$2" --arg arm "$3" --arg base "$4" --argjson epoch "$5" \
+  jq -n --arg trial "$2" --arg arm "$3" --arg base "$4" --argjson epoch "$5" --arg repo "$REPO_ID" \
         --arg wd "$REPO_REAL" --arg t "$TENANT" --arg f "$FAMILY" --arg m "$MODEL" '{
     schema:"micode.expected-context/1", profile:"paired_trial", context_id:("ctx-"+$trial),
     identity:{task_id:"task-pong", arm_id:$arm, trial_id:$trial, attempt_id:($trial+"-a1"),
               operation_id:($trial+"-op"), execution_id:($trial+"-ex")},
-    scope:{tenant_id:$t, task_family:$f}, repo_id:"gate-repo", base_commit:$base, branch:"main",
+    scope:{tenant_id:$t, task_family:$f}, repo_id:$repo, base_commit:$base, branch:"main",
     worktree_id:null, working_directory:$wd, build_namespace:"shared:default-target", model:$m,
     role:"implementation", read_paths:[], write_paths:["src/**"], is_primary_worktree:true,
     expected_issuer_ref:"loop-interop-gate", authority_epoch:$epoch, ttl_ms:600000,
@@ -410,6 +412,18 @@ axl intake episode --in "$MM_EP" --context "$CL/context" --ack "$CL/policy-ack" 
 check "mismatch: Axon intake refuses (exit 4)" eq "$?" 4
 check "mismatch: refusal says TASK_NOT_STARTED" grep -q TASK_NOT_STARTED "$WORK/mm-intake.err"
 check "mismatch: nothing recorded, store unchanged" bash -c "[ $(ledger_n) -eq $N ] && [ '$(store_hash)' = '$H' ]"
+# G16-r22-preflight-start, "a mismatched repository": everything else right (the
+# exact base included), but the declaration names another repository — an opaque
+# label, then another history's root. MiCode observes its own repo_id, so both
+# refuse before the first model turn and name the field.
+for bad in gate-repo "git-root:$(printf '1%.0s' $(seq 40))"; do
+  expected_context "$WORK/exp-repo.json" trial-repo challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+  jq --arg r "$bad" '.repo_id=$r' "$WORK/exp-repo.json" > "$WORK/exp-repo2.json"
+  run_micode repo-mm MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-repo2.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json"
+  check "repo mismatch ($bad): TASK_NOT_STARTED naming repo_id" \
+    bash -c "[ $RC -ne 0 ] && grep -q 'TASK_NOT_STARTED: EXECUTION_CONTEXT_MISMATCH' '$WORK/repo-mm.err' && grep -q 'repo_id' '$WORK/repo-mm.err'"
+  check "repo mismatch ($bad): ZERO provider requests" eq "$NEWREQ" 0
+done
 
 # ════════════════════════════════════════════════════════════════════════════
 section "7. negative: tampered MiCode episodes → Axon intake refuses, store unchanged"
@@ -672,15 +686,15 @@ section "10. G03: revocation is rechecked at TOOL EXECUTION (real pointer show �
 # where the two sides' formats must agree: a mismatch fails CLOSED (every call
 # refused), which the "in force" half below would catch.
 G03_PASS0=$PASS; G03_FAIL0=$FAIL
-# scripted_read: the provider's next turn is a `read` of src/main.rs.
-scripted_read() {
-  python3 - "$WORK/next.sse" <<'PY'
+# scripted_call TOOL ARGS_JSON: the provider's next turn is one call of TOOL.
+scripted_call() {
+  python3 - "$WORK/next.sse" "$1" "$2" <<'PY'
 import json, sys
-args = json.dumps({"path": "src/main.rs"})
+tool, args = sys.argv[2], json.dumps(json.loads(sys.argv[3]))
 ev = lambda name, d: f"event: {name}\ndata: {json.dumps(d)}\n\n"
 sse = "".join([
   ev("message_start", {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":None,"usage":{"input_tokens":5,"output_tokens":0}}}),
-  ev("content_block_start", {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu1","name":"read","input":{}}}),
+  ev("content_block_start", {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu1","name":tool,"input":{}}}),
   ev("content_block_delta", {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":args}}),
   ev("content_block_stop", {"type":"content_block_stop","index":0}),
   ev("message_delta", {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
@@ -697,7 +711,7 @@ axl pointer show --tenant "$TENANT" --family "$FAMILY" > "$WORK/view-live.json"
 check "G03: pointer show exit 0" eq "$?" 0
 check "G03: the live view does not list the pinned policy as revoked" \
   eq "$(jq --arg p "$POL_REF" '[.revocations.revoked[]|select(.policy_ref==$p)]|length' "$WORK/view-live.json")" 0
-scripted_read
+scripted_call read '{"path":"src/main.rs"}'
 run_micode g03-live MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g03.json" \
   MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" MICODE_AXON_POLICY_AUTHORITY="$WORK/view-live.json"
 check "G03 in force: micode exec succeeds" eq "$RC" 0
@@ -711,7 +725,7 @@ check "G03: pointer revoke exit 0" eq "$?" 0
 axl pointer show --tenant "$TENANT" --family "$FAMILY" > "$WORK/view-revoked.json"
 check "G03: the view now lists the pinned policy as revoked" \
   eq "$(jq --arg p "$POL_REF" '[.revocations.revoked[]|select(.policy_ref==$p)]|length' "$WORK/view-revoked.json")" 1
-scripted_read
+scripted_call read '{"path":"src/main.rs"}'
 run_micode g03-revoked MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g03.json" \
   MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" MICODE_AXON_POLICY_AUTHORITY="$WORK/view-revoked.json"
 check "G03 revoked: the task starts (the pin agreed at task start)" eq "$RC" 0
@@ -719,6 +733,23 @@ check "G03 revoked: two provider requests (the tool call, then its refusal)" eq 
 check "G03 revoked: the read was refused at execution, naming the revocation" grep -q 'was revoked' "$(result_req)"
 check "G03 revoked: the file's content never reached the model" bash -c "! grep -q 'println' '$(result_req)'"
 echo "loop_interop_gate: G03 section executed $(( PASS - G03_PASS0 + FAIL - G03_FAIL0 )) assertions, $(( FAIL - G03_FAIL0 )) failed"
+
+# ════════════════════════════════════════════════════════════════════════════
+section "11. G16 role-scope: a read-only role writes nothing (real binary)"
+# A critic declares no writes (its contract), and an empty write set must not
+# read as "unrestricted" at the tool boundary.
+expected_context "$WORK/exp-critic.json" trial-critic challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+jq '.role="critic" | .write_paths=[]' "$WORK/exp-critic.json" > "$WORK/exp-critic2.json"
+scripted_call write '{"path":"src/critic.rs","content":"x"}'
+run_micode critic MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-critic2.json"
+check "critic: micode exec succeeds (the task runs)" eq "$RC" 0
+check "critic: two provider requests (the write, then its refusal)" eq "$NEWREQ" 2
+check "critic: the write was refused naming the read-only role" grep -q 'read-only role' "$(result_req)"
+check "critic: the file never appeared" test ! -e "$REPO/src/critic.rs"
+jq '.role="critic" | .write_paths=["src/**"]' "$WORK/exp-critic.json" > "$WORK/exp-critic3.json"
+run_micode critic-w MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-critic3.json"
+check "critic declaring writes: TASK_NOT_STARTED, zero provider requests" \
+  bash -c "[ $RC -ne 0 ] && [ $NEWREQ -eq 0 ] && grep -q TASK_NOT_STARTED '$WORK/critic-w.err'"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "summary"

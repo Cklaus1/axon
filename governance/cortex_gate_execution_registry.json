@@ -252,6 +252,24 @@
         "PASS"
       ],
       "note": "B267. Section 10 of the paired interop gate, real binaries both sides: a pinned MiCode task reads Axon's REAL `axon-loop pointer show` output at every tool execution. While the pinned policy is in force its `read` runs; after a REAL `axon-loop pointer revoke` the same task still starts (the pin agreed at task start) but the `read` is refused at execution and its content never reaches the model. Discriminates: against MiCode 29446ec9 (pre-fix) exactly the two revoked assertions fail. MiCode side (micode c1bc363c): the fence is checked before the gate AND immediately before execute (a revocation during an approval wait still stops the effect), refuses when the view cannot vouch (unreadable, other scope, older epoch), is inherited by children (derive_spec) and required at spawn (child_is_within); the shortlist is the enforced tool_allowlist so candidate identity holds in children; retries are new dispatched calls and rechecked. Tests: micode-core dispatch::tests::{a_revoked_pinned_policy_stops_the_next_call_and_every_retry, an_authority_view_that_cannot_vouch_for_the_pin_refuses_the_call, a_revocation_during_an_approval_wait_stops_the_effect}, scope::tests::a_child_must_carry_its_parents_authority_fence_unchanged, micode-delegate task_tool::tests::a_child_inherits_its_parents_authority_fence, micode closed_loop_v022_real_binary::a_revoked_policy_is_refused_at_tool_execution_through_the_real_binary (run by the Stage-5 micode-suite harness)."
+    },
+    {
+      "gate_id": "G16-r22-preflight-start",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B266. Real binaries: loop_interop_gate section 6 \u2014 a stale base, an opaque repo_id and another history's root each yield TASK_NOT_STARTED: EXECUTION_CONTEXT_MISMATCH with ZERO provider requests (before the first model turn and any effect); the refused sidecar is refused again by Axon intake with the store unchanged. MiCode (eb9c52a6) observes every clause itself: repo_id as git-root:<root commit> (exec_context::tests::the_repository_identity_is_observed_and_a_different_one_refuses), base/branch/worktree/namespace/model route/primary-checkout (every_observable_field_is_compared), the dedicated per-trial build namespace and worktree (a_trial_subject_needs_a_dedicated_worktree_concrete_paths_and_its_own_namespace), the role's write contract (each_roles_write_contract_is_checked_before_the_task_starts), provider/model through the binary (closed_loop_v022_real_binary::a_different_model_route_is_refused_before_any_provider_call), and the same at every child spawn (assembly v022_a_child_whose_context_mismatches_its_task_is_refused_in_preflight) \u2014 run by the Stage-5 micode-suite harness. Parent echo: axon-loop-contracts check_context_current refuses observed_issuer == expected_issuer (fixtures.rs; redteam.rs AB8). Discriminates: against MiCode c1bc363c the four repo-mismatch assertions fail."
+    },
+    {
+      "gate_id": "G16-r22-role-scope",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B266. Real binaries: loop_interop_gate section 11 \u2014 a task declared as a critic (empty write set) runs, its model's write into src/ is refused at the tool boundary naming the read-only role and the file never appears; a critic declaring a write set is TASK_NOT_STARTED with zero provider requests. MiCode (eb9c52a6): scope::READ_ONLY_WRITES installed for critic/verifier denies write/edit and the unbounded tools and is required of every child (scope::tests::a_read_only_role_writes_nothing_and_its_children_stay_read_only); implementation/documentation must declare a non-empty set (exec_context::tests::each_roles_write_contract_is_checked_before_the_task_starts); experiment subjects need a dedicated worktree, concrete paths and a per-trial namespace (a_trial_subject_needs_a_dedicated_worktree_concrete_paths_and_its_own_namespace), their declared write set is the enforced write scope (closed_loop_v022_real_binary::the_declared_write_set_is_enforced_at_the_tool_boundary) and a child cannot widen it (spawner a_child_scope_not_provably_within_the_parents_is_refused). Discriminates: against MiCode c1bc363c the critic's write lands and both write assertions fail."
     }
   ],
   "tasks": [],
