@@ -71,6 +71,22 @@ impl EpochSource {
     pub fn current(&self) -> Result<AuthorityEpoch, String> {
         match self {
             EpochSource::LoopStore { store, scope } => {
+                // The authority store must EXIST and be CONFIGURED before its
+                // epoch means anything. `Store::open_dir` creates a missing
+                // root, and a store with no pointer answers epoch 0 — so an
+                // absent, unmounted or mistyped store silently became a fresh
+                // one at epoch 0 and authorized every request expecting 0.
+                // Measured (G16-r22-peer-failure-matrix): with the store moved
+                // away, a submit ran its check, at submit AND at the dispatch
+                // recheck. An operator-configured store always has its
+                // `config.json`; one without it is not an authority.
+                if !store.join("config.json").is_file() {
+                    return Err(format!(
+                        "authority store {} is unavailable (no axon-loop config.json); an absent \
+                         store is not epoch 0",
+                        store.display()
+                    ));
+                }
                 let st = axon_loop::Store::open_dir(store).map_err(|e| e.to_string())?;
                 axon_loop::epoch::current(&st, scope).map_err(|e| e.to_string())
             }
