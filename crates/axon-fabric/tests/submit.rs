@@ -915,3 +915,45 @@ fn a_timeout_after_launch_is_unknown_with_liability_and_is_never_retried() {
     let runs = std::fs::read_to_string(&starts).unwrap().lines().count();
     assert_eq!(runs, 1, "the timed-out check was retried");
 }
+
+/// G10-r22-trial-identity: repeated runs of ONE task and arm are distinct
+/// trials and all execute — the same semantic task id never deduplicates a
+/// fresh trial. A transport retry (same OperationId, same input) is the only
+/// thing that replays; an authorized new execution of the same trial is a new
+/// AttemptId (and op) and runs again.
+#[test]
+fn repeated_trials_of_one_task_are_distinct_and_only_a_transport_retry_replays() {
+    let env = Env::new();
+    let run = |op: &str, trial: &str, attempt: &str| {
+        let mut r = request(&env, op, "t_ok");
+        r["task_id"] = json!("task-same");
+        r["trial_id"] = json!(trial);
+        r["attempt_id"] = json!(attempt);
+        submit(&r.to_string(), &env.cfg(0)).unwrap()
+    };
+    let t1 = run("op-t1", "trial-rep-1", "a1");
+    let t2 = run("op-t2", "trial-rep-2", "a1");
+    assert!(
+        !t1.replayed && !t2.replayed,
+        "a fresh trial was deduplicated by its task id"
+    );
+    assert_eq!(spawn_count(&env.spawns), 2);
+    // Transport retry of trial 1: identical OperationId/input — replayed, not re-run.
+    let retry = run("op-t1", "trial-rep-1", "a1");
+    assert!(retry.replayed);
+    assert_eq!(retry.receipt, t1.receipt);
+    assert_eq!(spawn_count(&env.spawns), 2);
+    // An authorized NEW execution of trial 1: new AttemptId, new op — it runs.
+    let again = run("op-t1-a2", "trial-rep-1", "a2");
+    assert!(!again.replayed);
+    assert_eq!(spawn_count(&env.spawns), 3);
+    assert_eq!(again.receipt.attempt_id.as_str(), "a2");
+    // Reusing the OperationId for a different attempt is not a retry: conflict.
+    let mut r = request(&env, "op-t1", "t_ok");
+    r["task_id"] = json!("task-same");
+    r["trial_id"] = json!("trial-rep-1");
+    r["attempt_id"] = json!("a3");
+    let e = submit(&r.to_string(), &env.cfg(0)).unwrap_err();
+    assert_eq!(e.kind(), "conflict", "{e}");
+    assert_eq!(spawn_count(&env.spawns), 3);
+}

@@ -843,3 +843,47 @@ fn an_episode_of_another_schema_version_is_refused() {
     assert!(matches!(e, LoopError::Malformed(_)), "{e}");
     assert_eq!(snapshot(c.s.root()), before);
 }
+
+/// G10-r22-trial-identity, intake side: a second trial of the SAME task and
+/// arm is a new record, never deduplicated by task id; only the identical
+/// trial's identical bytes replay, and the same trial with different bytes is
+/// a conflict.
+#[test]
+fn a_repeated_trial_of_one_task_and_arm_is_recorded_as_its_own() {
+    let c = case(Some(500));
+    let first = run(&c, &c.ep, false).unwrap();
+    assert!(first.recorded_now);
+    // Trial 2 of the same task and arm: new trial/attempt/operation ids.
+    let mut ctx = c.ctx.clone();
+    for k in ["trial_id", "attempt_id", "operation_id", "execution_id"] {
+        ctx["identity"][k] = json!(format!("{}-2", ctx["identity"][k].as_str().unwrap()));
+    }
+    let mut ep = c.ep.clone();
+    ep["identity"] = ctx["identity"].clone();
+    ep["context_ref"] = json!(digest_value(&ctx).unwrap());
+    let second = intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &ctx.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
+            source_episode: None,
+            verification_request: None,
+            verification_receipt: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        second.recorded_now,
+        "a fresh trial was deduplicated by its task id"
+    );
+    assert_ne!(second.record.episode_ref, first.record.episode_ref);
+    assert_eq!(
+        second.record.identity.task_id,
+        first.record.identity.task_id
+    );
+    assert_eq!(second.ledger_seq, first.ledger_seq + 1);
+    // The identical trial replays; nothing new is written.
+    assert!(!run(&c, &c.ep, false).unwrap().recorded_now);
+}

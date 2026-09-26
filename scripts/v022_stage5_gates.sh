@@ -76,6 +76,12 @@ GATES=(
   "G13-r22-unknown-reconcile|axon-fabric|restart_matrix|a_crash_after_the_launch_record_is_unknown_never_rerun"
   "G26-r22-speculation-disabled|axon-fabric|joint_bypass|a_request_cannot_ask_for_speculative_dispatch"
   "G26-r22-speculation-disabled|axon-fabric|branches|publication_requires_base_epoch_writer_exact_verified_output_and_approval each_branch_carves_within_its_declared_regime_and_is_isolated cancelling_a_losing_branch_keeps_its_record_and_leaves_the_winner_alone"
+  "G10-r22-trial-identity|axon-fabric|submit|repeated_trials_of_one_task_are_distinct_and_only_a_transport_retry_replays duplicate_op_same_input_returns_the_same_receipt_without_re_execution same_op_different_input_is_a_conflict_with_zero_effects"
+  "G10-r22-trial-identity|axon-loop|intake|a_repeated_trial_of_one_task_and_arm_is_recorded_as_its_own the_same_trial_with_different_bytes_is_a_conflict"
+  "G10-r22-trial-identity|axon-loop|redteam|ab10_trial_ids_never_reused_across_experiments"
+  "G29-r22-bounded-mutation|axon-loop|plan_evo_tel|evo_proposes_a_bounded_deterministic_candidate evo_regularizes_history_and_exhausts"
+  "G29-r22-bounded-mutation|axon-loop|candidates|g2_policy_put_refuses_a_tool_adding_shortlist g2_evo_eligible_must_equal_the_registered_list g2_freeze_refuses_a_candidate_outside_the_list g2_baseline_and_activation_recheck_the_list"
+  "G29-r22-bounded-mutation|axon-loop|redteam|o1_o2_non_evo_or_widening_candidate_cannot_be_frozen g6_freeze_is_permanent g7_plan_shopping_is_refused"
 )
 
 for row in "${GATES[@]}"; do

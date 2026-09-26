@@ -216,6 +216,24 @@
         "PASS"
       ],
       "note": "B272. No speculative-effect path exists, and a request cannot ask for one: marking work speculative, pre-dispatching alternatives or naming a second dispatch authority is refused by the closed request schema before the journal (nothing journalled, nothing spawned). An approved branch (B271) keeps exact selected bytes (publication requires the exact verified output), shared cost (every branch carves within one declared regime) and cancellation semantics (a cancelled branch keeps its record and liability) rather than becoming an alternate dispatch authority. axon-fabric joint_bypass.rs, branches.rs."
+    },
+    {
+      "gate_id": "G10-r22-trial-identity",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B257. Repeated trials of one task and arm are distinct and all execute (Fabric) and are all recorded (axon-loop intake) \u2014 the same task id never deduplicates a fresh trial; only a transport retry (identical OperationId and input) replays; an authorized new execution of a trial carries a new AttemptId and op and runs; reusing an OperationId for other input is a conflict; the same trial with different bytes is a conflict; trial ids are never reused across experiments. axon-fabric submit.rs; axon-loop intake.rs, redteam.rs."
+    },
+    {
+      "gate_id": "G29-r22-bounded-mutation",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B273. The EVO proposer changes only the shortlist: its candidate records the parent policy and its discovery evidence, keeps the candidate set and controls (model/evaluator route) byte-equal, never sets authority_expansion, never adds an id, and its hypothesis history is append-only; a tool-adding or widening candidate is refused at put, at freeze and at activation; the frozen plan (evaluator, promotion rule, task corpus) is permanent and plan shopping is refused. The proposer emits data only and has no route to code or permissions. axon-loop plan_evo_tel.rs, candidates.rs, redteam.rs."
     }
   ],
   "tasks": [],
