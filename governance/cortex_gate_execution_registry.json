@@ -270,6 +270,24 @@
         "PASS"
       ],
       "note": "B266. Real binaries: loop_interop_gate section 11 \u2014 a task declared as a critic (empty write set) runs, its model's write into src/ is refused at the tool boundary naming the read-only role and the file never appears; a critic declaring a write set is TASK_NOT_STARTED with zero provider requests. MiCode (eb9c52a6): scope::READ_ONLY_WRITES installed for critic/verifier denies write/edit and the unbounded tools and is required of every child (scope::tests::a_read_only_role_writes_nothing_and_its_children_stay_read_only); implementation/documentation must declare a non-empty set (exec_context::tests::each_roles_write_contract_is_checked_before_the_task_starts); experiment subjects need a dedicated worktree, concrete paths and a per-trial namespace (a_trial_subject_needs_a_dedicated_worktree_concrete_paths_and_its_own_namespace), their declared write set is the enforced write scope (closed_loop_v022_real_binary::the_declared_write_set_is_enforced_at_the_tool_boundary) and a child cannot widen it (spawner a_child_scope_not_provably_within_the_parents_is_refused). Discriminates: against MiCode c1bc363c the critic's write lands and both write assertions fail."
+    },
+    {
+      "gate_id": "G16-r22-local-authority",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B267. Real binaries: loop_interop_gate section 5 \u2014 a policy naming a tool outside the registered candidate list is refused by Axon policy put (exit 4, naming the tool, store unchanged) and, fed to MiCode anyway, abstains to the incumbent with zero tool additions (the added tool never reaches the provider). MiCode (09717d17): a shortlist must be a subset of the session's authorized candidates and bound to their cl22 view (active_policy::tests::invalid_policies_abstain_to_the_incumbent_with_a_reason); the shortlist is the enforced, INHERITED tool allowlist, so a delegated child whose dispatch is rebuilt from the full registry is still refused a tool the policy did not shortlist (closed_loop_v022_real_binary::a_delegated_child_is_held_to_the_policys_shortlist_through_the_real_binary, mutation-checked); concrete file effects are checked against inherited path/write scopes and a child must be provably within its parent (scope::tests::{path_globs_cover_exact_paths_and_directory_prefixes_only, the_write_set_bounds_writes_but_not_reads, a_child_must_be_provably_within_its_parent}); an unknown glob/subset relation is denied, never assumed narrower (scope::tests::an_unprovable_pattern_fails_closed_everywhere)."
+    },
+    {
+      "gate_id": "G16-r22-candidate-shortlist",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B268. Real binaries: loop_interop_gate sections 3 and 5 \u2014 Axon's DEC policy narrows MiCode's sent tool set to exactly its shortlist, and a tool-adding policy is refused at put and abstains in MiCode with zero additions. A policy can do nothing but reorder/narrow: Axon refuses at put, naming the field, a policy that ALSO names a tool list, permission, verifier, model, compute profile, credential route, budget or skill (axon-loop tests/cli.rs a_policy_that_names_any_other_authority_dimension_is_refused_at_put \u2014 two independent layers, schema additionalProperties:false and serde deny_unknown_fields; dropping both lets it through, measured), and MiCode abstains on the same documents naming the field (active_policy::tests::a_policy_naming_any_other_authority_dimension_abstains_naming_it, mutation-checked). authority_expansion:true is refused on both sides. Skills are not policy-selectable at all: the candidate view is the tool registry."
     }
   ],
   "tasks": [],

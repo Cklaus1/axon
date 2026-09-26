@@ -471,3 +471,40 @@ fn cli_evo_evl_admit_tel_end_to_end() {
     let dupe = json!({"schema":"axon.loop.tel-request/1","episodes":[episodes[0], episodes[0]]});
     assert_eq!(run(d.path(), &["tel", "summarize"], Some(&dupe)).0, 4);
 }
+
+/// G16-r22-candidate-shortlist, Axon side, through the binary: a policy may only reorder or
+/// narrow the registered candidate list. A document that ALSO names any other authority
+/// dimension — a new tool list, a permission, a verifier, a model, a compute profile, a
+/// credential route, a budget, a skill — is not a policy this version defines: `policy put`
+/// refuses it as malformed (exit 3) naming the field, with nothing stored. The same policy
+/// without the field is accepted.
+///
+/// Two layers refuse, and either alone suffices: the checked-in schema (`additionalProperties:
+/// false`) and serde's `deny_unknown_fields`. Mutation: drop BOTH → the first extended document
+/// is accepted and this fails (measured; dropping either one alone still passes).
+#[test]
+fn a_policy_that_names_any_other_authority_dimension_is_refused_at_put() {
+    let d = tempfile::tempdir().unwrap();
+    let s = store_with_config(d.path());
+    register_candidates(&s);
+    let good = serde_json::to_value(policy("narrow", &["search", "read"])).unwrap();
+    let before = snapshot(d.path());
+    for (field, value) in [
+        ("tools", json!(["teleport"])),
+        ("permissions", json!({"exec": "any"})),
+        ("verifier", json!("verifier:lenient")),
+        ("model", json!("anthropic/claude-opus-5-5")),
+        ("compute_profile", json!("gpu-large")),
+        ("credential_route", json!("host:secrets")),
+        ("budget", json!({"micro_usd": 1_000_000})),
+        ("skills", json!(["deploy"])),
+    ] {
+        let mut bad = good.clone();
+        bad[field] = value;
+        let (c, _, err) = run(d.path(), &["policy", "put"], Some(&bad));
+        assert_eq!(c, 3, "{field}: {err}");
+        assert!(err.contains(field), "{field}: the refusal names the field: {err}");
+    }
+    assert_eq!(snapshot(d.path()), before, "a refused policy wrote nothing");
+    assert_eq!(run(d.path(), &["policy", "put"], Some(&good)).0, 0);
+}
