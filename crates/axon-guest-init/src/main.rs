@@ -2,19 +2,35 @@
 //!
 //! Boot sequence:
 //!   1. Re-seed entropy from virtio-rng (/dev/urandom)
-//!   2. Read capability policy from MMDS at 169.254.169.254 (schema axon-vm-mmds/1).
-//!      If no policy can be read, REFUSE to start the guest — an absent policy is
-//!      not a permissive one, and this binary exists to install the sandbox.
-//!      `AXON_GUEST_ALLOW_NO_POLICY=1` opts into the old unpoliced behaviour
-//!      (development only) and says so loudly on every boot.
+//!   2. Read the capability policy (schema axon-vm-mmds/1) and REFUSE to start
+//!      the guest unless it constrains something (see "Policy channels").
 //!   3. Fork: parent becomes PID-1 supervisor; child applies seccomp then execs Axon
 //!   4. Supervisor loop: reap zombies, forward SIGTERM/SIGINT, exit with child's code
+//!
+//! Policy channels, in order of precedence:
+//!
+//! * The KERNEL CMDLINE (`/proc/cmdline`): one word `axon.policy=<standard
+//!   padded base64 of the JSON payload>` — the encoding
+//!   `axon_vm::firecracker::embed_policy_in_cmdline` writes. This is the only
+//!   channel a NIC-less guest (the B263 profile) has. When the word is present
+//!   it WINS: MMDS is not consulted, and a malformed cmdline policy is a
+//!   refusal, never a fall-through to a second channel.
+//! * MMDS at 169.254.169.254, only when the cmdline carries no policy word.
+//!
+//! If neither yields a policy that CONSTRAINS something the guest is refused —
+//! an absent policy is not a permissive one, and this binary exists to install
+//! the sandbox. The old `AXON_GUEST_ALLOW_NO_POLICY=1` escape exists ONLY in
+//! builds with the non-default cargo feature `dev-allow-no-policy`. It is not a
+//! runtime flag in a default build because Linux copies unrecognised
+//! `NAME=value` cmdline words into init's ENVIRONMENT: whoever can append a
+//! word to the cmdline could otherwise switch the sandbox off (ACF-G25: fail
+//! closed "without development bypass").
 //!
 //! Invocation:
 //!   axon-guest-init <binary> [args...]
 //!   axon-guest-init /usr/bin/axon run /axon/program.ax
 //!
-//! Environment variables exported to child (from MMDS payload):
+//! Environment variables exported to child (from the policy payload):
 //!   AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS,
 //!   AXON_SOURCE_HASH
 //!
@@ -33,6 +49,7 @@
 use std::ffi::CString;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 use std::{env, process};
@@ -67,10 +84,21 @@ impl MmdsPayload {
             || self.budget_tokens.is_some()
             || self.seccomp_bpf_b64.is_some()
     }
+
+    /// Does it carry any of the LABEL fields? Used only to tell a labels-only
+    /// payload apart from an empty one in the refusal message — neither is a
+    /// policy.
+    fn has_labels(&self) -> bool {
+        self.principal.is_some() || self.run_id.is_some() || self.source_hash.is_some()
+    }
 }
 
 #[derive(Deserialize, Debug)]
 struct MmdsPayload {
+    /// `axon-vm-mmds/1` when written by `axon-vm`. REQUIRED on the cmdline
+    /// channel (see `parse_cmdline_policy`); tolerated-if-absent on MMDS, whose
+    /// historic payloads never carried it.
+    schema: Option<String>,
     principal: Option<String>,
     allowed_effects: Option<Vec<String>>,
     budget_tokens: Option<u64>,
@@ -98,77 +126,67 @@ fn main() {
     // 1. Re-seed entropy before any crypto-adjacent work.
     reseed_entropy();
 
-    // 2. Read policy from MMDS, and REFUSE to exec if there isn't one.
+    // 2. Read the policy, and REFUSE to exec if there isn't one.
     //
     //    This used to soft-fail: an unreachable metadata service logged one
     //    line that read like a note and handed `None` down, and `child_main`
     //    then skipped the whole policy block — no effect ceiling, no token cap,
-    //    no seccomp — and exec'd the guest anyway. The sandbox this binary
-    //    exists to install was simply absent, and the only evidence was a line
-    //    saying "running without policy" among the boot messages.
+    //    no seccomp — and exec'd the guest anyway.
     //
-    //    The soft-fail was justified as "running outside axon-vm". Nothing in
-    //    the workspace runs it that way: it is `/sbin/init` in
-    //    `axon-rootfs.ext4`, PID 1 of a microVM, and no script or test invokes
-    //    it directly. So the case being preserved had no caller, while the case
-    //    being broken — a VM that boots but cannot reach MMDS — is exactly when
-    //    a capability policy matters.
-    //
-    //    The developer case is still reachable, but must now be ASKED for.
-    let allow_unpoliced = env::var("AXON_GUEST_ALLOW_NO_POLICY")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let policy = match read_mmds() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[axon-guest-init] MMDS unavailable ({e})");
-            None
-        }
-    };
-    // CONTENT, not `is_some()`. A body that parsed but constrains nothing is
-    // not a policy — see `MmdsPayload::constrains_anything`.
-    let have_policy = policy.as_ref().is_some_and(|p| p.constrains_anything());
-    match policy_decision(have_policy, allow_unpoliced) {
-        PolicyDecision::Apply | PolicyDecision::ProceedUnpoliced => {
+    //    The kernel cmdline is read FIRST and wins: the B263 profile has no NIC,
+    //    so MMDS cannot work there at all, and a policy the host put on the
+    //    cmdline must not be overridable by whatever answers on the network.
+    let allow_unpoliced = allow_unpoliced();
+    let loaded = load_policy(read_cmdline_policy(Path::new(CMDLINE_PATH)), read_mmds);
+    let have_policy = loaded.is_ok();
+    let policy = match policy_decision(have_policy, allow_unpoliced) {
+        PolicyDecision::Apply => {
+            let (p, source) = loaded.expect("have_policy implies Ok");
+            eprintln!("[axon-guest-init] policy loaded from {}", source.describe());
             // A policy can be ACTIVE and still leave a mechanism off. Say which
             // one, per mechanism, rather than treating "a policy loaded" as a
             // blanket assurance — "policy applied" beside an absent seccomp
             // filter is the same overclaim in miniature as `{}` reading as a
             // policy at all.
-            if let Some(p) = policy.as_ref().filter(|_| have_policy) {
-                if p.allowed_effects.is_none() {
-                    eprintln!(
-                        "[axon-guest-init] WARNING: policy loaded with NO effect ceiling                          (allowed_effects omitted) — the guest runs unrestricted on that axis"
-                    );
-                }
-                if p.seccomp_bpf_b64.is_none() {
-                    eprintln!(
-                        "[axon-guest-init] WARNING: policy loaded with NO seccomp filter                          (seccomp_bpf_b64 omitted) — defence in depth is absent"
-                    );
-                }
-                if p.budget_tokens.is_none() {
-                    eprintln!(
-                        "[axon-guest-init] WARNING: policy loaded with NO token cap                          (budget_tokens omitted) — AI spend is uncapped"
-                    );
-                }
+            if p.allowed_effects.is_none() {
+                eprintln!(
+                    "[axon-guest-init] WARNING: policy loaded with NO effect ceiling \
+                     (allowed_effects omitted) — the guest runs unrestricted on that axis"
+                );
             }
+            if p.seccomp_bpf_b64.is_none() {
+                eprintln!(
+                    "[axon-guest-init] WARNING: policy loaded with NO seccomp filter \
+                     (seccomp_bpf_b64 omitted) — defence in depth is absent"
+                );
+            }
+            if p.budget_tokens.is_none() {
+                eprintln!(
+                    "[axon-guest-init] WARNING: policy loaded with NO token cap \
+                     (budget_tokens omitted) — AI spend is uncapped"
+                );
+            }
+            Some(p)
+        }
+        PolicyDecision::ProceedUnpoliced => {
+            eprintln!(
+                "[axon-guest-init] WARNING: AXON_GUEST_ALLOW_NO_POLICY is set in a \
+                 dev-allow-no-policy build — the guest is running with NO effect \
+                 ceiling, NO token cap and NO seccomp filter ({}).",
+                loaded.err().unwrap_or_default()
+            );
+            None
         }
         PolicyDecision::Refuse => {
             eprintln!(
-                "[axon-guest-init] REFUSING to start the guest: no capability policy was \
-                 loaded, so there would be no effect ceiling, no token cap and no seccomp \
-                 filter. Set AXON_GUEST_ALLOW_NO_POLICY=1 to run unpoliced on purpose \
-                 (development only)."
+                "[axon-guest-init] REFUSING to start the guest: {}. With no capability \
+                 policy there would be no effect ceiling, no token cap and no seccomp \
+                 filter.",
+                loaded.err().unwrap_or_default()
             );
             process::exit(1);
         }
-    }
-    if policy.is_none() {
-        eprintln!(
-            "[axon-guest-init] WARNING: AXON_GUEST_ALLOW_NO_POLICY is set — the guest is \
-             running with NO effect ceiling, NO token cap and NO seccomp filter."
-        );
-    }
+    };
 
     // 3. Fork.
     let child_pid = unsafe { libc::fork() };
@@ -207,6 +225,292 @@ fn policy_decision(have_policy: bool, allow_unpoliced: bool) -> PolicyDecision {
         (false, true) => PolicyDecision::ProceedUnpoliced,
         // Fail closed: an absent policy is not a permissive one.
         (false, false) => PolicyDecision::Refuse,
+    }
+}
+
+/// Is the development bypass compiled in AND asked for?
+///
+/// In a default build this is the constant `false`: the env var is not even
+/// read. Linux passes unrecognised `NAME=value` cmdline words into init's
+/// environment, so a runtime flag would be reachable by anyone who can append
+/// one word to the kernel cmdline. The bypass therefore exists only behind the
+/// non-default cargo feature `dev-allow-no-policy`.
+#[cfg(feature = "dev-allow-no-policy")]
+fn allow_unpoliced() -> bool {
+    env::var("AXON_GUEST_ALLOW_NO_POLICY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+#[cfg(not(feature = "dev-allow-no-policy"))]
+fn allow_unpoliced() -> bool {
+    false
+}
+
+// ── Kernel-cmdline policy channel ─────────────────────────────────────────────
+
+const CMDLINE_PATH: &str = "/proc/cmdline";
+/// The one cmdline word that carries the policy.
+const CMDLINE_POLICY_KEY: &str = "axon.policy=";
+/// The only schema the cmdline channel accepts.
+const POLICY_SCHEMA: &str = "axon-vm-mmds/1";
+/// x86 `COMMAND_LINE_SIZE`. The kernel keeps at most `COMMAND_LINE_SIZE - 1`
+/// bytes and silently TRUNCATES the rest, so a cmdline that reaches that
+/// length may have lost the tail of the policy. Refuse rather than guess; the
+/// host must keep the whole cmdline (policy word included) at or below
+/// `CMDLINE_MAX_SAFE` bytes.
+const X86_COMMAND_LINE_SIZE: usize = 2048;
+const CMDLINE_MAX_SAFE: usize = X86_COMMAND_LINE_SIZE - 2;
+
+/// Why a cmdline policy was refused. Each variant is a DISTINCT failure so
+/// the boot log says which one — a launcher bug and a truncation need
+/// different remedies.
+#[derive(Debug, PartialEq, Eq)]
+enum CmdlinePolicyError {
+    /// `/proc/cmdline` could not be read, so whether the host sent a policy
+    /// is unknown.
+    Unreadable(String),
+    /// The cmdline is long enough that the kernel may have truncated it.
+    PossiblyTruncated(usize),
+    /// `axon.policy=` appears more than once — which one the host meant is
+    /// ambiguous, so neither is used.
+    RepeatedWord,
+    /// `axon.policy=` with nothing after it.
+    EmptyValue,
+    /// The value is not standard padded base64.
+    BadBase64(String),
+    /// The decoded bytes are not a JSON object of the payload schema.
+    BadJson(String),
+    /// A JSON object key appears twice (compared as DECODED, so `"a"` and
+    /// `"\u0061"` are the same key). serde_json would silently keep the last.
+    DuplicateKey(String),
+    /// Parsed, but constrains nothing and carries nothing (`{}`).
+    ConstrainsNothing,
+    /// Parsed, carries labels (principal/run_id/source_hash) but no enforced
+    /// mechanism. Labels grant and withhold nothing.
+    LabelsOnly,
+    /// `schema` absent or not `axon-vm-mmds/1`.
+    WrongSchema(Option<String>),
+}
+
+impl std::fmt::Display for CmdlinePolicyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use CmdlinePolicyError::*;
+        match self {
+            Unreadable(e) => write!(f, "cmdline policy UNREADABLE: {CMDLINE_PATH}: {e}"),
+            PossiblyTruncated(n) => write!(
+                f,
+                "cmdline policy POSSIBLY TRUNCATED: the kernel cmdline is {n} bytes, at or \
+                 over the {CMDLINE_MAX_SAFE}-byte safe limit (x86 COMMAND_LINE_SIZE \
+                 {X86_COMMAND_LINE_SIZE}); the kernel drops the tail silently"
+            ),
+            RepeatedWord => write!(
+                f,
+                "cmdline policy AMBIGUOUS: `axon.policy=` appears more than once"
+            ),
+            EmptyValue => write!(f, "cmdline policy EMPTY: `axon.policy=` carries no value"),
+            BadBase64(e) => write!(f, "cmdline policy MALFORMED BASE64: {e}"),
+            BadJson(e) => write!(f, "cmdline policy MALFORMED JSON: {e}"),
+            DuplicateKey(k) => write!(f, "cmdline policy has DUPLICATE KEY `{k}`"),
+            ConstrainsNothing => write!(
+                f,
+                "cmdline policy CONSTRAINS NOTHING: no allowed_effects, budget_tokens or \
+                 seccomp_bpf_b64"
+            ),
+            LabelsOnly => write!(
+                f,
+                "cmdline policy is LABELS ONLY: principal/run_id/source_hash grant and \
+                 withhold nothing, and no enforced field is present"
+            ),
+            WrongSchema(s) => write!(
+                f,
+                "cmdline policy has WRONG SCHEMA: expected `{POLICY_SCHEMA}`, got {s:?}"
+            ),
+        }
+    }
+}
+
+/// Read and parse the cmdline policy from `path` (`/proc/cmdline` in the
+/// guest; injectable so tests do not depend on the host's cmdline).
+///
+/// `Ok(None)` means the cmdline carries NO `axon.policy=` word at all — the
+/// only case in which a second channel may be consulted.
+fn read_cmdline_policy(path: &Path) -> Result<Option<MmdsPayload>, CmdlinePolicyError> {
+    let raw = std::fs::read(path).map_err(|e| CmdlinePolicyError::Unreadable(e.to_string()))?;
+    let text = String::from_utf8(raw)
+        .map_err(|e| CmdlinePolicyError::Unreadable(format!("not UTF-8: {e}")))?;
+    parse_cmdline_policy(&text)
+}
+
+/// Parse a kernel cmdline. Every whitespace-separated word is scanned,
+/// including those after `--` (axon-vm appends the policy word after the init
+/// argv separator; `/proc/cmdline` shows the whole line either way).
+fn parse_cmdline_policy(cmdline: &str) -> Result<Option<MmdsPayload>, CmdlinePolicyError> {
+    let cmdline = cmdline.trim_end_matches('\n');
+    if cmdline.len() > CMDLINE_MAX_SAFE {
+        return Err(CmdlinePolicyError::PossiblyTruncated(cmdline.len()));
+    }
+    let mut values = cmdline
+        .split_ascii_whitespace()
+        .filter_map(|w| w.strip_prefix(CMDLINE_POLICY_KEY));
+    let Some(b64) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(CmdlinePolicyError::RepeatedWord);
+    }
+    if b64.is_empty() {
+        return Err(CmdlinePolicyError::EmptyValue);
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| CmdlinePolicyError::BadBase64(e.to_string()))?;
+    let json =
+        std::str::from_utf8(&bytes).map_err(|e| CmdlinePolicyError::BadJson(e.to_string()))?;
+    let payload = parse_policy_json_strict(json)?;
+    if !payload.constrains_anything() {
+        return Err(if payload.has_labels() {
+            CmdlinePolicyError::LabelsOnly
+        } else {
+            CmdlinePolicyError::ConstrainsNothing
+        });
+    }
+    if payload.schema.as_deref() != Some(POLICY_SCHEMA) {
+        return Err(CmdlinePolicyError::WrongSchema(payload.schema));
+    }
+    Ok(Some(payload))
+}
+
+/// Parse the payload JSON refusing duplicate object keys at any depth.
+///
+/// The same approach as `axon_cortex::parse_strict` (not depended on: this is
+/// a static PID-1 binary and pulls in nothing it does not need): keys are
+/// compared as the real parser DECODES them, so an escaped spelling of a key
+/// is still the same key.
+fn parse_policy_json_strict(json: &str) -> Result<MmdsPayload, CmdlinePolicyError> {
+    let StrictValue(v) = serde_json::from_str(json).map_err(|e| {
+        let m = e.to_string();
+        match m.strip_prefix("duplicate key: ") {
+            Some(k) => CmdlinePolicyError::DuplicateKey(
+                k.split(" at line").next().unwrap_or(k).to_string(),
+            ),
+            None => CmdlinePolicyError::BadJson(m),
+        }
+    })?;
+    if !v.is_object() {
+        return Err(CmdlinePolicyError::BadJson(
+            "top-level value is not a JSON object".to_string(),
+        ));
+    }
+    serde_json::from_value(v).map_err(|e| CmdlinePolicyError::BadJson(e.to_string()))
+}
+
+/// A JSON value whose deserialization fails on a repeated object key.
+struct StrictValue(serde_json::Value);
+
+impl<'de> Deserialize<'de> for StrictValue {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = serde_json::Value;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("any JSON value, with no repeated object key")
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::Null)
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(v.into())
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+                Ok(v.into())
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+                Ok(v.into())
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
+                Ok(serde_json::Number::from_f64(v)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(v.into())
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut out = Vec::new();
+                while let Some(StrictValue(v)) = a.next_element()? {
+                    out.push(v);
+                }
+                Ok(serde_json::Value::Array(out))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut out = serde_json::Map::new();
+                while let Some(k) = a.next_key::<String>()? {
+                    let StrictValue(v) = a.next_value()?;
+                    if out.contains_key(&k) {
+                        return Err(serde::de::Error::custom(format!("duplicate key: {k}")));
+                    }
+                    out.insert(k, v);
+                }
+                Ok(serde_json::Value::Object(out))
+            }
+        }
+        d.deserialize_any(V).map(StrictValue)
+    }
+}
+
+/// Which channel supplied the policy.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum PolicySource {
+    Cmdline,
+    Mmds,
+}
+
+impl PolicySource {
+    fn describe(self) -> &'static str {
+        match self {
+            PolicySource::Cmdline => "the kernel cmdline (axon.policy=)",
+            PolicySource::Mmds => "MMDS",
+        }
+    }
+}
+
+/// Combine the two channels. The cmdline WINS: if it carries a policy word,
+/// its verdict (a policy, or a refusal) is final and `mmds` is never called.
+/// Only a cmdline with no `axon.policy=` word at all falls back to MMDS.
+/// Every `Err` is a reason to refuse, worded for the boot log.
+fn load_policy(
+    cmdline: Result<Option<MmdsPayload>, CmdlinePolicyError>,
+    mmds: impl FnOnce() -> Result<Option<MmdsPayload>, String>,
+) -> Result<(MmdsPayload, PolicySource), String> {
+    match cmdline {
+        Err(e) => Err(e.to_string()),
+        Ok(Some(p)) => Ok((p, PolicySource::Cmdline)),
+        Ok(None) => match mmds() {
+            // CONTENT, not presence. A body that parsed but constrains nothing
+            // is not a policy — see `MmdsPayload::constrains_anything`.
+            Ok(Some(p)) if p.constrains_anything() => Ok((p, PolicySource::Mmds)),
+            Ok(Some(_)) => Err(
+                "policy ABSENT: no `axon.policy=` on the kernel cmdline, and \
+                                the MMDS payload constrains nothing"
+                    .to_string(),
+            ),
+            Ok(None) => Err(
+                "policy ABSENT: no `axon.policy=` on the kernel cmdline, and \
+                             MMDS returned an empty body"
+                    .to_string(),
+            ),
+            Err(e) => Err(format!(
+                "policy ABSENT: no `axon.policy=` on the kernel cmdline, and MMDS \
+                 failed ({e})"
+            )),
+        },
     }
 }
 
@@ -522,7 +826,240 @@ fn supervisor_main(first_child: libc::pid_t) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{policy_decision, MmdsPayload, PolicyDecision};
+    use super::{
+        allow_unpoliced, load_policy, parse_cmdline_policy, policy_decision, read_cmdline_policy,
+        CmdlinePolicyError, MmdsPayload, PolicyDecision, PolicySource, CMDLINE_MAX_SAFE,
+    };
+    use base64::Engine as _;
+    use std::path::PathBuf;
+
+    const VALID: &str = r#"{"schema":"axon-vm-mmds/1","run_id":"r1","principal":"alice","allowed_effects":["IO"],"budget_tokens":100,"source_hash":null,"seccomp_bpf_b64":null}"#;
+
+    fn b64(s: &str) -> String {
+        base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
+    }
+
+    /// The exact shape axon-vm's launcher boots with.
+    fn cmdline_with(policy_word: &str) -> String {
+        format!(
+            "console=ttyS0 reboot=k panic=1 pci=off nomodules init=/init -- /init \
+             /usr/bin/axon run /axon/program.ax {policy_word}\n"
+        )
+    }
+
+    fn write_tmp(name: &str, body: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "axon-guest-init-test-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    fn mmds_must_not_be_called() -> Result<Option<MmdsPayload>, String> {
+        panic!("MMDS consulted although the cmdline carried a policy word")
+    }
+
+    fn cmdline_err(policy_json: &str) -> CmdlinePolicyError {
+        parse_cmdline_policy(&cmdline_with(&format!("axon.policy={}", b64(policy_json))))
+            .expect_err("must refuse")
+    }
+
+    #[test]
+    fn a_valid_cmdline_policy_is_read_from_the_file_and_used() {
+        let path = write_tmp(
+            "valid",
+            &cmdline_with(&format!("axon.policy={}", b64(VALID))),
+        );
+        let got = read_cmdline_policy(&path).expect("valid").expect("present");
+        std::fs::remove_file(&path).ok();
+        assert_eq!(got.allowed_effects, Some(vec!["IO".to_string()]));
+        assert_eq!(got.budget_tokens, Some(100));
+        let (p, src) = load_policy(Ok(Some(got)), mmds_must_not_be_called).expect("applies");
+        assert_eq!(src, PolicySource::Cmdline);
+        assert!(p.constrains_anything());
+    }
+
+    /// The cmdline wins: a present cmdline policy means MMDS is never asked,
+    /// and a BAD cmdline policy is a refusal, not a fall-through to MMDS.
+    #[test]
+    fn the_cmdline_policy_beats_mmds() {
+        let cmd = parse_cmdline_policy(&cmdline_with(&format!("axon.policy={}", b64(VALID))));
+        let (p, src) = load_policy(cmd, || {
+            Ok(Some(
+                serde_json::from_str(r#"{"allowed_effects":["IO","Net","Exec"]}"#).unwrap(),
+            ))
+        })
+        .unwrap();
+        assert_eq!(src, PolicySource::Cmdline);
+        assert_eq!(p.allowed_effects, Some(vec!["IO".to_string()]));
+
+        let bad = parse_cmdline_policy(&cmdline_with("axon.policy=!!!"));
+        let e = load_policy(bad, mmds_must_not_be_called).unwrap_err();
+        assert!(e.contains("MALFORMED BASE64"), "{e}");
+    }
+
+    /// No word at all is the only case that falls back; with MMDS also empty
+    /// or unreachable the result is a refusal naming ABSENT.
+    #[test]
+    fn an_absent_cmdline_policy_with_no_mmds_refuses() {
+        let path = write_tmp("absent", &cmdline_with(""));
+        let cmd = read_cmdline_policy(&path);
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(cmd, Ok(None)));
+        for mmds in [
+            Err("connect 169.254.169.254:80: Network is unreachable".to_string()),
+            Ok(None),
+            Ok(Some(serde_json::from_str::<MmdsPayload>("{}").unwrap())),
+        ] {
+            let e = load_policy(parse_cmdline_policy(&cmdline_with("")), || mmds).unwrap_err();
+            assert!(e.contains("ABSENT"), "{e}");
+            assert_eq!(
+                policy_decision(false, allow_unpoliced()),
+                PolicyDecision::Refuse
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_cmdline_refuses_rather_than_falling_back() {
+        let e = read_cmdline_policy(std::path::Path::new("/nonexistent/axon/cmdline"))
+            .expect_err("unreadable is not absent");
+        assert!(matches!(e, CmdlinePolicyError::Unreadable(_)));
+        assert!(load_policy(Err(e), mmds_must_not_be_called).is_err());
+    }
+
+    #[test]
+    fn an_empty_object_is_refused_as_constraining_nothing() {
+        assert_eq!(cmdline_err("{}"), CmdlinePolicyError::ConstrainsNothing);
+        assert_eq!(
+            cmdline_err(r#"{"schema":"axon-vm-mmds/1","allowed_effects":null}"#),
+            CmdlinePolicyError::ConstrainsNothing
+        );
+    }
+
+    #[test]
+    fn a_labels_only_cmdline_policy_is_refused_as_labels_only() {
+        assert_eq!(
+            cmdline_err(
+                r#"{"schema":"axon-vm-mmds/1","run_id":"r1","principal":"alice","source_hash":"abc"}"#
+            ),
+            CmdlinePolicyError::LabelsOnly
+        );
+    }
+
+    #[test]
+    fn malformed_base64_is_refused_as_malformed_base64() {
+        for word in ["axon.policy=!!!", "axon.policy=e30=e30=", "axon.policy=e30"] {
+            let e = parse_cmdline_policy(&cmdline_with(word)).expect_err(word);
+            assert!(
+                matches!(e, CmdlinePolicyError::BadBase64(_)),
+                "{word}: {e:?}"
+            );
+        }
+        assert_eq!(
+            parse_cmdline_policy(&cmdline_with("axon.policy=")).unwrap_err(),
+            CmdlinePolicyError::EmptyValue
+        );
+    }
+
+    #[test]
+    fn malformed_json_is_refused_as_malformed_json() {
+        for body in ["{not json", "[1,2]", "\"x\"", r#"{"budget_tokens":"lots"}"#] {
+            let e = cmdline_err(body);
+            assert!(matches!(e, CmdlinePolicyError::BadJson(_)), "{body}: {e:?}");
+        }
+    }
+
+    /// serde_json keeps the LAST of two equal keys. A policy whose first
+    /// `allowed_effects` a reviewer reads and whose second the guest applies
+    /// is refused — including when the repeat is spelled with an escape.
+    #[test]
+    fn a_duplicate_key_is_refused_as_a_duplicate_key() {
+        for body in [
+            r#"{"schema":"axon-vm-mmds/1","allowed_effects":[],"allowed_effects":["Exec"]}"#,
+            r#"{"schema":"axon-vm-mmds/1","allowed_effects":[],"allowed_effect\u0073":["Exec"]}"#,
+        ] {
+            assert_eq!(
+                cmdline_err(body),
+                CmdlinePolicyError::DuplicateKey("allowed_effects".to_string()),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeated_policy_word_is_refused() {
+        let w = format!("axon.policy={} axon.policy={}", b64(VALID), b64(VALID));
+        assert_eq!(
+            parse_cmdline_policy(&cmdline_with(&w)).unwrap_err(),
+            CmdlinePolicyError::RepeatedWord
+        );
+    }
+
+    #[test]
+    fn a_missing_or_wrong_schema_is_refused() {
+        assert_eq!(
+            cmdline_err(r#"{"allowed_effects":["IO"]}"#),
+            CmdlinePolicyError::WrongSchema(None)
+        );
+        assert_eq!(
+            cmdline_err(r#"{"schema":"axon-vm-mmds/2","allowed_effects":["IO"]}"#),
+            CmdlinePolicyError::WrongSchema(Some("axon-vm-mmds/2".to_string()))
+        );
+    }
+
+    /// The kernel silently drops cmdline bytes past COMMAND_LINE_SIZE-1. A
+    /// cmdline that reaches the safe limit is refused even when the tail still
+    /// happens to parse; one just under it is accepted.
+    #[test]
+    fn a_cmdline_at_the_x86_limit_is_refused_as_possibly_truncated() {
+        let word = format!("axon.policy={}", b64(VALID));
+        let base = cmdline_with(&word);
+        let base = base.trim_end();
+        let pad_to = |n: usize| format!("x{} {base}", "x".repeat(n - base.len() - 2));
+        let at = pad_to(CMDLINE_MAX_SAFE + 1);
+        assert_eq!(at.len(), CMDLINE_MAX_SAFE + 1);
+        assert!(matches!(
+            parse_cmdline_policy(&at),
+            Err(CmdlinePolicyError::PossiblyTruncated(_))
+        ));
+        let under = pad_to(CMDLINE_MAX_SAFE);
+        assert!(parse_cmdline_policy(&under).unwrap().is_some());
+    }
+
+    /// Every refusal above is DISTINCT: the boot log names which one.
+    #[test]
+    fn the_refusals_are_distinct_messages() {
+        let msgs: std::collections::HashSet<String> = [
+            cmdline_err("{}"),
+            cmdline_err(r#"{"principal":"a"}"#),
+            parse_cmdline_policy(&cmdline_with("axon.policy=!!!")).unwrap_err(),
+            cmdline_err("{not json"),
+            cmdline_err(r#"{"budget_tokens":1,"budget_tokens":2}"#),
+        ]
+        .iter()
+        .map(|e| e.to_string().split(':').next().unwrap().to_string())
+        .collect();
+        assert_eq!(msgs.len(), 5, "{msgs:?}");
+    }
+
+    /// A default build carries no bypass: the env var is not even read.
+    ///
+    /// Deliberately NOT `cfg`-gated on the feature: if `dev-allow-no-policy`
+    /// is ever made a default (or enabled in the build under test) this must
+    /// go RED, not silently compile out. A `--features dev-allow-no-policy`
+    /// test run therefore fails here by design — that build IS the bypass.
+    #[test]
+    fn the_default_build_has_no_runtime_bypass() {
+        std::env::set_var("AXON_GUEST_ALLOW_NO_POLICY", "1");
+        let allowed = allow_unpoliced();
+        std::env::remove_var("AXON_GUEST_ALLOW_NO_POLICY");
+        assert!(
+            !allowed,
+            "a default build must not honour AXON_GUEST_ALLOW_NO_POLICY"
+        );
+    }
 
     /// The defect: an unreachable MMDS produced a guest with no effect ceiling,
     /// no token cap and no seccomp, started anyway, announced by a single line
