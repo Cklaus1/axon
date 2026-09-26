@@ -193,14 +193,6 @@ case "$c22n_rc:$c22n" in
   *) printf '%s\n' "$c22n" | tail -8; fail "v0.22 package gate did not refuse a symlinked directory (rc=$c22n_rc)" ;;
 esac
 
-# v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
-# governance/cortex_gate_execution_registry.json may only vouch for a package gate
-# whose checks a script invoked from THIS file runs; `cargo test -p …` below runs
-# the same tests but names no gate. The runner fails if a listed test is missing
-# or the filtered run executes fewer tests than listed.
-echo "── gate: v0.22 Stage-5 executed gates (G13 billing settlement, G10 cohort denominator) ──"
-./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
-
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
@@ -273,6 +265,17 @@ cargo build --locked -q -p axon-cortex --bins \
   || fail "cortex binary build (needed by axon-fabric's production-caller tests)"
 cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
   || fail "v0.22 closed-loop crate tests (axon-loop-contracts / axon-loop / axon-fabric)"
+
+# v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
+# governance/cortex_gate_execution_registry.json may only vouch for a package gate
+# whose checks a script invoked from THIS file runs; `cargo test -p …` below runs
+# the same tests but names no gate. It runs AFTER the closed-loop crate
+# tests because the Fabric tests drive the real `axon` and `cortex` binaries, which
+# are built just above; placed earlier (as it first was) every production-caller
+# test failed with "needs the `axon` binary" on a clean snapshot. The runner fails if a listed test is missing
+# or the filtered run executes fewer tests than listed.
+echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──"
+./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to
