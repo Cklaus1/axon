@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""G01 mutation run: every guard the G01 claim rests on, removed one at a time.
+"""G01 mutation run: each guard LISTED BELOW, removed one at a time.
+
+This is the set of G01 guards a mutation has been written for; it is not a proof
+that no other guard exists. A guard added to the G01 paths belongs here.
 
 For each mutation: the named test must PASS on the clean tree (baseline), and
 must FAIL once that single guard is removed (killed). A mutation that no longer
@@ -89,8 +92,8 @@ MUTATIONS = [
      "axon-loop", "--test protected_class", "a_protected_plan_counts_only_protected_backends"),
     ("M12", "activation: a protected scope needs a protected evaluation (D3)",
      "crates/axon-loop/src/pointer.rs",
-     "    if !t.mechanism_test && tx.store.config()?.protected_scopes.contains(&t.scope) {",
-     "    if false && !t.mechanism_test && tx.store.config()?.protected_scopes.contains(&t.scope) {",
+     "    if eval.evaluation_class != crate::plan::EvaluationClass::Protected {",
+     "    if false && eval.evaluation_class != crate::plan::EvaluationClass::Protected {",
      "axon-loop", "--test protected_class", "a_protected_scope_promotes_only_on_a_protected_evaluation"),
     ("M13", "freeze records the protected class (D3)",
      "crates/axon-loop/src/plan.rs",
@@ -148,6 +151,111 @@ MUTATIONS = [
      "        [one] => *one,",
      "        [one, ..] => *one,",
      "axon-loop", "--test intake", "verification_that_does_not_join_is_refused_with_the_store_unchanged"),
+    ('M24', 'intake: the receipt is the one verifier_ref cites',
+     'crates/axon-loop/src/intake.rs',
+     '    if &rc_ref != vref {',
+     '    if false && &rc_ref != vref {',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M25', 'intake: evidence_refs is exactly the check request',
+     'crates/axon-loop/src/intake.rs',
+     '    if v.evidence_refs != [req_ref.clone()] {',
+     '    if false && v.evidence_refs != [req_ref.clone()] {',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M26', "intake: the verdict's backend profile is pinned",
+     'crates/axon-loop/src/intake.rs',
+     '    if !pin\n        .backend_profiles',
+     '    if false && !pin\n        .backend_profiles',
+     'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
+    ('M27', 'intake: the check is an operator suite (check:<id>)',
+     'crates/axon-loop/src/intake.rs',
+     '    let Some(suite_id) = entry.strip_prefix("check:") else {',
+     '    let Some(suite_id) = entry.strip_prefix("check:").or(Some(entry)) else {',
+     'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
+    ('M28', 'intake: the recorded suite is pinned for this verifier',
+     'crates/axon-loop/src/intake.rs',
+     '        || !pin.check_suites.iter().any(|p| p == recorded)\n',
+     '\n',
+     'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
+    ('M29', 'intake: the recorded suite is the one argv named',
+     'crates/axon-loop/src/intake.rs',
+     '    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))\n        ||',
+     '    if false\n        ||',
+     'axon-loop', '--test intake', 'a_verdict_counts_only_for_what_the_operator_pinned'),
+    ('M30', "intake: argv is the task's registered acceptance check",
+     'crates/axon-loop/src/intake.rs',
+     '    if req.argv != [format!("check:{acc_suite}"), acc.check.clone()] || recorded != acc.check_suite',
+     '    if recorded != acc.check_suite',
+     'axon-loop', '--test intake', 'each_verification_rule_is_load_bearing_on_its_own'),
+    ('M31', 'intake: the verification is a registered_check',
+     'crates/axon-loop/src/intake.rs',
+     '    if req.job_kind != JobKind::RegisteredCheck {',
+     '    if false && req.job_kind != JobKind::RegisteredCheck {',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M32', 'intake: attempt/operation/execution ids join',
+     'crates/axon-loop/src/intake.rs',
+     '        && req.attempt_id == id.attempt_id\n        && rc.attempt_id == id.attempt_id\n        && req.operation_id == id.operation_id\n        && rc.operation_id == id.operation_id\n        && rc.execution_id == id.execution_id;',
+     ';',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M33', "intake: the receipt's input tree is the request's",
+     'crates/axon-loop/src/intake.rs',
+     '    if Some(&rc.input_workspace_ref) != checked\n        || ',
+     '    if false\n        || ',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M34', "intake: the sidecar's verified tree is the request's",
+     'crates/axon-loop/src/intake.rs',
+     '        || v.output_workspace_ref.as_ref() != checked\n',
+     '',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M35', "intake: the sidecar's result is the receipt's",
+     'crates/axon-loop/src/intake.rs',
+     '    if v.result != from_receipt {',
+     '    if false && v.result != from_receipt {',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M36', "intake: matched_checks is the receipt's",
+     'crates/axon-loop/src/intake.rs',
+     '    if v.matched_checks != rc.matched_checks.unwrap_or(0) {',
+     '    if false && v.matched_checks != rc.matched_checks.unwrap_or(0) {',
+     'axon-loop', '--test intake', 'verification_that_does_not_join_is_refused_with_the_store_unchanged'),
+    ('M37', 'EVL: arm proposers are subjects',
+     'crates/axon-loop/src/evl.rs',
+     '            subjects.insert(p);',
+     '            let _ = p;',
+     'axon-loop', '--test redteam', 'ns4p_ns4w_a_subject_is_never_a_trusted_observer_of_its_own_trials'),
+    ('M38', 'EVL: the evaluator is not a subject',
+     'crates/axon-loop/src/evl.rs',
+     '    if subjects.contains(&r.evaluator_ref) {',
+     '    if false && subjects.contains(&r.evaluator_ref) {',
+     'axon-loop', '--test evl_admission', 'evl_refusals_write_nothing'),
+    ('M39', 'EVL: no self-observation',
+     'crates/axon-loop/src/evl.rs',
+     '                } else if subjects.contains(&d.ctx.observed_issuer_ref) {',
+     '                } else if false && subjects.contains(&d.ctx.observed_issuer_ref) {',
+     'axon-loop', '--test redteam', 'ns4p_ns4w_a_subject_is_never_a_trusted_observer_of_its_own_trials'),
+    ('M40', 'signing: only a registered_check is signed',
+     'crates/axon-fabric/src/signing.rs',
+     '    if req.job_kind != JobKind::RegisteredCheck {\n        return Err(NOT_A_CHECK);',
+     '    if false && req.job_kind != JobKind::RegisteredCheck {\n        return Err(NOT_A_CHECK);',
+     'axon-fabric', '--lib', 'signing::tests::only_a_registered_suite_check_is_signed'),
+    ('M41', 'signing: only an operator suite is signed',
+     'crates/axon-fabric/src/signing.rs',
+     '    if !req.argv.first().is_some_and(|a| a.starts_with("check:")) {',
+     '    if false && !req.argv.first().is_some_and(|a| a.starts_with("check:")) {',
+     'axon-fabric', '--lib', 'signing::tests::only_a_registered_suite_check_is_signed'),
+    ('M42', 'signing: only if the workload could not reach the key',
+     'crates/axon-fabric/src/signing.rs',
+     'Some(r) if r.backend == LINUX_MICROVM_PROTECTED.id || r.effect_ceiling.is_empty() => Ok(()),',
+     'Some(_) => Ok(()),',
+     'axon-fabric', '--lib', 'signing::tests::an_effectless_local_run_signs_and_an_effectful_one_does_not'),
+    ('M43', "Fabric: the suite's entry is in the signed identity",
+     'crates/axon-fabric/src/submit.rs',
+     '.map(|s| format!("check-suite:{}@{}#{}", s.id, s.version, target.file));',
+     '.map(|s| format!("check-suite:{}@{}", s.id, s.version));',
+     'axon-fabric', '--test attestation', 'fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_the_key'),
+    ('M44', 'Fabric: a check runs from an empty environment',
+     'crates/axon-fabric/src/submit.rs',
+     '        .with_clean_env();',
+     ';',
+     'axon-fabric', '--test attestation', 'the_launchers_environment_does_not_steer_a_signed_verdict'),
 ]
 
 
@@ -173,6 +281,15 @@ def cargo_test(package, target, test):
     return "error", out
 
 
+def kill_line(out, test):
+    """The failing test's own panic: location and first message line."""
+    lines = out.splitlines()
+    for i, l in enumerate(lines):
+        if f"'{test.split('::')[-1]}'" in l and "panicked at" in l:
+            return " | ".join(x.strip() for x in lines[i:i + 2])[:400]
+    return None
+
+
 def sha(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
@@ -185,6 +302,22 @@ def main():
     if dirty:
         sys.exit(f"refused: uncommitted changes under crates/ — a mutation run is evidence about a commit\n{dirty}")
     commit = sh("git rev-parse HEAD").stdout.strip()
+    # The Fabric integration tests exec the `axon` interpreter from the target
+    # dir: build it from THIS tree first, so no baseline or kill rests on a
+    # stale binary, and record which one it was.
+    built = subprocess.run(
+        ["bash", "-c", "source scripts/lib_bounded_run.sh && bounded_run 16G 1800 "
+         "cargo build -q -p axon-core --no-default-features --bin axon"],
+        cwd=ROOT, capture_output=True, text=True)
+    if built.returncode != 0:
+        sys.exit(f"refused: could not build the axon interpreter\n{built.stderr[-2000:]}")
+    target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
+    axon_bin = os.path.join(target, "debug", "axon")
+    toolchain = {
+        "rustc": sh("rustc -V").stdout.strip(),
+        "cargo": sh("cargo -V").stdout.strip(),
+        "axon_bin_sha256": sha(axon_bin) if os.path.exists(axon_bin) else None,
+    }
     results, ok = [], True
     baselines = {}
     for (mid, guard, rel, old, new, pkg, target, test) in MUTATIONS:
@@ -196,14 +329,16 @@ def main():
         original = open(path).read()
         before = sha(path)
         n = original.count(old)
+        evidence = None
         if n != 1:
             result = f"not_applicable ({n} matches)"
         else:
             try:
                 with open(path, "w") as f:
                     f.write(original.replace(old, new))
-                outcome, _ = cargo_test(pkg, target, test)
+                outcome, out = cargo_test(pkg, target, test)
                 result = "killed" if outcome == "failed" else f"survived ({outcome})"
+                evidence = kill_line(out, test) if outcome == "failed" else None
             finally:
                 with open(path, "w") as f:
                     f.write(original)
@@ -212,9 +347,11 @@ def main():
         good = base == "passed" and result == "killed"
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
-                         "target": target, "test": test, "baseline": base, "result": result})
+                         "target": target, "test": test, "baseline": base, "result": result,
+                         "kill_evidence": evidence})
         print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}", flush=True)
-    doc = {"schema": "axon-v022-mutation-run/1", "gate": "G01", "commit": commit,
+    doc = {"schema": "axon-v022-mutation-run/2", "gate": "G01", "commit": commit,
+           "toolchain": toolchain,
            "all_killed": ok, "mutations": results}
     with open(sys.argv[1], "w") as f:
         json.dump(doc, f, indent=2)

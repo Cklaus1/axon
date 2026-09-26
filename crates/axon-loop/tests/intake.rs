@@ -887,6 +887,19 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
         &r,
         "output tree",
     );
+    // M34: a FAILED verdict run on the output tree, whose sidecar names ANOTHER
+    // tree as the one verified — a record that would misstate what was
+    // checked. Only the sidecar-tree conjunct refuses it.
+    let r = check_receipt("failed", 2);
+    let mut e = verified(&c.ep, &req, &r, "failed");
+    e["verification"]["output_workspace_ref"] = json!(format!("acf1:{}", "8".repeat(64)));
+    refuse(
+        "sidecar names another verified tree",
+        &e,
+        &req,
+        &r,
+        "output tree",
+    );
     // X04: a FAILED verdict from a non-supervised receipt (a passed one does
     // not even parse, so only step 8's rule refuses this).
     for source in ["worker_reported", "provider_reported"] {
