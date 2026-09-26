@@ -17,7 +17,7 @@
 //! (`<evidence>.sig` unless `--linux-evidence-sig`), verified against the
 //! Ed25519 public keys in `--linux-trusted-issuers` (default: the manifest's
 //! sibling `trusted_issuers/`), no older than the max age (default 30 days).
-//! axon-fabric workspace-import --state DIR --root DIR
+//! axon-fabric workspace-import --state DIR --tenant T --root DIR
 //! axon-fabric status --journal FILE --op ID
 //! axon-fabric cancel --journal FILE --op ID --reason TEXT
 //! ```
@@ -176,11 +176,14 @@ fn state_dir(a: &Args) -> PathBuf {
     })
 }
 
-/// `axon-fabric workspace-import --state DIR --root DIR`: import a tree into
+/// `axon-fabric workspace-import --state DIR --tenant T --root DIR`: import a tree into
 /// the WorkspaceVersion store and print its reference (and omissions).
 fn workspace_import(a: &Args) {
-    let store = axon_fabric::workspace::WorkspaceStore::open(&PathBuf::from(a.req("--state")))
-        .unwrap_or_else(|e| refuse("workspace", &e.to_string(), 2));
+    let tenant = axon_loop_contracts::TenantId::new(a.req("--tenant"))
+        .unwrap_or_else(|e| refuse("usage", &format!("--tenant: {e}"), 2));
+    let store =
+        axon_fabric::workspace::WorkspaceStore::open(&PathBuf::from(a.req("--state")), &tenant)
+            .unwrap_or_else(|e| refuse("workspace", &e.to_string(), 2));
     let tree = axon_fabric::workspace::WorkspaceTree::import_dir(
         &PathBuf::from(a.req("--root")),
         &axon_fabric::workspace::Quota::default(),

@@ -96,17 +96,20 @@ linking this crate, because this crate depends on `axon-cortex`.
   beyond the recipe — **namespace collisions** (equal after NFC + lowercase,
   or a path that is both file and directory). Skipped top-level `.git` /
   `.micode` are recorded as explicit omissions. The store
-  (`<state>/workspaces`, `--state`, default `<journal>.state`) is
+  (`<state>/tenants/<key>/workspaces`, `--state`, default `<journal>.state`) is
   content-addressed and write-once (fsynced temp + no-clobber rename); a
   materialization re-verifies every blob and refuses an existing
   destination. A `WorkspaceProjection` with no `version_ref` (a hash-only
   observation) or an unpublished ref cannot be materialized (G28). Each trial
   runs with its own `HOME` / `XDG_CACHE_HOME` / `CARGO_TARGET_DIR` under
-  `<state>/trial-caches/<sha256(trial_id)>`. `workspace_version_ref` may name
+  `<state>/tenants/<key>/trial-caches/<sha256(trial_id)>`. Store and caches
+  are per TENANT (`<state>/tenants/<sha256(tenant)[..32]>`): a version
+  another tenant published does not resolve (content addressing is not a
+  capability), and equal TrialIds in two tenants never share a cache. `workspace_version_ref` may name
   a published version (materialized privately per operation), the one-file
   version of `argv[0]` (copied into the store first; the COPY is judged), or
   the historical single-file digest (read in place). No GC (D11).
-  `axon-fabric workspace-import --state DIR --root DIR` publishes a tree.
+  `axon-fabric workspace-import --state DIR --tenant T --root DIR` publishes a tree.
   Mode bits are no boundary for root: the store's integrity is re-hashing,
   not permissions.
 * **Check suites (B264).** A `cortex-check-registry/1` file may carry

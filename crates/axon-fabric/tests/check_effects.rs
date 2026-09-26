@@ -56,7 +56,7 @@ fn with_suite(src: &str, visibility: &str) -> Suite {
         "entry": "h.ax", "workspace_version_ref": suite_ref,
     }]);
     std::fs::write(&env.registry, reg.to_string()).unwrap();
-    let candidate = WorkspaceStore::open(&env.cfg(0).state_dir)
+    let candidate = WorkspaceStore::open(&env.cfg(0).state_dir, &tenant())
         .unwrap()
         .import_dir(&env.ws, &Quota::default())
         .unwrap();
@@ -121,7 +121,7 @@ fn a_hidden_check_judges_the_candidate_from_outside_its_context() {
     // The subject's context — its workspace version (in and out), the
     // request it sent, the receipt and report it gets back, the journal —
     // carries the grader's identity at most, never its bytes.
-    let store = WorkspaceStore::open(&cfg.state_dir).unwrap();
+    let store = WorkspaceStore::open(&cfg.state_dir, &tenant()).unwrap();
     let cand = store.tree(&s.candidate).unwrap();
     let out = store
         .tree(r.output_workspace_ref.as_ref().unwrap())
@@ -269,7 +269,7 @@ fn a_run_that_moves_its_candidate_or_its_grader_is_no_verdict() {
         let out = sub.receipt.output_workspace_ref.clone().unwrap();
         if what == "candidate" {
             assert_ne!(out, s.candidate, "the output ref names what the run left");
-            let t = WorkspaceStore::open(&s.env.cfg(0).state_dir)
+            let t = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
                 .unwrap()
                 .tree(&out)
                 .expect("the output version is retrievable");
@@ -482,4 +482,8 @@ fn the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate() {
             "({i},{o}): {e}"
         );
     }
+}
+
+fn tenant() -> axon_loop_contracts::TenantId {
+    axon_loop_contracts::TenantId::new("tenant-t").unwrap()
 }

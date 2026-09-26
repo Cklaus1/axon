@@ -194,14 +194,14 @@ fn case() -> Case {
 /// Import through the store and assert it refused with `class` and
 /// published NOTHING (no blob, no manifest).
 fn refused(c: &Case, quota: &Quota, class: &str) -> ImportRefusal {
-    let store = WorkspaceStore::open(&c.state).unwrap();
+    let store = WorkspaceStore::open(&c.state, &tenant()).unwrap();
     let err = store.import_dir(&c.root, quota).unwrap_err();
     let StoreError::Refused(r) = err else {
         panic!("expected a refusal, got {err}")
     };
     assert_eq!(r.class(), class, "{r}");
     assert_eq!(
-        files_under(&c.state.join("workspaces")),
+        files_under(&c.state),
         0,
         "a refused import publishes nothing"
     );
@@ -253,7 +253,7 @@ fn refuses_symlinks_leaving_the_root() {
     let c = case();
     std::fs::create_dir_all(c.root.join("src")).unwrap();
     std::os::unix::fs::symlink("../ok.txt", c.root.join("src/up")).unwrap();
-    WorkspaceStore::open(&c.state)
+    WorkspaceStore::open(&c.state, &tenant())
         .unwrap()
         .import_dir(&c.root, &Quota::default())
         .unwrap();
@@ -352,7 +352,7 @@ fn refuses_entry_quota_overflow() {
         "quota_entries",
     );
     std::fs::remove_file(c.root.join("f2")).unwrap();
-    WorkspaceStore::open(&c.state)
+    WorkspaceStore::open(&c.state, &tenant())
         .unwrap()
         .import_dir(
             &c.root,
@@ -424,12 +424,11 @@ fn publish_is_write_once_and_materialize_round_trips() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tree");
     materialize_vector(&root, &vector());
-    let store = WorkspaceStore::open(&dir.path().join("state")).unwrap();
+    let store = WorkspaceStore::open(&dir.path().join("state"), &tenant()).unwrap();
     let r = store.import_dir(&root, &Quota::default()).unwrap();
     assert_eq!(r.as_str(), vector()["reference"].as_str().unwrap());
-    let mpath = dir
-        .path()
-        .join("state/workspaces/versions")
+    let mpath = ws_root(&dir.path().join("state"))
+        .join("versions")
         .join(format!("{}.manifest", &r.as_str()[5..]));
     let ino = std::fs::metadata(&mpath).unwrap().ino();
     assert_eq!(store.import_dir(&root, &Quota::default()).unwrap(), r);
@@ -481,12 +480,11 @@ fn a_tampered_blob_is_refused_and_nothing_is_materialized() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tree");
     materialize_vector(&root, &vector());
-    let store = WorkspaceStore::open(&dir.path().join("state")).unwrap();
+    let store = WorkspaceStore::open(&dir.path().join("state"), &tenant()).unwrap();
     let r = store.import_dir(&root, &Quota::default()).unwrap();
     // README.md's blob.
-    let blob = dir.path().join(
-        "state/workspaces/blobs/bad18e717145fcf190f9144d635a3295ab55ffc8cddcfc94b6c4b94b00093b42",
-    );
+    let blob = ws_root(&dir.path().join("state"))
+        .join("blobs/bad18e717145fcf190f9144d635a3295ab55ffc8cddcfc94b6c4b94b00093b42");
     std::fs::write(&blob, "hello workspacE\n").unwrap();
     let out = dir.path().join("out");
     assert!(matches!(
@@ -503,7 +501,7 @@ fn a_hash_only_observation_cannot_be_materialized() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tree");
     materialize_vector(&root, &vector());
-    let store = WorkspaceStore::open(&dir.path().join("state")).unwrap();
+    let store = WorkspaceStore::open(&dir.path().join("state"), &tenant()).unwrap();
     // A snapshot the observer HASHED — the vector's own reference — but never
     // published: the store holds no content for it.
     let snapshot = vector()["reference"].as_str().unwrap().to_string();
@@ -554,8 +552,10 @@ fn a_hash_only_observation_cannot_be_materialized() {
 #[test]
 fn two_trials_caches_do_not_see_each_others_writes() {
     let dir = tempfile::tempdir().unwrap();
-    let a = TrialCache::for_trial(dir.path(), &TrialId::new("trial-a").unwrap()).unwrap();
-    let b = TrialCache::for_trial(dir.path(), &TrialId::new("trial-b").unwrap()).unwrap();
+    let a =
+        TrialCache::for_trial(dir.path(), &tenant(), &TrialId::new("trial-a").unwrap()).unwrap();
+    let b =
+        TrialCache::for_trial(dir.path(), &tenant(), &TrialId::new("trial-b").unwrap()).unwrap();
     assert_ne!(a.root, b.root);
     for ((ka, va), (kb, vb)) in a.env().iter().zip(b.env().iter()) {
         assert_eq!(ka, kb);
@@ -564,7 +564,8 @@ fn two_trials_caches_do_not_see_each_others_writes() {
         assert!(!Path::new(vb).join("marker").exists());
     }
     // Keyed by TrialId: the same trial gets the same directories back.
-    let a2 = TrialCache::for_trial(dir.path(), &TrialId::new("trial-a").unwrap()).unwrap();
+    let a2 =
+        TrialCache::for_trial(dir.path(), &tenant(), &TrialId::new("trial-a").unwrap()).unwrap();
     assert_eq!(a2, a);
 }
 
@@ -626,7 +627,7 @@ fn through_submit_a_trials_home_is_its_own() {
 fn publish_ws(env: &Env) -> Acf1Ref {
     let cfg = env.cfg(0);
     std::fs::write(env.ws.join("notes.md"), "not a check\n").unwrap();
-    WorkspaceStore::open(&cfg.state_dir)
+    WorkspaceStore::open(&cfg.state_dir, &tenant())
         .unwrap()
         .import_dir(&env.ws, &Quota::default())
         .unwrap()
@@ -705,7 +706,7 @@ fn a_one_file_version_judges_the_bytes_it_hashed_not_the_live_file() {
         s.check_report
     );
     assert_eq!(s.receipt.input_workspace_ref.as_str(), r);
-    assert!(WorkspaceStore::open(&cfg.state_dir)
+    assert!(WorkspaceStore::open(&cfg.state_dir, &tenant())
         .unwrap()
         .contains(&Acf1Ref::new(r).unwrap()));
 }
@@ -721,4 +722,48 @@ fn the_historical_single_file_ref_still_resolves() {
     assert!(env
         .journal_text()
         .contains("\"legacy_single_file\":\"f.ax\""));
+}
+
+fn tenant() -> axon_loop_contracts::TenantId {
+    axon_loop_contracts::TenantId::new("tenant-t").unwrap()
+}
+
+/// Where `tenant()`'s store lives under a state dir.
+fn ws_root(state: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let key = format!("{:x}", Sha256::digest(tenant().as_str().as_bytes()));
+    state.join("tenants").join(&key[..32]).join("workspaces")
+}
+
+// ── tenancy ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn another_tenants_version_does_not_resolve_and_launches_nothing() {
+    let env = Env::new();
+    let cfg = env.cfg(0);
+    let other = axon_loop_contracts::TenantId::new("tenant-other").unwrap();
+    std::fs::write(env.ws.join("notes.md"), "x\n").unwrap();
+    let r = WorkspaceStore::open(&cfg.state_dir, &other)
+        .unwrap()
+        .import_dir(&env.ws, &Quota::default())
+        .unwrap();
+    // Positive control: in its own tenant it resolves.
+    assert!(WorkspaceStore::open(&cfg.state_dir, &other)
+        .unwrap()
+        .contains(&r));
+    assert!(!WorkspaceStore::open(&cfg.state_dir, &tenant())
+        .unwrap()
+        .contains(&r));
+    let mut req = request(&env, "op-xt", "t_ok");
+    req["workspace_version_ref"] = r.as_str().into();
+    let e = submit(&req.to_string(), &cfg).unwrap_err();
+    assert_eq!(e.kind(), "conflict", "{e}");
+    assert_eq!(spawn_count(&env.spawns), 0);
+    assert_eq!(env.launch_records(), 0);
+    // Caches are per tenant too, even for an equal TrialId.
+    let t = TrialId::new("trial-1").unwrap();
+    assert_ne!(
+        TrialCache::for_trial(&cfg.state_dir, &other, &t).unwrap(),
+        TrialCache::for_trial(&cfg.state_dir, &tenant(), &t).unwrap()
+    );
 }

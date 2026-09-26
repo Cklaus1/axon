@@ -36,8 +36,9 @@
 //!
 //! # Store
 //!
-//! `<state>/workspaces/blobs/<sha256>` and
-//! `<state>/workspaces/versions/<hex>.{manifest,omissions.json}`. Every file
+//! Per tenant: `<state>/tenants/<key>/workspaces/blobs/<sha256>` and
+//! `…/workspaces/versions/<hex>.{manifest,omissions.json}`. No blob or
+//! version is shared across tenants. Every file
 //! is written in full to a temp name, fsynced, and PUBLISHED by a no-clobber
 //! rename (`renameat2(RENAME_NOREPLACE)`; a `link`+`unlink` fallback where
 //! that is unavailable): an existing object is never overwritten, and a
@@ -57,7 +58,7 @@ use std::path::{Path, PathBuf};
 use axon_cortex::runner::{
     workspace_manifest_bytes, workspace_version_ref, WorkspaceManifestEntry,
 };
-use axon_loop_contracts::{Acf1Ref, TrialId};
+use axon_loop_contracts::{Acf1Ref, TenantId, TrialId};
 use serde::{Deserialize, Serialize};
 
 /// D11 default: at most this many entries.
@@ -655,9 +656,13 @@ fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 impl WorkspaceStore {
-    /// The store under a Fabric state dir (`<state>/workspaces`).
-    pub fn open(state_dir: &Path) -> Result<WorkspaceStore, StoreError> {
-        let root = state_dir.join("workspaces");
+    /// `tenant`'s store under a Fabric state dir
+    /// (`<state>/tenants/<sha256(tenant)[..32]>/workspaces`). Stores are per
+    /// TENANT: a reference published by one tenant does not resolve for
+    /// another, however it was learned — content addressing is not a
+    /// capability.
+    pub fn open(state_dir: &Path, tenant: &TenantId) -> Result<WorkspaceStore, StoreError> {
+        let root = tenant_dir(state_dir, tenant).join("workspaces");
         std::fs::create_dir_all(root.join("blobs"))?;
         std::fs::create_dir_all(root.join("versions"))?;
         Ok(WorkspaceStore { root })
@@ -886,6 +891,13 @@ pub fn remove_tree(p: &Path) -> std::io::Result<()> {
 
 // ── per-trial caches ────────────────────────────────────────────────────────
 
+/// `<state>/tenants/<sha256(tenant)[..32]>`.
+fn tenant_dir(state_dir: &Path, tenant: &TenantId) -> PathBuf {
+    state_dir
+        .join("tenants")
+        .join(&sha256_hex(tenant.as_str().as_bytes())[..32])
+}
+
 /// A trial's own mutable cache directories. Keyed by `TrialId`: every
 /// attempt of one trial shares them; no two trials ever do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -894,12 +906,16 @@ pub struct TrialCache {
 }
 
 impl TrialCache {
-    /// `<state>/trial-caches/<sha256(trial_id)[..32]>`, created fresh (0700)
-    /// on first use. The key is a hash so no id spelling can name another
-    /// trial's directory or leave the cache root.
-    pub fn for_trial(state_dir: &Path, trial: &TrialId) -> Result<TrialCache, StoreError> {
+    /// `<state>/tenants/<tenant key>/trial-caches/<sha256(trial_id)[..32]>`,
+    /// created fresh (0700) on first use. Keys are hashes so no id spelling
+    /// can name another trial's — or another tenant's — directory.
+    pub fn for_trial(
+        state_dir: &Path,
+        tenant: &TenantId,
+        trial: &TrialId,
+    ) -> Result<TrialCache, StoreError> {
         let key = &sha256_hex(trial.as_str().as_bytes())[..32];
-        let root = state_dir.join("trial-caches").join(key);
+        let root = tenant_dir(state_dir, tenant).join("trial-caches").join(key);
         for sub in ["home", "xdg-cache", "cargo-target"] {
             std::fs::create_dir_all(root.join(sub))?;
         }

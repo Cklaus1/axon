@@ -471,7 +471,7 @@ fn post_run(req: &ComputeRequest, cfg: &SubmitConfig, t: &Target) -> PostRun {
         Bound::Version { dir, .. } => {
             let tree = WorkspaceTree::import_dir(&dir.0.join("candidate"), &Quota::default());
             match tree.map_err(|e| e.to_string()).and_then(|tr| {
-                WorkspaceStore::open(&cfg.state_dir)
+                WorkspaceStore::open(&cfg.state_dir, &cfg.epoch.scope().tenant_id)
                     .and_then(|st| st.publish(&tr))
                     .map_err(|e| e.to_string())
             }) {
@@ -538,8 +538,8 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
             "argv file {file:?} must be a plain relative path inside the workspace"
         )));
     }
-    let store =
-        WorkspaceStore::open(&cfg.state_dir).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let store = WorkspaceStore::open(&cfg.state_dir, &cfg.epoch.scope().tenant_id)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
     let want = &req.workspace_version_ref;
     let version = if store.contains(want) {
         want.clone()
@@ -620,8 +620,8 @@ fn check_suite_target(
         .check(id)
         .ok_or_else(|| SubmitError::Unregistered(format!("check suite `{id}` is not registered")))?
         .clone();
-    let store =
-        WorkspaceStore::open(&cfg.state_dir).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let store = WorkspaceStore::open(&cfg.state_dir, &cfg.epoch.scope().tenant_id)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
     let cand = &req.workspace_version_ref;
     if !store.contains(cand) {
         return Err(SubmitError::Conflict(format!(
@@ -1017,9 +1017,10 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     } else {
         // Past the reservation, every refusal CANCELS (released: nothing
         // was launched) — a `?` here would strand the reservation as held.
-        let built = TrialCache::for_trial(&cfg.state_dir, &req.trial_id)
-            .map_err(|e| SubmitError::Workspace(e.to_string()))
-            .and_then(|cache| host_executor(&exe, &req, &ceiling, &cache));
+        let built =
+            TrialCache::for_trial(&cfg.state_dir, &cfg.epoch.scope().tenant_id, &req.trial_id)
+                .map_err(|e| SubmitError::Workspace(e.to_string()))
+                .and_then(|cache| host_executor(&exe, &req, &ceiling, &cache));
         let mut l = match built {
             Ok(l) => l,
             Err(e) => {
