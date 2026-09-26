@@ -442,3 +442,60 @@ fn baseline_rules() {
         Err(LoopError::Refused(_))
     ));
 }
+
+/// B280 / G16-r22-peer-failure-matrix: a peer that reconnects and REPLAYS an
+/// activation it already sent — after authority has moved on — gets the
+/// recorded result of that transition back, and nothing is re-activated: the
+/// pointer stays where the later transition left it, byte for byte.
+#[test]
+fn a_replayed_activation_after_authority_moved_does_not_reactivate() {
+    let w = world();
+    let boot = t(transition(
+        "boot",
+        "activate",
+        &null_policy_ref(),
+        Some(&w.inc_ref),
+        0,
+        Some(&w.baseline),
+        false,
+    ));
+    // Authority moves on: a pause at epoch 1 -> 2.
+    let pause = t(transition(
+        "pause-1", "pause", &w.inc_ref, None, 1, None, false,
+    ));
+    assert_eq!(pointer::transition(&w.s, &pause).unwrap().epoch.get(), 2);
+    let after_pause = snapshot(w.dir.path());
+    // The reconnecting peer replays its old activation.
+    let replay = pointer::transition(&w.s, &boot).unwrap();
+    assert_eq!(
+        replay.epoch.get(),
+        1,
+        "the recorded result of THAT transition"
+    );
+    assert_eq!(
+        epoch::current(&w.s, &scope()).unwrap().get(),
+        2,
+        "not re-activated"
+    );
+    assert!(matches!(
+        pointer::resolve(&w.s, &scope()),
+        Err(LoopError::Paused(_))
+    ));
+    assert_eq!(
+        snapshot(w.dir.path()),
+        after_pause,
+        "the replay wrote nothing"
+    );
+    // A NEW transition built on the peer's stale view is refused.
+    let stale = t(transition(
+        "reactivate",
+        "activate",
+        &w.inc_ref,
+        Some(&w.inc_ref),
+        1,
+        Some(&w.baseline),
+        false,
+    ));
+    assert!(pointer::transition(&w.s, &stale).is_err());
+    assert_eq!(snapshot(w.dir.path()), after_pause);
+}

@@ -2,7 +2,10 @@
 //! messages, stale epochs and schema mismatch preserve local authority and
 //! unknown status, and reconnecting does not duplicate activation, billing or
 //! task effects. The axon-loop half (partial export, replayed transitions,
-//! episode schema) is in `axon-loop/tests/peer_failures.rs`.
+//! episode schema) is in `axon-loop/tests/intake.rs`
+//! (`a_partial_export_is_refused_then_the_complete_one_is_recorded_once`,
+//! `an_episode_of_another_schema_version_is_refused`) and `axon-loop/tests/pointer.rs`
+//! (`a_replayed_activation_after_authority_moved_does_not_reactivate`).
 //!
 //! "Peer" here is the authority peer Fabric depends on at submit and at
 //! dispatch — the axon-loop epoch store — and the caller that re-sends a

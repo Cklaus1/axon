@@ -793,3 +793,53 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
     );
     assert_eq!(before, snapshot(c.s.root()));
 }
+
+/// B280 / G16-r22-peer-failure-matrix: a PARTIAL export (the sidecar arrives,
+/// its Fabric evidence does not) is refused with the store unchanged; the
+/// COMPLETE export later is recorded; re-sending it is idempotent; and a
+/// partial re-send after that is still refused — never "replayed" into a
+/// pass it could not have earned on its own.
+#[test]
+fn a_partial_export_is_refused_then_the_complete_one_is_recorded_once() {
+    let c = case(Some(500));
+    let (req, rc) = (check_request(), check_receipt("passed", 2));
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let before = snapshot(c.s.root());
+    assert!(
+        run_v(&c, &ep, None, None).is_err(),
+        "partial: no Fabric documents"
+    );
+    assert!(
+        run_v(&c, &ep, Some(&req), None).is_err(),
+        "partial: request without receipt"
+    );
+    assert_eq!(
+        snapshot(c.s.root()),
+        before,
+        "a partial export writes nothing"
+    );
+    let first = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap();
+    assert!(first.recorded_now);
+    let after = snapshot(c.s.root());
+    let again = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap();
+    assert!(!again.recorded_now);
+    assert_eq!(again.ledger_seq, first.ledger_seq);
+    assert!(
+        run_v(&c, &ep, None, Some(&rc)).is_err(),
+        "a partial re-send is not a replay"
+    );
+    assert_eq!(snapshot(c.s.root()), after);
+}
+
+/// B280 / G16-r22-peer-failure-matrix: an episode sidecar of ANOTHER schema
+/// version is refused, store unchanged — never read as the nearest version.
+#[test]
+fn an_episode_of_another_schema_version_is_refused() {
+    let c = case(Some(500));
+    let mut ep = c.ep.clone();
+    ep["schema"] = json!("axon.closed-loop.episode/2");
+    let before = snapshot(c.s.root());
+    let e = run(&c, &ep, false).unwrap_err();
+    assert!(matches!(e, LoopError::Malformed(_)), "{e}");
+    assert_eq!(snapshot(c.s.root()), before);
+}
