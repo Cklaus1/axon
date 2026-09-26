@@ -175,6 +175,9 @@ fn launch(kernel: &Path, effects: &[&str]) -> axon_vm::RunResult {
 }
 
 /// Grant covers what the guest does → a clean exit 0 reported by the guest.
+/// This shows the kernel took its GRANT BRANCH and halted cleanly. It is NOT an
+/// allow-path positive control: the guest kernel issues no syscall on that
+/// branch (FG-041; the ring-3 allow path is open as R36.S1).
 /// Then withhold FS → the in-guest gate refuses the substrate's `openat` and the
 /// library reports a Violation (exit 8), not ok. One test so the two boots do
 /// not race on the process-wide env vars above.
