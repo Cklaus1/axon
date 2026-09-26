@@ -1077,6 +1077,24 @@ pub fn run_linux_profile(
 mod tests {
     use super::*;
 
+    /// ADR-001 D3: the loop counts a protected evaluation only on a backend in
+    /// `PROTECTED_PROFILES`. That list is the loop's; the profiles are Fabric's.
+    /// A renamed or added profile must be classified here, not by accident.
+    #[test]
+    fn protected_profiles_are_exactly_the_microvm_profile() {
+        let listed: Vec<&str> = ALL
+            .iter()
+            .map(|p| p.id)
+            .filter(|id| axon_loop_contracts::PROTECTED_PROFILES.contains(id))
+            .collect();
+        assert_eq!(listed, [LINUX_MICROVM_PROTECTED.id]);
+        assert_eq!(
+            axon_loop_contracts::PROTECTED_PROFILES,
+            [LINUX_MICROVM_PROTECTED.id],
+            "a protected profile the backend registry does not define"
+        );
+    }
+
     #[test]
     fn profiles_are_truthful() {
         const { assert!(!LOCAL_INTERPRETER.hardware_isolation) };

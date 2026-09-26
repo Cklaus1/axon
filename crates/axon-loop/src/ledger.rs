@@ -117,6 +117,15 @@ pub enum Event {
         incumbent_policy_ref: Ref,
         candidate_policy_ref: Ref,
         authority_epoch: AuthorityEpoch,
+        /// ADR-001 D3: fixed AT FREEZE from whether the operator lists the
+        /// scope as protected, so it cannot be chosen after outcomes. The
+        /// pilot plan document (a vendored v0.22 contract) is not changed.
+        /// Absent for a development freeze, so older entries are unchanged.
+        #[serde(
+            default,
+            skip_serializing_if = "crate::plan::EvaluationClass::is_development"
+        )]
+        evaluation_class: crate::plan::EvaluationClass,
     },
     Hypothesis {
         scope: Scope,

@@ -116,6 +116,7 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
             .into_iter()
             .collect(),
         task_acceptance: task_acceptance(),
+        protected_scopes: Vec::new(),
     })
     .unwrap();
     register_candidates(&s);
@@ -138,6 +139,7 @@ pub fn store_without_candidates(dir: &Path) -> Store {
             .into_iter()
             .collect(),
         task_acceptance: task_acceptance(),
+        protected_scopes: Vec::new(),
     })
     .unwrap();
     // The lock file is created on first use; create it now so no-change

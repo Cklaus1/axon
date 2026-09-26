@@ -66,6 +66,12 @@ pub use receipt::{
     EvidenceSource, ExecutionReceipt, ReceiptStatus, ReceiptUsageState, ReceiptVerification,
 };
 
+/// ADR-001 D3: the ONLY backend profiles eligible for protected evaluation,
+/// admission evidence and promotion. Compiled in, never read from a request,
+/// a Fabric flag or a config file. `process_scoped/local-interpreter` is
+/// development-only. (axon-fabric's `drift` test ties this to its profile ids.)
+pub const PROTECTED_PROFILES: &[&str] = &["linux-microvm-protected"];
+
 /// 2^53 − 1: the largest integer every JSON implementation represents exactly.
 pub const MAX_INTEGER: u64 = 9_007_199_254_740_991;
 /// Input (and canonical output) byte limit: 1 MiB.

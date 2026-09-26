@@ -238,8 +238,27 @@ pub fn load_by_ref(store: &Store, r: &Ref) -> Result<PilotPlan> {
 }
 
 /// The freeze facts the rest of the loop binds to.
+/// ADR-001 D3: how an experiment's evidence may be used. `Development` (the
+/// default) is recorded and reportable, never protected evidence; `Protected`
+/// counts a trial only when every receipt it rests on came from a
+/// [`axon_loop_contracts::PROTECTED_PROFILES`] backend. Fixed at freeze.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationClass {
+    #[default]
+    Development,
+    Protected,
+}
+
+impl EvaluationClass {
+    pub fn is_development(&self) -> bool {
+        *self == EvaluationClass::Development
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Frozen {
+    pub evaluation_class: EvaluationClass,
     pub plan: PilotPlan,
     pub plan_ref: Ref,
     pub freeze_seq: u64,
@@ -253,6 +272,7 @@ pub(crate) fn frozen_in(tx: &Tx, id: &str) -> Result<Option<Frozen>> {
         Event::Freeze {
             plan_ref,
             authority_epoch,
+            evaluation_class,
             ..
         },
     )) = tx.freeze_of(id)
@@ -260,6 +280,7 @@ pub(crate) fn frozen_in(tx: &Tx, id: &str) -> Result<Option<Frozen>> {
         return Ok(None);
     };
     Ok(Some(Frozen {
+        evaluation_class: *evaluation_class,
         plan: load_by_ref(tx.store, plan_ref)?,
         plan_ref: plan_ref.clone(),
         freeze_seq: seq,
@@ -325,6 +346,11 @@ pub fn freeze(store: &Store, id: &str) -> Result<Ref> {
         )));
     }
     let epoch = tx.pointer(&plan.scope).epoch;
+    let evaluation_class = if store.config()?.protected_scopes.contains(&plan.scope) {
+        EvaluationClass::Protected
+    } else {
+        EvaluationClass::Development
+    };
     tx.append(Event::Freeze {
         experiment_id: id.to_string(),
         scope: plan.scope.clone(),
@@ -332,6 +358,7 @@ pub fn freeze(store: &Store, id: &str) -> Result<Ref> {
         incumbent_policy_ref: inc,
         candidate_policy_ref: cand,
         authority_epoch: epoch,
+        evaluation_class,
     })?;
     Ok(r)
 }

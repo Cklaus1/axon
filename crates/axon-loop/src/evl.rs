@@ -146,6 +146,13 @@ pub struct EvaluationRecord {
     pub trusted_verifiers: Vec<OpaqueRef>,
     pub subject_issuers: Vec<OpaqueRef>,
     pub arms: Vec<ArmResult>,
+    /// ADR-001 D3: the frozen plan's evaluation class. Absent (so the record's
+    /// bytes are unchanged) for a development evaluation.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::plan::EvaluationClass::is_development"
+    )]
+    pub evaluation_class: crate::plan::EvaluationClass,
     /// Every episode / context / receipt the evaluation read, by digest.
     pub evidence_refs: Vec<Ref>,
 }
@@ -447,10 +454,13 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         d,
                         policy,
                         &a.policy_ref,
-                        epoch,
-                        &verifiers,
-                        &config,
-                        &subjects,
+                        &Bench {
+                            epoch,
+                            verifiers: &verifiers,
+                            config: &config,
+                            subjects: &subjects,
+                            class: frozen.evaluation_class,
+                        },
                     ),
                 };
                 (o, why, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
@@ -488,6 +498,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         trusted_verifiers: verifiers.into_iter().collect(),
         subject_issuers,
         arms: arms.into_values().collect(),
+        evaluation_class: frozen.evaluation_class,
         evidence_refs: evidence.into_iter().collect(),
     };
     for p in policies.values() {
@@ -506,15 +517,29 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     Ok((rec, eref))
 }
 
+/// What every trial of one evaluation is judged against: fixed at the start of
+/// `evaluate`, identical for every arm.
+struct Bench<'a> {
+    epoch: AuthorityEpoch,
+    verifiers: &'a BTreeSet<OpaqueRef>,
+    config: &'a crate::store::Config,
+    subjects: &'a BTreeSet<OpaqueRef>,
+    class: crate::plan::EvaluationClass,
+}
+
 fn judge(
     d: &Delivered,
     policy: &PolicyEnvelope,
     policy_ref: &Ref,
-    epoch: AuthorityEpoch,
-    verifiers: &BTreeSet<OpaqueRef>,
-    config: &crate::store::Config,
-    subjects: &BTreeSet<OpaqueRef>,
+    bench: &Bench<'_>,
 ) -> (Outcome, String) {
+    let Bench {
+        epoch,
+        verifiers,
+        config,
+        subjects,
+        class,
+    } = *bench;
     if &d.ep.policy_ref != policy_ref {
         return (
             Outcome::Unknown,
@@ -526,6 +551,28 @@ fn judge(
     }
     if let Err(e) = bind_acf(&d.ep, &d.req, &d.rcpt, &d.proj) {
         return (Outcome::Unknown, format!("unbound ACF evidence: {e}"));
+    }
+    // ADR-001 D3: a protected evaluation counts a trial only if every receipt
+    // it rests on came from a protected backend. The local interpreter is
+    // development-only — its results are recorded, never protected evidence.
+    if class == crate::plan::EvaluationClass::Protected {
+        let backends = [
+            Some(d.rcpt.backend_profile_ref.as_str().to_string()),
+            d.verification[1]["backend_profile_ref"]
+                .as_str()
+                .map(str::to_string),
+        ];
+        for b in backends.into_iter().flatten() {
+            if !axon_loop_contracts::PROTECTED_PROFILES.contains(&b.as_str()) {
+                return (
+                    Outcome::Unknown,
+                    format!(
+                        "development backend {b} is ineligible for a protected evaluation \
+                         (ADR-001 D3)"
+                    ),
+                );
+            }
+        }
     }
     let v = &d.ep.verification;
     // A verdict is evidence only if its VERIFICATION evidence joins and is

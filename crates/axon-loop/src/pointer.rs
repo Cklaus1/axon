@@ -480,6 +480,19 @@ fn check_activate(
     if !adm.deployment_enabled {
         return Err(refused("the admitted plan has deployment_enabled = false"));
     }
+    // ADR-001 D3: in a protected scope a real promotion rests on protected
+    // evidence only. A development-class evaluation (local interpreter) is
+    // recorded and reportable, never a promotion there.
+    if !t.mechanism_test && tx.store.config()?.protected_scopes.contains(&t.scope) {
+        let eval: crate::evl::EvaluationRecord =
+            tx.store.get_record("evaluations", &adm.evaluation_ref)?;
+        if eval.evaluation_class != crate::plan::EvaluationClass::Protected {
+            return Err(refused(
+                "scope is protected: a development-class evaluation cannot promote a policy \
+                 (ADR-001 D3)",
+            ));
+        }
+    }
     Ok(())
 }
 

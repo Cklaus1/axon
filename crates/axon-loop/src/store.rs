@@ -83,6 +83,11 @@ pub struct Config {
     /// Absent in an older config: read as `{}`; always serialized.
     #[serde(default)]
     pub task_acceptance: std::collections::BTreeMap<axon_loop_contracts::TaskId, AcceptancePin>,
+    /// ADR-001 D3: scopes whose promotions must rest on PROTECTED evidence. In
+    /// such a scope a comparative activation refuses an admission whose
+    /// evaluation was development-class. Absent: `[]`; always serialized.
+    #[serde(default)]
+    pub protected_scopes: Vec<axon_loop_contracts::Scope>,
 }
 
 /// One task's operator-registered acceptance check (see [`Config::task_acceptance`]).
@@ -463,6 +468,8 @@ impl Store {
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
                     o.entry("task_acceptance")
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
+                    o.entry("protected_scopes")
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
                 }
                 strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
             }
@@ -474,6 +481,7 @@ impl Store {
                 verifier_keys: Default::default(),
                 verifier_pins: Default::default(),
                 task_acceptance: Default::default(),
+                protected_scopes: Vec::new(),
             }),
         }
     }
