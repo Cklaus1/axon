@@ -39,8 +39,8 @@ use crate::tel::{self, Summary};
 use axon_loop_contracts::{
     bind_acf, bind_episode, check_paired_trial_context, digest, digest_value, ArmId,
     AuthorityEpoch, ComputeRequest, CorpusRole, EpisodeStatus, ExecutionContextReceipt,
-    ExecutionReceipt, LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyProjection, Ref, Scope, TaskId,
-    TrialId, VerificationResult,
+    ExecutionReceipt, LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyProjection, ReceiptStatus, Ref,
+    Scope, TaskId, TrialId, VerificationResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -103,6 +103,36 @@ pub enum Outcome {
     Unknown,
 }
 
+/// ADR-001 §5: WHY a delivered trial is Unknown — a closed set, so an
+/// admission (and a reader) can tell "the check timed out" from "the evidence
+/// never bound" without parsing prose. A trial never delivered is not a kind:
+/// it is counted in [`ArmResult::missing`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnknownKind {
+    /// The run hit its deadline before a verdict.
+    TimedOut,
+    /// The run was canceled before a verdict.
+    Cancelled,
+    /// A pass that matched no check.
+    Unmatched,
+    /// The verification evidence was not delivered, or ended without one.
+    MissingEvidence,
+    /// Evidence was delivered but cannot be verified: unauthenticated, an
+    /// untrusted issuer, or a backend ineligible for this evaluation class.
+    Unverifiable,
+    /// No verification was run.
+    NotRun,
+    /// The evidence does not bind to this trial, arm, policy or context.
+    Unbound,
+}
+
+type Judged = (Outcome, String, Option<UnknownKind>);
+
+fn unknown(kind: UnknownKind, why: impl Into<String>) -> Judged {
+    (Outcome::Unknown, why.into(), Some(kind))
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrialResult {
@@ -110,6 +140,9 @@ pub struct TrialResult {
     pub trial_id: TrialId,
     pub outcome: Outcome,
     pub reason: String,
+    /// Set exactly when `outcome` is Unknown for a DELIVERED trial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unknown_kind: Option<UnknownKind>,
     #[serde(deserialize_with = "crate::nullable")]
     pub episode_ref: Option<Ref>,
     #[serde(deserialize_with = "crate::nullable")]
@@ -152,6 +185,10 @@ pub struct ArmResult {
     pub fail: u64,
     pub unknown: u64,
     pub missing: u64,
+    /// ADR-001 §5: the delivered Unknowns by kind. `unknown` counts these and
+    /// `missing` together; `assigned = verified_pass + fail + Σ + missing`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unknown_kinds: BTreeMap<UnknownKind, u64>,
     pub trials: Vec<TrialResult>,
     pub economics: Summary,
 }
@@ -443,6 +480,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             fail: 0,
             unknown: 0,
             missing: 0,
+            unknown_kinds: BTreeMap::new(),
             trials: Vec::new(),
             economics: Summary {
                 records: 0,
@@ -453,12 +491,13 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         arm.assigned += 1;
         let key = (a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone());
         let mut authenticated = None;
-        let (outcome, reason, ep_ref, role) = match delivered.get(&key) {
+        let (outcome, reason, kind, ep_ref, role) = match delivered.get(&key) {
             None => {
                 arm.missing += 1;
                 (
                     Outcome::Unknown,
                     "missing: no episode delivered".to_string(),
+                    None,
                     None,
                     None,
                 )
@@ -490,9 +529,9 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     check_paired_trial_context(&d.ctx, now, epoch, &observers)
                         .map_err(|e| e.to_string())
                 };
-                let (o, why) = match ctx_check {
-                    Err(e) => (
-                        Outcome::Unknown,
+                let (o, why, kind) = match ctx_check {
+                    Err(e) => unknown(
+                        UnknownKind::Unbound,
                         format!(
                             "context not admissible (TASK_NOT_STARTED evidence, never a pass): {e}"
                         ),
@@ -511,7 +550,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         &mut authenticated,
                     ),
                 };
-                (o, why, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
+                (o, why, kind, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
             }
         };
         match outcome {
@@ -519,11 +558,15 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             Outcome::Fail => arm.fail += 1,
             Outcome::Unknown => arm.unknown += 1,
         }
+        if let Some(k) = kind {
+            *arm.unknown_kinds.entry(k).or_default() += 1;
+        }
         arm.trials.push(TrialResult {
             task_id: a.task_id.clone(),
             trial_id: a.trial_id.clone(),
             outcome,
             reason,
+            unknown_kind: kind,
             episode_ref: ep_ref,
             corpus_role: role,
             // Only a counted verdict cites its evidence. Unreachable today:
@@ -546,6 +589,19 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     for (id, arm) in arms.iter_mut() {
         let us = usages.remove(id).unwrap_or_default();
         arm.economics = tel::summarize_with_missing(us.iter().map(|(u, s)| (u, *s)), arm.missing)?;
+        // ADR-001 §5: every assigned trial is exactly one of pass, fail, a
+        // KIND of unknown, or missing. A trial counted twice or not at all is
+        // refused here, before anything is written.
+        let kinds: u64 = arm.unknown_kinds.values().sum();
+        if arm.assigned != arm.verified_pass + arm.fail + kinds + arm.missing
+            || arm.unknown != kinds + arm.missing
+        {
+            return Err(refused(format!(
+                "evaluation invariant violated for arm {id}: assigned {} ≠ pass {} + fail {} + \
+                 unknown by kind {kinds} + missing {}",
+                arm.assigned, arm.verified_pass, arm.fail, arm.missing
+            )));
+        }
     }
 
     let mut subject_issuers: Vec<OpaqueRef> = subjects.into_iter().collect();
@@ -618,7 +674,7 @@ fn judge(
     policy_ref: &Ref,
     bench: &Bench<'_>,
     authenticated: &mut Option<VerificationEvidence>,
-) -> (Outcome, String) {
+) -> Judged {
     let Bench {
         epoch,
         verifiers,
@@ -635,16 +691,16 @@ fn judge(
         .chain([d.ctx.observed_issuer_ref.clone()])
         .collect();
     if &d.ep.policy_ref != policy_ref {
-        return (
-            Outcome::Unknown,
-            "unbound: episode ran a different policy than its arm".into(),
+        return unknown(
+            UnknownKind::Unbound,
+            "unbound: episode ran a different policy than its arm",
         );
     }
     if let Err(e) = bind_episode(&d.ep, policy, &d.ctx, epoch, verifiers, subjects) {
-        return (Outcome::Unknown, format!("unbound episode: {e}"));
+        return unknown(UnknownKind::Unbound, format!("unbound episode: {e}"));
     }
     if let Err(e) = bind_acf(&d.ep, &d.req, &d.rcpt, &d.proj) {
-        return (Outcome::Unknown, format!("unbound ACF evidence: {e}"));
+        return unknown(UnknownKind::Unbound, format!("unbound ACF evidence: {e}"));
     }
     // ADR-001 D3: a protected evaluation counts a trial only from protected
     // backends. The two legs prove DIFFERENT things (re-audit 3):
@@ -667,8 +723,8 @@ fn judge(
         ];
         for (leg, b) in legs {
             if let Some(b) = b.filter(|b| !axon_loop_contracts::PROTECTED_PROFILES.contains(b)) {
-                return (
-                    Outcome::Unknown,
+                return unknown(
+                    UnknownKind::Unverifiable,
                     format!(
                         "development {leg} backend {b} is ineligible for a protected evaluation \
                          (ADR-001 D3)"
@@ -709,16 +765,14 @@ fn judge(
                     key_id,
                 })
             })
-            .map_err(|e| e.to_string()),
-            _ => Err("the verification check's request and receipt were not delivered".into()),
+            .map_err(|e| (UnknownKind::Unverifiable, e.to_string())),
+            _ => Err((
+                UnknownKind::MissingEvidence,
+                "the verification check's request and receipt were not delivered".into(),
+            )),
         };
         match checked {
-            Err(e) => {
-                return (
-                    Outcome::Unknown,
-                    format!("unauthenticated verification: {e}"),
-                )
-            }
+            Err((kind, e)) => return unknown(kind, format!("unauthenticated verification: {e}")),
             Ok(ev) => *authenticated = Some(ev),
         }
     }
@@ -729,29 +783,41 @@ fn judge(
                 .as_ref()
                 .is_some_and(|i| verifiers.contains(i) && !subjects.contains(i));
             if v.matched_checks == 0 {
-                (
-                    Outcome::Unknown,
-                    "vacuous: passed with zero matched checks".into(),
+                unknown(
+                    UnknownKind::Unmatched,
+                    "vacuous: passed with zero matched checks",
                 )
             } else if !issuer_ok {
-                (
-                    Outcome::Unknown,
-                    "untrusted or subject verifier cannot establish a pass".into(),
+                unknown(
+                    UnknownKind::Unverifiable,
+                    "untrusted or subject verifier cannot establish a pass",
                 )
             } else {
                 (
                     Outcome::VerifiedPass,
                     format!("independently verified ({} checks)", v.matched_checks),
+                    None,
                 )
             }
         }
-        VerificationResult::Failed => (Outcome::Fail, "verifier reported failure".into()),
-        VerificationResult::NotRun => (
-            Outcome::Unknown,
+        VerificationResult::Failed => (Outcome::Fail, "verifier reported failure".into(), None),
+        VerificationResult::NotRun => unknown(
+            UnknownKind::NotRun,
             format!("verification not run (status {:?})", d.ep.status),
         ),
-        VerificationResult::Unknown => (
-            Outcome::Unknown,
+        VerificationResult::Unknown => unknown(
+            // The execution receipt says how the run ended (the episode folds
+            // a timeout into outcome_unknown). Informational: the kind never
+            // makes a trial count.
+            match d.rcpt.status {
+                ReceiptStatus::TimedOut => UnknownKind::TimedOut,
+                ReceiptStatus::Canceled => UnknownKind::Cancelled,
+                ReceiptStatus::Completed
+                | ReceiptStatus::Failed
+                | ReceiptStatus::Denied
+                | ReceiptStatus::Unsupported
+                | ReceiptStatus::OutcomeUnknown => UnknownKind::MissingEvidence,
+            },
             format!("verification unknown (status {:?})", d.ep.status),
         ),
     }

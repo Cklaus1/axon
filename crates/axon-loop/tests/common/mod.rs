@@ -435,12 +435,23 @@ pub fn trial(t: &Trial) -> Value {
         ep.verification.verifier_ref = Some(digest_value(&vrc).unwrap());
         ep.verification.evidence_refs = vec![digest_value(&vreq).unwrap()];
         ep.verification.output_workspace_ref = Some(tree.clone());
+    } else {
+        // An Unknown cites no verifier and delivers no verification (it used
+        // to keep the bundle's placeholder verifier_ref, which intake refuses
+        // — so every Unknown fixture was Unknown for the wrong reason).
+        ep.verification.verifier_ref = None;
+        ep.verification.evidence_refs = vec![];
     }
     ep.context_ref = digest(&ctx).unwrap();
     ep.acf_request_ref = digest(&req).unwrap();
     ep.acf_receipt_ref = digest(&rc).unwrap();
     ep.validate().unwrap();
-    let att = attest(t.verifier, &vreq, &vrc);
+    let (vreq, vrc, att) = if verdict.is_some() {
+        let att = attest(t.verifier, &vreq, &vrc);
+        (vreq, vrc, att)
+    } else {
+        (Value::Null, Value::Null, Value::Null)
+    };
     json!({"episode": ep, "context": ctx, "acf_request": req, "acf_receipt": rc, "projection": proj,
            "verification_request": vreq, "verification_receipt": vrc,
            "verification_attestation": att})
