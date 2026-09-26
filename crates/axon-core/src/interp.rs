@@ -361,6 +361,22 @@ pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
 
 type R = Result<Value, Flow>;
 
+/// Loop control never leaves the frame it was written in. A `break`/
+/// `continue` that reaches the edge of a function call, a closure call, a
+/// refinement or `@[verify]` predicate, or an effect-handler arm has no loop of
+/// its own there: it is an error AT that edge, never a jump in whatever loop
+/// the surrounding code is running. Without this, candidate code ended an
+/// operator test's loop before its assertions ran and the verdict was signed
+/// (v0.22 G01 final reviews, FG-063/064/065).
+pub(crate) fn contain_loop_control(r: R, site: &str) -> R {
+    match r {
+        Err(Flow::Break) | Err(Flow::Continue) => {
+            panic(format!("`break`/`continue` outside a loop in {site}"))
+        }
+        other => other,
+    }
+}
+
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
     Err(Flow::Panic(msg.into()))
 }
@@ -2911,6 +2927,12 @@ impl<'p> Interp<'p> {
     }
 
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+        // The WHOLE call — parameter refinements, body, return refinement,
+        // `@[verify]` — is one frame for loop control.
+        contain_loop_control(self.call_fn_frame(f, args), &format!("`{}`", f.name))
+    }
+
+    fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3037,7 +3059,9 @@ impl<'p> Interp<'p> {
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
                         pred_env.define(p.name.clone(), val.clone());
-                        if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                        if let Value::Bool(false) =
+                            contain_loop_control(self.eval(pred, &mut pred_env), "a predicate")?
+                        {
                             return Err(Flow::RefineViolation(format!(
                                 "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
                                  the value does not satisfy the type's predicate",
@@ -3214,7 +3238,9 @@ impl<'p> Interp<'p> {
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
                     env.define("_".into(), result.clone());
-                    if let Value::Bool(false) = self.eval(pred, &mut env)? {
+                    if let Value::Bool(false) =
+                        contain_loop_control(self.eval(pred, &mut env), "a predicate")?
+                    {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
                              type `{}` — the value does not satisfy the type's predicate",
@@ -3385,7 +3411,10 @@ impl<'p> Interp<'p> {
                         if let Some(s) = fields.get("source_tag") {
                             pred_env.define("source_tag".into(), s.clone());
                         }
-                        let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                        let outcome = contain_loop_control(
+                            self.eval(&spec.predicate, &mut pred_env),
+                            "a predicate",
+                        )?;
                         if let Value::Bool(false) = outcome {
                             return Err(Flow::VerifyFailed(format!(
                                 "verify failed in {}: composite predicate did not hold \
@@ -3436,7 +3465,10 @@ impl<'p> Interp<'p> {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
                     pred_env.define("value".into(), result.clone());
-                    let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                    let outcome = contain_loop_control(
+                        self.eval(&spec.predicate, &mut pred_env),
+                        "a predicate",
+                    )?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!(
                             "verify failed in {}: composite predicate did not hold (value {}{})",
@@ -4156,6 +4188,50 @@ mod tests {
     /// test used to count as a clean pass, so candidate code could end an
     /// acceptance test before its assertion ran. It is a failure now; a test
     /// that completes still passes.
+    /// Candidate 4's final-review blocker (executed): a `break` in a candidate
+    /// function's parameter/return refinement, `@[verify]` predicate, or a
+    /// candidate type's struct refinement escaped the call and ended the
+    /// operator test's loop. Loop control is contained at every frame edge now.
+    #[test]
+    fn loop_control_does_not_escape_through_a_predicate() {
+        let cases = [
+            (
+                "return refinement",
+                "fn solve(n: i64) -> (i64 where if n > 0 { break } else { true }) { 0 }\n",
+            ),
+            (
+                "param refinement",
+                "fn solve(n: i64 where if n > 0 { break } else { true }) -> i64 { 0 }\n",
+            ),
+            (
+                "verify",
+                "@[verify(if value == 0 { break } else { true })]\nfn solve(n: i64) -> i64 { 0 }\n",
+            ),
+        ];
+        let mut passed = Vec::new();
+        for (why, def) in cases {
+            let src = format!(
+                "{def}@[test]\nfn t() {{\n    let mut i = 1\n    while i < 4 {{\n        assert_eq(solve(i), 42)\n        i = i + 1\n    }}\n}}\n"
+            );
+            let prog = crate::parse_source(&src).expect("parses");
+            if run_test_fn(&prog, "t").is_ok() {
+                passed.push(why);
+            }
+        }
+        let prog = crate::parse_source(
+            "type Arg = { n: i64 } where if _.n > 0 { break } else { true }\n\
+             @[test]\nfn t() {\n    for i in 1..4 {\n        let a = Arg { n: i }\n        assert_eq(a.n, 42)\n    }\n}\n",
+        )
+        .expect("parses");
+        if run_test_fn(&prog, "t").is_ok() {
+            passed.push("struct refinement");
+        }
+        assert!(
+            passed.is_empty(),
+            "these escapes passed the test: {passed:?}"
+        );
+    }
+
     #[test]
     fn an_escaped_break_or_continue_does_not_pass_a_test() {
         let prog = crate::parse_source(

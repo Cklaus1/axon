@@ -845,3 +845,56 @@ fn an_escaped_break_cannot_end_the_operators_test_loop() {
         );
     }
 }
+
+/// Candidate 4's second final-review blocker (executed): a candidate module
+/// `use`d a suite helper and redefined its trait impl (or its `let` constant),
+/// and the merged program kept the candidate's definition — so a broken
+/// candidate passed the operator's test and Fabric signed it. A duplicate
+/// definition in the merged program is now E0002, so the check does not pass.
+/// Positive control: the honest candidate passes against the same suite.
+///
+/// Mutation: drop the impl (or let) uniqueness check in the resolver → red.
+#[test]
+fn a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant() {
+    let suite_with = |accept: &str, rubric: &str| {
+        let s = with_suite(accept, "hidden");
+        std::fs::write(s.suite_root.join("rubric.ax"), rubric).unwrap();
+        let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+            .unwrap()
+            .reference()
+            .to_string();
+        let mut reg: Value =
+            serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+        reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+        std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+        Suite { suite_ref, ..s }
+    };
+    let impl_accept = "mod f\nmod rubric\nuse f.{double}\nuse rubric.{Expect, Judge}\n\n@[test]\nfn hidden_completion() {\n    let e = Expect { want: 42 }\n    e.check(double(21))\n}\n";
+    let impl_rubric = "type Expect = { want: i64 }\ntrait Judge { fn check(self: Expect, got: i64) }\nimpl Judge for Expect { fn check(self: Expect, got: i64) { assert_eq(got, self.want) } }\n";
+    let let_accept = "mod f\nmod rubric\nuse f.{double}\nuse rubric.{WANT}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), WANT) }\n";
+    let let_rubric = "let WANT = 42\n";
+    for (why, accept, rubric, cand, pass) in [
+        ("impl override", impl_accept, impl_rubric,
+         "use rubric\n\nfn double(n: i64) -> i64 { n * 0 }\nimpl Judge for Expect { fn check(self: Expect, got: i64) { } }\n", false),
+        ("impl honest", impl_accept, impl_rubric, "fn double(n: i64) -> i64 { n * 2 }\n", true),
+        ("let override", let_accept, let_rubric,
+         "use rubric\n\nlet WANT = 0\nfn double(n: i64) -> i64 { n * 0 }\n", false),
+        ("let honest", let_accept, let_rubric, "fn double(n: i64) -> i64 { n * 2 }\n", true),
+    ] {
+        let s = suite_with(accept, rubric);
+        std::fs::write(s.env.ws.join("f.ax"), cand).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite { candidate, ..s };
+        let sub = submit(&suite_request(&s, "op-override").to_string(), &s.env.cfg(0)).unwrap();
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+    }
+}

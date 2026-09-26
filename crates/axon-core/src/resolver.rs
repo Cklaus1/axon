@@ -902,6 +902,26 @@ impl<'a> Resolver<'a> {
             self.table.define(b.name.to_string(), sym);
         }
 
+        // Named refinements and trait impls live outside the value/type symbol
+        // table, so their duplicates are tracked here. Every definition in the
+        // merged program is unique: a later one silently replacing an earlier
+        // one is how an imported module (a candidate, say) displaced a suite
+        // helper's constant, refinement or impl method (v0.22 G01, FG-066).
+        let mut refinements: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut impls: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        let dup = |this: &mut Self, what: String, span: crate::span::Span| {
+            this.emit_error(
+                Diagnostic::error(
+                    E0002,
+                    format!("{what} is defined more than once in this program"),
+                )
+                .with_file(this.file)
+                .with_span(span)
+                .with_fix("rename one of the definitions, or remove the duplicate".to_string()),
+            );
+        };
+
         for item in &program.items {
             match item {
                 Item::FnDef(f) => {
@@ -1057,20 +1077,37 @@ impl<'a> Resolver<'a> {
                 Item::UseDecl(_) => {
                     // UseDecls are handled in pass 2 after all module names are known.
                 }
-                Item::TraitDef(_) | Item::ImplBlock(_) => {
-                    // Phase 3: trait/impl blocks processed in a dedicated pass.
+                Item::ImplBlock(b) => {
+                    // Bodies are processed in a dedicated pass; uniqueness here.
+                    let key = (b.trait_name.clone(), format!("{:?}", b.for_type));
+                    if !impls.insert(key) {
+                        dup(
+                            self,
+                            format!("`impl {} for {:?}`", b.trait_name, b.for_type),
+                            b.span,
+                        );
+                    }
                 }
-                Item::LetDef { name, .. } => {
+                Item::TraitDef(_) => {
+                    // Phase 3: trait blocks processed in a dedicated pass.
+                }
+                Item::LetDef { name, span, .. } => {
                     let sym = Symbol::Fn {
                         name: name.clone(),
                         param_names: vec![],
                     };
-                    self.table.define(name.clone(), sym);
+                    if let Some(prev) = self.table.define(name.clone(), sym) {
+                        if !matches!(prev, Symbol::Builtin { .. }) {
+                            dup(self, format!("the constant `{name}`"), *span);
+                        }
+                    }
                 }
-                Item::RefineDef(_) => {
+                Item::RefineDef(r) => {
                     // Phase 5: a named refinement is a type alias; it introduces a
-                    // type name, not a value. No value-symbol to define here (the
-                    // type-name registry is built by the checker/infer layers).
+                    // type name, not a value — but it must be unique.
+                    if !refinements.insert(r.name.as_str()) {
+                        dup(self, format!("the refinement type `{}`", r.name), r.span);
+                    }
                 }
             }
         }
@@ -2698,6 +2735,35 @@ mod tests {
     }
 
     // ── E0002: duplicate fn name ──────────────────────────────────────────────
+
+    /// v0.22 G01 (FG-066): a module-level `let`, a named refinement and a
+    /// trait impl are unique in the merged program too — a later definition
+    /// used to replace an earlier one silently, which let an imported candidate
+    /// module displace a suite helper's constant, refinement or impl method.
+    #[test]
+    fn duplicate_let_refinement_or_impl_produces_e0002() {
+        for (why, src, name) in [
+            ("let", "let WANT = 42\nlet WANT = 0\nfn main() -> i64 { WANT }\n", "WANT"),
+            (
+                "refinement",
+                "type Answer = i64 where _ == 42\ntype Answer = i64 where _ >= 0\nfn main() -> i64 { 0 }\n",
+                "Answer",
+            ),
+            (
+                "impl",
+                "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
+                 impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
+                 impl J for E { fn check(self: E, got: i64) { } }\nfn main() -> i64 { 0 }\n",
+                "impl J for",
+            ),
+        ] {
+            let prog = crate::parse_source(src).expect("parses");
+            let result = resolve_program(&prog, "test.ax");
+            let e = errors_with_code(&result, E0002);
+            assert_eq!(e.len(), 1, "{why}: {e:?}");
+            assert!(e[0].contains(name), "{why}: {e:?}");
+        }
+    }
 
     #[test]
     fn duplicate_fn_name_produces_e0002() {
