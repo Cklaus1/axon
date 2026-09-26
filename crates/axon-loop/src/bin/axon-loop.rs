@@ -35,6 +35,7 @@
 //!                       receipts per attempt ref, execution cost unknown — D10)
 //! axon-loop --store DIR intake  episode    --in sidecar.json --context FILE|DIR
 //!                                          --ack FILE|DIR [--projection FILE] [--source-episode FILE]
+//!                                          [--verification-request FILE --verification-receipt FILE]
 //! ```
 //!
 //! `intake episode`: `--context` may name MiCode's `context/` directory, in
@@ -42,7 +43,9 @@
 //! may name MiCode's `policy-ack/` directory: the acknowledgement is found BY
 //! CONTENT (exactly one distinct ack pinning the episode's policy_ref over its
 //! candidate_set_ref), because `projection_ref` names a PolicyProjection, not
-//! the ack (G6). A non-null `projection_ref` requires `--projection`.
+//! the ack (G6). A non-null `projection_ref` requires `--projection`. A non-null
+//! `verification.verifier_ref` requires the Fabric check's request and receipt
+//! (G3 under D12; see `intake` step 8).
 
 use axon_loop::error::LoopError;
 use axon_loop::price::PinnedSchedule;
@@ -324,7 +327,15 @@ fn run(a: &Args) -> Result<Value, LoopError> {
             }
         }
         ["intake", "episode"] => {
-            a.only(&["in", "context", "ack", "projection", "source-episode"])?;
+            a.only(&[
+                "in",
+                "context",
+                "ack",
+                "projection",
+                "source-episode",
+                "verification-request",
+                "verification-receipt",
+            ])?;
             let episode = a.input()?;
             // Parse strictly once here only to learn which receipt the
             // sidecar names when a DIRECTORY is given; intake re-parses.
@@ -364,6 +375,14 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                 Some(p) => Some(std::fs::read_to_string(p)?),
                 None => None,
             };
+            let vreq = match a.flags.get("verification-request") {
+                Some(p) => Some(read(std::path::Path::new(p))?),
+                None => None,
+            };
+            let vrc = match a.flags.get("verification-receipt") {
+                Some(p) => Some(read(std::path::Path::new(p))?),
+                None => None,
+            };
             let out = intake::intake_episode(
                 &a.store()?,
                 &intake::IntakeInput {
@@ -372,6 +391,8 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                     acks: &acks,
                     projection: projection.as_deref(),
                     source_episode: source.as_deref(),
+                    verification_request: vreq.as_deref(),
+                    verification_receipt: vrc.as_deref(),
                 },
             )?;
             Ok(

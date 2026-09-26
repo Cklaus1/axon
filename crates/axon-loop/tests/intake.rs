@@ -177,6 +177,8 @@ fn run(c: &Case, ep: &Value, src: bool) -> Result<axon_loop::intake::IntakeOutco
             acks: &[c.ack.to_string()],
             projection: None,
             source_episode: src.then(|| c.src.to_string()).as_deref(),
+            verification_request: None,
+            verification_receipt: None,
         },
     )
 }
@@ -320,6 +322,8 @@ fn tampered_unknown_or_unjoinable_episodes_are_refused_with_the_store_unchanged(
             acks: &[c.ack.to_string()],
             projection: None,
             source_episode: None,
+            verification_request: None,
+            verification_receipt: None,
         },
     )
     .unwrap_err();
@@ -366,6 +370,8 @@ fn a_policy_the_store_does_not_hold_is_refused() {
             acks: &[a.to_string()],
             projection: None,
             source_episode: None,
+            verification_request: None,
+            verification_receipt: None,
         },
     )
     .unwrap_err();
@@ -401,6 +407,8 @@ fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
             acks: &[c.ack.to_string()],
             projection: None,
             source_episode: Some(&src.to_string()),
+            verification_request: None,
+            verification_receipt: None,
         },
     )
     .unwrap_err();
@@ -430,6 +438,8 @@ fn run_with(
             acks,
             projection,
             source_episode: None,
+            verification_request: None,
+            verification_receipt: None,
         },
     )
 }
@@ -504,4 +514,242 @@ fn g6_non_null_projection_ref_is_validated() {
     );
     assert_eq!(before, snapshot(c.s.root()));
     run_with(&c, &acks, Some(&good.to_string()), &ep).unwrap();
+}
+
+// ── step 8: a MiCode acceptance check that ran through Fabric (G3, D12) ─────
+
+const OUT_TREE: &str = "acf1:7777777777777777777777777777777777777777777777777777777777777777";
+
+fn check_request() -> Value {
+    json!({
+        "schema": "acf-compute-request/1",
+        "operation_id": "op-1", "task_id": "task-1", "trial_id": "trial-1", "attempt_id": "attempt-1",
+        "principal_ref": "principal:micode-check", "grant_ref": "grant:check", "approval_ref": null,
+        "job_kind": "registered_check", "registered_executable_ref": "axon-test-local",
+        "executable_digest": format!("acf1:{}", "e".repeat(64)),
+        "workspace_version_ref": OUT_TREE, "semantic_state_ref": null,
+        "policy_digest": format!("acf1:{}", "c".repeat(64)),
+        "required": {"engine": "axon_interpreter", "hardware_isolation": false, "os": "none",
+                     "architecture": "x86_64", "network_mode": "deny", "checkpoint_kind": "none"},
+        "limits": {"cpu_millicores": 1000, "memory_bytes": 268435456, "disk_bytes": 268435456,
+                   "wall_time_ms": 60000, "output_bytes": 1048576, "max_cost_micro": 100,
+                   "currency_code": "USD", "price_schedule_ref": "unpriced:test"},
+        "argv": ["f.ax", "t_"], "result_schema_ref": "cortex-check-report/1",
+    })
+}
+
+fn check_receipt(verification: &str, matched: u64) -> Value {
+    json!({
+        "schema": "acf-execution-receipt/1",
+        "operation_id": "op-1", "task_id": "task-1", "trial_id": "trial-1", "attempt_id": "attempt-1",
+        "execution_id": "exec-1", "backend_profile_ref": "fabric:local-interpreter",
+        "input_workspace_ref": OUT_TREE, "output_workspace_ref": null,
+        "policy_digest": format!("acf1:{}", "c".repeat(64)),
+        "status": "completed", "process_exit_code": 0,
+        "verification": verification, "matched_checks": matched,
+        "evidence_source": "supervisor_observed", "evidence_refs": ["check-report:fixture"],
+        "usage_state": "unknown", "cost_micro": null, "unresolved_liability_micro": 100,
+    })
+}
+
+/// Point `ep`'s verification at `(req, rc)`, re-deriving every ref so the only
+/// fault left is whatever the caller changed.
+fn verified(ep: &Value, req: &Value, rc: &Value, result: &str) -> Value {
+    let mut ep = ep.clone();
+    ep["output_workspace_ref"] = json!(OUT_TREE);
+    ep["verification"] = json!({
+        "result": result,
+        "matched_checks": rc["matched_checks"],
+        "issuer_ref": common::VERIFIER,
+        "verifier_ref": digest_value(rc).unwrap(),
+        "output_workspace_ref": OUT_TREE,
+        "evidence_refs": [digest_value(req).unwrap()],
+    });
+    ep
+}
+
+fn run_v(
+    c: &Case,
+    ep: &Value,
+    req: Option<&Value>,
+    rc: Option<&Value>,
+) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &c.ctx.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
+            source_episode: None,
+            verification_request: req.map(|v| v.to_string()).as_deref(),
+            verification_receipt: rc.map(|v| v.to_string()).as_deref(),
+        },
+    )
+}
+
+#[test]
+fn a_fabric_check_on_the_output_tree_is_recorded_as_the_verification() {
+    let c = case(Some(500));
+    let (req, rc) = (check_request(), check_receipt("passed", 2));
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let out = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap();
+    assert!(out.recorded_now);
+    assert_eq!(
+        out.record.verification_receipt_ref,
+        Some(digest_value(&rc).unwrap())
+    );
+    assert_eq!(
+        out.record.verification_request_ref,
+        Some(digest_value(&req).unwrap())
+    );
+    // The documents are held, content-addressed, for any later re-check.
+    let hex = digest_value(&rc).unwrap().hex().to_string();
+    assert!(c
+        .s
+        .root()
+        .join("fabric-receipts")
+        .join(format!("{hex}.json"))
+        .exists());
+
+    // A failed check is recorded as a failed verification, not dropped.
+    let c = case(Some(500));
+    let rc = check_receipt("failed", 2);
+    let ep = verified(&c.ep, &req, &rc, "failed");
+    assert!(run_v(&c, &ep, Some(&req), Some(&rc)).is_ok());
+}
+
+/// A record with no verifier keeps its pre-G3 bytes: the new fields are ABSENT.
+#[test]
+fn an_unverified_record_serialises_without_the_new_fields() {
+    let c = case(Some(500));
+    let out = run(&c, &c.ep, false).unwrap();
+    let v = serde_json::to_value(&out.record).unwrap();
+    assert!(v.get("verification_receipt_ref").is_none());
+    assert!(v.get("verification_request_ref").is_none());
+}
+
+/// Each case changes ONE thing from the positive control; every refusal writes
+/// nothing. Mutation: delete any single check in `check_verification` and the
+/// matching case here is accepted.
+#[test]
+fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
+    let c = case(Some(500));
+    let (req, rc) = (check_request(), check_receipt("passed", 2));
+    let good = verified(&c.ep, &req, &rc, "passed");
+    type Edit = Box<dyn Fn(&mut Value, &mut Value, &mut Value)>;
+    let cases: Vec<(&str, Edit, &str)> = vec![
+        (
+            "receipt for another operation",
+            Box::new(|_, _, r| r["operation_id"] = json!("op-2")),
+            "operation",
+        ),
+        (
+            "request for another attempt",
+            Box::new(|_, q, _| q["attempt_id"] = json!("attempt-2")),
+            "operation",
+        ),
+        (
+            "execution id not the sidecar's",
+            Box::new(|_, _, r| r["execution_id"] = json!("exec-9")),
+            "operation",
+        ),
+        (
+            "checked a different tree",
+            Box::new(|_, q, r| {
+                let other = json!(format!("acf1:{}", "8".repeat(64)));
+                q["workspace_version_ref"] = other.clone();
+                r["input_workspace_ref"] = other;
+            }),
+            "output tree",
+        ),
+        (
+            "receipt input differs from request",
+            Box::new(|_, _, r| {
+                r["input_workspace_ref"] = json!(format!("acf1:{}", "9".repeat(64)))
+            }),
+            "output tree",
+        ),
+        (
+            "provider-reported evidence",
+            Box::new(|_, _, r| r["evidence_source"] = json!("provider_reported")),
+            "supervisor",
+        ),
+        (
+            "not a registered check",
+            Box::new(|_, q, _| q["job_kind"] = json!("interpreter_run")),
+            "registered_check",
+        ),
+        (
+            "sidecar upgrades a failed check to passed",
+            Box::new(|_, _, r| r["verification"] = json!("failed")),
+            "check receipt says",
+        ),
+        (
+            "sidecar claims a pass the check never reached",
+            Box::new(|e, _, r| {
+                r["status"] = json!("timed_out");
+                r["verification"] = json!("unknown");
+                e["verification"]["result"] = json!("passed");
+            }),
+            "check receipt says",
+        ),
+        (
+            "matched_checks inflated",
+            Box::new(|e, _, _| e["verification"]["matched_checks"] = json!(5)),
+            "matched_checks",
+        ),
+        (
+            "extra evidence ref",
+            Box::new(|e, _, _| {
+                let extra = json!(format!("cl22:{}", "1".repeat(64)));
+                e["verification"]["evidence_refs"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(extra);
+            }),
+            "evidence_refs",
+        ),
+    ];
+    for (why, edit, want) in cases {
+        let (mut e, mut q, mut r) = (good.clone(), req.clone(), rc.clone());
+        edit(&mut e, &mut q, &mut r);
+        // Re-derive the refs the sidecar holds unless the case is about them.
+        if !why.contains("matched_checks") && !why.contains("evidence ref") {
+            let result = e["verification"]["result"].as_str().unwrap().to_string();
+            e = verified(&e, &q, &r, &result);
+        }
+        let before = snapshot(c.s.root());
+        let err = run_v(&c, &e, Some(&q), Some(&r)).expect_err(why);
+        // Refused by step 8, or earlier by the contract's own schema (a
+        // provider-reported receipt does not even parse): either way, not recorded.
+        assert!(
+            matches!(&err, LoopError::Refused(_) | LoopError::Malformed(_))
+                && err.to_string().contains(want),
+            "{why}: {err}"
+        );
+        assert_eq!(before, snapshot(c.s.root()), "{why}: store changed");
+    }
+
+    // Documents that are not the ones the sidecar names.
+    let before = snapshot(c.s.root());
+    let other_rc = check_receipt("passed", 3);
+    let e = run_v(&c, &good, Some(&req), Some(&other_rc)).unwrap_err();
+    assert!(
+        matches!(&e, LoopError::Refused(m) if m.contains("verifier_ref")),
+        "{e}"
+    );
+    // A verifier named but its evidence withheld.
+    let e = run_v(&c, &good, None, Some(&rc)).unwrap_err();
+    assert!(
+        matches!(&e, LoopError::Refused(m) if m.contains("not both presented")),
+        "{e}"
+    );
+    // Evidence presented for a sidecar that cites none.
+    let e = run_v(&c, &c.ep, Some(&req), Some(&rc)).unwrap_err();
+    assert!(
+        matches!(&e, LoopError::Refused(m) if m.contains("names no verifier_ref")),
+        "{e}"
+    );
+    assert_eq!(before, snapshot(c.s.root()));
 }

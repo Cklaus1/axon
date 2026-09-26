@@ -46,6 +46,26 @@
 //!    rounding UP ([`cost_micro_from_micro_cents`]). An unknown (`null`) cost
 //!    stays `null` — it is never compared as, or recorded as, `0`.
 //!
+//! 8. the verification evidence (v0.22 G3, D12). Under D12 only MiCode's
+//!    acceptance CHECK runs through Fabric; the agent's own execution stays
+//!    under local authority, so `acf_request_ref` / `acf_receipt_ref` remain
+//!    MiCode's not-produced markers and `bind_acf` does not apply. What CAN
+//!    join is the check: when `verification.verifier_ref` is non-null, the
+//!    Fabric `registered_check` request and receipt are REQUIRED
+//!    (`--verification-request` / `--verification-receipt`) and must be exactly
+//!    the documents the sidecar names (`verifier_ref` = cl22 of the receipt,
+//!    `evidence_refs` = [cl22 of the request]); the check IS the attempt's
+//!    Fabric operation (same task/trial/attempt/operation ids, and the
+//!    receipt's execution id is the sidecar's); it ran on the episode's OUTPUT
+//!    tree (request workspace = receipt input = `verification.output_workspace_ref`
+//!    = `output_workspace_ref`); its evidence is supervisor-observed; and the
+//!    sidecar's result and `matched_checks` are the receipt's, with a check that
+//!    did not complete yielding `unknown`. Evidence presented for a sidecar that
+//!    names none is refused rather than ignored. That Fabric actually journaled
+//!    the operation is NOT checked here (this crate does not read the Fabric
+//!    journal); `axon-fabric status --op` is the witness, and the paired interop
+//!    gate asks it.
+//!
 //! Idempotent on the sidecar's bytes; the same trial identity with DIFFERENT
 //! bytes is a conflict (exit 5). Nothing here authenticates MiCode: the
 //! observer and issuer fields name a party, they do not prove one.
@@ -55,9 +75,10 @@ use crate::ledger::{Event, Tx};
 use crate::store::Store;
 use axon_loop_contracts::{
     bind_episode, check_shortlist, digest, digest_value, parse, parse_value, AuthorityEpoch,
-    CandidateId, CorpusRole, EpisodeStatus, ExecutionContextReceipt, LoopEpisode, OpaqueRef,
-    PolicyEnvelope, PolicyId, PolicyProjection, Ref, RefScheme, Refusal, Scope, TrialIdentity,
-    UsageState,
+    CandidateId, ComputeRequest, CorpusRole, EpisodeStatus, EvidenceSource,
+    ExecutionContextReceipt, ExecutionReceipt, JobKind, LoopEpisode, OpaqueRef, PolicyEnvelope,
+    PolicyId, PolicyProjection, ReceiptStatus, ReceiptVerification, Ref, RefScheme, Refusal, Scope,
+    TrialIdentity, UsageState, VerificationResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -116,6 +137,14 @@ pub struct IntakeRecord {
     /// enforced: admission decides what a non-qualifying context may feed.
     #[serde(deserialize_with = "crate::nullable")]
     pub trial_profile_refusal: Option<String>,
+    /// Step 8: `cl22:` of the Fabric check receipt / request the verification
+    /// rests on (`fabric-receipts/`, `fabric-requests/`). ABSENT — not null —
+    /// when the sidecar names no verifier, so records written before G3 keep
+    /// their exact bytes and digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_receipt_ref: Option<Ref>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_request_ref: Option<Ref>,
 }
 
 /// What `intake_episode` returns.
@@ -138,6 +167,10 @@ pub struct IntakeInput<'a> {
     /// The `PolicyProjection` bytes, required iff `projection_ref` is non-null.
     pub projection: Option<&'a str>,
     pub source_episode: Option<&'a str>,
+    /// Step 8: the Fabric `registered_check` request and receipt, required iff
+    /// the sidecar names a `verification.verifier_ref`.
+    pub verification_request: Option<&'a str>,
+    pub verification_receipt: Option<&'a str>,
 }
 
 fn semantic(what: &str) -> impl Fn(Refusal) -> LoopError + '_ {
@@ -234,6 +267,9 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
         check_source_episode(text, &ep)?;
     }
 
+    // 8. The verification evidence (G3 under D12).
+    let verification = check_verification(input, &ep)?;
+
     // Idempotency / identity conflict, against the ledger — AFTER every
     // check, so a replay is never a way around one (a re-intake with a
     // `--source-episode` that does not join is refused, not replayed).
@@ -258,6 +294,10 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     // Record: bytes first (content-addressed, idempotent), then the ledger.
     store.put_cas("episodes", &ep)?;
     store.put_cas("contexts", &ctx)?;
+    if let Some((req, rc)) = &verification {
+        store.put_cas("fabric-requests", req)?;
+        store.put_cas("fabric-receipts", rc)?;
+    }
     let record = IntakeRecord {
         schema: IntakeSchema,
         scope: ep.scope.clone(),
@@ -283,6 +323,14 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
         )
         .err()
         .map(|r| r.to_string()),
+        verification_receipt_ref: verification
+            .as_ref()
+            .map(|(_, rc)| digest(rc))
+            .transpose()?,
+        verification_request_ref: verification
+            .as_ref()
+            .map(|(req, _)| digest(req))
+            .transpose()?,
     };
     let seq = tx.append(Event::EpisodeIntake {
         scope: ep.scope.clone(),
@@ -422,6 +470,115 @@ fn check_projection(text: Option<&str>, ep: &LoopEpisode) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Step 8 (see module docs). `Some((request, receipt))` when the sidecar
+/// names a verifier and every join holds; `None` when it names none.
+fn check_verification(
+    input: &IntakeInput<'_>,
+    ep: &LoopEpisode,
+) -> Result<Option<(ComputeRequest, ExecutionReceipt)>> {
+    let v = &ep.verification;
+    let Some(vref) = &v.verifier_ref else {
+        if input.verification_request.is_some() || input.verification_receipt.is_some() {
+            return Err(refused(
+                "verification evidence was presented, but the sidecar names no verifier_ref: \
+                 evidence the episode does not cite is not attached to it",
+            ));
+        }
+        return Ok(None);
+    };
+    let (Some(req_text), Some(rc_text)) = (input.verification_request, input.verification_receipt)
+    else {
+        return Err(refused(format!(
+            "verifier_ref {vref} names a Fabric check receipt, but the check's request and receipt \
+             were not both presented (--verification-request, --verification-receipt)"
+        )));
+    };
+    let req: ComputeRequest = parse(req_text).map_err(semantic("verification request"))?;
+    let rc: ExecutionReceipt = parse(rc_text).map_err(semantic("verification receipt"))?;
+    let (req_ref, rc_ref) = (digest(&req)?, digest(&rc)?);
+    if &rc_ref != vref {
+        return Err(refused(format!(
+            "verification receipt digests to {rc_ref}, but the sidecar's verifier_ref is {vref}"
+        )));
+    }
+    if v.evidence_refs != [req_ref.clone()] {
+        return Err(refused(
+            "verification evidence_refs must be exactly [cl22 of the check request]",
+        ));
+    }
+    for r in [&req_ref, &rc_ref] {
+        if [&ep.context_ref, &ep.acf_request_ref, &ep.acf_receipt_ref].contains(&r) {
+            return Err(refused(
+                "role upgrade: a context or execution document stands as the verification",
+            ));
+        }
+    }
+    if req.job_kind != JobKind::RegisteredCheck {
+        return Err(refused(
+            "the verification request is not a registered_check",
+        ));
+    }
+    let id = &ep.identity;
+    let same = req.task_id == id.task_id
+        && rc.task_id == id.task_id
+        && req.trial_id == id.trial_id
+        && rc.trial_id == id.trial_id
+        && req.attempt_id == id.attempt_id
+        && rc.attempt_id == id.attempt_id
+        && req.operation_id == id.operation_id
+        && rc.operation_id == id.operation_id
+        && rc.execution_id == id.execution_id;
+    if !same {
+        return Err(refused(
+            "the check is not this attempt's Fabric operation (task/trial/attempt/operation/\
+             execution ids differ)",
+        ));
+    }
+    let checked = Some(&req.workspace_version_ref);
+    if Some(&rc.input_workspace_ref) != checked
+        || v.output_workspace_ref.as_ref() != checked
+        || ep.output_workspace_ref.as_ref() != checked
+    {
+        return Err(refused(
+            "the check did not run on the episode's output tree (request workspace, receipt \
+             input, verification.output_workspace_ref and output_workspace_ref must agree)",
+        ));
+    }
+    if rc.evidence_source != EvidenceSource::SupervisorObserved {
+        return Err(refused(
+            "the check receipt is not supervisor-observed: a reported result verifies nothing",
+        ));
+    }
+    let from_receipt = match (rc.status, rc.verification) {
+        (ReceiptStatus::Completed, ReceiptVerification::Passed) => VerificationResult::Passed,
+        (ReceiptStatus::Completed, ReceiptVerification::Failed) => VerificationResult::Failed,
+        (
+            ReceiptStatus::Completed
+            | ReceiptStatus::Failed
+            | ReceiptStatus::Canceled
+            | ReceiptStatus::Denied
+            | ReceiptStatus::Unsupported
+            | ReceiptStatus::OutcomeUnknown
+            | ReceiptStatus::TimedOut,
+            ReceiptVerification::NotRequested
+            | ReceiptVerification::NotRun
+            | ReceiptVerification::Passed
+            | ReceiptVerification::Failed
+            | ReceiptVerification::Unknown,
+        ) => VerificationResult::Unknown,
+    };
+    if v.result != from_receipt {
+        return Err(refused(format!(
+            "the sidecar says verification {:?}, the check receipt says {from_receipt:?}",
+            v.result
+        )));
+    }
+    if v.matched_checks != rc.matched_checks.unwrap_or(0) {
+        return Err(refused("matched_checks differs from the check receipt's"));
+    }
+    Ok(Some((req, rc)))
 }
 
 fn check_source_episode(text: &str, ep: &LoopEpisode) -> Result<()> {
