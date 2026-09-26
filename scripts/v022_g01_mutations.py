@@ -123,6 +123,16 @@ MUTATIONS = [
      "            if config.protected_scopes.contains(scope) {\n                protected_scope_gate(",
      "            if t.kind != TransitionKind::Rollback && config.protected_scopes.contains(scope) {\n                protected_scope_gate(",
      "axon-loop", "--test protected_class", "a_rollback_in_a_protected_scope_needs_a_protected_admission"),
+    ("M19", "D3: the execution leg is checked",
+     "crates/axon-loop/src/evl.rs",
+     '("execution", Some(d.rcpt.backend_profile_ref.as_str())),',
+     '("execution", None),',
+     "axon-loop", "--test protected_class", "each_d3_leg_on_a_development_backend_counts_nothing"),
+    ("M20", "D3: the verification leg is checked",
+     "crates/axon-loop/src/evl.rs",
+     '                "verification",\n                d.verification[1]["backend_profile_ref"].as_str(),',
+     '                "verification",\n                None,',
+     "axon-loop", "--test protected_class", "each_d3_leg_on_a_development_backend_counts_nothing"),
 ]
 
 

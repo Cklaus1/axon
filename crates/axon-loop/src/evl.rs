@@ -624,22 +624,31 @@ fn judge(
     if let Err(e) = bind_acf(&d.ep, &d.req, &d.rcpt, &d.proj) {
         return (Outcome::Unknown, format!("unbound ACF evidence: {e}"));
     }
-    // ADR-001 D3: a protected evaluation counts a trial only if every receipt
-    // it rests on came from a protected backend. The local interpreter is
-    // development-only — its results are recorded, never protected evidence.
+    // ADR-001 D3: a protected evaluation counts a trial only from protected
+    // backends. The two legs prove DIFFERENT things (re-audit 3):
+    // * the VERIFICATION receipt's backend is inside the receipt the verifier
+    //   signed (the attestation binds its digest), so a counted protected
+    //   verdict is authenticated as having run on a protected backend;
+    // * the EXECUTION receipt's backend is a producer claim — nothing signs an
+    //   execution receipt (under D12 MiCode produces none) — so it is only a
+    //   FILTER that can make fewer trials count, never evidence that one ran
+    //   there.
+    // An absent verification receipt is skipped here and refused below as
+    // unauthenticated whenever the episode cites a verdict.
     if class == crate::plan::EvaluationClass::Protected {
-        let backends = [
-            Some(d.rcpt.backend_profile_ref.as_str().to_string()),
-            d.verification[1]["backend_profile_ref"]
-                .as_str()
-                .map(str::to_string),
+        let legs = [
+            ("execution", Some(d.rcpt.backend_profile_ref.as_str())),
+            (
+                "verification",
+                d.verification[1]["backend_profile_ref"].as_str(),
+            ),
         ];
-        for b in backends.into_iter().flatten() {
-            if !axon_loop_contracts::PROTECTED_PROFILES.contains(&b.as_str()) {
+        for (leg, b) in legs {
+            if let Some(b) = b.filter(|b| !axon_loop_contracts::PROTECTED_PROFILES.contains(b)) {
                 return (
                     Outcome::Unknown,
                     format!(
-                        "development backend {b} is ineligible for a protected evaluation \
+                        "development {leg} backend {b} is ineligible for a protected evaluation \
                          (ADR-001 D3)"
                     ),
                 );

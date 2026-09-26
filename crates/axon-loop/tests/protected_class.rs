@@ -28,10 +28,18 @@ fn protect(s: &axon_loop::store::Store) {
 /// the verification receipt (episode `verifier_ref` re-derived, attestation
 /// genuinely re-signed).
 fn on_protected_backend(v: &mut Value) {
+    on_backends(v, true, true)
+}
+
+/// Re-stamp each leg independently: `exec` / `verif` true = the protected
+/// backend, false = left on the development backend.
+fn on_backends(v: &mut Value, exec: bool, verif: bool) {
     for t in v["trials"].as_array_mut().unwrap() {
-        t["acf_receipt"]["backend_profile_ref"] = json!(PROTECTED);
+        if exec {
+            t["acf_receipt"]["backend_profile_ref"] = json!(PROTECTED);
+        }
         t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
-        if t["verification_receipt"].is_object() {
+        if t["verification_receipt"].is_object() && verif {
             t["verification_receipt"]["backend_profile_ref"] = json!(PROTECTED);
             t["episode"]["verification"]["verifier_ref"] =
                 json!(digest_value(&t["verification_receipt"]).unwrap());
@@ -297,6 +305,43 @@ fn a_rollback_in_a_protected_scope_needs_a_protected_admission() {
             assert_eq!(snapshot(w.dir.path()), before);
         } else {
             assert_eq!(r.unwrap(), Some(w.cand_ref.clone()));
+        }
+    }
+}
+
+/// Re-audit 3 (mutation reviewer, executed): every D3 test flipped BOTH
+/// receipts together, so dropping either leg from the check survived the whole
+/// suite. Each leg alone on the development backend now counts nothing, for a
+/// reason naming that leg; the both-protected control counts 2.
+///
+/// Mutations: drop the execution leg (M19) / the verification leg (M20) → red.
+#[test]
+fn each_d3_leg_on_a_development_backend_counts_nothing() {
+    for (exec, verif, leg) in [
+        (true, false, Some("verification")),
+        (false, true, Some("execution")),
+        (true, true, None),
+    ] {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        freeze_plan(&w.s, "legs", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        let mut v = evl_request("legs", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_backends(&mut v, exec, verif);
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+        match leg {
+            Some(leg) => {
+                assert_eq!(c.verified_pass, 0, "{leg}: {:?}", c.trials);
+                assert!(
+                    c.trials
+                        .iter()
+                        .all(|t| t.reason.contains(&format!("development {leg} backend"))),
+                    "{leg}: {:?}",
+                    c.trials
+                );
+            }
+            None => assert_eq!(c.verified_pass, 2, "{:?}", c.trials),
         }
     }
 }
