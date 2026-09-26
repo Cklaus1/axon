@@ -151,7 +151,8 @@ fn cancellation_before_launch_releases_after_launch_keeps_liability() {
         attempt_id: axon_loop_contracts::AttemptId::new("attempt-1").unwrap(),
         input_digest: axon_loop_contracts::Ref::new(format!("cl22:{}", "1".repeat(64))).unwrap(),
         config: json!({}),
-        authority_ref: "g".into(),
+        // The authority `submit` records ("principal|grant"): only it may cancel.
+        authority_ref: format!("{PRINCIPAL}|grant:test"),
         authority_epoch: axon_loop_contracts::AuthorityEpoch::new(0).unwrap(),
         scope: sc.clone(),
         reservation: axon_fabric::ResourceVector {
@@ -187,12 +188,57 @@ fn cancellation_before_launch_releases_after_launch_keeps_liability() {
     // The never-launched op, cancelled through the CLI as an operator would:
     // released, nothing billed.
     let bin = env!("CARGO_BIN_EXE_axon-fabric");
+    let cancel_as = |principal: &str, grant: &str| {
+        std::process::Command::new(bin)
+            .args(["cancel", "--journal"])
+            .arg(&env.journal)
+            .args(["--op", "op-pre", "--reason", "operator", "--grant-registry"])
+            .arg(&env.grant_registry)
+            .args(["--principal", principal, "--grant-ref", grant])
+            .output()
+            .unwrap()
+    };
+    // G03-r22-authority-intersection: holding the journal path and the op id
+    // confers nothing. Another grant of the SAME principal, and a principal the
+    // grant is not bound to, are both refused, and nothing is written.
+    let before = std::fs::read(&env.journal).unwrap();
+    for (p, g) in [
+        (PRINCIPAL, "grant:open"),
+        ("principal:intruder", "grant:test"),
+    ] {
+        let o = cancel_as(p, g);
+        assert_eq!(
+            o.status.code(),
+            Some(7),
+            "{p}|{g}: {}",
+            String::from_utf8_lossy(&o.stdout)
+        );
+        assert_eq!(
+            std::fs::read(&env.journal).unwrap(),
+            before,
+            "{p}|{g} wrote to the journal"
+        );
+    }
+    // The inspect route too: an intruder learns nothing about the op.
     let o = std::process::Command::new(bin)
-        .args(["cancel", "--journal"])
+        .args(["status", "--journal"])
         .arg(&env.journal)
-        .args(["--op", "op-pre", "--reason", "operator"])
+        .args(["--op", "op-pre", "--grant-registry"])
+        .arg(&env.grant_registry)
+        .args([
+            "--principal",
+            "principal:intruder",
+            "--grant-ref",
+            "grant:test",
+        ])
         .output()
         .unwrap();
+    assert_eq!(o.status.code(), Some(7));
+    assert!(
+        !String::from_utf8_lossy(&o.stdout).contains("held"),
+        "status disclosed usage"
+    );
+    let o = cancel_as(PRINCIPAL, "grant:test");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
     let pre: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(pre["state"], "cancelled");

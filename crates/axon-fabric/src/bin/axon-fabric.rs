@@ -18,8 +18,15 @@
 //! Ed25519 public keys in `--linux-trusted-issuers` (default: the manifest's
 //! sibling `trusted_issuers/`), no older than the max age (default 30 days).
 //! axon-fabric workspace-import --state DIR --tenant T --root DIR
-//! axon-fabric status --journal FILE --op ID
-//! axon-fabric cancel --journal FILE --op ID --reason TEXT
+//! axon-fabric status --journal FILE --op ID --grant-registry FILE --principal P --grant-ref G
+//! axon-fabric cancel --journal FILE --op ID --reason TEXT --grant-registry FILE --principal P --grant-ref G
+//!
+//! `status` and `cancel` act only for the authority that SUBMITTED the op:
+//! the grant must resolve for the principal in the operator's grant registry
+//! (as for `submit`) and be the principal|grant the journal recorded for the
+//! op. Holding a journal path or an operation id confers nothing
+//! (G03-r22-authority-intersection); anything else is `unauthorized` (exit 7)
+//! and nothing is written.
 //! ```
 //!
 //! Output on success: `{"schema":"axon-fabric-submit/1", "receipt": <acf-execution-receipt/1>,
@@ -207,8 +214,32 @@ fn open(a: &Args) -> (Journal, OperationId) {
     (j, op)
 }
 
+/// G03-r22-authority-intersection: the caller must present the authority that
+/// submitted `op` — a grant the operator's registry resolves for the principal,
+/// equal to the op's recorded `principal|grant`. Refused before anything is
+/// written or disclosed beyond the op's existence.
+fn authorize(a: &Args, j: &Journal, op: &OperationId) {
+    let grants = axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
+        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
+    let (principal, grant) = (a.req("--principal"), a.req("--grant-ref"));
+    grants
+        .resolve(&grant, &principal)
+        .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
+    let Some(v) = j.view(op) else {
+        refuse("unknown_op", &format!("no operation {op}"), 5)
+    };
+    if v.intent.authority_ref != format!("{principal}|{grant}") {
+        refuse(
+            "unauthorized",
+            &format!("operation {op} was not submitted under {principal}|{grant}"),
+            7,
+        )
+    }
+}
+
 fn status(a: &Args) {
     let (j, op) = open(a);
+    authorize(a, &j, &op);
     print_status(&j, &op);
 }
 
@@ -239,6 +270,7 @@ fn print_status(j: &Journal, op: &OperationId) {
 /// cleanup, and no cost evidence exists).
 fn cancel(a: &Args) {
     let (j, op) = open(a);
+    authorize(a, &j, &op);
     let reason = a.req("--reason");
     let Some(v) = j.view(&op) else {
         refuse("unknown_op", &format!("no operation {op}"), 5)
