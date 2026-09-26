@@ -94,7 +94,17 @@ if not isinstance(listed, dict) or len(listed) < min_files:
     print(f"  NON-VACUITY: manifest lists {len(listed) if hasattr(listed,'__len__') else '?'} files, floor is {min_files}"); sys.exit(1)
 
 present = set()
-for root, _dirs, files in os.walk(pkg):
+links = []
+if os.path.islink(pkg.rstrip("/")):
+    links.append("SYMLINK  <package root>")
+for root, dirs, files in os.walk(pkg):
+    # os.walk lists a symlinked directory under `dirs` but does not descend into
+    # it, so a link pointing OUTSIDE the package was invisible to this walk
+    # (measured: "both directions clean" with specs/extra -> an outside dir).
+    # Any link is refused here, by the repo's own walk.
+    for n in dirs + files:
+        if os.path.islink(os.path.join(root, n)):
+            links.append(f"SYMLINK  {os.path.relpath(os.path.join(root, n), pkg)}")
     for f in files:
         present.add(os.path.relpath(os.path.join(root, f), pkg))
 
@@ -120,7 +130,7 @@ for root, _dirs, files in os.walk(pkg):
 # a future deviation must be added here with a reason, not tolerated silently.
 DEVIATIONS: dict[str, tuple[str, str]] = {}
 
-bad = []
+bad = list(links)
 verified = 0
 deviated = []
 for rel, want in sorted(listed.items()):
