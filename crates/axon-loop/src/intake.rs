@@ -60,7 +60,9 @@
 //!    tree (request workspace = receipt input = `verification.output_workspace_ref`
 //!    = `output_workspace_ref`); its evidence is supervisor-observed; and the
 //!    sidecar's result and `matched_checks` are the receipt's, with a check that
-//!    did not complete yielding `unknown`. Evidence presented for a sidecar that
+//!    did not complete yielding `unknown`. For ANY cited result the issuer must
+//!    be a trusted verifier that is not the subject, and the check must not
+//!    have run as the subject's principal. Evidence presented for a sidecar that
 //!    names none is refused rather than ignored. That Fabric actually journaled
 //!    the operation is NOT checked here (this crate does not read the Fabric
 //!    journal); `axon-fabric status --op` is the witness, and the paired interop
@@ -268,7 +270,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     }
 
     // 8. The verification evidence (G3 under D12).
-    let verification = check_verification(input, &ep)?;
+    let verification = check_verification(input, &ep, &config.verifiers(), &subject)?;
 
     // Idempotency / identity conflict, against the ledger — AFTER every
     // check, so a replay is never a way around one (a re-intake with a
@@ -477,6 +479,8 @@ fn check_projection(text: Option<&str>, ep: &LoopEpisode) -> Result<()> {
 fn check_verification(
     input: &IntakeInput<'_>,
     ep: &LoopEpisode,
+    trusted_verifiers: &BTreeSet<OpaqueRef>,
+    subject: &BTreeSet<OpaqueRef>,
 ) -> Result<Option<(ComputeRequest, ExecutionReceipt)>> {
     let v = &ep.verification;
     let Some(vref) = &v.verifier_ref else {
@@ -514,6 +518,24 @@ fn check_verification(
                 "role upgrade: a context or execution document stands as the verification",
             ));
         }
+    }
+    // Independence, for EVERY cited result (bind_episode enforces it only for
+    // `passed`): the issuer is one the operator trusts and not the subject,
+    // and the check did not run as the subject either.
+    if !v
+        .issuer_ref
+        .as_ref()
+        .is_some_and(|i| trusted_verifiers.contains(i) && !subject.contains(i))
+    {
+        return Err(refused(
+            "the verification issuer is not a trusted verifier independent of the subject",
+        ));
+    }
+    if subject.contains(&req.principal_ref) {
+        return Err(refused(format!(
+            "the check ran as principal {}, the subject itself: a task cannot verify itself",
+            req.principal_ref
+        )));
     }
     if req.job_kind != JobKind::RegisteredCheck {
         return Err(refused(

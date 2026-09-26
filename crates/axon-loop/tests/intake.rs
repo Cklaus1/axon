@@ -700,6 +700,44 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
             "matched_checks",
         ),
         (
+            "check ran as the subject",
+            Box::new(|_, q, _| q["principal_ref"] = json!("micode-host-observer")),
+            "principal",
+        ),
+        (
+            "untrusted verifier",
+            // A FAILED result: bind_episode checks the issuer only for a pass,
+            // so this reaches step 8's own rule.
+            Box::new(|e, _, r| {
+                e["verification"]["issuer_ref"] = json!("fabric:someone-else");
+                e["verification"]["result"] = json!("failed");
+                r["verification"] = json!("failed");
+            }),
+            "trusted verifier",
+        ),
+        (
+            "the subject as verifier",
+            // A FAILED result: bind_episode checks the issuer only for a pass,
+            // so this reaches step 8's own rule.
+            Box::new(|e, _, r| {
+                e["verification"]["issuer_ref"] = json!("micode-host-observer");
+                e["verification"]["result"] = json!("failed");
+                r["verification"] = json!("failed");
+            }),
+            "trusted verifier",
+        ),
+        // A replayed earlier receipt of the SAME operation, from a run on the
+        // pre-session tree: every id matches, the bytes checked do not.
+        (
+            "stale receipt of this operation",
+            Box::new(|_, q, r| {
+                let before = json!(format!("acf1:{}", "a".repeat(64)));
+                q["workspace_version_ref"] = before.clone();
+                r["input_workspace_ref"] = before;
+            }),
+            "output tree",
+        ),
+        (
             "extra evidence ref",
             Box::new(|e, _, _| {
                 let extra = json!(format!("cl22:{}", "1".repeat(64)));
@@ -717,7 +755,9 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
         // Re-derive the refs the sidecar holds unless the case is about them.
         if !why.contains("matched_checks") && !why.contains("evidence ref") {
             let result = e["verification"]["result"].as_str().unwrap().to_string();
+            let issuer = e["verification"]["issuer_ref"].clone();
             e = verified(&e, &q, &r, &result);
+            e["verification"]["issuer_ref"] = issuer;
         }
         let before = snapshot(c.s.root());
         let err = run_v(&c, &e, Some(&q), Some(&r)).expect_err(why);
