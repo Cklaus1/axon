@@ -515,8 +515,11 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             reason,
             episode_ref: ep_ref,
             corpus_role: role,
-            // Only a counted verdict cites its evidence: an outcome demoted
-            // after authentication (a vacuous or untrusted pass) cites none.
+            // Only a counted verdict cites its evidence. Unreachable today:
+            // authentication already requires a trusted, independent issuer,
+            // and the receipt contract refuses a pass with no matched check,
+            // so no authenticated verdict is demoted afterwards. Kept against
+            // drift (re-audit 3: X23, an equivalent mutant).
             verification: authenticated
                 .filter(|_| matches!(outcome, Outcome::VerifiedPass | Outcome::Fail)),
         });

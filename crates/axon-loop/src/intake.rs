@@ -586,6 +586,10 @@ pub fn verify_check_evidence(
             "verification evidence_refs must be exactly [cl22 of the check request]",
         ));
     }
+    // Redundant today — bind_episode's role rule and the registered_check
+    // job-kind rule refuse these first — and kept so this function stands on
+    // its own for EVL. No test can make it fire alone (re-audit 3: X18, an
+    // equivalent mutant).
     for r in [&req_ref, &rc_ref] {
         if [&ep.context_ref, &ep.acf_request_ref, &ep.acf_receipt_ref].contains(&r) {
             return Err(refused(

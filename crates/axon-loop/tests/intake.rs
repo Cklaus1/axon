@@ -837,6 +837,58 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
         "{e}"
     );
     assert_eq!(before, snapshot(c.s.root()));
+
+    // Re-audit 3's surviving mutants: joins every case above exercised only
+    // with a PASSED receipt, where an earlier rule (the contract schema, or
+    // bind_episode's pass-only output rule) refused first. Each case below
+    // can be refused by the named rule alone.
+    let refuse = |why: &str, e: &Value, q: &Value, r: &Value, want: &str| {
+        let err = run_v(&c, e, Some(q), Some(r)).expect_err(why);
+        assert!(
+            matches!(&err, LoopError::Refused(m) if m.contains(want)),
+            "{why}: {err}"
+        );
+        assert_eq!(before, snapshot(c.s.root()), "{why}: store changed");
+    };
+    // X20: a FAILED verdict computed on another tree, honestly reported as
+    // such — only the episode-output conjunct ties it to the candidate.
+    let other = json!(format!("acf1:{}", "8".repeat(64)));
+    let (mut q, mut r) = (req.clone(), check_receipt("failed", 2));
+    q["workspace_version_ref"] = other.clone();
+    r["input_workspace_ref"] = other.clone();
+    let mut e = verified(&c.ep, &q, &r, "failed");
+    e["verification"]["output_workspace_ref"] = other;
+    refuse(
+        "a failed verdict on another tree",
+        &e,
+        &q,
+        &r,
+        "output tree",
+    );
+    // X04: a FAILED verdict from a non-supervised receipt (a passed one does
+    // not even parse, so only step 8's rule refuses this).
+    for source in ["worker_reported", "provider_reported"] {
+        let mut r = check_receipt("failed", 2);
+        r["evidence_source"] = json!(source);
+        let e = verified(&c.ep, &req, &r, "failed");
+        refuse(source, &e, &req, &r, "supervisor-observed");
+    }
+    // X10: a receipt recording two suite versions — the task's pinned one and
+    // another — is not a verdict of exactly one rubric.
+    let mut r = check_receipt("passed", 2);
+    r["evidence_refs"] = json!([
+        "check-report:fixture",
+        common::check_suite(),
+        format!("check-suite:acceptance@acf1:{}", "7".repeat(64))
+    ]);
+    let e = verified(&c.ep, &req, &r, "passed");
+    refuse(
+        "two suite versions",
+        &e,
+        &req,
+        &r,
+        "exactly one check suite",
+    );
 }
 
 /// B280 / G16-r22-peer-failure-matrix: a PARTIAL export (the sidecar arrives,

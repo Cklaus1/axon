@@ -133,6 +133,21 @@ MUTATIONS = [
      '                "verification",\n                d.verification[1]["backend_profile_ref"].as_str(),',
      '                "verification",\n                None,',
      "axon-loop", "--test protected_class", "each_d3_leg_on_a_development_backend_counts_nothing"),
+    ("M21", "intake: a verdict's checked tree is the episode's output (failed too)",
+     "crates/axon-loop/src/intake.rs",
+     "        || ep.output_workspace_ref.as_ref() != checked\n",
+     "",
+     "axon-loop", "--test intake", "verification_that_does_not_join_is_refused_with_the_store_unchanged"),
+    ("M22", "intake: the check receipt is supervisor-observed",
+     "crates/axon-loop/src/intake.rs",
+     "    if rc.evidence_source != EvidenceSource::SupervisorObserved {",
+     "    if false && rc.evidence_source != EvidenceSource::SupervisorObserved {",
+     "axon-loop", "--test intake", "verification_that_does_not_join_is_refused_with_the_store_unchanged"),
+    ("M23", "intake: the receipt records exactly one suite version",
+     "crates/axon-loop/src/intake.rs",
+     "        [one] => *one,",
+     "        [one, ..] => *one,",
+     "axon-loop", "--test intake", "verification_that_does_not_join_is_refused_with_the_store_unchanged"),
 ]
 
 
