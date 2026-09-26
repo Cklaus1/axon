@@ -478,11 +478,13 @@ impl Target {
             let inlined = name
                 .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'))
                 .and_then(|n| {
-                    let p = cand.join(format!("{n}.ax"));
-                    std::fs::symlink_metadata(&p)
-                        .ok()
-                        .filter(|m| m.is_file())
-                        .and_then(|_| std::fs::read_to_string(p).ok())
+                    // The module the runtime will load: first match along the
+                    // same path `AXON_PATH` gets, suite before candidate.
+                    [dir.0.join("check"), cand.clone()]
+                        .iter()
+                        .map(|d| d.join(format!("{n}.ax")))
+                        .find(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()))
+                        .and_then(|p| std::fs::read_to_string(p).ok())
                 });
             match inlined {
                 Some(module) => out.push_str(&module),
@@ -491,6 +493,26 @@ impl Target {
             out.push('\n');
         }
         Some(out)
+    }
+
+    /// `AXON_PATH` for the run. A check suite's own directory comes FIRST:
+    /// a module the operator's suite ships (a helper, a fixture) resolves to
+    /// the suite's file, so a candidate holding a same-named module cannot
+    /// shadow the rubric's code. The candidate follows, reachable only as the
+    /// modules the suite does not define. A plain file sees the candidate.
+    fn module_path(&self) -> String {
+        let join = |ds: &[PathBuf]| {
+            ds.iter()
+                .map(|d| d.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(":")
+        };
+        match (&self.suite, &self.bound) {
+            (Some(_), Bound::Version { dir, .. }) => {
+                join(&[dir.0.join("check"), dir.0.join("candidate")])
+            }
+            _ => self.candidate_dir().map(|d| join(&[d])).unwrap_or_default(),
+        }
     }
 
     /// The private copy of the candidate, when there is one.
@@ -1186,15 +1208,10 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 return Err(e);
             }
         };
-        // A check suite reaches the candidate ONLY as a module path; the
-        // operator's ambient AXON_PATH is never inherited.
-        l = l.with_env(
-            "AXON_PATH",
-            target
-                .candidate_dir()
-                .map(|d| d.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        );
+        // A check suite reaches the candidate ONLY as a module path, after
+        // its own directory; the operator's ambient AXON_PATH is never
+        // inherited.
+        l = l.with_env("AXON_PATH", target.module_path());
         Some(l)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {

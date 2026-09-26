@@ -217,7 +217,9 @@ use f.{double}
 fn hidden_completion() {
     match env_var(\"AXON_PATH\") {
         Ok(p) => {
-            let _ = write_file(\"{p}/planted.txt\", \"moved\")
+            let dirs = str_split(p, \":\")
+            let c = dirs[1]
+            let _ = write_file(\"{c}/planted.txt\", \"moved\")
             assert_eq(double(21), 42)
         }
         Err(e) => assert(false)
@@ -233,7 +235,9 @@ use f.{double}
 fn hidden_completion() {
     match env_var(\"AXON_PATH\") {
         Ok(p) => {
-            let _ = write_file(\"{p}/../check/planted.txt\", \"moved\")
+            let dirs = str_split(p, \":\")
+            let c = dirs[0]
+            let _ = write_file(\"{c}/planted.txt\", \"moved\")
             assert_eq(double(21), 42)
         }
         Err(e) => assert(false)
@@ -486,4 +490,121 @@ fn the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate() {
 
 fn tenant() -> axon_loop_contracts::TenantId {
     axon_loop_contracts::TenantId::new("tenant-t").unwrap()
+}
+
+// ── the suite's own modules come first ──────────────────────────────────────
+
+/// A suite with a helper module of its own, over a candidate whose files are
+/// `cand` (replacing f.ax): `(env, config, request)`.
+fn suite_with_helper(cand: &[(&str, &str)]) -> (Suite, Value) {
+    let s = with_suite(
+        "mod f\nmod helper\nuse f.{double}\nuse helper.{want}\n\n\
+         @[test]\nfn hidden_completion() { assert_eq(double(21), want()) }\n",
+        "hidden",
+    );
+    std::fs::write(s.suite_root.join("helper.ax"), "fn want() -> i64 { 42 }\n").unwrap();
+    let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut reg: Value =
+        serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+    reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+    std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+    for (name, text) in cand {
+        std::fs::write(s.env.ws.join(name), text).unwrap();
+    }
+    let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+        .unwrap()
+        .import_dir(&s.env.ws, &Quota::default())
+        .unwrap();
+    let s = Suite {
+        candidate,
+        suite_ref,
+        ..s
+    };
+    let r = suite_request(&s, "op-helper");
+    (s, r)
+}
+
+/// G01 re-audit 2: the suite reached every module through `AXON_PATH`, which
+/// held ONLY the candidate — so a candidate shipping a module named like one
+/// of the suite's helpers replaced the rubric's code. Here the candidate's
+/// `double` is broken and its `helper.ax` moves the expected value to match;
+/// the suite's own helper must win and the check must FAIL.
+#[test]
+fn a_candidate_cannot_shadow_a_module_of_the_suite() {
+    // Positive control: an honest candidate passes against the suite helper.
+    let (s, r) = suite_with_helper(&[]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        sub.reason
+    );
+
+    let (s, r) = suite_with_helper(&[
+        ("f.ax", "fn double(n: i64) -> i64 { n * 0 }\n"),
+        ("helper.ax", "fn want() -> i64 { 0 }\n"),
+    ]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Failed,
+        "the candidate's helper.ax judged its own broken double: {:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+}
+
+/// A candidate declaring a test under the suite's check name, or one the
+/// filter also matches, cannot turn a failing verdict into a pass. Probed, and
+/// the two fail closed for DIFFERENT reasons, both pinned here:
+///
+/// * same name: the duplicate definition stops the run — no summary, Unknown;
+/// * a name the filter matches as a SUBSTRING: the candidate's test RUNS in the
+///   rubric's run (the `axon test` filter is a substring) — but Fabric judges
+///   and counts only the EXACT named check (`matched_checks` 1), so the extra
+///   test cannot stand in for it; a failing extra test can only demote a pass
+///   to Unknown through the nonzero exit, which harms nobody but the candidate.
+#[test]
+fn a_candidate_test_named_like_the_suites_cannot_pass_for_it() {
+    let broken = "fn double(n: i64) -> i64 { n * 0 }\n";
+    let (s, r) = suite_with_helper(&[(
+        "f.ax",
+        &format!("{broken}@[test]\nfn hidden_completion() {{ assert(true) }}\n"),
+    )]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Unknown,
+        "{:?}",
+        sub.reason
+    );
+    assert!(sub.reason.as_deref().unwrap_or("").contains("no summary"));
+
+    let (s, r) = suite_with_helper(&[(
+        "f.ax",
+        &format!("{broken}@[test]\nfn hidden_completion_ok() {{ assert(true) }}\n"),
+    )]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Failed,
+        "{:?}",
+        sub.reason
+    );
+    let rep = sub.check_report.unwrap();
+    assert_eq!(rep["failed"], json!(["hidden_completion"]));
+    assert_eq!(
+        rep["passed"],
+        json!(["hidden_completion_ok"]),
+        "the candidate's test ran"
+    );
+    assert_eq!(
+        sub.receipt.matched_checks,
+        Some(1),
+        "only the exact name counts"
+    );
 }
