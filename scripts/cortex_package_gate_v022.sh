@@ -19,13 +19,15 @@
 #      code change, not a silent regeneration.
 #      Any failure here ABORTS before a single line of package code runs.
 #
-#   2. HONESTY, also stdlib only: all 504 proposed gates stay NOT_RUN, all 287
-#      work packages stay "Not started", and the three runtime-qualification
-#      booleans in integration/V022_RUNTIME_QUALIFICATION.json stay false. The
-#      package makes no execution claim and this repo must not graft one onto
-#      it. Repo-side execution results belong in a governance registry (the
-#      v0.15 mechanism), not in the vendored bytes — which are hash-pinned
-#      anyway, so this is a second, readable statement of the same fact.
+#   2. HONESTY, stdlib only, repo code only: a gate may leave NOT_RUN and a
+#      work package leave "Not started" only with a row in
+#      governance/cortex_gate_execution_registry.json naming an existing script
+#      that an existing invoker is grepped to run — the v0.15 rule, now shared
+#      code (scripts/cortex_honesty_invariant.py), with every row re-validated
+#      each run. The three runtime-qualification booleans in
+#      integration/V022_RUNTIME_QUALIFICATION.json stay false. Repo-side
+#      execution belongs in the registry, never in the vendored bytes (which
+#      are hash-pinned, and whose own validator rejects any non-NOT_RUN row).
 #
 #   3. The package's own validator (tools/validate_package.py), READ-ONLY:
 #      --output goes to the target dir, never --refresh-hashes, python -B with
@@ -70,6 +72,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 SUMS_NAME="SHA256SUMS_v0_22.json"
+REGISTRY="governance/cortex_gate_execution_registry.json"
 
 # Pins — measured on the vendored copy (docs/axon_cortex_v0_22, 2026-09-24).
 PIN_SUMS="b19c0401d1d8d38af74afc71b08b413204bca13c2686cda139199db97e39d891"
@@ -199,26 +202,35 @@ then
 fi
 
 # ── 2. honesty invariant (stdlib only) ───────────────────────────────────────
-echo "── cortex v0.22: honesty invariant (NOT_RUN / Not started / unqualified) ──"
-python3 -B - "$PKG" "$MIN_GATES" "$MIN_TASKS" "$MIN_SPECS" <<'PY' || note_fail "honesty invariant"
+echo "── cortex v0.22: honesty invariant (NOT_RUN unless something here runs it; unqualified) ──"
+# (a) The runtime-qualification ledger stays unqualified and the spec count
+#     holds its floor. Stdlib only.
+python3 -B - "$PKG" "$MIN_SPECS" <<'PY' || note_fail "honesty invariant (runtime qualification / spec floor)"
 import json, os, sys
-pkg, min_gates, min_tasks, min_specs = sys.argv[1], *map(int, sys.argv[2:5])
+pkg, min_specs = sys.argv[1], int(sys.argv[2])
 ld = lambda n: json.load(open(os.path.join(pkg, n), encoding="utf-8"))
-gates, tasks, specs = ld("gate_manifest.json")["gates"], ld("task_manifest.json")["tasks"], ld("spec_manifest.json")["specs"]
-q = ld("integration/V022_RUNTIME_QUALIFICATION.json")
+specs, q = ld("spec_manifest.json")["specs"], ld("integration/V022_RUNTIME_QUALIFICATION.json")
 err = []
-if len(gates) < min_gates: err.append(f"NON-VACUITY: {len(gates)} gates < {min_gates}")
-if len(tasks) < min_tasks: err.append(f"NON-VACUITY: {len(tasks)} tasks < {min_tasks}")
 if len(specs) < min_specs: err.append(f"NON-VACUITY: {len(specs)} specs < {min_specs}")
-err += [f"gate {g.get('id')}: product_result={g.get('product_result')!r}" for g in gates if g.get("product_result") != "NOT_RUN"]
-err += [f"task {t.get('id')}: status={t.get('status')!r}" for t in tasks if t.get("status") != "Not started"]
 for k in ("engineering_qualified", "policy_activated", "measured_improvement_supported"):
     if q.get(k) is not False: err.append(f"V022_RUNTIME_QUALIFICATION.{k} = {q.get(k)!r}, must be false")
 if q.get("live_evidence"): err.append("V022_RUNTIME_QUALIFICATION.live_evidence is non-empty")
+if q.get("qualified_profiles"): err.append("V022_RUNTIME_QUALIFICATION.qualified_profiles is non-empty")
 if err:
-    print("  honesty invariant VIOLATED:"); [print("   ", e) for e in err[:20]]; sys.exit(1)
-print(f"  {len(gates)} gates NOT_RUN, {len(tasks)} tasks Not started, {len(specs)} specs; qualification booleans false")
+    print("  honesty invariant VIOLATED:"); [print("   ", e) for e in err]; sys.exit(1)
+print(f"  {len(specs)} specs; runtime qualification booleans false, no live evidence, no qualified profile")
 PY
+# (b) The v0.15 registry rule, shared code (scripts/cortex_honesty_invariant.py):
+#     a gate off NOT_RUN / a task off "Not started" needs a registry row naming
+#     an existing script that an existing invoker greps as invoked, and EVERY
+#     row is re-validated each run. Before Stage 6 this script asserted the
+#     constants but never read the registry, so a row vouching for an r22 gate
+#     through a script nothing runs passed here (measured).
+[ -f "$REGISTRY" ] || fail_now "execution registry missing: $REGISTRY"
+python3 -B scripts/cortex_honesty_invariant.py --pkg "$PKG" --execution-registry "$REGISTRY" \
+  --min-gates "$MIN_GATES" --min-tasks "$MIN_TASKS" \
+  --also-known docs/axon_cortex_v0_15/axon-cortex-build-v0_15 \
+  || note_fail "honesty invariant (gate_manifest / task_manifest vs $REGISTRY)"
 
 # Resolve the pinned interpreter once; the validator prefers it too.
 has_pin() { "$1" -B -c "import importlib.metadata as m, sys; sys.exit(0 if m.version('jsonschema') == '$PINNED_JSONSCHEMA' else 1)" 2>/dev/null; }
