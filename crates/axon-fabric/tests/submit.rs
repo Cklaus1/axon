@@ -957,3 +957,30 @@ fn repeated_trials_of_one_task_are_distinct_and_only_a_transport_retry_replays()
     assert_eq!(e.kind(), "conflict", "{e}");
     assert_eq!(spawn_count(&env.spawns), 3);
 }
+
+/// G01-r22-nonvacuous-outcome: a whole-suite check (no filter) in which most
+/// checks pass and ONE fails is Failed — a high checklist score never offsets a
+/// failed requirement — and the matched count is every check that ran.
+#[test]
+fn one_failed_check_fails_the_whole_suite_whatever_the_rest_score() {
+    let env = Env::new();
+    let mut r = request(&env, "op-suite", "t_ok");
+    r["argv"] = json!(["f.ax"]);
+    let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Failed,
+        "{:?}",
+        s.check_report
+    );
+    assert_eq!(
+        s.receipt.matched_checks,
+        Some(2),
+        "t_ok passed and t_bad failed: both matched"
+    );
+    assert_eq!(
+        s.receipt.status,
+        ReceiptStatus::Completed,
+        "the process ran to completion; the verdict is what failed"
+    );
+}

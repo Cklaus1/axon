@@ -234,6 +234,15 @@
         "PASS"
       ],
       "note": "B273. The EVO proposer changes only the shortlist: its candidate records the parent policy and its discovery evidence, keeps the candidate set and controls (model/evaluator route) byte-equal, never sets authority_expansion, never adds an id, and its hypothesis history is append-only; a tool-adding or widening candidate is refused at put, at freeze and at activation; the frozen plan (evaluator, promotion rule, task corpus) is permanent and plan shopping is refused. The proposer emits data only and has no route to code or permissions. axon-loop plan_evo_tel.rs, candidates.rs, redteam.rs."
+    },
+    {
+      "gate_id": "G01-r22-nonvacuous-outcome",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B276. A pass needs nonzero applicable checks: verification 'passed' with zero matched checks is invalid in the contract, a real interpreter run that exits 0 matching nothing is NotRun, and a named check that is absent is NotRun with 0 matched. Over exact candidate bytes: output changed after verification is never a pass. No offsetting: one failed check fails a whole suite whatever the rest scored, exit code zero never stands for a verdict, and low cost never offsets inferior quality at admission. axon-fabric submit.rs; axon-cortex check_executor.rs; axon-loop-contracts fixtures.rs; axon-loop evl.rs, evl_admission.rs."
     }
   ],
   "tasks": [],

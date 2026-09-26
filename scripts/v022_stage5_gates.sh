@@ -82,6 +82,11 @@ GATES=(
   "G29-r22-bounded-mutation|axon-loop|plan_evo_tel|evo_proposes_a_bounded_deterministic_candidate evo_regularizes_history_and_exhausts"
   "G29-r22-bounded-mutation|axon-loop|candidates|g2_policy_put_refuses_a_tool_adding_shortlist g2_evo_eligible_must_equal_the_registered_list g2_freeze_refuses_a_candidate_outside_the_list g2_baseline_and_activation_recheck_the_list"
   "G29-r22-bounded-mutation|axon-loop|redteam|o1_o2_non_evo_or_widening_candidate_cannot_be_frozen g6_freeze_is_permanent g7_plan_shopping_is_refused"
+  "G01-r22-nonvacuous-outcome|axon-fabric|submit|one_failed_check_fails_the_whole_suite_whatever_the_rest_score a_registered_check_runs_and_emits_a_supervisor_observed_receipt"
+  "G01-r22-nonvacuous-outcome|axon-cortex|check_executor|an_empty_mandatory_match_is_not_run_never_passed"
+  "G01-r22-nonvacuous-outcome|axon-loop-contracts|fixtures|verification_passed_requires_matched_checks"
+  "G01-r22-nonvacuous-outcome|axon-loop|evl|output_bytes_changed_after_verification_are_not_a_pass bind_acf_alone_refuses_a_pass_over_other_bytes"
+  "G01-r22-nonvacuous-outcome|axon-loop|evl_admission|reject_on_inferiority_or_no_economic_benefit"
 )
 
 for row in "${GATES[@]}"; do
