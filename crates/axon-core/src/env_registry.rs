@@ -25,6 +25,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_MAX_DEPTH", "recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it"),
     ("AXON_CLOCK", "deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping"),
     ("AXON_PATH", "colon-separated module search path for `mod`/`use` imports"),
+    ("AXON_PATH_EXCLUSIVE", "exactly `1`: resolve modules ONLY from AXON_PATH, never `~/.axon/lib` or the binary's own library. Fabric sets it for every check it runs, so a verdict depends on nothing outside the suite and the candidate"),
     ("AXON_STRICT", "promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself"),
     // ── Record / replay ──────────────────────────────────────────────────
     ("AXON_RECORD", "path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records"),

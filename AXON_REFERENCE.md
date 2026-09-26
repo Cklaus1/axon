@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 54 environment variables.
+The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 142 diagnostic codes (129 live, 13 reserved), 55 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (54)
+## Environment variables (55)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -78,6 +78,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_MAX_DEPTH` | recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it |
 | `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
 | `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
+| `AXON_PATH_EXCLUSIVE` | exactly `1`: resolve modules ONLY from AXON_PATH, never `~/.axon/lib` or the binary's own library. Fabric sets it for every check it runs, so a verdict depends on nothing outside the suite and the candidate |
 | `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |
 | `AXON_RECORD` | path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records |
 | `AXON_REPLAY` | serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD |

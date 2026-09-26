@@ -872,7 +872,12 @@ fn host_executor(
         // 3): only the ceiling, the trial cache and the module path below.
         .with_clean_env();
     // Always set — `""` is deny-every-effect, never "no ceiling".
-    let mut local = local.with_effect_ceiling(ceiling);
+    let mut local = local
+        .with_effect_ceiling(ceiling)
+        // Modules resolve ONLY from the module path set below — never from
+        // the trial cache's `~/.axon/lib` (under the caller-named state dir)
+        // or the interpreter's own library (re-audit 5, executed).
+        .with_env("AXON_PATH_EXCLUSIVE", "1");
     // The trial's own fresh HOME / XDG_CACHE_HOME / CARGO_TARGET_DIR: no
     // two trials share a mutable cache.
     for (k, v) in cache.env() {
@@ -892,6 +897,19 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         return Err(SubmitError::Malformed(
             "policy_digest is the all-zero placeholder; name the governing policy".into(),
         ));
+    }
+    // Every run path — the run directory, the trial caches, and the module
+    // path a check resolves through — lives under the caller-named state dir,
+    // and AXON_PATH is a ':'-separated list. A ':' in the state dir would split
+    // it into directories the CALLER chose, ahead of the operator's suite
+    // (re-audit 5, executed: a signed pass for a candidate the suite fails).
+    // Refused before anything is written or launched.
+    if cfg.state_dir.as_os_str().to_string_lossy().contains(':') {
+        return Err(SubmitError::Malformed(format!(
+            "state dir {} contains ':', the module-path separator: a run under it could not \
+             keep its module path to the directories it names",
+            cfg.state_dir.display()
+        )));
     }
 
     // 4a (first, so a refusal touches nothing — not even the journal file).

@@ -512,7 +512,9 @@ fn suite_with_helper(cand: &[(&str, &str)]) -> (Suite, Value) {
     reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
     std::fs::write(&s.env.registry, reg.to_string()).unwrap();
     for (name, text) in cand {
-        std::fs::write(s.env.ws.join(name), text).unwrap();
+        let p = s.env.ws.join(name);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
     }
     let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
         .unwrap()
@@ -630,6 +632,81 @@ fn a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass() {
     assert_eq!(
         sub.receipt.verification,
         ReceiptVerification::Unknown,
+        "{:?}",
+        sub.reason
+    );
+}
+
+/// Re-audit 5 blocker (executed): AXON_PATH is ':'-separated and built from
+/// the caller-named state dir, so a ':' in it put caller directories ahead of
+/// the suite and Fabric signed a pass the suite would fail. Such a state dir
+/// is refused before anything is written or launched. Positive control: the
+/// same request under an ordinary state dir runs.
+///
+/// Mutation: drop the ':' refusal in `submit` → red.
+#[test]
+fn a_state_dir_that_would_split_the_module_path_is_refused() {
+    let s = with_suite(&hidden_suite_src(), "hidden");
+    let mut cfg = s.env.cfg(0);
+    let evil = s.env.dir.path().join("x:y");
+    cfg.state_dir = evil.clone();
+    let e = submit(&suite_request(&s, "op-colon").to_string(), &cfg).unwrap_err();
+    assert_eq!(e.kind(), "malformed", "{e}");
+    assert!(e.to_string().contains("contains ':'"), "{e}");
+    assert!(!evil.exists(), "nothing was written under it");
+    assert_untouched(&s.env, "colon state dir");
+    // Positive control.
+    let sub = submit(&suite_request(&s, "op-plain").to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        sub.reason
+    );
+}
+
+/// Re-audit 5 blocker (executed): modules fell through AXON_PATH to ambient
+/// dirs — the trial cache's `~/.axon/lib`, under the caller-named state dir —
+/// so a candidate whose tree does NOT compile on its own passed with a module
+/// planted there, and Fabric signed it. A check now resolves modules only from
+/// its module path (AXON_PATH_EXCLUSIVE). Positive control: the same candidate
+/// with the module shipped in its own tree passes.
+///
+/// Mutation: drop AXON_PATH_EXCLUSIVE from the check executor → red.
+#[test]
+fn a_check_loads_no_module_from_outside_the_suite_and_the_candidate() {
+    // `use f::h` loads `f/h.ax` with no `mod` keyword, so the admission scan
+    // sees nothing to refuse — resolution alone decides where it comes from.
+    let uses_h = "use f::h\n\nfn double(n: i64) -> i64 { d2(n) }\n";
+    let h = "fn d2(n: i64) -> i64 { n * 2 }\n";
+
+    // Planted in the trial cache's HOME, absent from the candidate's tree.
+    let (s, r) = suite_with_helper(&[("f.ax", uses_h)]);
+    let cfg = s.env.cfg(0);
+    let cache = axon_fabric::workspace::TrialCache::for_trial(
+        &cfg.state_dir,
+        &tenant(),
+        &axon_loop_contracts::TrialId::new(r["trial_id"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let lib = cache.root.join("home/.axon/lib/f");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("h.ax"), h).unwrap();
+    let sub = submit(&r.to_string(), &cfg).unwrap();
+    assert_ne!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "a module from the trial cache judged the candidate: {:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+
+    // Positive control: shipped in the tree, the same candidate passes.
+    let (s, r) = suite_with_helper(&[("f.ax", uses_h), ("f/h.ax", h)]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
         "{:?}",
         sub.reason
     );

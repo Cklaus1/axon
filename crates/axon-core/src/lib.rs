@@ -503,6 +503,12 @@ pub fn axon_search_dirs(binary_path: Option<&std::path::Path>) -> Vec<std::path:
             }
         }
     }
+    // A caller that names every directory a run may load from (Fabric, for a
+    // check it will vouch for) disables the ambient ones below: `~/.axon/lib`
+    // and the binary's own library are not part of the tree being judged.
+    if std::env::var("AXON_PATH_EXCLUSIVE").as_deref() == Ok("1") {
+        return dirs;
+    }
 
     // 2. ~/.axon/lib/
     let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
