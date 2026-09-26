@@ -273,3 +273,32 @@ fn an_unauthenticated_verdict_never_counts() {
         c.trials
     );
 }
+
+/// The operator pins hold in EVL exactly as at intake (one shared join): the
+/// candidate's verification ran another verifier REVISION, genuinely signed by
+/// the trusted verifier, with the episode re-derived to cite it. Each such
+/// trial is Unknown for that reason, and nothing is admitted.
+/// Mutation: drop the pin block in `verify_check_evidence` → the verdicts
+/// count and this fails.
+#[test]
+fn a_verdict_from_an_unpinned_verifier_revision_never_counts_in_evl() {
+    let (pass, _, d, r, moved, outcomes) = run("unpinned-rev", |v| {
+        for t in candidate_trials(v) {
+            let mut req = t["verification_request"].clone();
+            req["executable_digest"] = json!(format!("acf1:{}", "f".repeat(64)));
+            let rc = t["verification_receipt"].clone();
+            t["verification_attestation"] = common::attest(common::VERIFIER, &req, &rc);
+            t["episode"]["verification"]["evidence_refs"] = json!([digest_value(&req).unwrap()]);
+            t["verification_request"] = req;
+        }
+    });
+    assert_eq!(pass, 0, "{outcomes:?}");
+    assert!(
+        outcomes
+            .iter()
+            .all(|(o, reason)| *o == Outcome::Unknown && reason.contains("verifier revision")),
+        "{outcomes:?}"
+    );
+    assert_ne!(d, Decision::Accept, "{r:?}");
+    assert!(!moved);
+}

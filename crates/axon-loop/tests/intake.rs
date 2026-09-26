@@ -1253,3 +1253,145 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
     );
     assert_eq!(snapshot(c.s.root()), before);
 }
+
+/// The re-audit's missing discriminators (wf_5ca44805). Each case below can be
+/// refused ONLY by the rule it names — every other check passes — and none
+/// writes a byte:
+/// (a) the right registered key, every bound field correct, a corrupted
+///     signature: only the Ed25519 verification can refuse it;
+/// (b) a genuinely signed request/receipt/attestation of ANOTHER trial, with
+///     the sidecar re-derived to cite it: only the identity join can;
+/// (c) a trusted, KEYED subject vouching for its own FAILED verdict (so
+///     bind_episode's pass-only rule does not fire first): only the
+///     independence rule can;
+/// (d) the requester choosing the test inside the pinned suite, or another
+///     task's pinned suite: only the task-acceptance pin can;
+/// (e) a task the operator registered no acceptance check for.
+///
+/// Mutations, each turning its case green: make the signature verify a no-op;
+/// drop the task_id/trial_id terms of the identity join; drop
+/// `!subject.contains(i)`; drop the task-acceptance block.
+#[test]
+fn each_verification_rule_is_load_bearing_on_its_own() {
+    let c = case(Some(500));
+    let before = snapshot(c.s.root());
+    let refused = |ep: &Value, req: &Value, rc: &Value, att: &Value, why: &str, want: &str| {
+        let e = run_va(&c, ep, Some(req), Some(rc), Some(att)).unwrap_err();
+        assert!(
+            matches!(e, LoopError::Refused(ref m) if m.contains(want)),
+            "{why}: expected `{want}`: {e}"
+        );
+        assert_eq!(snapshot(c.s.root()), before, "{why} wrote to the store");
+    };
+    let (req, rc) = (check_request(), check_receipt("passed", 1));
+    let ep = verified(&c.ep, &req, &rc, "passed");
+
+    // (a) corrupted signature under the registered key.
+    let mut bad = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let sig = bad["signature"].as_str().unwrap().to_string();
+    let flipped = format!(
+        "{}{}",
+        if &sig[..2] == "00" { "01" } else { "00" },
+        &sig[2..]
+    );
+    bad["signature"] = json!(flipped);
+    refused(
+        &ep,
+        &req,
+        &rc,
+        &bad,
+        "corrupted signature",
+        "does not verify",
+    );
+
+    // (b) another trial's genuine evidence, cited by a re-derived sidecar.
+    let (mut req2, mut rc2) = (check_request(), check_receipt("passed", 1));
+    for d in [&mut req2, &mut rc2] {
+        d["trial_id"] = json!("trial-2");
+    }
+    let ep2 = verified(&c.ep, &req2, &rc2, "passed");
+    let att2 = attest(&verifier_key().0, common::VERIFIER, &req2, &rc2);
+    refused(
+        &ep2,
+        &req2,
+        &rc2,
+        &att2,
+        "another trial's evidence",
+        "not this attempt's",
+    );
+
+    // (d) the requester chooses the test; another task's suite.
+    let mut req_f = check_request();
+    req_f["argv"] = json!(["check:acceptance", "t_trivially_true"]);
+    let ep_f = verified(&c.ep, &req_f, &rc, "passed");
+    let att_f = attest(&verifier_key().0, common::VERIFIER, &req_f, &rc);
+    refused(
+        &ep_f,
+        &req_f,
+        &rc,
+        &att_f,
+        "requester-chosen test",
+        "registered acceptance",
+    );
+    let other_suite = format!("check-suite:lenient@acf1:{}", "7".repeat(64));
+    let mut config = c.s.config().unwrap();
+    config
+        .verifier_pins
+        .get_mut(&OpaqueRef::new(common::VERIFIER).unwrap())
+        .unwrap()
+        .check_suites
+        .push(other_suite.clone());
+    c.s.write_config(&config).unwrap();
+    let before = snapshot(c.s.root());
+    let mut req_s = check_request();
+    req_s["argv"] = json!(["check:lenient", "t_"]);
+    let mut rc_s = check_receipt("passed", 1);
+    rc_s["evidence_refs"] = json!(["check-report:fixture", other_suite]);
+    let ep_s = verified(&c.ep, &req_s, &rc_s, "passed");
+    let att_s = attest(&verifier_key().0, common::VERIFIER, &req_s, &rc_s);
+    let e = run_va(&c, &ep_s, Some(&req_s), Some(&rc_s), Some(&att_s)).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("registered acceptance")),
+        "another task's (pinned) suite: {e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
+
+    // (e) no acceptance check registered for the task.
+    config.task_acceptance.clear();
+    c.s.write_config(&config).unwrap();
+    let before = snapshot(c.s.root());
+    let e = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("no operator-registered acceptance")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
+
+    // (c) a trusted, keyed subject vouching for its own FAILED verdict.
+    let c = case(Some(500));
+    let subject_id = c.ctx["observed_issuer_ref"].as_str().unwrap().to_string();
+    let (s_sk, s_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let mut config = c.s.config().unwrap();
+    let sid = OpaqueRef::new(&subject_id).unwrap();
+    config.trusted_verifiers.push(sid.clone());
+    config.verifier_keys.insert(sid.clone(), s_pk);
+    config.verifier_pins.insert(sid, common::verifier_pin());
+    c.s.write_config(&config).unwrap();
+    let before = snapshot(c.s.root());
+    let rc_f = check_receipt("failed", 1);
+    let mut ep_c = verified(&c.ep, &req, &rc_f, "failed");
+    ep_c["verification"]["issuer_ref"] = json!(subject_id);
+    let att_c = axon_loop_contracts::attestation::sign(
+        &s_sk,
+        &OpaqueRef::new(&subject_id).unwrap(),
+        &serde_json::from_value(req.clone()).unwrap(),
+        &serde_json::from_value(rc_f.clone()).unwrap(),
+    )
+    .unwrap();
+    let e = run_va(&c, &ep_c, Some(&req), Some(&rc_f), Some(&att_c)).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("independent of the subject")),
+        "subject vouching for its own failure: {e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
+}

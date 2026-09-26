@@ -217,6 +217,18 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
         "{out}"
     );
 
+    // A REPLAY decides from what the op ran under (journalled), not from the
+    // grant registry the replaying call supplies: the op above ran with file
+    // effects, so presenting the effect-free registry now does not get it
+    // signed.
+    let (c, out) = fabric(
+        &submit_args(&env, &reg, &pure),
+        Some(&suite_request(&env, "op-effectful").to_string()),
+    );
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(out["replayed"], json!(true), "{out}");
+    assert_eq!(out["receipt_attestation"], json!(null), "{out}");
+
     // No signer configured: unattested, nothing withheld.
     let plain = registry_with(&env, "reg-plain.json", None);
     let (c, out) = fabric(
@@ -276,4 +288,42 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
 
 fn tenant() -> axon_loop_contracts::TenantId {
     axon_loop_contracts::TenantId::new("tenant-t").unwrap()
+}
+
+/// A registered suite that produced NO verdict (here: it does not compile, so
+/// `axon test` emits no summary) still records which suite was running, so an
+/// honest "unknown" names what it was unknown about and can be pinned.
+/// Mutation: emit `evidence: vec![]` in local_receipt's no-summary branch →
+/// the check-suite ref is missing and this fails.
+#[test]
+fn a_suite_run_without_a_verdict_still_names_its_suite() {
+    let env = Env::new();
+    let root = env.dir.path().join("suites/broken");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("accept.ax"), "fn (\n").unwrap();
+    let r = WorkspaceTree::import_dir(&root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&env.registry).unwrap()).unwrap();
+    v["checks"] = json!([{"id": "broken", "visibility": "hidden", "root": root,
+                          "entry": "accept.ax", "workspace_version_ref": r}]);
+    let reg = env.dir.path().join("reg-broken.json");
+    std::fs::write(&reg, v.to_string()).unwrap();
+    let mut req = suite_request(&env, "op-broken");
+    req["argv"] = json!(["check:broken", "anything"]);
+    let (c, out) = fabric(
+        &submit_args(&env, &reg, &env.grant_registry),
+        Some(&req.to_string()),
+    );
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(out["receipt"]["verification"], "unknown", "{out}");
+    assert!(
+        out["receipt"]["evidence_refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().starts_with("check-suite:broken@")),
+        "{out}"
+    );
 }

@@ -674,6 +674,31 @@ pub fn verify_check_evidence(
             "rubric: suite {recorded} is not a version pinned for verifier {issuer}"
         )));
     }
+    // ...and it must be THIS task's acceptance check, as the operator
+    // registered it: that suite at that version, that exact test.
+    let acc = config
+        .task_acceptance
+        .get(&ep.identity.task_id)
+        .ok_or_else(|| {
+            refused(format!(
+                "acceptance: task {} has no operator-registered acceptance check, so no verdict \
+                 can decide it",
+                ep.identity.task_id
+            ))
+        })?;
+    let acc_suite = acc
+        .check_suite
+        .strip_prefix("check-suite:")
+        .and_then(|x| x.split('@').next())
+        .unwrap_or("");
+    if req.argv != [format!("check:{acc_suite}"), acc.check.clone()] || recorded != acc.check_suite
+    {
+        return Err(refused(format!(
+            "acceptance: the check ran {:?} ({recorded}), not task {}'s registered acceptance \
+             check {} in {}",
+            req.argv, ep.identity.task_id, acc.check, acc.check_suite
+        )));
+    }
     if subject.contains(&req.principal_ref) {
         return Err(refused(format!(
             "the check ran as principal {}, the subject itself: a task cannot verify itself",

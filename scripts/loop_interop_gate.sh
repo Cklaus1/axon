@@ -573,11 +573,17 @@ jq -n --arg s "$(sha256sum "$FAB/grants/grant_check.axgrant" | cut -d' ' -f1)" -
   > "$FAB/grants/grants.json"
 EXE_DIGEST="acf1:$(python3 -c 'import json,sys,hashlib;print(hashlib.sha256(json.dumps({"registered_executable_ref":"axon-test-local","sha256":sys.argv[1]},sort_keys=True,separators=(",",":")).encode()).hexdigest())' "$AXI_SHA")"
 # The operator's PIN for the verifier: the revision, compute profile and suite
-# version its verdicts must come from (G01-r22-independent-issuer).
+# version its verdicts must come from (G01-r22-independent-issuer); and each
+# task's registered ACCEPTANCE check — which test in that suite decides it
+# (the requester never chooses).
 jq -c --arg ex "$EXE_DIGEST" --arg sv "$SUITE_REF" '.verifier_pins = {"gate:independent-verifier": {
     registered_executable_ref: "axon-test-local", executable_digest: $ex,
     backend_profiles: ["process_scoped/local-interpreter"],
-    check_suites: [("check-suite:acceptance@" + $sv)] }}' "$STORE/config.json" > "$STORE/config.json.tmp" \
+    check_suites: [("check-suite:acceptance@" + $sv)] }}
+  | .task_acceptance = {
+    "task-pong": {check_suite: ("check-suite:acceptance@" + $sv), check: "t_ok_double"},
+    "task-fail": {check_suite: ("check-suite:acceptance@" + $sv), check: "t_bad"},
+    "task-none": {check_suite: ("check-suite:acceptance@" + $sv), check: "t_ok"} }' "$STORE/config.json" > "$STORE/config.json.tmp" \
   && mv "$STORE/config.json.tmp" "$STORE/config.json"
 # fabric_check_config <out> <filter> [argv0, default the operator's check:acceptance]
 fabric_check_config() {
@@ -597,9 +603,10 @@ fabric_check_config() {
       argv:[$entry,$f], result_schema_ref:"cortex-check-report/1" } }' > "$1"
 }
 # expected context whose execution id is the one Fabric mints for the op
-g3_context() {  # <out> <trial>
+g3_context() {  # <out> <trial> [task, default task-pong]
   expected_context "$1" "$2" challenger-1 "$HEAD_SHA" "$RES_EPOCH"
-  jq --arg t "$2" '.identity.execution_id = ("exec-"+$t+"-op")' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+  jq --arg t "$2" --arg task "${3:-task-pong}" \
+    '.identity.execution_id = ("exec-"+$t+"-op") | .identity.task_id = $task' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 # sidecar_verification_docs <sidecar> → sets VREQ VRC (files under fabric/)
 g3_docs() {
@@ -705,9 +712,28 @@ check "rubric: the task still completes (a withheld attestation never fails a ta
 check "rubric: MiCode cites NO verdict from the candidate's own check file" \
   eq "$(jq -c '[.verification.verifier_ref, .verification.result]' "$G3O_EP")" '[null,"not_run"]'
 
+# The requester does not choose the test: the same task-pong run through the
+# operator's suite, but naming a DIFFERENT (passing) test than the task's
+# registered acceptance check, is genuinely signed and still refused.
+fabric_check_config "$WORK/fabric-pick.json" t_ok_zero
+g3_context "$WORK/exp-g3p.json" trial-g3p
+snap_cl
+run_micode g3p MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3p.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
+  MICODE_AXON_FABRIC_CHECK="$WORK/fabric-pick.json"
+G3P_EP="$(new_file "$CL/episodes" "$SN_EP")"
+g3_docs "$G3P_EP"
+check "acceptance: the requester-chosen test passed and was signed" \
+  bash -c "[ \"\$(jq -r .verification.result '$G3P_EP')\" = passed ] && [ -n '$VATT' ]"
+H_P="$(store_hash)"
+axl intake episode --in "$G3P_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" >/dev/null 2>"$WORK/g3p.err"
+check "acceptance: a verdict on a test the task did not register is refused (exit 4)" eq "$?" 4
+check "acceptance: ...naming the task's registered acceptance check" grep -q "registered acceptance" "$WORK/g3p.err"
+check "acceptance: store unchanged" eq "$(store_hash)" "$H_P"
+
 # A FAILING acceptance check is recorded as failed — never dropped, never passed.
 fabric_check_config "$WORK/fabric-fail.json" t_bad
-g3_context "$WORK/exp-g3f.json" trial-g3f
+g3_context "$WORK/exp-g3f.json" trial-g3f task-fail
 snap_cl
 run_micode g3f MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3f.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
   MICODE_AXON_FABRIC_CHECK="$WORK/fabric-fail.json"
@@ -720,7 +746,7 @@ check "G3: a failed Fabric check is intaken as failed (exit 0)" eq "$?" 0
 
 # A check name that matches no test is NOT a pass: Fabric says not_run, MiCode records unknown.
 fabric_check_config "$WORK/fabric-none.json" t_ok
-g3_context "$WORK/exp-g3n.json" trial-g3n
+g3_context "$WORK/exp-g3n.json" trial-g3n task-none
 snap_cl
 run_micode g3n MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3n.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
   MICODE_AXON_FABRIC_CHECK="$WORK/fabric-none.json"

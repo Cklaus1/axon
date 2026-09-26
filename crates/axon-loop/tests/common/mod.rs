@@ -115,6 +115,7 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
         verifier_pins: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_pin())]
             .into_iter()
             .collect(),
+        task_acceptance: task_acceptance(),
     })
     .unwrap();
     register_candidates(&s);
@@ -136,6 +137,7 @@ pub fn store_without_candidates(dir: &Path) -> Store {
         verifier_pins: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_pin())]
             .into_iter()
             .collect(),
+        task_acceptance: task_acceptance(),
     })
     .unwrap();
     // The lock file is created on first use; create it now so no-change
@@ -203,6 +205,25 @@ pub const CHECK_PROFILE: &str = "fabric:local-interpreter";
 pub fn check_suite() -> String {
     format!("check-suite:acceptance@acf1:{}", "5".repeat(64))
 }
+/// The acceptance check registered for every fixture task: the pinned suite's
+/// `t_` test (what [`verification_check`] runs).
+pub const ACCEPTANCE_CHECK: &str = "t_";
+pub fn task_acceptance() -> std::collections::BTreeMap<TaskId, axon_loop::store::AcceptancePin> {
+    (0..200)
+        .map(|i| format!("task-{i}"))
+        .chain(["disc-task".to_string()])
+        .map(|t| {
+            (
+                TaskId::new(t).unwrap(),
+                axon_loop::store::AcceptancePin {
+                    check_suite: check_suite(),
+                    check: ACCEPTANCE_CHECK.into(),
+                },
+            )
+        })
+        .collect()
+}
+
 pub fn verifier_pin() -> axon_loop::store::VerifierPin {
     axon_loop::store::VerifierPin {
         registered_executable_ref: CHECK_EXECUTABLE.into(),

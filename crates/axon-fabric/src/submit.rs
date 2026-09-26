@@ -171,6 +171,27 @@ pub struct Submission {
     pub backend: Option<&'static str>,
     /// Why no verdict/effect happened, when relevant.
     pub reason: Option<String>,
+    /// What the recorded operation actually RAN under, from its journal
+    /// intent (for a replay too): the backend and the effect ceiling of the
+    /// grant it was admitted with. `None` when nothing was launched. Anything
+    /// that vouches for the result (the verifier's attestation) decides from
+    /// this, never from the configuration of the call that asked.
+    pub ran_under: Option<RanUnder>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RanUnder {
+    pub backend: String,
+    pub effect_ceiling: String,
+}
+
+fn ran_under_of(intent: &crate::journal::Intent) -> Option<RanUnder> {
+    Some(RanUnder {
+        backend: intent.config["backend"].as_str()?.to_string(),
+        effect_ceiling: intent.config["grant"]["effect_ceiling"]
+            .as_str()?
+            .to_string(),
+    })
 }
 
 /// A refusal that never reached the journal's launch record.
@@ -982,6 +1003,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 replayed: false,
                 backend: None,
                 reason: Some(why),
+                ran_under: None,
             });
         }
     };
@@ -1045,6 +1067,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 replayed: false,
                 backend: Some(profile.id),
                 reason: Some(why),
+                ran_under: None,
             });
         }
     };
@@ -1249,6 +1272,10 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         replayed: false,
         backend: Some(profile.id),
         reason,
+        ran_under: Some(RanUnder {
+            backend: profile.id.to_string(),
+            effect_ceiling: ceiling.clone(),
+        }),
     })
 }
 
@@ -1363,7 +1390,9 @@ fn local_receipt(
                         exit: None,
                         verification: ReceiptVerification::Unknown,
                         matched: None,
-                        evidence: vec![],
+                        // The suite that was running is still recorded: an
+                        // honest "unknown" names what it was unknown about.
+                        evidence: suite.clone().map(opaque).into_iter().collect(),
                         liability_micro: liability,
                         output: output.clone(),
                     },
@@ -1386,7 +1415,9 @@ fn local_receipt(
                         exit: None,
                         verification: ReceiptVerification::Unknown,
                         matched: None,
-                        evidence: vec![],
+                        // The suite that was running is still recorded: an
+                        // honest "unknown" names what it was unknown about.
+                        evidence: suite.clone().map(opaque).into_iter().collect(),
                         liability_micro: liability,
                         output,
                     },
@@ -1531,6 +1562,7 @@ fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
                 replayed: true,
                 backend: None,
                 reason: o.get("reason").and_then(|x| x.as_str()).map(String::from),
+                ran_under: v.launched.then(|| ran_under_of(&v.intent)).flatten(),
             };
         }
     }
@@ -1580,6 +1612,7 @@ fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
         replayed: true,
         backend: None,
         reason: Some(why.to_string()),
+        ran_under: None,
     }
 }
 

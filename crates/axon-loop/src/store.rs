@@ -74,6 +74,25 @@ pub struct Config {
     /// older config: read as `{}`; always serialized.
     #[serde(default)]
     pub verifier_pins: std::collections::BTreeMap<OpaqueRef, VerifierPin>,
+    /// v0.22 G01: the acceptance check the operator registered for each TASK —
+    /// which suite, and which test in it, decides the task. Without this the
+    /// requester chooses the test (a trivially passing one) or another task's
+    /// suite, and a genuinely signed verdict still answers the wrong question.
+    /// A task with no entry has no verifiable acceptance (fail closed). Interim
+    /// operator authority until the frozen plan carries it (ADR-001 §3).
+    /// Absent in an older config: read as `{}`; always serialized.
+    #[serde(default)]
+    pub task_acceptance: std::collections::BTreeMap<axon_loop_contracts::TaskId, AcceptancePin>,
+}
+
+/// One task's operator-registered acceptance check (see [`Config::task_acceptance`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptancePin {
+    /// The suite and version, as Fabric records it: `check-suite:<id>@<acf1 version>`.
+    pub check_suite: String,
+    /// The exact test in that suite whose verdict is the task's.
+    pub check: String,
 }
 
 /// One trusted verifier's operator pin (see [`Config::verifier_pins`]).
@@ -442,6 +461,8 @@ impl Store {
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
                     o.entry("verifier_pins")
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
+                    o.entry("task_acceptance")
+                        .or_insert_with(|| serde_json::Value::Object(Default::default()));
                 }
                 strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
             }
@@ -452,6 +473,7 @@ impl Store {
                 trusted_observers: Vec::new(),
                 verifier_keys: Default::default(),
                 verifier_pins: Default::default(),
+                task_acceptance: Default::default(),
             }),
         }
     }

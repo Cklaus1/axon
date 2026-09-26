@@ -289,13 +289,15 @@ fn submit(a: &Args) {
                     // bytes, which can never define the rubric.
                     let registered_suite =
                         req.argv.first().is_some_and(|a| a.starts_with("check:"));
-                    let isolated =
-                        s.backend == Some(axon_fabric::backend::LINUX_MICROVM_PROTECTED.id);
-                    let effectless = cfg
-                        .grants
-                        .resolve(req.grant_ref.as_str(), req.principal_ref.as_str())
-                        .map(|g| axon_fabric::grants::effect_ceiling(g.grant()).is_empty())
-                        .unwrap_or(false);
+                    // What the op RAN under, as journalled — for a replay too.
+                    // Never the grant registry this call happens to supply.
+                    let (isolated, effectless) = match &s.ran_under {
+                        Some(r) => (
+                            r.backend == axon_fabric::backend::LINUX_MICROVM_PROTECTED.id,
+                            r.effect_ceiling.is_empty(),
+                        ),
+                        None => (false, false),
+                    };
                     if !is_check {
                         (
                             None,
