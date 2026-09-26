@@ -285,7 +285,9 @@ def kill_line(out, test):
     """The failing test's own panic: location and first message line."""
     lines = out.splitlines()
     for i, l in enumerate(lines):
-        if f"'{test.split('::')[-1]}'" in l and "panicked at" in l:
+        # The panic names the test by its full path (`mod::tests::name`) for a
+        # lib test and by its bare name for an integration test.
+        if "panicked at" in l and (f"'{test}'" in l or f"'{test.split('::')[-1]}'" in l):
             return " | ".join(x.strip() for x in lines[i:i + 2])[:400]
     return None
 
