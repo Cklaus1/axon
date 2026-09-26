@@ -48,6 +48,10 @@ History:
   - A `break` escaping a candidate function counted as a pass: clause 4, and "subject-generated
     evidence is rejected".
   - Both are fixed in 4e7851bc (FG-062, FG-063). Candidate 2 is frozen after this.
+- Final re-audit of frozen candidate 2 (wf_2f0bc4c3, axon e42fe160): four roles REGISTER, one
+  DO_NOT_REGISTER on one executed blocker. FG-063's fix stopped a `break` at the test boundary
+  only; a candidate's `break` still landed in a loop the operator's test owned. Loop control no
+  longer crosses any function boundary (fixed: bcf9c0a7, FG-064). Candidate 3 is frozen after this.
 
 ## The claim
 
@@ -94,8 +98,9 @@ or promotion only if all of the following hold.
    - the verifier revision (executable and digest) and its compute profile;
    - exactly one suite identity, `check-suite:<id>@<version>#<entry>`, pinned for that verifier;
    - the task's own registered acceptance check: that suite identity plus the exact test name.
-   - that test counts as passed only if it COMPLETED. A `break`/`continue` escaping a candidate
-     function, which unwinds the test before its assertions run, is a failure.
+   - that test counts as passed only if it COMPLETED. Loop control never crosses a function
+     boundary: a `break`/`continue` with no loop of its own in a candidate function is a failure
+     there. It can neither unwind the test nor end a loop the operator's test owns.
 
    The requester chooses neither the test, nor the version, nor the entry file. The suite's own
    modules resolve before the candidate's. No repository-controlled configuration source (MiCode
@@ -133,7 +138,7 @@ or promotion only if all of the following hold.
 | 1 | `attestation.rs` unit tests; `intake.rs` authenticated, each-rule and one-scope tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 M54 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
 | 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 M57 | §8 (2): effectful grant withheld; replay unsigned |
 | 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
-| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M56 | §8 (4): another pinned revision refused; task and filter pin cases |
+| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M56 M58 | §8 (4): another pinned revision refused; task and filter pin cases |
 | 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
 | 6 | `protected_class.rs` (including a protected-class mechanism fixture and rollback revalidation) | M11–M13 M17–M20 M51 | not exercised (see gaps) |
 | 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 M48 | §8 (7): the record names the key id and the stored attestation |
@@ -210,6 +215,14 @@ TOML or `.env` may set `axon.*` (`config`).
   interpreter. The mutation driver builds it once, so interpreter guards are mutated through their
   unit tests (M56). A pinned interpreter older than `AXON_PATH_EXCLUSIVE` would not honour it;
   Fabric does not probe that capability.
+- **Two other test-semantics hazards are MAJOR-ADJACENT (candidate-2 review), not claimed.**
+  - A candidate's `exit(0)` counts as a clean pass whenever the grant allows IO. Every locally
+    signable check has an empty ceiling, and `exit` needs IO, so no signed verdict can arise from
+    it today. It must be closed before the microVM produces suite verdicts.
+  - A test that returns `Err`, for example via `?` over the candidate's output, counts as a
+    pass. That depends on how the operator's own suite is written.
+
+  Both are tracked in the sweep.
 - **An untested legacy guard.** A counted verdict in an evaluation from before verdict citation
   is refused at admission, but no test drives that legacy shape.
 - **Learning inputs are outside G01.** EVO `propose` reads caller-supplied episodes and trusts a

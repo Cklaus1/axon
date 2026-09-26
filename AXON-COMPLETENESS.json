@@ -2312,6 +2312,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "4e7851bc"
+    },
+    {
+      "id": "FG-064",
+      "where": "crates/axon-core/src/interp.rs",
+      "claimed": "FG-063 fixed: a test counts as passed only if it completed; a break/continue escaping a candidate function is a failure.",
+      "reality": "4e7851bc caught a break/continue only when it reached the test boundary. Loop control still crossed function boundaries, so a candidate's `break` landed in a loop the operator's test owned, ended it before any assertion ran, and the test returned normally \u2014 the real Fabric binary signed that pass.",
+      "reproduced": "G01 final independent re-audit of candidate 2 (clause auditor, wf_2f0bc4c3), executed at e42fe160 through the real binary (signed pass, attestation verified). Pinned by interp::tests::an_escaped_break_or_continue_does_not_pass_a_test (while/for/closure cases, M58) and an_escaped_break_cannot_end_the_operators_test_loop.",
+      "fix": "call_fn and call_closure turn a break/continue escaping their body into a panic; loop control never crosses a function boundary.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "bcf9c0a7"
     }
   ]
 }

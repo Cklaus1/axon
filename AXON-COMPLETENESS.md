@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 62 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 63 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -646,4 +646,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The interpreter's test runner counted a stray break/continue escaping a function as a clean pass, so candidate code could unwind the operator's test before its assertion ran and Fabric signed a pass for a candidate the suite fails. The property-test runner had the same hole.
 - **Reproduced:** G01 final independent re-audit (verdict adversary, wf_5f02e4cb), executed at ac76b14c in Fabric's exact environment. Pinned by interp::tests::an_escaped_break_or_continue_does_not_pass_a_test (M56) and an_escaped_break_does_not_pass_the_operators_test.
 - **Fix:** run_test_fn (and the property runner) fail a test that a break/continue escaped; return and exit(0) stay clean. (`4e7851bc`)
+
+### FG-064 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** FG-063 fixed: a test counts as passed only if it completed; a break/continue escaping a candidate function is a failure.
+- **Reality:** 4e7851bc caught a break/continue only when it reached the test boundary. Loop control still crossed function boundaries, so a candidate's `break` landed in a loop the operator's test owned, ended it before any assertion ran, and the test returned normally — the real Fabric binary signed that pass.
+- **Reproduced:** G01 final independent re-audit of candidate 2 (clause auditor, wf_2f0bc4c3), executed at e42fe160 through the real binary (signed pass, attestation verified). Pinned by interp::tests::an_escaped_break_or_continue_does_not_pass_a_test (while/for/closure cases, M58) and an_escaped_break_cannot_end_the_operators_test_loop.
+- **Fix:** call_fn and call_closure turn a break/continue escaping their body into a panic; loop control never crosses a function boundary. (`bcf9c0a7`)
 
