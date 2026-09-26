@@ -9,7 +9,35 @@
     "5. If a future upstream release re-vendors the package WITH results filled in, the honesty check will accept a non-NOT_RUN product_result only for gates that have a valid row here, and only when the result is in allowed_product_result.",
     "Removing a gate's implementation means removing its row."
   ],
-  "gates": [],
+  "gates": [
+    {
+      "gate_id": "G00-r22-package-gate-upgrade",
+      "executed_by": "scripts/cortex_package_gate_v022.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B283. Measured each run: pinned SHA256SUMS_v0_22.json (axon-package-sha256/1, both excluded files pinned) checked both directions by repo code before any package code; validator run with --output to target/ (never --refresh-hashes; self-grep refuses every argparse prefix), report deleted first, counts held to floors with orphan_gates exactly 0 (no zero-count false failure); whole-tree digest before/after package code (no self-hash cycle, no writes). Older pack retained: the v0.15 pack, scripts/cortex_package_gate.sh and gate.sh's call to it are asserted present. Stage 6, v022/stage6-pkggate."
+    },
+    {
+      "gate_id": "G00-r22-pack-integrity",
+      "executed_by": "scripts/cortex_package_gate_v022.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B284. Manifests, owner exports, dependency/release closures, generated views, parent-lock bytes and Fabric reference bytes: tools/validate_package.py (+closed_loop_package_checks) run read-only after pinned integrity. Rationale + execution recipe for every new task/gate: the gate's own stdlib coherence stage (32 r22 work packages: non-empty requirement basis, numbered implementation sequence, verbatim acceptance text; 80/80 r22 gates covered). Documentation/reference conformance only."
+    },
+    {
+      "gate_id": "G00-r22-honest-status",
+      "executed_by": "scripts/cortex_package_gate_v022.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B284. scripts/cortex_honesty_invariant.py: no v0.22 gate off NOT_RUN and no task off 'Not started' without a valid row here (every row re-validated); V022_RUNTIME_QUALIFICATION booleans false, no live evidence, no qualified profile; a skipped or expected-failure test inside the offline suite is a FAIL, never a pass (a suite that cannot start — pinned jsonschema absent — is printed as SKIPPED in the PASS line, logged to target/harness-skips.log, and fatal under AXON_HARNESS_STRICT=1); every PASS line is printed with the scope 'package conformance only — 0 product gates executed; NOT Rust implementation, physical backend evidence, real MiCode interoperability or measured self-improvement'."
+    }
+  ],
   "tasks": [],
   "tasks_note": "A work package status other than 'Not started' needs a row in `tasks` with task_id and allowed_status. A status in {Done, Complete, Completed, Landed} additionally requires every one of that task's gate_targets to have a valid row in `gates` -- so 'Done' cannot launder an unexecuted gate.",
   "checked_by": "scripts/cortex_honesty_invariant.py (run by scripts/cortex_package_gate.sh and scripts/cortex_package_gate_v022.sh)"
