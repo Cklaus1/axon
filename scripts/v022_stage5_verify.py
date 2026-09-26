@@ -207,8 +207,17 @@ def _suite_log(results, blocks=()):
 def self_test(declared):
     """The classifier against the cases it exists to tell apart. Run before anything else: a
     checker that cannot tell a declared defect from a new failure must not certify either."""
+    # With nothing declared the matcher is unused but must stay PROVEN: test it against a
+    # synthetic declaration of the same shape, so a regression cannot hide until the next defect.
     if not declared:
-        return []
+        declared = [{
+            "id": "SELF-TEST-SYNTHETIC",
+            "test": "the_goodbye_hint_names_an_interactive_resume_that_continues_the_session",
+            "fingerprint": {"failure_class": "panic",
+                            "test_binary": "crates/micode/tests/tui_terminal_lifecycle.rs",
+                            "message_regex": "the goodbye hint names no `/resume <id>` line to type into MiCode",
+                            "suite_failures_exactly": 1},
+        }]
     d = declared[0]
     fp = d["fingerprint"]
     good = (f"thread '{d['test']}' (4242) panicked at {fp['test_binary']}:1805:13:\n"

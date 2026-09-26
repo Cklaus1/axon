@@ -358,35 +358,15 @@
     "PASS_WITH_KNOWN_BASELINE_DEFECTS": "the MiCode regression suite failed EXACTLY on declared pre-existing defects: same test id, same failure class, same normalized signature, the declared count, and each still reproducing on its pinned baseline revision in this run. Known defects are counted separately and never as passes. Anything else is FAIL.",
     "quantities": "stage5_required (PASS|FAIL), micode_full_suite (PASS|PASS_WITH_KNOWN_BASELINE_DEFECTS|FAIL) and stage5_verdict (VERIFIED|NOT_VERIFIED) are reported independently"
   },
-  "declared_baseline_defects": [
+  "declared_baseline_defects": [],
+  "retired_baseline_defects": [
     {
       "id": "MICODE-TUI-QUIT-CHECKPOINT-RACE",
       "test": "the_goodbye_hint_names_an_interactive_resume_that_continues_the_session",
-      "test_binary": "crates/micode/tests/tui_terminal_lifecycle.rs",
-      "reproduced_on": {
-        "repo": "micode",
-        "branch": "tui",
-        "revision": "65286581",
-        "how": "TMPDIR on ext4: fails 3/3; on tmpfs: passes 3/3"
-      },
-      "fingerprint": {
-        "failure_class": "panic",
-        "test_binary": "crates/micode/tests/tui_terminal_lifecycle.rs",
-        "message_regex": "the goodbye hint names no `/resume <id>` line to type into MiCode",
-        "suite_failures_exactly": 1,
-        "normalization": "ANSI stripped; .rs:line:col, (pid/thread ids), temp/home paths and timings replaced before matching (v022_stage5_verify.normalize_failure)"
-      },
-      "predates_v0_22": "identical failure on tui@65286581, before any v0.22 MiCode commit",
-      "diagnosis": ".axon-v022/stage5/MICODE_TUI_QUIT_CHECKPOINT_RACE.md (strace: no checkpoint write attempted on ext4; a 1s pause before /quit passes 3/3)",
-      "owner": "MiCode tui branch (TUI quit path / TurnCheckpointer)",
-      "removal_criterion": "Remove this entry when the tui quit path awaits the in-flight turn commit (fix owned by micode-8b) and the test passes on ext4. While declared, a PASS of this test is reported as a STALE declaration in the results and by release_check, so it cannot linger unnoticed.",
-      "reproduction": {
-        "repo": "micode",
-        "revision": "65286581",
-        "package": "micode",
-        "test_target": "tui_terminal_lifecycle",
-        "tmpdir_filesystem": "ext4 (the defect is filesystem-timing dependent; a tmpfs TMPDIR hides it)"
-      }
+      "declared_on": "micode 65286581 (reproduced there, ext4 only)",
+      "fixed_by": "micode 109d3ac6 (tui; also origin/main 3b524439): after the TUI loop exits, wait (bounded, 10s) for the cancelled session task instead of aborting it, so /quit and a second Ctrl+C keep the completion-boundary checkpoint. Regression test quitting_while_the_answer_is_still_committing_keeps_the_turn_resumable (debug fault hook MICODE_FAULT_SLOW_CHECKPOINT_MS).",
+      "diagnosis_correction": "the lost save was drive_session's completion-boundary checkpoint, not TurnCheckpointer::on_turn_committed (a one-turn TUI prompt is always a final turn); same race.",
+      "removed_with": "the v022 MiCode line's merge of tui@109d3ac6; from then the test must simply pass"
     }
   ]
 }
