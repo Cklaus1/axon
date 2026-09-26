@@ -1395,3 +1395,49 @@ fn each_verification_rule_is_load_bearing_on_its_own() {
     );
     assert_eq!(snapshot(c.s.root()), before);
 }
+
+/// G01 re-audit 2: intake's subject set held only the episode's observer, while
+/// EVL's also holds each arm policy's stored PROPOSER. So the agent that
+/// proposed a policy could, as a trusted verifier holding a registered key,
+/// sign the verdict on that very policy and have it recorded — exactly what
+/// EVL (and evo, n4_proposer_excluded_even_when_trusted_as_verifier) refuse.
+/// Positive control: the same evidence with no proposal on record is recorded.
+#[test]
+fn the_proposer_of_the_policy_cannot_verify_its_episodes() {
+    let (req, rc) = (check_request(), check_receipt("passed", 2));
+
+    let c = case(Some(500));
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    assert!(run_v(&c, &ep, Some(&req), Some(&rc)).is_ok(), "control");
+
+    let c = case(Some(500));
+    let mut tx = axon_loop::ledger::Tx::begin(&c.s).unwrap();
+    tx.append(axon_loop::ledger::Event::Hypothesis {
+        scope: c.p.scope.clone(),
+        hypothesis: Box::new(axon_loop::evo::Hypothesis::Proposed {
+            schema: axon_loop::evo::HypothesisSchema,
+            candidate_policy_ref: digest(&c.p).unwrap(),
+            parent_policy_ref: c.p.parent_policy_ref.clone(),
+            intervention: c.p.shortlist.clone(),
+            mutation: axon_loop::evo::Mutation::Remove {
+                candidate: CandidateId::new("bash").unwrap(),
+            },
+            rationale: BoundedText::new("drop bash").unwrap(),
+            proposer_ref: OpaqueRef::new(common::VERIFIER).unwrap(),
+            seed: 0,
+            discovery_evidence_refs: vec![],
+            excluded: vec![],
+            proposed_ms: 0,
+        }),
+    })
+    .unwrap();
+    drop(tx);
+    let before = snapshot(c.s.root());
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let err = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+    assert!(
+        err.to_string().contains("subject or unknown verifier"),
+        "{err}"
+    );
+    assert_eq!(snapshot(c.s.root()), before, "nothing recorded");
+}

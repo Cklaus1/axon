@@ -266,7 +266,13 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     // 5. The cross-document join at the scope's current epoch.
     let current_epoch = tx.pointer(&ep.scope).epoch;
     let config = store.config()?;
-    let subject: BTreeSet<OpaqueRef> = [ctx.observed_issuer_ref.clone()].into_iter().collect();
+    // The subject: the episode's observer AND the policy's proposer, if one is
+    // on record — the same set EVL judges by, so neither door lets the agent
+    // that proposed a policy verify it.
+    let subject: BTreeSet<OpaqueRef> = [ctx.observed_issuer_ref.clone()]
+        .into_iter()
+        .chain(crate::evo::proposer_in(&tx, &ep.scope, &ep.policy_ref))
+        .collect();
     bind_episode(
         &ep,
         &policy,
