@@ -144,6 +144,25 @@ linking this crate, because this crate depends on `axon-cortex`.
   that allows fs reads lets it read `<run>/check` — the effect ceiling, not
   the directory layout, is what bounds that.
 
+* **`branches`** (B271): logical A/B branches. `Branches::open_experiment`
+  writes a write-once experiment over a PUBLISHED base with one declared
+  regime and ≥ 2 arms, each with its own run id (`TrialId`, hence its own
+  caches) and writer; approvers are declared and never a writer. A request
+  whose `trial_id` is a branch run carves from the scope AND within the
+  regime (`Journal::reserve_within`, `ResourceVector::carve_within`); a
+  refusal cancels the op before launch (`branch`, exit 9). Heads are
+  write-once `head-<seq>.json`; `publish` requires the expected head (seq +
+  version, journalled as `Intent::expected_version`), the current loop-store
+  epoch, the branch's writer, a Fabric op IN THIS JOURNAL on this branch that
+  `passed` with input = output = the new version, and a declared approver ≠
+  writer; the head is created by a no-clobber link, so of two concurrent
+  publications exactly one wins and the other must rebase and re-verify.
+  `cancel` marks the branch, releases its unlaunched ops, keeps a launched
+  op's liability, removes nothing, and leaves other branches untouched; a
+  cancelled branch accepts no new op (not even an intent) and no
+  publication. Library API only — no CLI verb yet. Approvals and writers are
+  operator-declared names, not authenticated signatures.
+
 `acf1:` identities (`executable_digest`, `workspace_digest`) delegate to the
 single canonicaliser `axon_cortex::runner::acf1_canonical_bytes`, which the
 cortex side builds its requests with (D-C3, fixed in Stage 2).

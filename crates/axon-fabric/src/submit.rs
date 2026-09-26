@@ -140,6 +140,9 @@ pub enum SubmitError {
     Unregistered(String),
     /// `grant_ref` did not resolve to an operator grant for `principal_ref`.
     Unauthorized(String),
+    /// The request's run is a logical branch that refuses it (cancelled, or
+    /// its declared regime is exhausted) — B271.
+    Branch(String),
     Journal(JournalError),
     /// The Fabric's workspace store / state dir failed (I/O, corruption).
     Workspace(String),
@@ -153,6 +156,7 @@ impl SubmitError {
             SubmitError::StaleEpoch { .. } => "stale_epoch",
             SubmitError::Unregistered(_) => "unregistered",
             SubmitError::Unauthorized(_) => "unauthorized",
+            SubmitError::Branch(_) => "branch",
             SubmitError::Journal(_) => "journal",
             SubmitError::Workspace(_) => "workspace",
         }
@@ -165,6 +169,7 @@ impl SubmitError {
             SubmitError::StaleEpoch { .. } => 6,
             SubmitError::Unregistered(_) => 4,
             SubmitError::Unauthorized(_) => 7,
+            SubmitError::Branch(_) => 9,
             SubmitError::Journal(_) | SubmitError::Workspace(_) => 2,
         }
     }
@@ -181,6 +186,7 @@ impl std::fmt::Display for SubmitError {
             ),
             SubmitError::Unregistered(s) => write!(f, "unregistered executable: {s}"),
             SubmitError::Unauthorized(s) => write!(f, "unauthorized: {s}"),
+            SubmitError::Branch(s) => write!(f, "branch: {s}"),
             SubmitError::Journal(e) => write!(f, "journal: {e}"),
             SubmitError::Workspace(e) => write!(f, "workspace store: {e}"),
         }
@@ -829,6 +835,21 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         });
     }
 
+    // 3b. Logical branch (B271): a run id that is a branch's is bound by that
+    //     branch — refused outright once the branch is cancelled.
+    let branches = crate::branches::Branches::open(&cfg.state_dir, &scope);
+    let branch = branches
+        .branch_of_run(&req.trial_id)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    if let Some((exp, br)) = &branch {
+        if branches.is_cancelled(&exp.experiment_id, &br.arm_id) {
+            return Err(SubmitError::Branch(format!(
+                "branch {}/{} is cancelled",
+                exp.experiment_id, br.arm_id
+            )));
+        }
+    }
+
     // 4. Backend selection. A request nothing satisfies gets an
     //    `unsupported` receipt — journalled (intent + failed, never launched)
     //    so a retry returns the same answer.
@@ -962,6 +983,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 Bound::Version { version, .. } => json!({"workspace_version_ref": version}),
                 Bound::Legacy => json!({"legacy_single_file": target.file}),
             },
+            "branch": branch.as_ref().map(|(e, b)| json!({
+                "experiment": e.experiment_id, "arm": b.arm_id,
+            })),
             // The suite's identity only — never its bytes.
             "check_suite": target.suite.as_ref().map(|s| json!({
                 "id": s.id, "workspace_version_ref": s.version,
@@ -977,7 +1001,23 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         // Raced with a concurrent submit of the same op: never run twice.
         return Ok(replayed(&req, &v));
     }
-    journal.reserve(&req.operation_id)?;
+    match &branch {
+        // A branch's ops carve from the scope AND within the branch's regime.
+        Some((exp, br)) => {
+            let run = br.run_id.clone();
+            let sc = scope.clone();
+            if let Err(e) = journal.reserve_within(&req.operation_id, exp.regime, move |i| {
+                i.scope == sc && i.trial_id == run
+            }) {
+                journal.cancel(&req.operation_id, &format!("not reserved: {e}"), None)?;
+                return Err(SubmitError::Branch(format!(
+                    "branch {}/{} regime refuses the reservation: {e}",
+                    exp.experiment_id, br.arm_id
+                )));
+            }
+        }
+        None => journal.reserve(&req.operation_id)?,
+    }
 
     if let Some(h) = cfg.pre_launch_hook {
         h(cfg);

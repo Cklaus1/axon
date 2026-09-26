@@ -17,6 +17,7 @@
 //! files — no database dependency.
 
 pub mod backend;
+pub mod branches;
 pub mod grants;
 pub mod journal;
 pub mod submit;

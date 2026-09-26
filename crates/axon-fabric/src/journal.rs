@@ -53,7 +53,8 @@
 //!
 //! No epoch/fencing token, no outbox, no launcher integration, and
 //! `expected_version` is recorded as the effect's CAS precondition but not
-//! compared against anything by this module.
+//! compared against anything by this module — `crate::branches` compares it
+//! for workspace publication (B271).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
@@ -753,6 +754,16 @@ impl State {
     }
 
     fn usage(&self, scope: &Scope) -> Result<ScopeUsage, JournalError> {
+        self.usage_where(scope, |_| true)
+    }
+
+    /// [`Self::usage`] over the scope's ops whose intent satisfies `member`
+    /// (B271: one logical branch's ops). `ceiling` is the SCOPE's.
+    fn usage_where(
+        &self,
+        scope: &Scope,
+        member: impl Fn(&Intent) -> bool,
+    ) -> Result<ScopeUsage, JournalError> {
         let ceiling = *self
             .scopes
             .get(scope)
@@ -761,7 +772,11 @@ impl State {
             ceiling,
             ..Default::default()
         };
-        for v in self.ops.values().filter(|v| &v.intent.scope == scope) {
+        for v in self
+            .ops
+            .values()
+            .filter(|v| &v.intent.scope == scope && member(&v.intent))
+        {
             let r = v.intent.reservation;
             match (v.state, v.billing) {
                 (OpState::Intended, _) => {}
@@ -1042,6 +1057,73 @@ impl Journal {
     /// Carve the operation's reservation from its scope, atomically.
     pub fn reserve(&self, op: &OperationId) -> Result<(), JournalError> {
         self.append(Rec::Reserved { op: op.clone() })
+    }
+
+    /// [`Self::reserve`], and ALSO within `sub_ceiling` over the scope's ops
+    /// that satisfy `member` (B271: a logical branch's declared regime). Both
+    /// carves go through `ResourceVector::carve_within`, and the sub-ceiling
+    /// check and the append happen under ONE lock. A refusal writes nothing.
+    /// The sub-ceiling is not a journal record, so reopening re-checks only
+    /// the scope ceiling (which a prefix of accepted carves always satisfies).
+    pub fn reserve_within(
+        &self,
+        op: &OperationId,
+        sub_ceiling: ResourceVector,
+        member: impl Fn(&Intent) -> bool,
+    ) -> Result<(), JournalError> {
+        let mut g = self.lock();
+        let v = g
+            .state
+            .ops
+            .get(op)
+            .ok_or_else(|| JournalError::UnknownOp(op.clone()))?
+            .clone();
+        let sub = g.state.usage_where(&v.intent.scope, member)?;
+        if let Err(dimension) = ResourceVector::carve_within(
+            sub.committed(),
+            v.intent.reservation,
+            sub_ceiling,
+            op.as_str(),
+        ) {
+            return Err(JournalError::BudgetExceeded {
+                scope: Box::new(v.intent.scope.clone()),
+                vectors: Box::new([v.intent.reservation, sub.committed(), sub_ceiling]),
+                dimension,
+            });
+        }
+        let rec = Rec::Reserved { op: op.clone() };
+        let change = g.state.transition(&rec)?;
+        let line = Line {
+            seq: g.seq + 1,
+            rec,
+        };
+        let mut bytes = serde_json::to_vec(&line).map_err(std::io::Error::other)?;
+        bytes.push(b'\n');
+        g.file.write_all(&bytes)?;
+        g.file.sync_data()?;
+        g.seq += 1;
+        g.state.commit(change);
+        Ok(())
+    }
+
+    /// Usage of the scope's ops whose intent satisfies `member`.
+    pub fn usage_where(
+        &self,
+        scope: &Scope,
+        member: impl Fn(&Intent) -> bool,
+    ) -> Result<ScopeUsage, JournalError> {
+        self.lock().state.usage_where(scope, member)
+    }
+
+    /// Every op whose intent satisfies `member`, in no particular order.
+    pub fn views_where(&self, member: impl Fn(&Intent) -> bool) -> Vec<OpView> {
+        self.lock()
+            .state
+            .ops
+            .values()
+            .filter(|v| member(&v.intent))
+            .cloned()
+            .collect()
     }
 
     /// Record that the effect is about to be dispatched. Call BEFORE dispatch.
