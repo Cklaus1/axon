@@ -563,10 +563,15 @@ impl LinuxProfileConfig {
             return Err("evidence record lacks engine.firecracker_sha256 / engine.jailer_sha256; an unidentified VMM qualifies nothing".into());
         }
         let pin = &m["engine"];
-        // RULE:engine-pin
-        if !pin.is_null()
-            && (pin["firecracker_sha256"] != eng["firecracker_sha256"]
-                || pin["jailer_sha256"] != eng["jailer_sha256"])
+        // RULE:engine-pin — REQUIRED. It used to apply only "when the manifest
+        // has an engine block", so a manifest without one qualified any VMM the
+        // evidence named. Every manifest linux_profile_manifest.py writes now
+        // pins both engines (S3-2), so a missing or malformed pin is refused.
+        if !is_hex64(&pin["firecracker_sha256"]) || !is_hex64(&pin["jailer_sha256"]) {
+            return Err("manifest pins no engine (engine.firecracker_sha256 / engine.jailer_sha256); evidence cannot be bound to a known VMM".into());
+        }
+        if pin["firecracker_sha256"] != eng["firecracker_sha256"]
+            || pin["jailer_sha256"] != eng["jailer_sha256"]
         {
             return Err("evidence engine digests differ from the manifest's engine pins".into());
         }

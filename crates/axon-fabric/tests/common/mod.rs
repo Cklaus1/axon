@@ -384,6 +384,7 @@ pub fn sig_of(p: &Path) -> PathBuf {
 pub fn lx_manifest(guest_axon_sha: &str) -> String {
     json!({"schema":"axon-linux-microvm-profile/1","profile":"linux-microvm-protected",
            "source":{"axon_tree_dirty_at_build": false},
+           "engine":{"firecracker_sha256": TEST_FC_SHA, "jailer_sha256": TEST_JAILER_SHA},
            "artifacts":{"axon":{"sha256": guest_axon_sha}}})
     .to_string()
 }
