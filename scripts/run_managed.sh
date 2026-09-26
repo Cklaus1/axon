@@ -324,6 +324,9 @@ cmd_supervise() {
     own_tmp="/var/tmp/axr-$BASHPID"
     mkdir -p "$own_tmp" && chmod 700 "$own_tmp" && export TMPDIR="$own_tmp" && echo "$own_tmp" > "$dir/tmpdir"
   fi
+  # Where a stage profile's results document goes: INSIDE the run dir, so the
+  # receipt can bind it (see write_receipt). Harmless to a non-profile run.
+  export STAGE_RESULTS="$dir/stage-results.json"
   local work=""
   work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
   if [ -n "$work" ] && [ -d "$work" ]; then
@@ -562,17 +565,39 @@ write_receipt() {
   case "$first_tok" in
     */gate.sh|gate.sh) is_gate=yes ;;
   esac
+  local profile=""
   for tok in $raw_cmd; do
     case "$tok" in
       --strict) is_strict=yes ;;
+      --profile=*) profile="${tok#--profile=}" ;;
     esac
   done
+  # A STAGE profile's results document (written by the gate to $STAGE_RESULTS,
+  # which cmd_start points into this run dir) is bound into the receipt: its
+  # digest, its verdict, and the exact pair it certified. release_check reads
+  # these fields and the document; the receipt is stale if either side moved.
+  local sres="$dir/stage-results.json" stage_fields=""
+  if [ -n "$profile" ] && [ -s "$sres" ]; then
+    stage_fields="$(python3 -B - "$sres" <<'PY'
+import hashlib, json, sys
+p = sys.argv[1]; raw = open(p, "rb").read(); d = json.loads(raw)
+pair = d.get("pair", {})
+print("stage_results_sha256=" + hashlib.sha256(raw).hexdigest())
+print("stage_verdict=" + str(d.get("verdict")))
+print("stage_manifest_sha256=" + str(d.get("manifest_sha256")))
+print("pair_axon_head=" + str(pair.get("axon", {}).get("start", {}).get("head")))
+print("pair_micode_head=" + str(pair.get("micode", {}).get("start", {}).get("head")))
+PY
+)"
+  fi
 
   {
     echo "schema=axon-run-receipt/1"
     echo "command=$(cat "$dir/cmd" 2>/dev/null)"
     echo "gate_run=$is_gate"
     echo "gate_strict=$is_strict"
+    echo "gate_profile=${profile:-none}"
+    [ -n "$stage_fields" ] && echo "$stage_fields"
     echo "head=${head:-unknown}"
     echo "tree=${dirty:-unknown}"
     echo "tree_digest=$tree_digest"

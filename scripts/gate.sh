@@ -37,13 +37,23 @@ cd "$ROOT"
 
 STRICT=0
 USE_NEXTEST=0
+PROFILE=""
 for arg in "$@"; do
   case "$arg" in
     --strict) STRICT=1 ;;
     --nextest) USE_NEXTEST=1 ;;
+    # A STAGE verification profile: the gate additionally executes the
+    # profile's required-harness manifest on an exact Axon + peer pair, and a
+    # required harness that SKIPs or does not run FAILS the gate. It does not
+    # change what AXON_HARNESS_STRICT means for repository-wide qualification.
+    --profile=v022-stage5) PROFILE=v022-stage5 ;;
+    --profile=*) echo "gate: unknown profile ${arg#--profile=} (known: v022-stage5)" >&2; exit 2 ;;
     *) echo "gate: unknown flag $arg" >&2; exit 2 ;;
   esac
 done
+if [ -n "$PROFILE" ] && [ "$STRICT" != 1 ]; then
+  echo "gate: --profile=$PROFILE certifies a stage and requires --strict" >&2; exit 2
+fi
 
 # Deterministic test environment.
 export AXON_SEED="${AXON_SEED:-42}"
@@ -855,4 +865,10 @@ if [ "$STRICT" != 1 ]; then
 fi
 
 echo ""
+if [ "$PROFILE" = v022-stage5 ]; then
+  echo "── gate: v0.22 Stage-5 verification profile (exact Axon + MiCode pair) ──"
+  # Results land where run_managed tells it (bound into the receipt), else target/.
+  python3 -B scripts/v022_stage5_verify.py --results "${STAGE_RESULTS:-target/v022-stage5-results.json}" \
+    || fail "v0.22 Stage-5 verification profile (a required Stage-5 harness did not PASS)"
+fi
 echo "✅ gate PASSED"

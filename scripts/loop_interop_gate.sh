@@ -79,7 +79,10 @@ section "build"
 ( cd "$AXON_DIR" && CARGO_TARGET_DIR="$AXON_TGT" cargo build --locked -q -p axon-fabric --bin axon-fabric \
     && CARGO_TARGET_DIR="$AXON_TGT" cargo build --locked -q -p axon-core --no-default-features --bin axon ) \
   || { echo "FATAL: axon-fabric / axon interpreter build failed" >&2; exit 2; }
-AXF="$AXON_TGT/debug/axon-fabric"; AXI="$AXON_TGT/debug/axon"
+( cd "$AXON_DIR" && CARGO_TARGET_DIR="$AXON_TGT" cargo build --locked -q -p cortex-policy-adapter ) \
+  || { echo "FATAL: cortex-policy-adapter build failed" >&2; exit 2; }
+AXF="$AXON_TGT/debug/axon-fabric"; AXI="$AXON_TGT/debug/axon"; CPA="$AXON_TGT/debug/cortex-policy-adapter"
+[ -x "$CPA" ] || { echo "FATAL: cortex-policy-adapter not built" >&2; exit 2; }
 [ -x "$AXF" ] && [ -x "$AXI" ] || { echo "FATAL: axon-fabric or axon not built" >&2; exit 2; }
 AXL="$AXON_TGT/debug/axon-loop"
 MICODE="$MICODE_TGT/debug/micode"
@@ -430,6 +433,7 @@ check "tampered cost: nothing recorded" eq "$(ledger_n)" "$N"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "8. G3: MiCode's acceptance check runs through REAL Fabric; Axon intake joins it"
+G3_PASS0=$PASS; G3_FAIL0=$FAIL
 # D12: only the acceptance check goes through Fabric; the agent's own tool calls
 # stay under local MiCode authority, so the sidecar's execution refs stay
 # not-produced markers. What must join, on real bytes from three real binaries:
@@ -560,6 +564,61 @@ G3H_EP="$(new_file "$CL/episodes" "$SN_EP")"
 check "G3: a template naming a task-owned field → no verifier cited (not_run)" \
   eq "$(jq -c '[.verification.result,.verification.verifier_ref]' "$G3H_EP")" '["not_run",null]'
 check "G3: Fabric never saw the hijacked op" test "$("$AXF" status --journal "$FAB/ops.journal" --op trial-g3h-op >/dev/null 2>&1; echo $?)" -ne 0
+
+# Machine-readable: the Stage-5 profile (governance/v022_stage5_verification.json)
+# requires this section to have EXECUTED, not merely the gate to have passed.
+echo "loop_interop_gate: G3 section executed $(( PASS - G3_PASS0 + FAIL - G3_FAIL0 )) assertions, $(( FAIL - G3_FAIL0 )) failed"
+
+# ════════════════════════════════════════════════════════════════════════════
+section "9. B256: real MiCode negotiates closed-loop-profile/1 with the REAL cortex-policy-adapter"
+# Before the first model call, from the composition root; the outcome is the
+# durable record MiCode writes under closed-loop/profile/.
+B256_PASS0=$PASS; B256_FAIL0=$FAIL
+PROF="$CL/profile"
+b256_run() {  # <label> <adapter path>; sets PREC (the record this run wrote)
+  local before; before="$(list_dir "$PROF")"
+  run_micode "$1" MICODE_SEMANTIC_TOOLS=1 MICODE_POLICY_ADAPTER="$2" MICODE_POLICY_NEGOTIATE_PROFILE=1 \
+    MICODE_POLICY_GRANT_SNAPSHOT=snap-gate MICODE_POLICY_WRITE_PREFIX=src/ MICODE_POLICY_SNAPSHOT=snap-gate
+  PREC="$(new_file "$PROF" "$before")"
+}
+b256_run b256-real "$CPA"
+check "B256: micode exec succeeds with negotiation on" eq "$RC" 0
+check "B256: a profile record was written" test -n "$PREC"
+check "B256: outcome agreed with the real adapter" eq "$(jq -r .outcome "$PREC")" agreed
+check "B256: the accept is Axon's (peer axon, role accept)" eq "$(jq -c '[.accept.peer,.accept.role]' "$PREC")" '["axon","accept"]'
+check "B256: cortex-policy-adapter/1 agreed; axon-bridge/v0 NOT (Axon never claims MiCode's wire)" \
+  eq "$(jq -c '.accept.adapters' "$PREC")" '["cortex-policy-adapter/1"]'
+# Two independent cl22 implementations: MiCode confirmed the accept against the
+# offer it sent, and the adapter, given that same offer, answers byte-identically.
+jq -c .offer "$PREC" > "$WORK/b256-offer.json"
+"$CPA" --negotiate < "$WORK/b256-offer.json" > "$WORK/b256-accept.json"; B256_RC=$?
+check "B256: the real adapter accepts MiCode's recorded offer (exit 0)" eq "$B256_RC" 0
+check "B256: ...with exactly the accept MiCode recorded" eq "$(jq -cS . "$WORK/b256-accept.json")" "$(jq -cS .accept "$PREC")"
+# An OLD adapter: the real one, minus --negotiate (as every pre-B256 build answers).
+cat > "$WORK/old-adapter.sh" <<SH
+#!/bin/sh
+if [ "\$1" = --negotiate ]; then echo "unknown argument --negotiate" >&2; exit 2; fi
+exec "$CPA" "\$@"
+SH
+chmod +x "$WORK/old-adapter.sh"
+b256_run b256-old "$WORK/old-adapter.sh"
+check "B256: an old adapter → micode still runs (incumbent protocol 1)" eq "$RC" 0
+check "B256: an old adapter is recorded as old_peer, never as agreed" eq "$(jq -r .outcome "$PREC")" old_peer
+# A LYING peer: the real accept with a schema MiCode never offered.
+cat > "$WORK/lying-adapter.sh" <<SH
+#!/bin/sh
+if [ "\$1" = --negotiate ]; then
+  "$CPA" --negotiate | jq -c '.schemas += ["axon.closed-loop.transition/1"] | .schemas |= unique'
+  exit 0
+fi
+exec "$CPA" "\$@"
+SH
+chmod +x "$WORK/lying-adapter.sh"
+b256_run b256-lie "$WORK/lying-adapter.sh"
+check "B256: a fabricated accept is recorded as failed, never agreed" eq "$(jq -r .outcome "$PREC")" failed
+check "B256: ...and names why" grep -q "does not hold" <<<"$(jq -r .failure "$PREC")"
+echo "loop_interop_gate: B256 section executed $(( PASS - B256_PASS0 + FAIL - B256_FAIL0 )) assertions, $(( FAIL - B256_FAIL0 )) failed"
+
 
 # ════════════════════════════════════════════════════════════════════════════
 section "summary"

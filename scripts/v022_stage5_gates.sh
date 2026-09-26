@@ -23,8 +23,8 @@ GATES=(
   "G10-r22-cohort-denominator|axon-loop|tel_price|g10_cohort_denominator_counts_unknown_as_unresolved_not_free g10_price_schedule_is_pinned_by_content_ref g10_price_schedule_ref_mismatch_is_refused"
   # Whole dedicated test files ('*N' = run every test in the target, require at
   # least N): each file exists only for the gate(s) named, so all of it must pass.
-  "G03-r22-workspace-import|axon-fabric|workspace|*24"
-  "G28-r22-workspace-not-context|axon-fabric|workspace|*24"
+  "G03-r22-workspace-import|axon-fabric|workspace|*27"
+  "G28-r22-workspace-not-context|axon-fabric|workspace|*27"
   "G28-r22-workspace-not-context|axon-fabric|check_effects|*8"
   "G03-r22-check-effects|axon-fabric|check_effects|*8"
   "G32-r22-receipt-roles|axon-loop|evl|*8"
@@ -33,6 +33,16 @@ GATES=(
   "G08-r22-logical-branches|axon-fabric|branches|*6"
   "G11-r22-workspace-cas|axon-fabric|branches|*6"
   "G08-r22-branch-cancellation|axon-fabric|branches|*6"
+  # B256 (G16-r22-negotiation / closed-wire), Axon half: the contracts rule and
+  # the REAL adapter process answering every shared vector.
+  "G16-r22-negotiation|axon-loop-contracts|profile|*13"
+  "G16-r22-negotiation|cortex-policy-adapter|negotiate|*4"
+  "G16-r22-closed-wire|cortex-policy-adapter|negotiate|ambiguous_or_open_offers_are_refused_not_resolved negotiate_is_a_mode_and_cannot_be_mixed_with_a_grant"
+  # G3 under D12: intake joins a MiCode acceptance check that ran through
+  # Fabric (the real-binary join is loop_interop_gate.sh section 8).
+  "G3-d12-intake-join|axon-loop|intake|a_fabric_check_on_the_output_tree_is_recorded_as_the_verification an_unverified_record_serialises_without_the_new_fields verification_that_does_not_join_is_refused_with_the_store_unchanged"
+  # B261: the omission-set regression the paired G3 gate found (4430f104).
+  "G03-r22-workspace-import|axon-fabric|workspace|the_same_version_imported_with_different_omissions_is_one_version a_tampered_omission_record_is_corrupt a_check_over_a_version_from_a_real_repository_passes"
 )
 
 for row in "${GATES[@]}"; do
