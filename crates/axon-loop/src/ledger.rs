@@ -256,6 +256,18 @@ fn check_head_mac(k: Option<&LedgerKey>, h: &Head) -> Result<()> {
 }
 
 /// A ledger transaction: the store lock, plus the verified ledger.
+/// Test seam (B280, G13-r22-restart-matrix): called inside [`Tx::append`] at
+/// `"after_ledger_append"` (the entry is durable; nothing projected) and
+/// `"after_projection"` (projected; the head not yet written), so a crash
+/// child can die in exactly those windows and a real restart be tested from
+/// what it leaves. Never set in production; settable once per process.
+static FAULT_HOOK: std::sync::OnceLock<fn(&'static str)> = std::sync::OnceLock::new();
+
+/// Install the [`FAULT_HOOK`] (tests only). Returns false if one was set.
+pub fn set_fault_hook(h: fn(&'static str)) -> bool {
+    FAULT_HOOK.set(h).is_ok()
+}
+
 pub struct Tx<'s> {
     pub store: &'s Store,
     _lock: Lock,
@@ -507,6 +519,11 @@ impl<'s> Tx<'s> {
 
     /// Append an event: ledger line (fsync), projection, then head.
     pub fn append(&mut self, event: Event) -> Result<u64> {
+        let fault = |stage: &'static str| {
+            if let Some(h) = FAULT_HOOK.get() {
+                h(stage)
+            }
+        };
         let seq = self.entries.len() as u64 + 1;
         let mut e = Entry {
             schema: EntrySchema,
@@ -525,9 +542,11 @@ impl<'s> Tx<'s> {
         }
         let r = axon_loop_contracts::digest(&e)?;
         self.store.append_jsonl(&ledger_path(self.store), &e)?;
+        fault("after_ledger_append");
         self.entries.push(e.clone());
         self.refs.push(r);
         self.project(&e)?;
+        fault("after_projection");
         self.write_head()?;
         Ok(seq)
     }

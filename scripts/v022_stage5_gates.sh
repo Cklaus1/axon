@@ -43,6 +43,17 @@ GATES=(
   "G3-d12-intake-join|axon-loop|intake|a_fabric_check_on_the_output_tree_is_recorded_as_the_verification an_unverified_record_serialises_without_the_new_fields verification_that_does_not_join_is_refused_with_the_store_unchanged"
   # B261: the omission-set regression the paired G3 gate found (4430f104).
   "G03-r22-workspace-import|axon-fabric|workspace|the_same_version_imported_with_different_omissions_is_one_version a_tampered_omission_record_is_corrupt a_check_over_a_version_from_a_real_repository_passes"
+  # B280 (post-Stage-5 v0.22 work; this runner executes every v0.22 row by name).
+  # G13: real process deaths at every submit boundary, inside branch
+  # cancellation and inside a pointer transition; no unowned worker.
+  "G13-r22-restart-matrix|axon-fabric|restart_matrix|a_pre_launch_crash_is_resumed_once_and_never_repeated a_crash_after_the_launch_record_is_unknown_never_rerun a_crash_between_terminal_and_receipt_is_explicit_and_never_rerun an_orphan_is_not_resumed_under_a_superseded_epoch a_crash_inside_branch_cancellation_converges_on_restart"
+  "G13-r22-restart-matrix|axon-fabric|submit|sigkill_after_launch_reconciles_to_outcome_unknown_with_liability"
+  "G13-r22-restart-matrix|axon-fabric|journal|sigkill_after_launch_reconciles_to_outcome_unknown_with_liability_kept sigkill_after_intent_only_leaves_an_intended_op_with_no_reservation sigkill_after_reserve_keeps_the_budget_held"
+  "G13-r22-restart-matrix|axon-loop|pointer|a_real_crash_inside_a_transition_rolls_forward_exactly_once"
+  # G16: peer outage, replay, stale epochs, partial export, schema mismatch.
+  "G16-r22-peer-failure-matrix|axon-fabric|peer_failure_matrix|an_unreadable_epoch_store_at_submit_refuses_and_records_nothing an_outage_between_submit_and_dispatch_launches_nothing_and_stays_explicit a_resent_request_after_an_outage_replays_and_never_duplicates authority_that_moved_during_an_outage_is_not_assumed a_request_of_another_schema_version_is_refused_before_the_journal"
+  "G16-r22-peer-failure-matrix|axon-loop|intake|a_partial_export_is_refused_then_the_complete_one_is_recorded_once an_episode_of_another_schema_version_is_refused"
+  "G16-r22-peer-failure-matrix|axon-loop|pointer|a_replayed_activation_after_authority_moved_does_not_reactivate"
 )
 
 for row in "${GATES[@]}"; do

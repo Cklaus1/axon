@@ -499,3 +499,77 @@ fn a_replayed_activation_after_authority_moved_does_not_reactivate() {
     assert!(pointer::transition(&w.s, &stale).is_err());
     assert_eq!(snapshot(w.dir.path()), after_pause);
 }
+
+fn die_at_the_named_append_stage(stage: &'static str) {
+    if std::env::var("LOOP_CRASH_AT").ok().as_deref() == Some(stage) {
+        std::process::abort();
+    }
+}
+
+/// The crash child: applies the transition in `LOOP_CRASH_T` to the store at
+/// `LOOP_CRASH_STORE`, dying inside the ledger append at `LOOP_CRASH_AT`.
+#[test]
+#[ignore = "driven as a subprocess by the restart test below"]
+fn transition_crash_child() {
+    axon_loop::ledger::set_fault_hook(die_at_the_named_append_stage);
+    let s = axon_loop::store::Store::open_dir(std::env::var("LOOP_CRASH_STORE").unwrap()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("LOOP_CRASH_T").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let _ = pointer::transition(&s, &t(v));
+}
+
+/// B280 / G13-r22-restart-matrix, axon-loop side: a REAL process dies inside a
+/// pointer transition — after its ledger entry is durable but before the
+/// projection, and after the projection but before the head — and a real
+/// restart rolls forward to exactly one applied transition. Re-sending the
+/// same transition returns that result and applies nothing twice.
+/// (`crash_between_ledger_append_and_publish_rolls_forward` models the same
+/// window by rewriting files; this kills the process there.)
+#[test]
+fn a_real_crash_inside_a_transition_rolls_forward_exactly_once() {
+    for stage in ["after_ledger_append", "after_projection"] {
+        let w = world();
+        let v = transition("p-crash", "pause", &w.inc_ref, None, 1, None, false);
+        let tf = w.dir.path().join("t.json");
+        std::fs::write(&tf, v.to_string()).unwrap();
+        let st = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "transition_crash_child",
+                "--exact",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .env("LOOP_CRASH_STORE", w.s.root())
+            .env("LOOP_CRASH_T", &tf)
+            .env("LOOP_CRASH_AT", stage)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            st.signal(),
+            Some(6),
+            "{stage}: the child did not die there ({st:?})"
+        );
+        // Restart: a fresh store handle reads what the dead process left.
+        let s = axon_loop::store::Store::open_dir(w.s.root()).unwrap();
+        let p = pointer::load(&s, &scope()).unwrap();
+        assert_eq!(
+            (p.epoch.get(), p.active_policy_ref.is_none()),
+            (2, true),
+            "{stage}: rolled forward"
+        );
+        let again = pointer::transition(&s, &t(v.clone())).unwrap();
+        assert_eq!(again.epoch.get(), 2, "{stage}: the recorded result");
+        let applied = std::fs::read_to_string(s.root().join("ledger.jsonl"))
+            .unwrap()
+            .lines()
+            .filter(|l| l.contains("\"p-crash\""))
+            .count();
+        assert_eq!(applied, 1, "{stage}: applied exactly once");
+        assert_eq!(epoch::current(&s, &scope()).unwrap().get(), 2, "{stage}");
+    }
+}

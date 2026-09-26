@@ -126,6 +126,24 @@
         "PASS"
       ],
       "note": "B271. Cancelling a branch keeps every record and any liability and leaves sibling branches untouched. axon-fabric/tests/branches.rs."
+    },
+    {
+      "gate_id": "G13-r22-restart-matrix",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B280. REAL process deaths (abort() in a crash child at SubmitConfig.fault_hook boundaries; SIGKILL of the real axon-fabric CLI) at every submit effect boundary \u2014 after intent, after reserve, after the launch record, after the terminal record \u2014 plus inside branch cancellation and inside an axon-loop pointer transition (after the ledger append, after the projection; axon_loop::ledger::set_fault_hook). A restart resumes a pre-launch orphan exactly once (never under a superseded epoch; released in a cancelled branch), keeps a launched op OutcomeUnknown with its liability and never re-runs it, and the check worker dies with its supervisor (PR_SET_PDEATHSIG). Tests: axon-fabric restart_matrix.rs, submit.rs, journal.rs; axon-loop pointer.rs. NOT covered by a real kill: the Linux microVM profile (its launcher path is BLOCKED on the operator-signed B263 qualification)."
+    },
+    {
+      "gate_id": "G16-r22-peer-failure-matrix",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B280. Authority-peer outage at submit and between submit and dispatch (an absent store is refused, not read as epoch 0 \u2014 FG-048), a re-send after reconnect through the library and the real CLI (one run, budget committed once), authority that moved while away (new request refused, recorded answer kept), another schema version or an unknown field refused before the journal, a partial export refused then the complete one recorded once (a partial re-send is not a replay), an episode of another schema version refused, and a replayed activation after a later pause that re-activates nothing. Tests: axon-fabric peer_failure_matrix.rs; axon-loop intake.rs, pointer.rs. The MiCode-side peer failures (old/absent adapter, no common profile, fabricated accept, Fabric refusal) are loop_interop_gate.sh sections 8-9 and MiCode's own tests."
     }
   ],
   "tasks": [],
