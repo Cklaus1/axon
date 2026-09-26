@@ -813,9 +813,14 @@ run_micode g3f MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3f.json" MICODE_AXON_ACT
 G3F_EP="$(new_file "$CL/episodes" "$SN_EP")"
 check "G3: a failing check → verification failed" eq "$(jq -r .verification.result "$G3F_EP")" failed
 g3_docs "$G3F_EP"
-axl intake episode --in "$G3F_EP" --context "$CL/context" --ack "$CL/policy-ack" \
-  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" >/dev/null 2>"$WORK/g3f.err"
-check "G3: a failed Fabric check is intaken as failed (exit 0)" eq "$?" 0
+G3F_IN="$(axl intake episode --in "$G3F_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" 2>"$WORK/g3f.err")"
+check "G3: a failed Fabric check is intaken (exit 0)" eq "$?" 0
+# ...and what was recorded is the FAILED verdict: the stored receipt the
+# record cites says failed (re-audit 5: the exit code alone proved only that
+# the episode was accepted).
+check "G3: ...recorded as the failed verdict it is" \
+  eq "$(jq -r .verification "$STORE/fabric-receipts/$(jq -r .record.verification_receipt_ref <<<"$G3F_IN" | cut -d: -f2).json")" failed
 
 # A check name that matches no test is NOT a pass: Fabric says not_run, MiCode records unknown.
 fabric_check_config "$WORK/fabric-none.json" t_ok

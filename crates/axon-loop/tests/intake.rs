@@ -1389,7 +1389,9 @@ fn each_verification_rule_is_load_bearing_on_its_own() {
     let c = case(Some(500));
     let before = snapshot(c.s.root());
     let refused = |ep: &Value, req: &Value, rc: &Value, att: &Value, why: &str, want: &str| {
-        let e = run_va(&c, ep, Some(req), Some(rc), Some(att)).unwrap_err();
+        // expect_err names the case, so a mutation's recorded kill says WHICH
+        // forgery turned green (re-audit 5).
+        let e = run_va(&c, ep, Some(req), Some(rc), Some(att)).expect_err(why);
         assert!(
             matches!(e, LoopError::Refused(ref m) if m.contains(want)),
             "{why}: expected `{want}`: {e}"

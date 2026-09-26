@@ -1,9 +1,33 @@
 # G01 — verification authenticity: the claim, its evidence, and what it does not cover
 
-Status: **NOT REGISTERED.** This is the exact statement a registration of the
-G01-r22-* gate family would certify. An independent re-audit checks it clause by
-clause. The registry row is written only when that re-audit finds every clause
-holding and the mutation run is fully killed at the commit being registered.
+Status: **NOT REGISTERED.** This is the exact statement a registration of
+**G01-r22-independent-issuer** would certify ("verifier receipts are authenticated through
+trusted issuer lookup and bind profile/configuration/artifact/verifier revision;
+subject-generated, stale or cross-task evidence is rejected even if its JSON and hashes
+validate").
+
+It does not certify the rest of the G01 family. Each of those gates stays PARTIAL until its own
+clauses hold:
+- **G01-r22-registered-check** needs a "real protected host path"; the microVM emits no verdict
+  yet.
+- **G01-r22-verifier-separation** needs the subject unable to edit the verifier; that needs the
+  D1 protected environment.
+- **G01-r22-unknown-outcome** needs distinct non-success states "through the bridge"; under D12
+  no real MiCode trial reaches evaluation.
+
+**Registration rule.** The candidate is frozen: exact Axon and MiCode SHAs, clean trees, this
+document. It is registered when all of the following hold:
+- every clause below has named evidence;
+- every mutation in `scripts/v022_g01_mutations.py` is killed at the frozen Axon SHA;
+- the real-binary interop gate and the named MiCode G01 gates pass against the frozen pair;
+- one final independent re-audit of the frozen pair finds zero claim-level blockers.
+
+Nothing is edited during that review. Its findings are classified:
+- **BLOCKER:** directly falsifies a clause below, or a prerequisite it explicitly names.
+- **MAJOR-ADJACENT:** a real defect outside this claim. It is recorded in the sweep and the
+  false-green ledger, and it does not block.
+- **MINOR:** a proof, test or documentation weakness that does not falsify a clause.
+- **FUTURE:** hardening beyond the v0.22 gate.
 
 History:
 - Re-audit 1 (wf_f213aa49): failed.
@@ -12,6 +36,12 @@ History:
 - Re-audit 4 (wf_0c9149f9, at 917fe199): failed on one blocker. A revoked verifier's verdicts
   still counted at admission and activation (fixed: c0770ae8, FG-058). Four of the five roles
   reported REGISTER; every minor is addressed below or stated as a limitation.
+- Re-audit 5 (wf_7e55371c, at cf6c779b): failed on two blockers.
+  - A `:` in the caller-named state dir split `AXON_PATH` (fixed in 1db8ead8).
+  - Modules fell through to ambient directories (fixed in 1db8ead8, with the new
+    `AXON_PATH_EXCLUSIVE`).
+  - Its majors are closed too: cross-scope reuse, the ceiling proven applied (both 7c3f2fe5), and
+    a repository `.env` setting `axon.*` (MiCode dd4ea0a9).
 
 ## The claim
 
@@ -24,6 +54,9 @@ or promotion only if all of the following hold.
    - the request and receipt digests;
    - the operation, task, trial, attempt and execution ids.
 
+   One Fabric verification decides one trial in ONE scope: intake refuses a verification
+   receipt already recorded under another scope.
+
    The public key must be registered in the store's `verifier_keys`. A missing key, a missing
    attestation or a key mismatch refuses the verdict. The check is repeated at admission and at
    every re-derivation (activation, rollback). A verifier the operator has since untrusted or
@@ -35,7 +68,10 @@ or promotion only if all of the following hold.
    - the workload could not read the key: it ran in the protected microVM, or its admitted grant
      gives it no effect at all.
    - the check ran from an empty environment, apart from the ceiling, the trial caches and the
-     module path.
+     module path. The empty ceiling is applied by the executor, not merely intended.
+   - its modules resolved ONLY from the suite and the candidate (`AXON_PATH_EXCLUSIVE`), never
+     from the trial cache's `~/.axon/lib` or the interpreter's own library; a state dir that
+     would split the module path (a `:`) is refused before anything is written.
 3. **The verifier is trusted and independent.** Evaluation is the only door where a verdict
    counts, and it judges by this subject set:
    - the trial's observer;
@@ -52,7 +88,9 @@ or promotion only if all of the following hold.
    - the task's own registered acceptance check: that suite identity plus the exact test name.
 
    The requester chooses neither the test, nor the version, nor the entry file. The suite's own
-   modules resolve before the candidate's.
+   modules resolve before the candidate's. No repository-controlled configuration source (MiCode
+   project TOML, or a `.env` discovered from the working directory) may set `axon.*`, so the
+   judged repository cannot choose its own verifier configuration.
 5. **The semantic joins hold.**
    - The identity join covers task, trial, attempt, operation and execution.
    - The request tree, the receipt's input, the sidecar's verified tree and the episode's output
@@ -82,8 +120,8 @@ or promotion only if all of the following hold.
 
 | Clause | Tests (unit/integration) | Mutations | Real binaries (`loop_interop_gate.sh`) |
 |---|---|---|---|
-| 1 | `attestation.rs` unit tests; `intake.rs` authenticated and each-rule tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
-| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay and forged-journal; environment test; `check_effects.rs` exit-0 rule | M01 M40–M42 M44 M49 | §8 (2): effectful grant withheld; replay unsigned |
+| 1 | `attestation.rs` unit tests; `intake.rs` authenticated, each-rule and one-scope tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 M54 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
+| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 | §8 (2): effectful grant withheld; replay unsigned |
 | 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
 | 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 | §8 (4): another pinned revision refused; task and filter pin cases |
 | 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
@@ -102,7 +140,8 @@ and a count.
 
 MiCode's side is defense in depth, because intake re-verifies either way. It cites no unattested
 verdict, and a repository cannot choose its own verification. Both are rows in
-`scripts/v022_micode_gates.sh`.
+`scripts/v022_micode_gates.sh`: it cites no unattested verdict (`fabric_check`), and no project
+TOML or `.env` may set `axon.*` (`config`).
 
 ## Accepted limitations (ADR-001; not claimed)
 
@@ -114,9 +153,17 @@ verdict, and a repository cannot choose its own verification. Both are rows in
   when it names a subject). The materialized run directory sits under a caller-named state dir,
   so a same-uid process could rewrite it mid-run.
 - **The DEV environment makes no protected claim (D1).**
-- **The attestation binds no loop scope.** It carries no tenant or family, so reuse of a verdict
-  across scopes is refused by intake's scope bind, not by the signature. Binding the scope is an
-  attestation v2 item (after D1/D2/D5).
+- **The attestation binds no loop scope.** It carries no tenant or family. Intake refuses a
+  verification receipt already recorded under another scope (clause 1), so reuse is refused by
+  the store, not by the signature. Binding the scope is an attestation v2 item (after D1/D2/D5).
+- **G01 authenticates the verdict, not the tree's provenance.** It authenticates the verdict
+  about a tree and a task's check. It does not authenticate:
+  - that the arm's policy produced that tree;
+  - the arm id;
+  - the cost or corpus role.
+
+  Those rest on producer-written documents (D12 local execution, `bind_acf` over unsigned
+  execution documents).
 - **Fabric re-runs an operation on a fresh journal.** The journal is caller-named, so a new
   journal re-runs and re-signs an operation already run elsewhere. Uniqueness per attempt comes
   from intake's identity rule, which records one set of bytes per trial identity, not from
@@ -140,6 +187,17 @@ verdict, and a repository cannot choose its own verification. Both are rows in
   requires real ones, so every real MiCode trial is Unknown ("unbound ACF evidence"). It fails
   closed. The interop gate drives intake, not `evl evaluate`, admit or activate; counting is
   proved on fixture trials.
+- **Revocation is not retroactive to the ACTIVE policy.** Untrusting or re-keying a verifier
+  stops its verdicts at every later admission, activation and rollback. A policy already active
+  stays active until the next transition (ADR-001 §5 activation revalidation).
+- **Pins are checked when the verdict is authenticated.** Verifier pins and task acceptance
+  (clause 4) are checked at intake and evaluation, not re-checked at admission. Withdrawing a pin
+  later does not retract an evaluated verdict, whereas untrusting or re-keying the verifier does.
+- **The admission scan does not see `use a::b`.** Such an import loads a module without a `mod`
+  line. Resolution is confined to the suite and candidate (clause 2), and the empty ceiling
+  denies effects at run time, so the scan is not the barrier.
+- **An untested legacy guard.** A counted verdict in an evaluation from before verdict citation
+  is refused at admission, but no test drives that legacy shape.
 - **Learning inputs are outside G01.** EVO `propose` reads caller-supplied episodes and trusts a
   verdict by issuer name, with no attestation or intake. It cannot choose the mutation, and a
   proposed candidate must still pass evaluation and admission.

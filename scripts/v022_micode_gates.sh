@@ -78,7 +78,7 @@ GATES=(
   # verification (the `axon.` namespace is closed to project config).
   # Defense in depth: Axon's intake re-verifies either way.
   "G01-r22-independent-issuer|micode-persist|lib|fabric_check::tests::an_unattested_or_misattested_receipt_is_not_cited"
-  "G01-r22-independent-issuer|micode|lib|config::tests::a_repository_cannot_choose_its_own_verification"
+  "G01-r22-independent-issuer|micode|lib|config::tests::a_repository_cannot_choose_its_own_verification config::tests::a_dotenv_cannot_supply_a_closed_key"
 )
 
 for row in "${GATES[@]}"; do

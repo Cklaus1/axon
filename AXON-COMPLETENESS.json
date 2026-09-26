@@ -2244,6 +2244,39 @@
       "status": "fixed",
       "severity": "security",
       "commit": "c0770ae8"
+    },
+    {
+      "id": "FG-059",
+      "where": "crates/axon-fabric/src/submit.rs",
+      "claimed": "FG-052: a check suite's own modules always resolve before the candidate's (AXON_PATH = <run>/check:<run>/candidate).",
+      "reality": "AXON_PATH is ':'-separated and built from the caller-named state dir; a state dir (or journal) containing ':' put caller directories ahead of the suite, replacing its helpers, and Fabric signed a pass the suite would have failed.",
+      "reproduced": "G01 independent re-audit 5 (verdict adversary, wf_7e55371c), executed at cf6c779b through the real binary. Pinned by a_state_dir_that_would_split_the_module_path_is_refused (mutation M52).",
+      "fix": "submit refuses a state dir containing ':' before anything is written or launched.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "1db8ead8"
+    },
+    {
+      "id": "FG-060",
+      "where": "crates/axon-core/src/lib.rs",
+      "claimed": "G01 clause 4: what ran is the operator's pinned suite over the candidate's tree.",
+      "reality": "Module resolution fell through AXON_PATH to ambient directories \u2014 the trial cache's ~/.axon/lib under the caller-named state dir, and the interpreter binary's ../lib/axon \u2014 and `use a::b` loads with no `mod` line the scan sees. A candidate that does not compile on its own passed with a planted module and was signed.",
+      "reproduced": "G01 independent re-audit 5 (verdict adversary), executed through the real binary (signed ATTACK). Pinned by a_check_loads_no_module_from_outside_the_suite_and_the_candidate (mutation M53).",
+      "fix": "New interpreter switch AXON_PATH_EXCLUSIVE=1 resolves modules only from AXON_PATH; Fabric sets it for every check.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "1db8ead8"
+    },
+    {
+      "id": "FG-061",
+      "where": "crates/axon-loop/src/intake.rs",
+      "claimed": "G01 claim, accepted limitation: reuse of a verdict across scopes is refused by intake's scope bind.",
+      "reality": "No such bind existed for the verification documents (they carry no scope; the identity-conflict check is per scope): one signed verdict was recorded in two tenants and could count in both.",
+      "reproduced": "G01 independent re-audit 5 (clause auditor), executed at cf6c779b. Pinned by one_verdict_decides_one_trial_in_one_scope (mutation M54).",
+      "fix": "Intake refuses a verification receipt already recorded under another scope.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "7c3f2fe5"
     }
   ]
 }
