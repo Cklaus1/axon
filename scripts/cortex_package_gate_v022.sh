@@ -280,19 +280,73 @@ echo "── cortex v0.22: package offline suite (jsonschema==$PINNED_JSONSCHEMA
 SUITE="not run"
 if [ -n "$PY" ]; then
   SUITE_OUT="$OUTDIR/suite.log"
+  # OFFLINE, two layers. (a) In-process: the suite is started through a guard
+  # that makes every socket connect / sendto / name lookup raise, so a test that
+  # reaches for the network ERRORS rather than passing on whatever the network
+  # happened to return (measured before this: a test connecting to pypi.org:443
+  # passed and the gate said PASS). (b) Where the host allows it, a fresh network
+  # namespace (`unshare -n`, else `unshare -rn`), which also covers child
+  # processes the in-process guard cannot see. (b) is probed by actually running
+  # the interpreter against the pack, because `unshare -rn` as root cannot read a
+  # home directory owned by another uid; the mode used is printed, never implied.
+  # -B -E -s: no bytecode, no PYTHON* env steering (PYTHONPATH/PYTHONSTARTUP),
+  # no user site-packages.
+  read -r -d '' OFFLINE_GUARD <<'GUARD'
+import socket, unittest
+_MSG = "network disabled: the v0.22 package suite is run OFFLINE by cortex_package_gate_v022.sh"
+def _deny(*a, **k): raise OSError(_MSG)
+class _Offline(socket.socket):
+    def connect(self, *a): raise OSError(_MSG)
+    connect_ex = connect
+    def sendto(self, *a): raise OSError(_MSG)
+socket.socket = _Offline
+socket.create_connection = socket.getaddrinfo = socket.gethostbyname = socket.gethostbyname_ex = _deny
+unittest.main(module=None, argv=["unittest", "discover", "-s", "tests"])
+GUARD
+  NETNS=()
+  for cand in "unshare -n" "unshare -rn"; do
+    # shellcheck disable=SC2086
+    if command -v unshare >/dev/null 2>&1 && $cand "$PY" -B -c 'import os, sys; os.listdir(sys.argv[1])' "$PKG" >/dev/null 2>&1; then
+      read -r -a NETNS <<<"$cand"; break
+    fi
+  done
+  OFFLINE_MODE="in-process socket guard"; [ ${#NETNS[@]} -gt 0 ] && OFFLINE_MODE="$OFFLINE_MODE + ${NETNS[*]}"
+  echo "  offline: $OFFLINE_MODE"
   BEFORE="$(tree_digest "$PKG")"
-  ( cd "$PKG" && "$PY" -B -m unittest discover -s tests ) >"$SUITE_OUT" 2>&1; SRC=$?
+  ( cd "$PKG" && "${NETNS[@]}" "$PY" -B -E -s -c "$OFFLINE_GUARD" ) >"$SUITE_OUT" 2>&1; SRC=$?
   AFTER="$(tree_digest "$PKG")"
   [ "$BEFORE" = "$AFTER" ] || note_fail "offline suite MUTATED the vendored pack (tree digest changed)"
-  RAN="$(grep -oE '^Ran [0-9]+ tests?' "$SUITE_OUT" | grep -oE '[0-9]+' | tail -1)"; RAN="${RAN:-0}"
-  NSKIP="$(grep -oE 'skipped=[0-9]+' "$SUITE_OUT" | grep -oE '[0-9]+' | tail -1)"; NSKIP="${NSKIP:-0}"
-  if [ "$SRC" -ne 0 ]; then
-    tail -n 15 "$SUITE_OUT" | sed 's/^/     /'
-    note_fail "offline suite FAILED (exit $SRC, see $SUITE_OUT)"
-  elif [ "$RAN" -lt "$MIN_SUITE_TESTS" ]; then
-    note_fail "offline suite ran $RAN tests, floor is $MIN_SUITE_TESTS (non-vacuity)"
+  if find "$PKG" \( -name __pycache__ -o -name '*.pyc' -o -name '*.pyo' \) | grep -q .; then
+    note_fail "Python bytecode present inside the vendored pack after the suite"
+  fi
+  # A skip is not a pass, and neither is an expected failure or an unexpected
+  # success: the summary line must be exactly "OK". Measured before this: a test
+  # marked @unittest.skip ("needs live KVM") ran as "568 tests OK (1 skipped)"
+  # and the gate said PASS — the NOT_RUN-dressed-as-green shape G00-r22-honest-
+  # status exists to forbid.
+  if ! SUITE="$(python3 -B - "$SUITE_OUT" "$SRC" "$MIN_SUITE_TESTS" <<'PY'
+import re, sys
+log, rc, floor = open(sys.argv[1], encoding="utf-8", errors="replace").read(), int(sys.argv[2]), int(sys.argv[3])
+m = re.findall(r"^Ran (\d+) tests? in", log, re.M)
+ran = int(m[-1]) if m else 0
+lines = [l for l in log.strip().splitlines() if l.strip()]
+tail = lines[-1].strip() if lines else ""
+err = []
+if rc != 0: err.append(f"unittest exited {rc}")
+if ran < floor: err.append(f"NON-VACUITY: ran {ran} tests, floor is {floor}")
+if tail != "OK": err.append(f"summary line is {tail!r}, expected exactly 'OK' (a skip, expected failure or unexpected success is not a pass)")
+if err:
+    for e in err: print(e)
+    sys.exit(1)
+print(f"{ran} tests OK, 0 skipped")
+PY
+)"; then
+    tail -n 12 "$SUITE_OUT" | sed 's/^/     /'
+    printf '%s\n' "$SUITE" | sed 's/^/  /'
+    note_fail "offline suite not clean (see $SUITE_OUT)"
+    SUITE="FAILED"
   else
-    SUITE="$RAN tests OK ($NSKIP skipped) under $("$PY" -c 'import sys;print(sys.executable)')"
+    SUITE="$SUITE, offline ($OFFLINE_MODE), under $("$PY" -B -c 'import sys;print(sys.executable)')"
     echo "  $SUITE"
   fi
 else
