@@ -481,11 +481,26 @@ fn sigkill_after_launch_reconciles_to_outcome_unknown_with_liability() {
     assert_eq!(s.receipt.process_exit_code, None);
     assert_eq!(s.receipt.unresolved_liability_micro, 100);
     assert!(!started.exists(), "no re-execution");
-    // Reap the orphaned child of the killed launcher (its pid was recorded).
-    let _ = std::process::Command::new("kill")
-        .arg("-9")
-        .arg(orphan.trim())
-        .status();
+    // G13-r22-restart-matrix: NO UNOWNED WORKER. The check worker (its pid was
+    // recorded) dies with the supervisor that journalled its launch. This test
+    // used to reap it by hand. Mutation: drop PR_SET_PDEATHSIG in
+    // axon_cortex::runner::run_limited → the worker is still alive here.
+    let pid: i32 = orphan.trim().parse().expect("worker pid");
+    let t0 = std::time::Instant::now();
+    while std::path::Path::new(&format!("/proc/{pid}")).exists()
+        && !std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|s| s.split_whitespace().nth(2) == Some("Z"))
+            .unwrap_or(true)
+    {
+        if t0.elapsed().as_secs() >= 10 {
+            let _ = std::process::Command::new("kill")
+                .arg("-9")
+                .arg(pid.to_string())
+                .status();
+            panic!("the check worker {pid} outlived its SIGKILLed supervisor (an unowned worker)");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 /// Moves the scope's epoch forward — called by the submit path AFTER its

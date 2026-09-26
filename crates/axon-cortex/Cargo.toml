@@ -10,6 +10,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
+# PR_SET_PDEATHSIG for the check worker (G13-r22-restart-matrix): a worker must not
+# outlive the supervisor that journalled its launch.
+libc = "0.2"
 axon-ai = { path = "../axon-ai", optional = true }
 
 [features]

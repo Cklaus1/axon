@@ -2170,6 +2170,37 @@ fn run_limited(
 ) -> std::io::Result<(String, Option<i32>, bool)> {
     use std::io::Read;
     use std::process::Stdio;
+    // NO UNOWNED WORKER (v0.22 G13-r22-restart-matrix). A supervisor that dies
+    // — SIGKILL, OOM, a host reboot of the process — used to leave its check
+    // running with nobody to collect its verdict or bill it: measured, the
+    // worker of a SIGKILLed `axon-fabric submit` survived until a test reaped it
+    // by hand. The journal already records such an op as OutcomeUnknown with its
+    // liability kept; the worker now dies with the supervisor, so "unknown" is
+    // not also "still running". The getppid() check closes the race where the
+    // parent dies between fork and prctl.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        let parent = unsafe { libc::getpid() };
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::prctl(
+                    libc::PR_SET_PDEATHSIG,
+                    libc::SIGKILL as libc::c_ulong,
+                    0,
+                    0,
+                    0,
+                ) != 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent {
+                    libc::_exit(137);
+                }
+                Ok(())
+            });
+        }
+    }
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
