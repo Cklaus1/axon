@@ -4,7 +4,7 @@
 //! axon-fabric submit --request FILE|- --journal FILE --check-registry FILE
 //!                    --grant-registry FILE
 //!                    --store DIR --tenant T --family F --expected-epoch N
-//!                    [--workspace DIR]
+//!                    [--workspace DIR] [--state DIR (default <journal>.state)]
 //!                    [--budget-micro N] [--budget-exec-ms N]
 //!                    [--linux-launcher SH --linux-manifest JSON
 //!                     --linux-evidence JSON [--linux-artifacts DIR]
@@ -17,6 +17,7 @@
 //! (`<evidence>.sig` unless `--linux-evidence-sig`), verified against the
 //! Ed25519 public keys in `--linux-trusted-issuers` (default: the manifest's
 //! sibling `trusted_issuers/`), no older than the max age (default 30 days).
+//! axon-fabric workspace-import --state DIR --root DIR
 //! axon-fabric status --journal FILE --op ID
 //! axon-fabric cancel --journal FILE --op ID --reason TEXT
 //! ```
@@ -83,6 +84,7 @@ fn main() {
         "submit" => submit(&a),
         "status" => status(&a),
         "cancel" => cancel(&a),
+        "workspace-import" => workspace_import(&a),
         _ => refuse(
             "usage",
             "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
@@ -138,6 +140,7 @@ fn submit(a: &Args) {
         },
         expected_epoch: expected,
         workspace: PathBuf::from(a.opt("--workspace").unwrap_or_else(|| ".".into())),
+        state_dir: state_dir(a),
         budget: ResourceVector {
             model_micro_usd: a.num("--budget-micro", 1_000_000),
             exec_ms: a.num("--budget-exec-ms", 3_600_000),
@@ -162,6 +165,35 @@ fn submit(a: &Args) {
         ),
         Err(e) => refuse(e.kind(), &e.to_string(), e.exit_code()),
     }
+}
+
+/// `--state DIR`, default `<journal>.state` beside the journal.
+fn state_dir(a: &Args) -> PathBuf {
+    a.opt("--state").map(PathBuf::from).unwrap_or_else(|| {
+        let mut s = PathBuf::from(a.req("--journal")).into_os_string();
+        s.push(".state");
+        PathBuf::from(s)
+    })
+}
+
+/// `axon-fabric workspace-import --state DIR --root DIR`: import a tree into
+/// the WorkspaceVersion store and print its reference (and omissions).
+fn workspace_import(a: &Args) {
+    let store = axon_fabric::workspace::WorkspaceStore::open(&PathBuf::from(a.req("--state")))
+        .unwrap_or_else(|e| refuse("workspace", &e.to_string(), 2));
+    let tree = axon_fabric::workspace::WorkspaceTree::import_dir(
+        &PathBuf::from(a.req("--root")),
+        &axon_fabric::workspace::Quota::default(),
+    )
+    .unwrap_or_else(|e| refuse(e.class(), &e.to_string(), 3));
+    let r = store
+        .publish(&tree)
+        .unwrap_or_else(|e| refuse("workspace", &e.to_string(), 2));
+    println!(
+        "{}",
+        json!({"schema": "axon-fabric-workspace-import/1", "workspace_version_ref": r,
+               "entries": tree.entries().len(), "omissions": tree.omissions()})
+    );
 }
 
 fn open(a: &Args) -> (Journal, OperationId) {

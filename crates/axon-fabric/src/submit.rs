@@ -56,6 +56,7 @@ use serde_json::{json, Value};
 use crate::backend::{self, Profile};
 use crate::grants::{GrantRegistry, ResolvedGrant};
 use crate::journal::{Begin, Billing, Intent, Journal, JournalError, OpState, ResourceVector};
+use crate::workspace::{self, Quota, TrialCache, WorkspaceStore, WorkspaceTree};
 
 /// Where the current authority epoch comes from.
 #[derive(Debug, Clone)]
@@ -91,8 +92,15 @@ pub struct SubmitConfig {
     pub epoch: EpochSource,
     /// The epoch the caller was authorized under.
     pub expected_epoch: AuthorityEpoch,
-    /// The directory a request's `argv[0]` file is resolved under.
+    /// The directory a request's `argv[0]` file is resolved under when the
+    /// request names a HISTORICAL single-file ref or a one-file
+    /// WorkspaceVersion of that file (the latter is copied into the store
+    /// before anything reads it).
     pub workspace: PathBuf,
+    /// The Fabric state dir: the WorkspaceVersion store
+    /// (`<state>/workspaces`), per-trial caches (`<state>/trial-caches`) and
+    /// per-operation materializations (`<state>/runs`).
+    pub state_dir: PathBuf,
     /// Aggregate ceiling for the scope (declared idempotently in the journal).
     pub budget: ResourceVector,
     /// The operator's grant registry: the ONLY source of a request's
@@ -133,6 +141,8 @@ pub enum SubmitError {
     /// `grant_ref` did not resolve to an operator grant for `principal_ref`.
     Unauthorized(String),
     Journal(JournalError),
+    /// The Fabric's workspace store / state dir failed (I/O, corruption).
+    Workspace(String),
 }
 
 impl SubmitError {
@@ -144,6 +154,7 @@ impl SubmitError {
             SubmitError::Unregistered(_) => "unregistered",
             SubmitError::Unauthorized(_) => "unauthorized",
             SubmitError::Journal(_) => "journal",
+            SubmitError::Workspace(_) => "workspace",
         }
     }
     /// CLI exit code.
@@ -154,7 +165,7 @@ impl SubmitError {
             SubmitError::StaleEpoch { .. } => 6,
             SubmitError::Unregistered(_) => 4,
             SubmitError::Unauthorized(_) => 7,
-            SubmitError::Journal(_) => 2,
+            SubmitError::Journal(_) | SubmitError::Workspace(_) => 2,
         }
     }
 }
@@ -171,6 +182,7 @@ impl std::fmt::Display for SubmitError {
             SubmitError::Unregistered(s) => write!(f, "unregistered executable: {s}"),
             SubmitError::Unauthorized(s) => write!(f, "unauthorized: {s}"),
             SubmitError::Journal(e) => write!(f, "journal: {e}"),
+            SubmitError::Workspace(e) => write!(f, "workspace store: {e}"),
         }
     }
 }
@@ -303,16 +315,87 @@ fn resolve_executable(
     Ok(e)
 }
 
-/// `argv` for a registered check is `[file]` or `[file, filter]`. The file
-/// must be relative, inside the workspace, and its bytes must hash to
-/// `workspace_version_ref`.
-fn check_target(req: &ComputeRequest, ws: &Path) -> Result<(String, Option<String>), SubmitError> {
-    let (file, filter) = match req.argv.as_slice() {
-        [f] => (f.clone(), None),
-        [f, flt] => (f.clone(), Some(flt.clone())),
-        _ => {
+/// Where a request's target bytes live for the run.
+#[derive(Debug)]
+enum Bound {
+    /// HISTORICAL single-file ref (`{"path","sha256"}`): the check reads the
+    /// operator workspace in place.
+    Legacy,
+    /// A WorkspaceVersion from the store, materialized privately for this
+    /// operation: `dir` is the copy, removed when the guard drops.
+    Version { version: Acf1Ref, dir: RunDir },
+}
+
+/// A per-operation directory under `<state>/runs`, removed on drop — on
+/// every path, refusal or not.
+#[derive(Debug)]
+struct RunDir(PathBuf);
+
+impl RunDir {
+    fn new(state: &Path, op: &str) -> Result<RunDir, SubmitError> {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let key = format!(
+            "{}-{}-{}",
+            &sha256_hex(op.as_bytes())[..16],
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let p = state.join("runs").join(key);
+        std::fs::create_dir_all(&p).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+        Ok(RunDir(p))
+    }
+}
+
+impl Drop for RunDir {
+    fn drop(&mut self) {
+        let _ = workspace::remove_tree(&self.0);
+    }
+}
+
+/// What a request's `argv` resolved to.
+#[derive(Debug)]
+struct Target {
+    file: String,
+    filter: Option<String>,
+    bound: Bound,
+}
+
+impl Target {
+    /// The directory the check reads `file` under.
+    fn dir(&self, cfg: &SubmitConfig) -> PathBuf {
+        match &self.bound {
+            Bound::Legacy => cfg.workspace.clone(),
+            Bound::Version { dir, .. } => dir.0.join("candidate"),
+        }
+    }
+}
+
+/// `argv` for a registered check is `[file]` or `[file, filter]`; for an
+/// interpreter run it is `[program.ax]`. The file must be a plain relative
+/// path, and `workspace_version_ref` must name the bytes the run will read:
+///
+/// 1. a WorkspaceVersion the store holds — materialized privately, and the
+///    file must be a regular-file entry of it;
+/// 2. the one-file WorkspaceVersion of the workspace file — the file is
+///    imported (copied) into the store first and the run reads THAT copy,
+///    so the bytes judged are the bytes hashed;
+/// 3. the historical single-file digest of the workspace file (kept so old
+///    refs still resolve; the run reads the workspace in place).
+///
+/// Anything else is a conflict. Every refusal happens before admission.
+fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, SubmitError> {
+    let (file, filter) = match (req.job_kind, req.argv.as_slice()) {
+        (JobKind::RegisteredCheck, [f]) => (f.clone(), None),
+        (JobKind::RegisteredCheck, [f, flt]) => (f.clone(), Some(flt.clone())),
+        (JobKind::RegisteredCheck, _) => {
             return Err(SubmitError::Malformed(
                 "registered_check argv must be [file] or [file, filter]".into(),
+            ))
+        }
+        (JobKind::InterpreterRun, [f]) => (f.clone(), None),
+        (JobKind::InterpreterRun, _) => {
+            return Err(SubmitError::Malformed(
+                "interpreter_run argv must be [program.ax]".into(),
             ))
         }
     };
@@ -325,16 +408,62 @@ fn check_target(req: &ComputeRequest, ws: &Path) -> Result<(String, Option<Strin
             "argv file {file:?} must be a plain relative path inside the workspace"
         )));
     }
-    let bytes = std::fs::read(ws.join(p))
-        .map_err(|e| SubmitError::Malformed(format!("cannot read {file}: {e}")))?;
-    let got = workspace_digest(&file, &bytes);
-    if req.workspace_version_ref != got {
-        return Err(SubmitError::Conflict(format!(
-            "workspace_version_ref {} does not match the bytes of {file} ({got})",
-            req.workspace_version_ref
+    let store =
+        WorkspaceStore::open(&cfg.state_dir).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let want = &req.workspace_version_ref;
+    let version = if store.contains(want) {
+        want.clone()
+    } else {
+        let bytes = std::fs::read(cfg.workspace.join(p))
+            .map_err(|e| SubmitError::Malformed(format!("cannot read {file}: {e}")))?;
+        if want.as_str() == axon_cortex::runner::single_file_workspace_version_ref(&file, &bytes) {
+            // Copy the file into the store and judge the COPY: re-derive the
+            // ref from what was stored, not from what was read above.
+            let tree = WorkspaceTree::import_file(&cfg.workspace, &file, &Quota::default())
+                .map_err(|e| SubmitError::Malformed(format!("workspace import refused: {e}")))?;
+            let r = store
+                .publish(&tree)
+                .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+            if r != *want {
+                return Err(SubmitError::Conflict(format!(
+                    "workspace_version_ref {want} does not match the imported bytes of {file} ({r})"
+                )));
+            }
+            r
+        } else if *want == workspace_digest(&file, &bytes) {
+            return Ok(Target {
+                file,
+                filter,
+                bound: Bound::Legacy,
+            });
+        } else {
+            return Err(SubmitError::Conflict(format!(
+                "workspace_version_ref {want} names neither a published WorkspaceVersion \
+                 nor the bytes of {file}"
+            )));
+        }
+    };
+    let v = store
+        .load(&version)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    if !v
+        .entries
+        .iter()
+        .any(|e| e.path == file && e.mode != workspace::MODE_LINK)
+    {
+        return Err(SubmitError::Malformed(format!(
+            "argv file {file:?} is not a regular file of WorkspaceVersion {version}"
         )));
     }
-    Ok((file, filter))
+    let dir = RunDir::new(&cfg.state_dir, req.operation_id.as_str())?;
+    store
+        .materialize(&version, &dir.0.join("candidate"), false)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    Ok(Target {
+        file,
+        filter,
+        bound: Bound::Version { version, dir },
+    })
 }
 
 /// An axon-os `Runtime` that performs NO effect: it states the selected
@@ -423,6 +552,7 @@ fn host_executor(
     exe: &RegisteredExecutable,
     req: &ComputeRequest,
     ceiling: &str,
+    cache: &TrialCache,
 ) -> Result<LocalInterpreterExecutor, SubmitError> {
     let mut r = CheckRegistry::new();
     r.register_expected(
@@ -436,7 +566,13 @@ fn host_executor(
         .with_timeout(std::time::Duration::from_millis(req.limits.wall_time_ms))
         .with_max_output(req.limits.output_bytes as usize);
     // Always set — `""` is deny-every-effect, never "no ceiling".
-    Ok(local.with_effect_ceiling(ceiling))
+    let mut local = local.with_effect_ceiling(ceiling);
+    // The trial's own fresh HOME / XDG_CACHE_HOME / CARGO_TARGET_DIR: no
+    // two trials share a mutable cache.
+    for (k, v) in cache.env() {
+        local = local.with_env(k, v);
+    }
+    Ok(local)
 }
 
 /// Submit one request. See the module docs for the order of operations.
@@ -562,21 +698,10 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     } else {
         resolve_executable(&req, &cfg.registry)?
     };
-    let target = match req.job_kind {
-        JobKind::RegisteredCheck => Some(check_target(&req, &cfg.workspace)?),
-        JobKind::InterpreterRun => {
-            if req.argv.len() != 1 {
-                return Err(SubmitError::Malformed(
-                    "interpreter_run argv must be [program.ax]".into(),
-                ));
-            }
-            let (f, _) = check_target(&req, &cfg.workspace)?;
-            Some((f, None))
-        }
-    };
+    let target = check_target(&req, cfg)?;
 
     // 6. Supervisor admission (axon-os).
-    let program = cfg.workspace.join(&target.as_ref().expect("set above").0);
+    let program = target.dir(cfg).join(&target.file);
     let approval = match supervisor_admits(&req, &profile, &grant, &program) {
         Ok(a) => a,
         Err(why) => {
@@ -620,6 +745,12 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 "reproducible": grant.grant().reproducible,
                 "approval": approval,
             },
+            // Which bytes the run reads: a stored WorkspaceVersion, or the
+            // operator workspace in place (historical single-file ref).
+            "workspace": match &target.bound {
+                Bound::Version { version, .. } => json!({"workspace_version_ref": version}),
+                Bound::Legacy => json!({"legacy_single_file": target.file}),
+            },
         }),
         authority_ref: format!("{}|{}", req.principal_ref, req.grant_ref),
         authority_epoch: cfg.expected_epoch,
@@ -645,7 +776,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             current: now.map(|e| e.get().to_string()).unwrap_or_else(|e| e),
         });
     }
-    let (file, filter) = target.expect("set above");
+    let run_dir = target.dir(cfg);
+    let (file, filter) = (target.file.clone(), target.filter.clone());
     let is_linux = profile.id == backend::LINUX_MICROVM_PROTECTED.id;
     // Re-verify the executable immediately before the launch record: a host
     // binary against its registry pin, the Linux profile against its
@@ -668,7 +800,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     let local = if is_linux {
         None
     } else {
-        Some(host_executor(&exe, &req, &ceiling)?)
+        let cache = TrialCache::for_trial(&cfg.state_dir, &req.trial_id)
+            .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+        Some(host_executor(&exe, &req, &ceiling, &cache)?)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {
         journal.cancel(&req.operation_id, &format!("executable changed: {e}"), None)?;
@@ -680,7 +814,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     let (r, report, reason) = match profile.id {
         id if id == backend::LOCAL_INTERPRETER.id => {
             let res = local.expect("host backend").run_checks(&CheckRequest {
-                workspace: &cfg.workspace,
+                workspace: &run_dir,
                 rel_path: &file,
                 filter: filter.as_deref(),
             });
@@ -691,7 +825,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             let policy = guest_policy
                 .as_ref()
                 .expect("built when the profile was selected");
-            let res = backend::run_linux_profile(lx, &cfg.workspace.join(&file), &req, policy);
+            let res = backend::run_linux_profile(lx, &run_dir.join(&file), &req, policy);
             let q = qualified.as_ref().expect("qualified at dispatch");
             linux_receipt(&req, &journal, res, q, liability)?
         }

@@ -1,0 +1,73 @@
+{
+  "schema": "micode.workspace-version-vector/1",
+  "recipe": "docs/axon-support/WORKSPACE_VERSION_RECIPE.md",
+  "produced_by": "an independent Python implementation of the recipe (hashlib + json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)); reproduced byte-for-byte by micode-persist workspace_version::tests::the_cross_language_vector_reproduces_byte_for_byte",
+  "tree": [
+    {
+      "path": "README.md",
+      "kind": "file",
+      "content": "hello workspace\n",
+      "executable": false
+    },
+    {
+      "path": "bin/run.sh",
+      "kind": "file",
+      "content": "#!/bin/sh\necho run\n",
+      "executable": true
+    },
+    {
+      "path": "src/lib.rs",
+      "kind": "file",
+      "content": "pub fn f() -> u8 {\n    1\n}\n",
+      "executable": false
+    },
+    {
+      "path": "src/a b.txt",
+      "kind": "file",
+      "content": "space in a name\n",
+      "executable": false
+    },
+    {
+      "path": "docs/über.md",
+      "kind": "file",
+      "content": "non-ASCII name — and content\n",
+      "executable": false
+    },
+    {
+      "path": "a.txt",
+      "kind": "file",
+      "content": "sorts before a/b: '.' is 0x2E, '/' is 0x2F\n",
+      "executable": false
+    },
+    {
+      "path": "a/b",
+      "kind": "file",
+      "content": "slash\n",
+      "executable": false
+    },
+    {
+      "path": "empty",
+      "kind": "file",
+      "content": "",
+      "executable": false
+    },
+    {
+      "path": "link",
+      "kind": "symlink",
+      "target": "src/lib.rs"
+    },
+    {
+      "path": "src/up",
+      "kind": "symlink",
+      "target": "../README.md"
+    }
+  ],
+  "manifest": "100644 16 bad18e717145fcf190f9144d635a3295ab55ffc8cddcfc94b6c4b94b00093b42 README.md\n100644 43 9ab9dc9a268b577f6cc56636088e85d64c8c927b3e05b8834b8119ad6e9f327f a.txt\n100644 6 8578a26bad9cf662e6e0cd91540eea63fb2ed5b5b2cebc471364c137b12931e6 a/b\n100755 19 a4e0317eafab5cf1bc4a0041c7c8aeb6ece56fe72e7b2b3017a8a6574614cd35 bin/run.sh\n100644 31 f46cbd637ef40e722e0c624b019081d65a9449d1822d4b94a4324bfd4d3edbab docs/über.md\n100644 0 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 empty\n120000 10 b1a35a68f14e696205874893c07fd24fdb88882b47c23cc0e0c80a30c7d53759 link\n100644 16 13eebb204868282ab7056bb6a4d077d657bde044cc125ffa76751906957b4095 src/a b.txt\n100644 27 660b8555e1302f314fb8dc3c76d2165994e362e27bbbfbb15e7ca4a29fba423b src/lib.rs\n120000 12 dbcc210d7f4962499db6d4cfa18658e26d05ee700c962a811cac911f095e22fd src/up\n",
+  "manifest_sha256": "594144ff817e7752b8a7f08840f6872fd56955d396c07e5e2176ce0269233f58",
+  "identity_object": "{\"manifest_sha256\":\"594144ff817e7752b8a7f08840f6872fd56955d396c07e5e2176ce0269233f58\",\"schema\":\"axon.workspace-version/1\"}",
+  "reference": "acf1:75d702a16229cb679e99716e4b63aef44ebc1dc1adeecec9bacee12163fc0985",
+  "one_byte_flip": {
+    "path": "README.md",
+    "note": "XOR the first byte with 0x01 ('h' -> 'i'); the reference MUST differ from `reference`"
+  }
+}

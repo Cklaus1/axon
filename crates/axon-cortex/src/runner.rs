@@ -1917,6 +1917,9 @@ struct ExecLimits {
     /// Value for `AXON_ALLOWED_EFFECTS` (the interpreter's own effect
     /// ceiling). `None` leaves it unset (no ceiling).
     effect_ceiling: Option<String>,
+    /// Extra environment for the check process (set, never inherited
+    /// selectively): the Fabric's per-trial cache dirs and module path.
+    env: Vec<(String, String)>,
 }
 
 impl LocalInterpreterExecutor {
@@ -1952,6 +1955,14 @@ impl LocalInterpreterExecutor {
     /// ceiling (process_scoped enforcement, not an OS boundary).
     pub fn with_effect_ceiling(mut self, ceiling: impl Into<String>) -> Self {
         self.limits.effect_ceiling = Some(ceiling.into());
+        self
+    }
+
+    /// Set `key=value` in the check process's environment. Used by the
+    /// Fabric to give each trial its own fresh `HOME` / `XDG_CACHE_HOME` /
+    /// `CARGO_TARGET_DIR`, and a hidden check its `AXON_PATH`.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.limits.env.push((key.into(), value.into()));
         self
     }
 
@@ -2037,6 +2048,9 @@ impl CheckExecutor for LocalInterpreterExecutor {
         }
         if let Some(c) = &self.limits.effect_ceiling {
             cmd.env("AXON_ALLOWED_EFFECTS", c);
+        }
+        for (k, v) in &self.limits.env {
+            cmd.env(k, v);
         }
         let (text, code, truncated) = run_limited(&mut cmd, &self.limits)?;
         if truncated {
@@ -2420,6 +2434,66 @@ pub fn fabric_executable_digest(id: &str, sha256: &str) -> String {
 /// check judged): `{"path","sha256"}`.
 pub fn fabric_workspace_digest(rel_path: &str, bytes: &[u8]) -> String {
     acf1_digest(&[("path", rel_path), ("sha256", &sha256_hex(bytes))])
+}
+
+/// The `schema` value of a WorkspaceVersion identity object.
+pub const WORKSPACE_VERSION_SCHEMA: &str = "axon.workspace-version/1";
+
+/// One entry of a WorkspaceVersion manifest (B261, identity gap G8): a
+/// relative `/`-separated UTF-8 path, its mode (`100644` | `100755` |
+/// `120000`), content length and lowercase-hex sha256. Validating the path
+/// and the tree (traversal, links, quotas …) is the importer's job
+/// (`axon_fabric::workspace`); this is only the byte recipe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceManifestEntry {
+    pub path: String,
+    pub mode: &'static str,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// THE WorkspaceVersion manifest bytes (MiCode
+/// `docs/axon-support/WORKSPACE_VERSION_RECIPE.md` §3, shared with
+/// `micode-persist::workspace_version`): one
+/// `<mode> SP <size> SP <sha256> SP <path> LF` line per entry, sorted by the
+/// path's UTF-8 bytes; an empty tree is the empty byte string. It lives here,
+/// beside `acf1_canonical_bytes`, for the same reason: both sides of the
+/// cortex → fabric seam build it, and there must be one implementation.
+pub fn workspace_manifest_bytes(entries: &[WorkspaceManifestEntry]) -> Vec<u8> {
+    let mut sorted: Vec<&WorkspaceManifestEntry> = entries.iter().collect();
+    sorted.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+    let mut out = Vec::new();
+    for e in sorted {
+        out.extend_from_slice(e.mode.as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(e.size.to_string().as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(e.sha256.as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(e.path.as_bytes());
+        out.push(b'\n');
+    }
+    out
+}
+
+/// `acf1:` WorkspaceVersion reference of a manifest (recipe §4):
+/// `acf1_digest({"manifest_sha256": sha256(manifest), "schema": "axon.workspace-version/1"})`.
+pub fn workspace_version_ref(manifest: &[u8]) -> String {
+    acf1_digest(&[
+        ("manifest_sha256", &sha256_hex(manifest)),
+        ("schema", WORKSPACE_VERSION_SCHEMA),
+    ])
+}
+
+/// The WorkspaceVersion reference of a tree holding exactly one regular,
+/// non-executable file — the artifact a single-file check judges.
+pub fn single_file_workspace_version_ref(rel_path: &str, bytes: &[u8]) -> String {
+    workspace_version_ref(&workspace_manifest_bytes(&[WorkspaceManifestEntry {
+        path: rel_path.to_string(),
+        mode: "100644",
+        size: bytes.len() as u64,
+        sha256: sha256_hex(bytes),
+    }]))
 }
 
 impl CheckExecutor for FabricSubmitExecutor {

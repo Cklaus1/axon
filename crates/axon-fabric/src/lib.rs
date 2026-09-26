@@ -20,6 +20,7 @@ pub mod backend;
 pub mod grants;
 pub mod journal;
 pub mod submit;
+pub mod workspace;
 
 pub use grants::{GrantRegistry, ResolvedGrant};
 pub use journal::{

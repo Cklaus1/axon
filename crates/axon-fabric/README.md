@@ -85,6 +85,31 @@ linking this crate, because this crate depends on `axon-cortex`.
     `axon_tree_dirty_at_build: true`, so Fabric refuses this profile today**
     — until the operator signs a re-qualification (S3-6).
 
+* **`workspace`** (B261, v0.22 Stage 5): WorkspaceVersion — one identity for
+  a workspace TREE, byte-identical to MiCode's `axon.workspace-version/1`
+  recipe (`tests/fixtures/workspace_version_vector.json`, copied from MiCode
+  `docs/axon-support/fixtures/` at 09029360; the byte recipe itself is
+  `axon_cortex::runner::{workspace_manifest_bytes, workspace_version_ref}`).
+  Import refuses the whole tree on traversal, absolute paths, escaping
+  symlinks, devices/FIFOs/sockets, non-UTF-8 names, control characters,
+  duplicates, quota overflow (D11: 20 000 entries / 256 MiB / depth 32) and —
+  beyond the recipe — **namespace collisions** (equal after NFC + lowercase,
+  or a path that is both file and directory). Skipped top-level `.git` /
+  `.micode` are recorded as explicit omissions. The store
+  (`<state>/workspaces`, `--state`, default `<journal>.state`) is
+  content-addressed and write-once (fsynced temp + no-clobber rename); a
+  materialization re-verifies every blob and refuses an existing
+  destination. A `WorkspaceProjection` with no `version_ref` (a hash-only
+  observation) or an unpublished ref cannot be materialized (G28). Each trial
+  runs with its own `HOME` / `XDG_CACHE_HOME` / `CARGO_TARGET_DIR` under
+  `<state>/trial-caches/<sha256(trial_id)>`. `workspace_version_ref` may name
+  a published version (materialized privately per operation), the one-file
+  version of `argv[0]` (copied into the store first; the COPY is judged), or
+  the historical single-file digest (read in place). No GC (D11).
+  `axon-fabric workspace-import --state DIR --root DIR` publishes a tree.
+  Mode bits are no boundary for root: the store's integrity is re-hashing,
+  not permissions.
+
 `acf1:` identities (`executable_digest`, `workspace_digest`) delegate to the
 single canonicaliser `axon_cortex::runner::acf1_canonical_bytes`, which the
 cortex side builds its requests with (D-C3, fixed in Stage 2).

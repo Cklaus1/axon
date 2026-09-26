@@ -215,6 +215,7 @@ dependencies = [
  "axon-loop-contracts",
  "axon-os",
  "axon-vm",
+ "icu_normalizer",
  "libc",
  "ring",
  "serde",
