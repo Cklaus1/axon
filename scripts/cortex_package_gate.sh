@@ -159,7 +159,14 @@ for d in deviated:
 print(f"  {verified}/{len(listed)} files match ({len(deviated)} via a pinned deviation); {len(present)} present; "
       f"unlisted: {sorted(allowed_unlisted)} (the manifest itself) — both directions clean")
 PY
-[ $? -eq 0 ] || note_fail "package integrity (SHA256SUMS_v0_15.json)"
+INTEGRITY15=$?
+[ $INTEGRITY15 -eq 0 ] || note_fail "package integrity (SHA256SUMS_v0_15.json)"
+# The package's Python runs only on a tree whose bytes were just verified.
+# Measured (v0.22 Stage 6, donor lesson 90c4c616): with integrity merely
+# RECORDED as failed, a line inserted into tools/validate_package.py still
+# executed with the gate's privileges before the verdict. Abort instead: an
+# integrity failure means no package code runs at all.
+[ $INTEGRITY15 -eq 0 ] || abort "v0.15 integrity failed — refusing to execute code from an unverified package (no package code was executed)"
 
 echo "── cortex: the package's own validator (tools/validate_package.py) ─"
 # --report is NOT optional. The validator's default report path is
