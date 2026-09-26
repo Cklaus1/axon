@@ -35,6 +35,10 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LAUNCH="$REPO/scripts/fc_linux_profile.sh"
 FIX="$REPO/profiles/linux-microvm/fixtures"
+# Every launch carries a capability policy (fc_linux_profile.sh --policy): the
+# guest refuses to run a workload without one (ACF-G25).
+POL_IO="$FIX/policy-io.json"
+POL_EXEC="$FIX/policy-io-exec.json"
 EVIDENCE_DIR="${B263_EVIDENCE_DIR:-${CARGO_TARGET_DIR:-$REPO/target}/b263-evidence}"
 KEEP=0
 while [[ $# -gt 0 ]]; do
@@ -117,7 +121,7 @@ trap 'cleanup_canaries; pkill -f "b263-listener-$TS" 2>/dev/null; [[ $KEEP == 1 
 say "(a) boot and run hello.ax"
 A="$WORK/a"
 AXON_AI_API_KEY="$ENV_TOKEN" ANTHROPIC_API_KEY="$ENV_TOKEN" \
-    "$LAUNCH" --program "$FIX/hello.ax" --out "$A" --timeout-s 60 >/dev/null 2>&1; RC_A=$?
+    "$LAUNCH" --program "$FIX/hello.ax" --policy "$POL_IO" --out "$A" --timeout-s 60 >/dev/null 2>&1; RC_A=$?
 if [[ $RC_A == 0 ]] && cmp -s "$A/out/stdout" "$FIX/hello.expected"; then
     record a1_boot_runs_ax_expected_stdout PASS "exit 0; stdout == fixtures/hello.expected ($(sha256sum < "$A/out/stdout" | cut -c1-16)); wall $(jq_r "$A/result.json" wall_ms) ms" "ACF-G23,G03-r22-physical-isolation"
 else
@@ -207,7 +211,7 @@ sed -e "s/@TA@/$TA/; s/@TB@/$TB/; s/@EA@/$EA/; s/@EB@/$EB/; s/@WA@/$WA/; s/@WB@/
 echo "$WS_TOKEN" > "$WORK/ws_token.txt"
 B="$WORK/b"
 AXON_AI_API_KEY="$ENV_TOKEN" ANTHROPIC_API_KEY="$ENV_TOKEN" OPENAI_API_KEY="$ENV_TOKEN" \
-    "$LAUNCH" --program "$FIX/probe.ax" --out "$B" --timeout-s 120 \
+    "$LAUNCH" --program "$FIX/probe.ax" --policy "$POL_EXEC" --out "$B" --timeout-s 120 \
     --put "$WORK/probe.sh:job/probe.sh" --put "$WORK/ws_token.txt:job/ws_token.txt" >/dev/null 2>&1; RC_B=$?
 sleep 1
 GUEST_CONN=$(wc -l < "$CONN_LOG")
@@ -291,7 +295,7 @@ fi
 say "(d) memory: host cgroup limit below guest RAM"
 echo 300 > "$WORK/mb300"
 D1="$WORK/d1"
-"$LAUNCH" --program "$FIX/mem.ax" --out "$D1" --mem-mib 512 --cg-mem-max $((160*1024*1024)) \
+"$LAUNCH" --program "$FIX/mem.ax" --policy "$POL_IO" --out "$D1" --mem-mib 512 --cg-mem-max $((160*1024*1024)) \
     --put "$WORK/mb300:job/mb.txt" --timeout-s 90 >/dev/null 2>&1; RC_D1=$?
 OOMK="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cgroup_final"]["memory.events"]["oom_kill"])' "$D1/result.json" 2>/dev/null)"
 PEAK="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cgroup_final"]["memory.peak"])' "$D1/result.json" 2>/dev/null)"
@@ -299,7 +303,7 @@ TOUCHED_D1="$(grep -c MEM-TOUCHED "$D1/out/stdout" 2>/dev/null)"
 # positive control: same program, 16 MiB, same limits -> completes
 echo 16 > "$WORK/mb16"
 D0="$WORK/d0"
-"$LAUNCH" --program "$FIX/mem.ax" --out "$D0" --mem-mib 512 --cg-mem-max $((160*1024*1024)) \
+"$LAUNCH" --program "$FIX/mem.ax" --policy "$POL_IO" --out "$D0" --mem-mib 512 --cg-mem-max $((160*1024*1024)) \
     --put "$WORK/mb16:job/mb.txt" --timeout-s 90 >/dev/null 2>&1; RC_D0=$?
 if [[ $RC_D0 == 0 ]] && grep -q "MEM-TOUCHED 16 MiB" "$D0/out/stdout" \
    && [[ $RC_D1 == 21 && -n "$OOMK" && "$OOMK" -ge 1 && "${TOUCHED_D1:-0}" == 0 && -n "$PEAK" && "$PEAK" -le $((160*1024*1024)) ]]; then
@@ -313,7 +317,7 @@ R_D1="$(residue "$(jq_r "$D1/result.json" id)")"
 
 # guest RAM bound: guest has 128 MiB, asks for 300 MiB -> guest-side OOM, workload fails
 D2="$WORK/d2"
-"$LAUNCH" --program "$FIX/mem.ax" --out "$D2" --mem-mib 128 \
+"$LAUNCH" --program "$FIX/mem.ax" --policy "$POL_IO" --out "$D2" --mem-mib 128 \
     --put "$WORK/mb300:job/mb.txt" --timeout-s 90 >/dev/null 2>&1; RC_D2=$?
 WX="$(jq_r "$D2/result.json" workload_exit)"
 GOOM="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("oom_kills",""))' "$D2/out/guest.json" 2>/dev/null)"
@@ -326,7 +330,7 @@ fi
 # host pids bound on the VMM: pids.max below what Firecracker needs -> VMM cannot start its vcpu thread
 say "(d) pids: host cgroup pids.max"
 D4="$WORK/d4"
-"$LAUNCH" --program "$FIX/hello.ax" --out "$D4" --cg-pids-max 1 --timeout-s 30 >/dev/null 2>&1; RC_D4=$?
+"$LAUNCH" --program "$FIX/hello.ax" --policy "$POL_IO" --out "$D4" --cg-pids-max 1 --timeout-s 30 >/dev/null 2>&1; RC_D4=$?
 PEV="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cgroup_final"]["pids.events"]["max"])' "$D4/result.json" 2>/dev/null)"
 if [[ $RC_D4 != 0 && -n "$PEV" && "$PEV" -ge 1 ]] && ! grep -q "B263-START" "$D4/serial.log"; then
     record d4_host_pids_limit_enforced_on_vmm PASS "pids.max=1: the jailed VMM's thread creation refused by the host cgroup (pids.events max=$PEV), guest never started (rc=$RC_D4); pids.max=16 control = run (a) (pids.peak=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cgroup_final"]["pids.peak"])' "$A/result.json"))" "ACF-G27"
@@ -340,7 +344,7 @@ fi
 say "(e) wall-clock kill of a looping guest"
 E="$WORK/e"
 T0=$(date +%s%N)
-"$LAUNCH" --program "$FIX/loop.ax" --out "$E" --timeout-s 8 --cg-cpu-max "50000 100000" >/dev/null 2>&1; RC_E=$?
+"$LAUNCH" --program "$FIX/loop.ax" --policy "$POL_IO" --out "$E" --timeout-s 8 --cg-cpu-max "50000 100000" >/dev/null 2>&1; RC_E=$?
 T1=$(date +%s%N)
 EL=$(( (T1 - T0) / 1000000 ))
 EID="$(jq_r "$E/result.json" id)"
@@ -368,7 +372,7 @@ fi
 # ── (f) crash: SIGKILL the VMM mid-run ───────────────────────────────────────
 say "(f) SIGKILL firecracker mid-run"
 F="$WORK/f"
-"$LAUNCH" --program "$FIX/loop.ax" --out "$F" --timeout-s 60 >/dev/null 2>&1 &
+"$LAUNCH" --program "$FIX/loop.ax" --policy "$POL_IO" --out "$F" --timeout-s 60 >/dev/null 2>&1 &
 LPID=$!
 for _ in $(seq 100); do [[ -f "$F/launch.json" ]] && grep -q B263-START "$F/serial.log" 2>/dev/null && break; sleep 0.2; done
 FPID="$(jq_r "$F/launch.json" vmm_pid)"
@@ -386,7 +390,7 @@ fi
 # supervisor itself killed: SIGKILL the launcher mid-run -> resources orphaned -> --reap
 say "(f) SIGKILL the launcher (supervisor death) then reap"
 F2="$WORK/f2"
-"$LAUNCH" --program "$FIX/loop.ax" --out "$F2" --timeout-s 60 >/dev/null 2>&1 &
+"$LAUNCH" --program "$FIX/loop.ax" --policy "$POL_IO" --out "$F2" --timeout-s 60 >/dev/null 2>&1 &
 LPID2=$!
 for _ in $(seq 100); do [[ -f "$F2/launch.json" ]] && grep -q B263-START "$F2/serial.log" 2>/dev/null && break; sleep 0.2; done
 F2ID="$(jq_r "$F2/launch.json" id)"
@@ -405,7 +409,7 @@ fi
 INJ_FAIL=""
 for pt in after-chroot after-netns after-launch; do
     FI="$WORK/inj-$pt"
-    FC_PROFILE_INJECT_FAIL=$pt "$LAUNCH" --program "$FIX/loop.ax" --out "$FI" --timeout-s 30 >/dev/null 2>&1; rc=$?
+    FC_PROFILE_INJECT_FAIL=$pt "$LAUNCH" --program "$FIX/loop.ax" --policy "$POL_IO" --out "$FI" --timeout-s 30 >/dev/null 2>&1; rc=$?
     iid="$(jq_r "$FI/result.json" id)"
     acq="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["cleanup"]["acquired"]))' "$FI/result.json" 2>/dev/null)"
     left="$(residue "$iid")"
@@ -445,16 +449,145 @@ SW="$WORK/swap"; mkdir -p "$SW"
 cp "$REPO/dist/guest-linux/vmlinux" "$SW/vmlinux"; cp "$REPO/dist/guest-linux/rootfs.sqfs" "$SW/rootfs.sqfs"
 printf 'X' | dd of="$SW/rootfs.sqfs" bs=1 seek=4096 conv=notrunc 2>/dev/null
 G3="$WORK/g3"
-"$LAUNCH" --program "$FIX/hello.ax" --out "$G3" --artifacts-dir "$SW" --timeout-s 30 >/dev/null 2>&1; RC_G3=$?
+"$LAUNCH" --program "$FIX/hello.ax" --policy "$POL_IO" --out "$G3" --artifacts-dir "$SW" --timeout-s 30 >/dev/null 2>&1; RC_G3=$?
 if [[ $RC_G3 == 22 && "$(jq_r "$G3/result.json" status)" == launch-refused && ! -f "$G3/serial.log" && "$(jq_r "$G3/result.json" acquired)" == "[]" ]]; then
     record g3_swapped_rootfs_refused_before_launch PASS "1-byte-modified rootfs: refused (rc 22), no VMM started, nothing acquired" "ACF-G24"
 else
     record g3_swapped_rootfs_refused_before_launch FAIL "rc=$RC_G3 status=$(jq_r "$G3/result.json" status)" "ACF-G24"
 fi
 
+# engine swap: a firecracker or jailer differing from the manifest's engine pin
+# must refuse before acquiring anything (S3-2). The swapped copy is otherwise
+# a working binary; only one byte differs.
+PIN_FC="$(jq_r "$MANIFEST" engine.firecracker_sha256)"; PIN_JL="$(jq_r "$MANIFEST" engine.jailer_sha256)"
+G4_OK=1; G4_DET=""
+for which in fc jailer; do
+    SW4="$WORK/swap-$which"; mkdir -p "$SW4"
+    cp /usr/local/bin/firecracker "$SW4/firecracker"; cp /usr/local/bin/jailer "$SW4/jailer"
+    if [[ $which == fc ]]; then T4="$SW4/firecracker"; else T4="$SW4/jailer"; fi
+    SZ=$(stat -c %s "$T4")
+    printf 'X' | dd of="$T4" bs=1 seek=$(( SZ - 1 )) conv=notrunc 2>/dev/null
+    G4="$WORK/g4-$which"
+    "$LAUNCH" --program "$FIX/hello.ax" --policy "$POL_IO" --out "$G4" --fc-bin "$SW4/firecracker" \
+        --jailer-bin "$SW4/jailer" --timeout-s 30 >/dev/null 2>&1; rc=$?
+    if [[ $rc == 22 && "$(jq_r "$G4/result.json" status)" == launch-refused && ! -f "$G4/serial.log" \
+          && "$(jq_r "$G4/result.json" acquired)" == "[]" && "$(jq_r "$G4/result.json" reason)" == *"engine digest"* \
+          && -z "$(residue "$(jq_r "$G4/result.json" id)")" ]]; then
+        G4_DET="$G4_DET $which:refused(rc 22, nothing acquired)"
+    else
+        G4_OK=0; G4_DET="$G4_DET $which:BAD(rc=$rc status=$(jq_r "$G4/result.json" status) reason=$(jq_r "$G4/result.json" reason))"
+    fi
+done
+# positive control: the pinned engine is the one run (a) used, and it ran
+if [[ $G4_OK == 1 && "$PIN_FC" =~ ^[0-9a-f]{64}$ && "$PIN_FC" == "$(sha256sum /usr/local/bin/firecracker | cut -d' ' -f1)" \
+      && "$PIN_JL" == "$(sha256sum /usr/local/bin/jailer | cut -d' ' -f1)" && $RC_A == 0 \
+      && "$(jq_r "$A/result.json" engine.bound)" == true ]]; then
+    record g4_swapped_engine_refused_before_launch PASS "1-byte-modified copy of each engine binary:$G4_DET, no serial.log; control: the pinned engine (manifest engine.firecracker_sha256 ${PIN_FC:0:16}) ran (a), and its chroot/running copy was re-verified" "ACF-G24,G13-r22-profile-qualification"
+else
+    record g4_swapped_engine_refused_before_launch FAIL "$G4_DET pin_fc=$PIN_FC a_rc=$RC_A a_engine_bound=$(jq_r "$A/result.json" engine.bound)" "ACF-G24"
+fi
+
+# ── (x1) guest policy channel: ACF-G25 ────────────────────────────────────────
+# The host passes the policy as one kernel-cmdline word; axon-guest-init refuses
+# the workload unless it constrains something. Each refusal is asserted at BOTH
+# layers: the launcher refuses before acquiring anything, AND — with the
+# launcher's check bypassed by a test hook — the guest itself refuses: it got
+# as far as B263-START, yet the workload never ran (no marker line, no file it
+# writes). guest-init.sh opens /out/stdout for the workload before exec, so the
+# file exists; what must hold is that nothing was written to it.
+say "(x1) guest policy channel"
+X0="$WORK/x0"
+"$LAUNCH" --program "$FIX/policy_probe.ax" --policy "$POL_IO" --out "$X0" --timeout-s 60 >/dev/null 2>&1; RC_X0=$?
+X0_OK=0
+[[ $RC_X0 == 0 && -f "$X0/out/ran.txt" ]] && grep -q X1-WORKLOAD-RAN "$X0/out/stdout" \
+    && [[ "$(jq_r "$X0/result.json" policy.bound)" == true && "$(jq_r "$X0/result.json" admissible)" == true ]] && X0_OK=1
+# launcher_refuses DIR [launcher args...] -> 0 when refused before launch, nothing acquired
+launcher_refuses() {
+    local d="$1"; shift
+    "$LAUNCH" --program "$FIX/policy_probe.ax" --out "$d" --timeout-s 30 "$@" >/dev/null 2>&1; local rc=$?
+    [[ $rc == 22 && "$(jq_r "$d/result.json" status)" == launch-refused && ! -f "$d/serial.log" \
+       && "$(jq_r "$d/result.json" acquired)" == "[]" ]]
+}
+# guest_refuses DIR WORD EXPECTED_SERIAL_REPORT STDERR_NEEDLE -> 0 when the guest refused
+guest_refuses() {
+    local d="$1" word="$2" rep="$3" needle="$4"
+    FC_PROFILE_TEST_POLICY_WORD="$word" "$LAUNCH" --program "$FIX/policy_probe.ax" --out "$d" --timeout-s 60 >/dev/null 2>&1; local rc=$?
+    [[ $rc == 25 && "$(jq_r "$d/result.json" status)" == policy-unbound && "$(jq_r "$d/result.json" admissible)" == false ]] || return 1
+    grep -q B263-START "$d/serial.log" || return 1
+    [[ "$(jq_r "$d/result.json" policy.serial_report)" == "$rep" ]] || return 1
+    [[ -f "$d/out/stdout" && ! -s "$d/out/stdout" && ! -e "$d/out/ran.txt" ]] || return 1
+    grep -q "REFUSING to start the guest" "$d/out/stderr" && grep -qF -- "$needle" "$d/out/stderr" || return 1
+    [[ "$(jq_r "$d/result.json" workload_exit)" == 1 ]]
+}
+x1_row() {  # x1_row NAME LAUNCHER_OK GUEST_OK DETAIL
+    if [[ $X0_OK == 1 && $2 == 0 && $3 == 0 ]]; then
+        record "$1" PASS "$4; control: the same program under a valid policy ran (marker + ran.txt, policy bound)" "ACF-G25"
+    else
+        record "$1" FAIL "control=$X0_OK(rc $RC_X0) launcher_refused=$2 guest_refused=$3 — $4" "ACF-G25"
+    fi
+}
+launcher_refuses "$WORK/x1a-l"; LA=$?
+guest_refuses "$WORK/x1a-g" "" "absent" "policy ABSENT"; GA=$?
+x1_row x1a_policy_absent_workload_never_runs $LA $GA "no --policy: launcher refused (rc 22, nothing acquired); cmdline with no policy word: guest reported 'B263-POLICY absent', axon-guest-init refused, stdout empty, ran.txt absent, run inadmissible (rc 25)"
+printf '{}' > "$WORK/pol-empty.json"
+launcher_refuses "$WORK/x1b-l" --policy "$WORK/pol-empty.json"; LB=$?
+guest_refuses "$WORK/x1b-g" "axon.policy=$(printf '{}' | base64 -w0)" "sha=$(printf '{}' | sha256sum | cut -d' ' -f1)" "CONSTRAINS NOTHING"; GB=$?
+x1_row x1b_policy_empty_object_workload_never_runs $LB $GB "policy '{}': launcher refused (constrains nothing); guest decoded it (serial sha of '{}'), axon-guest-init refused CONSTRAINS NOTHING, workload never ran"
+printf '{"schema":"axon-vm-mmds/1","allowed_effects":["IO"]' > "$WORK/pol-malformed.json"
+python3 -c 'import json; print(json.dumps({"schema":"axon-vm-mmds/1","allowed_effects":["IO"],"principal":"p"*2100}))' > "$WORK/pol-long.json"
+launcher_refuses "$WORK/x1c-l" --policy "$WORK/pol-malformed.json"; LC=$?
+launcher_refuses "$WORK/x1c-l2" --policy "$WORK/pol-long.json"; LC2=$?
+[[ $LC == 0 && $LC2 == 0 && "$(jq_r "$WORK/x1c-l2/result.json" reason)" == *"cmdline would be"* ]] || LC=1
+guest_refuses "$WORK/x1c-g" "axon.policy=@@not-base64@@" "undecodable" "MALFORMED BASE64"; GC=$?
+x1_row x1c_policy_malformed_workload_never_runs $LC $GC "truncated JSON and an over-long (cmdline > 2046 B, possibly truncated) policy: launcher refused both; non-base64 word on the cmdline: guest reported 'undecodable', axon-guest-init refused MALFORMED BASE64, workload never ran"
+# x1d: the host embeds B while recording A (test hook) -> the guest's report
+# differs from what the host recorded -> the run is INADMISSIBLE. The guest
+# cannot know which policy the host meant, so B (a valid policy) does run
+# in-guest; what is asserted is that no result is admitted from it.
+python3 -c 'import json; print(json.dumps({"schema":"axon-vm-mmds/1","run_id":"x1d-other","allowed_effects":["IO"],"budget_tokens":0}))' > "$WORK/pol-other.json"
+X1D="$WORK/x1d"
+FC_PROFILE_TEST_EMBED_POLICY="$WORK/pol-other.json" "$LAUNCH" --program "$FIX/policy_probe.ax" --policy "$POL_IO" --out "$X1D" --timeout-s 60 >/dev/null 2>&1; RC_X1D=$?
+"$LAUNCH" --verify-result "$X1D" >/dev/null 2>&1; RC_X1DV=$?
+if [[ $X0_OK == 1 && $RC_X1D == 25 && "$(jq_r "$X1D/result.json" status)" == policy-unbound && "$(jq_r "$X1D/result.json" admissible)" == false \
+      && "$(jq_r "$X1D/result.json" policy.serial_sha256)" == "$(sha256sum < "$WORK/pol-other.json" | cut -d' ' -f1)" \
+      && "$(jq_r "$X1D/result.json" policy_sha256)" == "$(sha256sum < "$POL_IO" | cut -d' ' -f1)" && $RC_X1DV == 23 ]]; then
+    record x1d_policy_serial_sha_mismatch_inadmissible PASS "host recorded sha(policy-io.json), guest reported sha of a different embedded policy: status policy-unbound (rc 25), admissible=false, --verify-result refuses (rc 23). NOTE: the embedded policy is valid, so the workload DID run in-guest under it; the property asserted is non-admission" "ACF-G25"
+else
+    record x1d_policy_serial_sha_mismatch_inadmissible FAIL "rc=$RC_X1D status=$(jq_r "$X1D/result.json" status) admissible=$(jq_r "$X1D/result.json" admissible) verify=$RC_X1DV" "ACF-G25"
+fi
+# x1e: the ceiling is ENFORCED, not merely delivered. `FS` is not a separate
+# effect axis in Axon (write_file is IO), so the spawn axis is used: IO never
+# implies Exec. A policy naming `FS` is refused by the launcher, not ignored.
+X1E0="$WORK/x1e-io"; X1E1="$WORK/x1e-exec"
+"$LAUNCH" --program "$FIX/exec_probe.ax" --policy "$POL_IO" --out "$X1E0" --timeout-s 60 >/dev/null 2>&1; RC_E0=$?
+"$LAUNCH" --program "$FIX/exec_probe.ax" --policy "$POL_EXEC" --out "$X1E1" --timeout-s 60 >/dev/null 2>&1; RC_E1=$?
+printf '{"schema":"axon-vm-mmds/1","allowed_effects":["IO","FS"]}' > "$WORK/pol-fs.json"
+launcher_refuses "$WORK/x1e-fs" --policy "$WORK/pol-fs.json"; LFS=$?
+if [[ $RC_E0 == 10 && "$(jq_r "$X1E0/result.json" workload_exit)" == 8 && "$(jq_r "$X1E0/result.json" admissible)" == true \
+      && ! -e "$X1E0/out/exec_ran.txt" ]] && grep -q X1E-BEGIN "$X1E0/out/stdout" && ! grep -q X1E-END "$X1E0/out/stdout" \
+   && [[ $RC_E1 == 0 && -f "$X1E1/out/exec_ran.txt" ]] && grep -q spawned "$X1E1/out/stdout" && grep -q X1E-END "$X1E1/out/stdout" \
+   && [[ $LFS == 0 ]]; then
+    record x1e_effect_ceiling_enforced_in_guest PASS "allowed_effects=[IO]: the spawn was a SandboxViolation (workload exit 8), exec_ran.txt never written; [IO,Exec] (positive control): spawn ran, file written, exit 0; allowed_effects naming 'FS' (not an Axon effect) refused by the launcher" "ACF-G25"
+else
+    record x1e_effect_ceiling_enforced_in_guest FAIL "io: rc=$RC_E0 wexit=$(jq_r "$X1E0/result.json" workload_exit) file=$([[ -e $X1E0/out/exec_ran.txt ]] && echo present); io+exec: rc=$RC_E1; fs-name refused=$LFS" "ACF-G25"
+fi
+# ── (x2) scope: ACF-G26 closes as "unsupported axis refuses" (operator default
+# D8, provisional). Path/host projection into the guest is NOT implemented;
+# this asserts only that a request for it is REFUSED rather than dropped (the
+# guest's parser ignores unknown keys, so a pass-through would read as
+# enforced). It is not, and must not be read as, path enforcement.
+printf '{"schema":"axon-vm-mmds/1","allowed_effects":["IO"],"fs_write":["/work/out/"]}' > "$WORK/pol-path.json"
+printf '{"schema":"axon-vm-mmds/1","allowed_effects":["IO","Net"],"net_hosts":["api.example.com"]}' > "$WORK/pol-host.json"
+launcher_refuses "$WORK/x2-path" --policy "$WORK/pol-path.json"; LP=$?
+launcher_refuses "$WORK/x2-host" --policy "$WORK/pol-host.json"; LH=$?
+if [[ $LP == 0 && $LH == 0 && "$(jq_r "$WORK/x2-path/result.json" reason)" == *"unsupported axis"* \
+      && "$(jq_r "$WORK/x2-host/result.json" reason)" == *"unsupported axis"* ]]; then
+    record x2_scope_unsupported_axis_refuses PASS "UNSUPPORTED AXIS REFUSES (ACF-G26 wording, operator default D8): a path-scoped (fs_write) and a host-scoped (net_hosts) policy were each refused before launch (rc 22, nothing acquired). Path/host scope is NOT projected or enforced in this profile — this row is a refusal, not path enforcement" "ACF-G26"
+else
+    record x2_scope_unsupported_axis_refuses FAIL "path refused=$LP host refused=$LH reason=$(jq_r "$WORK/x2-path/result.json" reason)" "ACF-G26"
+fi
+
 # ── BLOCKED: required by the gates, not testable honestly here ───────────────
-record x1_guest_policy_channel BLOCKED "ACF-G25 needs a boot-policy protocol (absent/empty/malformed/mismatched policy fails closed). This profile deliberately has none (offline, no MMDS; axon-guest-init not included); defining one belongs to the axon-vm/Fabric owner. Not substituted." "ACF-G25"
-record x2_scope_preservation BLOCKED "ACF-G26 needs a path/host-specific grant projected into VM policy; depends on the same missing policy channel. The profile is all-or-nothing (workspace rw, no net). Not substituted." "ACF-G26"
 record x3_l0_hypervisor_boundary BLOCKED "Host is WSL2 with nested KVM under Hyper-V (operator decision D2). The L0 hypervisor and the WSL2 utility VM are outside the qualified boundary; no assertion here covers a guest escape through L0/L1." "G03-r22-physical-isolation"
 record x4_trusted_evidence_issuer BLOCKED "G13-r22-profile-qualification requires binding to a TRUSTED evidence issuer. This evidence is produced and signed by nobody but the invoking root shell; no issuer key exists in this repo. The record is unsigned." "G13-r22-profile-qualification"
 
