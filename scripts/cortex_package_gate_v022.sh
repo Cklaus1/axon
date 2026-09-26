@@ -19,13 +19,15 @@
 #      code change, not a silent regeneration.
 #      Any failure here ABORTS before a single line of package code runs.
 #
-#   2. HONESTY, also stdlib only: all 504 proposed gates stay NOT_RUN, all 287
-#      work packages stay "Not started", and the three runtime-qualification
-#      booleans in integration/V022_RUNTIME_QUALIFICATION.json stay false. The
-#      package makes no execution claim and this repo must not graft one onto
-#      it. Repo-side execution results belong in a governance registry (the
-#      v0.15 mechanism), not in the vendored bytes — which are hash-pinned
-#      anyway, so this is a second, readable statement of the same fact.
+#   2. HONESTY, stdlib only, repo code only: a gate may leave NOT_RUN and a
+#      work package leave "Not started" only with a row in
+#      governance/cortex_gate_execution_registry.json naming an existing script
+#      that an existing invoker is grepped to run — the v0.15 rule, now shared
+#      code (scripts/cortex_honesty_invariant.py), with every row re-validated
+#      each run. The three runtime-qualification booleans in
+#      integration/V022_RUNTIME_QUALIFICATION.json stay false. Repo-side
+#      execution belongs in the registry, never in the vendored bytes (which
+#      are hash-pinned, and whose own validator rejects any non-NOT_RUN row).
 #
 #   3. The package's own validator (tools/validate_package.py), READ-ONLY:
 #      --output goes to the target dir, never --refresh-hashes, python -B with
@@ -70,6 +72,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 SUMS_NAME="SHA256SUMS_v0_22.json"
+REGISTRY="governance/cortex_gate_execution_registry.json"
 
 # Pins — measured on the vendored copy (docs/axon_cortex_v0_22, 2026-09-24).
 PIN_SUMS="b19c0401d1d8d38af74afc71b08b413204bca13c2686cda139199db97e39d891"
@@ -93,6 +96,20 @@ NAME=cortex_package_gate_v022
 fail_now() { echo "$NAME: FAIL — $1"; exit 1; }
 FAILURES=()
 note_fail() { echo "   ↳ FAILED: $1"; FAILURES+=("$1"); }
+
+# Self-check: the package's hash-rewriting tools may not appear as COMMANDS in
+# this script, in any spelling argparse accepts. Neither tool sets
+# allow_abbrev=False, so an unambiguous PREFIX is the flag (measured on the
+# vendored tools): validate_package.py has --root and --refresh-hashes, so
+# `--re`, `--ref`, `--refr` … all reseal SHA256SUMS; package_views.py has
+# --root and --write, so `--w` rewrites four hash-listed views; and
+# tools/run_review_tests.py rewrites review/TEST_LOG.txt + TEST_RESULTS.json on
+# every invocation. The sums pin catches the RESULT on the next run; this makes
+# the script refuse to be the thing that does it. Patterns are split so this
+# line does not match itself; comment lines are exempt.
+if grep -nE '^[^#]*(-''-re[a-z-]*|run_review''_tests|package_views\.py[^#]*-''-w[a-z-]*)' "$0" >&2; then
+  fail_now "this script invokes a tool that rewrites hash-listed package files (see the line above)"
+fi
 
 command -v python3 >/dev/null 2>&1 || fail_now "python3 not found (required to verify the package)"
 [ -d "$PKG" ] || fail_now "package root missing: $PKG"
@@ -185,26 +202,99 @@ then
 fi
 
 # ── 2. honesty invariant (stdlib only) ───────────────────────────────────────
-echo "── cortex v0.22: honesty invariant (NOT_RUN / Not started / unqualified) ──"
-python3 -B - "$PKG" "$MIN_GATES" "$MIN_TASKS" "$MIN_SPECS" <<'PY' || note_fail "honesty invariant"
+echo "── cortex v0.22: honesty invariant (NOT_RUN unless something here runs it; unqualified) ──"
+# (a) The runtime-qualification ledger stays unqualified and the spec count
+#     holds its floor. Stdlib only.
+python3 -B - "$PKG" "$MIN_SPECS" <<'PY' || note_fail "honesty invariant (runtime qualification / spec floor)"
 import json, os, sys
-pkg, min_gates, min_tasks, min_specs = sys.argv[1], *map(int, sys.argv[2:5])
+pkg, min_specs = sys.argv[1], int(sys.argv[2])
 ld = lambda n: json.load(open(os.path.join(pkg, n), encoding="utf-8"))
-gates, tasks, specs = ld("gate_manifest.json")["gates"], ld("task_manifest.json")["tasks"], ld("spec_manifest.json")["specs"]
-q = ld("integration/V022_RUNTIME_QUALIFICATION.json")
+specs, q = ld("spec_manifest.json")["specs"], ld("integration/V022_RUNTIME_QUALIFICATION.json")
 err = []
-if len(gates) < min_gates: err.append(f"NON-VACUITY: {len(gates)} gates < {min_gates}")
-if len(tasks) < min_tasks: err.append(f"NON-VACUITY: {len(tasks)} tasks < {min_tasks}")
 if len(specs) < min_specs: err.append(f"NON-VACUITY: {len(specs)} specs < {min_specs}")
-err += [f"gate {g.get('id')}: product_result={g.get('product_result')!r}" for g in gates if g.get("product_result") != "NOT_RUN"]
-err += [f"task {t.get('id')}: status={t.get('status')!r}" for t in tasks if t.get("status") != "Not started"]
 for k in ("engineering_qualified", "policy_activated", "measured_improvement_supported"):
     if q.get(k) is not False: err.append(f"V022_RUNTIME_QUALIFICATION.{k} = {q.get(k)!r}, must be false")
 if q.get("live_evidence"): err.append("V022_RUNTIME_QUALIFICATION.live_evidence is non-empty")
+if q.get("qualified_profiles"): err.append("V022_RUNTIME_QUALIFICATION.qualified_profiles is non-empty")
 if err:
-    print("  honesty invariant VIOLATED:"); [print("   ", e) for e in err[:20]]; sys.exit(1)
-print(f"  {len(gates)} gates NOT_RUN, {len(tasks)} tasks Not started, {len(specs)} specs; qualification booleans false")
+    print("  honesty invariant VIOLATED:"); [print("   ", e) for e in err]; sys.exit(1)
+print(f"  {len(specs)} specs; runtime qualification booleans false, no live evidence, no qualified profile")
 PY
+# (b) The v0.15 registry rule, shared code (scripts/cortex_honesty_invariant.py):
+#     a gate off NOT_RUN / a task off "Not started" needs a registry row naming
+#     an existing script that an existing invoker greps as invoked, and EVERY
+#     row is re-validated each run. Before Stage 6 this script asserted the
+#     constants but never read the registry, so a row vouching for an r22 gate
+#     through a script nothing runs passed here (measured).
+[ -f "$REGISTRY" ] || fail_now "execution registry missing: $REGISTRY"
+python3 -B scripts/cortex_honesty_invariant.py --pkg "$PKG" --execution-registry "$REGISTRY" \
+  --min-gates "$MIN_GATES" --min-tasks "$MIN_TASKS" \
+  --also-known docs/axon_cortex_v0_15/axon-cortex-build-v0_15 \
+  || note_fail "honesty invariant (gate_manifest / task_manifest vs $REGISTRY)"
+
+# ── 2b. pack coherence the package validator does not check (stdlib) ─────────
+# G00-r22-pack-integrity asks that "every new task/gate has a source-derived or
+# explicitly proposed rationale and execution recipe". tools/validate_package.py
+# checks the manifests, owner exports, dependency closures, generated views,
+# parent bytes and Fabric bytes (stage 3), but NOT this clause: it never reads
+# a requirement's `basis` or the acceptance text in build/WORK_PACKAGES_V022.md.
+# It trips on such an edit only INCIDENTALLY (stale AXON_CORTEX_MASTER.md view,
+# owner-export digest), and both are regenerable. Measured on a scratch copy:
+# B284's acceptance line for G00-r22-pack-integrity deleted AND B284's basis
+# blanked, then the owner-export lock re-digested, the views regenerated
+# (package_views.py --write), the sums resealed and the pins moved — validator
+# PASS, 567-test suite PASS, gate PASS. So it is checked here: each of the 32 r22 work
+# packages has a requirement row with a non-empty basis and a WORK_PACKAGES
+# section carrying a numbered implementation sequence (the recipe) and, for
+# every gate target, the gate's manifest text verbatim; every r22 gate is owned
+# by exactly such a section.
+echo "── cortex v0.22: pack coherence (every r22 task/gate has rationale + recipe) ──"
+python3 -B - "$PKG" <<'PY' || note_fail "pack coherence (r22 rationale / execution recipe)"
+import json, os, re, sys
+pkg = sys.argv[1]
+ld = lambda n: json.load(open(os.path.join(pkg, n), encoding="utf-8"))
+gd = {g["id"]: g for g in ld("gate_manifest.json")["gates"]}
+new = {t["id"]: t for t in ld("integration/V022_WORK_PACKAGES.json")["tasks"]}
+reqs = ld("integration/V022_REQUIREMENTS.json")["requirements"]
+wp = open(os.path.join(pkg, "build/WORK_PACKAGES_V022.md"), encoding="utf-8").read()
+sections = {m.group(1): m for m in re.finditer(r"^## (B\d+) — .*$", wp, re.M)}
+starts = sorted(m.start() for m in sections.values()) + [len(wp)]
+body = {tid: wp[m.start():starts[starts.index(m.start()) + 1]] for tid, m in sections.items()}
+err, covered = [], set()
+if len(new) < 32: err.append(f"NON-VACUITY: {len(new)} r22 work packages < 32")
+basis = {}
+for r in reqs: basis.setdefault(r.get("task"), []).append((r.get("basis") or "").strip())
+for tid, t in sorted(new.items()):
+    if not basis.get(tid) or not all(basis[tid]): err.append(f"{tid}: requirement row missing or empty `basis` (rationale)")
+    sec = body.get(tid)
+    if sec is None: err.append(f"{tid}: no '## {tid} — …' section in build/WORK_PACKAGES_V022.md"); continue
+    rec = sec.split("### Implementation sequence", 1)
+    if len(rec) < 2 or not re.search(r"^1\. \S", rec[1].split("\n### ", 1)[0], re.M):
+        err.append(f"{tid}: no numbered '### Implementation sequence' (execution recipe)")
+    for gid in t["gate_targets"]:
+        g = gd.get(gid)
+        if g is None: err.append(f"{tid}: gate target {gid} not in gate_manifest.json"); continue
+        if f"**{gid}** — {g['description']}" not in sec:
+            err.append(f"{tid}: acceptance line for {gid} missing or differs from the manifest text")
+        else: covered.add(gid)
+r22 = {g for g in gd if "-r22-" in g}
+for gid in sorted(r22 - covered): err.append(f"{gid}: no work-package section carries its acceptance text")
+if len(r22) < 80: err.append(f"NON-VACUITY: {len(r22)} r22 gates < 80")
+if err:
+    print("  pack coherence FAILED:"); [print("   ", e) for e in err[:20]]; sys.exit(1)
+print(f"  {len(new)} r22 work packages: basis + numbered recipe + verbatim acceptance text; {len(covered)}/{len(r22)} r22 gates covered")
+PY
+
+# G00-r22-package-gate-upgrade: "an older vendored pack is retained until
+# references migrate deliberately". Checked, not assumed: the v0.15 pack and its
+# gate must still exist and scripts/gate.sh must still invoke that gate.
+OLD_PKG="docs/axon_cortex_v0_15/axon-cortex-build-v0_15"
+if [ ! -f "$OLD_PKG/SHA256SUMS_v0_15.json" ] || [ ! -x scripts/cortex_package_gate.sh ] \
+   || ! grep -qE '^[^#]*\./scripts/cortex_package_gate\.sh' scripts/gate.sh; then
+  note_fail "the older v0.15 pack or its gate is no longer retained and invoked (G00-r22-package-gate-upgrade)"
+else
+  echo "  older pack retained: $OLD_PKG, gated by scripts/cortex_package_gate.sh (invoked by scripts/gate.sh)"
+fi
 
 # Resolve the pinned interpreter once; the validator prefers it too.
 has_pin() { "$1" -B -c "import importlib.metadata as m, sys; sys.exit(0 if m.version('jsonschema') == '$PINNED_JSONSCHEMA' else 1)" 2>/dev/null; }
@@ -266,19 +356,73 @@ echo "── cortex v0.22: package offline suite (jsonschema==$PINNED_JSONSCHEMA
 SUITE="not run"
 if [ -n "$PY" ]; then
   SUITE_OUT="$OUTDIR/suite.log"
+  # OFFLINE, two layers. (a) In-process: the suite is started through a guard
+  # that makes every socket connect / sendto / name lookup raise, so a test that
+  # reaches for the network ERRORS rather than passing on whatever the network
+  # happened to return (measured before this: a test connecting to pypi.org:443
+  # passed and the gate said PASS). (b) Where the host allows it, a fresh network
+  # namespace (`unshare -n`, else `unshare -rn`), which also covers child
+  # processes the in-process guard cannot see. (b) is probed by actually running
+  # the interpreter against the pack, because `unshare -rn` as root cannot read a
+  # home directory owned by another uid; the mode used is printed, never implied.
+  # -B -E -s: no bytecode, no PYTHON* env steering (PYTHONPATH/PYTHONSTARTUP),
+  # no user site-packages.
+  read -r -d '' OFFLINE_GUARD <<'GUARD'
+import socket, unittest
+_MSG = "network disabled: the v0.22 package suite is run OFFLINE by cortex_package_gate_v022.sh"
+def _deny(*a, **k): raise OSError(_MSG)
+class _Offline(socket.socket):
+    def connect(self, *a): raise OSError(_MSG)
+    connect_ex = connect
+    def sendto(self, *a): raise OSError(_MSG)
+socket.socket = _Offline
+socket.create_connection = socket.getaddrinfo = socket.gethostbyname = socket.gethostbyname_ex = _deny
+unittest.main(module=None, argv=["unittest", "discover", "-s", "tests"])
+GUARD
+  NETNS=()
+  for cand in "unshare -n" "unshare -rn"; do
+    # shellcheck disable=SC2086
+    if command -v unshare >/dev/null 2>&1 && $cand "$PY" -B -c 'import os, sys; os.listdir(sys.argv[1])' "$PKG" >/dev/null 2>&1; then
+      read -r -a NETNS <<<"$cand"; break
+    fi
+  done
+  OFFLINE_MODE="in-process socket guard"; [ ${#NETNS[@]} -gt 0 ] && OFFLINE_MODE="$OFFLINE_MODE + ${NETNS[*]}"
+  echo "  offline: $OFFLINE_MODE"
   BEFORE="$(tree_digest "$PKG")"
-  ( cd "$PKG" && "$PY" -B -m unittest discover -s tests ) >"$SUITE_OUT" 2>&1; SRC=$?
+  ( cd "$PKG" && "${NETNS[@]}" "$PY" -B -E -s -c "$OFFLINE_GUARD" ) >"$SUITE_OUT" 2>&1; SRC=$?
   AFTER="$(tree_digest "$PKG")"
   [ "$BEFORE" = "$AFTER" ] || note_fail "offline suite MUTATED the vendored pack (tree digest changed)"
-  RAN="$(grep -oE '^Ran [0-9]+ tests?' "$SUITE_OUT" | grep -oE '[0-9]+' | tail -1)"; RAN="${RAN:-0}"
-  NSKIP="$(grep -oE 'skipped=[0-9]+' "$SUITE_OUT" | grep -oE '[0-9]+' | tail -1)"; NSKIP="${NSKIP:-0}"
-  if [ "$SRC" -ne 0 ]; then
-    tail -n 15 "$SUITE_OUT" | sed 's/^/     /'
-    note_fail "offline suite FAILED (exit $SRC, see $SUITE_OUT)"
-  elif [ "$RAN" -lt "$MIN_SUITE_TESTS" ]; then
-    note_fail "offline suite ran $RAN tests, floor is $MIN_SUITE_TESTS (non-vacuity)"
+  if find "$PKG" \( -name __pycache__ -o -name '*.pyc' -o -name '*.pyo' \) | grep -q .; then
+    note_fail "Python bytecode present inside the vendored pack after the suite"
+  fi
+  # A skip is not a pass, and neither is an expected failure or an unexpected
+  # success: the summary line must be exactly "OK". Measured before this: a test
+  # marked @unittest.skip ("needs live KVM") ran as "568 tests OK (1 skipped)"
+  # and the gate said PASS — the NOT_RUN-dressed-as-green shape G00-r22-honest-
+  # status exists to forbid.
+  if ! SUITE="$(python3 -B - "$SUITE_OUT" "$SRC" "$MIN_SUITE_TESTS" <<'PY'
+import re, sys
+log, rc, floor = open(sys.argv[1], encoding="utf-8", errors="replace").read(), int(sys.argv[2]), int(sys.argv[3])
+m = re.findall(r"^Ran (\d+) tests? in", log, re.M)
+ran = int(m[-1]) if m else 0
+lines = [l for l in log.strip().splitlines() if l.strip()]
+tail = lines[-1].strip() if lines else ""
+err = []
+if rc != 0: err.append(f"unittest exited {rc}")
+if ran < floor: err.append(f"NON-VACUITY: ran {ran} tests, floor is {floor}")
+if tail != "OK": err.append(f"summary line is {tail!r}, expected exactly 'OK' (a skip, expected failure or unexpected success is not a pass)")
+if err:
+    for e in err: print(e)
+    sys.exit(1)
+print(f"{ran} tests OK, 0 skipped")
+PY
+)"; then
+    tail -n 12 "$SUITE_OUT" | sed 's/^/     /'
+    printf '%s\n' "$SUITE" | sed 's/^/  /'
+    note_fail "offline suite not clean (see $SUITE_OUT)"
+    SUITE="FAILED"
   else
-    SUITE="$RAN tests OK ($NSKIP skipped) under $("$PY" -c 'import sys;print(sys.executable)')"
+    SUITE="$SUITE, offline ($OFFLINE_MODE), under $("$PY" -B -c 'import sys;print(sys.executable)')"
     echo "  $SUITE"
   fi
 else
@@ -295,4 +439,7 @@ if [ ${#FAILURES[@]} -gt 0 ]; then
   exit 1
 fi
 VAL="validator PASS"; [ "${VAL_SKIPPED:-0}" = 1 ] && VAL="validator SKIPPED"
-echo "$NAME: PASS — integrity pinned + both directions, honesty holds, $VAL; offline suite: $SUITE"
+# The scope is part of the verdict (G00-r22-honest-status): an offline pass here
+# is documentation/reference conformance, not a product gate.
+echo "  scope: package conformance only — 0 product gates executed; NOT Rust implementation, physical backend evidence, real MiCode interoperability or measured self-improvement"
+echo "$NAME: PASS — integrity pinned + both directions, honesty holds, coherence holds, $VAL; offline suite: $SUITE"
