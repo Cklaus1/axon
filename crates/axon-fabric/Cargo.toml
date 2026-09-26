@@ -17,6 +17,9 @@ sha2 = "0.10"
 # Ed25519 verification of qualification evidence (decision D6). Already in
 # the workspace lockfile via rustls; no new crate.
 ring = "0.17"
+# NFC for the workspace importer's namespace-collision refusal (B261).
+# Already in the workspace lockfile via url/idna; no new crate.
+icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 axon-loop-contracts = { path = "../axon-loop-contracts" }
 axon-loop = { path = "../axon-loop" }
 axon-cortex = { path = "../axon-cortex" }

@@ -203,6 +203,24 @@ pub fn project_receipt_status(s: ReceiptStatus) -> EpisodeStatus {
 /// Structural join of an episode to its ACF request and receipt through a
 /// policy projection. Production must authenticate/resolve the projection
 /// first; this is shape and identity only.
+///
+/// B265 (G32) — receipt ROLES are never upgraded, and verification binds
+/// exact bytes. (A context document offered AS the execution receipt is
+/// already refused by type: it does not parse as `acf-execution-receipt/1`,
+/// and `acf_receipt_ref` must be the receipt's own digest.) Beyond the
+/// package reference's `bind_acf`, this refuses:
+///
+/// * a preflight context, the request or the execution receipt standing in
+///   as the INDEPENDENT verification (`verification.verifier_ref` /
+///   `evidence_refs` naming any of them) — context proves a launch context,
+///   the receipt proves process facts, neither proves a check outcome;
+/// * process facts (`status: completed`) resting on a receipt that is not
+///   `supervisor_observed` (a worker/provider claim is not an observation);
+/// * a pass whose checked output is not EXACTLY the output the execution
+///   left (`receipt.output_workspace_ref` must be present and equal to
+///   `verification.output_workspace_ref`) — bytes changed after verification
+///   invalidate it. This is checked here directly, not only transitively
+///   through `bind_episode`.
 pub fn bind_acf(
     episode: &LoopEpisode,
     request: &ComputeRequest,
@@ -249,6 +267,38 @@ pub fn bind_acf(
     }
     if project_receipt_status(receipt.status) != episode.status {
         return Err(semantic("Fabric outcome semantics lost"));
+    }
+    // B265 — roles.
+    let roles = [
+        &episode.context_ref,
+        &episode.acf_request_ref,
+        &episode.acf_receipt_ref,
+    ];
+    let v = &episode.verification;
+    if v.verifier_ref
+        .iter()
+        .chain(v.evidence_refs.iter())
+        .any(|r| roles.contains(&r))
+    {
+        return Err(semantic(
+            "role upgrade: a context/request/execution receipt is not independent verification",
+        ));
+    }
+    if episode.status == EpisodeStatus::Completed
+        && receipt.evidence_source != crate::receipt::EvidenceSource::SupervisorObserved
+    {
+        return Err(semantic(
+            "role upgrade: process completion rests on a receipt that is not supervisor-observed",
+        ));
+    }
+    // B265 — the verified bytes are the bytes the execution left.
+    if v.result == VerificationResult::Passed
+        && (receipt.output_workspace_ref.is_none()
+            || receipt.output_workspace_ref != v.output_workspace_ref)
+    {
+        return Err(semantic(
+            "verified output is not the execution's output (bytes changed after verification)",
+        ));
     }
     Ok(())
 }

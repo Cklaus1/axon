@@ -212,6 +212,7 @@ impl Env {
             },
             expected_epoch: AuthorityEpoch::new(expected_epoch).unwrap(),
             workspace: self.ws.clone(),
+            state_dir: self.dir.path().join("fabric-state"),
             budget: axon_fabric::ResourceVector {
                 model_micro_usd: 1_000,
                 exec_ms: 1_000_000,

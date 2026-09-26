@@ -56,6 +56,7 @@ use serde_json::{json, Value};
 use crate::backend::{self, Profile};
 use crate::grants::{GrantRegistry, ResolvedGrant};
 use crate::journal::{Begin, Billing, Intent, Journal, JournalError, OpState, ResourceVector};
+use crate::workspace::{self, Quota, TrialCache, WorkspaceStore, WorkspaceTree};
 
 /// Where the current authority epoch comes from.
 #[derive(Debug, Clone)]
@@ -91,8 +92,15 @@ pub struct SubmitConfig {
     pub epoch: EpochSource,
     /// The epoch the caller was authorized under.
     pub expected_epoch: AuthorityEpoch,
-    /// The directory a request's `argv[0]` file is resolved under.
+    /// The directory a request's `argv[0]` file is resolved under when the
+    /// request names a HISTORICAL single-file ref or a one-file
+    /// WorkspaceVersion of that file (the latter is copied into the store
+    /// before anything reads it).
     pub workspace: PathBuf,
+    /// The Fabric state dir: the WorkspaceVersion store
+    /// (`<state>/workspaces`), per-trial caches (`<state>/trial-caches`) and
+    /// per-operation materializations (`<state>/runs`).
+    pub state_dir: PathBuf,
     /// Aggregate ceiling for the scope (declared idempotently in the journal).
     pub budget: ResourceVector,
     /// The operator's grant registry: the ONLY source of a request's
@@ -132,7 +140,12 @@ pub enum SubmitError {
     Unregistered(String),
     /// `grant_ref` did not resolve to an operator grant for `principal_ref`.
     Unauthorized(String),
+    /// The request's run is a logical branch that refuses it (cancelled, or
+    /// its declared regime is exhausted) — B271.
+    Branch(String),
     Journal(JournalError),
+    /// The Fabric's workspace store / state dir failed (I/O, corruption).
+    Workspace(String),
 }
 
 impl SubmitError {
@@ -143,7 +156,9 @@ impl SubmitError {
             SubmitError::StaleEpoch { .. } => "stale_epoch",
             SubmitError::Unregistered(_) => "unregistered",
             SubmitError::Unauthorized(_) => "unauthorized",
+            SubmitError::Branch(_) => "branch",
             SubmitError::Journal(_) => "journal",
+            SubmitError::Workspace(_) => "workspace",
         }
     }
     /// CLI exit code.
@@ -154,7 +169,8 @@ impl SubmitError {
             SubmitError::StaleEpoch { .. } => 6,
             SubmitError::Unregistered(_) => 4,
             SubmitError::Unauthorized(_) => 7,
-            SubmitError::Journal(_) => 2,
+            SubmitError::Branch(_) => 9,
+            SubmitError::Journal(_) | SubmitError::Workspace(_) => 2,
         }
     }
 }
@@ -170,7 +186,9 @@ impl std::fmt::Display for SubmitError {
             ),
             SubmitError::Unregistered(s) => write!(f, "unregistered executable: {s}"),
             SubmitError::Unauthorized(s) => write!(f, "unauthorized: {s}"),
+            SubmitError::Branch(s) => write!(f, "branch: {s}"),
             SubmitError::Journal(e) => write!(f, "journal: {e}"),
+            SubmitError::Workspace(e) => write!(f, "workspace store: {e}"),
         }
     }
 }
@@ -242,6 +260,9 @@ struct Obs {
     matched: Option<u64>,
     evidence: Vec<OpaqueRef>,
     liability_micro: u64,
+    /// The workspace the run LEFT (re-imported after it). `None` when
+    /// nothing was launched or the backend produces no workspace.
+    output: Option<Acf1Ref>,
 }
 
 fn receipt(req: &ComputeRequest, backend: &str, o: Obs) -> ExecutionReceipt {
@@ -252,6 +273,7 @@ fn receipt(req: &ComputeRequest, backend: &str, o: Obs) -> ExecutionReceipt {
         matched,
         evidence,
         liability_micro,
+        output,
     } = o;
     ExecutionReceipt {
         schema: Default::default(),
@@ -268,7 +290,7 @@ fn receipt(req: &ComputeRequest, backend: &str, o: Obs) -> ExecutionReceipt {
         }),
         backend_profile_ref: opaque(backend),
         input_workspace_ref: req.workspace_version_ref.clone(),
-        output_workspace_ref: None,
+        output_workspace_ref: output,
         policy_digest: req.policy_digest.clone(),
         status,
         process_exit_code: exit.and_then(|c| u8::try_from(c).ok()),
@@ -303,19 +325,216 @@ fn resolve_executable(
     Ok(e)
 }
 
-/// `argv` for a registered check is `[file]` or `[file, filter]`. The file
-/// must be relative, inside the workspace, and its bytes must hash to
-/// `workspace_version_ref`.
-fn check_target(req: &ComputeRequest, ws: &Path) -> Result<(String, Option<String>), SubmitError> {
-    let (file, filter) = match req.argv.as_slice() {
-        [f] => (f.clone(), None),
-        [f, flt] => (f.clone(), Some(flt.clone())),
-        _ => {
+/// Where a request's target bytes live for the run.
+#[derive(Debug)]
+enum Bound {
+    /// HISTORICAL single-file ref (`{"path","sha256"}`): the check reads the
+    /// operator workspace in place.
+    Legacy,
+    /// A WorkspaceVersion from the store, materialized privately for this
+    /// operation: `dir` is the copy, removed when the guard drops.
+    Version { version: Acf1Ref, dir: RunDir },
+}
+
+/// A per-operation directory under `<state>/runs`, removed on drop — on
+/// every path, refusal or not.
+#[derive(Debug)]
+struct RunDir(PathBuf);
+
+impl RunDir {
+    fn new(state: &Path, op: &str) -> Result<RunDir, SubmitError> {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let key = format!(
+            "{}-{}-{}",
+            &sha256_hex(op.as_bytes())[..16],
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let p = state.join("runs").join(key);
+        std::fs::create_dir_all(&p).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+        Ok(RunDir(p))
+    }
+}
+
+impl Drop for RunDir {
+    fn drop(&mut self) {
+        let _ = workspace::remove_tree(&self.0);
+    }
+}
+
+/// What a request's `argv` resolved to.
+#[derive(Debug)]
+struct Target {
+    /// The file the interpreter runs: the candidate's `argv[0]`, or a check
+    /// suite's entry.
+    file: String,
+    filter: Option<String>,
+    /// The CANDIDATE's bytes.
+    bound: Bound,
+    /// A registered check suite (`argv[0] = "check:<id>"`): its own
+    /// WorkspaceVersion, materialized read-only beside — never inside — the
+    /// candidate.
+    suite: Option<Suite>,
+}
+
+#[derive(Debug)]
+struct Suite {
+    id: String,
+    version: Acf1Ref,
+}
+
+impl Target {
+    /// The directory the interpreter reads `file` under.
+    fn dir(&self, cfg: &SubmitConfig) -> PathBuf {
+        match (&self.suite, &self.bound) {
+            (Some(_), Bound::Version { dir, .. }) => dir.0.join("check"),
+            (_, Bound::Legacy) => cfg.workspace.clone(),
+            (None, Bound::Version { dir, .. }) => dir.0.join("candidate"),
+        }
+    }
+
+    /// For a check suite, the text the admission probe scans: the entry
+    /// with each `mod NAME` line replaced by the candidate's `NAME.ax` (the
+    /// module the suite will actually load through `AXON_PATH`). A module
+    /// the candidate does not hold stays a `mod` line, which scans as EVERY
+    /// effect (deny-by-default) — never as none. `None` for a plain file.
+    fn scan_source(&self) -> Option<String> {
+        let (Some(_), Some(cand)) = (&self.suite, self.candidate_dir()) else {
+            return None;
+        };
+        let Bound::Version { dir, .. } = &self.bound else {
+            return None;
+        };
+        let entry = std::fs::read_to_string(dir.0.join("check").join(&self.file)).ok()?;
+        let mut out = String::new();
+        for line in entry.lines() {
+            let name = line.trim().strip_prefix("mod ").map(str::trim);
+            let inlined = name
+                .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                .and_then(|n| {
+                    let p = cand.join(format!("{n}.ax"));
+                    std::fs::symlink_metadata(&p)
+                        .ok()
+                        .filter(|m| m.is_file())
+                        .and_then(|_| std::fs::read_to_string(p).ok())
+                });
+            match inlined {
+                Some(module) => out.push_str(&module),
+                None => out.push_str(line),
+            }
+            out.push('\n');
+        }
+        Some(out)
+    }
+
+    /// The private copy of the candidate, when there is one.
+    fn candidate_dir(&self) -> Option<PathBuf> {
+        match &self.bound {
+            Bound::Version { dir, .. } => Some(dir.0.join("candidate")),
+            Bound::Legacy => None,
+        }
+    }
+}
+
+/// What the Fabric saw AFTER the run.
+struct PostRun {
+    output: Option<Acf1Ref>,
+    /// Why the verdict cannot stand for the candidate, if it cannot.
+    problem: Option<String>,
+}
+
+/// Re-derive the workspace the run left (the receipt's
+/// `output_workspace_ref`), and whether the verdict still names the
+/// candidate: the output must equal the input, and a check suite's own
+/// bytes must be what was registered. An output version is PUBLISHED, so a
+/// receipt's output ref is always retrievable.
+fn post_run(req: &ComputeRequest, cfg: &SubmitConfig, t: &Target) -> PostRun {
+    let input = &req.workspace_version_ref;
+    let mut problem = None;
+    if let (Some(s), Bound::Version { dir, .. }) = (&t.suite, &t.bound) {
+        match WorkspaceTree::import_dir(&dir.0.join("check"), &Quota::default()) {
+            Ok(tr) if tr.reference() == s.version => {}
+            Ok(tr) => {
+                problem = Some(format!(
+                    "check suite `{}` changed during the run ({} → {})",
+                    s.id,
+                    s.version,
+                    tr.reference()
+                ))
+            }
+            Err(e) => {
+                problem = Some(format!(
+                    "check suite `{}` unreadable after the run: {e}",
+                    s.id
+                ))
+            }
+        }
+    }
+    let output = match &t.bound {
+        Bound::Legacy => std::fs::read(cfg.workspace.join(&t.file))
+            .ok()
+            .map(|b| workspace_digest(&t.file, &b)),
+        Bound::Version { dir, .. } => {
+            let tree = WorkspaceTree::import_dir(&dir.0.join("candidate"), &Quota::default());
+            match tree.map_err(|e| e.to_string()).and_then(|tr| {
+                WorkspaceStore::open(&cfg.state_dir, &cfg.epoch.scope().tenant_id)
+                    .and_then(|st| st.publish(&tr))
+                    .map_err(|e| e.to_string())
+            }) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    problem.get_or_insert(format!("candidate unreadable after the run: {e}"));
+                    None
+                }
+            }
+        }
+    };
+    match &output {
+        Some(o) if o == input => {}
+        Some(o) => {
+            problem.get_or_insert(format!(
+                "the run changed the candidate ({input} → {o}); the verdict names neither"
+            ));
+        }
+        None => {
+            problem.get_or_insert("no output workspace could be observed".into());
+        }
+    }
+    PostRun { output, problem }
+}
+
+/// `argv` for a registered check is `[file]` or `[file, filter]`; for an
+/// interpreter run it is `[program.ax]`. The file must be a plain relative
+/// path, and `workspace_version_ref` must name the bytes the run will read:
+///
+/// 1. a WorkspaceVersion the store holds — materialized privately, and the
+///    file must be a regular-file entry of it;
+/// 2. the one-file WorkspaceVersion of the workspace file — the file is
+///    imported (copied) into the store first and the run reads THAT copy,
+///    so the bytes judged are the bytes hashed;
+/// 3. the historical single-file digest of the workspace file (kept so old
+///    refs still resolve; the run reads the workspace in place).
+///
+/// Anything else is a conflict. Every refusal happens before admission.
+fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, SubmitError> {
+    let (file, filter) = match (req.job_kind, req.argv.as_slice()) {
+        (JobKind::RegisteredCheck, [f]) => (f.clone(), None),
+        (JobKind::RegisteredCheck, [f, flt]) => (f.clone(), Some(flt.clone())),
+        (JobKind::RegisteredCheck, _) => {
             return Err(SubmitError::Malformed(
                 "registered_check argv must be [file] or [file, filter]".into(),
             ))
         }
+        (JobKind::InterpreterRun, [f]) => (f.clone(), None),
+        (JobKind::InterpreterRun, _) => {
+            return Err(SubmitError::Malformed(
+                "interpreter_run argv must be [program.ax]".into(),
+            ))
+        }
     };
+    if let Some(id) = file.strip_prefix("check:") {
+        return check_suite_target(req, cfg, id, filter);
+    }
     let p = Path::new(&file);
     if p.is_absolute()
         || p.components()
@@ -325,16 +544,137 @@ fn check_target(req: &ComputeRequest, ws: &Path) -> Result<(String, Option<Strin
             "argv file {file:?} must be a plain relative path inside the workspace"
         )));
     }
-    let bytes = std::fs::read(ws.join(p))
-        .map_err(|e| SubmitError::Malformed(format!("cannot read {file}: {e}")))?;
-    let got = workspace_digest(&file, &bytes);
-    if req.workspace_version_ref != got {
-        return Err(SubmitError::Conflict(format!(
-            "workspace_version_ref {} does not match the bytes of {file} ({got})",
-            req.workspace_version_ref
+    let store = WorkspaceStore::open(&cfg.state_dir, &cfg.epoch.scope().tenant_id)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let want = &req.workspace_version_ref;
+    let version = if store.contains(want) {
+        want.clone()
+    } else {
+        let bytes = std::fs::read(cfg.workspace.join(p))
+            .map_err(|e| SubmitError::Malformed(format!("cannot read {file}: {e}")))?;
+        if want.as_str() == axon_cortex::runner::single_file_workspace_version_ref(&file, &bytes) {
+            // Copy the file into the store and judge the COPY: re-derive the
+            // ref from what was stored, not from what was read above.
+            let tree = WorkspaceTree::import_file(&cfg.workspace, &file, &Quota::default())
+                .map_err(|e| SubmitError::Malformed(format!("workspace import refused: {e}")))?;
+            let r = store
+                .publish(&tree)
+                .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+            if r != *want {
+                return Err(SubmitError::Conflict(format!(
+                    "workspace_version_ref {want} does not match the imported bytes of {file} ({r})"
+                )));
+            }
+            r
+        } else if *want == workspace_digest(&file, &bytes) {
+            return Ok(Target {
+                file,
+                filter,
+                bound: Bound::Legacy,
+                suite: None,
+            });
+        } else {
+            return Err(SubmitError::Conflict(format!(
+                "workspace_version_ref {want} names neither a published WorkspaceVersion \
+                 nor the bytes of {file}"
+            )));
+        }
+    };
+    let v = store
+        .load(&version)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    if !v
+        .entries
+        .iter()
+        .any(|e| e.path == file && e.mode != workspace::MODE_LINK)
+    {
+        return Err(SubmitError::Malformed(format!(
+            "argv file {file:?} is not a regular file of WorkspaceVersion {version}"
         )));
     }
-    Ok((file, filter))
+    let dir = RunDir::new(&cfg.state_dir, req.operation_id.as_str())?;
+    store
+        .materialize(&version, &dir.0.join("candidate"), false)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    Ok(Target {
+        file,
+        filter,
+        bound: Bound::Version { version, dir },
+        suite: None,
+    })
+}
+
+/// `argv = ["check:<id>", filter?]`: the operator-registered check suite
+/// `<id>` judges the candidate, which must be a PUBLISHED WorkspaceVersion.
+/// The suite root is imported at dispatch and must still be the version the
+/// operator pinned; it is materialized read-only into `<run>/check`, the
+/// candidate into `<run>/candidate`, and the suite reaches the candidate
+/// only through `AXON_PATH`. Neither directory contains the other.
+fn check_suite_target(
+    req: &ComputeRequest,
+    cfg: &SubmitConfig,
+    id: &str,
+    filter: Option<String>,
+) -> Result<Target, SubmitError> {
+    if req.job_kind != JobKind::RegisteredCheck {
+        return Err(SubmitError::Malformed(
+            "a registered check suite runs only as registered_check".into(),
+        ));
+    }
+    let c = cfg
+        .registry
+        .check(id)
+        .ok_or_else(|| SubmitError::Unregistered(format!("check suite `{id}` is not registered")))?
+        .clone();
+    let store = WorkspaceStore::open(&cfg.state_dir, &cfg.epoch.scope().tenant_id)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let cand = &req.workspace_version_ref;
+    if !store.contains(cand) {
+        return Err(SubmitError::Conflict(format!(
+            "check suite `{id}` judges a published WorkspaceVersion; {cand} is not one"
+        )));
+    }
+    let tree = WorkspaceTree::import_dir(&c.root, &Quota::default())
+        .map_err(|e| SubmitError::Unregistered(format!("check suite `{id}` refused: {e}")))?;
+    if tree.reference().as_str() != c.workspace_version_ref {
+        return Err(SubmitError::Unregistered(format!(
+            "check suite `{id}` is {} on disk, not the registered {}",
+            tree.reference(),
+            c.workspace_version_ref
+        )));
+    }
+    if !tree
+        .entries()
+        .iter()
+        .any(|e| e.path == c.entry && matches!(e.kind, workspace::EntryKind::File { .. }))
+    {
+        return Err(SubmitError::Unregistered(format!(
+            "check suite `{id}` has no regular file `{}`",
+            c.entry
+        )));
+    }
+    let version = store
+        .publish(&tree)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let dir = RunDir::new(&cfg.state_dir, req.operation_id.as_str())?;
+    store
+        .materialize(cand, &dir.0.join("candidate"), false)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    store
+        .materialize(&version, &dir.0.join("check"), true)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    Ok(Target {
+        file: c.entry,
+        filter,
+        bound: Bound::Version {
+            version: cand.clone(),
+            dir,
+        },
+        suite: Some(Suite {
+            id: id.to_string(),
+            version,
+        }),
+    })
 }
 
 /// An axon-os `Runtime` that performs NO effect: it states the selected
@@ -344,13 +684,16 @@ fn check_target(req: &ComputeRequest, ws: &Path) -> Result<(String, Option<Strin
 /// code path every axon-os job takes — may this program run on this backend
 /// under THIS grant, with THIS approval policy? The real effect runs later,
 /// after the journal's launch record, bounded by the same grant's ceiling.
-struct AdmissionProbe(axon_os::Isolation);
+struct AdmissionProbe(axon_os::Isolation, Option<String>);
 
 impl axon_os::Runtime for AdmissionProbe {
     fn isolation(&self) -> axon_os::Isolation {
         self.0
     }
     fn declared_effects(&self, p: &Path) -> axon_os::DeclaredEffects {
+        if let Some(src) = &self.1 {
+            return axon_os::runtime::scan_effects(src);
+        }
         match std::fs::read_to_string(p) {
             Ok(src) => axon_os::runtime::scan_effects(&src),
             Err(_) => axon_os::DeclaredEffects::unknown(),
@@ -381,6 +724,7 @@ fn supervisor_admits(
     profile: &Profile,
     grant: &ResolvedGrant,
     program: &Path,
+    scan_source: Option<String>,
 ) -> Result<String, String> {
     use axon_os::IsolationRequirement;
     let requirement =
@@ -400,7 +744,7 @@ fn supervisor_admits(
         ));
     }
     let manifest = grant.manifest_for(program, format!("fabric {}", req.operation_id));
-    let rt = AdmissionProbe(profile.isolation);
+    let rt = AdmissionProbe(profile.isolation, scan_source);
     // The job path is the GRANT FILE: its `.approval` sibling is the sign-off
     // token axon-os verifies against (program, grant).
     let rec = axon_os::supervise_requiring(
@@ -423,6 +767,7 @@ fn host_executor(
     exe: &RegisteredExecutable,
     req: &ComputeRequest,
     ceiling: &str,
+    cache: &TrialCache,
 ) -> Result<LocalInterpreterExecutor, SubmitError> {
     let mut r = CheckRegistry::new();
     r.register_expected(
@@ -436,7 +781,13 @@ fn host_executor(
         .with_timeout(std::time::Duration::from_millis(req.limits.wall_time_ms))
         .with_max_output(req.limits.output_bytes as usize);
     // Always set — `""` is deny-every-effect, never "no ceiling".
-    Ok(local.with_effect_ceiling(ceiling))
+    let mut local = local.with_effect_ceiling(ceiling);
+    // The trial's own fresh HOME / XDG_CACHE_HOME / CARGO_TARGET_DIR: no
+    // two trials share a mutable cache.
+    for (k, v) in cache.env() {
+        local = local.with_env(k, v);
+    }
+    Ok(local)
 }
 
 /// Submit one request. See the module docs for the order of operations.
@@ -484,6 +835,21 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         });
     }
 
+    // 3b. Logical branch (B271): a run id that is a branch's is bound by that
+    //     branch — refused outright once the branch is cancelled.
+    let branches = crate::branches::Branches::open(&cfg.state_dir, &scope);
+    let branch = branches
+        .branch_of_run(&req.trial_id)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    if let Some((exp, br)) = &branch {
+        if branches.is_cancelled(&exp.experiment_id, &br.arm_id) {
+            return Err(SubmitError::Branch(format!(
+                "branch {}/{} is cancelled",
+                exp.experiment_id, br.arm_id
+            )));
+        }
+    }
+
     // 4. Backend selection. A request nothing satisfies gets an
     //    `unsupported` receipt — journalled (intent + failed, never launched)
     //    so a retry returns the same answer.
@@ -517,6 +883,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     matched: None,
                     evidence: vec![],
                     liability_micro: 0,
+                    output: None,
                 },
             );
             record_unlaunched(&journal, &req, &input_digest, cfg, &scope, &why, &r)?;
@@ -562,22 +929,11 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     } else {
         resolve_executable(&req, &cfg.registry)?
     };
-    let target = match req.job_kind {
-        JobKind::RegisteredCheck => Some(check_target(&req, &cfg.workspace)?),
-        JobKind::InterpreterRun => {
-            if req.argv.len() != 1 {
-                return Err(SubmitError::Malformed(
-                    "interpreter_run argv must be [program.ax]".into(),
-                ));
-            }
-            let (f, _) = check_target(&req, &cfg.workspace)?;
-            Some((f, None))
-        }
-    };
+    let target = check_target(&req, cfg)?;
 
     // 6. Supervisor admission (axon-os).
-    let program = cfg.workspace.join(&target.as_ref().expect("set above").0);
-    let approval = match supervisor_admits(&req, &profile, &grant, &program) {
+    let program = target.dir(cfg).join(&target.file);
+    let approval = match supervisor_admits(&req, &profile, &grant, &program, target.scan_source()) {
         Ok(a) => a,
         Err(why) => {
             let r = receipt(
@@ -590,6 +946,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     matched: None,
                     evidence: vec![],
                     liability_micro: 0,
+                    output: None,
                 },
             );
             record_unlaunched(&journal, &req, &input_digest, cfg, &scope, &why, &r)?;
@@ -620,6 +977,19 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 "reproducible": grant.grant().reproducible,
                 "approval": approval,
             },
+            // Which bytes the run reads: a stored WorkspaceVersion, or the
+            // operator workspace in place (historical single-file ref).
+            "workspace": match &target.bound {
+                Bound::Version { version, .. } => json!({"workspace_version_ref": version}),
+                Bound::Legacy => json!({"legacy_single_file": target.file}),
+            },
+            "branch": branch.as_ref().map(|(e, b)| json!({
+                "experiment": e.experiment_id, "arm": b.arm_id,
+            })),
+            // The suite's identity only — never its bytes.
+            "check_suite": target.suite.as_ref().map(|s| json!({
+                "id": s.id, "workspace_version_ref": s.version,
+            })),
         }),
         authority_ref: format!("{}|{}", req.principal_ref, req.grant_ref),
         authority_epoch: cfg.expected_epoch,
@@ -631,7 +1001,23 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         // Raced with a concurrent submit of the same op: never run twice.
         return Ok(replayed(&req, &v));
     }
-    journal.reserve(&req.operation_id)?;
+    match &branch {
+        // A branch's ops carve from the scope AND within the branch's regime.
+        Some((exp, br)) => {
+            let run = br.run_id.clone();
+            let sc = scope.clone();
+            if let Err(e) = journal.reserve_within(&req.operation_id, exp.regime, move |i| {
+                i.scope == sc && i.trial_id == run
+            }) {
+                journal.cancel(&req.operation_id, &format!("not reserved: {e}"), None)?;
+                return Err(SubmitError::Branch(format!(
+                    "branch {}/{} regime refuses the reservation: {e}",
+                    exp.experiment_id, br.arm_id
+                )));
+            }
+        }
+        None => journal.reserve(&req.operation_id)?,
+    }
 
     if let Some(h) = cfg.pre_launch_hook {
         h(cfg);
@@ -645,7 +1031,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             current: now.map(|e| e.get().to_string()).unwrap_or_else(|e| e),
         });
     }
-    let (file, filter) = target.expect("set above");
+    let run_dir = target.dir(cfg);
+    let (file, filter) = (target.file.clone(), target.filter.clone());
     let is_linux = profile.id == backend::LINUX_MICROVM_PROTECTED.id;
     // Re-verify the executable immediately before the launch record: a host
     // binary against its registry pin, the Linux profile against its
@@ -668,7 +1055,29 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     let local = if is_linux {
         None
     } else {
-        Some(host_executor(&exe, &req, &ceiling)?)
+        // Past the reservation, every refusal CANCELS (released: nothing
+        // was launched) — a `?` here would strand the reservation as held.
+        let built =
+            TrialCache::for_trial(&cfg.state_dir, &cfg.epoch.scope().tenant_id, &req.trial_id)
+                .map_err(|e| SubmitError::Workspace(e.to_string()))
+                .and_then(|cache| host_executor(&exe, &req, &ceiling, &cache));
+        let mut l = match built {
+            Ok(l) => l,
+            Err(e) => {
+                journal.cancel(&req.operation_id, &format!("not launched: {e}"), None)?;
+                return Err(e);
+            }
+        };
+        // A check suite reaches the candidate ONLY as a module path; the
+        // operator's ambient AXON_PATH is never inherited.
+        l = l.with_env(
+            "AXON_PATH",
+            target
+                .candidate_dir()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
+        Some(l)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {
         journal.cancel(&req.operation_id, &format!("executable changed: {e}"), None)?;
@@ -680,18 +1089,19 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     let (r, report, reason) = match profile.id {
         id if id == backend::LOCAL_INTERPRETER.id => {
             let res = local.expect("host backend").run_checks(&CheckRequest {
-                workspace: &cfg.workspace,
+                workspace: &run_dir,
                 rel_path: &file,
                 filter: filter.as_deref(),
             });
-            local_receipt(&req, &journal, res, filter.as_deref(), liability)?
+            let seen = post_run(&req, cfg, &target);
+            local_receipt(&req, &journal, res, filter.as_deref(), liability, seen)?
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
             let policy = guest_policy
                 .as_ref()
                 .expect("built when the profile was selected");
-            let res = backend::run_linux_profile(lx, &cfg.workspace.join(&file), &req, policy);
+            let res = backend::run_linux_profile(lx, &run_dir.join(&file), &req, policy);
             let q = qualified.as_ref().expect("qualified at dispatch");
             linux_receipt(&req, &journal, res, q, liability)?
         }
@@ -711,6 +1121,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                         matched: None,
                         evidence: vec![],
                         liability_micro: liability,
+                        output: None,
                     },
                 ),
                 None,
@@ -736,8 +1147,10 @@ fn local_receipt(
     res: std::io::Result<CheckReport>,
     filter: Option<&str>,
     liability: u64,
+    seen: PostRun,
 ) -> Result<Outcome, SubmitError> {
     let id = backend::LOCAL_INTERPRETER.id;
+    let PostRun { output, problem } = seen;
     match res {
         Ok(rep) => {
             // Verification is judged for the NAMED check (the filter), and
@@ -794,6 +1207,16 @@ fn local_receipt(
                 // failing named test is not evidence of a pass.
                 verification = ReceiptVerification::Unknown;
             }
+            if problem.is_some()
+                && matches!(
+                    verification,
+                    ReceiptVerification::Passed | ReceiptVerification::Failed
+                )
+            {
+                // The judged bytes are not the bytes the run left behind (or
+                // the check's own inputs moved): no verdict about either.
+                verification = ReceiptVerification::Unknown;
+            }
             journal.complete(&req.operation_id, Billing::Unknown)?;
             Ok((
                 receipt(
@@ -806,10 +1229,11 @@ fn local_receipt(
                         matched: Some(matched),
                         evidence,
                         liability_micro: liability,
+                        output,
                     },
                 ),
                 Some(report_json),
-                None,
+                problem,
             ))
         }
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
@@ -826,6 +1250,7 @@ fn local_receipt(
                         matched: None,
                         evidence: vec![],
                         liability_micro: liability,
+                        output: output.clone(),
                     },
                 ),
                 None,
@@ -848,6 +1273,7 @@ fn local_receipt(
                         matched: None,
                         evidence: vec![],
                         liability_micro: liability,
+                        output,
                     },
                 ),
                 None,
@@ -920,6 +1346,7 @@ fn linux_receipt(
                 matched: None,
                 evidence,
                 liability_micro: liability,
+                output: None,
             },
         ),
         None,
@@ -1023,6 +1450,7 @@ fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
             matched: None,
             evidence: vec![],
             liability_micro: liability,
+            output: None,
         },
     );
     Submission {

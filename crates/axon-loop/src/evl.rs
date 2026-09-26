@@ -8,7 +8,12 @@
 //! * `bind_episode` succeeds (identity, scope, exact policy/context bytes,
 //!   controls, input workspace, current authority epoch of the scope);
 //! * `bind_acf` succeeds (exact request/receipt bytes, projection, ids,
-//!   workspaces, status semantics);
+//!   workspaces, status semantics, and B265 roles: no context/request/
+//!   execution receipt standing as the verifier, completion only on a
+//!   supervisor-observed receipt, a pass only over the exact bytes the
+//!   execution left);
+//! * the episode and context are for THIS evaluation's scope — evidence
+//!   minted for another tenant is `unknown: cross-tenant`, never joined;
 //! * the trial's preflight context passes the bounded paired-trial profile
 //!   ([`axon_loop_contracts::check_paired_trial_context`]: expected ==
 //!   observed, the observer is NOT the expecting parent, NOT a subject issuer
@@ -397,7 +402,14 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                 // NS4p/NS4w: a subject (request subject issuer, arm proposer)
                 // never observes its own preflight, even if the operator
                 // listed it as an observer — the verifier rule, mirrored.
-                let ctx_check = if subjects.contains(&d.ctx.observed_issuer_ref) {
+                let ctx_check = if d.ep.scope != r.scope || d.ctx.scope != r.scope {
+                    // Cross-tenant: evidence minted for another scope never
+                    // joins this one, whatever its ids say.
+                    Err(format!(
+                        "cross-tenant evidence: episode scope {:?} / context scope {:?}, evaluation scope {:?}",
+                        d.ep.scope, d.ctx.scope, r.scope
+                    ))
+                } else if subjects.contains(&d.ctx.observed_issuer_ref) {
                     Err(format!(
                         "observer {} is a subject issuer: no self-observation",
                         d.ctx.observed_issuer_ref

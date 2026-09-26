@@ -93,6 +93,76 @@ linking this crate, because this crate depends on `axon-cortex`.
     `axon_tree_dirty_at_build: true`, so Fabric refuses this profile today**
     — until the operator signs a re-qualification (S3-6).
 
+* **`workspace`** (B261, v0.22 Stage 5): WorkspaceVersion — one identity for
+  a workspace TREE, byte-identical to MiCode's `axon.workspace-version/1`
+  recipe (`tests/fixtures/workspace_version_vector.json`, copied from MiCode
+  `docs/axon-support/fixtures/` at 09029360; the byte recipe itself is
+  `axon_cortex::runner::{workspace_manifest_bytes, workspace_version_ref}`).
+  Import refuses the whole tree on traversal, absolute paths, escaping
+  symlinks, devices/FIFOs/sockets, non-UTF-8 names, control characters,
+  duplicates, quota overflow (D11: 20 000 entries / 256 MiB / depth 32) and —
+  beyond the recipe — **namespace collisions** (equal after NFC + lowercase,
+  or a path that is both file and directory). Skipped top-level `.git` /
+  `.micode` are recorded as explicit omissions. The store
+  (`<state>/tenants/<key>/workspaces`, `--state`, default `<journal>.state`) is
+  content-addressed and write-once (fsynced temp + no-clobber rename); a
+  materialization re-verifies every blob and refuses an existing
+  destination. A `WorkspaceProjection` with no `version_ref` (a hash-only
+  observation) or an unpublished ref cannot be materialized (G28). Each trial
+  runs with its own `HOME` / `XDG_CACHE_HOME` / `CARGO_TARGET_DIR` under
+  `<state>/tenants/<key>/trial-caches/<sha256(trial_id)>`. Store and caches
+  are per TENANT (`<state>/tenants/<sha256(tenant)[..32]>`): a version
+  another tenant published does not resolve (content addressing is not a
+  capability), and equal TrialIds in two tenants never share a cache. `workspace_version_ref` may name
+  a published version (materialized privately per operation), the one-file
+  version of `argv[0]` (copied into the store first; the COPY is judged), or
+  the historical single-file digest (read in place). No GC (D11).
+  `axon-fabric workspace-import --state DIR --tenant T --root DIR` publishes a tree.
+  Mode bits are no boundary for root: the store's integrity is re-hashing,
+  not permissions.
+* **Check suites (B264).** A `cortex-check-registry/1` file may carry
+  `checks: [{id, visibility: visible|hidden, root, entry,
+  workspace_version_ref}]`. A request with `argv = ["check:<id>", filter]`
+  judges a PUBLISHED candidate version: the suite root is imported at
+  dispatch and must still be the pinned version (else `unregistered`, zero
+  launches), then the candidate is materialized into `<run>/candidate` and
+  the suite read-only into `<run>/check` — never inside the candidate — and
+  the suite reaches the candidate only through `AXON_PATH` (the operator's
+  ambient `AXON_PATH` is never inherited). Admission scans the suite entry
+  with each `mod NAME` replaced by the candidate's `NAME.ax`; an unresolved
+  module still scans as every effect. `CheckRegistry::subject_visible_checks`
+  never lists a hidden suite. The journal records a suite's identity, never
+  its bytes.
+* **Output binding (B264/B265).** After a local run the Fabric re-imports
+  what the run left: the receipt's `output_workspace_ref` is that version
+  (published, so retrievable), or the historical digest of the file for a
+  historical ref. If it differs from the input, or a suite's own bytes moved,
+  a pass/fail verdict becomes `unknown` with the reason. The cortex
+  `FabricSubmitExecutor` sends the one-file WorkspaceVersion of the checked
+  file and accepts a report only if the receipt's input AND output refs are
+  that version. Candidate code runs inside the verifier process: a grant
+  that allows fs reads lets it read `<run>/check` — the effect ceiling, not
+  the directory layout, is what bounds that.
+
+* **`branches`** (B271): logical A/B branches. `Branches::open_experiment`
+  writes a write-once experiment over a PUBLISHED base with one declared
+  regime and ≥ 2 arms, each with its own run id (`TrialId`, hence its own
+  caches) and writer; approvers are declared and never a writer. A request
+  whose `trial_id` is a branch run carves from the scope AND within the
+  regime (`Journal::reserve_within`, `ResourceVector::carve_within`); a
+  refusal cancels the op before launch (`branch`, exit 9). Heads are
+  write-once `head-<seq>.json`; `publish` requires the expected head (seq +
+  version, journalled as `Intent::expected_version`), the current loop-store
+  epoch, the branch's writer, a Fabric op IN THIS JOURNAL on this branch that
+  `passed` with input = output = the new version, and a declared approver ≠
+  writer; the head is created by a no-clobber link, so of two concurrent
+  publications exactly one wins and the other must rebase and re-verify.
+  `cancel` marks the branch, releases its unlaunched ops, keeps a launched
+  op's liability, removes nothing, and leaves other branches untouched; a
+  cancelled branch accepts no new op (not even an intent) and no
+  publication. Library API only — no CLI verb yet. Approvals and writers are
+  operator-declared names, not authenticated signatures.
+
 `acf1:` identities (`executable_digest`, `workspace_digest`) delegate to the
 single canonicaliser `axon_cortex::runner::acf1_canonical_bytes`, which the
 cortex side builds its requests with (D-C3, fixed in Stage 2).
