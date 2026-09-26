@@ -66,6 +66,12 @@ pub struct DeliveredTrial {
     pub acf_request: Value,
     pub acf_receipt: Value,
     pub projection: Value,
+    /// G01-r22-independent-issuer: the verifier's `acf-receipt-attestation/1`
+    /// over this trial's ACF request and receipt. A verdict (passed or failed)
+    /// counts only if it verifies under the key the operator registered for
+    /// the episode's verification issuer; without it the trial is `Unknown`.
+    #[serde(default)]
+    pub verification_attestation: Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,6 +155,7 @@ struct Delivered {
     req: ComputeRequest,
     rcpt: ExecutionReceipt,
     proj: PolicyProjection,
+    attestation: Value,
 }
 
 /// Evaluate and store. Returns the record and its `cl22:` ref.
@@ -175,6 +182,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     .into();
     let config = store.config()?;
     let verifiers = config.verifiers();
+    let verifier_keys = config.verifier_keys.clone();
     if verifiers.is_empty() {
         return Err(refused(
             "no trusted verifiers configured: nothing can be verified",
@@ -354,6 +362,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     req,
                     rcpt,
                     proj,
+                    attestation: t.verification_attestation.clone(),
                 },
             )
             .is_some()
@@ -425,7 +434,15 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                             "context not admissible (TASK_NOT_STARTED evidence, never a pass): {e}"
                         ),
                     ),
-                    Ok(()) => judge(d, policy, &a.policy_ref, epoch, &verifiers, &subjects),
+                    Ok(()) => judge(
+                        d,
+                        policy,
+                        &a.policy_ref,
+                        epoch,
+                        &verifiers,
+                        &verifier_keys,
+                        &subjects,
+                    ),
                 };
                 (o, why, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
             }
@@ -486,6 +503,7 @@ fn judge(
     policy_ref: &Ref,
     epoch: AuthorityEpoch,
     verifiers: &BTreeSet<OpaqueRef>,
+    verifier_keys: &BTreeMap<OpaqueRef, String>,
     subjects: &BTreeSet<OpaqueRef>,
 ) -> (Outcome, String) {
     if &d.ep.policy_ref != policy_ref {
@@ -501,6 +519,36 @@ fn judge(
         return (Outcome::Unknown, format!("unbound ACF evidence: {e}"));
     }
     let v = &d.ep.verification;
+    // A verdict is evidence only if its issuer AUTHENTICATED it: its own
+    // signature over exactly this request and receipt, under the key the
+    // operator registered. A name on the trusted list is not enough, and an
+    // unauthenticated FAILURE is refused as surely as a pass — forged failures
+    // could otherwise sink an arm.
+    if matches!(
+        v.result,
+        VerificationResult::Passed | VerificationResult::Failed
+    ) {
+        let Some(issuer) = v.issuer_ref.as_ref() else {
+            return (
+                Outcome::Unknown,
+                "unauthenticated verification: no issuer".into(),
+            );
+        };
+        let Some(key) = verifier_keys.get(issuer) else {
+            return (
+                Outcome::Unknown,
+                format!("unauthenticated verification: verifier {issuer} has no registered key"),
+            );
+        };
+        if let Err(e) =
+            axon_loop_contracts::attestation::verify(&d.attestation, issuer, &d.req, &d.rcpt, key)
+        {
+            return (
+                Outcome::Unknown,
+                format!("unauthenticated verification: {e}"),
+            );
+        }
+    }
     match v.result {
         VerificationResult::Passed => {
             let issuer_ok = v

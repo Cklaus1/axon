@@ -136,9 +136,27 @@ struct Case {
     ep: Value,
 }
 
+use common::verifier_key;
+
+fn attest(sk: &[u8], issuer: &str, req: &Value, rc: &Value) -> Value {
+    axon_loop_contracts::attestation::sign(
+        sk,
+        &OpaqueRef::new(issuer).unwrap(),
+        &serde_json::from_value(req.clone()).unwrap(),
+        &serde_json::from_value(rc.clone()).unwrap(),
+    )
+    .unwrap()
+}
+
 fn case(micro_cents: Option<u64>) -> Case {
     let dir = tempfile::tempdir().unwrap();
     let s = store_with_config(dir.path());
+    let mut config = s.config().unwrap();
+    config.verifier_keys.insert(
+        OpaqueRef::new(common::VERIFIER).unwrap(),
+        verifier_key().1.clone(),
+    );
+    s.write_config(&config).unwrap();
     let names: Vec<CandidateId> = CANDIDATES
         .iter()
         .map(|c| CandidateId::new(*c).unwrap())
@@ -181,6 +199,7 @@ fn run(c: &Case, ep: &Value, src: bool) -> Result<axon_loop::intake::IntakeOutco
             source_episode: src.then(|| c.src.to_string()).as_deref(),
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
 }
@@ -326,6 +345,7 @@ fn tampered_unknown_or_unjoinable_episodes_are_refused_with_the_store_unchanged(
             source_episode: None,
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
     .unwrap_err();
@@ -374,6 +394,7 @@ fn a_policy_the_store_does_not_hold_is_refused() {
             source_episode: None,
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
     .unwrap_err();
@@ -414,6 +435,7 @@ fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
             source_episode: Some(&src.to_string()),
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
     .unwrap_err();
@@ -445,6 +467,7 @@ fn run_with(
             source_episode: None,
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
 }
@@ -573,11 +596,26 @@ fn verified(ep: &Value, req: &Value, rc: &Value, result: &str) -> Value {
     ep
 }
 
+/// Step 8 with the evidence the fixture verifier genuinely signed.
 fn run_v(
     c: &Case,
     ep: &Value,
     req: Option<&Value>,
     rc: Option<&Value>,
+) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    let att = match (req, rc) {
+        (Some(q), Some(r)) => Some(attest(&verifier_key().0, common::VERIFIER, q, r)),
+        _ => None,
+    };
+    run_va(c, ep, req, rc, att.as_ref())
+}
+
+fn run_va(
+    c: &Case,
+    ep: &Value,
+    req: Option<&Value>,
+    rc: Option<&Value>,
+    att: Option<&Value>,
 ) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
     intake_episode(
         &c.s,
@@ -589,6 +627,7 @@ fn run_v(
             source_episode: None,
             verification_request: req.map(|v| v.to_string()).as_deref(),
             verification_receipt: rc.map(|v| v.to_string()).as_deref(),
+            verification_attestation: att.map(|v| v.to_string()).as_deref(),
         },
     )
 }
@@ -876,6 +915,7 @@ fn a_repeated_trial_of_one_task_and_arm_is_recorded_as_its_own() {
             source_episode: None,
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
     .unwrap();
@@ -954,6 +994,7 @@ fn every_historical_spend_shape_is_read_through_the_pinned_table() {
             source_episode: Some(&src.to_string()),
             verification_request: None,
             verification_receipt: None,
+            verification_attestation: None,
         },
     )
     .unwrap_err();
@@ -962,4 +1003,172 @@ fn every_historical_spend_shape_is_read_through_the_pinned_table() {
         "{e}"
     );
     assert_eq!(snapshot(c.s.root()), before);
+}
+
+/// G01-r22-independent-issuer / G32-r22-sidecar-bindings: verification evidence
+/// is AUTHENTICATED, not named — and authentication does not replace the
+/// semantic joins. The sidecar names a trusted verifier and every digest joins;
+/// what decides is that verifier's own signature over exactly this request and
+/// receipt, under the key the operator registered for it. Each forgery below is
+/// refused for ITS OWN reason, and none writes a byte:
+///
+/// missing; malformed; self-signed attacker key claiming the verifier's name;
+/// another REGISTERED verifier's key claiming this verifier's name; a genuine
+/// signature over another request; over another receipt; a genuine attestation
+/// replayed from another trial; the receipt tampered after signing; the request
+/// tampered after signing; a trusted verifier with no registered key; and the
+/// subject vouching for itself with a genuinely registered key.
+///
+/// Mutation: delete the attestation block in `check_verification` → the
+/// forgeries are recorded and this fails.
+#[test]
+fn verification_evidence_is_authenticated_not_named() {
+    let c = case(Some(500));
+    let req = check_request();
+    let rc = check_receipt("passed", 1);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let genuine = |q: &Value, r: &Value| attest(&verifier_key().0, common::VERIFIER, q, r);
+    // A second verifier the operator DOES trust and has a key for.
+    let (b_sk, b_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let mut config = c.s.config().unwrap();
+    config
+        .trusted_verifiers
+        .push(OpaqueRef::new("fixture:verifier-b").unwrap());
+    config
+        .verifier_keys
+        .insert(OpaqueRef::new("fixture:verifier-b").unwrap(), b_pk);
+    c.s.write_config(&config).unwrap();
+    let before = snapshot(c.s.root());
+
+    let refused = |ep: &Value, req: &Value, rc: &Value, att: Option<&Value>, why: &str| {
+        let e = run_va(&c, ep, Some(req), Some(rc), att).unwrap_err();
+        assert!(
+            matches!(e, LoopError::Refused(ref m) if m.contains(why)),
+            "expected a refusal for `{why}`: {e}"
+        );
+        assert_eq!(snapshot(c.s.root()), before, "`{why}` wrote to the store");
+    };
+    refused(&ep, &req, &rc, None, "not authenticated");
+    refused(
+        &ep,
+        &req,
+        &rc,
+        Some(&json!("not an attestation")),
+        "not a JSON object",
+    );
+    let (impostor, _) = axon_loop_contracts::attestation::generate().unwrap();
+    refused(
+        &ep,
+        &req,
+        &rc,
+        Some(&attest(&impostor, common::VERIFIER, &req, &rc)),
+        "not by",
+    );
+    refused(
+        &ep,
+        &req,
+        &rc,
+        Some(&attest(&b_sk, common::VERIFIER, &req, &rc)),
+        "not by",
+    );
+
+    let mut other_req = check_request();
+    other_req["limits"]["max_cost_micro"] = json!(99);
+    refused(
+        &ep,
+        &req,
+        &rc,
+        Some(&genuine(&other_req, &rc)),
+        "request_ref",
+    );
+    let other_rc = check_receipt("failed", 1);
+    refused(
+        &ep,
+        &req,
+        &rc,
+        Some(&genuine(&req, &other_rc)),
+        "receipt_ref",
+    );
+    let mut req2 = check_request();
+    req2["trial_id"] = json!("trial-2");
+    let mut rc2 = check_receipt("passed", 1);
+    rc2["trial_id"] = json!("trial-2");
+    // (bound fields are compared in order; another trial's receipt differs first)
+    refused(&ep, &req, &rc, Some(&genuine(&req2, &rc2)), "receipt_ref");
+
+    // Tampered after signing: the sidecar is re-derived to cite the tampered
+    // document, so only the signature can notice.
+    let signed = genuine(&req, &rc);
+    let mut rc_t = rc.clone();
+    rc_t["matched_checks"] = json!(2);
+    refused(
+        &verified(&c.ep, &req, &rc_t, "passed"),
+        &req,
+        &rc_t,
+        Some(&signed),
+        "receipt_ref",
+    );
+    let mut req_t = req.clone();
+    req_t["argv"] = json!(["f.ax", "t_other"]);
+    refused(
+        &verified(&c.ep, &req_t, &rc, "passed"),
+        &req_t,
+        &rc,
+        Some(&signed),
+        "request_ref",
+    );
+
+    // The subject vouching for itself, with a key the operator registered.
+    let subject_id = c.ctx["observed_issuer_ref"].as_str().unwrap().to_string();
+    let (s_sk, s_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let mut config = c.s.config().unwrap();
+    config
+        .trusted_verifiers
+        .push(OpaqueRef::new(&subject_id).unwrap());
+    config
+        .verifier_keys
+        .insert(OpaqueRef::new(&subject_id).unwrap(), s_pk);
+    c.s.write_config(&config).unwrap();
+    let before_subject = snapshot(c.s.root());
+    let mut ep_s = ep.clone();
+    ep_s["verification"]["issuer_ref"] = json!(subject_id);
+    let e = run_va(
+        &c,
+        &ep_s,
+        Some(&req),
+        Some(&rc),
+        Some(&attest(&s_sk, &subject_id, &req, &rc)),
+    )
+    .unwrap_err();
+    assert!(
+        // bind_episode refuses it first; check_verification would too.
+        matches!(e, LoopError::Refused(ref m) if m.contains("subject")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before_subject);
+
+    // A trusted verifier with no registered key vouches for nothing.
+    config
+        .verifier_keys
+        .remove(&OpaqueRef::new(common::VERIFIER).unwrap());
+    c.s.write_config(&config).unwrap();
+    let before_nokey = snapshot(c.s.root());
+    let e = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("no registered key")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before_nokey);
+
+    // The genuine evidence, under the registered key, is recorded — and the
+    // outcome names the key that authenticated it.
+    config.verifier_keys.insert(
+        OpaqueRef::new(common::VERIFIER).unwrap(),
+        verifier_key().1.clone(),
+    );
+    c.s.write_config(&config).unwrap();
+    let out = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap();
+    assert!(out
+        .verification_key_id
+        .is_some_and(|k| k.starts_with("ed25519:")));
 }

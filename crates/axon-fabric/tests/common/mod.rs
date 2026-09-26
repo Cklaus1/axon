@@ -172,6 +172,7 @@ impl Env {
             trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
             trusted_verifiers: vec![],
             trusted_observers: vec![],
+            verifier_keys: Default::default(),
         })
         .unwrap();
         let registry = dir.path().join("registry.json");

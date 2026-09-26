@@ -187,3 +187,85 @@ fn laundered_evidence_never_crosses_independent_admission() {
         assert!(!moved, "{why}: the pointer moved");
     }
 }
+
+/// G01-r22-independent-issuer through the whole chain: a verdict counts only if
+/// its issuer AUTHENTICATED it. The candidate's trials keep every document
+/// intact and name the trusted verifier; only the attestation is forged —
+/// removed, signed by an impostor key claiming the verifier's name, or a
+/// genuine attestation of ANOTHER trial's receipt replayed. Each trial is
+/// Unknown for that reason, the candidate has no verified pass, admission does
+/// not accept, the pointer does not move. An unattested FAILURE is Unknown too:
+/// a forged failure cannot sink an arm.
+///
+/// Mutation: delete the authentication block in `evl::judge` → the forged
+/// verdicts count and this fails.
+#[test]
+fn an_unauthenticated_verdict_never_counts() {
+    let (impostor, _) = axon_loop_contracts::attestation::generate().unwrap();
+    type Forge = Box<dyn Fn(&mut Value)>;
+    let forgeries: Vec<(&str, Forge)> = vec![
+        (
+            "attestation removed",
+            Box::new(|v| {
+                for t in candidate_trials(v) {
+                    t["verification_attestation"] = Value::Null;
+                }
+            }),
+        ),
+        (
+            "impostor key claiming the trusted verifier",
+            Box::new(move |v| {
+                for t in candidate_trials(v) {
+                    let req: ComputeRequest =
+                        serde_json::from_value(t["acf_request"].clone()).unwrap();
+                    let rc: ExecutionReceipt =
+                        serde_json::from_value(t["acf_receipt"].clone()).unwrap();
+                    t["verification_attestation"] = axon_loop_contracts::attestation::sign(
+                        &impostor,
+                        &OpaqueRef::new(common::VERIFIER).unwrap(),
+                        &req,
+                        &rc,
+                    )
+                    .unwrap();
+                }
+            }),
+        ),
+        (
+            "genuine attestation of another trial, replayed",
+            Box::new(|v| {
+                let donor = v["trials"][0]["verification_attestation"].clone();
+                for t in candidate_trials(v) {
+                    t["verification_attestation"] = donor.clone();
+                }
+            }),
+        ),
+    ];
+    for (i, (why, forge)) in forgeries.into_iter().enumerate() {
+        let (pass, _, d, r, moved, outcomes) = run(&format!("unauth-{i}"), |v| forge(v));
+        assert_eq!(pass, 0, "{why}: {outcomes:?}");
+        assert!(
+            outcomes.iter().all(|(o, reason)| *o == Outcome::Unknown
+                && reason.contains("unauthenticated verification")),
+            "{why}: {outcomes:?}"
+        );
+        assert_ne!(d, Decision::Accept, "{why}: {r:?}");
+        assert!(!moved, "{why}");
+    }
+
+    // A forged FAILURE: the candidate's trials fail, unattested.
+    let w = world();
+    freeze_plan(&w.s, "unauth-fail", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    // cand_pass = 0: every candidate trial reports failure.
+    let specs = pair(&w.inc, &w.cand, 2, 2, 0, Some(100), Some(50));
+    let mut v = evl_request("unauth-fail", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    for t in candidate_trials(&mut v) {
+        t["verification_attestation"] = Value::Null;
+    }
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+    assert!(
+        c.trials.iter().all(|t| t.outcome == Outcome::Unknown),
+        "an unattested failure is not a failure: {:?}",
+        c.trials
+    );
+}

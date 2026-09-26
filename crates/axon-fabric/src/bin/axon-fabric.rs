@@ -37,6 +37,23 @@
 //! exit (2 io/journal, 3 malformed, 4 unregistered, 5 conflict, 6 stale epoch,
 //! 7 unauthorized: `grant_ref` not resolvable for `principal_ref`).
 //!
+//! SIGNED RECEIPTS (G01-r22-independent-issuer). The operator's check registry
+//! may carry a `"signer": {"issuer_ref", "key_path", "public_key"}` block: the
+//! verifier identity this Fabric issues receipts as, its PKCS#8 Ed25519 key,
+//! and that key's public half, pinned. There is no per-call flag: a caller
+//! cannot choose an issuer name or supply a key. The signer is refused before
+//! any work unless the key file is a regular file owned by this uid and
+//! readable by no one else, and derives exactly the pinned public key. After
+//! the receipt is FINAL, Fabric signs an `acf-receipt-attestation/1` binding
+//! issuer, key id, request and receipt digests and the receipt's identity —
+//! but only if the check workload could not have reached the key: the admitted
+//! grant gives it no effect at all (the local interpreter cannot path-scope a
+//! read, so any IO would reach the key file), or it ran in the protected
+//! microVM. Otherwise `"receipt_attestation"` is `null` with
+//! `"attestation_withheld"` saying why. `axon-fabric keygen --out PATH`
+//! provisions a key (0600, never over an existing file) and prints the public
+//! key to pin here and to register in the loop store's `verifier_keys`.
+//!
 //! Every executable comes from the `--check-registry` file (path + sha256),
 //! never from the request. Every grant comes from the `--grant-registry` file
 //! (`axon-fabric-grant-registry/1`, grant files pinned by sha256); the
@@ -92,12 +109,106 @@ fn main() {
         "status" => status(&a),
         "cancel" => cancel(&a),
         "workspace-import" => workspace_import(&a),
+        "keygen" => keygen(&a),
         _ => refuse(
             "usage",
             "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
             2,
         ),
     }
+}
+
+/// The operator-configured signer in the check registry, if any. Every defect
+/// refuses as `unregistered` (exit 4) before any work.
+fn signer(registry: &std::path::Path) -> Option<(axon_loop_contracts::OpaqueRef, Vec<u8>)> {
+    let bad = |why: String| -> ! { refuse("unregistered", &format!("registry signer: {why}"), 4) };
+    let text = std::fs::read_to_string(registry).unwrap_or_else(|e| bad(e.to_string()));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| bad(e.to_string()));
+    let sg = v.get("signer")?;
+    let obj = sg
+        .as_object()
+        .unwrap_or_else(|| bad("not an object".into()));
+    let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    if keys != ["issuer_ref", "key_path", "public_key"] {
+        bad(format!(
+            "must be exactly issuer_ref, key_path, public_key; has {keys:?}"
+        ));
+    }
+    let field = |k: &str| {
+        obj[k]
+            .as_str()
+            .unwrap_or_else(|| bad(format!("{k} is not a string")))
+    };
+    let id = axon_loop_contracts::OpaqueRef::new(field("issuer_ref"))
+        .unwrap_or_else(|e| bad(format!("issuer_ref: {e}")));
+    let mut path = PathBuf::from(field("key_path"));
+    if path.is_relative() {
+        path = registry
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(path);
+    }
+    let meta = std::fs::symlink_metadata(&path)
+        .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
+    {
+        use std::os::unix::fs::MetadataExt;
+        if !meta.file_type().is_file() {
+            bad(format!("key {} is not a regular file", path.display()));
+        }
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        if meta.uid() != euid || meta.mode() & 0o077 != 0 {
+            bad(format!(
+                "key {} must be owned by this uid and readable by no one else (mode {:o})",
+                path.display(),
+                meta.mode() & 0o777
+            ));
+        }
+    }
+    let key = std::fs::read(&path).unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
+    let pk = axon_loop_contracts::attestation::public_key_of(&key)
+        .unwrap_or_else(|e| bad(format!("key {}: {e}", path.display())));
+    if pk != field("public_key") {
+        bad(format!(
+            "key {} does not derive the pinned public_key",
+            path.display()
+        ));
+    }
+    Some((id, key))
+}
+
+fn keygen(a: &Args) {
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let out = PathBuf::from(a.req("--out"));
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+        .unwrap_or_else(|_| refuse("io", "key generation failed", 2));
+    let pk = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
+        .unwrap_or_else(|_| refuse("io", "generated key does not load", 2))
+        .public_key()
+        .as_ref()
+        .to_vec();
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&out)
+            .unwrap_or_else(|e| refuse("io", &format!("{}: {e}", out.display()), 2));
+        f.write_all(pkcs8.as_ref())
+            .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
+    }
+    println!(
+        "{}",
+        json!({
+            "schema": "axon-fabric-issuer-key/1",
+            "private_key": out,
+            "public_key": pk.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            "fingerprint": axon_loop_contracts::attestation::key_fingerprint(&pk),
+        })
+    );
 }
 
 fn submit(a: &Args) {
@@ -111,9 +222,10 @@ fn submit(a: &Args) {
     } else {
         std::fs::read_to_string(&req_src).unwrap_or_else(|e| refuse("io", &e.to_string(), 2))
     };
-    let registry =
-        axon_cortex::runner::CheckRegistry::load(&PathBuf::from(a.req("--check-registry")))
-            .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    let registry_path = PathBuf::from(a.req("--check-registry"));
+    let registry = axon_cortex::runner::CheckRegistry::load(&registry_path)
+        .unwrap_or_else(|e| refuse("unregistered", &e, 4));
+    let issuer = signer(&registry_path);
     let grants = axon_fabric::GrantRegistry::load(&PathBuf::from(a.req("--grant-registry")))
         .unwrap_or_else(|e| refuse("unauthorized", &e, 7));
     let sc =
@@ -160,17 +272,53 @@ fn submit(a: &Args) {
         fault_hook: None,
     };
     match axon_fabric::submit(&text, &cfg) {
-        Ok(s) => println!(
-            "{}",
-            json!({
-                "schema": "axon-fabric-submit/1",
-                "receipt": s.receipt,
-                "check_report": s.check_report,
-                "replayed": s.replayed,
-                "backend": s.backend,
-                "reason": s.reason,
-            })
-        ),
+        Ok(s) => {
+            // The receipt is final here. Sign it only if the workload that
+            // produced it could not have read the signing key.
+            let (attestation, withheld) = match issuer {
+                None => (None, None),
+                Some((id, key)) => {
+                    let req: axon_loop_contracts::ComputeRequest =
+                        axon_loop_contracts::parse(&text)
+                            .unwrap_or_else(|e| refuse("malformed", &e.to_string(), 3));
+                    let isolated =
+                        s.backend == Some(axon_fabric::backend::LINUX_MICROVM_PROTECTED.id);
+                    let effectless = cfg
+                        .grants
+                        .resolve(req.grant_ref.as_str(), req.principal_ref.as_str())
+                        .map(|g| axon_fabric::grants::effect_ceiling(g.grant()).is_empty())
+                        .unwrap_or(false);
+                    if isolated || effectless {
+                        let att =
+                            axon_loop_contracts::attestation::sign(&key, &id, &req, &s.receipt)
+                                .unwrap_or_else(|e| refuse("io", &e, 2));
+                        (Some(att), None)
+                    } else {
+                        (
+                            None,
+                            Some(
+                                "the admitted grant gives the check workload file, network or \
+                                 exec effects on a backend that cannot path-scope them, so the \
+                                 workload could have read the signing key: no attestation",
+                            ),
+                        )
+                    }
+                }
+            };
+            println!(
+                "{}",
+                json!({
+                    "schema": "axon-fabric-submit/1",
+                    "receipt": s.receipt,
+                    "check_report": s.check_report,
+                    "replayed": s.replayed,
+                    "backend": s.backend,
+                    "reason": s.reason,
+                    "receipt_attestation": attestation,
+                    "attestation_withheld": withheld,
+                })
+            )
+        }
         Err(e) => refuse(e.kind(), &e.to_string(), e.exit_code()),
     }
 }

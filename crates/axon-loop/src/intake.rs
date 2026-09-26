@@ -66,7 +66,14 @@
 //!    sidecar's result and `matched_checks` are the receipt's, with a check that
 //!    did not complete yielding `unknown`. For ANY cited result the issuer must
 //!    be a trusted verifier that is not the subject, and the check must not
-//!    have run as the subject's principal. Evidence presented for a sidecar that
+//!    have run as the subject's principal. And the issuer must be
+//!    AUTHENTICATED, not merely named: an `acf-receipt-attestation/1`
+//!    (`--verification-attestation`) must verify under the Ed25519 key the
+//!    operator registered for that issuer in `verifier_keys`, over exactly this
+//!    receipt's and request's cl22 (G01-r22-independent-issuer,
+//!    G32-r22-sidecar-bindings). A copied issuer name, a sidecar's claim, or a
+//!    validly self-signed attestation under any other key authenticates
+//!    nothing; a trusted verifier with no registered key can vouch for nothing. Evidence presented for a sidecar that
 //!    names none is refused rather than ignored. That Fabric actually journaled
 //!    the operation is NOT checked here (this crate does not read the Fabric
 //!    journal); `axon-fabric status --op` is the witness, and the paired interop
@@ -161,6 +168,9 @@ pub struct IntakeOutcome {
     pub ledger_seq: u64,
     /// `false` when these exact bytes were already recorded (idempotent replay).
     pub recorded_now: bool,
+    /// The id (fingerprint) of the operator-registered key that authenticated
+    /// the verification evidence, when the sidecar cites any.
+    pub verification_key_id: Option<String>,
 }
 
 /// The documents an intake reads. Texts, so the caller owns all file I/O.
@@ -177,6 +187,9 @@ pub struct IntakeInput<'a> {
     /// the sidecar names a `verification.verifier_ref`.
     pub verification_request: Option<&'a str>,
     pub verification_receipt: Option<&'a str>,
+    /// Step 8: the issuer's `acf-receipt-attestation/1` over that receipt and
+    /// request, required with them.
+    pub verification_attestation: Option<&'a str>,
 }
 
 fn semantic(what: &str) -> impl Fn(Refusal) -> LoopError + '_ {
@@ -274,7 +287,13 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     }
 
     // 8. The verification evidence (G3 under D12).
-    let verification = check_verification(input, &ep, &config.verifiers(), &subject)?;
+    let verification = check_verification(
+        input,
+        &ep,
+        &config.verifiers(),
+        &config.verifier_keys,
+        &subject,
+    )?;
 
     // Idempotency / identity conflict, against the ledger — AFTER every
     // check, so a replay is never a way around one (a re-intake with a
@@ -286,6 +305,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
                     record: (**intake).clone(),
                     ledger_seq: e.seq,
                     recorded_now: false,
+                    verification_key_id: verification.as_ref().map(|v| v.3.clone()),
                 });
             }
             if intake.scope == ep.scope && intake.identity == ep.identity {
@@ -300,9 +320,10 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     // Record: bytes first (content-addressed, idempotent), then the ledger.
     store.put_cas("episodes", &ep)?;
     store.put_cas("contexts", &ctx)?;
-    if let Some((req, rc)) = &verification {
+    if let Some((req, rc, att, _)) = &verification {
         store.put_cas("fabric-requests", req)?;
         store.put_cas("fabric-receipts", rc)?;
+        store.put_cas("fabric-attestations", att)?;
     }
     let record = IntakeRecord {
         schema: IntakeSchema,
@@ -331,11 +352,11 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
         .map(|r| r.to_string()),
         verification_receipt_ref: verification
             .as_ref()
-            .map(|(_, rc)| digest(rc))
+            .map(|(_, rc, _, _)| digest(rc))
             .transpose()?,
         verification_request_ref: verification
             .as_ref()
-            .map(|(req, _)| digest(req))
+            .map(|(req, _, _, _)| digest(req))
             .transpose()?,
     };
     let seq = tx.append(Event::EpisodeIntake {
@@ -346,6 +367,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
         record,
         ledger_seq: seq,
         recorded_now: true,
+        verification_key_id: verification.map(|v| v.3),
     })
 }
 
@@ -484,11 +506,15 @@ fn check_verification(
     input: &IntakeInput<'_>,
     ep: &LoopEpisode,
     trusted_verifiers: &BTreeSet<OpaqueRef>,
+    verifier_keys: &std::collections::BTreeMap<OpaqueRef, String>,
     subject: &BTreeSet<OpaqueRef>,
-) -> Result<Option<(ComputeRequest, ExecutionReceipt)>> {
+) -> Result<Option<(ComputeRequest, ExecutionReceipt, Value, String)>> {
     let v = &ep.verification;
     let Some(vref) = &v.verifier_ref else {
-        if input.verification_request.is_some() || input.verification_receipt.is_some() {
+        if input.verification_request.is_some()
+            || input.verification_receipt.is_some()
+            || input.verification_attestation.is_some()
+        {
             return Err(refused(
                 "verification evidence was presented, but the sidecar names no verifier_ref: \
                  evidence the episode does not cite is not attached to it",
@@ -535,6 +561,24 @@ fn check_verification(
             "the verification issuer is not a trusted verifier independent of the subject",
         ));
     }
+    // Authentication, not naming: the issuer's own signature over exactly
+    // these two documents, under the key the operator registered for it.
+    let issuer = v.issuer_ref.as_ref().expect("checked just above");
+    let key = verifier_keys.get(issuer).ok_or_else(|| {
+        refused(format!(
+            "verifier {issuer} is trusted but has no registered key in verifier_keys: its \
+             evidence cannot be authenticated, so it vouches for nothing"
+        ))
+    })?;
+    let att_text = input.verification_attestation.ok_or_else(|| {
+        refused(format!(
+            "the verification is not authenticated: no acf-receipt-attestation from {issuer} \
+             was presented (--verification-attestation)"
+        ))
+    })?;
+    let att = parse_value(att_text).map_err(semantic("verification attestation"))?;
+    let key_id = axon_loop_contracts::attestation::verify(&att, issuer, &req, &rc, key)
+        .map_err(|e| refused(format!("verification attestation refused: {e}")))?;
     if subject.contains(&req.principal_ref) {
         return Err(refused(format!(
             "the check ran as principal {}, the subject itself: a task cannot verify itself",
@@ -604,7 +648,7 @@ fn check_verification(
     if v.matched_checks != rc.matched_checks.unwrap_or(0) {
         return Err(refused("matched_checks differs from the check receipt's"));
     }
-    Ok(Some((req, rc)))
+    Ok(Some((req, rc, att, key_id)))
 }
 
 /// The canonical MiCode episode's spend in micro-cents (1e-8 USD), read through

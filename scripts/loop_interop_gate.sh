@@ -205,6 +205,13 @@ STORE="$WORK/store"; mkdir -p "$STORE"
 cat > "$STORE/config.json" <<'J'
 {"schema":"axon.loop.config/1","trusted_admitters":["op:gate-admitter"],"trusted_verifiers":["gate:independent-verifier"]}
 J
+# G01-r22-independent-issuer: the verifier's Ed25519 key, provisioned by the real
+# `axon-fabric keygen`; the operator registers its PUBLIC key for the verifier id,
+# so the verifier's evidence is authenticated, not merely named.
+ISSUER_KEY="$WORK/issuer.pk8"
+ISSUER_PK="$("$AXF" keygen --out "$ISSUER_KEY" | jq -r .public_key)"
+jq -c --arg pk "$ISSUER_PK" '.verifier_keys = {"gate:independent-verifier": $pk}' "$STORE/config.json" > "$STORE/config.json.tmp" \
+  && mv "$STORE/config.json.tmp" "$STORE/config.json"
 store_hash() { (cd "$STORE" && find . -type f ! -path './locks/*' -print0 | sort -z | xargs -0 sha256sum) | sha256sum | cut -d' ' -f1; }
 ledger_n() { [ -f "$STORE/ledger.jsonl" ] && wc -l < "$STORE/ledger.jsonl" || echo 0; }
 axl() { "$AXL" --store "$STORE" "$@"; }
@@ -519,13 +526,18 @@ G3_PASS0=$PASS; G3_FAIL0=$FAIL
 #   → sidecar verifier_ref / evidence_refs / output tree → axon-loop intake.
 FAB="$WORK/fabric"; mkdir -p "$FAB/grants"
 AXI_SHA="$(sha256sum "$AXI" | cut -d' ' -f1)"
-jq -n --arg p "$AXI" --arg s "$AXI_SHA" \
-  '{schema:"cortex-check-registry/1",executors:[{id:"axon-test-local",path:$p,sha256:$s}]}' > "$FAB/checks.json"
+# The operator's registry also names Fabric's SIGNER: the verifier identity it
+# issues receipts as, its key, and that key's public half, pinned. No caller
+# (MiCode included) names an issuer or a key.
+jq -n --arg p "$AXI" --arg s "$AXI_SHA" --arg k "$ISSUER_KEY" --arg pk "$ISSUER_PK" \
+  '{schema:"cortex-check-registry/1",executors:[{id:"axon-test-local",path:$p,sha256:$s}],
+    signer:{issuer_ref:"gate:independent-verifier",key_path:$k,public_key:$pk}}' > "$FAB/checks.json"
+# No effect at all: the acceptance check is pure tests, and a check workload
+# that could read files could read the signing key — Fabric would then
+# withhold its attestation.
 cat > "$FAB/grants/grant_check.axgrant" <<'G'
 profile = "restricted"
 [grant]
-fs_read = ["*"]
-fs_write = ["*"]
 max_label = "internal"
 [grant.budget]
 cost_micro = 1000
@@ -560,6 +572,9 @@ g3_context() {  # <out> <trial>
 g3_docs() {
   VRC="$CL/fabric/$(jq -r .verification.verifier_ref "$1" | cut -d: -f2).json"
   VREQ="$CL/fabric/$(jq -r '.verification.evidence_refs[0]' "$1" | cut -d: -f2).json"
+  # Fabric's attestation of that receipt, kept by MiCode beside it.
+  VATT="$(grep -l '"acf-receipt-attestation/1"' "$CL"/fabric/*.json 2>/dev/null | while read -r f; do
+    [ "$(jq -r .receipt_ref "$f")" = "$(jq -r .verification.verifier_ref "$1")" ] && echo "$f"; done | head -1)"
 }
 
 fabric_check_config "$WORK/fabric-pass.json" t_ok_double
@@ -607,8 +622,35 @@ axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" 
   --verification-request "$VREQ" --verification-receipt "$WORK/g3-tampered-rc.json" >/dev/null 2>"$WORK/g3-tamper.err"
 check "G3: intake with a receipt that is not the cited one is refused (exit 4)" eq "$?" 4
 check "G3: store unchanged by that refusal" eq "$(store_hash)" "$H_G3"
+# G01-r22-independent-issuer on real bytes: the verdict is AUTHENTICATED.
+check "G01: MiCode kept Fabric's attestation of the cited receipt" test -n "$VATT"
+check "G01: it is signed by the provisioned verifier key" eq "$(jq -r .public_key "$VATT")" "$ISSUER_PK"
+check "G01: it binds this attempt's operation" eq "$(jq -r .operation_id "$VATT")" "trial-g3-op"
+axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" >/dev/null 2>"$WORK/g01-noatt.err"
+check "G01: the right documents WITHOUT the attestation are refused (exit 4)" eq "$?" 4
+check "G01: ...as unauthenticated" grep -q "not authenticated" "$WORK/g01-noatt.err"
+# An impostor: a REAL Fabric process run against a registry of its own that
+# pins ITS key under the verifier's name — the one thing a local caller can do.
+# It replays the same operation and signs a genuine-looking attestation of the
+# very same receipt; only the operator's key registration tells them apart.
+IMP_PK="$("$AXF" keygen --out "$WORK/impostor.pk8" | jq -r .public_key)"
+jq --arg k "$WORK/impostor.pk8" --arg pk "$IMP_PK" '.signer.key_path = $k | .signer.public_key = $pk' \
+  "$FAB/checks.json" > "$WORK/impostor-checks.json"
+"$AXF" submit --request "$VREQ" --journal "$FAB/ops.journal" --check-registry "$WORK/impostor-checks.json" \
+  --grant-registry "$FAB/grants/grants.json" --store "$STORE" --tenant "$TENANT" --family "$FAMILY" \
+  --expected-epoch "$RES_EPOCH" --state "$FAB/state" > "$WORK/g01-impostor.json"
+check "G01: the impostor Fabric replayed the same receipt" \
+  eq "$(jq -c '[.replayed, (.receipt|tojson)]' "$WORK/g01-impostor.json")" "$(jq -c --slurpfile r "$VRC" '[true, ($r[0]|tojson)]' -n)"
+jq -c .receipt_attestation "$WORK/g01-impostor.json" > "$WORK/g01-impostor-att.json"
+axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" \
+  --verification-attestation "$WORK/g01-impostor-att.json" >/dev/null 2>"$WORK/g01-impostor.err"
+check "G01: an attestation under an unregistered key is refused (exit 4)" eq "$?" 4
+check "G01: ...naming the key it is not signed by" grep -q "not by" "$WORK/g01-impostor.err"
+check "G01: store unchanged by the refusals" eq "$(store_hash)" "$H_G3"
 G3_IN="$(axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
-  --verification-request "$VREQ" --verification-receipt "$VRC" 2>"$WORK/g3-intake.err")"
+  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" 2>"$WORK/g3-intake.err")"
 check "G3: intake joins the real Fabric check (exit 0)" eq "$?" 0
 check "G3: record cites the receipt" eq "$(jq -r .record.verification_receipt_ref <<<"$G3_IN")" "$(jq -r .verification.verifier_ref "$G3_EP")"
 check "G3: Fabric receipt stored content-addressed" \
@@ -624,7 +666,7 @@ G3F_EP="$(new_file "$CL/episodes" "$SN_EP")"
 check "G3: a failing check → verification failed" eq "$(jq -r .verification.result "$G3F_EP")" failed
 g3_docs "$G3F_EP"
 axl intake episode --in "$G3F_EP" --context "$CL/context" --ack "$CL/policy-ack" \
-  --verification-request "$VREQ" --verification-receipt "$VRC" >/dev/null 2>"$WORK/g3f.err"
+  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" >/dev/null 2>"$WORK/g3f.err"
 check "G3: a failed Fabric check is intaken as failed (exit 0)" eq "$?" 0
 
 # A check name that matches no test is NOT a pass: Fabric says not_run, MiCode records unknown.
@@ -809,6 +851,24 @@ jq '.role="critic" | .write_paths=["src/**"]' "$WORK/exp-critic.json" > "$WORK/e
 run_micode critic-w MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-critic3.json"
 check "critic declaring writes: TASK_NOT_STARTED, zero provider requests" \
   bash -c "[ $RC -ne 0 ] && [ $NEWREQ -eq 0 ] && grep -q TASK_NOT_STARTED '$WORK/critic-w.err'"
+
+# ════════════════════════════════════════════════════════════════════════════
+section "12. G01: the subject cannot read the verifier's signing key (real binary)"
+# The attestation authenticates the issuer only while its key is out of the
+# subject's reach. A closed-loop implementation task declares a write set, so
+# its agent has no unbounded tool (bash et al. are denied) and its file tools
+# cannot leave the workspace root. The agent asks to read the key: refused, and
+# no byte of it reaches the model.
+expected_context "$WORK/exp-key.json" trial-key challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+KEY_B64="$(base64 -w0 "$ISSUER_KEY")"
+for tool_args in "read|{\"path\":\"$ISSUER_KEY\"}" "bash|{\"command\":\"cat $ISSUER_KEY\"}"; do
+  IFS='|' read -r tool args <<<"$tool_args"
+  scripted_call "$tool" "$args"
+  run_micode "key-$tool" MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-key.json"
+  check "key/$tool: the task runs, the call is answered" bash -c "[ $RC -eq 0 ] && [ $NEWREQ -eq 2 ]"
+  check "key/$tool: the call was refused" grep -qiE 'denied|outside|not allowed|refus' "$(result_req)"
+  check "key/$tool: no byte of the key reached the model" bash -c "! grep -qF '$KEY_B64' '$(result_req)' && ! grep -qF '$(head -c 24 "$ISSUER_KEY" | base64 -w0)' '$(result_req)'"
+done
 
 # ════════════════════════════════════════════════════════════════════════════
 section "summary"

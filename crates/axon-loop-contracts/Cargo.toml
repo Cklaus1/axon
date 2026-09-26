@@ -9,4 +9,7 @@ description = "Axon Cortex v0.22 closed-loop shared contracts: pure types, stric
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# Ed25519 for verifier-receipt attestations (G01-r22-independent-issuer).
+# Already in the workspace lockfile (axon-fabric, rustls); no new crate.
+ring = "0.17"
 axon-cortex = { path = "../axon-cortex" }

@@ -35,7 +35,7 @@
 //!                       receipts per attempt ref, execution cost unknown — D10)
 //! axon-loop --store DIR intake  episode    --in sidecar.json --context FILE|DIR
 //!                                          --ack FILE|DIR [--projection FILE] [--source-episode FILE]
-//!                                          [--verification-request FILE --verification-receipt FILE]
+//!                                          [--verification-request FILE --verification-receipt FILE --verification-attestation FILE]
 //! ```
 //!
 //! `intake episode`: `--context` may name MiCode's `context/` directory, in
@@ -335,6 +335,7 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                 "source-episode",
                 "verification-request",
                 "verification-receipt",
+                "verification-attestation",
             ])?;
             let episode = a.input()?;
             // Parse strictly once here only to learn which receipt the
@@ -383,6 +384,10 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                 Some(p) => Some(read(std::path::Path::new(p))?),
                 None => None,
             };
+            let vatt = match a.flags.get("verification-attestation") {
+                Some(p) => Some(read(std::path::Path::new(p))?),
+                None => None,
+            };
             let out = intake::intake_episode(
                 &a.store()?,
                 &intake::IntakeInput {
@@ -393,11 +398,13 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                     source_episode: source.as_deref(),
                     verification_request: vreq.as_deref(),
                     verification_receipt: vrc.as_deref(),
+                    verification_attestation: vatt.as_deref(),
                 },
             )?;
             Ok(
                 json!({"schema":"axon.loop.intake-result/1","episode_ref":out.record.episode_ref,
                       "ledger_seq":out.ledger_seq,"recorded_now":out.recorded_now,
+                      "verification_key_id":out.verification_key_id,
                       "record":out.record}),
             )
         }

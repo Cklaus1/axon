@@ -55,6 +55,16 @@ pub struct Config {
     /// still parses: [`Store::config`] reads the absent field as `[]`.
     #[serde(default)]
     pub trusted_observers: Vec<OpaqueRef>,
+    /// v0.22 G01-r22-independent-issuer: the Ed25519 PUBLIC key (64 hex) the
+    /// operator registered for each trusted verifier. Membership in
+    /// `trusted_verifiers` names who may vouch; this is what lets a vouching
+    /// be AUTHENTICATED — verification evidence is accepted only with an
+    /// `acf-receipt-attestation/1` that verifies under the key registered for
+    /// its issuer. A trusted verifier with no key here can vouch for nothing
+    /// (fail closed). Absent in a config written before this field: read as
+    /// `{}`; always serialized.
+    #[serde(default)]
+    pub verifier_keys: std::collections::BTreeMap<OpaqueRef, String>,
 }
 
 impl Config {
@@ -404,6 +414,8 @@ impl Store {
                 if let Some(o) = v.as_object_mut() {
                     o.entry("trusted_observers")
                         .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                    o.entry("verifier_keys")
+                        .or_insert_with(|| serde_json::Value::Object(Default::default()));
                 }
                 strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
             }
@@ -412,6 +424,7 @@ impl Store {
                 trusted_admitters: Vec::new(),
                 trusted_verifiers: Vec::new(),
                 trusted_observers: Vec::new(),
+                verifier_keys: Default::default(),
             }),
         }
     }

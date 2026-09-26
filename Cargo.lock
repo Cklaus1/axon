@@ -295,6 +295,7 @@ name = "axon-loop-contracts"
 version = "0.1.0"
 dependencies = [
  "axon-cortex",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

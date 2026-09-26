@@ -23,6 +23,7 @@
 //!
 //! `axon-cortex` must never depend on this crate.
 
+pub mod attestation;
 pub mod canonical;
 pub mod checks;
 pub mod compute;

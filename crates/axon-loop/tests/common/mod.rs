@@ -109,6 +109,9 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
         trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
         trusted_observers: vec![OpaqueRef::new(OBSERVER).unwrap()],
+        verifier_keys: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_key().1.clone())]
+            .into_iter()
+            .collect(),
     })
     .unwrap();
     register_candidates(&s);
@@ -124,6 +127,9 @@ pub fn store_without_candidates(dir: &Path) -> Store {
         trusted_admitters: vec![OpaqueRef::new(ADMITTER).unwrap()],
         trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
         trusted_observers: vec![OpaqueRef::new(OBSERVER).unwrap()],
+        verifier_keys: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_key().1.clone())]
+            .into_iter()
+            .collect(),
     })
     .unwrap();
     // The lock file is created on first use; create it now so no-change
@@ -174,6 +180,13 @@ impl<'a> Trial<'a> {
 
 /// A delivered trial `{episode, context, acf_request, acf_receipt, projection}`
 /// whose references all bind.
+/// The fixture verifier's Ed25519 key `(PKCS#8, public hex)`, registered for
+/// [`VERIFIER`] in every fixture store (G01-r22-independent-issuer).
+pub fn verifier_key() -> &'static (Vec<u8>, String) {
+    static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())
+}
+
 pub fn trial(t: &Trial) -> Value {
     let identity = TrialIdentity {
         task_id: TaskId::new(t.task).unwrap(),
@@ -248,7 +261,17 @@ pub fn trial(t: &Trial) -> Value {
     ep.acf_request_ref = digest(&req).unwrap();
     ep.acf_receipt_ref = digest(&rc).unwrap();
     ep.validate().unwrap();
-    json!({"episode": ep, "context": ctx, "acf_request": req, "acf_receipt": rc, "projection": proj})
+    // The verifier's attestation of this request/receipt, as the trial's
+    // issuer, under the fixture key (registered only for VERIFIER).
+    let att = axon_loop_contracts::attestation::sign(
+        &verifier_key().0,
+        &OpaqueRef::new(t.verifier).unwrap(),
+        &req,
+        &rc,
+    )
+    .unwrap();
+    json!({"episode": ep, "context": ctx, "acf_request": req, "acf_receipt": rc, "projection": proj,
+           "verification_attestation": att})
 }
 
 /// A learning-eligible discovery episode (for EVO input).
