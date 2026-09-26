@@ -2134,6 +2134,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "1595a2fe"
+    },
+    {
+      "id": "FG-049",
+      "where": "scripts/loop_interop_gate.sh",
+      "claimed": "The paired interop gate proves a canonical MiCode episode whose cost disagrees with its sidecar is refused by Axon's source-episode cost join (\"a zero canonical cost vs a metered sidecar is still refused\").",
+      "reality": "The negative re-pointed the ALREADY-RECORDED pinned episode at the tampered canonical episode under a new trial_id. Axon's identity bind refused that before the cost join ran, so the assertion (exit 4 only) passed without the property ever being exercised. The same shape hid a real defect: a v014 canonical episode's never-written micro_cents 0 was read by both peers as a KNOWN ZERO spend.",
+      "reproduced": "KEEP=1 run of the gate: both refusals read `refused: bind: task/arm/trial/attempt/operation/execution mismatch`, not a unit-conversion refusal.",
+      "fix": "The negatives now use a fresh task's sidecar changed only in source_episode_ref, and assert the refusal text comes from the cost join (\"ZERO spend\" / \"NO known spend\"). The spend itself is read through one pinned migration table on both peers (micode 7070c8ca, axon source_episode_spend). Found building G16-r22-negotiation.",
+      "status": "fixed",
+      "severity": "reporting",
+      "commit": "6838969b"
     }
   ]
 }

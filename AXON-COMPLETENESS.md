@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 47 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 48 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -540,4 +540,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The epoch was read through axon_loop::Store::open_dir, which CREATES a missing root, and a store with no pointer answers epoch 0. An absent, unmounted or mistyped store therefore became a fresh store at epoch 0 and authorized every request expecting 0.
 - **Reproduced:** Move the configured loop store away and submit a request with --expected-epoch 0: the check ran and a completed receipt was returned, both at submit and when the store disappeared between submit and dispatch (tests/peer_failure_matrix.rs, before the fix).
 - **Fix:** The epoch source requires the store to exist and be configured (config.json) and otherwise refuses: StaleEpoch at submit with nothing journalled, a released cancel at dispatch. Mutation: without the check, 2/5 peer-failure tests fail. Found building the B280 G16-r22-peer-failure-matrix. (`1595a2fe`)
+
+### FG-049 — scripts/loop_interop_gate.sh (reporting, fixed)
+
+- **Claimed:** The paired interop gate proves a canonical MiCode episode whose cost disagrees with its sidecar is refused by Axon's source-episode cost join ("a zero canonical cost vs a metered sidecar is still refused").
+- **Reality:** The negative re-pointed the ALREADY-RECORDED pinned episode at the tampered canonical episode under a new trial_id. Axon's identity bind refused that before the cost join ran, so the assertion (exit 4 only) passed without the property ever being exercised. The same shape hid a real defect: a v014 canonical episode's never-written micro_cents 0 was read by both peers as a KNOWN ZERO spend.
+- **Reproduced:** KEEP=1 run of the gate: both refusals read `refused: bind: task/arm/trial/attempt/operation/execution mismatch`, not a unit-conversion refusal.
+- **Fix:** The negatives now use a fresh task's sidecar changed only in source_episode_ref, and assert the refusal text comes from the cost join ("ZERO spend" / "NO known spend"). The spend itself is read through one pinned migration table on both peers (micode 7070c8ca, axon source_episode_spend). Found building G16-r22-negotiation. (`6838969b`)
 
