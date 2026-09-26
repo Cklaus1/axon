@@ -118,7 +118,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unknown` / `silently-ignored`. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**57 controls tracked; 17 engine states unknown or silently-ignored.**
+**58 controls tracked; 17 engine states unknown or silently-ignored.**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -161,6 +161,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_MAX_DEPTH` | interpreter-scoped | ✓ | n/a | n/a | n/a | resolved |
 | `AXON_OS_TIMEOUT_MS` | launcher-side | n/a | n/a | n/a | n/a | resolved |
 | `AXON_PATH` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
+| `AXON_PATH_EXCLUSIVE` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_PROOF_DEPTH` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_PROOF_TIMEOUT_MS` | compile-time/shared-front-end | ✓ | ✓ | ✓ | n/a | resolved |
 | `AXON_RECORD` | replay/record/audit | ✓ | refused | refused | ✓ | native-closed |
@@ -203,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 57 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 60 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -610,4 +611,25 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The key and trust were checked only when the evaluation was made. Admission and its re-derivation (activation, rollback) read the stored evaluation alone, so after the operator removed a verifier's key or trust its verdicts still admitted and still activated a policy.
 - **Reproduced:** G01 independent re-audit 4 (clause auditor, wf_0c9149f9), executed at 917fe199: with verifier_keys and trusted_verifiers emptied after the evaluation, admit returned Accept with 2 passes and activation succeeded; revoking between admit and activate also activated. Pinned by a_revoked_verifier_s_verdicts_stop_counting (mutation M50).
 - **Fix:** admission::derive re-checks every counted verdict's recorded issuer and key id against the current config (issuer trusted and not a subject; registered key's id equal to the one it verified under); a counted verdict with no recorded evidence is refused. derive serves admit and every re-derivation. (`c0770ae8`)
+
+### FG-059 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** FG-052: a check suite's own modules always resolve before the candidate's (AXON_PATH = <run>/check:<run>/candidate).
+- **Reality:** AXON_PATH is ':'-separated and built from the caller-named state dir; a state dir (or journal) containing ':' put caller directories ahead of the suite, replacing its helpers, and Fabric signed a pass the suite would have failed.
+- **Reproduced:** G01 independent re-audit 5 (verdict adversary, wf_7e55371c), executed at cf6c779b through the real binary. Pinned by a_state_dir_that_would_split_the_module_path_is_refused (mutation M52).
+- **Fix:** submit refuses a state dir containing ':' before anything is written or launched. (`1db8ead8`)
+
+### FG-060 — crates/axon-core/src/lib.rs (security, fixed)
+
+- **Claimed:** G01 clause 4: what ran is the operator's pinned suite over the candidate's tree.
+- **Reality:** Module resolution fell through AXON_PATH to ambient directories — the trial cache's ~/.axon/lib under the caller-named state dir, and the interpreter binary's ../lib/axon — and `use a::b` loads with no `mod` line the scan sees. A candidate that does not compile on its own passed with a planted module and was signed.
+- **Reproduced:** G01 independent re-audit 5 (verdict adversary), executed through the real binary (signed ATTACK). Pinned by a_check_loads_no_module_from_outside_the_suite_and_the_candidate (mutation M53).
+- **Fix:** New interpreter switch AXON_PATH_EXCLUSIVE=1 resolves modules only from AXON_PATH; Fabric sets it for every check. (`1db8ead8`)
+
+### FG-061 — crates/axon-loop/src/intake.rs (security, fixed)
+
+- **Claimed:** G01 claim, accepted limitation: reuse of a verdict across scopes is refused by intake's scope bind.
+- **Reality:** No such bind existed for the verification documents (they carry no scope; the identity-conflict check is per scope): one signed verdict was recorded in two tenants and could count in both.
+- **Reproduced:** G01 independent re-audit 5 (clause auditor), executed at cf6c779b. Pinned by one_verdict_decides_one_trial_in_one_scope (mutation M54).
+- **Fix:** Intake refuses a verification receipt already recorded under another scope. (`7c3f2fe5`)
 

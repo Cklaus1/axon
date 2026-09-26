@@ -1016,6 +1016,19 @@
       "note": "Consumed by the shared front-end AHEAD of the engine split, so every engine inherits one implementation. No second reader exists to diverge."
     },
     {
+      "name": "AXON_PATH_EXCLUSIVE",
+      "category": "compile-time/shared-front-end",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "enforced",
+        "wasm": "enforced",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-fabric/tests/check_effects.rs",
+      "note": "Read in axon_search_dirs beside AXON_PATH, ahead of the engine split, so every engine inherits it. Fabric sets it for every check; a_check_loads_no_module_from_outside_the_suite_and_the_candidate (mutation M53) proves a planted ambient module is not loaded."
+    },
+    {
       "name": "AXON_STRICT",
       "category": "compile-time/shared-front-end",
       "status": "resolved",
