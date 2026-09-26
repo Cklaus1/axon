@@ -235,6 +235,9 @@ cmd_cancel() {
   local dir="$1"
   [ -d "$dir" ] || die "no such run: $dir"
   echo cancelled > "$dir/status"
+  # The supervisor may die with the job (cgroup.kill takes the whole scope), so
+  # it cannot be relied on to remove the run's temp; cancel removes it too.
+  if [ -s "$dir/tmpdir" ]; then _rt="$(cat "$dir/tmpdir")"; case "$_rt" in /var/tmp/axr-*) rm -rf "$_rt" ;; esac; fi
   # Stop the supervisor FIRST. It is outside the job's scope by construction
   # (own session, and it joins the cgroup only to place the child), so a
   # scope kill does not reach it — and a surviving supervisor would observe
@@ -304,14 +307,22 @@ cmd_supervise() {
   fi
   # Run INSIDE the snapshot when there is one, so the job reads committed
   # bytes rather than whatever the developer tree happens to hold right now.
+  local own_tmp=""
   # TEMP ON DISK, PER RUN. /tmp on this host class is a RAM tmpfs (12 GB here):
   # measured 2026-09-26, leaked test images filled it to 100% and a strict gate
   # failed with ENOSPC in LLVM and the parity harnesses; tmpfs pages written by
   # the job are also charged to its memory cgroup. Unless the caller set TMPDIR
   # explicitly, the job's temp lives under its own run directory, on disk, and
   # is removed with the run's scaffolding.
+  #
+  # SHORT path, not "$dir/tmp": a run dir is ~90 bytes, and tests that bind Unix
+  # sockets under TMPDIR then exceed SUN_LEN (108) — measured: 7 axon-fabric
+  # tests failed "path must be shorter than SUN_LEN" in a strict gate. /var/tmp
+  # is on the root disk (not a tmpfs) on this host class; the run dir records
+  # where the temp was, and the supervisor removes it after the receipt.
   if [ -z "${TMPDIR:-}" ]; then
-    mkdir -p "$dir/tmp" && export TMPDIR="$dir/tmp"
+    own_tmp="/var/tmp/axr-$BASHPID"
+    mkdir -p "$own_tmp" && chmod 700 "$own_tmp" && export TMPDIR="$own_tmp" && echo "$own_tmp" > "$dir/tmpdir"
   fi
   local work=""
   work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
@@ -375,7 +386,9 @@ cmd_supervise() {
   # true one, and `wait` would otherwise report the signal as a plain exit.
   [ "$(cat "$dir/status")" = "cancelled" ] || echo "exited:$code" > "$dir/status"
   write_receipt "$dir" "$code"
-  [ -d "$dir/tmp" ] && rm -rf "$dir/tmp"
+  # From the supervisor's own variable, not re-read from the run dir: a caller
+  # may already have deleted the run dir by now (measured: the self-test does).
+  case "${own_tmp:-}" in /var/tmp/axr-*) rm -rf "$own_tmp" ;; esac
   # Release the containment scope. Only `cancel` used to do this, so every
   # NORMALLY COMPLETING run leaked its cgroup — measured at 71 leaked
   # directories, 71 of the 74 cgroups on the host, accumulating across

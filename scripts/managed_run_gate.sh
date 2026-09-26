@@ -259,11 +259,15 @@ fi
 D3T=$(env -u TMPDIR "$RM" start gate_selftest_tmp -- bash -c 'echo "$TMPDIR" > "$TMPDIR/where"; cat "$TMPDIR/where"') \
   || fail "start failed"
 waitrc "$D3T" || fail "no receipt for the TMPDIR self-test"
-case "$(cat "$D3T/log")" in
-  "$D3T/tmp") ;;
-  *) fail "job TMPDIR was '$(cat "$D3T/log")', expected $D3T/tmp — temp would land in the RAM /tmp" ;;
+T3T="$(cat "$D3T/log")"
+case "$T3T" in
+  /var/tmp/axr-*) ;;
+  *) fail "job TMPDIR was '$T3T', expected /var/tmp/axr-* — temp would land in the RAM /tmp" ;;
 esac
-[ ! -e "$D3T/tmp" ] || fail "the run's temp dir outlived the run"
+# Short enough that a Unix socket under a nested temp dir fits SUN_LEN (108).
+[ "${#T3T}" -le 32 ] || fail "job TMPDIR '$T3T' is ${#T3T} bytes; sockets beneath it will exceed SUN_LEN"
+[ "$(cat "$D3T/tmpdir")" = "$T3T" ] || fail "the run dir does not record its temp location"
+[ ! -e "$T3T" ] || fail "the run's temp dir outlived the run"
 rm -rf "$D3T"
 
 # ── 4. evidence is retained and attributable ────────────────────────────────
