@@ -708,6 +708,24 @@ stage order means it should have had one here" ;;
     fail "loop_interop_gate (Axon <-> MiCode v0.22 paired interop)"
   fi
 
+  # The MiCode half of the v0.22 named-test evidence: the exact MiCode tests
+  # that back each MiCode-side gate row in the execution registry, against the
+  # same peer the interop gate pairs with. "The whole MiCode suite passed"
+  # names no gate; this does. Same PASS-line and SKIP rules as above.
+  if mgs=$(./scripts/v022_micode_gates.sh 2>&1); then
+    case "$(printf '%s\n' "$mgs" | tail -1)" in
+      "v022_micode_gates: PASS — "*)
+        echo "  OK $(printf '%s\n' "$mgs" | tail -1)" ;;
+      "v022_micode_gates: SKIP — "*)
+        echo "  SKIP $(printf '%s\n' "$mgs" | tail -1) — this measured NOTHING"
+        echo "v022_micode_gates" >> "$SKIPLOG" ;;
+      *) printf '%s\n' "$mgs" | tail -5; fail "v022_micode_gates exited 0 without its PASS line" ;;
+    esac
+  else
+    printf '%s\n' "$mgs" | grep -E 'FAIL|FATAL' | tail -15
+    fail "v022_micode_gates (MiCode-side v0.22 gate tests)"
+  fi
+
   # B263 physical qualification of the protected Linux microVM profile
   # (root + KVM + firecracker/jailer + built dist/guest-linux artifacts).
   # PASS_WITH_BLOCKED (exit 3) FAILS this gate: qualification is not earned

@@ -288,6 +288,15 @@
         "PASS"
       ],
       "note": "B268. Real binaries: loop_interop_gate sections 3 and 5 \u2014 Axon's DEC policy narrows MiCode's sent tool set to exactly its shortlist, and a tool-adding policy is refused at put and abstains in MiCode with zero additions. A policy can do nothing but reorder/narrow: Axon refuses at put, naming the field, a policy that ALSO names a tool list, permission, verifier, model, compute profile, credential route, budget or skill (axon-loop tests/cli.rs a_policy_that_names_any_other_authority_dimension_is_refused_at_put \u2014 two independent layers, schema additionalProperties:false and serde deny_unknown_fields; dropping both lets it through, measured), and MiCode abstains on the same documents naming the field (active_policy::tests::a_policy_naming_any_other_authority_dimension_abstains_naming_it, mutation-checked). authority_expansion:true is refused on both sides. Skills are not policy-selectable at all: the candidate view is the tool registry."
+    },
+    {
+      "gate_id": "G16-r22-preflight-return",
+      "executed_by": "scripts/v022_micode_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B266, third use site. Named MiCode tests, run by exact name against the paired MiCode revision: every result a child of a closed-loop task returns is classified against the parent's CURRENT context before the parent sees it \u2014 the parent's current integration head (re-observed at intake, not the launch head), its current declaration (model route, build namespace, whether it still declares a context at all) and its declared write set. Stale worker success is directly_integratable / needs_rebase / conflicting / obsolete, obsolete outranking conflicting, and the class rides the result as a runtime footer the child cannot author, plus a written receipt; a receipt that cannot be produced renders as 'integrability unknown; do not merge', never as integratable. MiCode never merges a child's work, so nothing is admitted against a different base. result_receipt::tests::a_result_is_classified_against_the_parents_current_context (every class and every obsolete condition); assembly::tests::v022_a_returned_result_is_classified_against_the_parents_current_context (the production driver, real git: own work / parent landed a commit / write outside the set / parent rewound \u2014 mutations recorded in the test)."
     }
   ],
   "tasks": [],
