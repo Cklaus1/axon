@@ -393,3 +393,49 @@ fn a_replay_is_never_signed_not_even_a_genuine_one() {
         json!(axon_fabric::signing::REPLAYED)
     );
 }
+
+/// Re-audit 3: the check process inherited the launcher's WHOLE environment,
+/// so ambient `AXON_*` variables steered the verdict the verifier then signed.
+/// `AXON_STRICT=1` turns an unused `Result` from a warning into a type error:
+/// here it is set in Fabric's own environment, and the operator's suite —
+/// which drops a Result — must still pass, because the check runs from an
+/// empty environment. Mutation: drop `.with_clean_env()` → no summary, red.
+#[test]
+fn the_launchers_environment_does_not_steer_a_signed_verdict() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.dir.path().join("grants-pure")).unwrap();
+    let pure = env.dir.path().join("grants-pure").join("grants.json");
+    write_grant_registry(&pure, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+    let root = env.dir.path().join("suites/lenient-on-results");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("accept.ax"),
+        "mod f\nuse f.{double}\n\nfn probe() -> Result<i64, str> { Ok(1) }\n\n\
+         @[test]\nfn accept_double() {\n    probe()\n    assert_eq(double(21), 42)\n}\n",
+    )
+    .unwrap();
+    let sref = WorkspaceTree::import_dir(&root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut reg: Value = serde_json::from_slice(&std::fs::read(&env.registry).unwrap()).unwrap();
+    reg["checks"] = json!([{"id": "acceptance", "visibility": "hidden", "root": root,
+                            "entry": "accept.ax", "workspace_version_ref": sref}]);
+    let reg_path = env.dir.path().join("reg-env.json");
+    std::fs::write(&reg_path, reg.to_string()).unwrap();
+
+    use std::io::Write;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_axon-fabric"))
+        .args(submit_args(&env, &reg_path, &pure))
+        .env("AXON_STRICT", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut pipe = child.stdin.take().unwrap();
+    pipe.write_all(suite_request(&env, "op-env").to_string().as_bytes())
+        .unwrap();
+    drop(pipe);
+    let out: Value = serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap();
+    assert_eq!(out["receipt"]["verification"], "passed", "{out}");
+}

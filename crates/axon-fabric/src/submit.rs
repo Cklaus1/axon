@@ -867,7 +867,10 @@ fn host_executor(
     let local = LocalInterpreterExecutor::from_registry(&r)
         .map_err(|e| SubmitError::Unregistered(e.to_string()))?
         .with_timeout(std::time::Duration::from_millis(req.limits.wall_time_ms))
-        .with_max_output(req.limits.output_bytes as usize);
+        .with_max_output(req.limits.output_bytes as usize)
+        // Nothing of the launcher's environment steers a verdict (re-audit
+        // 3): only the ceiling, the trial cache and the module path below.
+        .with_clean_env();
     // Always set — `""` is deny-every-effect, never "no ceiling".
     let mut local = local.with_effect_ceiling(ceiling);
     // The trial's own fresh HOME / XDG_CACHE_HOME / CARGO_TARGET_DIR: no

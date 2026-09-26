@@ -2016,6 +2016,9 @@ struct ExecLimits {
     /// Extra environment for the check process (set, never inherited
     /// selectively): the Fabric's per-trial cache dirs and module path.
     env: Vec<(String, String)>,
+    /// Start the check process from an EMPTY environment, so only what is
+    /// set explicitly here reaches it.
+    clean_env: bool,
 }
 
 impl LocalInterpreterExecutor {
@@ -2051,6 +2054,16 @@ impl LocalInterpreterExecutor {
     /// ceiling (process_scoped enforcement, not an OS boundary).
     pub fn with_effect_ceiling(mut self, ceiling: impl Into<String>) -> Self {
         self.limits.effect_ceiling = Some(ceiling.into());
+        self
+    }
+
+    /// Run the check from an EMPTY environment: nothing of the launcher's
+    /// reaches it but the effect ceiling and what [`Self::with_env`] sets.
+    /// Interpreter behaviour is steered by ambient `AXON_*` variables
+    /// (`AXON_STRICT` alone turns a passing check into no verdict), and a
+    /// verdict someone vouches for must not depend on who launched it.
+    pub fn with_clean_env(mut self) -> Self {
+        self.limits.clean_env = true;
         self
     }
 
@@ -2141,6 +2154,9 @@ impl CheckExecutor for LocalInterpreterExecutor {
             .arg("--json");
         if let Some(f) = req.filter {
             cmd.arg("--filter").arg(f);
+        }
+        if self.limits.clean_env {
+            cmd.env_clear();
         }
         if let Some(c) = &self.limits.effect_ceiling {
             cmd.env("AXON_ALLOWED_EFFECTS", c);
