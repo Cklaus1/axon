@@ -103,6 +103,11 @@ MUTATIONS = [
      "            Ok(_ev) => {}",
      "axon-loop", "--test evidence_laundering",
      "a_counted_verdict_cites_the_evidence_it_was_authenticated_on"),
+    ("M15", "EVL: only an intaken episode is evaluated (ADR-001 §8)",
+     "crates/axon-loop/src/evl.rs",
+     "let ctx_check = if let Err(e) = intake_join(&intaken, d) {",
+     "let ctx_check = if let Err(e) = Ok::<(), String>(()) {",
+     "axon-loop", "--test evidence_laundering", "an_episode_intake_never_recorded_never_counts"),
 ]
 
 

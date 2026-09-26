@@ -52,18 +52,32 @@ type Run = (
 
 /// One experiment on a fresh world; `edit` launders the delivered trials.
 fn run(exp: &str, edit: impl FnOnce(&mut Value)) -> Run {
+    run_after(exp, false, edit)
+}
+
+/// [`run`], optionally intaking the GENUINE bundle before laundering it: the
+/// store then holds honest intake records, so whatever refuses the laundered
+/// delivery is evaluation's own re-check (evidence swapped after intake), not
+/// intake refusing the laundered bytes.
+fn run_after(exp: &str, genuine_intaken: bool, edit: impl FnOnce(&mut Value)) -> Run {
     let w = world();
     let before = axon_loop::pointer::load(&w.s, &scope()).unwrap();
     freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     let mut v = evl_request(exp, &w.inc, &w.cand, &specs, &EvlOpts::default());
+    if genuine_intaken {
+        assert!(
+            intake_all(&w.s, &v).is_empty(),
+            "the genuine bundle intakes"
+        );
+    }
     edit(&mut v);
     let (rec, e) = evaluate(&w.s, &v).unwrap();
     let c = rec.arm_for_policy(&w.cand_ref).unwrap();
     let outcomes = c
         .trials
         .iter()
-        .map(|t| (t.outcome, t.reason.clone()))
+        .map(|t| (t.outcome, first_refusal(t.trial_id.as_str(), &t.reason)))
         .collect();
     let (adm, _) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
     let after = axon_loop::pointer::load(&w.s, &scope()).unwrap();
@@ -166,7 +180,9 @@ fn laundered_evidence_never_crosses_independent_admission() {
             1 => "unknown verifier cannot establish outcome",
             2 => "Fabric reference mismatch",
             3 => "missing: no episode delivered",
-            _ => "cross-tenant evidence",
+            // Refused at intake since ADR-001 §8 (evaluation reads only what
+            // intake admitted); evaluation's cross-tenant check is second line.
+            _ => "intake: refused: bind: cross-scope episode",
         };
         assert!(
             outcomes.iter().any(|(_, reason)| reason.contains(want)),
@@ -197,8 +213,10 @@ fn laundered_evidence_never_crosses_independent_admission() {
 /// not accept, the pointer does not move. An unattested FAILURE is Unknown too:
 /// a forged failure cannot sink an arm.
 ///
-/// Mutation: delete the authentication block in `evl::judge` → the forged
-/// verdicts count and this fails.
+/// The genuine bundle is intaken FIRST, so the forged attestation is swapped in
+/// between intake and evaluation — only evaluation's own re-verification can
+/// refuse it. Mutation: delete the authentication block in `evl::judge` → the
+/// forged verdicts count and this fails.
 #[test]
 fn an_unauthenticated_verdict_never_counts() {
     let (impostor, _) = axon_loop_contracts::attestation::generate().unwrap();
@@ -244,7 +262,8 @@ fn an_unauthenticated_verdict_never_counts() {
         ),
     ];
     for (i, (why, reason_part, forge)) in forgeries.into_iter().enumerate() {
-        let (pass, _, d, r, moved, outcomes) = run(&format!("unauth-{i}"), |v| forge(v));
+        let (pass, _, d, r, moved, outcomes) =
+            run_after(&format!("unauth-{i}"), true, |v| forge(v));
         assert_eq!(pass, 0, "{why}: {outcomes:?}");
         assert!(
             outcomes.iter().all(|(o, reason)| *o == Outcome::Unknown
@@ -372,4 +391,50 @@ fn a_counted_verdict_cites_the_evidence_it_was_authenticated_on() {
         }
     }
     assert_eq!((pass, fail, unknown), (2, 1, 1));
+}
+
+/// ADR-001 §8 (architecture review wf_6c790b05): evaluation read the trials the
+/// REQUEST carried, so an episode intake would refuse — or one never presented
+/// to intake at all — was judged as if every intake check had passed. Now a
+/// delivered episode counts only if intake recorded it in this scope. Here the
+/// genuine bundle goes straight to evaluation: nothing counts. Positive
+/// control: the same bundle after intake is two verified passes per arm.
+///
+/// Mutation: drop the `intake_join` arm in `evaluate` → the un-intaken
+/// bundle is judged as verified passes and this fails.
+#[test]
+fn an_episode_intake_never_recorded_never_counts() {
+    let w = world();
+    freeze_plan(&w.s, "raw", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let v = evl_request("raw", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    let (rec, e) = axon_loop::evl::evaluate(
+        &w.s,
+        &axon_loop::evl::parse_request(&v.to_string()).unwrap(),
+    )
+    .unwrap();
+    for arm in &rec.arms {
+        assert_eq!(arm.verified_pass, 0, "{arm:?}");
+        assert!(arm
+            .trials
+            .iter()
+            .all(|t| t.outcome == Outcome::Unknown && t.reason.contains("not intaken")));
+    }
+    let (adm, _) = admit(&w.s, "raw", &e, ADMITTER, false).unwrap();
+    assert_ne!(adm.decision, Decision::Accept, "{:?}", adm.reasons);
+
+    let w = world();
+    freeze_plan(&w.s, "intaken", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let v = evl_request("intaken", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    assert!(intake_all(&w.s, &v).is_empty());
+    let (rec, _) = axon_loop::evl::evaluate(
+        &w.s,
+        &axon_loop::evl::parse_request(&v.to_string()).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        rec.arms.iter().all(|a| a.verified_pass == 2),
+        "{:?}",
+        rec.arms
+    );
 }

@@ -27,6 +27,14 @@ fn refused_unchanged<T: std::fmt::Debug>(
     e
 }
 
+/// An EVALUATION refusal writes nothing. Intake runs first, as in production
+/// (it records evidence; it decides nothing), so the snapshot isolates what
+/// evaluation itself did.
+fn eval_refused(w: &World, v: &serde_json::Value) -> LoopError {
+    intake_all(&w.s, v);
+    refused_unchanged(w, || evaluate(&w.s, v))
+}
+
 // ── root cause 1: activation re-derives, never trusts ─────────────────────
 
 /// A6: a forged ACCEPT stored under its own correct cl22 name.
@@ -319,9 +327,7 @@ fn g7_trials_before_freeze_are_refused() {
         created_ms: Some(before_freeze),
         ..Default::default()
     };
-    let e = refused_unchanged(&w, || {
-        evaluate(&w.s, &evl_request("exp", &w.inc, &w.cand, &specs, &o))
-    });
+    let e = eval_refused(&w, &evl_request("exp", &w.inc, &w.cand, &specs, &o));
     assert!(e.to_string().contains("before the plan froze"), "{e}");
 }
 
@@ -447,12 +453,10 @@ fn j109_unpaired_task_sets_refused() {
     for s in specs.iter_mut().skip(2) {
         s.2 = s.2.replace("task", "easy");
     }
-    let e = refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
-        )
-    });
+    let e = eval_refused(
+        &w,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    );
     assert!(e.to_string().contains("task manifest"), "{e}");
 }
 
@@ -1036,12 +1040,10 @@ fn ab9_ab10_one_evaluation_per_experiment_the_reject_stands() {
         .filter(|s| s.2 == "task-0" || s.2 == "task-1")
         .cloned()
         .collect();
-    let e = refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp", &w.inc, &w.cand, &cherry, &EvlOpts::default()),
-        )
-    });
+    let e = eval_refused(
+        &w,
+        &evl_request("exp", &w.inc, &w.cand, &cherry, &EvlOpts::default()),
+    );
     assert!(
         e.to_string()
             .contains("one evaluation per frozen experiment"),
@@ -1052,12 +1054,10 @@ fn ab9_ab10_one_evaluation_per_experiment_the_reject_stands() {
     for s in reroll.iter_mut() {
         s.3 = format!("r{}", s.3);
     }
-    refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp", &w.inc, &w.cand, &reroll, &EvlOpts::default()),
-        )
-    });
+    eval_refused(
+        &w,
+        &evl_request("exp", &w.inc, &w.cand, &reroll, &EvlOpts::default()),
+    );
     // the REJECT stands
     refused_unchanged(&w, || {
         pointer::transition(
@@ -1085,12 +1085,10 @@ fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
     let full = pair(&w.inc, &w.cand, 4, 4, 2, Some(100), Some(50));
     // subset of tasks
     let subset: Vec<_> = full.iter().filter(|s| s.2 != "task-3").cloned().collect();
-    let e = refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp", &w.inc, &w.cand, &subset, &EvlOpts::default()),
-        )
-    });
+    let e = eval_refused(
+        &w,
+        &evl_request("exp", &w.inc, &w.cand, &subset, &EvlOpts::default()),
+    );
     assert!(e.to_string().contains("cover exactly the manifest"), "{e}");
     // an extra task
     let mut extra = full.clone();
@@ -1102,12 +1100,10 @@ fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
         Out::Pass,
         Some(50),
     ));
-    refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp", &w.inc, &w.cand, &extra, &EvlOpts::default()),
-        )
-    });
+    eval_refused(
+        &w,
+        &evl_request("exp", &w.inc, &w.cand, &extra, &EvlOpts::default()),
+    );
     // a repeated task (repetitions = 1)
     let mut rep = full.clone();
     rep.push((
@@ -1118,12 +1114,10 @@ fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
         Out::Pass,
         Some(50),
     ));
-    let e = refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp", &w.inc, &w.cand, &rep, &EvlOpts::default()),
-        )
-    });
+    let e = eval_refused(
+        &w,
+        &evl_request("exp", &w.inc, &w.cand, &rep, &EvlOpts::default()),
+    );
     assert!(e.to_string().contains("repetitions"), "{e}");
     // undelivered trials are fine and counted as missing
     let o = EvlOpts {
@@ -1146,12 +1140,10 @@ fn ab10_trial_ids_never_reused_across_experiments() {
     })
     .unwrap();
     let specs = pair(&w.inc, &c2, 2, 2, 2, Some(100), Some(50));
-    let e = refused_unchanged(&w, || {
-        evaluate(
-            &w.s,
-            &evl_request("exp2", &w.inc, &c2, &specs, &EvlOpts::default()),
-        )
-    });
+    let e = eval_refused(
+        &w,
+        &evl_request("exp2", &w.inc, &c2, &specs, &EvlOpts::default()),
+    );
     assert!(
         e.to_string()
             .contains("unique for the experiment's lifetime"),

@@ -726,8 +726,86 @@ pub fn evl_request(
            "assigned":assigned,"trials":trials})
 }
 
+/// MiCode's policy acknowledgement for `p`, as intake joins it by content.
+pub fn ack_for(p: &PolicyEnvelope) -> Value {
+    json!({
+        "schema": "micode.closed-loop.policy-ack/1",
+        "pin": {"state": "pinned", "policy_id": p.policy_id, "policy_ref": digest(p).unwrap(),
+                "controls_ref": p.controls_ref, "candidate_set_ref": p.candidate_set_ref,
+                "shortlist": p.shortlist},
+        "candidates": candidate_list(),
+        "candidate_set_ref": p.candidate_set_ref,
+    })
+}
+
+/// Intake every delivered trial of an EVL request, the way the producer's
+/// episodes reach the store in production. A trial intake REFUSES stays
+/// un-intaken — evaluation then counts it Unknown, never a pass — and the
+/// refusal reasons are returned so a test can pin them.
+pub fn intake_all(s: &Store, v: &Value) -> Vec<(String, String)> {
+    let acks: Vec<String> = v["policies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let p: PolicyEnvelope = serde_json::from_value(p.clone()).unwrap();
+            axon_loop::candidates::put_policy(s, &p).unwrap();
+            ack_for(&p).to_string()
+        })
+        .collect();
+    let text = |x: &Value| (!x.is_null()).then(|| x.to_string());
+    let mut refused = vec![];
+    for t in v["trials"].as_array().unwrap() {
+        let r = axon_loop::intake::intake_episode(
+            s,
+            &axon_loop::intake::IntakeInput {
+                episode: &t["episode"].to_string(),
+                context: &t["context"].to_string(),
+                acks: &acks,
+                projection: None,
+                source_episode: None,
+                verification_request: text(&t["verification_request"]).as_deref(),
+                verification_receipt: text(&t["verification_receipt"]).as_deref(),
+                verification_attestation: text(&t["verification_attestation"]).as_deref(),
+            },
+        );
+        if let Err(e) = r {
+            refused.push((
+                t["episode"]["identity"]["trial_id"]
+                    .as_str()
+                    .unwrap_or("?")
+                    .to_string(),
+                e.to_string(),
+            ));
+        }
+    }
+    refused
+}
+
+thread_local! {
+    static INTAKE_REFUSALS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
+        Default::default();
+}
+
+/// Intake what the request delivers, then evaluate — the production order.
+/// Each trial intake refused is remembered (per test thread) for
+/// [`first_refusal`].
 pub fn evaluate(s: &Store, v: &Value) -> Result<(evl::EvaluationRecord, Ref), LoopError> {
+    let refused = intake_all(s, v);
+    INTAKE_REFUSALS.with(|m| m.borrow_mut().extend(refused));
     evl::evaluate(s, &evl::parse_request(&v.to_string())?)
+}
+
+/// Why a trial did not count, at the FIRST layer that refused it: intake's
+/// reason when evaluation found the trial never intaken (ADR-001 §8 — laundered
+/// episode or context bytes now die at intake), else evaluation's own.
+pub fn first_refusal(trial_id: &str, evl_reason: &str) -> String {
+    if evl_reason.contains("not intaken") {
+        if let Some(r) = INTAKE_REFUSALS.with(|m| m.borrow().get(trial_id).cloned()) {
+            return format!("intake: {r}");
+        }
+    }
+    evl_reason.to_string()
 }
 
 pub fn admit(

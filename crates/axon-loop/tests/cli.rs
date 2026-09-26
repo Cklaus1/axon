@@ -392,6 +392,39 @@ fn cli_evo_evl_admit_tel_end_to_end() {
 
     let specs = pair(&inc, &cand, 2, 2, 2, Some(100), Some(50));
     let req = evl_request("exp", &inc, &cand, &specs, &EvlOpts::default());
+    // ADR-001 §8: the producer's episodes reach the store through `intake
+    // episode` first; evaluation reads only what intake admitted.
+    let docs = tempfile::tempdir().unwrap();
+    let file = |name: String, v: &Value| {
+        let p = docs.path().join(name);
+        std::fs::write(&p, v.to_string()).unwrap();
+        p.display().to_string()
+    };
+    // A directory of acks: intake selects the one that pins the episode's
+    // policy BY CONTENT (G6), as MiCode's ack directory is handed over.
+    let ack_dir = docs.path().join("acks");
+    std::fs::create_dir(&ack_dir).unwrap();
+    for (i, p) in [&inc, &cand].iter().enumerate() {
+        std::fs::write(ack_dir.join(format!("{i}.json")), ack_for(p).to_string()).unwrap();
+    }
+    for (i, t) in req["trials"].as_array().unwrap().iter().enumerate() {
+        let mut args: Vec<String> = ["intake", "episode"].map(String::from).to_vec();
+        for (flag, key) in [
+            ("--in", "episode"),
+            ("--context", "context"),
+            ("--verification-request", "verification_request"),
+            ("--verification-receipt", "verification_receipt"),
+            ("--verification-attestation", "verification_attestation"),
+        ] {
+            args.push(flag.into());
+            args.push(file(format!("{i}-{key}.json"), &t[key]));
+        }
+        args.push("--ack".into());
+        args.push(ack_dir.display().to_string());
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (c, _, e) = run(d.path(), &argv, None);
+        assert_eq!(c, 0, "intake of trial {i}: {e}");
+    }
     let (c, v, e) = run(d.path(), &["evl", "evaluate"], Some(&req));
     assert_eq!(c, 0, "{e}");
     let eval_ref = v["evaluation_ref"].clone();

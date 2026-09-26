@@ -57,7 +57,7 @@ fn judge_c0(edit: impl FnOnce(&mut Value)) -> (Outcome, String) {
         .find(|t| t.trial_id.as_str() == "c1")
         .unwrap();
     assert_eq!(c1.outcome, Outcome::VerifiedPass, "{}", c1.reason);
-    (t.outcome, t.reason.clone())
+    (t.outcome, first_refusal("c0", &t.reason))
 }
 
 #[test]
@@ -77,7 +77,12 @@ fn the_execution_receipt_cannot_stand_as_independent_verification() {
         t["episode"]["verification"]["evidence_refs"] = json!([rref]);
     });
     assert_eq!(o, Outcome::Unknown);
-    assert!(why.contains("role upgrade"), "{why}");
+    // First line since ADR-001 §8: intake pins the verification's evidence to
+    // exactly the check request (evaluation's role-upgrade check is second).
+    assert!(
+        why.contains("intake: refused: verification evidence_refs must be exactly"),
+        "{why}"
+    );
 }
 
 #[test]
@@ -88,7 +93,12 @@ fn a_preflight_context_cannot_stand_as_the_verifier() {
         t["episode"]["verification"]["verifier_ref"] = cref;
     });
     assert_eq!(o, Outcome::Unknown);
-    assert!(why.contains("role upgrade"), "{why}");
+    // First line since ADR-001 §8: intake joins verifier_ref to the delivered
+    // check receipt (evaluation's role-upgrade check is second).
+    assert!(
+        why.contains("intake: refused: verification receipt digests to"),
+        "{why}"
+    );
 }
 
 #[test]
@@ -109,6 +119,9 @@ fn a_context_document_offered_as_the_execution_receipt_is_refused_whole() {
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     let mut v = evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default());
     v["trials"][2]["acf_receipt"] = v["trials"][2]["context"].clone();
+    // Intake (which never sees the execution receipt) runs first; the refusal
+    // under test is evaluation's, so the snapshot follows intake.
+    intake_all(&w.s, &v);
     let before = snapshot(w.dir.path());
     assert!(evaluate(&w.s, &v).is_err(), "a context is not a receipt");
     assert_eq!(snapshot(w.dir.path()), before, "and nothing is recorded");
@@ -188,5 +201,9 @@ fn evidence_from_another_tenant_never_joins_this_evaluation() {
         })
     });
     assert_eq!(o, Outcome::Unknown);
-    assert!(why.contains("cross-tenant"), "{why}");
+    // First line since ADR-001 §8: intake binds the episode to the scope.
+    assert!(
+        why.contains("intake: refused: bind: cross-scope episode"),
+        "{why}"
+    );
 }

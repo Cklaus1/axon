@@ -342,6 +342,21 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         }
     }
 
+    // ADR-001 §8: evaluation reads what the operator store ADMITTED through
+    // intake, never bytes the request merely carries. Every intake check
+    // (context join, ack, spend conversion, the verification evidence) sits
+    // on that path; a delivered episode with no EpisodeIntake record in this
+    // scope bypassed all of them.
+    let intaken: BTreeMap<Ref, crate::intake::IntakeRecord> = tx
+        .entries()
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::EpisodeIntake { scope, intake } if scope == &r.scope => {
+                Some((intake.episode_ref.clone(), (**intake).clone()))
+            }
+            _ => None,
+        })
+        .collect();
     let mut delivered: BTreeMap<(TaskId, ArmId, TrialId), Delivered> = BTreeMap::new();
     let mut evidence = BTreeSet::new();
     for (i, t) in r.trials.iter().enumerate() {
@@ -446,7 +461,9 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                 // NS4p/NS4w: a subject (request subject issuer, arm proposer)
                 // never observes its own preflight, even if the operator
                 // listed it as an observer — the verifier rule, mirrored.
-                let ctx_check = if d.ep.scope != r.scope || d.ctx.scope != r.scope {
+                let ctx_check = if let Err(e) = intake_join(&intaken, d) {
+                    Err(e)
+                } else if d.ep.scope != r.scope || d.ctx.scope != r.scope {
                     // Cross-tenant: evidence minted for another scope never
                     // joins this one, whatever its ids say.
                     Err(format!(
@@ -539,6 +556,28 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         })?;
     }
     Ok((rec, eref))
+}
+
+/// The delivered episode is one intake RECORDED in this scope. Its bytes are
+/// then exactly the intaken bytes (the record is keyed by their digest), and
+/// those bytes bind everything else intake joined: the context by
+/// `context_ref`, the verification check by `verifier_ref` and
+/// `evidence_refs` — which evaluation's own joins re-check against what is
+/// delivered. So existence is the whole test; comparing the other refs again
+/// here could never fire.
+fn intake_join(
+    intaken: &BTreeMap<Ref, crate::intake::IntakeRecord>,
+    d: &Delivered,
+) -> std::result::Result<(), String> {
+    if intaken.contains_key(&d.ep_ref) {
+        Ok(())
+    } else {
+        Err(format!(
+            "not intaken: episode {} has no intake record in this scope, so none of intake's \
+             checks ever ran on it",
+            d.ep_ref
+        ))
+    }
 }
 
 /// What every trial of one evaluation is judged against: fixed at the start of

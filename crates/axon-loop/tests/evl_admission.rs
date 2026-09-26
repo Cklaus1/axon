@@ -62,6 +62,9 @@ fn evl_refusals_write_nothing() {
     freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     let good = evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    // Intake first (production order); the refusals under test are
+    // evaluation's, and a re-intake of recorded bytes writes nothing.
+    intake_all(&w.s, &good);
     let before = snapshot(w.dir.path());
     let mut v = good.clone();
     v["assigned"].as_array_mut().unwrap().remove(0);
