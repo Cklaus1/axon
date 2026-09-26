@@ -699,10 +699,68 @@ axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" 
 check "G01: an attestation under an unregistered key is refused (exit 4)" eq "$?" 4
 check "G01: ...naming the key it is not signed by" grep -q "not by" "$WORK/g01-impostor.err"
 check "G01: store unchanged by the refusals" eq "$(store_hash)" "$H_G3"
+# Real-binary negatives for clauses the unit tests pin (re-audit 3: the gate
+# stayed green with these guards removed). Each runs BEFORE the positive intake
+# below, since intake records the trial identity.
+cl22() { python3 -c 'import json,sys,hashlib;print("cl22:"+hashlib.sha256(json.dumps(json.load(open(sys.argv[1])),sort_keys=True,separators=(",",":")).encode()).hexdigest())' "$1"; }
+# (2) The check workload could reach files: Fabric withholds its signature.
+mkdir -p "$WORK/grants-io"
+cat > "$WORK/grants-io/grant_check.axgrant" <<'G'
+profile = "developer"
+[grant]
+max_label = "internal"
+[grant.budget]
+cost_micro = 1000
+G
+jq -n --arg s "$(sha256sum "$WORK/grants-io/grant_check.axgrant" | cut -d' ' -f1)" --arg pr "$CHECK_PRINCIPAL" \
+  '{schema:"axon-fabric-grant-registry/1",grants:[{grant_ref:"grant:check",principal_ref:$pr,path:"grant_check.axgrant",sha256:$s}]}' \
+  > "$WORK/grants-io/grants.json"
+jq '.operation_id = "g01-io-op"' "$VREQ" > "$WORK/g01-io-req.json"
+"$AXF" submit --request "$WORK/g01-io-req.json" --journal "$WORK/g01-io.journal" --check-registry "$FAB/checks.json" \
+  --grant-registry "$WORK/grants-io/grants.json" --store "$STORE" --tenant "$TENANT" --family "$FAMILY" \
+  --expected-epoch "$RES_EPOCH" --state "$FAB/state" > "$WORK/g01-io.json"
+check "G01/(2): an effectful check grant runs, unsigned, naming why" \
+  eq "$(jq -c '[.receipt_attestation, (.attestation_withheld|test("could have read the signing key"))]' "$WORK/g01-io.json")" '[null,true]'
+# (3) The check ran AS the subject: a caller-minted grant registry names the
+# observer as the check principal; Fabric genuinely runs and signs it (fresh
+# journal), and the sidecar is re-derived to cite it. Intake refuses.
+mkdir -p "$WORK/grants-obs"
+cp "$FAB/grants/grant_check.axgrant" "$WORK/grants-obs/"
+jq '.grants[0].principal_ref = "micode-host-observer"' "$FAB/grants/grants.json" > "$WORK/grants-obs/grants.json"
+jq '.principal_ref = "micode-host-observer"' "$VREQ" > "$WORK/g01-obs-req.json"
+cp -a "$FAB/state" "$WORK/obs-state"
+"$AXF" submit --request "$WORK/g01-obs-req.json" --journal "$WORK/g01-obs.journal" --check-registry "$FAB/checks.json" \
+  --grant-registry "$WORK/grants-obs/grants.json" --store "$STORE" --tenant "$TENANT" --family "$FAMILY" \
+  --expected-epoch "$RES_EPOCH" --state "$WORK/obs-state" > "$WORK/g01-obs.json"
+jq .receipt "$WORK/g01-obs.json" > "$WORK/g01-obs-rc.json"
+jq .receipt_attestation "$WORK/g01-obs.json" > "$WORK/g01-obs-att.json"
+check "G01/(3): Fabric signed the check run as the observer (the principal is a caller-chosen name)" \
+  test "$(jq -r .signature "$WORK/g01-obs-att.json")" != null
+jq --arg q "$(cl22 "$WORK/g01-obs-req.json")" --arg r "$(cl22 "$WORK/g01-obs-rc.json")" \
+  '.verification.evidence_refs = [$q] | .verification.verifier_ref = $r' "$G3_EP" > "$WORK/g01-obs-ep.json"
+axl intake episode --in "$WORK/g01-obs-ep.json" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$WORK/g01-obs-req.json" --verification-receipt "$WORK/g01-obs-rc.json" \
+  --verification-attestation "$WORK/g01-obs-att.json" >/dev/null 2>"$WORK/g01-obs.err"
+check "G01/(3): ...and intake refuses a check run as the subject (exit 4, principal)" \
+  bash -c "[ $? -eq 4 ] && grep -q 'principal' '$WORK/g01-obs.err'"
+check "G01/(3): store unchanged by that refusal" eq "$(store_hash)" "$H_G3"
+# (4) The operator pinned another verifier revision: the genuine evidence no
+# longer decides (a copy of the store, so the real one is untouched).
+cp -a "$STORE" "$WORK/store-pin"
+jq '.verifier_pins["gate:independent-verifier"].executable_digest = ("acf1:" + ("f"*64))' "$STORE/config.json" \
+  > "$WORK/store-pin/config.json"
+"$AXL" --store "$WORK/store-pin" intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" >/dev/null 2>"$WORK/g01-pin.err"
+check "G01/(4): a store pinned to another verifier revision refuses the genuine verdict (exit 4)" \
+  bash -c "[ $? -eq 4 ] && grep -q 'verifier revision' '$WORK/g01-pin.err'"
 G3_IN="$(axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
   --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" 2>"$WORK/g3-intake.err")"
 check "G3: intake joins the real Fabric check (exit 0)" eq "$?" 0
 check "G3: record cites the receipt" eq "$(jq -r .record.verification_receipt_ref <<<"$G3_IN")" "$(jq -r .verification.verifier_ref "$G3_EP")"
+check "G01/(7): the record names the key that authenticated it" \
+  eq "$(jq -r .record.verification_key_id <<<"$G3_IN")" "$(jq -r .key_id "$VATT")"
+check "G01/(7): ...and the attestation it verified, stored content-addressed" \
+  eq "$(jq -S . "$STORE/fabric-attestations/$(jq -r .record.verification_attestation_ref <<<"$G3_IN" | cut -d: -f2).json")" "$(jq -S . "$VATT")"
 check "G3: Fabric receipt stored content-addressed" \
   test -f "$STORE/fabric-receipts/$(jq -r .verification.verifier_ref "$G3_EP" | cut -d: -f2).json"
 
@@ -945,14 +1003,47 @@ section "12. G01: the subject cannot read the verifier's signing key (real binar
 # cannot leave the workspace root. The agent asks to read the key: refused, and
 # no byte of it reaches the model.
 expected_context "$WORK/exp-key.json" trial-key challenger-1 "$HEAD_SHA" "$RES_EPOCH"
-KEY_B64="$(base64 -w0 "$ISSUER_KEY")"
-for tool_args in "read|{\"path\":\"$ISSUER_KEY\"}" "bash|{\"command\":\"cat $ISSUER_KEY\"}"; do
-  IFS='|' read -r tool args <<<"$tool_args"
+# Only what the TOOLS returned — never the system prompt or tool descriptions,
+# which name refusals themselves (re-audit 3: a whole-request grep matched them).
+tool_results() {
+  jq -r '[.messages[]?.content[]? | select(type=="object" and .type=="tool_result") | .content
+          | if type=="string" then . else (map(.text? // "") | join("\n")) end] | join("\n")' "$1"
+}
+# Did ANY byte-window of the key reach the model, in any encoding a tool could
+# return it in: hex, base64 at every alignment, or the raw bytes decoded as text.
+key_leaked() {
+  python3 - "$ISSUER_KEY" "$1" <<'PY'
+import base64, sys
+key = open(sys.argv[1], "rb").read()
+text = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+hexs = key.hex()
+probes = [hexs[i:i + 32] for i in range(0, len(hexs) - 31, 2)]
+for o in range(3):
+    b = base64.b64encode(key[o:]).decode()
+    probes += [b[i:i + 16] for i in range(0, len(b) - 20, 4)]
+raw = key.decode("utf-8", errors="replace")
+probes += [raw[i:i + 12] for i in range(len(raw) - 11) if raw[i:i + 12].count("\ufffd") <= 4]
+sys.exit(0 if any(p and p in text for p in probes) else 1)
+PY
+}
+key_absent() { ! key_leaked "$1"; }
+# Positive control: WITHOUT the closed-loop scope (no expected context), the
+# agent's bash reads the key — and the detector must see it there, or its
+# silence below proves nothing.
+scripted_call bash "{\"command\":\"cat $ISSUER_KEY\"}"
+run_micode key-control
+tool_results "$(result_req)" > "$WORK/key-control.results"
+check "key/control: unscoped, the key DOES reach the model and the detector sees it" key_leaked "$WORK/key-control.results"
+for tool_args in "read|{\"path\":\"$ISSUER_KEY\"}|read rejected .* relative to the workspace root" \
+                 "bash|{\"command\":\"cat $ISSUER_KEY\"}|delegation scope denied this call"; do
+  IFS='|' read -r tool args refusal <<<"$tool_args"
   scripted_call "$tool" "$args"
   run_micode "key-$tool" MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-key.json"
+  tool_results "$(result_req)" > "$WORK/key-$tool.results"
+  echo "  key/$tool tool_result: $(head -c 240 "$WORK/key-$tool.results" | tr '\n' ' ')"
   check "key/$tool: the task runs, the call is answered" bash -c "[ $RC -eq 0 ] && [ $NEWREQ -eq 2 ]"
-  check "key/$tool: the call was refused" grep -qiE 'denied|outside|not allowed|refus' "$(result_req)"
-  check "key/$tool: no byte of the key reached the model" bash -c "! grep -qF '$KEY_B64' '$(result_req)' && ! grep -qF '$(head -c 24 "$ISSUER_KEY" | base64 -w0)' '$(result_req)'"
+  check "key/$tool: the tool_result is the tool's own refusal" grep -qE "$refusal" "$WORK/key-$tool.results"
+  check "key/$tool: no byte of the key reached the model" key_absent "$WORK/key-$tool.results"
 done
 
 # ════════════════════════════════════════════════════════════════════════════
