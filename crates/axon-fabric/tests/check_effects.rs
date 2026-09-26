@@ -608,3 +608,29 @@ fn a_candidate_test_named_like_the_suites_cannot_pass_for_it() {
         "only the exact name counts"
     );
 }
+
+/// Re-audit 4 (R09 survived): "passed requires exit 0" had no test. The named
+/// check passes, but another test the substring filter also runs fails, so
+/// the run exits nonzero: that is not evidence of a pass, and the receipt
+/// says Unknown. Mutation: disable the exit-0 rule in `local_receipt` → red.
+#[test]
+fn a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass() {
+    let (s, r) = suite_with_helper(&[(
+        "f.ax",
+        "fn double(n: i64) -> i64 { n * 2 }\n@[test]\nfn hidden_completion_z() { assert(false) }\n",
+    )]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    let rep = sub.check_report.clone().unwrap();
+    assert_eq!(
+        rep["passed"],
+        json!(["hidden_completion"]),
+        "the named check passed"
+    );
+    assert_ne!(rep["exit_code"], json!(0), "{rep}");
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Unknown,
+        "{:?}",
+        sub.reason
+    );
+}

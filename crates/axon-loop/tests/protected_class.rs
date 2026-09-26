@@ -464,3 +464,50 @@ fn a_rollback_revalidates_its_predecessor() {
         assert_eq!(snapshot(w.dir.path()), before);
     }
 }
+
+/// Re-audit 4 (mutation reviewer): M17 was "killed" only because the message
+/// changed — its fixture was development-class, so the D3 class check still
+/// refused. Here the mechanism-test admission rests on a PROTECTED-class
+/// evaluation (protected backend, every trial cleared): the fixture ban is
+/// the only thing between it and activation, so removing that guard flips
+/// the outcome from refused to activated.
+#[test]
+fn a_protected_class_mechanism_test_is_still_not_served() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "pmech", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let o = EvlOpts {
+        role: CorpusRole::MechanismTest,
+        ..EvlOpts::default()
+    };
+    let mut v = evl_request("pmech", &w.inc, &w.cand, &specs_for(&w), &o);
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    assert_eq!(
+        rec.evaluation_class,
+        axon_loop::plan::EvaluationClass::Protected
+    );
+    let (adm, adm_ref) = admit(&w.s, "pmech", &e, ADMITTER, true).unwrap();
+    assert_eq!(adm.decision, Decision::Accept, "{:?}", adm.reasons);
+    let before = snapshot(w.dir.path());
+    let e = apply(
+        &w,
+        transition(
+            "m1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm_ref),
+            true,
+        ),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("serves no mechanism-test")),
+        "{e}"
+    );
+    assert_eq!(snapshot(w.dir.path()), before);
+}

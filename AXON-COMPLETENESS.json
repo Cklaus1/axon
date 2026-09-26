@@ -2233,6 +2233,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "bfed1ace"
+    },
+    {
+      "id": "FG-058",
+      "where": "crates/axon-loop/src/admission.rs",
+      "claimed": "G01 clause 1: a verdict counts toward admission or promotion only while its verifier's key is registered and the verifier is trusted (the lookup fails closed).",
+      "reality": "The key and trust were checked only when the evaluation was made. Admission and its re-derivation (activation, rollback) read the stored evaluation alone, so after the operator removed a verifier's key or trust its verdicts still admitted and still activated a policy.",
+      "reproduced": "G01 independent re-audit 4 (clause auditor, wf_0c9149f9), executed at 917fe199: with verifier_keys and trusted_verifiers emptied after the evaluation, admit returned Accept with 2 passes and activation succeeded; revoking between admit and activate also activated. Pinned by a_revoked_verifier_s_verdicts_stop_counting (mutation M50).",
+      "fix": "admission::derive re-checks every counted verdict's recorded issuer and key id against the current config (issuer trusted and not a subject; registered key's id equal to the one it verified under); a counted verdict with no recorded evidence is refused. derive serves admit and every re-derivation.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "c0770ae8"
     }
   ]
 }

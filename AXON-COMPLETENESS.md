@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 56 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 57 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -603,4 +603,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** Fabric's check process inherited the launcher's whole environment, and interpreter behaviour follows ambient AXON_* variables: AXON_STRICT=1 alone turns a passing check into no verdict.
 - **Reproduced:** Measured: axon test of a suite that drops a Result passes, and under AXON_STRICT=1 aborts with a type error. Pinned by the_launchers_environment_does_not_steer_a_signed_verdict through the real binary with AXON_STRICT=1 in its environment (mutation M44). Found by G01 independent re-audit 3.
 - **Fix:** Fabric's check executor runs from an empty environment (LocalInterpreterExecutor::with_clean_env): only the effect ceiling, the trial's cache dirs and the module path reach it. (`bfed1ace`)
+
+### FG-058 — crates/axon-loop/src/admission.rs (security, fixed)
+
+- **Claimed:** G01 clause 1: a verdict counts toward admission or promotion only while its verifier's key is registered and the verifier is trusted (the lookup fails closed).
+- **Reality:** The key and trust were checked only when the evaluation was made. Admission and its re-derivation (activation, rollback) read the stored evaluation alone, so after the operator removed a verifier's key or trust its verdicts still admitted and still activated a policy.
+- **Reproduced:** G01 independent re-audit 4 (clause auditor, wf_0c9149f9), executed at 917fe199: with verifier_keys and trusted_verifiers emptied after the evaluation, admit returned Accept with 2 passes and activation succeeded; revoking between admit and activate also activated. Pinned by a_revoked_verifier_s_verdicts_stop_counting (mutation M50).
+- **Fix:** admission::derive re-checks every counted verdict's recorded issuer and key id against the current config (issuer trusted and not a subject; registered key's id equal to the one it verified under); a counted verdict with no recorded evidence is refused. derive serves admit and every re-derivation. (`c0770ae8`)
 

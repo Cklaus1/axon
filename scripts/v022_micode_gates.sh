@@ -73,6 +73,12 @@ GATES=(
   # B268: a policy only reorders or narrows; it introduces nothing.
   "G16-r22-candidate-shortlist|micode-persist|lib|active_policy::tests::a_policy_naming_any_other_authority_dimension_abstains_naming_it active_policy::tests::a_valid_policy_pins_its_ref_and_ordered_shortlist"
   "G16-r22-candidate-shortlist|micode|closed_loop_v022_real_binary|a_policy_narrows_the_sent_tools_and_an_invalid_one_abstains_to_the_incumbent"
+  # G01 (re-audit 4): MiCode's side of verification authenticity — it cites
+  # no verdict Fabric did not attest, and a repository cannot choose its own
+  # verification (the `axon.` namespace is closed to project config).
+  # Defense in depth: Axon's intake re-verifies either way.
+  "G01-r22-independent-issuer|micode-persist|lib|fabric_check::tests::an_unattested_or_misattested_receipt_is_not_cited"
+  "G01-r22-independent-issuer|micode|lib|config::tests::a_repository_cannot_choose_its_own_verification"
 )
 
 for row in "${GATES[@]}"; do

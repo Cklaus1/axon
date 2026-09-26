@@ -887,6 +887,19 @@ fn verification_that_does_not_join_is_refused_with_the_store_unchanged() {
         &r,
         "output tree",
     );
+    // M45 (re-audit 4): the episode cites the CHECK's own request and receipt
+    // as its execution documents — a role upgrade only this rule refuses at
+    // intake.
+    let mut e = good.clone();
+    e["acf_request_ref"] = json!(digest_value(&req).unwrap());
+    e["acf_receipt_ref"] = json!(digest_value(&rc).unwrap());
+    refuse(
+        "execution refs are the check's own documents",
+        &e,
+        &req,
+        &rc,
+        "role upgrade",
+    );
     // M34: a FAILED verdict run on the output tree, whose sidecar names ANOTHER
     // tree as the one verified — a record that would misstate what was
     // checked. Only the sidecar-tree conjunct refuses it.

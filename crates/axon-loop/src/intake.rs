@@ -597,10 +597,11 @@ pub fn verify_check_evidence(
             "verification evidence_refs must be exactly [cl22 of the check request]",
         ));
     }
-    // Redundant today — bind_episode's role rule and the registered_check
-    // job-kind rule refuse these first — and kept so this function stands on
-    // its own for EVL. No test can make it fire alone (re-audit 3: X18, an
-    // equivalent mutant).
+    // The ONLY intake guard against an episode citing its own execution
+    // documents as the verification (re-audit 4 corrected re-audit 3's "X18
+    // is equivalent": bind_episode has no role rule; bind_acf does, but intake
+    // never calls it). EVL's bind_acf would still refuse to COUNT such an
+    // episode; this keeps it from being recorded at all.
     for r in [&req_ref, &rc_ref] {
         if [&ep.context_ref, &ep.acf_request_ref, &ep.acf_receipt_ref].contains(&r) {
             return Err(refused(

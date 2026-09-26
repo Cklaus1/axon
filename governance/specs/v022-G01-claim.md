@@ -9,6 +9,9 @@ History:
 - Re-audit 1 (wf_f213aa49): failed.
 - Re-audit 2 (wf_c11193f8): failed.
 - Re-audit 3 (wf_85472584, at 87273274): failed, with three blockers, all since fixed. The fixes are FG-053 to FG-057.
+- Re-audit 4 (wf_0c9149f9, at 917fe199): failed on one blocker. A revoked verifier's verdicts
+  still counted at admission and activation (fixed: c0770ae8, FG-058). Four of the five roles
+  reported REGISTER; every minor is addressed below or stated as a limitation.
 
 ## The claim
 
@@ -22,7 +25,9 @@ or promotion only if all of the following hold.
    - the operation, task, trial, attempt and execution ids.
 
    The public key must be registered in the store's `verifier_keys`. A missing key, a missing
-   attestation or a key mismatch refuses the verdict.
+   attestation or a key mismatch refuses the verdict. The check is repeated at admission and at
+   every re-derivation (activation, rollback). A verifier the operator has since untrusted or
+   re-keyed no longer vouches for anything.
 2. **Fabric signs only a verdict it just produced.** It signs a `registered_check` of an
    operator-registered suite (`check:<id>`), and only when all of these hold:
    - this process produced the receipt. A replay is never signed, because the journal path is
@@ -31,14 +36,16 @@ or promotion only if all of the following hold.
      gives it no effect at all.
    - the check ran from an empty environment, apart from the ceiling, the trial caches and the
      module path.
-3. **The verifier is trusted and independent.** The subject set is the same at intake and in
-   evaluation:
+3. **The verifier is trusted and independent.** Evaluation is the only door where a verdict
+   counts, and it judges by this subject set:
    - the trial's observer;
    - the evaluation request's subject issuers;
    - the proposer of each arm policy.
 
-   The issuer must be trusted and outside that set. The check must not have run as a subject
-   principal.
+   Intake cannot know an evaluation's subject issuers. It judges by the observer and the
+   proposer of the episode's own policy. That is a subset of evaluation's set, so it fails
+   closed. The issuer must be trusted and outside the set. The check must not have run as a
+   subject principal.
 4. **What ran is what the operator pinned.** This covers:
    - the verifier revision (executable and digest) and its compute profile;
    - exactly one suite identity, `check-suite:<id>@<version>#<entry>`, pinned for that verifier;
@@ -75,17 +82,27 @@ or promotion only if all of the following hold.
 
 | Clause | Tests (unit/integration) | Mutations | Real binaries (`loop_interop_gate.sh`) |
 |---|---|---|---|
-| 1 | `attestation.rs` unit tests; `intake.rs` authenticated and each-rule tests; `evidence_laundering.rs` unauthenticated-verdict | M02 M03 M08 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
-| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay and forged-journal; environment test | M01 M40–M42 M44 | §8 (2): effectful grant withheld; replay unsigned |
-| 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 | §8 (3): check run as the observer refused |
-| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 | §8 (4): another pinned revision refused; task and filter pin cases |
-| 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite) | M09 M21–M25 M31–M36 | §8: tree, identity and supervisor on real bytes |
-| 6 | `protected_class.rs` | M11–M13 M17–M20 | not exercised (see gaps) |
-| 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 | §8 (7): the record names the key id and the stored attestation |
+| 1 | `attestation.rs` unit tests; `intake.rs` authenticated and each-rule tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
+| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay and forged-journal; environment test; `check_effects.rs` exit-0 rule | M01 M40–M42 M44 M49 | §8 (2): effectful grant withheld; replay unsigned |
+| 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
+| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 | §8 (4): another pinned revision refused; task and filter pin cases |
+| 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
+| 6 | `protected_class.rs` (including a protected-class mechanism fixture and rollback revalidation) | M11–M13 M17–M20 M51 | not exercised (see gaps) |
+| 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 M48 | §8 (7): the record names the key id and the stored attestation |
 
 The mutation run lives in `scripts/v022_g01_mutations.py`, with results in
-`governance/proofs/v022-g01/`. It covers the listed guards only. It is not a
-proof that no other guard exists.
+`governance/proofs/v022-g01/`. The authoritative run is the one named for the commit being
+registered. Superseded runs are kept under `superseded/`. The run covers the listed guards only;
+it is not a proof that no other guard exists.
+
+A kill means the named test failed. For M24 and M27–M29 the recorded kill shows the forged input
+still refused, but by a second rule. That is redundancy by design (defense in depth): the kill
+proves the named test depends on the guard, not that the guard alone stands between a forgery
+and a count.
+
+MiCode's side is defense in depth, because intake re-verifies either way. It cites no unattested
+verdict, and a repository cannot choose its own verification. Both are rows in
+`scripts/v022_micode_gates.sh`.
 
 ## Accepted limitations (ADR-001; not claimed)
 
@@ -100,6 +117,10 @@ proof that no other guard exists.
 - **The attestation binds no loop scope.** It carries no tenant or family, so reuse of a verdict
   across scopes is refused by intake's scope bind, not by the signature. Binding the scope is an
   attestation v2 item (after D1/D2/D5).
+- **Fabric re-runs an operation on a fresh journal.** The journal is caller-named, so a new
+  journal re-runs and re-signs an operation already run elsewhere. Uniqueness per attempt comes
+  from intake's identity rule, which records one set of bytes per trial identity, not from
+  Fabric.
 - **Unshipped suite modules fall through to the candidate.** A `mod` the operator's suite
   declares but does not ship resolves from the candidate. Suite completeness is the operator's
   registration duty; the suite's own modules always win (FG-052).
@@ -114,11 +135,23 @@ proof that no other guard exists.
   stays active until the next transition (ADR-001 §5 activation revalidation, pending).
 - **Clause 6 has no real-binary coverage.** The interop gate never freezes or activates in a
   protected scope.
+- **No real MiCode verdict counts in evaluation yet, and counting has no real-binary coverage.**
+  Under D12, MiCode writes its execution refs as not-produced markers. Evaluation's `bind_acf`
+  requires real ones, so every real MiCode trial is Unknown ("unbound ACF evidence"). It fails
+  closed. The interop gate drives intake, not `evl evaluate`, admit or activate; counting is
+  proved on fixture trials.
+- **Learning inputs are outside G01.** EVO `propose` reads caller-supplied episodes and trusts a
+  verdict by issuer name, with no attestation or intake. It cannot choose the mutation, and a
+  proposed candidate must still pass evaluation and admission.
+- **Section 12's read row tests generic containment.** The read tool's absolute-path refusal
+  applies with or without the closed-loop scope. Only the bash row exercises the scope. MiCode's
+  closed-loop tool denial is a denylist (`bash`, `run_code`, `run_tests`, `check`), so a future
+  tool that shells out must be added to it.
 - **Parser hardening is pending.** The verdict is parsed from merged stdout and stderr. Under the
   empty ceiling, candidate code cannot print, and a failing named test's own result line cannot
   be suppressed, so a fail cannot become a pass (reasoned, not executed). A dedicated result
   channel is still pending.
-- **Two guards are equivalent mutants.** No test can make them fire alone, and each is documented
-  where it stands:
-  - `verify_check_evidence`'s role-upgrade rule (X18);
-  - EVL's cited-only-if-counted filter (X23).
+- **One guard is an equivalent mutant.** No test can make EVL's cited-only-if-counted filter
+  (X23) fire alone, and it is documented where it stands. Re-audit 4 showed X18, the intake
+  role-upgrade rule, is not equivalent. It is the only intake guard for that case, and is now
+  M45.

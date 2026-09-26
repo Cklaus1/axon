@@ -658,9 +658,14 @@ axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" 
 check "G3: intake WITHOUT the Fabric documents is refused (exit 4)" eq "$?" 4
 check "G3: store unchanged by that refusal" eq "$(store_hash)" "$H_G3"
 jq -c '.verification = "failed"' "$VRC" > "$WORK/g3-tampered-rc.json"
+# Everything else genuine — including Fabric's attestation — so only the
+# cited-receipt join can refuse it (re-audit 4: without the attestation this
+# was refused as unauthenticated, and stayed green with the join removed).
 axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
-  --verification-request "$VREQ" --verification-receipt "$WORK/g3-tampered-rc.json" >/dev/null 2>"$WORK/g3-tamper.err"
+  --verification-request "$VREQ" --verification-receipt "$WORK/g3-tampered-rc.json" \
+  --verification-attestation "$VATT" >/dev/null 2>"$WORK/g3-tamper.err"
 check "G3: intake with a receipt that is not the cited one is refused (exit 4)" eq "$?" 4
+check "G3: ...by the cited-receipt join" grep -q "digests to" "$WORK/g3-tamper.err"
 check "G3: store unchanged by that refusal" eq "$(store_hash)" "$H_G3"
 # G01-r22-independent-issuer on real bytes: the verdict is AUTHENTICATED.
 check "G01: MiCode kept Fabric's attestation of the cited receipt" test -n "$VATT"
