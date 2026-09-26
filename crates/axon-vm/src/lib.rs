@@ -10,9 +10,11 @@
 //! jailer-less Firecracker running the custom Axon guest kernel, NOT Linux, and
 //! it is not qualified as a protected microVM.
 
+pub mod admit;
 pub mod firecracker;
 
+pub use admit::{admit, AdmitError, AdmitRequest, AdmittedLaunch, ExtendedTcb, KernelPin};
 pub use firecracker::{
-    run_in_firecracker, BackendProfile, GuestOutcome, LaunchSpec, MmdsPayload, RunResult,
-    BACKEND_PROFILE,
+    run_in_firecracker, BackendProfile, FirecrackerBin, GuestOutcome, LaunchSpec, MmdsPayload,
+    RunResult, BACKEND_PROFILE,
 };

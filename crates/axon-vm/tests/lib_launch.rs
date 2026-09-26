@@ -8,7 +8,10 @@
 
 use std::path::{Path, PathBuf};
 
-use axon_vm::{run_in_firecracker, GuestOutcome, LaunchSpec, MmdsPayload, BACKEND_PROFILE};
+use axon_vm::{
+    admit, run_in_firecracker, AdmitRequest, FirecrackerBin, GuestOutcome, KernelPin, LaunchSpec,
+    BACKEND_PROFILE,
+};
 
 #[test]
 fn backend_profile_is_truthful_about_what_it_is() {
@@ -103,7 +106,7 @@ fn live_prereqs() -> Option<PathBuf> {
     let fc = ["/usr/local/bin/firecracker", "/opt/firecracker/firecracker"]
         .iter()
         .any(|p| Path::new(p).exists())
-        || axon_vm::firecracker::which_firecracker().is_ok();
+        || FirecrackerBin::resolve().is_ok();
     let kvm = Path::new("/dev/kvm").exists();
     match kernel {
         Some(k) if fc && kvm => Some(k.canonicalize().unwrap()),
@@ -132,27 +135,41 @@ fn launch(kernel: &Path, effects: &[&str]) -> axon_vm::RunResult {
     let initrd = dir.path().join("initrd");
     std::fs::write(&initrd, "x").unwrap();
     let sock = dir.path().join("fc.sock");
-    let mmds = MmdsPayload {
-        schema: "axon-vm-mmds/1".into(),
-        run_id: "lib-launch-test".into(),
+    // D-019: the library launch goes through admission like the CLI does. The
+    // test pins the digest of the very kernel it boots — a pin, not TOFU.
+    let digest = hex_sha256(kernel);
+    let effects: Vec<String> = effects.iter().map(|s| s.to_string()).collect();
+    let admitted = admit(&AdmitRequest {
+        run_id: "lib-launch-test",
+        kernel,
         principal: None,
-        allowed_effects: Some(effects.iter().map(|s| s.to_string()).collect()),
+        manifest_effects: Some(&effects),
+        principal_effects: None,
+        effects_override: None,
         budget_tokens: None,
         source_hash: None,
         seccomp_bpf_b64: None,
-    };
+        kernel_pin: KernelPin::Verify {
+            expect_digest: Some(&digest),
+            baseline: &dir.path().join("no-baseline"),
+        },
+        extended_tcb: None,
+    })
+    .expect("pinned kernel is admitted");
+    let firecracker = FirecrackerBin::resolve().expect("firecracker resolved");
     std::env::set_var("AXON_VM_QUIET", "1");
     std::env::set_var("AXON_VM_TIMEOUT_SECS", "20");
     run_in_firecracker(&LaunchSpec {
+        admitted: &admitted,
+        firecracker: &firecracker,
         program: &prog,
-        kernel,
         initrd: &initrd,
         mem_mib: 128,
         vcpus: 1,
         vsock_port: 5000,
         socket_path: &sock,
-        mmds: &mmds,
         principal_mem_mib: None,
+        socket_timeout: axon_vm::firecracker::DEFAULT_SOCKET_TIMEOUT,
     })
     .expect("launcher drove the Firecracker API")
 }
@@ -173,4 +190,9 @@ fn live_boot_through_the_library_reports_the_guest_verdict() {
     assert_eq!(denied.outcome, GuestOutcome::Violation, "{denied:?}");
     assert_eq!(denied.exit_code, 8);
     assert!(!denied.ok());
+}
+
+fn hex_sha256(p: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(std::fs::read(p).unwrap()))
 }
