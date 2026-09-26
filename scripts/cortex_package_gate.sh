@@ -61,6 +61,12 @@ PKG="docs/axon_cortex_v0_15/axon-cortex-build-v0_15"
 SUMS="$PKG/SHA256SUMS_v0_15.json"
 REGISTRY="governance/cortex_gate_execution_registry.json"
 REPORT="target/cortex-package-validation.json"
+# The manifest is pinned from OUTSIDE the package. A forward/reverse check
+# against a manifest that can be regenerated alongside the files it lists
+# proves nothing: measured on a scratch copy, a tampered spec plus a
+# recomputed SHA256SUMS_v0_15.json read as "both directions clean" (gate PASS).
+# Re-vendoring means editing this pin — a reviewable code change.
+PIN_SUMS15="99047d324053d7aa09020061de9787372675760c5d67be1e31863ed2f6bddee3"
 
 # Non-vacuity floors. Minimums, not exact values: a legitimately re-vendored
 # package may grow. A truncated or empty manifest trips these.
@@ -83,9 +89,13 @@ command -v python3 >/dev/null 2>&1 || abort "python3 not found (required to pars
 mkdir -p target
 
 echo "── cortex: package integrity (SHA256SUMS_v0_15, both directions) ──"
-python3 - "$PKG" "$SUMS" "$MIN_FILES" <<'PY'
+python3 -B - "$PKG" "$SUMS" "$MIN_FILES" "$PIN_SUMS15" <<'PY'
 import hashlib, json, os, sys
-pkg, sums, min_files = sys.argv[1], sys.argv[2], int(sys.argv[3])
+pkg, sums, min_files, pin_sums = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+got_sums = hashlib.sha256(open(sums, "rb").read()).hexdigest()
+if got_sums != pin_sums:
+    print(f"  integrity FAILED:\n    PINNED   {os.path.basename(sums)} digest {got_sums} != pinned {pin_sums} "
+          "(the manifest itself changed — re-vendor deliberately by editing PIN_SUMS15)"); sys.exit(1)
 man = json.load(open(sums, encoding="utf-8"))
 if man.get("schema") != "cortex-package-sha256/1":
     print(f"  manifest schema is {man.get('schema')!r}, expected cortex-package-sha256/1"); sys.exit(1)
