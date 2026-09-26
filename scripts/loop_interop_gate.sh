@@ -511,7 +511,12 @@ check "G3: an independent Fabric import of the repo yields the same tree ref" eq
 NP_REQ="cl22:$(python3 -c 'import json,hashlib;print(hashlib.sha256(json.dumps({"not_produced_by":"micode","field":"acf_request_ref"},sort_keys=True,separators=(",",":")).encode()).hexdigest())')"
 check "G3/D12: acf_request_ref stays MiCode's not-produced marker" eq "$(jq -r .acf_request_ref "$G3_EP")" "$NP_REQ"
 # Fabric's own journal witnesses the operation (not MiCode's word for it).
-FSTAT="$("$AXF" status --journal "$FAB/ops.journal" --op trial-g3-op)"
+# `status` acts only for the submitting authority (G03-r22-authority-intersection).
+fab_status() {  # <op>
+  "$AXF" status --journal "$FAB/ops.journal" --op "$1" \
+    --grant-registry "$FAB/grants/grants.json" --principal "$CHECK_PRINCIPAL" --grant-ref grant:check
+}
+FSTAT="$(fab_status trial-g3-op)"
 check "G3: Fabric journal holds the op, launched" eq "$(jq -r .launched <<<"$FSTAT")" true
 check "G3: Fabric journal op state is completed" eq "$(jq -r .state <<<"$FSTAT")" completed
 
@@ -563,7 +568,12 @@ run_micode g3h MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3h.json" MICODE_AXON_ACT
 G3H_EP="$(new_file "$CL/episodes" "$SN_EP")"
 check "G3: a template naming a task-owned field → no verifier cited (not_run)" \
   eq "$(jq -c '[.verification.result,.verification.verifier_ref]' "$G3H_EP")" '["not_run",null]'
-check "G3: Fabric never saw the hijacked op" test "$("$AXF" status --journal "$FAB/ops.journal" --op trial-g3h-op >/dev/null 2>&1; echo $?)" -ne 0
+# Exactly unknown_op (exit 5) under the right authority: a bare "nonzero" would
+# also be satisfied by an authorization refusal, which proves nothing about the op.
+check "G3: Fabric never saw the hijacked op (unknown_op, exit 5)" eq "$(fab_status trial-g3h-op >/dev/null 2>&1; echo $?)" 5
+check "G3: status without the submitting authority is refused (exit 7)" \
+  eq "$("$AXF" status --journal "$FAB/ops.journal" --op trial-g3-op --grant-registry "$FAB/grants/grants.json" \
+        --principal principal:intruder --grant-ref grant:check >/dev/null 2>&1; echo $?)" 7
 
 # Machine-readable: the Stage-5 profile (governance/v022_stage5_verification.json)
 # requires this section to have EXECUTED, not merely the gate to have passed.
