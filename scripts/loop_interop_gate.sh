@@ -177,16 +177,30 @@ ledger_n() { [ -f "$STORE/ledger.jsonl" ] && wc -l < "$STORE/ledger.jsonl" || ec
 axl() { "$AXL" --store "$STORE" "$@"; }
 
 # ════════════════════════════════════════════════════════════════════════════
-section "0. old peer: no expected context, a policy file present"
-# A stale/foreign policy is set, but the harness declared no context: MiCode
-# must behave exactly as before — every tool, no closed-loop artefact.
-echo '{"schema":"axon.closed-loop.policy/1"}' > "$WORK/stale-policy.json"
-run_micode old MICODE_AXON_ACTIVE_POLICY="$WORK/stale-policy.json"
+section "0. old peer: no expected context, no policy"
+# A peer that declares nothing gets MiCode exactly as before: every tool, no
+# closed-loop artefact. This is the baseline tool set section 1 compares to.
+run_micode old
 check "old peer: micode exec succeeds" eq "$RC" 0
 check "old peer: exactly one provider request" eq "$NEWREQ" 1
 OLD_TOOLS="$(req_tools "$(last_req)")"
 check "old peer: no .micode/axon/closed-loop directory" test ! -e "$CL"
 check "old peer: Axon ledger has nothing to record" eq "$(ledger_n)" 0
+
+section "0b. a policy set WITHOUT an expected context is REFUSED, not ignored"
+# Before v022 Stage 4 (MiCode B268, 03f6dea4) MiCode silently IGNORED an active
+# policy that came with no expected context, and this section asserted that
+# silent ignore as correct. A configured key that does nothing is the failure
+# AGENTS.md §1 forbids, and ACTIVE_POLICY_ENV's own doc says it requires the
+# context. Now: TASK_NOT_STARTED, zero provider calls, nothing written.
+echo '{"schema":"axon.closed-loop.policy/1"}' > "$WORK/stale-policy.json"
+run_micode stale MICODE_AXON_ACTIVE_POLICY="$WORK/stale-policy.json"
+check "policy without context: micode exec is refused (nonzero)" test "$RC" -ne 0
+check "policy without context: zero provider requests" eq "$NEWREQ" 0
+check "policy without context: names POLICY_WITHOUT_EXPECTED_CONTEXT" \
+  grep -q POLICY_WITHOUT_EXPECTED_CONTEXT "$WORK/stale.out" "$WORK/stale.err"
+check "policy without context: no .micode/axon/closed-loop directory" test ! -e "$CL"
+check "policy without context: Axon ledger has nothing to record" eq "$(ledger_n)" 0
 
 # ════════════════════════════════════════════════════════════════════════════
 section "1. incumbent run: learn the candidate view from MiCode's own ack"
