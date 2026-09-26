@@ -18,7 +18,7 @@
 | D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **fixed** (Stage 2 lane 2B) | `crates/axon-cortex/tests/fabric_acf1.rs`, `crates/axon-fabric/tests/journal.rs` |
 | D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
 | D-019 | `axon-vm` library entry bypasses `cmd_run`'s pre-launch gates | **open** (latent, no production caller) — Stage 3 | — |
-| D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **open** — Stage 3 | — |
+| D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **part fixed** — `HardwareIsolated` no longer accepts an unqualified VM (S3-7, `0f21a9fd`, mutation-checked); qualification strictness (S3-1) and the in-guest policy channel (S3-5) still open — Stage 3 | `crates/axon-os/tests/hardware_isolation.rs` |
 | D-021 | v0.22 package `EXISTING_AXON_MAP.md` repeats two stale claims | package update proposed | — |
 | **D-022** | interp stamped AI-sourced `Uncertain` as user-constructed, at the constructor and through arithmetic (both engines) | **FIXED** — ported; mutation-verified | ported from `D-014@upgrade/cortex-v0_20` |
 | **D-023** | reflex reply parse was last-wins; an id-less request was served as id 0 | **FIXED** — ported; mutation-verified | ported from `D-015@upgrade/cortex-v0_20` |
