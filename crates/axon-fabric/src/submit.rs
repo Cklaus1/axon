@@ -1198,7 +1198,15 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 .suite
                 .as_ref()
                 .map(|s| format!("check-suite:{}@{}", s.id, s.version));
-            local_receipt(&req, &journal, res, filter.as_deref(), liability, seen, suite)?
+            local_receipt(
+                &req,
+                &journal,
+                res,
+                filter.as_deref(),
+                liability,
+                seen,
+                suite,
+            )?
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");

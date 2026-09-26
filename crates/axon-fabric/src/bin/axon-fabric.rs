@@ -284,6 +284,11 @@ fn submit(a: &Args) {
                     // The signer is a VERIFIER identity: it vouches only for a
                     // registered check's verdict, never for arbitrary execution.
                     let is_check = req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck;
+                    // ...and only a verdict from an OPERATOR-registered suite:
+                    // a check file of the candidate's own tree is candidate
+                    // bytes, which can never define the rubric.
+                    let registered_suite =
+                        req.argv.first().is_some_and(|a| a.starts_with("check:"));
                     let isolated =
                         s.backend == Some(axon_fabric::backend::LINUX_MICROVM_PROTECTED.id);
                     let effectless = cfg
@@ -297,6 +302,15 @@ fn submit(a: &Args) {
                             Some(
                                 "not a registered_check: the verifier signs verdicts, not \
                                  execution",
+                            ),
+                        )
+                    } else if !registered_suite {
+                        (
+                            None,
+                            Some(
+                                "the check is a file of the candidate's tree, not an \
+                                 operator-registered suite (check:<id>): candidate bytes cannot \
+                                 define the rubric, so the verifier does not vouch for it",
                             ),
                         )
                     } else if isolated || effectless {

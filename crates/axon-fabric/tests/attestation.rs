@@ -8,6 +8,7 @@
 mod common;
 use common::*;
 
+use axon_fabric::workspace::{Quota, WorkspaceStore, WorkspaceTree};
 use axon_loop_contracts::{ComputeRequest, ExecutionReceipt, OpaqueRef};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -47,9 +48,42 @@ fn keygen(out: &Path) -> (i32, Value) {
     )
 }
 
-/// A copy of the env's check registry carrying `signer` (or none).
+/// An operator-registered suite `acceptance` (outside the candidate tree):
+/// `(root, workspace_version_ref)`.
+fn suite(env: &Env) -> (PathBuf, String) {
+    let root = env.dir.path().join("suites/acceptance");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("accept.ax"),
+        "mod f\nuse f.{double}\n\n@[test]\nfn accept_double() { assert_eq(double(21), 42) }\n",
+    )
+    .unwrap();
+    let r = WorkspaceTree::import_dir(&root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    (root, r)
+}
+
+/// A request that runs the registered suite over the candidate, published as
+/// a WorkspaceVersion in the CLI's state dir.
+fn suite_request(env: &Env, op: &str) -> Value {
+    let candidate = WorkspaceStore::open(&env.dir.path().join("fabric-state"), &tenant())
+        .unwrap()
+        .import_dir(&env.ws, &Quota::default())
+        .unwrap();
+    let mut r = request(env, op, "t_ok");
+    r["argv"] = json!(["check:acceptance", "accept_double"]);
+    r["workspace_version_ref"] = json!(candidate.as_str());
+    r
+}
+
+/// A copy of the env's check registry carrying the suite and `signer` (or none).
 fn registry_with(env: &Env, name: &str, signer: Option<Value>) -> PathBuf {
     let mut v: Value = serde_json::from_slice(&std::fs::read(&env.registry).unwrap()).unwrap();
+    let (root, r) = suite(env);
+    v["checks"] = json!([{"id": "acceptance", "visibility": "hidden", "root": root,
+                          "entry": "accept.ax", "workspace_version_ref": r}]);
     if let Some(s) = signer {
         v["signer"] = s;
     }
@@ -115,7 +149,7 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
 
     // Signed: an effect-free check, the operator's signer.
     let reg = registry_with(&env, "reg-signed.json", Some(signer(&key, &pk)));
-    let req = request(&env, "op-signed", "t_ok");
+    let req = suite_request(&env, "op-signed");
     let (c, out) = fabric(&submit_args(&env, &reg, &pure), Some(&req.to_string()));
     assert_eq!(c, 0, "{out}");
     let rq: ComputeRequest = serde_json::from_value(req.clone()).unwrap();
@@ -125,6 +159,28 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
         .expect("the attestation verifies under the pinned key");
     assert_eq!(att["key_id"], key_id.as_str());
     assert_eq!(att["operation_id"], "op-signed");
+    assert_eq!(out["receipt"]["verification"], "passed", "{out}");
+    assert!(out["receipt"]["evidence_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e.as_str().unwrap().starts_with("check-suite:acceptance@")));
+
+    // A check file of the candidate's OWN tree: candidate bytes cannot define
+    // the rubric, so the verifier does not vouch for it (the receipt is still
+    // an answer, unattested).
+    let (c, out) = fabric(
+        &submit_args(&env, &reg, &pure),
+        Some(&request(&env, "op-own-file", "t_ok").to_string()),
+    );
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(out["receipt_attestation"], json!(null));
+    assert!(
+        out["attestation_withheld"]
+            .as_str()
+            .is_some_and(|r| r.contains("not an operator-registered suite")),
+        "{out}"
+    );
     let (_, other_pk) = axon_loop_contracts::attestation::generate().unwrap();
     assert!(
         axon_loop_contracts::attestation::verify(att, &issuer, &rq, &rc, &other_pk).is_err(),
@@ -135,7 +191,7 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
     // the key. The receipt is still an answer — just not an attested one.
     let (c, out) = fabric(
         &submit_args(&env, &reg, &env.grant_registry),
-        Some(&request(&env, "op-effectful", "t_ok").to_string()),
+        Some(&suite_request(&env, "op-effectful").to_string()),
     );
     assert_eq!(c, 0, "{out}");
     assert_eq!(out["receipt_attestation"], json!(null));
@@ -216,4 +272,8 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
         spawns,
         "a refused signer ran nothing"
     );
+}
+
+fn tenant() -> axon_loop_contracts::TenantId {
+    axon_loop_contracts::TenantId::new("tenant-t").unwrap()
 }

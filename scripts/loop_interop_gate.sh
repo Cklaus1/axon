@@ -689,23 +689,21 @@ check "G3: record cites the receipt" eq "$(jq -r .record.verification_receipt_re
 check "G3: Fabric receipt stored content-addressed" \
   test -f "$STORE/fabric-receipts/$(jq -r .verification.verifier_ref "$G3_EP" | cut -d: -f2).json"
 
-# The rubric is the operator's, never the candidate's: the same task with its
-# check pointed at a file IN its own tree runs through real Fabric and is
-# genuinely signed — and intake refuses it, store unchanged.
+# The rubric is the operator's, never the candidate's. The same task with its
+# check pointed at a file IN its own tree runs through real Fabric, but the
+# verifier does not vouch for candidate bytes: Fabric withholds its attestation,
+# so MiCode cites no verdict at all. (That a genuinely SIGNED candidate-tree
+# verdict is still refused at intake is axon-loop tests/intake.rs
+# a_verdict_counts_only_for_what_the_operator_pinned.)
 fabric_check_config "$WORK/fabric-own.json" t_ok_double checks/accept.ax
 g3_context "$WORK/exp-g3o.json" trial-g3o
 snap_cl
 run_micode g3o MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3o.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
   MICODE_AXON_FABRIC_CHECK="$WORK/fabric-own.json"
 G3O_EP="$(new_file "$CL/episodes" "$SN_EP")"
-g3_docs "$G3O_EP"
-check "rubric: the candidate-tree check was genuinely signed by the verifier" eq "$(jq -r .public_key "$VATT")" "$ISSUER_PK"
-H_O="$(store_hash)"
-axl intake episode --in "$G3O_EP" --context "$CL/context" --ack "$CL/policy-ack" \
-  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" >/dev/null 2>"$WORK/g3o.err"
-check "rubric: a verdict from the candidate's own check file is refused (exit 4)" eq "$?" 4
-check "rubric: ...because candidate bytes cannot define the rubric" grep -q "cannot define the acceptance rubric" "$WORK/g3o.err"
-check "rubric: store unchanged" eq "$(store_hash)" "$H_O"
+check "rubric: the task still completes (a withheld attestation never fails a task)" eq "$RC" 0
+check "rubric: MiCode cites NO verdict from the candidate's own check file" \
+  eq "$(jq -c '[.verification.verifier_ref, .verification.result]' "$G3O_EP")" '[null,"not_run"]'
 
 # A FAILING acceptance check is recorded as failed — never dropped, never passed.
 fabric_check_config "$WORK/fabric-fail.json" t_bad
