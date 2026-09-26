@@ -1,0 +1,19 @@
+{
+  "schema": "axon-v022-release-claims/1",
+  "purpose": "G29-r22-claim-separation: the repository's OWN v0.22 release claims, as three separate fields. Each is true only when it cites evidence of its own kind; absence of that evidence leaves it false. None implies another: an engineering qualification is not a policy activation, and neither is a measured improvement. Validated by scripts/v022_claim_separation.py (invoked by scripts/gate.sh).",
+  "engineering_qualified": {
+    "claimed": false,
+    "evidence": null,
+    "note": "Requires a RELEASE-VERIFIED receipt (scripts/release_check.sh) at the claimed revision. Not yet: FG-042 open, B263 unsigned."
+  },
+  "policy_activated": {
+    "claimed": false,
+    "evidence": null,
+    "note": "Requires a real admission record (axon.loop.admission, decision accept) AND the fenced activation transition that published it, from the Stage-7 pilot. None exists."
+  },
+  "measured_improvement_supported": {
+    "claimed": false,
+    "evidence": null,
+    "note": "Requires a measured-claim report (G21-r22-measured-claim: population, clusters, paired outcomes, costs, uncertainty). No pilot has run, so no benefit is justified; this stays false rather than naming a winner."
+  }
+}

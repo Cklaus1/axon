@@ -286,6 +286,9 @@ cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
 # or the filtered run executes fewer tests than listed.
 echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──"
 ./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
+# G29-r22-claim-separation: the repository's own three release claims stay
+# separate and false until each has evidence of its own kind.
+python3 -B scripts/v022_claim_separation.py || fail "v0.22 release-claim separation"
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to

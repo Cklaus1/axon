@@ -198,6 +198,15 @@
         "PASS"
       ],
       "note": "B260. A check that times out after its launch record gives receipt TimedOut / verification Unknown, projected to episode OutcomeUnknown, with its whole reservation kept as outstanding liability (neither refunded nor charged as known); a re-send with the same operation id replays that answer and never re-runs it (the worker is started exactly once). A launched op whose supervisor dies (SIGKILL, abort) is OutcomeUnknown with liability kept and never re-run; unknown billing keeps the full reservation; an unknown outcome can be settled with evidence but never marked completed. axon-fabric submit.rs, journal.rs, restart_matrix.rs."
+    },
+    {
+      "gate_id": "G29-r22-claim-separation",
+      "executed_by": "scripts/v022_claim_separation.py",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B286. governance/v022_release_claims.json holds engineering_qualified, policy_activated and measured_improvement_supported as three separate fields; each may be true only with evidence of its own kind (a release-verified receipt; an admission plus its activation transition; a measured-claim report with population and uncertainty), one claim's evidence never stands for another's, no merged field is allowed, and absence leaves a claim false. All three are false today (no pilot, not release-verified). The validator self-tests the cases it must refuse before reading the record."
     }
   ],
   "tasks": [],
