@@ -39,19 +39,19 @@ fn launder(
     t["acf_receipt"] = json!(rc);
 }
 
-/// One experiment on a fresh world; `edit` launders the delivered trials.
-/// Returns (candidate verified passes, assigned, decision, reasons, pointer moved?).
-fn run(
-    exp: &str,
-    edit: impl FnOnce(&mut Value),
-) -> (
+/// (candidate verified passes, assigned, decision, reasons, pointer moved?,
+/// per-trial (outcome, reason)).
+type Run = (
     u64,
     u64,
     Decision,
     Vec<String>,
     bool,
     Vec<(Outcome, String)>,
-) {
+);
+
+/// One experiment on a fresh world; `edit` launders the delivered trials.
+fn run(exp: &str, edit: impl FnOnce(&mut Value)) -> Run {
     let w = world();
     let before = axon_loop::pointer::load(&w.s, &scope()).unwrap();
     freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
