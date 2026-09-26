@@ -144,6 +144,24 @@
         "PASS"
       ],
       "note": "B280. Authority-peer outage at submit and between submit and dispatch (an absent store is refused, not read as epoch 0 \u2014 FG-048), a re-send after reconnect through the library and the real CLI (one run, budget committed once), authority that moved while away (new request refused, recorded answer kept), another schema version or an unknown field refused before the journal, a partial export refused then the complete one recorded once (a partial re-send is not a replay), an episode of another schema version refused, and a replayed activation after a later pause that re-activates nothing. Tests: axon-fabric peer_failure_matrix.rs; axon-loop intake.rs, pointer.rs. The MiCode-side peer failures (old/absent adapter, no common profile, fabricated accept, Fabric refusal) are loop_interop_gate.sh sections 8-9 and MiCode's own tests."
+    },
+    {
+      "gate_id": "G03-r22-joint-bypass",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B282. Attacks on Fabric's routes into authority, on the selected profile (process_scoped/local-interpreter): a repository shipping its own check/grant registries (refused; its executable never runs), re-attaching a different outcome to a finished op or attaching one to an unfinished op (refused before any write; replays keep the original receipt), argv escaping the workspace, the legacy single-file fallback's live-file swap (no verdict on bytes it did not judge), per-trial cache isolation, grant authority (grant_authority.rs: grant_ref bound to its principal, pinned grant files) and check effects (check_effects.rs: hidden suite, substituted suite/executable/argv, stale epoch). Verifier separation is G32 below. NOT covered: the Linux microVM profile (BLOCKED on the operator-signed B263 qualification) and settlement, which is library-only accounting, not an admission route."
+    },
+    {
+      "gate_id": "G32-r22-evidence-laundering",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B282. Each laundering class \u2014 mutated receipt, forged issuer identity, hash-only success, missing attempt, cross-tenant reference \u2014 on individually schema-valid documents with re-derived digests, driven through independent evaluation -> admission -> the fenced pointer: never a verified pass, never Accepted, pointer never moves, each refused by its own first-line check (mutation-proven), with a clean positive control Accepted (axon-loop evidence_laundering.rs). Intake step 8 refuses laundered Fabric verification evidence (intake.rs)."
     }
   ],
   "tasks": [],

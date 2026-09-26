@@ -54,6 +54,13 @@ GATES=(
   "G16-r22-peer-failure-matrix|axon-fabric|peer_failure_matrix|an_unreadable_epoch_store_at_submit_refuses_and_records_nothing an_outage_between_submit_and_dispatch_launches_nothing_and_stays_explicit a_resent_request_after_an_outage_replays_and_never_duplicates authority_that_moved_during_an_outage_is_not_assumed a_request_of_another_schema_version_is_refused_before_the_journal"
   "G16-r22-peer-failure-matrix|axon-loop|intake|a_partial_export_is_refused_then_the_complete_one_is_recorded_once an_episode_of_another_schema_version_is_refused"
   "G16-r22-peer-failure-matrix|axon-loop|pointer|a_replayed_activation_after_authority_moved_does_not_reactivate"
+  # B282: joint bypass (routes) and evidence laundering (the whole admission chain).
+  "G03-r22-joint-bypass|axon-fabric|joint_bypass|a_repository_cannot_supply_its_own_registries an_outcome_cannot_be_reattached_or_attached_early an_argv_file_outside_the_workspace_is_refused"
+  "G03-r22-joint-bypass|axon-fabric|workspace|a_legacy_single_file_swapped_before_launch_never_yields_a_verdict_on_the_original two_trials_caches_do_not_see_each_others_writes"
+  "G03-r22-joint-bypass|axon-fabric|grant_authority|*7"
+  "G03-r22-joint-bypass|axon-fabric|check_effects|*8"
+  "G32-r22-evidence-laundering|axon-loop|evidence_laundering|a_clean_bundle_is_accepted_positive_control laundered_evidence_never_crosses_independent_admission"
+  "G32-r22-evidence-laundering|axon-loop|intake|verification_that_does_not_join_is_refused_with_the_store_unchanged"
 )
 
 for row in "${GATES[@]}"; do

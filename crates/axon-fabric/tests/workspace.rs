@@ -854,3 +854,31 @@ fn a_check_over_a_version_from_a_real_repository_passes() {
     );
     assert_eq!(s.receipt.input_workspace_ref, r);
 }
+
+/// B282 / G03-r22-joint-bypass — the LEGACY single-file fallback reads the live
+/// workspace in place. A file swapped after the request's digest was taken
+/// must not yield a verdict that names the ORIGINAL bytes: either the verdict
+/// is about the bytes the receipt names, or there is no verdict.
+#[test]
+fn a_legacy_single_file_swapped_before_launch_never_yields_a_verdict_on_the_original() {
+    let env = Env::new();
+    let named = request(&env, "op-legacy-swap", "t_ok");
+    let mut cfg = env.cfg(0);
+    cfg.pre_launch_hook = Some(swap_workspace_file);
+    let s = submit(&named.to_string(), &cfg).unwrap();
+    // The run judged the swapped file; the receipt names the original digest.
+    // So there is NO verdict — neither passed nor failed — and the reason says why.
+    assert_eq!(
+        s.receipt.verification,
+        axon_loop_contracts::ReceiptVerification::Unknown,
+        "{:?}",
+        s.reason
+    );
+    assert!(
+        s.reason
+            .as_deref()
+            .is_some_and(|r| r.contains("the run changed the candidate")),
+        "{:?}",
+        s.reason
+    );
+}
