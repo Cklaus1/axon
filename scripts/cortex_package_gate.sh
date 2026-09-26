@@ -173,12 +173,17 @@ echo "── cortex: the package's own validator (tools/validate_package.py) ─
 # <root>/package_validation.json, which is a HASH-LISTED file, and it stamps a
 # fresh `validated_at` every run -- running it with defaults would break the
 # integrity check above. Write the report to target/ instead.
-if ! python3 "$PKG/tools/validate_package.py" --root "$PKG" --report "$REPORT" >/dev/null; then
+# A stale PASS report must not survive into this run. Measured: with the
+# validator replaced by a no-op that exits 0 without writing, the gate read the
+# PREVIOUS run's PASS report from target/ and passed.
+rm -f "$REPORT"
+if ! python3 -B "$PKG/tools/validate_package.py" --root "$PKG" --report "$REPORT" >/dev/null; then
   note_fail "package validator reported errors (see $REPORT)"
 fi
 python3 - "$REPORT" <<'PY'
 import json, sys
-r = json.load(open(sys.argv[1], encoding="utf-8"))
+try: r = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError) as e: print(f"  no readable validator report (it must be written by THIS run): {e}"); sys.exit(1)
 if r.get("result") != "PASS":
     print("  validator result:", r.get("result"), r.get("errors")); sys.exit(1)
 c = r.get("counts", {})
