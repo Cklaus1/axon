@@ -676,6 +676,7 @@ name = "cortex-policy-adapter"
 version = "0.1.0"
 dependencies = [
  "axon-cortex",
+ "axon-loop-contracts",
  "serde_json",
 ]
 
