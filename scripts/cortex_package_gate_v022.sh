@@ -94,6 +94,20 @@ fail_now() { echo "$NAME: FAIL — $1"; exit 1; }
 FAILURES=()
 note_fail() { echo "   ↳ FAILED: $1"; FAILURES+=("$1"); }
 
+# Self-check: the package's hash-rewriting tools may not appear as COMMANDS in
+# this script, in any spelling argparse accepts. Neither tool sets
+# allow_abbrev=False, so an unambiguous PREFIX is the flag (measured on the
+# vendored tools): validate_package.py has --root and --refresh-hashes, so
+# `--re`, `--ref`, `--refr` … all reseal SHA256SUMS; package_views.py has
+# --root and --write, so `--w` rewrites four hash-listed views; and
+# tools/run_review_tests.py rewrites review/TEST_LOG.txt + TEST_RESULTS.json on
+# every invocation. The sums pin catches the RESULT on the next run; this makes
+# the script refuse to be the thing that does it. Patterns are split so this
+# line does not match itself; comment lines are exempt.
+if grep -nE '^[^#]*(-''-re[a-z-]*|run_review''_tests|package_views\.py[^#]*-''-w[a-z-]*)' "$0" >&2; then
+  fail_now "this script invokes a tool that rewrites hash-listed package files (see the line above)"
+fi
+
 command -v python3 >/dev/null 2>&1 || fail_now "python3 not found (required to verify the package)"
 [ -d "$PKG" ] || fail_now "package root missing: $PKG"
 [ -f "$PKG/$SUMS_NAME" ] || fail_now "checksum manifest missing: $PKG/$SUMS_NAME"
