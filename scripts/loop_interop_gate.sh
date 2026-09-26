@@ -74,6 +74,13 @@ section "build"
   || { echo "FATAL: axon-loop build failed" >&2; exit 2; }
 ( cd "$MICODE_DIR" && CARGO_TARGET_DIR="$MICODE_TGT" cargo build --locked -q -p micode --bin micode ) \
   || { echo "FATAL: micode build failed (--locked: is MiCode's Cargo.lock tracked and current?)" >&2; exit 2; }
+# Section 8 (G3) drives the REAL Fabric submit path, which runs the check in
+# the real interpreter: both are built here, never mocked.
+( cd "$AXON_DIR" && CARGO_TARGET_DIR="$AXON_TGT" cargo build --locked -q -p axon-fabric --bin axon-fabric \
+    && CARGO_TARGET_DIR="$AXON_TGT" cargo build --locked -q -p axon-core --no-default-features --bin axon ) \
+  || { echo "FATAL: axon-fabric / axon interpreter build failed" >&2; exit 2; }
+AXF="$AXON_TGT/debug/axon-fabric"; AXI="$AXON_TGT/debug/axon"
+[ -x "$AXF" ] && [ -x "$AXI" ] || { echo "FATAL: axon-fabric or axon not built" >&2; exit 2; }
 AXL="$AXON_TGT/debug/axon-loop"
 MICODE="$MICODE_TGT/debug/micode"
 [ -x "$AXL" ] || { echo "FATAL: built axon-loop not at $AXL" >&2; exit 2; }
@@ -128,6 +135,22 @@ printf 'fn main() {\n    println!("hello");\n}\n' > "$REPO/src/main.rs"
 g add -A && g commit -q -m "base"
 BASE_PARENT="$(g rev-parse HEAD)"
 printf '# task\nsay pong\n' > "$REPO/TASK.md"
+# The task's ACCEPTANCE CHECK (G3): an Axon test file Fabric runs in the real
+# interpreter. Fabric judges the EXACTLY NAMED check (argv[1]); a name that
+# matches no test is not_run, never passed.
+mkdir -p "$REPO/checks"
+cat > "$REPO/checks/accept.ax" <<'AX'
+fn double(n: i64) -> i64 { n * 2 }
+
+@[test]
+fn t_ok_double() { assert_eq(double(2), 4) }
+
+@[test]
+fn t_ok_zero() { assert_eq(double(0), 0) }
+
+@[test]
+fn t_bad() { assert_eq(double(2), 5) }
+AX
 g add -A && g commit -q -m "task"
 HEAD_SHA="$(g rev-parse HEAD)"
 REPO_REAL="$(cd "$REPO" && pwd -P)"
@@ -404,6 +427,139 @@ axl intake episode --in "$WORK/tamper-cost-unconverted.json" --context "$PIN_CTX
 TC_RC=$?
 check "tampered cost (same trial, different bytes): refused as identity conflict (exit 5)" eq "$TC_RC" 5
 check "tampered cost: nothing recorded" eq "$(ledger_n)" "$N"
+
+# ════════════════════════════════════════════════════════════════════════════
+section "8. G3: MiCode's acceptance check runs through REAL Fabric; Axon intake joins it"
+# D12: only the acceptance check goes through Fabric; the agent's own tool calls
+# stay under local MiCode authority, so the sidecar's execution refs stay
+# not-produced markers. What must join, on real bytes from three real binaries:
+#   MiCode → axon-fabric workspace-import + submit → supervisor-observed receipt
+#   → sidecar verifier_ref / evidence_refs / output tree → axon-loop intake.
+FAB="$WORK/fabric"; mkdir -p "$FAB/grants"
+AXI_SHA="$(sha256sum "$AXI" | cut -d' ' -f1)"
+jq -n --arg p "$AXI" --arg s "$AXI_SHA" \
+  '{schema:"cortex-check-registry/1",executors:[{id:"axon-test-local",path:$p,sha256:$s}]}' > "$FAB/checks.json"
+cat > "$FAB/grants/grant_check.axgrant" <<'G'
+profile = "restricted"
+[grant]
+fs_read = ["*"]
+fs_write = ["*"]
+max_label = "internal"
+[grant.budget]
+cost_micro = 1000
+G
+CHECK_PRINCIPAL="principal:gate-check"   # NOT micode-host-observer: a task cannot verify itself
+jq -n --arg s "$(sha256sum "$FAB/grants/grant_check.axgrant" | cut -d' ' -f1)" --arg pr "$CHECK_PRINCIPAL" \
+  '{schema:"axon-fabric-grant-registry/1",grants:[{grant_ref:"grant:check",principal_ref:$pr,path:"grant_check.axgrant",sha256:$s}]}' \
+  > "$FAB/grants/grants.json"
+EXE_DIGEST="acf1:$(python3 -c 'import json,sys,hashlib;print(hashlib.sha256(json.dumps({"registered_executable_ref":"axon-test-local","sha256":sys.argv[1]},sort_keys=True,separators=(",",":")).encode()).hexdigest())' "$AXI_SHA")"
+# fabric_check_config <out> <filter>
+fabric_check_config() {
+  jq -n --arg fab "$AXF" --arg j "$FAB/ops.journal" --arg c "$FAB/checks.json" --arg g "$FAB/grants/grants.json" \
+        --arg st "$STORE" --arg state "$FAB/state" --arg pr "$CHECK_PRINCIPAL" --arg ex "$EXE_DIGEST" --arg f "$2" '{
+    schema:"micode.fabric-check/1", fabric:$fab, journal:$j, check_registry:$c, grant_registry:$g,
+    loop_store:$st, state:$state, issuer_ref:"gate:independent-verifier", timeout_s:300,
+    request_template:{
+      principal_ref:$pr, grant_ref:"grant:check", approval_ref:null,
+      registered_executable_ref:"axon-test-local", executable_digest:$ex,
+      semantic_state_ref:null, policy_digest:("acf1:"+("c"*64)),
+      required:{engine:"axon_interpreter",hardware_isolation:false,os:"none",architecture:"x86_64",
+                network_mode:"deny",checkpoint_kind:"none"},
+      limits:{cpu_millicores:1000,memory_bytes:268435456,disk_bytes:268435456,wall_time_ms:60000,
+              output_bytes:1048576,max_cost_micro:100,currency_code:"USD",price_schedule_ref:"unpriced:gate"},
+      argv:["checks/accept.ax",$f], result_schema_ref:"cortex-check-report/1" } }' > "$1"
+}
+# expected context whose execution id is the one Fabric mints for the op
+g3_context() {  # <out> <trial>
+  expected_context "$1" "$2" challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+  jq --arg t "$2" '.identity.execution_id = ("exec-"+$t+"-op")' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+# sidecar_verification_docs <sidecar> → sets VREQ VRC (files under fabric/)
+g3_docs() {
+  VRC="$CL/fabric/$(jq -r .verification.verifier_ref "$1" | cut -d: -f2).json"
+  VREQ="$CL/fabric/$(jq -r '.verification.evidence_refs[0]' "$1" | cut -d: -f2).json"
+}
+
+fabric_check_config "$WORK/fabric-pass.json" t_ok_double
+g3_context "$WORK/exp-g3.json" trial-g3
+snap_cl
+run_micode g3 MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
+  MICODE_AXON_FABRIC_CHECK="$WORK/fabric-pass.json"
+check "G3: micode exec succeeds" eq "$RC" 0
+G3_EP="$(new_file "$CL/episodes" "$SN_EP")"
+check "G3: a sidecar was written" test -n "$G3_EP"
+check "G3: verification cites a verifier (MiCode ran the check through Fabric)" \
+  test "$(jq -r .verification.verifier_ref "$G3_EP")" != null
+g3_docs "$G3_EP"
+check "G3: the cited receipt is on disk under closed-loop/fabric/" test -s "$VRC"
+check "G3: the cited request is on disk under closed-loop/fabric/" test -s "$VREQ"
+check "G3: verification passed with matched_checks 1 (the named check, t_ok_double)" \
+  eq "$(jq -c '[.verification.result,.verification.matched_checks]' "$G3_EP")" '["passed",1]'
+check "G3: receipt is supervisor-observed" eq "$(jq -r .evidence_source "$VRC")" supervisor_observed
+check "G3: receipt's operation is this attempt's" eq "$(jq -r .operation_id "$VRC")" "trial-g3-op"
+check "G3: receipt's execution id is the sidecar's" eq "$(jq -r .execution_id "$VRC")" "$(jq -r .identity.execution_id "$G3_EP")"
+check "G3: the check ran as the check principal, not the subject" eq "$(jq -r .principal_ref "$VREQ")" "$CHECK_PRINCIPAL"
+# The tree: MiCode's WorkspaceVersion == Fabric's import == the receipt's input.
+check "G3: output_workspace_ref == receipt input tree" eq "$(jq -r .output_workspace_ref "$G3_EP")" "$(jq -r .input_workspace_ref "$VRC")"
+FAB_IMPORT="$("$AXF" workspace-import --state "$WORK/fabric-reimport" --tenant "$TENANT" --root "$REPO" | jq -r .workspace_version_ref)"
+check "G3: an independent Fabric import of the repo yields the same tree ref" eq "$FAB_IMPORT" "$(jq -r .output_workspace_ref "$G3_EP")"
+# D12 limitation, stated on the wire: execution refs are still not-produced markers.
+NP_REQ="cl22:$(python3 -c 'import json,hashlib;print(hashlib.sha256(json.dumps({"not_produced_by":"micode","field":"acf_request_ref"},sort_keys=True,separators=(",",":")).encode()).hexdigest())')"
+check "G3/D12: acf_request_ref stays MiCode's not-produced marker" eq "$(jq -r .acf_request_ref "$G3_EP")" "$NP_REQ"
+# Fabric's own journal witnesses the operation (not MiCode's word for it).
+FSTAT="$("$AXF" status --journal "$FAB/ops.journal" --op trial-g3-op)"
+check "G3: Fabric journal holds the op, launched" eq "$(jq -r .launched <<<"$FSTAT")" true
+check "G3: Fabric journal op state is completed" eq "$(jq -r .state <<<"$FSTAT")" completed
+
+H_G3="$(store_hash)"
+axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" >/dev/null 2>"$WORK/g3-nodocs.err"
+check "G3: intake WITHOUT the Fabric documents is refused (exit 4)" eq "$?" 4
+check "G3: store unchanged by that refusal" eq "$(store_hash)" "$H_G3"
+jq -c '.verification = "failed"' "$VRC" > "$WORK/g3-tampered-rc.json"
+axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$WORK/g3-tampered-rc.json" >/dev/null 2>"$WORK/g3-tamper.err"
+check "G3: intake with a receipt that is not the cited one is refused (exit 4)" eq "$?" 4
+check "G3: store unchanged by that refusal" eq "$(store_hash)" "$H_G3"
+G3_IN="$(axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" 2>"$WORK/g3-intake.err")"
+check "G3: intake joins the real Fabric check (exit 0)" eq "$?" 0
+check "G3: record cites the receipt" eq "$(jq -r .record.verification_receipt_ref <<<"$G3_IN")" "$(jq -r .verification.verifier_ref "$G3_EP")"
+check "G3: Fabric receipt stored content-addressed" \
+  test -f "$STORE/fabric-receipts/$(jq -r .verification.verifier_ref "$G3_EP" | cut -d: -f2).json"
+
+# A FAILING acceptance check is recorded as failed — never dropped, never passed.
+fabric_check_config "$WORK/fabric-fail.json" t_bad
+g3_context "$WORK/exp-g3f.json" trial-g3f
+snap_cl
+run_micode g3f MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3f.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
+  MICODE_AXON_FABRIC_CHECK="$WORK/fabric-fail.json"
+G3F_EP="$(new_file "$CL/episodes" "$SN_EP")"
+check "G3: a failing check → verification failed" eq "$(jq -r .verification.result "$G3F_EP")" failed
+g3_docs "$G3F_EP"
+axl intake episode --in "$G3F_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" >/dev/null 2>"$WORK/g3f.err"
+check "G3: a failed Fabric check is intaken as failed (exit 0)" eq "$?" 0
+
+# A check name that matches no test is NOT a pass: Fabric says not_run, MiCode records unknown.
+fabric_check_config "$WORK/fabric-none.json" t_ok
+g3_context "$WORK/exp-g3n.json" trial-g3n
+snap_cl
+run_micode g3n MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3n.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
+  MICODE_AXON_FABRIC_CHECK="$WORK/fabric-none.json"
+G3N_EP="$(new_file "$CL/episodes" "$SN_EP")"
+check "G3: a check name matching no test → unknown with 0 matched (never passed)" \
+  eq "$(jq -c '[.verification.result,.verification.matched_checks]' "$G3N_EP")" '["unknown",0]'
+
+# A harness cannot make a check vouch for another trial: identity in the template is refused.
+jq '.request_template.trial_id = "someone-else"' "$WORK/fabric-pass.json" > "$WORK/fabric-hijack.json"
+g3_context "$WORK/exp-g3h.json" trial-g3h
+snap_cl
+run_micode g3h MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3h.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
+  MICODE_AXON_FABRIC_CHECK="$WORK/fabric-hijack.json"
+G3H_EP="$(new_file "$CL/episodes" "$SN_EP")"
+check "G3: a template naming a task-owned field → no verifier cited (not_run)" \
+  eq "$(jq -c '[.verification.result,.verification.verifier_ref]' "$G3H_EP")" '["not_run",null]'
+check "G3: Fabric never saw the hijacked op" test "$("$AXF" status --journal "$FAB/ops.journal" --op trial-g3h-op >/dev/null 2>&1; echo $?)" -ne 0
 
 # ════════════════════════════════════════════════════════════════════════════
 section "summary"
