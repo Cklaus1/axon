@@ -37,10 +37,10 @@ use crate::ledger::{Event, Tx};
 use crate::store::{contract_from_value, strict_record, Store};
 use crate::tel::{self, Summary};
 use axon_loop_contracts::{
-    bind_acf, bind_episode, check_paired_trial_context, digest, ArmId, AuthorityEpoch,
-    ComputeRequest, CorpusRole, EpisodeStatus, ExecutionContextReceipt, ExecutionReceipt,
-    LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyProjection, Ref, Scope, TaskId, TrialId,
-    VerificationResult,
+    bind_acf, bind_episode, check_paired_trial_context, digest, digest_value, ArmId,
+    AuthorityEpoch, ComputeRequest, CorpusRole, EpisodeStatus, ExecutionContextReceipt,
+    ExecutionReceipt, LoopEpisode, OpaqueRef, PolicyEnvelope, PolicyProjection, Ref, Scope, TaskId,
+    TrialId, VerificationResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -114,6 +114,24 @@ pub struct TrialResult {
     pub episode_ref: Option<Ref>,
     #[serde(deserialize_with = "crate::nullable")]
     pub corpus_role: Option<CorpusRole>,
+    /// The verification evidence this outcome rests on, as authenticated:
+    /// present exactly when a verdict (pass or fail) was counted, so a later
+    /// audit can re-verify the attestation against the documents it names.
+    /// Absent on older records and on every Unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationEvidence>,
+}
+
+/// Which signed verification a counted verdict rests on.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationEvidence {
+    pub request_ref: Ref,
+    pub receipt_ref: Ref,
+    pub attestation_ref: Ref,
+    pub issuer_ref: OpaqueRef,
+    /// The operator-registered key it verified under (`ed25519:<16 hex>`).
+    pub key_id: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -408,6 +426,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         });
         arm.assigned += 1;
         let key = (a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone());
+        let mut authenticated = None;
         let (outcome, reason, ep_ref, role) = match delivered.get(&key) {
             None => {
                 arm.missing += 1;
@@ -461,6 +480,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                             subjects: &subjects,
                             class: frozen.evaluation_class,
                         },
+                        &mut authenticated,
                     ),
                 };
                 (o, why, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
@@ -478,6 +498,10 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             reason,
             episode_ref: ep_ref,
             corpus_role: role,
+            // Only a counted verdict cites its evidence: an outcome demoted
+            // after authentication (a vacuous or untrusted pass) cites none.
+            verification: authenticated
+                .filter(|_| matches!(outcome, Outcome::VerifiedPass | Outcome::Fail)),
         });
     }
     for (id, arm) in arms.iter_mut() {
@@ -532,6 +556,7 @@ fn judge(
     policy: &PolicyEnvelope,
     policy_ref: &Ref,
     bench: &Bench<'_>,
+    authenticated: &mut Option<VerificationEvidence>,
 ) -> (Outcome, String) {
     let Bench {
         epoch,
@@ -594,15 +619,29 @@ fn judge(
                 config,
                 subjects,
             )
-            .map(|_| ())
+            .and_then(|(q, r, a, key_id)| {
+                Ok(VerificationEvidence {
+                    request_ref: digest(&q)?,
+                    receipt_ref: digest(&r)?,
+                    attestation_ref: digest_value(&a)?,
+                    issuer_ref: v
+                        .issuer_ref
+                        .clone()
+                        .ok_or_else(|| refused("an authenticated verdict names no issuer"))?,
+                    key_id,
+                })
+            })
             .map_err(|e| e.to_string()),
             _ => Err("the verification check's request and receipt were not delivered".into()),
         };
-        if let Err(e) = checked {
-            return (
-                Outcome::Unknown,
-                format!("unauthenticated verification: {e}"),
-            );
+        match checked {
+            Err(e) => {
+                return (
+                    Outcome::Unknown,
+                    format!("unauthenticated verification: {e}"),
+                )
+            }
+            Ok(ev) => *authenticated = Some(ev),
         }
     }
     match v.result {

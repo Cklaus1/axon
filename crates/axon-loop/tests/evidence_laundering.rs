@@ -302,3 +302,74 @@ fn a_verdict_from_an_unpinned_verifier_revision_never_counts_in_evl() {
     assert_ne!(d, Decision::Accept, "{r:?}");
     assert!(!moved);
 }
+
+/// G01 re-audit 2: the evaluation record said a trial was "independently
+/// verified" but not by WHAT — the signed verification it was authenticated
+/// on was discarded. Each counted verdict (pass or fail) now cites the
+/// request, receipt and attestation digests, the issuer and the key id, and
+/// the cited attestation re-verifies against the cited documents; an Unknown
+/// (here: an undelivered trial) cites nothing.
+#[test]
+fn a_counted_verdict_cites_the_evidence_it_was_authenticated_on() {
+    let w = world();
+    freeze_plan(&w.s, "cite", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 1, 2, Some(100), Some(50));
+    let v = evl_request(
+        "cite",
+        &w.inc,
+        &w.cand,
+        &specs,
+        &EvlOpts {
+            deliver: Box::new(|t| t != "c1"),
+            ..EvlOpts::default()
+        },
+    );
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let delivered = |trial: &str| {
+        v["trials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["episode"]["identity"]["trial_id"] == trial)
+            .unwrap()
+            .clone()
+    };
+    let pk = &verifier_key().1;
+    let (mut pass, mut fail, mut unknown) = (0, 0, 0);
+    for t in rec.arms.iter().flat_map(|a| &a.trials) {
+        match t.outcome {
+            Outcome::VerifiedPass | Outcome::Fail => {
+                if t.outcome == Outcome::Fail {
+                    fail += 1
+                } else {
+                    pass += 1
+                }
+                let ev = t.verification.as_ref().expect("a counted verdict cites");
+                let d = delivered(t.trial_id.as_str());
+                let (q, r, a) = (
+                    &d["verification_request"],
+                    &d["verification_receipt"],
+                    &d["verification_attestation"],
+                );
+                assert_eq!(ev.request_ref, digest_value(q).unwrap());
+                assert_eq!(ev.receipt_ref, digest_value(r).unwrap());
+                assert_eq!(ev.attestation_ref, digest_value(a).unwrap());
+                assert_eq!(ev.issuer_ref.as_str(), VERIFIER);
+                let key_id = attestation::verify(
+                    a,
+                    &ev.issuer_ref,
+                    &serde_json::from_value(q.clone()).unwrap(),
+                    &serde_json::from_value(r.clone()).unwrap(),
+                    pk,
+                )
+                .expect("the cited attestation re-verifies");
+                assert_eq!(ev.key_id, key_id);
+            }
+            Outcome::Unknown => {
+                unknown += 1;
+                assert!(t.verification.is_none(), "{t:?}");
+            }
+        }
+    }
+    assert_eq!((pass, fail, unknown), (2, 1, 1));
+}
