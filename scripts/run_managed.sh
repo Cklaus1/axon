@@ -329,10 +329,31 @@ cmd_supervise() {
   export STAGE_RESULTS="$dir/stage-results.json"
   local work=""
   work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
-  if [ -n "$work" ] && [ -d "$work" ]; then
-    setsid env -C "$work" "$@" > "$dir/log" 2>&1 &
+  # SIGNAL DISPOSITIONS. A non-interactive bash starts every `&` job with
+  # SIGINT and SIGQUIT IGNORED, and an ignored disposition survives exec — so
+  # every managed job, and everything it spawned, ran with Ctrl+C disabled.
+  # Measured: a gate-launched child had SigIgn 0x6, and MiCode's
+  # signals_still_end_onboarding_after_the_key_prompt (SIGINT must end the
+  # process) failed 2/2 inside the managed gate and 0/15 outside it. A shell
+  # `trap -` cannot fix it here: this supervisor is itself an `&` job, and bash
+  # cannot reset a signal that was ignored when the shell started. So the reset
+  # happens in the exec chain, at the OS level (`env --default-signal`, or a
+  # python3 shim where `env` lacks it); a host with neither is refused rather
+  # than silently running every job with signals ignored.
+  local reset=()
+  if env --default-signal=INT,QUIT true 2>/dev/null; then
+    reset=(env --default-signal=INT,QUIT)
+  elif command -v python3 >/dev/null 2>&1; then
+    reset=(python3 -c 'import os,signal,sys
+for s in (signal.SIGINT, signal.SIGQUIT): signal.signal(s, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])')
   else
-    setsid "$@" > "$dir/log" 2>&1 &
+    die "cannot restore default SIGINT/SIGQUIT for the job (no env --default-signal, no python3)"
+  fi
+  if [ -n "$work" ] && [ -d "$work" ]; then
+    setsid "${reset[@]}" env -C "$work" "$@" > "$dir/log" 2>&1 &
+  else
+    setsid "${reset[@]}" "$@" > "$dir/log" 2>&1 &
   fi
   local child=$!
   echo "$child" > "$dir/pid"

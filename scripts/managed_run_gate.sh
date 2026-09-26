@@ -270,6 +270,22 @@ esac
 [ ! -e "$T3T" ] || fail "the run's temp dir outlived the run"
 rm -rf "$D3T"
 
+# ── 3h. a job runs with DEFAULT SIGINT/SIGQUIT, as a real launch does ───────
+# A non-interactive shell starts `&` jobs with SIGINT/SIGQUIT ignored and the
+# disposition survives exec: every managed gate ran with Ctrl+C disabled until
+# run_managed restored the defaults. Read from the job's own /proc record, and
+# from a grandchild, since inheritance is the whole failure.
+D3S=$("$RM" start gate_selftest_signals -- sh -c 'grep "^SigIgn:" /proc/self/status; sh -c "grep ^SigIgn: /proc/self/status"') \
+  || fail "start failed"
+waitrc "$D3S" || fail "no receipt for the signal-disposition self-test"
+while read -r _ mask; do
+  m=$(( 16#$mask ))
+  [ $(( m & (1 << 1) )) -eq 0 ] || fail "a managed job runs with SIGINT ignored (SigIgn $mask)"
+  [ $(( m & (1 << 2) )) -eq 0 ] || fail "a managed job runs with SIGQUIT ignored (SigIgn $mask)"
+done < "$D3S/log"
+[ "$(grep -c '^SigIgn:' "$D3S/log")" -eq 2 ] || fail "signal self-test did not report job and grandchild"
+rm -rf "$D3S"
+
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has
 # an empty log, and demanding content here failed a correct run — the check
@@ -283,4 +299,4 @@ done
 grep -q '^head=' "$D2/snapshot" || fail "snapshot records no commit"
 
 rm -rf "$D" "$D2"
-echo "managed_run_gate: PASS — job result owned, grandchild cancelled, bystander survived, evidence retained"
+echo "managed_run_gate: PASS — job result owned, grandchild cancelled, bystander survived, default signals, evidence retained"
