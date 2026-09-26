@@ -14,7 +14,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-KERNEL="$(pwd)/target/x86_64-axon-metal/release/axon-guest-kernel"
+# AXON_GUEST_KERNEL (explicit) wins, then $CARGO_TARGET_DIR, then the workspace
+# target/ — the same order crates/axon-vm/tests/lib_launch.rs uses, so a build
+# into a per-lane CARGO_TARGET_DIR is found without copying into the repo.
+if [[ -n "${AXON_GUEST_KERNEL:-}" ]]; then
+    KERNEL="$AXON_GUEST_KERNEL"
+elif [[ -n "${CARGO_TARGET_DIR:-}" && -f "$CARGO_TARGET_DIR/x86_64-axon-metal/release/axon-guest-kernel" ]]; then
+    KERNEL="$CARGO_TARGET_DIR/x86_64-axon-metal/release/axon-guest-kernel"
+else
+    KERNEL="$(pwd)/target/x86_64-axon-metal/release/axon-guest-kernel"
+fi
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "ERROR: kernel not found at $KERNEL" >&2
