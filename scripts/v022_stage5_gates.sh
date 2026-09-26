@@ -87,6 +87,9 @@ GATES=(
   "G01-r22-nonvacuous-outcome|axon-loop-contracts|fixtures|verification_passed_requires_matched_checks"
   "G01-r22-nonvacuous-outcome|axon-loop|evl|output_bytes_changed_after_verification_are_not_a_pass bind_acf_alone_refuses_a_pass_over_other_bytes"
   "G01-r22-nonvacuous-outcome|axon-loop|evl_admission|reject_on_inferiority_or_no_economic_benefit"
+  # B259: a fake Axon filename cannot dispatch native shell (the interpreter
+  # really receives it and fails it; the uncovered kind is Unsupported).
+  "G13-r22-legacy-scope|axon-fabric|joint_bypass|a_fake_axon_file_is_interpreted_never_executed_as_native_shell an_argv_file_outside_the_workspace_is_refused"
 )
 
 for row in "${GATES[@]}"; do

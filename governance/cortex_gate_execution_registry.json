@@ -315,6 +315,15 @@
         "PASS"
       ],
       "note": "B256. Old peer / absent peer (loop_interop_gate.sh sections 0 and 9): MiCode with no expected context runs as the incumbent and writes no closed-loop artefact; the real adapter and MiCode negotiate closed-loop-profile/1 with every outcome persisted before the first model call \u2014 agreed, old peer (explicit, retained-authority incumbent), no common profile (explicit unsupported), fabricated accept (recorded failed). Old episodes remain readable through PINNED adapters, never reinterpreted: MiCode's canonical episode spend (micode 7070c8ca) \u2014 v014 episodes carry a never-written micro_cents 0 which the in-place G1 change had read as a KNOWN ZERO (every historical episode free); spend is now appended as spend_micro_cents and one pinned table on both peers reads v014 0 as unknown (MiCode episode::tests::every_historical_spend_shape_reads_without_reinterpretation over a whole v014 episode; Axon intake::every_historical_spend_shape_is_read_through_the_pinned_table), and the real join refuses a v014-shaped canonical episode against a metered sidecar BY THE COST JOIN (section 4; discriminates vs micode 09717d17). Axon's own Cortex episode format and digest rule are pinned unchanged since the v0.22 base (axon-cortex conformance::a_pre_v022_episode_reads_and_keeps_its_digest). Axon-side negotiation vectors: v022_stage5_gates.sh (axon-loop-contracts profile, cortex-policy-adapter negotiate)."
+    },
+    {
+      "gate_id": "G13-r22-legacy-scope",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B259. A fake Axon filename cannot dispatch native shell work: an EXECUTABLE shebang script named evil.ax, aimed at a sentinel outside the workspace, submitted as a registered check (with and without a filter) is handed to the registered Axon interpreter as SOURCE \u2014 the interpreter spawn is counted, the receipt is Failed, never Passed \u2014 and as interpreter_run is an explicit Unsupported with nothing spawned; the sentinel never appears; an argv that smuggles a command after the file is refused as malformed (axon-fabric joint_bypass::a_fake_axon_file_is_interpreted_never_executed_as_native_shell \u2014 mutation: execute the argv file directly in the check executor instead of `axon test <file>` \u2192 the spawn and sentinel assertions fail, measured). argv is only [file] / [file, filter] under the workspace (an_argv_file_outside_the_workspace_is_refused). Legacy interpreter runs keep their declared-effect and authority semantics: the whole interp\u2194codegen/AOT/wasm parity suite and the effect-ceiling harnesses gate.sh already runs (parity_all.sh; AXON_ALLOWED_EFFECTS is passed through to the check process)."
     }
   ],
   "tasks": [],

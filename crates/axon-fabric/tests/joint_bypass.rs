@@ -14,6 +14,7 @@ mod common;
 use common::*;
 
 use axon_fabric::{submit, Journal};
+use axon_loop_contracts::ReceiptStatus;
 use serde_json::json;
 
 /// The workspace ships a check registry and grant registry of its own, naming a
@@ -159,4 +160,77 @@ fn a_request_cannot_ask_for_speculative_dispatch() {
         "a speculative request was journalled"
     );
     assert_eq!(spawn_count(&env.spawns), 0);
+}
+
+/// G13-r22-legacy-scope: a fake Axon filename cannot dispatch arbitrary native
+/// shell work. `evil.ax` is an EXECUTABLE shell script with a shebang that
+/// would create a sentinel OUTSIDE the workspace. Fabric's argv is only ever a
+/// file for the registered interpreter to run (`[file]` / `[file, filter]`),
+/// never a command: under both job kinds the script is handed to the Axon
+/// interpreter as source, so it cannot pass, and the sentinel never appears.
+/// An argv that tries to smuggle a command after the file is refused first.
+#[test]
+fn a_fake_axon_file_is_interpreted_never_executed_as_native_shell() {
+    let env = Env::new();
+    let sentinel = env.dir.path().join("PWNED");
+    let evil = env.ws.join("evil.ax");
+    let script = format!("#!/bin/sh\ntouch {}\n", sentinel.display());
+    std::fs::write(&evil, &script).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&evil, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let digest = axon_cortex::runner::fabric_workspace_digest("evil.ax", script.as_bytes());
+    // (job kind, argv, the interpreter spawns it causes, the receipt status)
+    for (i, (kind, argv, spawned, status)) in [
+        (
+            "registered_check",
+            json!(["evil.ax", "t_ok"]),
+            1,
+            ReceiptStatus::Failed,
+        ),
+        (
+            "registered_check",
+            json!(["evil.ax"]),
+            1,
+            ReceiptStatus::Failed,
+        ),
+        (
+            "interpreter_run",
+            json!(["evil.ax"]),
+            0,
+            ReceiptStatus::Unsupported,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut r = request(&env, &format!("op-fake-ax-{i}"), "t_ok");
+        r["job_kind"] = json!(kind);
+        r["argv"] = argv.clone();
+        r["workspace_version_ref"] = json!(digest);
+        let before = spawn_count(&env.spawns);
+        let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
+        // Not refused early: a registered check really HANDS the file to the
+        // Axon interpreter (the counting wrapper around it spawned), which
+        // runs it as Axon source and fails it; an uncovered job kind is an
+        // explicit Unsupported with nothing spawned.
+        assert_eq!(spawn_count(&env.spawns) - before, spawned, "{kind} {argv}");
+        assert_eq!(s.receipt.status, status, "{kind} {argv}");
+        assert_ne!(
+            s.receipt.verification,
+            axon_loop_contracts::ReceiptVerification::Passed,
+            "{kind} {argv}: a shell script cannot pass as an Axon check"
+        );
+        assert!(
+            !sentinel.exists(),
+            "{kind} {argv}: the script ran as native shell"
+        );
+    }
+    let mut smuggle = request(&env, "op-fake-ax-smuggle", "t_ok");
+    smuggle["argv"] = json!(["evil.ax", "t_ok", "; sh evil.ax"]);
+    smuggle["workspace_version_ref"] = json!(digest);
+    let e = submit(&smuggle.to_string(), &env.cfg(0)).unwrap_err();
+    assert_eq!(e.kind(), "malformed", "{e}");
+    assert!(!sentinel.exists());
 }
