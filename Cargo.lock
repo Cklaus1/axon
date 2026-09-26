@@ -216,6 +216,7 @@ dependencies = [
  "axon-os",
  "axon-vm",
  "libc",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

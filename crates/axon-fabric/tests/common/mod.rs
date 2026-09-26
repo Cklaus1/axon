@@ -320,3 +320,148 @@ pub fn request(env: &Env, op: &str, filter: &str) -> Value {
         "result_schema_ref": "cortex-check-report/1"
     })
 }
+
+// ── Linux profile qualification: a throwaway issuer, generated per test ─────
+//
+// No private key is ever written to the repository; each test mints its own
+// Ed25519 key pair, trusts its public half, and signs the evidence with it.
+
+use axon_fabric::backend::{Clock, LinuxProfileConfig, QualificationTrust};
+use ring::signature::KeyPair as _;
+
+/// "Now" for every qualification test: 2026-09-25T12:00:00Z.
+pub const TEST_NOW: &str = "2026-09-25T12:00:00Z";
+/// A fresh evidence `end`: one hour before `TEST_NOW`.
+pub const TEST_END: &str = "2026-09-25T11:00:00Z";
+pub const TEST_FC_SHA: &str = "96d25e000e5fcbf5b11dca0e1275b5d7dc0922ff8b8206aeaed98e515a8468dc";
+pub const TEST_JAILER_SHA: &str =
+    "8965e9ee855537561ac3adaf0b086a3882456fdc55472691f3bbe489199014ce";
+pub const TEST_CAVEAT: &str = "Nested virtualization under Hyper-V; the L0 hypervisor is outside \
+                               the qualified boundary. (operator decision D2)";
+
+pub fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+pub struct Issuer(pub ring::signature::Ed25519KeyPair);
+
+impl Issuer {
+    pub fn generate() -> Issuer {
+        let rng = ring::rand::SystemRandom::new();
+        let doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        Issuer(ring::signature::Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap())
+    }
+    pub fn public_hex(&self) -> String {
+        hex(self.0.public_key().as_ref())
+    }
+    /// An `axon-evidence-signature/1` over exactly `bytes`.
+    pub fn sign(&self, bytes: &[u8]) -> String {
+        json!({"schema":"axon-evidence-signature/1","alg":"ed25519",
+               "public_key": self.public_hex(),
+               "signature": hex(self.0.sign(bytes).as_ref())})
+        .to_string()
+    }
+    /// Write `v` to `path` and its detached signature to `path.sig`.
+    pub fn write_signed(&self, path: &Path, v: &Value) {
+        let bytes = serde_json::to_vec_pretty(v).unwrap();
+        std::fs::write(path, &bytes).unwrap();
+        std::fs::write(sig_of(path), self.sign(&bytes)).unwrap();
+    }
+    /// Trust this issuer: write its public key into `dir/<name>.pub`.
+    pub fn trust_in(&self, dir: &Path, name: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.pub")), self.public_hex() + "\n").unwrap();
+    }
+}
+
+pub fn sig_of(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push(".sig");
+    PathBuf::from(s)
+}
+
+/// A manifest built from a CLEAN tree, pinning the guest interpreter.
+pub fn lx_manifest(guest_axon_sha: &str) -> String {
+    json!({"schema":"axon-linux-microvm-profile/1","profile":"linux-microvm-protected",
+           "source":{"axon_tree_dirty_at_build": false},
+           "artifacts":{"axon":{"sha256": guest_axon_sha}}})
+    .to_string()
+}
+
+/// A complete, fresh, clean `PASS` record for `manifest_sha`.
+pub fn good_evidence(manifest_sha: &str) -> Value {
+    json!({
+        "schema": "axon-b263-evidence/1",
+        "work_package": "B263",
+        "host": "WSL2-nested",
+        "caveat": TEST_CAVEAT,
+        "source": {"axon_git_rev": "0".repeat(40), "tree_dirty": false},
+        "engine": {"firecracker": "Firecracker v1.10.1", "firecracker_sha256": TEST_FC_SHA,
+                   "jailer": "Jailer v1.10.1", "jailer_sha256": TEST_JAILER_SHA},
+        "profile": {"name": "linux-microvm-protected", "manifest_sha256": manifest_sha},
+        "assertions": [
+            {"name": "a1_boot_runs_ax_expected_stdout", "status": "PASS"},
+            {"name": "a2_guest_is_pinned_linux_kernel", "status": "PASS"},
+            {"name": "x3_l0_hypervisor_boundary", "status": "PASS"}
+        ],
+        "counts": {"total": 3, "PASS": 3, "FAIL": 0, "BLOCKED": 0},
+        "result": "PASS",
+        "start": "2026-09-25T10:59:30Z",
+        "end": TEST_END
+    })
+}
+
+/// Sign `evidence` with `issuer` into `dir/evidence.json(.sig)`, trust the
+/// issuer in `dir/trusted_issuers/`, and point a config at `dir/manifest.json`
+/// (which the caller has written). Clock pinned at `TEST_NOW`, max age 30 d.
+pub fn qualified_linux_cfg(dir: &Path, issuer: &Issuer, evidence: &Value) -> LinuxProfileConfig {
+    issuer.trust_in(&dir.join("trusted_issuers"), "operator");
+    issuer.write_signed(&dir.join("evidence.json"), evidence);
+    let manifest = dir.join("manifest.json");
+    let mut trust = QualificationTrust::for_manifest(&manifest);
+    trust.clock = Clock::FixedUnix(axon_fabric::backend::parse_utc(TEST_NOW).unwrap());
+    LinuxProfileConfig {
+        launcher: dir.join("no-launcher.sh"),
+        manifest,
+        artifacts_dir: None,
+        evidence: dir.join("evidence.json"),
+        evidence_signature: None,
+        waivers: None,
+        trust,
+        out_root: dir.join("lx-out"),
+    }
+}
+
+/// A stand-in for `scripts/fc_linux_profile.sh` that writes the documented
+/// `axon-linux-microvm-result/1` shape and appends to `<out_root>/launches`
+/// each time it is actually run (so "the launcher never ran" is checkable).
+pub fn stand_in_launcher(
+    env: &Env,
+    exit: i32,
+    bound: bool,
+    cleanup_ok: bool,
+    verify_exit: i32,
+) -> std::path::PathBuf {
+    let p = env.dir.path().join(format!(
+        "fake-launcher-{exit}-{bound}-{cleanup_ok}-{verify_exit}.sh"
+    ));
+    let body = format!(
+        r#"#!/bin/sh
+if [ "$1" = "--verify-result" ]; then exit {verify_exit}; fi
+OUT=""
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
+mkdir -p "$OUT/out"
+echo launched >> "$OUT/../launches"
+cat > "$OUT/result.json" <<J
+{{"schema":"axon-linux-microvm-result/1","status":"x","workload_exit":0,
+ "output_bound":{bound},"outputs":{{"stdout":{{"sha256":"ab","bytes":1}}}},
+ "cleanup":{{"complete":{cleanup_ok},"left_behind":[]}}}}
+J
+exit {exit}
+"#
+    );
+    std::fs::write(&p, body).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}

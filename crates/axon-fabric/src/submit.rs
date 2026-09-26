@@ -637,16 +637,21 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     // Re-verify the executable immediately before the launch record: a host
     // binary against its registry pin, the Linux profile against its
     // qualification (manifest vs evidence).
-    if is_linux {
-        if let Err(e) = cfg.linux.as_ref().expect("configured").qualification() {
-            journal.cancel(
-                &req.operation_id,
-                &format!("profile no longer qualified: {e}"),
-                None,
-            )?;
-            return Err(SubmitError::Unregistered(e));
+    let qualified = if is_linux {
+        match cfg.linux.as_ref().expect("configured").qualification() {
+            Ok(q) => Some(q),
+            Err(e) => {
+                journal.cancel(
+                    &req.operation_id,
+                    &format!("profile no longer qualified: {e}"),
+                    None,
+                )?;
+                return Err(SubmitError::Unregistered(e));
+            }
         }
-    }
+    } else {
+        None
+    };
     let local = if is_linux {
         None
     } else {
@@ -671,7 +676,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
             let res = backend::run_linux_profile(lx, &cfg.workspace.join(&file), &req);
-            linux_receipt(&req, &journal, res, liability)?
+            let q = qualified.as_ref().expect("qualified at dispatch");
+            linux_receipt(&req, &journal, res, q, liability)?
         }
         other => {
             // Selection returned a backend with no dispatcher: say so, keep
@@ -839,10 +845,24 @@ fn linux_receipt(
     req: &ComputeRequest,
     journal: &Journal,
     res: backend::LinuxRun,
+    q: &backend::LinuxQualification,
     liability: u64,
 ) -> Result<Outcome, SubmitError> {
     let id = backend::LINUX_MICROVM_PROTECTED.id;
-    let evidence: Vec<OpaqueRef> = res.evidence.iter().map(|e| opaque(e.clone())).collect();
+    let mut evidence: Vec<OpaqueRef> = res.evidence.iter().map(|e| opaque(e.clone())).collect();
+    // What the run was qualified BY travels with its receipt: the signed
+    // record, its issuer, and the boundary caveat (D2) — so a reader of the
+    // receipt cannot mistake a caveated qualification for an unqualified one.
+    evidence.push(opaque(format!(
+        "qualification-evidence-sha256:{}",
+        q.evidence_sha256
+    )));
+    evidence.push(opaque(format!("qualification-issuer:{}", q.issuer)));
+    evidence.push(opaque(format!("qualification-host:{}", q.host)));
+    evidence.push(opaque(format!("qualification-caveat:{}", q.caveat)));
+    for w in &q.waived {
+        evidence.push(opaque(format!("qualification-waived:{w}")));
+    }
     let (status, exit, verification) = match res.outcome {
         backend::LinuxOutcome::Ok { workload_exit } => (
             ReceiptStatus::Completed,

@@ -14,6 +14,9 @@ path = "src/bin/axon-fabric.rs"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
+# Ed25519 verification of qualification evidence (decision D6). Already in
+# the workspace lockfile via rustls; no new crate.
+ring = "0.17"
 axon-loop-contracts = { path = "../axon-loop-contracts" }
 axon-loop = { path = "../axon-loop" }
 axon-cortex = { path = "../axon-cortex" }

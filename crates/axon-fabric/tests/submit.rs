@@ -245,26 +245,16 @@ fn linux_cfg(env: &Env, manifest_bytes: &str, evidence_sha: &str) -> LinuxProfil
     } else {
         evidence_sha.to_string()
     };
-    std::fs::write(
-        d.join("evidence.json"),
-        json!({"schema":"axon-b263-evidence/1","counts":{"FAIL":0},
-               "profile":{"name":"linux-microvm-protected","manifest_sha256":ev_sha}})
-        .to_string(),
-    )
-    .unwrap();
-    LinuxProfileConfig {
-        launcher: d.join("no-launcher.sh"),
-        manifest: d.join("manifest.json"),
-        artifacts_dir: None,
-        evidence: d.join("evidence.json"),
-        out_root: d.join("lx-out"),
-    }
+    // A properly issuer-signed, fresh, clean PASS record — generated here,
+    // with a throwaway key, never a self-authored `{"counts":{"FAIL":0}}`.
+    let issuer = Issuer::generate();
+    qualified_linux_cfg(d, &issuer, &good_evidence(&ev_sha))
 }
 
 #[test]
 fn linux_profile_eligibility_is_bound_to_the_qualified_manifest() {
     let env = Env::new();
-    let manifest = json!({"artifacts":{"axon":{"sha256":"ab".repeat(32)}}}).to_string();
+    let manifest = lx_manifest(&"ab".repeat(32));
     let req = axon_loop_contracts::parse::<axon_loop_contracts::ComputeRequest>(
         &{
             let mut r = linux_request(&env, "op-e");
@@ -556,37 +546,7 @@ fn an_epoch_change_between_submit_and_launch_is_refused_before_the_launch_record
 // passes, result.json → receipt, --verify-result rebinding, cleanup) with a
 // stand-in that writes the documented `axon-linux-microvm-result/1` shape.
 // They say nothing about the VM itself — B263's qualification harness does.
-
-fn stand_in_launcher(
-    env: &Env,
-    exit: i32,
-    bound: bool,
-    cleanup_ok: bool,
-    verify_exit: i32,
-) -> std::path::PathBuf {
-    let p = env.dir.path().join(format!(
-        "fake-launcher-{exit}-{bound}-{cleanup_ok}-{verify_exit}.sh"
-    ));
-    let body = format!(
-        r#"#!/bin/sh
-if [ "$1" = "--verify-result" ]; then exit {verify_exit}; fi
-OUT=""
-while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
-mkdir -p "$OUT/out"
-echo launched >> "$OUT/../launches"
-cat > "$OUT/result.json" <<J
-{{"schema":"axon-linux-microvm-result/1","status":"x","workload_exit":0,
- "output_bound":{bound},"outputs":{{"stdout":{{"sha256":"ab","bytes":1}}}},
- "cleanup":{{"complete":{cleanup_ok},"left_behind":[]}}}}
-J
-exit {exit}
-"#
-    );
-    std::fs::write(&p, body).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-    p
-}
+// (`stand_in_launcher` lives in `common`, shared with `qualification.rs`.)
 
 fn linux_run_request(env: &Env, op: &str, manifest_guest_axon: &str) -> serde_json::Value {
     let mut r = linux_request(env, op);
@@ -605,7 +565,7 @@ fn linux_run_request(env: &Env, op: &str, manifest_guest_axon: &str) -> serde_js
 
 fn linux_submit(env: &Env, op: &str, launcher: std::path::PathBuf) -> axon_fabric::Submission {
     let guest = "cd".repeat(32);
-    let manifest = json!({"artifacts":{"axon":{"sha256": guest}}}).to_string();
+    let manifest = lx_manifest(&guest);
     let mut lx = linux_cfg(env, &manifest, "");
     lx.launcher = launcher;
     std::fs::create_dir_all(&lx.out_root).unwrap();
@@ -675,7 +635,7 @@ fn linux_profile_failures_are_outcome_unknown_with_liability() {
 fn a_changed_manifest_makes_the_linux_profile_ineligible_with_no_launch() {
     let env = Env::new();
     let guest = "cd".repeat(32);
-    let manifest = json!({"artifacts":{"axon":{"sha256": guest}}}).to_string();
+    let manifest = lx_manifest(&guest);
     let mut lx = linux_cfg(&env, &manifest, &"0".repeat(64)); // evidence ≠ manifest
     lx.launcher = stand_in_launcher(&env, 0, true, true, 0);
     std::fs::create_dir_all(&lx.out_root).unwrap();
@@ -782,7 +742,7 @@ fn unsupported_architecture_checkpoint_or_engine_is_refused_before_effects() {
 #[test]
 fn the_linux_profile_refuses_an_architecture_or_checkpoint_it_does_not_offer() {
     let env = Env::new();
-    let manifest = json!({"artifacts":{"axon":{"sha256":"ab".repeat(32)}}}).to_string();
+    let manifest = lx_manifest(&"ab".repeat(32));
     let ok = linux_cfg(&env, &manifest, "");
     for (field, value) in [
         ("architecture", "aarch64"),
