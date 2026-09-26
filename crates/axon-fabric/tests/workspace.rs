@@ -767,3 +767,90 @@ fn another_tenants_version_does_not_resolve_and_launches_nothing() {
         TrialCache::for_trial(&cfg.state_dir, &tenant(), &t).unwrap()
     );
 }
+
+// ── omissions are a set of observations (found by the paired G3 gate) ──────
+
+/// The same version imported from a repository (`.git` omitted) and from a
+/// plain copy (nothing omitted) is ONE version with two observations — not a
+/// corrupt store. Before the fix the second publish failed "exists with
+/// different bytes".
+#[test]
+fn the_same_version_imported_with_different_omissions_is_one_version() {
+    let c = case();
+    let store = WorkspaceStore::open(&c.state, &tenant()).unwrap();
+    let plain = store.import_dir(&c.root, &Quota::default()).unwrap();
+    std::fs::create_dir_all(c.root.join(".git")).unwrap();
+    std::fs::write(c.root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let with_git = store.import_dir(&c.root, &Quota::default()).unwrap();
+    assert_eq!(plain, with_git, "omissions are not part of the reference");
+    // Idempotent on a repeat of either observation.
+    assert_eq!(store.import_dir(&c.root, &Quota::default()).unwrap(), plain);
+    let v = store.load(&plain).unwrap();
+    assert!(
+        v.omissions.iter().any(|o| o.path == ".git"),
+        "every recorded observation's omissions are kept: {:?}",
+        v.omissions
+    );
+    // The content still round-trips.
+    let dest = c.state.parent().unwrap().join("out");
+    store.materialize(&plain, &dest, false).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dest.join("ok.txt")).unwrap(),
+        "fine\n"
+    );
+}
+
+/// A stored omission record whose bytes do not hash to its name is corrupt.
+#[test]
+fn a_tampered_omission_record_is_corrupt() {
+    let c = case();
+    let store = WorkspaceStore::open(&c.state, &tenant()).unwrap();
+    let r = store.import_dir(&c.root, &Quota::default()).unwrap();
+    let rec = walk_find(&c.state, ".omissions").expect("an omissions set directory");
+    let file = std::fs::read_dir(&rec)
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    std::fs::write(&file, br#"[{"path":"x","reason":"forged"}]"#).unwrap();
+    assert!(matches!(store.load(&r), Err(StoreError::Corrupt(_))));
+}
+
+fn walk_find(p: &Path, suffix: &str) -> Option<PathBuf> {
+    for e in std::fs::read_dir(p).ok()?.flatten() {
+        let q = e.path();
+        if q.is_dir() {
+            if q.to_string_lossy().ends_with(suffix) {
+                return Some(q);
+            }
+            if let Some(f) = walk_find(&q, suffix) {
+                return Some(f);
+            }
+        }
+    }
+    None
+}
+
+/// End to end: a check over a version imported from a REAL repository (with a
+/// `.git` to omit) passes through submit — the post-run candidate re-check
+/// re-imports a materialized copy with nothing to omit, and must not report
+/// the store corrupt. Before the fix: receipt `not_run`, "candidate
+/// unreadable after the run".
+#[test]
+fn a_check_over_a_version_from_a_real_repository_passes() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.ws.join(".git")).unwrap();
+    std::fs::write(env.ws.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let r = publish_ws(&env);
+    let mut req = request(&env, "op-repo", "t_ok");
+    req["workspace_version_ref"] = r.as_str().into();
+    let s = submit(&req.to_string(), &env.cfg(0)).unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        axon_loop_contracts::ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(s.receipt.input_workspace_ref, r);
+}

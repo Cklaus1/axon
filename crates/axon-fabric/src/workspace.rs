@@ -37,7 +37,9 @@
 //! # Store
 //!
 //! Per tenant: `<state>/tenants/<key>/workspaces/blobs/<sha256>` and
-//! `…/workspaces/versions/<hex>.{manifest,omissions.json}`. No blob or
+//! `…/workspaces/versions/<hex>.manifest` plus one content-addressed record
+//! per distinct omission set, `…/versions/<hex>.omissions/<sha256>.json`
+//! (see [`WorkspaceStore::publish`] for why it is a set). No blob or
 //! version is shared across tenants. Every file
 //! is written in full to a temp name, fsynced, and PUBLISHED by a no-clobber
 //! rename (`renameat2(RENAME_NOREPLACE)`; a `link`+`unlink` fallback where
@@ -676,23 +678,94 @@ impl WorkspaceStore {
             .join("versions")
             .join(format!("{}.manifest", ref_hex(r)))
     }
-    fn omissions_path(&self, r: &Acf1Ref) -> PathBuf {
+    /// The single omissions file stores written before omissions became a set.
+    /// Read (never written) so those stores still load.
+    fn legacy_omissions_path(&self, r: &Acf1Ref) -> PathBuf {
         self.root
             .join("versions")
             .join(format!("{}.omissions.json", ref_hex(r)))
     }
+    fn omissions_dir(&self, r: &Acf1Ref) -> PathBuf {
+        self.root
+            .join("versions")
+            .join(format!("{}.omissions", ref_hex(r)))
+    }
 
     /// Publish a validated tree. Blobs first, then omissions, then the
     /// manifest — the manifest's appearance IS the publication.
+    ///
+    /// **Omissions are a SET of observations, not one per version.** They are
+    /// not part of the reference (the recipe's preimage is the manifest), so
+    /// the same version is legitimately imported with different skip lists:
+    /// from a repository (`.git` and `.micode` omitted) and from a materialized
+    /// copy (nothing to omit). Stored as one no-clobber file per version, the
+    /// second import collided with the first as "exists with different bytes"
+    /// and was reported as a CORRUPT store — which made Fabric's post-run
+    /// candidate re-check fail for every check whose version came from a real
+    /// repository, downgrading a genuine pass to `not_run`. Measured on the
+    /// paired interop gate (G3): 2/2 checks passed, receipt said not_run.
+    /// Each distinct set is now its own content-addressed record, so a repeat
+    /// is idempotent and a different observation is added, never clobbered.
     pub fn publish(&self, tree: &WorkspaceTree) -> Result<Acf1Ref, StoreError> {
         for e in &tree.entries {
             publish_file(&self.blob(&sha256_hex(&e.content)), &e.content)?;
         }
         let r = tree.reference();
         let om = serde_json::to_vec(&tree.omissions).expect("serializable");
-        publish_file(&self.omissions_path(&r), &om)?;
+        publish_file(
+            &self
+                .omissions_dir(&r)
+                .join(format!("{}.json", sha256_hex(&om))),
+            &om,
+        )?;
         publish_file(&self.manifest_path(&r), &tree.manifest())?;
         Ok(r)
+    }
+
+    /// Every omission any import of `r` recorded: the sorted union of the
+    /// stored sets (plus a legacy single file). A version with NO omission
+    /// record at all is corrupt — publication writes one before the manifest.
+    fn stored_omissions(&self, r: &Acf1Ref) -> Result<Vec<Omission>, StoreError> {
+        let mut files = Vec::new();
+        let legacy = self.legacy_omissions_path(r);
+        if legacy.is_file() {
+            files.push(legacy);
+        }
+        match std::fs::read_dir(self.omissions_dir(r)) {
+            Ok(rd) => {
+                for e in rd {
+                    let p = e?.path();
+                    if p.extension().is_some_and(|x| x == "json") {
+                        files.push(p);
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        if files.is_empty() {
+            return Err(StoreError::Corrupt(format!("{r} has no omission record")));
+        }
+        let mut all = Vec::new();
+        for f in files {
+            let bytes = std::fs::read(&f)?;
+            let set: Vec<Omission> = serde_json::from_slice(&bytes)
+                .map_err(|e| StoreError::Corrupt(format!("omissions of {r}: {e}")))?;
+            // Named by its own digest (legacy file excepted): a record whose
+            // bytes do not hash to its name is not the observation it claims.
+            if f.parent() == Some(self.omissions_dir(r).as_path())
+                && f.file_stem().and_then(|s| s.to_str()) != Some(sha256_hex(&bytes).as_str())
+            {
+                return Err(StoreError::Corrupt(format!(
+                    "omission record {} does not hash to its name",
+                    f.display()
+                )));
+            }
+            all.extend(set);
+        }
+        all.sort();
+        all.dedup();
+        Ok(all)
     }
 
     /// Import `root` and publish it.
@@ -721,9 +794,7 @@ impl WorkspaceStore {
         }
         let entries = parse_manifest(&manifest)
             .ok_or_else(|| StoreError::Corrupt(format!("manifest of {r} is malformed")))?;
-        let omissions: Vec<Omission> =
-            serde_json::from_slice(&std::fs::read(self.omissions_path(r))?)
-                .map_err(|e| StoreError::Corrupt(format!("omissions of {r}: {e}")))?;
+        let omissions = self.stored_omissions(r)?;
         Ok(WorkspaceVersion {
             reference: r.clone(),
             manifest,
