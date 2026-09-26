@@ -604,6 +604,22 @@ chmod +x "$WORK/old-adapter.sh"
 b256_run b256-old "$WORK/old-adapter.sh"
 check "B256: an old adapter → micode still runs (incumbent protocol 1)" eq "$RC" 0
 check "B256: an old adapter is recorded as old_peer, never as agreed" eq "$(jq -r .outcome "$PREC")" old_peer
+# NO COMMON PROFILE, answered by the REAL adapter: it is handed MiCode's offer
+# with every schema swapped for one Axon does not speak, so the refusal is the
+# real adapter's own `no_common_schema`, and MiCode must record exactly that.
+cat > "$WORK/nocommon-adapter.sh" <<SH
+#!/bin/sh
+if [ "\$1" = --negotiate ]; then
+  jq -c '.schemas = ["x.unknown.schema/1"] | .required = []' | "$CPA" --negotiate
+  exit \$?
+fi
+exec "$CPA" "\$@"
+SH
+chmod +x "$WORK/nocommon-adapter.sh"
+b256_run b256-nocommon "$WORK/nocommon-adapter.sh"
+check "B256: no common profile → micode still runs (incumbent protocol 1, authority retained)" eq "$RC" 0
+check "B256: no common profile is recorded as unsupported, never agreed" eq "$(jq -r .outcome "$PREC")" unsupported
+check "B256: ...with the real adapter's own code no_common_schema" eq "$(jq -r .unsupported.code "$PREC")" no_common_schema
 # A LYING peer: the real accept with a schema MiCode never offered.
 cat > "$WORK/lying-adapter.sh" <<SH
 #!/bin/sh

@@ -78,29 +78,50 @@ if mc_dir:
     (ok if cur == mch and not dirty else bad)(f"micode checkout is still the certified revision ({cur[:10]}{', dirty' if dirty else ''}) — otherwise the pair is stale")
 hs = {h["id"]: h for h in d.get("harnesses", [])}
 man = json.loads(m)
+declared = {x["id"] for x in man.get("declared_baseline_defects", [])}
 for h in man["harnesses"]:
     got = hs.get(h["id"])
+    st = got.get("status") if got else None
     if not got:
-        bad(f"required harness {h['id']} NOT RUN")
-    elif got.get("status") != "PASS":
-        bad(f"required harness {h['id']}: {got.get('status')} — {got.get('detail')}")
-    else:
-        ok(f"required harness {h['id']}: PASS")
+        bad(f"harness {h['id']} NOT RUN")
+    elif h.get("required"):
+        (ok if st == "PASS" else bad)(f"required harness {h['id']}: {st}" + ("" if st == "PASS" else f" — {got.get('detail')}"))
+    elif h.get("gates_profile"):
+        present = set(got.get("declared_defects", []))
+        if st == "PASS":
+            ok(f"regression harness {h['id']}: PASS (fully green)")
+        elif st == "KNOWN_BASELINE_DEFECT" and present and present <= declared:
+            ok(f"regression harness {h['id']}: KNOWN_BASELINE_DEFECT {sorted(present)} — NOT a pass; suite NOT fully green")
+        else:
+            bad(f"regression harness {h['id']}: {st} — {got.get('detail')}")
 li = hs.get("loop-interop", {})
 for sec in ("G3", "B256"):
     (ok if any(x.startswith(f"loop_interop_gate: {sec} section executed") for x in li.get("markers", [])) else bad)(f"loop_interop_gate {sec} section executed")
-(ok if not d.get("problems") and d.get("verdict") == "PASS" else bad)("no unclassified Stage-5 problem; verdict " + str(d.get("verdict")))
+(ok if d.get("stage5_requirements") == "PASS" else bad)("Stage-5 required properties: " + str(d.get("stage5_requirements")))
+(ok if not d.get("problems") and d.get("verdict") in ("VERIFIED", "VERIFIED_WITH_DECLARED_BASELINE_DEFECT") else bad)("no unclassified problem; verdict " + str(d.get("verdict")))
+out.append("defects " + ",".join(d.get("micode_full_suite", {}).get("declared_defects_present", [])))
+out.append("suite " + str(d.get("micode_full_suite", {}).get("status")))
 print("\n".join(out))
 PY
 )"
+    DEFECTS=""; SUITE=""
     while IFS= read -r l; do
-      case "$l" in "ok "*) sok "${l#ok }" ;; "FAIL "*) sbad "${l#FAIL }" ;; esac
+      case "$l" in "ok "*) sok "${l#ok }" ;; "FAIL "*) sbad "${l#FAIL }" ;;
+        "defects "*) DEFECTS="${l#defects }" ;; "suite "*) SUITE="${l#suite }" ;; esac
     done <<< "$out"
     MCH="$(sed -n 's/^pair_micode_head=//p' "$run/receipt")"
   fi
   echo "───────────────────────────────────────────────────────────────────"
   if [ "$fails" -eq 0 ]; then
-    echo "STAGE-5 VERIFIED  axon $(git rev-parse --short "$TARGET") + micode ${MCH:0:8}  (a stage verdict, NOT a release verdict)"
+    if [ -n "$DEFECTS" ]; then
+      n=$(tr ',' '\n' <<< "$DEFECTS" | grep -c .)
+      echo "STAGE-5 VERIFIED — $n declared pre-existing MiCode defect(s) remain: $DEFECTS"
+      echo "  axon $(git rev-parse --short "$TARGET") + micode ${MCH:0:8}; MiCode full suite: $SUITE (not fully green)"
+    else
+      echo "STAGE-5 VERIFIED"
+      echo "  axon $(git rev-parse --short "$TARGET") + micode ${MCH:0:8}; MiCode full suite: $SUITE"
+    fi
+    echo "  a STAGE verdict only — no release qualification is implied"
     exit 0
   fi
   echo "NOT STAGE-5 VERIFIED  ($fails check(s) failed)"

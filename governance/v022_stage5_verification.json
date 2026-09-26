@@ -37,11 +37,35 @@
         },
         {
           "pattern": "^loop_interop_gate: B256 section executed ([0-9]+) assertions, ([0-9]+) failed$",
-          "min_first": 11,
+          "min_first": 14,
           "second_equals": 0
         }
       ],
       "establishes": "Real MiCode <-> real Axon: B268 policy consumption and single-owner refusal, B269 episode export/intake, G3 (real MiCode -> real axon-fabric -> real interpreter -> real axon-loop intake) and B256 (real MiCode negotiating with the real cortex-policy-adapter before any model call). Discriminates: a pre-G3 MiCode (0f5329f8) fails every G3 assertion; a lazily negotiating MiCode (f926dbf8) fails 9/11 B256 assertions."
+    },
+    {
+      "id": "discriminators",
+      "required": true,
+      "kind": "discriminator",
+      "repo": "axon",
+      "command": [
+        "scripts/loop_interop_gate.sh"
+      ],
+      "cases": [
+        {
+          "micode_revision": "0f5329f8f609ac1305eb14e9fb755197a2e0096e",
+          "why": "pre-G3 MiCode (no Fabric acceptance-check client)",
+          "section": "G3",
+          "min_failed": 20
+        },
+        {
+          "micode_revision": "f926dbf8519afd5bdcbf4396490acb2b81a0ec0b",
+          "why": "lazy B256 MiCode (negotiates on first decision, writes no profile record)",
+          "section": "B256",
+          "min_failed": 9
+        }
+      ],
+      "establishes": "The real-system sections DISCRIMINATE: the same gate, run against MiCode builds that lack the property, must FAIL that section. Built from the MiCode repository in throwaway worktrees at the pinned revisions; a gate that passed those builds would prove nothing."
     },
     {
       "id": "micode-stage5-exact",
@@ -88,7 +112,7 @@
     },
     {
       "id": "micode-suite",
-      "required": true,
+      "required": false,
       "kind": "cargo-suite",
       "repo": "micode",
       "command": [
@@ -101,15 +125,9 @@
       "prerequisites": [
         "python3 -c 'import pytest'"
       ],
-      "establishes": "The MiCode workspace suite at its accepted baseline (0 failures). pytest is a PREREQUISITE, not an optional: its absence fails this harness rather than skipping tests that need it.",
-      "baseline_exceptions": [
-        {
-          "test": "the_goodbye_hint_names_an_interactive_resume_that_continues_the_session",
-          "binary": "micode/tests/tui_terminal_lifecycle.rs",
-          "why": "PRE-EXISTING on tui@65286581 (identical failure there), outside v0.22. A /quit-before-turn-commit race: on ext4 the per-turn checkpoint is not yet written when /quit is processed, so no resume hint (strace + a 1s-delay probe that passes 3/3). Diagnosed in .axon-v022/stage5/MICODE_TUI_QUIT_CHECKPOINT_RACE.md; owner: tui branch.",
-          "policy": "tolerated ONLY as this exact test name; any other failure fails the harness, and the exception is reported in the results, never folded silently into PASS"
-        }
-      ]
+      "establishes": "The MiCode workspace suite as a REGRESSION baseline for the pair. Not a Stage-5 property: its status is reported separately (PASS, or KNOWN_BASELINE_DEFECT when it fails exactly on declared pre-existing defects). Any other failure, an unexpected pass of a declared defect, or a changed fingerprint fails the profile. pytest is a PREREQUISITE: its absence is NOT_RUN, which fails the profile.",
+      "role": "regression",
+      "gates_profile": true
     }
   ],
   "properties": [
@@ -251,14 +269,6 @@
         "micode-stage5-exact"
       ],
       "required": true
-    },
-    {
-      "task": "MiCode",
-      "gate": "MiCode workspace suite",
-      "harnesses": [
-        "micode-suite"
-      ],
-      "required": true
     }
   ],
   "not_established_here": [
@@ -338,6 +348,35 @@
       "harness": "to_str-of-str native parity (no codegen feature)",
       "owner": "compiler (I-2)",
       "why": "as above"
+    }
+  ],
+  "result_semantics": {
+    "PASS": "executed and established its property",
+    "FAIL": "executed and the property failed, or evidence is missing",
+    "SKIP": "the harness reported a skip; for a required harness a Stage-5 FAILURE",
+    "NOT_RUN": "a prerequisite or the peer is absent; for a required harness a Stage-5 FAILURE",
+    "KNOWN_BASELINE_DEFECT": "the MiCode regression suite failed EXACTLY on declared pre-existing defects (test id, failure count and fingerprint all as declared). Never counted as PASS, never contributes to a pass count; reported separately. The suite status is then NOT_FULLY_GREEN."
+  },
+  "declared_baseline_defects": [
+    {
+      "id": "MICODE-TUI-QUIT-CHECKPOINT-RACE",
+      "test": "the_goodbye_hint_names_an_interactive_resume_that_continues_the_session",
+      "test_binary": "crates/micode/tests/tui_terminal_lifecycle.rs",
+      "reproduced_on": {
+        "repo": "micode",
+        "branch": "tui",
+        "revision": "65286581",
+        "how": "TMPDIR on ext4: fails 3/3; on tmpfs: passes 3/3"
+      },
+      "fingerprint": {
+        "panic_site_regex": "panicked at crates/micode/tests/tui_terminal_lifecycle\\.rs:[0-9]+:[0-9]+:",
+        "message_regex": "the goodbye hint names no `/resume <id>` line to type into MiCode",
+        "suite_failures_exactly": 1
+      },
+      "predates_v0_22": "identical failure on tui@65286581, before any v0.22 MiCode commit",
+      "diagnosis": ".axon-v022/stage5/MICODE_TUI_QUIT_CHECKPOINT_RACE.md (strace: no checkpoint write attempted on ext4; a 1s pause before /quit passes 3/3)",
+      "owner": "MiCode tui branch (TUI quit path / TurnCheckpointer)",
+      "removal_criterion": "Remove this entry when the tui quit path awaits the in-flight turn commit and the test passes on ext4. While declared, an UNEXPECTED PASS of this test fails the profile, so a fixed defect cannot stay declared."
     }
   ]
 }
