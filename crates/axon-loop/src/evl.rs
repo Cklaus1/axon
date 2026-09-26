@@ -66,10 +66,16 @@ pub struct DeliveredTrial {
     pub acf_request: Value,
     pub acf_receipt: Value,
     pub projection: Value,
-    /// G01-r22-independent-issuer: the verifier's `acf-receipt-attestation/1`
-    /// over this trial's ACF request and receipt. A verdict (passed or failed)
-    /// counts only if it verifies under the key the operator registered for
-    /// the episode's verification issuer; without it the trial is `Unknown`.
+    /// G01-r22-independent-issuer: the VERIFICATION evidence the episode cites
+    /// (`verification.verifier_ref`): the registered check's request and
+    /// receipt, and the verifier's `acf-receipt-attestation/1` over them —
+    /// never the trial's execution documents. A verdict (passed or failed)
+    /// counts only if [`crate::intake::verify_check_evidence`] accepts them,
+    /// exactly as intake does; otherwise the trial is `Unknown`.
+    #[serde(default)]
+    pub verification_request: Value,
+    #[serde(default)]
+    pub verification_receipt: Value,
     #[serde(default)]
     pub verification_attestation: Value,
 }
@@ -155,7 +161,7 @@ struct Delivered {
     req: ComputeRequest,
     rcpt: ExecutionReceipt,
     proj: PolicyProjection,
-    attestation: Value,
+    verification: [Value; 3],
 }
 
 /// Evaluate and store. Returns the record and its `cl22:` ref.
@@ -182,7 +188,6 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     .into();
     let config = store.config()?;
     let verifiers = config.verifiers();
-    let verifier_keys = config.verifier_keys.clone();
     if verifiers.is_empty() {
         return Err(refused(
             "no trusted verifiers configured: nothing can be verified",
@@ -362,7 +367,11 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     req,
                     rcpt,
                     proj,
-                    attestation: t.verification_attestation.clone(),
+                    verification: [
+                        t.verification_request.clone(),
+                        t.verification_receipt.clone(),
+                        t.verification_attestation.clone(),
+                    ],
                 },
             )
             .is_some()
@@ -440,7 +449,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         &a.policy_ref,
                         epoch,
                         &verifiers,
-                        &verifier_keys,
+                        &config,
                         &subjects,
                     ),
                 };
@@ -503,7 +512,7 @@ fn judge(
     policy_ref: &Ref,
     epoch: AuthorityEpoch,
     verifiers: &BTreeSet<OpaqueRef>,
-    verifier_keys: &BTreeMap<OpaqueRef, String>,
+    config: &crate::store::Config,
     subjects: &BTreeSet<OpaqueRef>,
 ) -> (Outcome, String) {
     if &d.ep.policy_ref != policy_ref {
@@ -519,30 +528,30 @@ fn judge(
         return (Outcome::Unknown, format!("unbound ACF evidence: {e}"));
     }
     let v = &d.ep.verification;
-    // A verdict is evidence only if its issuer AUTHENTICATED it: its own
-    // signature over exactly this request and receipt, under the key the
-    // operator registered. A name on the trusted list is not enough, and an
-    // unauthenticated FAILURE is refused as surely as a pass — forged failures
-    // could otherwise sink an arm.
+    // A verdict is evidence only if its VERIFICATION evidence joins and is
+    // authenticated — the same rule intake applies, over the verification
+    // check's own documents. An unauthenticated FAILURE is refused as surely
+    // as a pass: forged failures could otherwise sink an arm.
     if matches!(
         v.result,
         VerificationResult::Passed | VerificationResult::Failed
     ) {
-        let Some(issuer) = v.issuer_ref.as_ref() else {
-            return (
-                Outcome::Unknown,
-                "unauthenticated verification: no issuer".into(),
-            );
+        let [req, rc, att] = &d.verification;
+        let text = |x: &Value| (!x.is_null()).then(|| x.to_string());
+        let checked = match (text(req), text(rc)) {
+            (Some(q), Some(r)) => crate::intake::verify_check_evidence(
+                &d.ep,
+                &q,
+                &r,
+                text(att).as_deref(),
+                config,
+                subjects,
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+            _ => Err("the verification check's request and receipt were not delivered".into()),
         };
-        let Some(key) = verifier_keys.get(issuer) else {
-            return (
-                Outcome::Unknown,
-                format!("unauthenticated verification: verifier {issuer} has no registered key"),
-            );
-        };
-        if let Err(e) =
-            axon_loop_contracts::attestation::verify(&d.attestation, issuer, &d.req, &d.rcpt, key)
-        {
+        if let Err(e) = checked {
             return (
                 Outcome::Unknown,
                 format!("unauthenticated verification: {e}"),

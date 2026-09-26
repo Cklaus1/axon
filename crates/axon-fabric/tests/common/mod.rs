@@ -173,6 +173,7 @@ impl Env {
             trusted_verifiers: vec![],
             trusted_observers: vec![],
             verifier_keys: Default::default(),
+            verifier_pins: Default::default(),
         })
         .unwrap();
         let registry = dir.path().join("registry.json");

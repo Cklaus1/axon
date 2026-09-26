@@ -203,9 +203,10 @@ fn laundered_evidence_never_crosses_independent_admission() {
 fn an_unauthenticated_verdict_never_counts() {
     let (impostor, _) = axon_loop_contracts::attestation::generate().unwrap();
     type Forge = Box<dyn Fn(&mut Value)>;
-    let forgeries: Vec<(&str, Forge)> = vec![
+    let forgeries: Vec<(&str, &str, Forge)> = vec![
         (
             "attestation removed",
+            "not authenticated",
             Box::new(|v| {
                 for t in candidate_trials(v) {
                     t["verification_attestation"] = Value::Null;
@@ -214,12 +215,13 @@ fn an_unauthenticated_verdict_never_counts() {
         ),
         (
             "impostor key claiming the trusted verifier",
+            "not by",
             Box::new(move |v| {
                 for t in candidate_trials(v) {
                     let req: ComputeRequest =
-                        serde_json::from_value(t["acf_request"].clone()).unwrap();
+                        serde_json::from_value(t["verification_request"].clone()).unwrap();
                     let rc: ExecutionReceipt =
-                        serde_json::from_value(t["acf_receipt"].clone()).unwrap();
+                        serde_json::from_value(t["verification_receipt"].clone()).unwrap();
                     t["verification_attestation"] = axon_loop_contracts::attestation::sign(
                         &impostor,
                         &OpaqueRef::new(common::VERIFIER).unwrap(),
@@ -232,6 +234,7 @@ fn an_unauthenticated_verdict_never_counts() {
         ),
         (
             "genuine attestation of another trial, replayed",
+            "the evidence it must vouch for",
             Box::new(|v| {
                 let donor = v["trials"][0]["verification_attestation"].clone();
                 for t in candidate_trials(v) {
@@ -240,12 +243,13 @@ fn an_unauthenticated_verdict_never_counts() {
             }),
         ),
     ];
-    for (i, (why, forge)) in forgeries.into_iter().enumerate() {
+    for (i, (why, reason_part, forge)) in forgeries.into_iter().enumerate() {
         let (pass, _, d, r, moved, outcomes) = run(&format!("unauth-{i}"), |v| forge(v));
         assert_eq!(pass, 0, "{why}: {outcomes:?}");
         assert!(
             outcomes.iter().all(|(o, reason)| *o == Outcome::Unknown
-                && reason.contains("unauthenticated verification")),
+                && reason.contains("unauthenticated verification")
+                && reason.contains(reason_part)),
             "{why}: {outcomes:?}"
         );
         assert_ne!(d, Decision::Accept, "{why}: {r:?}");

@@ -281,6 +281,9 @@ fn submit(a: &Args) {
                     let req: axon_loop_contracts::ComputeRequest =
                         axon_loop_contracts::parse(&text)
                             .unwrap_or_else(|e| refuse("malformed", &e.to_string(), 3));
+                    // The signer is a VERIFIER identity: it vouches only for a
+                    // registered check's verdict, never for arbitrary execution.
+                    let is_check = req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck;
                     let isolated =
                         s.backend == Some(axon_fabric::backend::LINUX_MICROVM_PROTECTED.id);
                     let effectless = cfg
@@ -288,7 +291,15 @@ fn submit(a: &Args) {
                         .resolve(req.grant_ref.as_str(), req.principal_ref.as_str())
                         .map(|g| axon_fabric::grants::effect_ceiling(g.grant()).is_empty())
                         .unwrap_or(false);
-                    if isolated || effectless {
+                    if !is_check {
+                        (
+                            None,
+                            Some(
+                                "not a registered_check: the verifier signs verdicts, not \
+                                 execution",
+                            ),
+                        )
+                    } else if isolated || effectless {
                         let att =
                             axon_loop_contracts::attestation::sign(&key, &id, &req, &s.receipt)
                                 .unwrap_or_else(|e| refuse("io", &e, 2));

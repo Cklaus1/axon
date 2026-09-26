@@ -143,9 +143,14 @@ printf 'fn main() {\n    println!("hello");\n}\n' > "$REPO/src/main.rs"
 g add -A && g commit -q -m "base"
 BASE_PARENT="$(g rev-parse HEAD)"
 printf '# task\nsay pong\n' > "$REPO/TASK.md"
-# The task's ACCEPTANCE CHECK (G3): an Axon test file Fabric runs in the real
-# interpreter. Fabric judges the EXACTLY NAMED check (argv[1]); a name that
-# matches no test is not_run, never passed.
+# The CANDIDATE's code: what the task produced.
+cat > "$REPO/calc.ax" <<'AX'
+fn double(n: i64) -> i64 { n * 2 }
+AX
+# A check file IN the candidate's own tree. The candidate controls these bytes,
+# so they can never define the acceptance rubric (G01-r22-verifier-separation):
+# section 8 shows a genuinely signed verdict from this file is refused. The
+# real acceptance suite is the operator's (below, outside the repository).
 mkdir -p "$REPO/checks"
 cat > "$REPO/checks/accept.ax" <<'AX'
 fn double(n: i64) -> i64 { n * 2 }
@@ -529,8 +534,28 @@ AXI_SHA="$(sha256sum "$AXI" | cut -d' ' -f1)"
 # The operator's registry also names Fabric's SIGNER: the verifier identity it
 # issues receipts as, its key, and that key's public half, pinned. No caller
 # (MiCode included) names an issuer or a key.
-jq -n --arg p "$AXI" --arg s "$AXI_SHA" --arg k "$ISSUER_KEY" --arg pk "$ISSUER_PK" \
+# The ACCEPTANCE CHECK (G3) is the operator's registered, hidden suite: outside
+# the candidate's repository, pinned by its WorkspaceVersion, reaching the
+# candidate only through `mod calc`. Fabric judges the EXACTLY NAMED check
+# (argv[1]); a name that matches no test is not_run, never passed.
+SUITE="$FAB/suites/acceptance"; mkdir -p "$SUITE"
+cat > "$SUITE/accept.ax" <<'AX'
+mod calc
+use calc.{double}
+
+@[test]
+fn t_ok_double() { assert_eq(double(2), 4) }
+
+@[test]
+fn t_ok_zero() { assert_eq(double(0), 0) }
+
+@[test]
+fn t_bad() { assert_eq(double(2), 5) }
+AX
+SUITE_REF="$("$AXF" workspace-import --state "$WORK/suite-ref" --tenant "$TENANT" --root "$SUITE" | jq -r .workspace_version_ref)"
+jq -n --arg p "$AXI" --arg s "$AXI_SHA" --arg k "$ISSUER_KEY" --arg pk "$ISSUER_PK" --arg sr "$SUITE" --arg sv "$SUITE_REF" \
   '{schema:"cortex-check-registry/1",executors:[{id:"axon-test-local",path:$p,sha256:$s}],
+    checks:[{id:"acceptance",visibility:"hidden",root:$sr,entry:"accept.ax",workspace_version_ref:$sv}],
     signer:{issuer_ref:"gate:independent-verifier",key_path:$k,public_key:$pk}}' > "$FAB/checks.json"
 # No effect at all: the acceptance check is pure tests, and a check workload
 # that could read files could read the signing key — Fabric would then
@@ -547,10 +572,18 @@ jq -n --arg s "$(sha256sum "$FAB/grants/grant_check.axgrant" | cut -d' ' -f1)" -
   '{schema:"axon-fabric-grant-registry/1",grants:[{grant_ref:"grant:check",principal_ref:$pr,path:"grant_check.axgrant",sha256:$s}]}' \
   > "$FAB/grants/grants.json"
 EXE_DIGEST="acf1:$(python3 -c 'import json,sys,hashlib;print(hashlib.sha256(json.dumps({"registered_executable_ref":"axon-test-local","sha256":sys.argv[1]},sort_keys=True,separators=(",",":")).encode()).hexdigest())' "$AXI_SHA")"
-# fabric_check_config <out> <filter>
+# The operator's PIN for the verifier: the revision, compute profile and suite
+# version its verdicts must come from (G01-r22-independent-issuer).
+jq -c --arg ex "$EXE_DIGEST" --arg sv "$SUITE_REF" '.verifier_pins = {"gate:independent-verifier": {
+    registered_executable_ref: "axon-test-local", executable_digest: $ex,
+    backend_profiles: ["process_scoped/local-interpreter"],
+    check_suites: [("check-suite:acceptance@" + $sv)] }}' "$STORE/config.json" > "$STORE/config.json.tmp" \
+  && mv "$STORE/config.json.tmp" "$STORE/config.json"
+# fabric_check_config <out> <filter> [argv0, default the operator's check:acceptance]
 fabric_check_config() {
   jq -n --arg fab "$AXF" --arg j "$FAB/ops.journal" --arg c "$FAB/checks.json" --arg g "$FAB/grants/grants.json" \
-        --arg st "$STORE" --arg state "$FAB/state" --arg pr "$CHECK_PRINCIPAL" --arg ex "$EXE_DIGEST" --arg f "$2" '{
+        --arg st "$STORE" --arg state "$FAB/state" --arg pr "$CHECK_PRINCIPAL" --arg ex "$EXE_DIGEST" --arg f "$2" \
+        --arg entry "${3:-check:acceptance}" '{
     schema:"micode.fabric-check/1", fabric:$fab, journal:$j, check_registry:$c, grant_registry:$g,
     loop_store:$st, state:$state, issuer_ref:"gate:independent-verifier", timeout_s:300,
     request_template:{
@@ -561,7 +594,7 @@ fabric_check_config() {
                 network_mode:"deny",checkpoint_kind:"none"},
       limits:{cpu_millicores:1000,memory_bytes:268435456,disk_bytes:268435456,wall_time_ms:60000,
               output_bytes:1048576,max_cost_micro:100,currency_code:"USD",price_schedule_ref:"unpriced:gate"},
-      argv:["checks/accept.ax",$f], result_schema_ref:"cortex-check-report/1" } }' > "$1"
+      argv:[$entry,$f], result_schema_ref:"cortex-check-report/1" } }' > "$1"
 }
 # expected context whose execution id is the one Fabric mints for the op
 g3_context() {  # <out> <trial>
@@ -655,6 +688,24 @@ check "G3: intake joins the real Fabric check (exit 0)" eq "$?" 0
 check "G3: record cites the receipt" eq "$(jq -r .record.verification_receipt_ref <<<"$G3_IN")" "$(jq -r .verification.verifier_ref "$G3_EP")"
 check "G3: Fabric receipt stored content-addressed" \
   test -f "$STORE/fabric-receipts/$(jq -r .verification.verifier_ref "$G3_EP" | cut -d: -f2).json"
+
+# The rubric is the operator's, never the candidate's: the same task with its
+# check pointed at a file IN its own tree runs through real Fabric and is
+# genuinely signed — and intake refuses it, store unchanged.
+fabric_check_config "$WORK/fabric-own.json" t_ok_double checks/accept.ax
+g3_context "$WORK/exp-g3o.json" trial-g3o
+snap_cl
+run_micode g3o MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g3o.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" \
+  MICODE_AXON_FABRIC_CHECK="$WORK/fabric-own.json"
+G3O_EP="$(new_file "$CL/episodes" "$SN_EP")"
+g3_docs "$G3O_EP"
+check "rubric: the candidate-tree check was genuinely signed by the verifier" eq "$(jq -r .public_key "$VATT")" "$ISSUER_PK"
+H_O="$(store_hash)"
+axl intake episode --in "$G3O_EP" --context "$CL/context" --ack "$CL/policy-ack" \
+  --verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT" >/dev/null 2>"$WORK/g3o.err"
+check "rubric: a verdict from the candidate's own check file is refused (exit 4)" eq "$?" 4
+check "rubric: ...because candidate bytes cannot define the rubric" grep -q "cannot define the acceptance rubric" "$WORK/g3o.err"
+check "rubric: store unchanged" eq "$(store_hash)" "$H_O"
 
 # A FAILING acceptance check is recorded as failed — never dropped, never passed.
 fabric_check_config "$WORK/fabric-fail.json" t_bad

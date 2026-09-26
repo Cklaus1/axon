@@ -1190,7 +1190,15 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 filter: filter.as_deref(),
             });
             let seen = post_run(&req, cfg, &target);
-            local_receipt(&req, &journal, res, filter.as_deref(), liability, seen)?
+            // The registered suite that judged the candidate travels in the
+            // receipt (and so under the verifier's attestation): a consumer
+            // can require an operator-pinned suite, never a file the
+            // subject wrote (G01-r22-verifier-separation).
+            let suite = target
+                .suite
+                .as_ref()
+                .map(|s| format!("check-suite:{}@{}", s.id, s.version));
+            local_receipt(&req, &journal, res, filter.as_deref(), liability, seen, suite)?
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
@@ -1245,6 +1253,7 @@ fn local_receipt(
     filter: Option<&str>,
     liability: u64,
     seen: PostRun,
+    suite: Option<String>,
 ) -> Result<Outcome, SubmitError> {
     let id = backend::LOCAL_INTERPRETER.id;
     let PostRun { output, problem } = seen;
@@ -1288,12 +1297,13 @@ fn local_receipt(
                 "total": rep.total,
                 "exit_code": rep.exit_code,
             });
-            let evidence = vec![opaque(format!(
+            let mut evidence = vec![opaque(format!(
                 "cl22-report:{}",
                 axon_loop_contracts::digest_value(&report_json)
                     .map(|r| r.to_string())
                     .unwrap_or_default()
             ))];
+            evidence.extend(suite.map(opaque));
             // The process ran to completion (a summary was produced). The
             // exit code is the check run's, and verification is separate.
             let status = ReceiptStatus::Completed;

@@ -287,13 +287,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     }
 
     // 8. The verification evidence (G3 under D12).
-    let verification = check_verification(
-        input,
-        &ep,
-        &config.verifiers(),
-        &config.verifier_keys,
-        &subject,
-    )?;
+    let verification = check_verification(input, &ep, &config, &subject)?;
 
     // Idempotency / identity conflict, against the ledger — AFTER every
     // check, so a replay is never a way around one (a re-intake with a
@@ -505,8 +499,7 @@ fn check_projection(text: Option<&str>, ep: &LoopEpisode) -> Result<()> {
 fn check_verification(
     input: &IntakeInput<'_>,
     ep: &LoopEpisode,
-    trusted_verifiers: &BTreeSet<OpaqueRef>,
-    verifier_keys: &std::collections::BTreeMap<OpaqueRef, String>,
+    config: &crate::store::Config,
     subject: &BTreeSet<OpaqueRef>,
 ) -> Result<Option<(ComputeRequest, ExecutionReceipt, Value, String)>> {
     let v = &ep.verification;
@@ -529,6 +522,51 @@ fn check_verification(
              were not both presented (--verification-request, --verification-receipt)"
         )));
     };
+    verify_check_evidence(
+        ep,
+        req_text,
+        rc_text,
+        input.verification_attestation,
+        config,
+        subject,
+    )
+    .map(Some)
+}
+
+/// The verification join and its authentication, shared by intake (step 8)
+/// and EVL judging: `ep.verification` cites a Fabric registered check, and
+/// `(req_text, rc_text, att_text)` must be exactly that check's request,
+/// receipt and the verifier's attestation. Returns the typed documents, the
+/// attestation and the authenticating key id. Everything a verdict rests on
+/// is checked here, in one place, for every consumer:
+///
+/// * the documents are the ones cited (digests), and never a context or
+///   execution document standing in for a verification;
+/// * the issuer is a trusted verifier independent of the subject, AUTHENTICATED
+///   by its attestation under the operator-registered key;
+/// * the check is what the operator PINNED for that verifier: its revision
+///   (registered executable + digest), a pinned compute profile, and an
+///   operator-registered suite (`check:<id>`, recorded by Fabric as
+///   `check-suite:<id>@<version>`) at a pinned version — never a file of the
+///   subject's own tree, whose bytes the subject controls;
+/// * it is this attempt's operation, on the episode's output tree, observed by
+///   the supervisor, run as a principal other than the subject, and the
+///   sidecar's result and matched count are the receipt's.
+pub fn verify_check_evidence(
+    ep: &LoopEpisode,
+    req_text: &str,
+    rc_text: &str,
+    att_text: Option<&str>,
+    config: &crate::store::Config,
+    subject: &BTreeSet<OpaqueRef>,
+) -> Result<(ComputeRequest, ExecutionReceipt, Value, String)> {
+    let v = &ep.verification;
+    let vref = v
+        .verifier_ref
+        .as_ref()
+        .ok_or_else(|| refused("the episode cites no verifier_ref"))?;
+    let trusted_verifiers = config.verifiers();
+    let verifier_keys = &config.verifier_keys;
     let req: ComputeRequest = parse(req_text).map_err(semantic("verification request"))?;
     let rc: ExecutionReceipt = parse(rc_text).map_err(semantic("verification receipt"))?;
     let (req_ref, rc_ref) = (digest(&req)?, digest(&rc)?);
@@ -570,7 +608,7 @@ fn check_verification(
              evidence cannot be authenticated, so it vouches for nothing"
         ))
     })?;
-    let att_text = input.verification_attestation.ok_or_else(|| {
+    let att_text = att_text.ok_or_else(|| {
         refused(format!(
             "the verification is not authenticated: no acf-receipt-attestation from {issuer} \
              was presented (--verification-attestation)"
@@ -579,6 +617,63 @@ fn check_verification(
     let att = parse_value(att_text).map_err(semantic("verification attestation"))?;
     let key_id = axon_loop_contracts::attestation::verify(&att, issuer, &req, &rc, key)
         .map_err(|e| refused(format!("verification attestation refused: {e}")))?;
+    // What the verifier ran must be what the operator pinned for it.
+    let pin = config.verifier_pins.get(issuer).ok_or_else(|| {
+        refused(format!(
+            "verifier {issuer} has no operator pin (revision, profile, suite): its verdict cannot \
+             be tied to what the operator trusts it to run"
+        ))
+    })?;
+    if req.registered_executable_ref.as_str() != pin.registered_executable_ref
+        || req.executable_digest.as_str() != pin.executable_digest
+    {
+        return Err(refused(format!(
+            "verifier revision: the check ran {} ({}), not the pinned {} ({})",
+            req.registered_executable_ref,
+            req.executable_digest,
+            pin.registered_executable_ref,
+            pin.executable_digest
+        )));
+    }
+    if !pin
+        .backend_profiles
+        .iter()
+        .any(|p| p == rc.backend_profile_ref.as_str())
+    {
+        return Err(refused(format!(
+            "compute profile: the verdict came from {}, not a profile pinned for verifier {issuer}",
+            rc.backend_profile_ref
+        )));
+    }
+    let entry = req.argv.first().map(String::as_str).unwrap_or("");
+    let Some(suite_id) = entry.strip_prefix("check:") else {
+        return Err(refused(format!(
+            "rubric: the check ran {entry:?}, a file of the candidate's own tree — candidate \
+             bytes cannot define the acceptance rubric; a verification must run an \
+             operator-registered suite (check:<id>)"
+        )));
+    };
+    let suites: Vec<&str> = rc
+        .evidence_refs
+        .iter()
+        .map(OpaqueRef::as_str)
+        .filter(|e| e.starts_with("check-suite:"))
+        .collect();
+    let recorded = match suites.as_slice() {
+        [one] => *one,
+        _ => {
+            return Err(refused(
+                "rubric: the receipt does not record exactly one check suite version",
+            ))
+        }
+    };
+    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))
+        || !pin.check_suites.iter().any(|p| p == recorded)
+    {
+        return Err(refused(format!(
+            "rubric: suite {recorded} is not a version pinned for verifier {issuer}"
+        )));
+    }
     if subject.contains(&req.principal_ref) {
         return Err(refused(format!(
             "the check ran as principal {}, the subject itself: a task cannot verify itself",
@@ -648,7 +743,7 @@ fn check_verification(
     if v.matched_checks != rc.matched_checks.unwrap_or(0) {
         return Err(refused("matched_checks differs from the check receipt's"));
     }
-    Ok(Some((req, rc, att, key_id)))
+    Ok((req, rc, att, key_id))
 }
 
 /// The canonical MiCode episode's spend in micro-cents (1e-8 USD), read through

@@ -562,7 +562,7 @@ fn check_request() -> Value {
         "limits": {"cpu_millicores": 1000, "memory_bytes": 268435456, "disk_bytes": 268435456,
                    "wall_time_ms": 60000, "output_bytes": 1048576, "max_cost_micro": 100,
                    "currency_code": "USD", "price_schedule_ref": "unpriced:test"},
-        "argv": ["f.ax", "t_"], "result_schema_ref": "cortex-check-report/1",
+        "argv": ["check:acceptance", "t_"], "result_schema_ref": "cortex-check-report/1",
     })
 }
 
@@ -575,7 +575,8 @@ fn check_receipt(verification: &str, matched: u64) -> Value {
         "policy_digest": format!("acf1:{}", "c".repeat(64)),
         "status": "completed", "process_exit_code": 0,
         "verification": verification, "matched_checks": matched,
-        "evidence_source": "supervisor_observed", "evidence_refs": ["check-report:fixture"],
+        "evidence_source": "supervisor_observed",
+        "evidence_refs": ["check-report:fixture", common::check_suite()],
         "usage_state": "unknown", "cost_micro": null, "unresolved_liability_micro": 100,
     })
 }
@@ -1171,4 +1172,84 @@ fn verification_evidence_is_authenticated_not_named() {
     assert!(out
         .verification_key_id
         .is_some_and(|k| k.starts_with("ed25519:")));
+}
+
+/// G01-r22-independent-issuer / G01-r22-verifier-separation: an AUTHENTIC
+/// verdict still counts only if the verifier ran what the operator pinned for
+/// it. Every document below is genuinely signed by the trusted verifier's
+/// registered key and joins the episode; each differs from the pin in one way
+/// and is refused for that reason, with the store unchanged: another verifier
+/// revision; another compute profile; a check file from the candidate's own
+/// tree (candidate bytes cannot define the rubric); a suite version the
+/// operator did not pin; a suite other than the one the request named; and a
+/// trusted verifier with no pin at all.
+///
+/// Mutation: delete the pin block in `verify_check_evidence` → the substituted
+/// verdicts are recorded and this fails.
+#[test]
+fn a_verdict_counts_only_for_what_the_operator_pinned() {
+    let c = case(Some(500));
+    let before = snapshot(c.s.root());
+    type Alter = Box<dyn Fn(&mut Value, &mut Value)>;
+    let cases: Vec<(&str, &str, Alter)> = vec![
+        (
+            "another verifier revision",
+            "verifier revision",
+            Box::new(|req, _| req["executable_digest"] = json!(format!("acf1:{}", "f".repeat(64)))),
+        ),
+        (
+            "another compute profile",
+            "compute profile",
+            Box::new(|_, rc| rc["backend_profile_ref"] = json!("fabric:someone-elses-laptop")),
+        ),
+        (
+            "a check file from the candidate's own tree",
+            "candidate bytes cannot define the acceptance rubric",
+            Box::new(|req, rc| {
+                req["argv"] = json!(["checks/accept.ax", "t_"]);
+                rc["evidence_refs"] = json!(["check-report:fixture"]);
+            }),
+        ),
+        (
+            "an unpinned suite version",
+            "not a version pinned",
+            Box::new(|_, rc| {
+                rc["evidence_refs"] = json!([
+                    "check-report:fixture",
+                    format!("check-suite:acceptance@acf1:{}", "6".repeat(64))
+                ])
+            }),
+        ),
+        (
+            "a suite other than the one requested",
+            "not a version pinned",
+            Box::new(|req, _| req["argv"] = json!(["check:lenient", "t_"])),
+        ),
+    ];
+    for (why, reason, alter) in cases {
+        let (mut req, mut rc) = (check_request(), check_receipt("passed", 1));
+        alter(&mut req, &mut rc);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let e = run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).unwrap_err();
+        assert!(
+            matches!(e, LoopError::Refused(ref m) if m.contains(reason)),
+            "{why}: expected `{reason}`: {e}"
+        );
+        assert_eq!(snapshot(c.s.root()), before, "{why} wrote to the store");
+    }
+
+    // A trusted, keyed verifier the operator pinned nothing for.
+    let mut config = c.s.config().unwrap();
+    config.verifier_pins.clear();
+    c.s.write_config(&config).unwrap();
+    let before = snapshot(c.s.root());
+    let (req, rc) = (check_request(), check_receipt("passed", 1));
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let e = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("no operator pin")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
 }

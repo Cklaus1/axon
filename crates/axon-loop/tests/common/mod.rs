@@ -112,6 +112,9 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
         verifier_keys: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_key().1.clone())]
             .into_iter()
             .collect(),
+        verifier_pins: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_pin())]
+            .into_iter()
+            .collect(),
     })
     .unwrap();
     register_candidates(&s);
@@ -128,6 +131,9 @@ pub fn store_without_candidates(dir: &Path) -> Store {
         trusted_verifiers: vec![OpaqueRef::new(VERIFIER).unwrap()],
         trusted_observers: vec![OpaqueRef::new(OBSERVER).unwrap()],
         verifier_keys: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_key().1.clone())]
+            .into_iter()
+            .collect(),
+        verifier_pins: [(OpaqueRef::new(VERIFIER).unwrap(), verifier_pin())]
             .into_iter()
             .collect(),
     })
@@ -185,6 +191,76 @@ impl<'a> Trial<'a> {
 pub fn verifier_key() -> &'static (Vec<u8>, String) {
     static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
     KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())
+}
+
+/// The operator's pin for [`VERIFIER`]: the revision, profile and suite a
+/// fixture verification check runs.
+pub const CHECK_EXECUTABLE: &str = "axon-test-local";
+pub fn check_executable_digest() -> String {
+    format!("acf1:{}", "e".repeat(64))
+}
+pub const CHECK_PROFILE: &str = "fabric:local-interpreter";
+pub fn check_suite() -> String {
+    format!("check-suite:acceptance@acf1:{}", "5".repeat(64))
+}
+pub fn verifier_pin() -> axon_loop::store::VerifierPin {
+    axon_loop::store::VerifierPin {
+        registered_executable_ref: CHECK_EXECUTABLE.into(),
+        executable_digest: check_executable_digest(),
+        backend_profiles: vec![CHECK_PROFILE.into()],
+        check_suites: vec![check_suite()],
+    }
+}
+
+/// The registered check (request, receipt) that verified `identity`'s output
+/// `tree`, with `verification` and `matched` as Fabric would record them.
+pub fn verification_check(
+    identity: &TrialIdentity,
+    tree: &Acf1Ref,
+    verification: &str,
+    matched: u64,
+) -> (Value, Value) {
+    let req = json!({
+        "schema": "acf-compute-request/1",
+        "operation_id": identity.operation_id, "task_id": identity.task_id,
+        "trial_id": identity.trial_id, "attempt_id": identity.attempt_id,
+        "principal_ref": "principal:acceptance-check", "grant_ref": "grant:check", "approval_ref": null,
+        "job_kind": "registered_check", "registered_executable_ref": CHECK_EXECUTABLE,
+        "executable_digest": check_executable_digest(),
+        "workspace_version_ref": tree, "semantic_state_ref": null,
+        "policy_digest": format!("acf1:{}", "c".repeat(64)),
+        "required": {"engine": "axon_interpreter", "hardware_isolation": false, "os": "none",
+                     "architecture": "x86_64", "network_mode": "deny", "checkpoint_kind": "none"},
+        "limits": {"cpu_millicores": 1000, "memory_bytes": 268435456, "disk_bytes": 268435456,
+                   "wall_time_ms": 60000, "output_bytes": 1048576, "max_cost_micro": 100,
+                   "currency_code": "USD", "price_schedule_ref": "unpriced:test"},
+        "argv": ["check:acceptance", "t_"], "result_schema_ref": "cortex-check-report/1",
+    });
+    let rc = json!({
+        "schema": "acf-execution-receipt/1",
+        "operation_id": identity.operation_id, "task_id": identity.task_id,
+        "trial_id": identity.trial_id, "attempt_id": identity.attempt_id,
+        "execution_id": identity.execution_id, "backend_profile_ref": CHECK_PROFILE,
+        "input_workspace_ref": tree, "output_workspace_ref": null,
+        "policy_digest": format!("acf1:{}", "c".repeat(64)),
+        "status": "completed", "process_exit_code": 0,
+        "verification": verification, "matched_checks": matched,
+        "evidence_source": "supervisor_observed",
+        "evidence_refs": ["cl22-report:fixture", check_suite()],
+        "usage_state": "unknown", "cost_micro": null, "unresolved_liability_micro": 100,
+    });
+    (req, rc)
+}
+
+/// The verifier's attestation of `(req, rc)` as `issuer`, under the fixture key.
+pub fn attest(issuer: &str, req: &Value, rc: &Value) -> Value {
+    axon_loop_contracts::attestation::sign(
+        &verifier_key().0,
+        &OpaqueRef::new(issuer).unwrap(),
+        &serde_json::from_value(req.clone()).unwrap(),
+        &serde_json::from_value(rc.clone()).unwrap(),
+    )
+    .unwrap()
 }
 
 pub fn trial(t: &Trial) -> Value {
@@ -257,20 +333,35 @@ pub fn trial(t: &Trial) -> Value {
             rc.process_exit_code = None;
         }
     }
+    // The verification the episode cites: the registered check over the
+    // episode's output tree (Pass/Fail only — an Unknown cites none).
+    let tree = ep
+        .output_workspace_ref
+        .clone()
+        .expect("the fixture episode has an output tree");
+    let verdict = match t.out {
+        Out::Pass => Some("passed"),
+        Out::Fail => Some("failed"),
+        Out::Unknown => None,
+    };
+    let (vreq, vrc) = verification_check(
+        &ep.identity,
+        &tree,
+        verdict.unwrap_or("unknown"),
+        ep.verification.matched_checks,
+    );
+    if verdict.is_some() {
+        ep.verification.verifier_ref = Some(digest_value(&vrc).unwrap());
+        ep.verification.evidence_refs = vec![digest_value(&vreq).unwrap()];
+        ep.verification.output_workspace_ref = Some(tree.clone());
+    }
     ep.context_ref = digest(&ctx).unwrap();
     ep.acf_request_ref = digest(&req).unwrap();
     ep.acf_receipt_ref = digest(&rc).unwrap();
     ep.validate().unwrap();
-    // The verifier's attestation of this request/receipt, as the trial's
-    // issuer, under the fixture key (registered only for VERIFIER).
-    let att = axon_loop_contracts::attestation::sign(
-        &verifier_key().0,
-        &OpaqueRef::new(t.verifier).unwrap(),
-        &req,
-        &rc,
-    )
-    .unwrap();
+    let att = attest(t.verifier, &vreq, &vrc);
     json!({"episode": ep, "context": ctx, "acf_request": req, "acf_receipt": rc, "projection": proj,
+           "verification_request": vreq, "verification_receipt": vrc,
            "verification_attestation": att})
 }
 

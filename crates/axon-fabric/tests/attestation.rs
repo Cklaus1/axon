@@ -146,6 +146,21 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
         "{out}"
     );
 
+    // Not a verification: an interpreter_run is execution, not a verdict, so the
+    // verifier identity does not sign it.
+    let mut run = request(&env, "op-run", "t_ok");
+    run["job_kind"] = json!("interpreter_run");
+    run["argv"] = json!(["f.ax"]);
+    let (c, out) = fabric(&submit_args(&env, &reg, &pure), Some(&run.to_string()));
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(out["receipt_attestation"], json!(null));
+    assert!(
+        out["attestation_withheld"]
+            .as_str()
+            .is_some_and(|r| r.contains("not a registered_check")),
+        "{out}"
+    );
+
     // No signer configured: unattested, nothing withheld.
     let plain = registry_with(&env, "reg-plain.json", None);
     let (c, out) = fabric(

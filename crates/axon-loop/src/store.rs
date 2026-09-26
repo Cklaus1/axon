@@ -65,6 +65,30 @@ pub struct Config {
     /// `{}`; always serialized.
     #[serde(default)]
     pub verifier_keys: std::collections::BTreeMap<OpaqueRef, String>,
+    /// v0.22 G01-r22-independent-issuer / G01-r22-verifier-separation: WHAT
+    /// each trusted verifier must have run for its verdict to count. A
+    /// genuinely signed receipt from another verifier revision, another
+    /// compute profile, or another suite — or from a file in the subject's own
+    /// tree instead of an operator-registered suite — is refused. A trusted
+    /// verifier with no pin vouches for nothing (fail closed). Absent in an
+    /// older config: read as `{}`; always serialized.
+    #[serde(default)]
+    pub verifier_pins: std::collections::BTreeMap<OpaqueRef, VerifierPin>,
+}
+
+/// One trusted verifier's operator pin (see [`Config::verifier_pins`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerifierPin {
+    /// The registered executable the check must run (`registered_executable_ref`).
+    pub registered_executable_ref: String,
+    /// Its registry-derived digest (`executable_digest`): the verifier REVISION.
+    pub executable_digest: String,
+    /// The backend profiles (`backend_profile_ref`) a verdict may come from.
+    pub backend_profiles: Vec<String>,
+    /// The registered suites a verdict may come from, as Fabric records them
+    /// in the receipt: `check-suite:<id>@<acf1 version>`.
+    pub check_suites: Vec<String>,
 }
 
 impl Config {
@@ -416,6 +440,8 @@ impl Store {
                         .or_insert_with(|| serde_json::Value::Array(Vec::new()));
                     o.entry("verifier_keys")
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
+                    o.entry("verifier_pins")
+                        .or_insert_with(|| serde_json::Value::Object(Default::default()));
                 }
                 strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
             }
@@ -425,6 +451,7 @@ impl Store {
                 trusted_verifiers: Vec::new(),
                 trusted_observers: Vec::new(),
                 verifier_keys: Default::default(),
+                verifier_pins: Default::default(),
             }),
         }
     }
