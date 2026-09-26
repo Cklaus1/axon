@@ -3160,6 +3160,15 @@ impl<'p> Interp<'p> {
         let mut result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
+            // Loop control never crosses a function boundary: a `break` or
+            // `continue` with no loop of its own in this body is an error HERE,
+            // not a jump in whatever loop the CALLER happens to be running.
+            // It used to escape, so candidate code could end an operator
+            // test's loop early and skip its assertions (v0.22 G01 final
+            // re-audit of candidate 2, executed).
+            Err(Flow::Break) | Err(Flow::Continue) => {
+                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))
+            }
             Err(other) => return Err(other),
         };
         // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
@@ -3472,6 +3481,10 @@ impl<'p> Interp<'p> {
         let out = match self.eval(&body, &mut env) {
             Ok(v) => Ok(v),
             Err(Flow::Return(v)) => Ok(v),
+            // As for a named fn: loop control does not leave the closure.
+            Err(Flow::Break) | Err(Flow::Continue) => {
+                panic("`break`/`continue` outside a loop in a closure")
+            }
             Err(other) => Err(other),
         };
         // Write back only names the closure actually captured. A `let` introduced
@@ -4156,6 +4169,25 @@ mod tests {
         assert!(run_test_fn(&prog, "t_break").is_err());
         assert!(run_test_fn(&prog, "t_continue").is_err());
         assert!(run_test_fn(&prog, "t_ok").is_ok());
+        // Candidate 2's blocker: the escape lands in a loop the TEST owns. It
+        // must not end that loop and skip the assertions (while, for, and
+        // through a closure).
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_while() {\n    let mut i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_closure() {\n    let g = |n: i64| { if n > 0 { break }  n }\n    for i in 1..4 {\n        assert_eq(g(i), 99)\n    }\n}\n\
+             @[test]\nfn t_own_loop_ok() {\n    let mut i = 0\n    while true {\n        i = i + 1\n        if i > 2 { break }\n    }\n    assert_eq(i, 3)\n}\n",
+        )
+        .expect("parses");
+        for t in ["t_while", "t_for", "t_closure"] {
+            assert!(run_test_fn(&prog, t).is_err(), "{t} passed");
+        }
+        assert!(
+            run_test_fn(&prog, "t_own_loop_ok").is_ok(),
+            "a test's own break still works"
+        );
     }
     use super::*;
 

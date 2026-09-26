@@ -803,3 +803,45 @@ fn a_candidate_holding_a_symlink_is_refused() {
     assert!(e.to_string().contains("symbolic link"), "{e}");
     assert_untouched(&s.env, "candidate with a symlink");
 }
+
+/// Candidate 2's final-review blocker (executed): the operator's test LOOPS
+/// over inputs, and a `break`/`continue` in the candidate's function landed
+/// in that loop — ending it before any assertion ran — so the broken
+/// candidate passed and Fabric signed it. Loop control no longer crosses a
+/// function boundary. Positive control: the honest candidate passes the same
+/// loop-shaped suite.
+///
+/// Mutation: let break/continue cross `call_fn` again → red.
+#[test]
+fn an_escaped_break_cannot_end_the_operators_test_loop() {
+    let suite = "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() {\n    for i in 1..4 {\n        assert_eq(double(i), i * 2)\n    }\n    let mut j = 1\n    while j < 4 {\n        assert_eq(double(j), j * 2)\n        j = j + 1\n    }\n}\n";
+    for (why, body, pass) in [
+        (
+            "break",
+            "fn double(n: i64) -> i64 {\n    if n > 0 { break }\n    n * 0\n}\n",
+            false,
+        ),
+        (
+            "continue",
+            "fn double(n: i64) -> i64 {\n    if n > 0 { continue }\n    n * 0\n}\n",
+            false,
+        ),
+        ("honest", "fn double(n: i64) -> i64 { n * 2 }\n", true),
+    ] {
+        let s = with_suite(suite, "hidden");
+        std::fs::write(s.env.ws.join("f.ax"), body).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite { candidate, ..s };
+        let sub = submit(&suite_request(&s, "op-loop").to_string(), &s.env.cfg(0)).unwrap();
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+    }
+}

@@ -321,6 +321,11 @@ MUTATIONS = [
      '    refuse_links(\n        cv.entries\n            .iter()\n            .map(|e| (e.path.as_str(), e.mode == workspace::MODE_LINK)),\n        "the candidate",\n    )?;',
      '    let _ = &cv;',
      'axon-fabric', '--test check_effects', 'a_candidate_holding_a_symlink_is_refused'),
+    ('M58', 'interpreter: loop control does not cross a function boundary',
+     'crates/axon-core/src/interp.rs',
+     '            Err(Flow::Break) | Err(Flow::Continue) => {\n                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))\n            }\n',
+     '',
+     'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_does_not_pass_a_test'),
 ]
 
 
