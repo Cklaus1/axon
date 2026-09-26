@@ -170,8 +170,12 @@ fn main() {
         }
         PolicyDecision::ProceedUnpoliced => {
             eprintln!(
-                "[axon-guest-init] WARNING: AXON_GUEST_ALLOW_NO_POLICY is set in a \
-                 dev-allow-no-policy build — the guest is running with NO effect \
+                // The variable's NAME is deliberately not spelled here: it must
+                // appear in the binary only when the bypass is compiled in, so
+                // `strings` on an image's init is a check (build-guest-image.sh
+                // and tests/no_bypass_in_default_build.rs both make it).
+                "[axon-guest-init] WARNING: the development no-policy BYPASS is \
+                 active (dev-allow-no-policy build) — the guest is running with NO effect \
                  ceiling, NO token cap and NO seccomp filter ({}).",
                 loaded.err().unwrap_or_default()
             );

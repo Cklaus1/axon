@@ -51,6 +51,10 @@ def main():
             "axon_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked "
                           "-p axon-core --no-default-features --bin axon --release "
                           "--target x86_64-unknown-linux-musl",
+            "axon_guest_init_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build "
+                                     "--locked -p axon-guest-init --release "
+                                     "--target x86_64-unknown-linux-musl (default features: "
+                                     "no dev-allow-no-policy bypass)",
             "rustc": first_line(["rustc", "--version"]),
         },
         "kernel": {
@@ -71,7 +75,10 @@ def main():
                        "sha256": sha(os.path.join(prof, "guest-init.sh"))},
         "artifacts": {},
     }
-    for name in ("vmlinux", "rootfs.sqfs", "axon"):
+    # axon-guest-init is pinned like axon: it is the in-guest policy channel
+    # (reads `axon.policy=` from the kernel cmdline), so a swapped binary is a
+    # swapped policy enforcer.
+    for name in ("vmlinux", "rootfs.sqfs", "axon", "axon-guest-init"):
         p = os.path.join(dist, name)
         manifest["artifacts"][name] = {
             "path": os.path.join("dist/guest-linux", name),

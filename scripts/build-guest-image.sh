@@ -9,7 +9,8 @@
 #
 #   linux          — the pinned "protected Linux microVM" profile (B263):
 #                    Linux 6.1.188 + Firecracker v1.10.1's CI guest config, and
-#                    a read-only squashfs root (static busybox + static axon).
+#                    a read-only squashfs root (static busybox + static axon
+#                    + static axon-guest-init, the in-guest policy channel).
 #                    Pins: profiles/linux-microvm/kernel.pin (digest-checked).
 #                    Outputs: dist/guest-linux/{vmlinux,rootfs.sqfs,manifest.json}.
 #                    Requires: gcc make flex bison bc libelf-dev squashfs-tools
@@ -153,6 +154,27 @@ build_rootfs_linux() {
         exit 1
     fi
 
+    # axon-guest-init: the in-guest policy channel (ACF-G25 / x1). guest-init.sh
+    # execs the workload under it; it reads `axon.policy=` from /proc/cmdline and
+    # refuses to start the workload without a policy that constrains something.
+    # DEFAULT FEATURES ONLY: `dev-allow-no-policy` compiles in a runtime
+    # no-policy escape, and must never reach an image.
+    echo "[build-guest-image] Building axon-guest-init (static musl, --locked, default features)..."
+    RUSTFLAGS="-C target-feature=+crt-static" \
+        cargo build --locked -p axon-guest-init \
+            --target x86_64-unknown-linux-musl --release --quiet
+    local INIT_BIN="target/x86_64-unknown-linux-musl/release/axon-guest-init"
+    if ! file "$INIT_BIN" | grep -q 'static'; then
+        echo "[build-guest-image] ERROR: $INIT_BIN is not statically linked" >&2
+        exit 1
+    fi
+    # The artefact-level check that the bypass is absent: the only code that
+    # spells the variable's name is compiled out of a default build.
+    if grep -qa 'AXON_GUEST_ALLOW_NO_POLICY' "$INIT_BIN"; then
+        echo "[build-guest-image] ERROR: $INIT_BIN contains the no-policy bypass" >&2
+        exit 1
+    fi
+
     local STAGE
     STAGE="$(mktemp -d)"
     trap 'rm -rf "${STAGE:-}"' EXIT
@@ -163,14 +185,17 @@ build_rootfs_linux() {
         [[ "$applet" == busybox ]] || ln -s busybox "$STAGE/bin/$applet"
     done
     cp "$AXON_BIN" "$STAGE/usr/bin/axon"
+    cp "$INIT_BIN" "$STAGE/usr/bin/axon-guest-init"
     cp "$PROFILE_DIR/guest-init.sh" "$STAGE/init"
-    chmod 0755 "$STAGE/init" "$STAGE/usr/bin/axon" "$STAGE/bin/busybox"
+    chmod 0755 "$STAGE/init" "$STAGE/usr/bin/axon" "$STAGE/usr/bin/axon-guest-init" \
+        "$STAGE/bin/busybox"
 
     rm -f "$LDIST/rootfs.sqfs"
     # -all-time/-mkfs-time 0 + -all-root: the image is a function of its inputs.
     mksquashfs "$STAGE" "$LDIST/rootfs.sqfs" -noappend -all-root -no-xattrs \
         -mkfs-time 0 -all-time 0 -comp gzip -quiet
     cp "$AXON_BIN" "$LDIST/axon"
+    cp "$INIT_BIN" "$LDIST/axon-guest-init"
     echo "[build-guest-image] rootfs → $LDIST/rootfs.sqfs ($(du -sh "$LDIST/rootfs.sqfs" | cut -f1))"
 }
 

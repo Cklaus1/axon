@@ -50,7 +50,23 @@ fn default_build_refuses_with_no_policy_even_with_the_bypass_variable_set() {
     assert!(stderr.contains("REFUSING"), "stderr: {stderr}");
     assert!(stderr.contains("policy ABSENT"), "stderr: {stderr}");
     assert!(
-        !stderr.contains("AXON_GUEST_ALLOW_NO_POLICY is set"),
+        !stderr.contains("BYPASS"),
         "the default build must not acknowledge the bypass variable: {stderr}"
+    );
+}
+
+/// The same property at the artefact level, the check an image build can make
+/// without booting anything: a default-features binary does not contain the
+/// bypass variable's NAME at all, because the only code that spells it is
+/// compiled out. (`scripts/build-guest-image.sh` applies this to the musl
+/// release binary it installs into the B263 rootfs.)
+#[test]
+fn default_build_binary_does_not_contain_the_bypass_variable_name() {
+    let bin = std::fs::read(env!("CARGO_BIN_EXE_axon-guest-init")).expect("read binary");
+    let needle = b"AXON_GUEST_ALLOW_NO_POLICY";
+    assert!(
+        !bin.windows(needle.len()).any(|w| w == needle),
+        "the default-features axon-guest-init binary contains `AXON_GUEST_ALLOW_NO_POLICY` \
+         — the no-policy bypass is compiled in"
     );
 }

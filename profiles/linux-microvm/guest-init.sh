@@ -15,12 +15,23 @@
 #                                  block devices, loaded-artifact digests)
 # and on the serial console (ttyS0), which the host captures independently:
 #   B263-BOOT <kernel release>
-#   B263-LOADED axon=<sha256> program=<sha256>
+#   B263-LOADED axon=<sha256> program=<sha256> init=<sha256>
+#   B263-POLICY sha=<sha256>   (or `absent` / `undecodable` / `ambiguous words=N`)
 #   B263-START
 #   B263-OUT stdout=<sha256> exit=<n>
 #   B263-DONE
 # The host compares the serial digests against the bytes it extracts from the
 # drive, so neither channel alone can vouch for a result.
+#
+# Boot policy (ACF-G25, closes x1): the host passes the capability policy as ONE
+# kernel-cmdline word `axon.policy=<base64 of the axon-vm-mmds/1 JSON>`. This
+# script only REPORTS it (serial `B263-POLICY sha=<sha256 of the decoded JSON>`,
+# or `B263-POLICY absent|undecodable`); the DECISION is axon-guest-init's, which
+# the workload is exec'd under. It refuses (exit 1, reason on /out/stderr, the
+# program never runs) when the policy is absent, empty, labels-only, malformed,
+# duplicated or possibly truncated, and exports the effect ceiling / token cap
+# and installs seccomp otherwise. The no-policy escape hatch is compiled out of
+# the image's axon-guest-init (non-default cargo feature).
 #
 # Every path ends in `reboot -f` (reboot=k -> Firecracker exits). If this
 # script itself dies, the kernel panics (PID 1 exit) and panic=1 reboots.
@@ -57,7 +68,39 @@ mkdir -p /work/out
 
 AXON_SHA=$(sha256sum /usr/bin/axon | cut -d' ' -f1)
 PROG_SHA=$(sha256sum /work/job/program.ax | cut -d' ' -f1)
-echo "B263-LOADED axon=$AXON_SHA program=$PROG_SHA"
+INIT_SHA=$(sha256sum /usr/bin/axon-guest-init | cut -d' ' -f1)
+echo "B263-LOADED axon=$AXON_SHA program=$PROG_SHA init=$INIT_SHA"
+
+# Report the policy the host put on the cmdline. `set -f`: a cmdline word must
+# not be glob-expanded. The digest is over the DECODED JSON bytes, i.e. the
+# bytes the host serialised, so the host can compare it to what it sent.
+# (Extracted between the markers and run by axon-guest-init's
+# tests/b263_profile_wiring.rs — keep it self-contained.)
+# >>> policy-report
+set -f
+# Words, not lines, on purpose: the policy is one cmdline WORD.
+# shellcheck disable=SC2013
+POLICY_WORDS=0
+POLICY_B64=""
+for w in $(cat /proc/cmdline); do
+    case "$w" in
+        axon.policy=*) POLICY_B64="${w#axon.policy=}"; POLICY_WORDS=$((POLICY_WORDS + 1)) ;;
+    esac
+done
+set +f
+POLICY_SHA=""
+if [ "$POLICY_WORDS" -eq 0 ]; then
+    echo "B263-POLICY absent"
+elif [ "$POLICY_WORDS" -gt 1 ]; then
+    echo "B263-POLICY ambiguous words=$POLICY_WORDS"
+elif printf '%s' "$POLICY_B64" | base64 -d > /tmp/policy.json 2>/dev/null; then
+    POLICY_SHA=$(sha256sum /tmp/policy.json | cut -d' ' -f1)
+    echo "B263-POLICY sha=$POLICY_SHA"
+else
+    echo "B263-POLICY undecodable"
+fi
+rm -f /tmp/policy.json
+# <<< policy-report
 
 # Guest-side process bound: the workload runs in its own cgroup with a pids
 # ceiling. This bounds fork bombs INSIDE the guest; the host bound on the VMM's
@@ -84,10 +127,14 @@ echo "B263-START"
     echo 0 > /sys/fs/cgroup/job/cgroup.procs
     cd /work
     # Empty environment by construction: nothing from the kernel cmdline or the
-    # host reaches the workload except these three fixed values.
+    # host reaches the workload except these three fixed values and what
+    # axon-guest-init derives from the cmdline POLICY (AXON_ALLOWED_EFFECTS,
+    # AXON_BUDGET_TOKENS, and the labels). `env -i` also means a
+    # `NAME=value` cmdline word the kernel copied into PID 1's environment
+    # cannot reach axon-guest-init either.
     # shellcheck disable=SC2086
     exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \
-        /usr/bin/axon run /work/job/program.ax $ARGS
+        /usr/bin/axon-guest-init /usr/bin/axon run /work/job/program.ax $ARGS
 ) > /work/out/stdout 2> /work/out/stderr < /dev/null
 RC=$?
 echo "$RC" > /work/out/exit
@@ -95,8 +142,8 @@ echo "$RC" > /work/out/exit
 NETDEVS=$(ls /sys/class/net | tr '\n' ' ')
 BLKDEVS=$(ls /sys/block | tr '\n' ' ')
 ROOTMNT=$(grep ' / ' /proc/mounts | head -1 | cut -d' ' -f4 | cut -d, -f1)
-printf '{"netdevs":"%s","blockdevs":"%s","root_mount_mode":"%s","axon_sha256":"%s","program_sha256":"%s","pids_max":"%s","pids_events":"%s","memory_max":"%s","oom_kills":"%s"}\n' \
-    "$NETDEVS" "$BLKDEVS" "$ROOTMNT" "$AXON_SHA" "$PROG_SHA" \
+printf '{"netdevs":"%s","blockdevs":"%s","root_mount_mode":"%s","axon_sha256":"%s","program_sha256":"%s","guest_init_sha256":"%s","policy_sha256":"%s","pids_max":"%s","pids_events":"%s","memory_max":"%s","oom_kills":"%s"}\n' \
+    "$NETDEVS" "$BLKDEVS" "$ROOTMNT" "$AXON_SHA" "$PROG_SHA" "$INIT_SHA" "$POLICY_SHA" \
     "$(cat /sys/fs/cgroup/job/pids.max 2>/dev/null)" \
     "$(grep max /sys/fs/cgroup/job/pids.events 2>/dev/null | cut -d' ' -f2)" \
     "$(cat /sys/fs/cgroup/job/memory.max 2>/dev/null)" \
