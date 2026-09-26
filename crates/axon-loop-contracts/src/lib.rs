@@ -11,7 +11,11 @@
 //!   input ≤ 1 MiB; `deny_unknown_fields`; required-nullable fields must be
 //!   PRESENT — `null` is a value, absence is a refusal);
 //! * [`digest`]: the package's `cl22:` sorted-key canonical digest;
-//! * [`checks`]: the semantic checks that need no I/O.
+//! * [`checks`]: the semantic checks that need no I/O;
+//! * [`profile`]: `closed-loop-profile/1`, the B256 offer/accept negotiation
+//!   (explicit `Unsupported`, never a fallback). Deliberately NOT re-exported
+//!   at the crate root: consumers glob-import the root, and generic names
+//!   like `Accept`/`Side` must not appear in their scope unasked.
 //!
 //! The JSON Schemas these types agree with are checked in under `schemas/`.
 //! A JSON issuer field authenticates nothing, and passing a check here is never
@@ -27,6 +31,7 @@ pub mod episode;
 pub mod error;
 pub mod ids;
 pub mod policy;
+pub mod profile;
 pub mod receipt;
 pub mod schema;
 

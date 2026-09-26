@@ -189,10 +189,10 @@ fn string_rules(s: &Map<String, Value>, st: &str, path: &str) -> Result<(), Refu
     Ok(())
 }
 
-/// The four anchored patterns the checked-in schemas use, as hand-written
+/// The five anchored patterns the checked-in schemas use, as hand-written
 /// matchers (no regex dependency). Any other pattern is refused rather than
 /// silently treated as matching.
-fn pattern_matches(p: &str, st: &str) -> Result<bool, String> {
+pub(crate) fn pattern_matches(p: &str, st: &str) -> Result<bool, String> {
     let hex64 =
         |h: &str| h.len() == 64 && h.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'));
     Ok(match p {
@@ -209,6 +209,7 @@ fn pattern_matches(p: &str, st: &str) -> Result<bool, String> {
             .is_some_and(|(sch, h)| matches!(sch, "cl22" | "acf1" | "sha256") && hex64(h)),
         "^acf1:[0-9a-f]{64}$" => st.strip_prefix("acf1:").is_some_and(hex64),
         "^[A-Z]{3}$" => st.len() == 3 && st.bytes().all(|c| c.is_ascii_uppercase()),
+        crate::profile::PROFILE_ID_PATTERN => crate::profile::is_profile_id(st),
         other => return Err(format!("unsupported pattern {other:?}")),
     })
 }
@@ -344,5 +345,39 @@ mod tests {
         let one = json!({"oneOf":[{"type":"integer"},{"type":"integer","minimum":5}]});
         assert!(validate_against(&one, &json!(7)).is_err());
         assert!(validate_against(&one, &json!(1)).is_ok());
+    }
+
+    #[test]
+    fn profile_id_pattern_is_exact() {
+        let s = json!({"type": "string", "pattern": crate::profile::PROFILE_ID_PATTERN});
+        for ok in [
+            "axon.closed-loop.policy/1",
+            "usage/2",
+            "axon-bridge/v0",
+            "cortex-policy-adapter/1",
+            "a/9999",
+        ] {
+            assert!(validate_against(&s, &json!(ok)).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "/1",
+            "Usage/2",
+            "usage/02",
+            "usage/10000",
+            "usage/",
+            "usage/2 ",
+            "usage_x/2",
+            "1usage/2",
+            "usage/v",
+            "usage/2/3",
+            "usage/-1",
+        ] {
+            assert!(validate_against(&s, &json!(bad)).is_err(), "{bad:?}");
+        }
+        let long_ok = format!("{}/1", "a".repeat(96));
+        let too_long = format!("{}/1", "a".repeat(97));
+        assert!(validate_against(&s, &json!(long_ok)).is_ok());
+        assert!(validate_against(&s, &json!(too_long)).is_err());
     }
 }

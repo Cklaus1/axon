@@ -17,6 +17,8 @@
 //! * [`admission`] — the frozen plan rule applied deterministically:
 //!   ACCEPT / REJECT / INCONCLUSIVE (B277).
 //! * [`tel`] — whole-task economics over `Usage`; unknown stays unknown (B270).
+//! * [`price`] — the price schedule pinned by content Ref (G10); execution
+//!   cost is unknown while no execution schedule exists (D10).
 //! * [`intake`] — a MiCode episode sidecar joined to a stored policy and its
 //!   context receipt, recorded in the ledger (B269 Axon side).
 //!
@@ -38,6 +40,7 @@ pub mod intake;
 pub mod ledger;
 pub mod plan;
 pub mod pointer;
+pub mod price;
 pub mod rules;
 pub mod store;
 pub mod tasks;

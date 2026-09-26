@@ -193,6 +193,14 @@ case "$c22n_rc:$c22n" in
   *) printf '%s\n' "$c22n" | tail -8; fail "v0.22 package gate did not refuse a symlinked directory (rc=$c22n_rc)" ;;
 esac
 
+# v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
+# governance/cortex_gate_execution_registry.json may only vouch for a package gate
+# whose checks a script invoked from THIS file runs; `cargo test -p …` below runs
+# the same tests but names no gate. The runner fails if a listed test is missing
+# or the filtered run executes fewer tests than listed.
+echo "── gate: v0.22 Stage-5 executed gates (G13 billing settlement, G10 cohort denominator) ──"
+./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
+
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of

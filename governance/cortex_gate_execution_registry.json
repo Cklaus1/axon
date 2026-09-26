@@ -35,7 +35,25 @@
       "allowed_product_result": [
         "PASS"
       ],
-      "note": "B284. scripts/cortex_honesty_invariant.py: no v0.22 gate off NOT_RUN and no task off 'Not started' without a valid row here (every row re-validated); V022_RUNTIME_QUALIFICATION booleans false, no live evidence, no qualified profile; a skipped or expected-failure test inside the offline suite is a FAIL, never a pass (a suite that cannot start — pinned jsonschema absent — is printed as SKIPPED in the PASS line, logged to target/harness-skips.log, and fatal under AXON_HARNESS_STRICT=1); every PASS line is printed with the scope 'package conformance only — 0 product gates executed; NOT Rust implementation, physical backend evidence, real MiCode interoperability or measured self-improvement'."
+      "note": "B284. scripts/cortex_honesty_invariant.py: no v0.22 gate off NOT_RUN and no task off 'Not started' without a valid row here (every row re-validated); V022_RUNTIME_QUALIFICATION booleans false, no live evidence, no qualified profile; a skipped or expected-failure test inside the offline suite is a FAIL, never a pass (a suite that cannot start \u2014 pinned jsonschema absent \u2014 is printed as SKIPPED in the PASS line, logged to target/harness-skips.log, and fatal under AXON_HARNESS_STRICT=1); every PASS line is printed with the scope 'package conformance only \u2014 0 product gates executed; NOT Rust implementation, physical backend evidence, real MiCode interoperability or measured self-improvement'."
+    },
+    {
+      "gate_id": "G13-r22-billing-settlement",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B270. Settlement idempotent only for identical (origin, sequence, content); any other second settlement refused, recorded as settle_conflict, op disputed at the per-dimension max liability; replay refuses a duplicate settled line; Unknown billing keeps its full reservation; an Unknown-cost record never produces a zero-cost winner. Tests named in scripts/v022_stage5_gates.sh (axon-fabric/tests/journal.rs g13_*, axon-loop/tests/tel_price.rs). Dispute RESOLUTION is not implemented."
+    },
+    {
+      "gate_id": "G10-r22-cohort-denominator",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B270. Cohort cost divides by every ASSIGNED trial; unknown-cost records are unresolved, never free; the request's price_schedule_ref must equal the pinned schedule's cl22 Ref. Tests named in scripts/v022_stage5_gates.sh (axon-loop/tests/tel_price.rs). G10-r22-full-task-cost stays NOT_RUN: no operator execution price schedule (D10)."
     }
   ],
   "tasks": [],

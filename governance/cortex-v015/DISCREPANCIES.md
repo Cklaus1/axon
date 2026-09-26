@@ -27,6 +27,7 @@
 | D-026 | typed approval/record structs silently drop unknown fields | open — fold into R24's `axon-approval/2` | ported from `D-018@upgrade/cortex-v0_20` |
 | D-027 | `axon trace --replay` re-runs LIVE AI calls under a "replaying" banner | open | ported from `D-019@upgrade/cortex-v0_20` |
 | D-028 | estimated token usage is indistinguishable from reported | open | ported from `D-020@upgrade/cortex-v0_20` |
+| D-029 | package fixture bundle carries the G10 price-schedule mismatch B270 now refuses | package — file upstream | `crates/axon-loop/tests/tel_price.rs` |
 
 None of the four fixes is on `main` yet: a `gate.sh --strict` run is in flight
 and several parity harnesses rebuild, so integrating mid-run would invalidate
@@ -976,3 +977,13 @@ and the complete ID map is in `UPGRADE_V0_22_DONOR_PORT.md`.
 * **D-001** carried: the v0.22 package still says "empty scope = unscoped". The
   repo behaviour (`""` = deny-all) stands, and is now pinned by the ported
   `sandbox_scope_net_empty.ax` case, which asserts the refusal *reason*, not just exit 8.
+
+
+## D-029 — the v0.22 package's own fixture bundle carries the G10 price-schedule mismatch
+
+The package fixture bundle's `acf_request` names `fixture:synthetic-not-pricing` as its
+price schedule while its episode usage names a `cl22:` schedule Ref — exactly the
+OpaqueRef/Ref mismatch G10 forbids. Stage 5 (B270, `07a19b13`) now REFUSES that
+mismatch (`crates/axon-loop/src/price.rs`; `tests/tel_price.rs`), so the package fixture
+would be refused by the implementation. Package-side; the vendored pack is not edited.
+Proposed: file upstream.

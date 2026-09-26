@@ -32,6 +32,19 @@ No `axon` CLI verb reaches this crate.
 * `admission`: applies the frozen plan rule and returns ACCEPT, REJECT or
   INCONCLUSIVE. This is **CX-11 policy admission**.
 * `tel`: whole-task economics over `Usage`. Unknown stays unknown.
+  `tel::join` joins Fabric receipts to sidecar usages per attempt ref (the
+  receipt's `cl22:` digest): the identical receipt twice is collapsed, two
+  different receipts for one `(operation_id, attempt_id)` are refused.
+  `cohort_cost` / `compare_per_trial` divide by every ASSIGNED trial and
+  order only two fully known cohorts; an unknown cost is `unresolved`, never
+  a cheaper winner (G10-r22-cohort-denominator, `tests/tel_price.rs`).
+* `price`: the price schedule is pinned by its `cl22:` content Ref. A
+  request's `limits.price_schedule_ref` (an ACF `OpaqueRef`) must be exactly
+  that Ref string, and a usage must name it too; a mismatch is refused (G10).
+  **There is no execution price schedule (D10):** a schedule claiming
+  execution coverage is refused, and every attempt's execution cost is
+  `unknown` holding its reservation. So a joined whole-task total is never a
+  known number today, and G10-r22-full-task-cost is not met.
 * `intake`: joins a MiCode `axon.closed-loop.episode/1` sidecar to a stored
   policy and its context receipt, and records the result in the ledger.
 * `ledger`: the store's hash-chained `ledger.jsonl` + `ledger.head` +
