@@ -205,7 +205,7 @@ pub fn check_executable_digest() -> String {
 }
 pub const CHECK_PROFILE: &str = "fabric:local-interpreter";
 pub fn check_suite() -> String {
-    format!("check-suite:acceptance@acf1:{}", "5".repeat(64))
+    format!("check-suite:acceptance@acf1:{}#accept.ax", "5".repeat(64))
 }
 /// The acceptance check registered for every fixture task: the pinned suite's
 /// `t_` test (what [`verification_check`] runs).

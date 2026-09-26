@@ -1122,7 +1122,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             })),
             // The suite's identity only — never its bytes.
             "check_suite": target.suite.as_ref().map(|s| json!({
-                "id": s.id, "workspace_version_ref": s.version,
+                "id": s.id, "workspace_version_ref": s.version, "entry": target.file,
             })),
         }),
         authority_ref: format!("{}|{}", req.principal_ref, req.grant_ref),
@@ -1233,11 +1233,14 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             // The registered suite that judged the candidate travels in the
             // receipt (and so under the verifier's attestation): a consumer
             // can require an operator-pinned suite, never a file the
-            // subject wrote (G01-r22-verifier-separation).
+            // subject wrote (G01-r22-verifier-separation). The ENTRY file is
+            // part of that identity: the check registry is caller-named, so
+            // without it a registry could run another file of the pinned
+            // suite tree under the same id@version (re-audit 3).
             let suite = target
                 .suite
                 .as_ref()
-                .map(|s| format!("check-suite:{}@{}", s.id, s.version));
+                .map(|s| format!("check-suite:{}@{}#{}", s.id, s.version, target.file));
             local_receipt(
                 &req,
                 &journal,

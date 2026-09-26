@@ -1295,6 +1295,19 @@ fn a_verdict_counts_only_for_what_the_operator_pinned() {
             }),
         ),
         (
+            // Re-audit 3: the check registry is caller-named, so without the
+            // entry in the recorded identity it could run ANOTHER file of the
+            // pinned suite tree under the same id@version.
+            "another entry file of the pinned suite version",
+            "not a version pinned",
+            Box::new(|_, rc| {
+                rc["evidence_refs"] = json!([
+                    "check-report:fixture",
+                    common::check_suite().replace("#accept.ax", "#lenient.ax")
+                ])
+            }),
+        ),
+        (
             "a suite other than the one requested",
             "not a version pinned",
             Box::new(|req, _| req["argv"] = json!(["check:lenient", "t_"])),

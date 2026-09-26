@@ -94,7 +94,8 @@ pub struct Config {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptancePin {
-    /// The suite and version, as Fabric records it: `check-suite:<id>@<acf1 version>`.
+    /// The suite, version and entry file, as Fabric records it:
+    /// `check-suite:<id>@<acf1 version>#<entry>`.
     pub check_suite: String,
     /// The exact test in that suite whose verdict is the task's.
     pub check: String,
@@ -111,7 +112,7 @@ pub struct VerifierPin {
     /// The backend profiles (`backend_profile_ref`) a verdict may come from.
     pub backend_profiles: Vec<String>,
     /// The registered suites a verdict may come from, as Fabric records them
-    /// in the receipt: `check-suite:<id>@<acf1 version>`.
+    /// in the receipt: `check-suite:<id>@<acf1 version>#<entry>`.
     pub check_suites: Vec<String>,
 }
 

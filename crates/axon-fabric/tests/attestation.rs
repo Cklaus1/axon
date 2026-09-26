@@ -160,11 +160,17 @@ fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_
     assert_eq!(att["key_id"], key_id.as_str());
     assert_eq!(att["operation_id"], "op-signed");
     assert_eq!(out["receipt"]["verification"], "passed", "{out}");
-    assert!(out["receipt"]["evidence_refs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e.as_str().unwrap().starts_with("check-suite:acceptance@")));
+    assert!(
+        out["receipt"]["evidence_refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| {
+                let e = e.as_str().unwrap();
+                e.starts_with("check-suite:acceptance@") && e.ends_with("#accept.ax")
+            }),
+        "the receipt names the suite's ENTRY file too: {out}"
+    );
 
     // A check file of the candidate's OWN tree: candidate bytes cannot define
     // the rubric, so the verifier does not vouch for it (the receipt is still
