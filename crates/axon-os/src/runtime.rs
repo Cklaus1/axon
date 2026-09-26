@@ -64,7 +64,11 @@ pub enum IsolationRequirement {
     /// Any runtime will do (every existing caller: the legacy semantics).
     #[default]
     Any,
-    /// Hardware virtualisation (any KVM microVM, qualified or not).
+    /// Hardware isolation that has been QUALIFIED. Only
+    /// [`Isolation::LinuxMicroVmProtected`] satisfies it: a KVM microVM that
+    /// was never physically qualified (no jailer, unpinned guest — B263) has
+    /// hardware virtualisation present but no evidence that the enclosure
+    /// holds, so it is NOT accepted as hardware isolation (D-020 / B259).
     HardwareIsolated,
     /// A QUALIFIED protected Linux microVM. Only
     /// [`Isolation::LinuxMicroVmProtected`] satisfies it; nothing is ever
@@ -77,10 +81,15 @@ impl IsolationRequirement {
     pub fn satisfied_by(self, iso: Isolation) -> bool {
         match (self, iso) {
             (IsolationRequirement::Any, _) => true,
+            // Enumerated exhaustively, with NO wildcard: a new isolation
+            // level must be classified here explicitly or the crate does not
+            // compile — it can never silently satisfy a hardware requirement.
             (IsolationRequirement::HardwareIsolated, Isolation::ProcessScoped) => false,
-            (IsolationRequirement::HardwareIsolated, _) => true,
+            (IsolationRequirement::HardwareIsolated, Isolation::KvmMicroVmUnqualified) => false,
+            (IsolationRequirement::HardwareIsolated, Isolation::LinuxMicroVmProtected) => true,
+            (IsolationRequirement::MicroVm, Isolation::ProcessScoped) => false,
+            (IsolationRequirement::MicroVm, Isolation::KvmMicroVmUnqualified) => false,
             (IsolationRequirement::MicroVm, Isolation::LinuxMicroVmProtected) => true,
-            (IsolationRequirement::MicroVm, _) => false,
         }
     }
 }
@@ -1146,9 +1155,13 @@ mod runtime_tests {
                 iso == Isolation::LinuxMicroVmProtected,
                 "{iso:?}"
             );
+            // D-020: an UNQUALIFIED KVM microVM used to satisfy
+            // HardwareIsolated (`(HardwareIsolated, _) => true`). Hardware
+            // virtualisation being present is not qualified isolation, so
+            // only the qualified protected profile satisfies it now.
             assert_eq!(
                 R::HardwareIsolated.satisfied_by(iso),
-                iso != Isolation::ProcessScoped,
+                iso == Isolation::LinuxMicroVmProtected,
                 "{iso:?}"
             );
         }
