@@ -1441,3 +1441,108 @@ fn the_proposer_of_the_policy_cannot_verify_its_episodes() {
     );
     assert_eq!(snapshot(c.s.root()), before, "nothing recorded");
 }
+
+/// Genuine, signed evidence of the positive path, with every document's
+/// task_id set to `task` and every ref re-derived — `(context, episode, req, rc)`.
+fn for_task(c: &Case, task: &str, rc: Value) -> (Value, Value, Value, Value) {
+    let mut ctx = c.ctx.clone();
+    ctx["identity"]["task_id"] = json!(task);
+    let mut ep = c.ep.clone();
+    ep["identity"]["task_id"] = json!(task);
+    ep["context_ref"] = json!(digest_value(&ctx).unwrap());
+    let mut req = check_request();
+    req["task_id"] = json!(task);
+    let mut rc = rc;
+    rc["task_id"] = json!(task);
+    let ep = verified(&ep, &req, &rc, "passed");
+    (ctx, ep, req, rc)
+}
+
+fn run_ctx(c: &Case, ctx: &Value, ep: &Value, req: &Value, rc: &Value) -> Result<(), LoopError> {
+    let att = attest(&verifier_key().0, common::VERIFIER, req, rc);
+    intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &ctx.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
+            source_episode: None,
+            verification_request: Some(req.to_string()).as_deref(),
+            verification_receipt: Some(rc.to_string()).as_deref(),
+            verification_attestation: Some(att.to_string()).as_deref(),
+        },
+    )
+    .map(|_| ())
+}
+
+/// G01 re-audit 2 — nothing varied task_id ALONE. Two tasks the operator
+/// registered with different acceptance checks in the same suite; the
+/// verifier genuinely ran and signed task-1's check. The same evidence with
+/// only the task_id changed to task-2 (re-signed, every ref re-derived) is
+/// refused: a verdict on one task's test cannot decide another task.
+#[test]
+fn a_verdict_on_one_tasks_check_cannot_decide_another_task() {
+    let c = case(Some(500));
+    let mut config = c.s.config().unwrap();
+    config.task_acceptance.insert(
+        TaskId::new("task-2").unwrap(),
+        axon_loop::store::AcceptancePin {
+            check_suite: common::check_suite(),
+            check: "t_other".into(),
+        },
+    );
+    c.s.write_config(&config).unwrap();
+
+    let (ctx, ep, req, rc) = for_task(&c, "task-2", check_receipt("passed", 1));
+    let before = snapshot(c.s.root());
+    let e = run_ctx(&c, &ctx, &ep, &req, &rc).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("not task task-2's registered acceptance check t_other")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
+
+    // Positive control: the identical construction for task-1 is recorded.
+    let (ctx, ep, req, rc) = for_task(&c, "task-1", check_receipt("passed", 1));
+    run_ctx(&c, &ctx, &ep, &req, &rc).unwrap();
+}
+
+/// G01 re-audit 2 — the `recorded != acc.check_suite` conjunct was never
+/// discriminated: every fixture pinned ONE suite version, so the verifier-pin
+/// rule refused any other first. Here the verifier is pinned for two versions
+/// of the suite and the task for the newer; a genuinely signed run of the
+/// right test in the OLDER (still verifier-pinned) version is refused by that
+/// conjunct alone. Positive control: the newer version is recorded.
+#[test]
+fn a_verdict_from_another_pinned_version_of_the_suite_does_not_decide_the_task() {
+    let v2 = format!("check-suite:acceptance@acf1:{}", "6".repeat(64));
+    let c = case(Some(500));
+    let mut config = c.s.config().unwrap();
+    config
+        .verifier_pins
+        .get_mut(&OpaqueRef::new(common::VERIFIER).unwrap())
+        .unwrap()
+        .check_suites
+        .push(v2.clone());
+    config
+        .task_acceptance
+        .get_mut(&TaskId::new("task-1").unwrap())
+        .unwrap()
+        .check_suite = v2.clone();
+    c.s.write_config(&config).unwrap();
+
+    let (ctx, ep, req, rc) = for_task(&c, "task-1", check_receipt("passed", 1));
+    let before = snapshot(c.s.root());
+    let e = run_ctx(&c, &ctx, &ep, &req, &rc).unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("not task task-1's registered acceptance check")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
+
+    let mut rc2 = check_receipt("passed", 1);
+    rc2["evidence_refs"] = json!(["check-report:fixture", v2]);
+    let (ctx, ep, req, rc) = for_task(&c, "task-1", rc2);
+    run_ctx(&c, &ctx, &ep, &req, &rc).unwrap();
+}
