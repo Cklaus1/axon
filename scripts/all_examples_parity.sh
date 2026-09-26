@@ -136,6 +136,10 @@ for f in examples/*.ax examples/stdlib/*.ax examples/asi/*.ax \
       refused=$((refused + 1)); refuses="$refuses\n  REFUSED (interp-only, E0910): $base"
     else
       failbuild=$((failbuild + 1)); fails="$fails\n  BUILD-FAIL: $base"
+      # Keep the compiler's own words. The count alone said "38 build-fail" on a
+      # strict run that could not be reproduced afterwards, and with no error
+      # text there was nothing to diagnose. First 3 lines per example.
+      fails="$fails\n$(printf '%s\n' "$BUILD_ERR" | grep -v '^Compiling ' | head -3 | sed 's/^/      | /')"
     fi
     continue
   fi
