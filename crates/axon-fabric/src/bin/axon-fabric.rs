@@ -150,6 +150,7 @@ fn submit(a: &Args) {
         grants,
         linux,
         pre_launch_hook: None,
+        fault_hook: None,
     };
     match axon_fabric::submit(&text, &cfg) {
         Ok(s) => println!(

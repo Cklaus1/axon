@@ -113,6 +113,35 @@ pub struct SubmitConfig {
     /// immediately before the dispatch-time epoch recheck. `None` in
     /// production (the CLI never sets it).
     pub pre_launch_hook: Option<fn(&SubmitConfig)>,
+    /// Test seam (B280, G13-r22-restart-matrix): called at each journal effect
+    /// boundary, so a crash child can die at exactly that point and a real
+    /// restart can be tested from it. `None` in production (the CLI never
+    /// sets it).
+    pub fault_hook: Option<fn(Boundary)>,
+}
+
+/// The journal effect boundaries a restart can happen at (G13-r22-restart-matrix).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Boundary {
+    /// `begin` recorded the intent; nothing reserved.
+    AfterIntent,
+    /// The reservation is carved; the launch record is not yet written.
+    AfterReserve,
+    /// The launch record is durable; the effect has not been dispatched.
+    AfterLaunchRecord,
+    /// The terminal record is durable; the receipt/outcome is not.
+    AfterTerminal,
+}
+
+impl Boundary {
+    pub fn name(self) -> &'static str {
+        match self {
+            Boundary::AfterIntent => "after_intent",
+            Boundary::AfterReserve => "after_reserve",
+            Boundary::AfterLaunchRecord => "after_launch_record",
+            Boundary::AfterTerminal => "after_terminal",
+        }
+    }
 }
 
 /// What a submit produced.
@@ -816,6 +845,18 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     journal.declare_budget(&scope, cfg.budget)?;
 
     // 2. Dedup by operation id.
+    //
+    // An op recorded but NEVER LAUNCHED (Intended / Reserved) is an ORPHAN, not
+    // "in flight": every submit holds this journal's exclusive lock for its
+    // whole run, and we hold it now, so no live submit owns it. The launch
+    // record is written before any effect, so it has had no effect either —
+    // running it now is its FIRST execution, not a repeat. It is RESUMED
+    // through every check below (authority, branch, backend, admission). It
+    // used to be reported as "in flight (another submit owns it)" forever,
+    // with its budget held, which named an owner that did not exist
+    // (G13-r22-restart-matrix). Launched-but-unfinished ops were already
+    // reconciled to OutcomeUnknown by `Journal::open` and are never re-run.
+    let mut resume: Option<OpState> = None;
     if let Some(v) = journal.view(&req.operation_id) {
         if v.intent.input_digest != input_digest {
             return Err(SubmitError::Conflict(format!(
@@ -823,7 +864,28 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 req.operation_id, v.intent.input_digest, input_digest
             )));
         }
-        return Ok(replayed(&req, &v));
+        match v.state {
+            OpState::Intended | OpState::Reserved => {
+                // Its intent was recorded under an authority epoch; a caller
+                // authorized under a different one cannot adopt it.
+                if v.intent.authority_epoch != cfg.expected_epoch {
+                    journal.cancel(
+                        &req.operation_id,
+                        "orphaned before launch under a superseded authority epoch",
+                        None,
+                    )?;
+                    return Err(SubmitError::StaleEpoch {
+                        expected: cfg.expected_epoch.get(),
+                        current: format!(
+                            "{} (the orphaned intent's epoch; cancelled, released)",
+                            v.intent.authority_epoch.get()
+                        ),
+                    });
+                }
+                resume = Some(v.state);
+            }
+            _ => return Ok(replayed(&req, &v)),
+        }
     }
 
     // 3. Authority epoch at submit.
@@ -997,11 +1059,16 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         reservation: reservation(&req),
         expected_version: 0,
     };
-    if let Begin::AlreadyRecorded(v) = journal.begin(intent)? {
-        // Raced with a concurrent submit of the same op: never run twice.
-        return Ok(replayed(&req, &v));
+    if resume.is_none() {
+        if let Begin::AlreadyRecorded(v) = journal.begin(intent)? {
+            // Raced with a concurrent submit of the same op: never run twice.
+            return Ok(replayed(&req, &v));
+        }
+        fault(cfg, Boundary::AfterIntent);
     }
     match &branch {
+        // A resumed orphan that already holds its reservation keeps it.
+        _ if resume == Some(OpState::Reserved) => {}
         // A branch's ops carve from the scope AND within the branch's regime.
         Some((exp, br)) => {
             let run = br.run_id.clone();
@@ -1019,6 +1086,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         None => journal.reserve(&req.operation_id)?,
     }
 
+    fault(cfg, Boundary::AfterReserve);
     if let Some(h) = cfg.pre_launch_hook {
         h(cfg);
     }
@@ -1085,6 +1153,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     }
 
     journal.mark_launched(&req.operation_id)?;
+    fault(cfg, Boundary::AfterLaunchRecord);
     let liability = req.limits.max_cost_micro;
     let (r, report, reason) = match profile.id {
         id if id == backend::LOCAL_INTERPRETER.id => {
@@ -1129,6 +1198,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             )
         }
     };
+    fault(cfg, Boundary::AfterTerminal);
     record_receipt(&journal, &req, &r, report.as_ref(), reason.as_deref())?;
     Ok(Submission {
         receipt: r,
@@ -1399,6 +1469,12 @@ fn record_receipt(
         json!({"receipt": r, "check_report": report, "reason": reason}),
     )?;
     Ok(())
+}
+
+fn fault(cfg: &SubmitConfig, b: Boundary) {
+    if let Some(h) = cfg.fault_hook {
+        h(b);
+    }
 }
 
 fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
