@@ -42,6 +42,12 @@ History:
     `AXON_PATH_EXCLUSIVE`).
   - Its majors are closed too: cross-scope reuse, the ceiling proven applied (both 7c3f2fe5), and
     a repository `.env` setting `axon.*` (MiCode dd4ea0a9).
+- Final re-audit of frozen candidate 1 (wf_5f02e4cb, axon ac76b14c + micode dd4ea0a9): three
+  roles REGISTER, two DO_NOT_REGISTER, each on one executed blocker.
+  - A symlink chain in the candidate escaped the tree: clause 2's module confinement.
+  - A `break` escaping a candidate function counted as a pass: clause 4, and "subject-generated
+    evidence is rejected".
+  - Both are fixed in 4e7851bc (FG-062, FG-063). Candidate 2 is frozen after this.
 
 ## The claim
 
@@ -71,7 +77,9 @@ or promotion only if all of the following hold.
      module path. The empty ceiling is applied by the executor, not merely intended.
    - its modules resolved ONLY from the suite and the candidate (`AXON_PATH_EXCLUSIVE`), never
      from the trial cache's `~/.axon/lib` or the interpreter's own library; a state dir that
-     would split the module path (a `:`) is refused before anything is written.
+     would split the module path (a `:`) is refused before anything is written. The candidate
+     and the suite hold plain files and directories only: a tree containing a symbolic link is
+     refused before launch, so no link can lead a module lookup out of the tree.
 3. **The verifier is trusted and independent.** Evaluation is the only door where a verdict
    counts, and it judges by this subject set:
    - the trial's observer;
@@ -86,6 +94,8 @@ or promotion only if all of the following hold.
    - the verifier revision (executable and digest) and its compute profile;
    - exactly one suite identity, `check-suite:<id>@<version>#<entry>`, pinned for that verifier;
    - the task's own registered acceptance check: that suite identity plus the exact test name.
+   - that test counts as passed only if it COMPLETED. A `break`/`continue` escaping a candidate
+     function, which unwinds the test before its assertions run, is a failure.
 
    The requester chooses neither the test, nor the version, nor the entry file. The suite's own
    modules resolve before the candidate's. No repository-controlled configuration source (MiCode
@@ -121,9 +131,9 @@ or promotion only if all of the following hold.
 | Clause | Tests (unit/integration) | Mutations | Real binaries (`loop_interop_gate.sh`) |
 |---|---|---|---|
 | 1 | `attestation.rs` unit tests; `intake.rs` authenticated, each-rule and one-scope tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 M54 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
-| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 | §8 (2): effectful grant withheld; replay unsigned |
+| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 M57 | §8 (2): effectful grant withheld; replay unsigned |
 | 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
-| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 | §8 (4): another pinned revision refused; task and filter pin cases |
+| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M56 | §8 (4): another pinned revision refused; task and filter pin cases |
 | 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
 | 6 | `protected_class.rs` (including a protected-class mechanism fixture and rollback revalidation) | M11–M13 M17–M20 M51 | not exercised (see gaps) |
 | 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 M48 | §8 (7): the record names the key id and the stored attestation |
@@ -196,6 +206,10 @@ TOML or `.env` may set `axon.*` (`config`).
 - **The admission scan does not see `use a::b`.** Such an import loads a module without a `mod`
   line. Resolution is confined to the suite and candidate (clause 2), and the empty ceiling
   denies effects at run time, so the scan is not the barrier.
+- **Interpreter-side guards need a rebuilt binary.** Fabric tests execute the built `axon`
+  interpreter. The mutation driver builds it once, so interpreter guards are mutated through their
+  unit tests (M56). A pinned interpreter older than `AXON_PATH_EXCLUSIVE` would not honour it;
+  Fabric does not probe that capability.
 - **An untested legacy guard.** A counted verdict in an evaluation from before verdict citation
   is refused at admission, but no test drives that legacy shape.
 - **Learning inputs are outside G01.** EVO `propose` reads caller-supplied episodes and trusts a

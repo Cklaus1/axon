@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 60 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 62 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -632,4 +632,18 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** No such bind existed for the verification documents (they carry no scope; the identity-conflict check is per scope): one signed verdict was recorded in two tenants and could count in both.
 - **Reproduced:** G01 independent re-audit 5 (clause auditor), executed at cf6c779b. Pinned by one_verdict_decides_one_trial_in_one_scope (mutation M54).
 - **Fix:** Intake refuses a verification receipt already recorded under another scope. (`7c3f2fe5`)
+
+### FG-062 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** G01 clause 2: a check's modules resolve ONLY from the suite and the candidate.
+- **Reality:** Workspace import checks a symlink's target lexically; a chain (z/a/b -> ../.., then f/h.ax through it) stays inside the tree on paper and resolves outside it once materialized, so a candidate's modules loaded from the trial cache or any absolute path and the same tree ref passed or failed on bytes outside it — and Fabric signed the pass.
+- **Reproduced:** G01 final independent re-audit (clause auditor, wf_5f02e4cb), executed at ac76b14c through the real binary (signed pass; same ref, opposite verdicts). Pinned by a_candidate_holding_a_symlink_is_refused (mutation M57).
+- **Fix:** A check refuses a candidate or suite tree holding any symbolic link, before launch. (`4e7851bc`)
+
+### FG-063 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** G01: a signed pass is the operator's acceptance test passing for the candidate; subject-generated evidence is rejected.
+- **Reality:** The interpreter's test runner counted a stray break/continue escaping a function as a clean pass, so candidate code could unwind the operator's test before its assertion ran and Fabric signed a pass for a candidate the suite fails. The property-test runner had the same hole.
+- **Reproduced:** G01 final independent re-audit (verdict adversary, wf_5f02e4cb), executed at ac76b14c in Fabric's exact environment. Pinned by interp::tests::an_escaped_break_or_continue_does_not_pass_a_test (M56) and an_escaped_break_does_not_pass_the_operators_test.
+- **Fix:** run_test_fn (and the property runner) fail a test that a break/continue escaped; return and exit(0) stay clean. (`4e7851bc`)
 
