@@ -617,26 +617,31 @@ stage order means it should have had one here" ;;
   # THE GUEST-KERNEL SYSCALL GATE'S ONLY LIVE PROOF, previously invoked by
   # nothing — not gate.sh, not CI, not another script.
   #
-  # It is a real two-case differential through Firecracker: policy withholds FS
-  # -> the openat is DENIED and the guest halts with exit 8; policy grants FS ->
-  # the same openat is PERMITTED, with no false violation. The negative case is
-  # what makes it worth running, and it is the shape most of this repo's
-  # stronger gates share.
-  #
-  # Measured on this host, where firecracker, /dev/kvm and the freestanding
-  # kernel artifact are all present: PASS in 20s, both directions.
+  # What it proves is ONE direction: policy withholds FS -> a real openat reaches
+  # syscall_dispatch and is DENIED, the guest halts with exit 8. The second case
+  # is NOT an allow-path control (FG-041 / F161): under an FS-granting policy the
+  # kernel reaches its grant branch and halts WITHOUT issuing any syscall, because
+  # sysretq back to ring 3 needs DPL-3 GDT segments that do not exist yet. This
+  # used to be reported as "enforced live, both directions" on the strength of a
+  # print line. Case 2 now asserts the absence of any syscall-dispatch marker, so
+  # it pins "no syscall issued" rather than claiming a permitted one.
   #
   # Output is NOT discarded. This harness exits 0 when its prerequisites are
   # absent, so `>/dev/null 2>&1 || fail` would make a skip byte-indistinguishable
   # from a pass — which is the defect that left 16 harnesses hanging off nothing
-  # in the first place. A skip must be legible to whoever reads this log.
+  # in the first place. A skip is printed, recorded in $SKIPLOG, and FATAL under
+  # AXON_HARNESS_STRICT=1.
   if out=$(./scripts/kernel_enforce_test.sh 2>&1); then
     case "$out" in
-      *"PASS — the syscall gate denies/permits by policy"*)
-        echo "  OK kernel_enforce_test: syscall gate enforced live, both directions" ;;
+      *"PASS — deny direction enforced live; allow path NOT implemented"*)
+        echo "  OK kernel_enforce_test: deny direction enforced live; allow path NOT implemented (FG-041)" ;;
       *skipping*)
-        echo "  SKIP kernel_enforce_test — prerequisites absent on this host:"
-        printf '%s\n' "$out" | sed 's/^/       /' | head -3 ;;
+        echo "  SKIP kernel_enforce_test — prerequisites absent on this host; this measured NOTHING:"
+        printf '%s\n' "$out" | sed 's/^/       /' | head -3
+        echo "kernel_enforce_test" >> "$SKIPLOG"
+        if [ "${AXON_HARNESS_STRICT:-}" = 1 ]; then
+          fail "kernel_enforce_test SKIPPED under AXON_HARNESS_STRICT=1"
+        fi ;;
       *)
         echo "$out"; fail "kernel_enforce_test exited 0 without its PASS line" ;;
     esac

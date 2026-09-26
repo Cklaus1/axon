@@ -208,6 +208,13 @@ fn required_effect(nr: u64) -> u64 {
 ///   * `VIOLATION` – effect required but not in policy (caller must exit guest)
 #[no_mangle]
 extern "C" fn syscall_dispatch(nr: u64) -> u64 {
+    // Every entry into the gate is announced. This line is the OBSERVABLE that
+    // `scripts/kernel_enforce_test.sh` uses both ways: the deny case must show it
+    // (the gate really ran), and the grant case must NOT (no syscall was issued
+    // there — the allow path is deferred, see `run_program`). Without it, "no
+    // syscall happened" could only be asserted by the absence of a VIOLATION,
+    // which an allowed syscall would also produce (FG-041).
+    kprintln!("[axon-kernel] syscall-dispatch: nr={}", nr);
     let req = required_effect(nr);
 
     if req == u64::MAX {
@@ -324,10 +331,10 @@ fn clean_halt() -> ! {
 /// We issue the genuine `syscall` instruction. The CPU traps to the LSTAR handler
 /// (`syscall_entry`), which calls `syscall_dispatch(257)`. Under an FS-denying policy it
 /// returns the VIOLATION sentinel, the handler jumps to `violation_exit`, and the VM
-/// halts with exit code 8 (`-VIOLATION8` on the serial stream). When FS *is* granted the
-/// open would be permitted, so we don't issue it here — the allowed return path
+/// halts with exit code 8 (`-VIOLATION8` on the serial stream). When FS *is* granted NO
+/// syscall is issued at all (FG-041) — the allow path is not implemented: the return path
 /// (`sysretq`) needs ring-3 user segments the boot GDT doesn't yet define, which is part
-/// of the full-execution work — and instead halt cleanly.
+/// of the full-execution work. The grant branch therefore just halts cleanly.
 pub fn run_program(policy: &Policy) -> ! {
     const SYS_OPENAT: u64 = 257;
     kprintln!(
@@ -335,9 +342,16 @@ pub fn run_program(policy: &Policy) -> ! {
     );
 
     if policy.allowed_effects.contains(EffectSet::FS) {
-        kprintln!("[axon-kernel] K5: policy GRANTS FS — open permitted; program would proceed");
+        // FG-041: this branch issues NO syscall. It used to print "open permitted",
+        // and the enforce test read that print as proof the gate PERMITTED an
+        // openat that never happened. The honest statement is only that the
+        // policy was read as granting FS; the allow path (dispatch → 0 → sysretq
+        // back to ring 3) is NOT implemented and is NOT exercised here.
         kprintln!(
-            "[axon-kernel] K5: (full interpreter ELF load + VFS is the remaining work) — halting"
+            "[axon-kernel] K5: policy GRANTS FS — grant branch reached, no syscall issued (allow path deferred)"
+        );
+        kprintln!(
+            "[axon-kernel] K5: (sysretq needs ring-3 GDT segments; ELF load + VFS also remaining) — halting"
         );
         clean_halt();
     }
