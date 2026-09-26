@@ -192,3 +192,149 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> Value {
+        let p = format!("{}/tests/fixtures/acf/{name}", env!("CARGO_MANIFEST_DIR"));
+        serde_json::from_str(&std::fs::read_to_string(p).expect("fixture")).expect("json")
+    }
+
+    fn req() -> ComputeRequest {
+        serde_json::from_value(fixture("request_offline.json")).expect("request")
+    }
+
+    fn rc() -> ExecutionReceipt {
+        serde_json::from_value(fixture("receipt_outcome_unknown.json")).expect("receipt")
+    }
+
+    fn issuer() -> OpaqueRef {
+        OpaqueRef::new("fabric:verifier").expect("ref")
+    }
+
+    /// A key, its public half, and a genuine attestation of (req, rc).
+    fn signed() -> (Vec<u8>, String, Value) {
+        let (k, pk) = generate().expect("key");
+        let doc = sign(&k, &issuer(), &req(), &rc()).expect("sign");
+        (k, pk, doc)
+    }
+
+    fn refusal(r: Result<String, Refusal>) -> String {
+        r.expect_err("must be refused").to_string()
+    }
+
+    #[test]
+    fn a_genuine_attestation_verifies_and_names_its_key() {
+        let (k, pk, doc) = signed();
+        assert_eq!(public_key_of(&k).expect("pk"), pk);
+        let id = verify(&doc, &issuer(), &req(), &rc(), &pk).expect("verifies");
+        assert_eq!(id, key_fingerprint(&unhex(&pk).expect("hex")));
+        assert_eq!(doc["key_id"], id.as_str());
+        assert!(id.starts_with("ed25519:") && id.len() == "ed25519:".len() + 16);
+    }
+
+    /// Every bound field, altered in the document alone: refused by the
+    /// binding comparison, before the signature is even consulted.
+    #[test]
+    fn every_bound_field_is_load_bearing() {
+        let (_, pk, doc) = signed();
+        for field in [
+            "schema",
+            "issuer_ref",
+            "key_id",
+            "request_ref",
+            "receipt_ref",
+            "operation_id",
+            "task_id",
+            "trial_id",
+            "attempt_id",
+            "execution_id",
+        ] {
+            let mut d = doc.clone();
+            d[field] = json!("x");
+            assert!(
+                verify(&d, &issuer(), &req(), &rc(), &pk).is_err(),
+                "{field} altered, still verified"
+            );
+        }
+    }
+
+    /// The document is untouched; what it is checked AGAINST differs.
+    #[test]
+    fn it_vouches_for_this_request_this_receipt_and_this_issuer_only() {
+        let (_, pk, doc) = signed();
+        let mut other_rc = serde_json::to_value(rc()).expect("v");
+        other_rc["verification"] = json!("failed");
+        let other_rc: ExecutionReceipt = serde_json::from_value(other_rc).expect("rc");
+        assert!(refusal(verify(&doc, &issuer(), &req(), &other_rc, &pk)).contains("receipt_ref"));
+
+        let mut other_req = serde_json::to_value(req()).expect("v");
+        other_req["limits"]["max_cost_micro"] = json!(7);
+        let other_req: ComputeRequest = serde_json::from_value(other_req).expect("req");
+        assert!(refusal(verify(&doc, &issuer(), &other_req, &rc(), &pk)).contains("request_ref"));
+
+        let other = OpaqueRef::new("fabric:someone-else").expect("ref");
+        assert!(refusal(verify(&doc, &other, &req(), &rc(), &pk)).contains("issuer_ref"));
+    }
+
+    #[test]
+    fn only_the_registered_key_is_accepted() {
+        let (_, _, doc) = signed();
+        let (_, other_pk) = generate().expect("key");
+        assert!(refusal(verify(&doc, &issuer(), &req(), &rc(), &other_pk)).contains("not by"));
+
+        // Self-signed under another key but CLAIMING the registered one: the
+        // presented key and key id say "registered", the signature does not.
+        let (_, pk, _) = signed();
+        let (k2, _) = generate().expect("key");
+        let mut forged = sign(&k2, &issuer(), &req(), &rc()).expect("sign");
+        forged["public_key"] = json!(pk);
+        forged["key_id"] = json!(key_fingerprint(&unhex(&pk).expect("hex")));
+        assert!(refusal(verify(&forged, &issuer(), &req(), &rc(), &pk)).contains("does not verify"));
+    }
+
+    #[test]
+    fn malformed_documents_and_keys_are_refused() {
+        let (_, pk, doc) = signed();
+        for (why, d) in [
+            ("unknown field", {
+                let mut d = doc.clone();
+                d["note"] = json!(1);
+                d
+            }),
+            ("wrong alg", {
+                let mut d = doc.clone();
+                d["alg"] = json!("rsa");
+                d
+            }),
+            ("no signature", {
+                let mut d = doc.clone();
+                d.as_object_mut().expect("obj").remove("signature");
+                d
+            }),
+            ("short signature", {
+                let mut d = doc.clone();
+                d["signature"] = json!("abcd");
+                d
+            }),
+            ("uppercase hex", {
+                let mut d = doc.clone();
+                d["signature"] = json!(d["signature"].as_str().expect("s").to_uppercase());
+                d
+            }),
+            ("not an object", json!("attestation")),
+        ] {
+            assert!(verify(&d, &issuer(), &req(), &rc(), &pk).is_err(), "{why}");
+        }
+        for bad in ["", "zz", &pk[..62], &pk.to_uppercase()] {
+            assert!(
+                refusal(verify(&doc, &issuer(), &req(), &rc(), bad)).contains("64-hex"),
+                "registered key {bad:?}"
+            );
+        }
+        assert!(public_key_of(b"not pkcs8").is_err());
+        assert!(sign(b"not pkcs8", &issuer(), &req(), &rc()).is_err());
+    }
+}
