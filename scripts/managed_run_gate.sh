@@ -255,6 +255,17 @@ if [ "$(cat "$D/scope" 2>/dev/null | cut -d: -f1)" = cgroup ] || [ -f /sys/fs/cg
   "$RM" cancel "$D3H" >/dev/null 2>&1; rm -rf "$D3H"
 fi
 
+# ── 3g. a job's temp is on disk under its run dir, not the RAM /tmp ─────────
+D3T=$(env -u TMPDIR "$RM" start gate_selftest_tmp -- bash -c 'echo "$TMPDIR" > "$TMPDIR/where"; cat "$TMPDIR/where"') \
+  || fail "start failed"
+waitrc "$D3T" || fail "no receipt for the TMPDIR self-test"
+case "$(cat "$D3T/log")" in
+  "$D3T/tmp") ;;
+  *) fail "job TMPDIR was '$(cat "$D3T/log")', expected $D3T/tmp — temp would land in the RAM /tmp" ;;
+esac
+[ ! -e "$D3T/tmp" ] || fail "the run's temp dir outlived the run"
+rm -rf "$D3T"
+
 # ── 4. evidence is retained and attributable ────────────────────────────────
 # The log must EXIST; it need not be non-empty. A job that prints nothing has
 # an empty log, and demanding content here failed a correct run — the check

@@ -304,6 +304,15 @@ cmd_supervise() {
   fi
   # Run INSIDE the snapshot when there is one, so the job reads committed
   # bytes rather than whatever the developer tree happens to hold right now.
+  # TEMP ON DISK, PER RUN. /tmp on this host class is a RAM tmpfs (12 GB here):
+  # measured 2026-09-26, leaked test images filled it to 100% and a strict gate
+  # failed with ENOSPC in LLVM and the parity harnesses; tmpfs pages written by
+  # the job are also charged to its memory cgroup. Unless the caller set TMPDIR
+  # explicitly, the job's temp lives under its own run directory, on disk, and
+  # is removed with the run's scaffolding.
+  if [ -z "${TMPDIR:-}" ]; then
+    mkdir -p "$dir/tmp" && export TMPDIR="$dir/tmp"
+  fi
   local work=""
   work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
   if [ -n "$work" ] && [ -d "$work" ]; then
@@ -366,6 +375,7 @@ cmd_supervise() {
   # true one, and `wait` would otherwise report the signal as a plain exit.
   [ "$(cat "$dir/status")" = "cancelled" ] || echo "exited:$code" > "$dir/status"
   write_receipt "$dir" "$code"
+  [ -d "$dir/tmp" ] && rm -rf "$dir/tmp"
   # Release the containment scope. Only `cancel` used to do this, so every
   # NORMALLY COMPLETING run leaked its cgroup — measured at 71 leaked
   # directories, 71 of the 74 cgroups on the host, accumulating across
