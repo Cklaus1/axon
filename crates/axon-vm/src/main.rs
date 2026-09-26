@@ -34,7 +34,9 @@ use axon_vm::firecracker::MmdsPayload;
 use axon_vm::firecracker::{
     embed_policy_in_cmdline, parse_guest_sentinel, EchoHandler, HostAwaitHandler,
 };
-use axon_vm::firecracker::{run_in_firecracker, FirecrackerBin, GuestOutcome, LaunchSpec};
+use axon_vm::firecracker::{
+    run_in_firecracker, FirecrackerBin, GuestOutcome, LaunchSpec, DEFAULT_SOCKET_TIMEOUT,
+};
 
 use axon_attest::{
     measure_host_stack, measure_kernel, measure_kernel_bytes, report_to_json,
@@ -1400,6 +1402,13 @@ fn cmd_run(
         fc_socket.unwrap_or_else(|| PathBuf::from(format!("/tmp/axon-vm-{}.sock", process::id())));
 
     // Launch Firecracker, configure the VM, and run the program.
+    // AXON_VM_SOCKET_TIMEOUT_SECS (default 5) — read here and passed in, so the
+    // library holds no ambient knob of its own (ACF-G22).
+    let socket_timeout = env::var("AXON_VM_SOCKET_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(DEFAULT_SOCKET_TIMEOUT);
     let result = FirecrackerBin::resolve().and_then(|firecracker| {
         run_in_firecracker(&LaunchSpec {
             admitted: &admitted,
@@ -1411,6 +1420,7 @@ fn cmd_run(
             vsock_port,
             socket_path: &socket_path,
             principal_mem_mib: principal.as_ref().map(|p| p.mem_mib),
+            socket_timeout,
         })
     });
 

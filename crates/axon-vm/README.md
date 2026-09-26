@@ -35,13 +35,16 @@ it uses `scripts/fc_linux_profile.sh` and the jailer.
 
 ## Open defects
 
-* **ACF-G22: child and sockets leak on post-spawn errors.** In
-  `src/firecracker.rs`, every `?` after the Firecracker child is spawned
-  returns without killing the child or removing the API and vsock sockets.
-  Cleanup happens only on the success path. This code is pre-existing and was
-  moved verbatim. The vsock UDS name is pid-keyed
-  (`/tmp/axon-vm-vsock-<pid>.sock`), so two concurrent launches in one process
-  collide.
+* **ACF-G22 — fixed.** After the Firecracker child is spawned, a `LaunchGuard`
+  owns it and both socket paths: any early return kills it, REAPS it and
+  removes the API and vsock sockets; the success path disarms the guard only
+  after its own wait. The vsock UDS is `<api socket>.vsock`, not
+  `/tmp/axon-vm-vsock-<pid>.sock`, so two launches in one process no longer
+  collide, and it is bound synchronously before any later `?`. The socket
+  wait is `LaunchSpec::socket_timeout` (the CLI still reads
+  `AXON_VM_SOCKET_TIMEOUT_SECS`). Pinned by `tests/launch_cleanup.rs` with a
+  stub firecracker script — no KVM needed. Still open: the vsock relay thread
+  blocks in `accept` for the life of the process after its launch ends.
 * **The live tests can still skip.** `tests/lib_launch.rs` and
   `tests/cli_parity.rs` skip when firecracker, `/dev/kvm` or the kernel is
   absent. Since 4c908c3 the skip is recorded to `target/harness-skips.log`,

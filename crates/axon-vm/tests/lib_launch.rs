@@ -169,6 +169,7 @@ fn launch(kernel: &Path, effects: &[&str]) -> axon_vm::RunResult {
         vsock_port: 5000,
         socket_path: &sock,
         principal_mem_mib: None,
+        socket_timeout: axon_vm::firecracker::DEFAULT_SOCKET_TIMEOUT,
     })
     .expect("launcher drove the Firecracker API")
 }

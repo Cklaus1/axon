@@ -12,10 +12,10 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::{env, fs, process};
+use std::{env, fs};
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -171,6 +171,62 @@ pub struct LaunchSpec<'a> {
     /// The principal's memory cap, if any. Enforced with a BALLOON, not a cgroup
     /// (there is no jailer) — see [`BACKEND_PROFILE`].
     pub principal_mem_mib: Option<u64>,
+    /// How long to wait for Firecracker to create its API socket. Was read from
+    /// `AXON_VM_SOCKET_TIMEOUT_SECS` inside the library; the CLI still honours
+    /// that variable and passes the value here ([`DEFAULT_SOCKET_TIMEOUT`] if
+    /// unset). A fixed 5s margin was found flaky under heavy host CPU
+    /// contention (R30 acc_a1/acc_a4).
+    pub socket_timeout: Duration,
+}
+
+/// The CLI's default for [`LaunchSpec::socket_timeout`].
+pub const DEFAULT_SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The host-side vsock UDS for a launch whose API socket is `socket_path`.
+///
+/// Keyed on the API socket (unique per launch) rather than on the process id:
+/// `/tmp/axon-vm-vsock-<pid>.sock` made two launches in one process share, and
+/// delete, each other's socket (ACF-G22).
+pub fn vsock_uds_path(socket_path: &Path) -> PathBuf {
+    let mut s = socket_path.as_os_str().to_owned();
+    s.push(".vsock");
+    PathBuf::from(s)
+}
+
+/// Owns a spawned Firecracker and the socket files of its launch (ACF-G22).
+///
+/// Every `?` after the spawn used to return with the child still running and
+/// both sockets on disk; cleanup existed only at the end of the success path.
+/// Dropping the guard kills the child, REAPS it (a killed-but-unwaited child is
+/// a zombie that still answers `kill(pid, 0)`), and removes both sockets. The
+/// success path disarms it only after it has itself waited for the child.
+struct LaunchGuard {
+    child: Option<Child>,
+    sockets: Vec<PathBuf>,
+}
+
+impl LaunchGuard {
+    fn child(&mut self) -> &mut Child {
+        self.child.as_mut().expect("child present until disarm")
+    }
+
+    /// The success path has reaped the child and removed the sockets itself.
+    fn disarm(mut self) {
+        self.child = None;
+        self.sockets.clear();
+    }
+}
+
+impl Drop for LaunchGuard {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        for s in &self.sockets {
+            let _ = fs::remove_file(s);
+        }
+    }
 }
 
 /// Launch Firecracker, configure the VM, run the program and report what the
@@ -187,18 +243,27 @@ pub fn run_in_firecracker(spec: &LaunchSpec<'_>) -> Result<RunResult, Box<dyn st
         vsock_port,
         socket_path,
         principal_mem_mib,
+        socket_timeout,
     } = *spec;
     let kernel = admitted.kernel();
     let mmds = admitted.mmds();
 
-    // Spawn Firecracker.
-    let mut fc = Command::new(firecracker.path())
+    let vsock_host_uds = vsock_uds_path(socket_path);
+
+    // Spawn Firecracker. From here on the guard owns the child and both socket
+    // paths: any early return kills and reaps it and removes the sockets.
+    let fc = Command::new(firecracker.path())
         .arg("--api-sock")
         .arg(socket_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let mut guard = LaunchGuard {
+        child: Some(fc),
+        sockets: vec![socket_path.to_path_buf(), vsock_host_uds.clone()],
+    };
+    let fc = guard.child();
 
     // Drain Firecracker's stdout/stderr (the guest serial console + FC logs) to our
     // stderr on background threads. Without this the piped buffers fill and the guest
@@ -227,17 +292,9 @@ pub fn run_in_firecracker(spec: &LaunchSpec<'_>) -> Result<RunResult, Box<dyn st
         }));
     }
 
-    // Wait for Firecracker to create its API socket (typically < 50ms; a fixed 5s margin
-    // was found flaky under heavy host CPU contention — R30's own acceptance gate observed
-    // acc_a1/acc_a4 failing at this exact R26_ATTESTATION stage under concurrent load, isolated
-    // reruns always passing clean, "root cause not chased further" per REQUIREMENTS.md — a
-    // starved Firecracker process spawn can plausibly take longer than 5s to even get scheduled.
-    // Tunable via AXON_VM_SOCKET_TIMEOUT_SECS (default 5), mirroring AXON_VM_TIMEOUT_SECS below.
-    let socket_timeout_secs: u64 = env::var("AXON_VM_SOCKET_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
-    let api = wait_for_socket(socket_path, Duration::from_secs(socket_timeout_secs))?;
+    // Wait for Firecracker to create its API socket (typically < 50ms). The
+    // bound is `spec.socket_timeout` — see its doc for why it is tunable.
+    let api = wait_for_socket(socket_path, socket_timeout)?;
 
     // Configure boot source.
     // The policy is embedded in the cmdline as base64-JSON so the guest kernel
@@ -269,13 +326,12 @@ pub fn run_in_firecracker(spec: &LaunchSpec<'_>) -> Result<RunResult, Box<dyn st
 
     // Configure vsock device so the guest can use host_await.
     // uds_path is the host-side Unix socket; the guest connects via CID 2.
-    let vsock_host_uds = format!("/tmp/axon-vm-vsock-{}.sock", process::id());
     fc_put(
         &api,
         "/vsock",
         &serde_json::json!({
             "guest_cid": 3,
-            "uds_path": vsock_host_uds,
+            "uds_path": vsock_host_uds.to_string_lossy(),
         }),
     )?;
 
@@ -321,10 +377,15 @@ pub fn run_in_firecracker(spec: &LaunchSpec<'_>) -> Result<RunResult, Box<dyn st
     // Start a vsock relay thread to bridge vsock ↔ host_await callbacks.
     // Uses EchoHandler by default; plug in a custom HostAwaitHandler to forward
     // requests to a real host process (e.g. a stdin/stdout bridge).
-    let vsock_uds = vsock_host_uds.clone();
+    // The listener is bound HERE, synchronously, so the socket file exists
+    // before any later `?` can run the guard — a relay thread that bound it
+    // after cleanup would leave it behind.
     let handler: Arc<dyn HostAwaitHandler> = Arc::new(EchoHandler);
+    let listener = bind_vsock_uds(&vsock_host_uds);
     let _vsock_thread = std::thread::spawn(move || {
-        vsock_relay(&vsock_uds, vsock_port, handler);
+        if let Some(l) = listener {
+            vsock_relay(l, vsock_port, handler);
+        }
     });
 
     // Copy the .ax program into a tmpfs-backed guest path.
@@ -418,9 +479,11 @@ pub fn run_in_firecracker(spec: &LaunchSpec<'_>) -> Result<RunResult, Box<dyn st
         let _ = d.join();
     }
 
-    // Clean up socket files.
+    // Clean up socket files. The child has been reaped above (try_wait saw it
+    // exit, or kill+wait), so only now is the guard disarmed.
     let _ = fs::remove_file(socket_path);
     let _ = fs::remove_file(&vsock_host_uds);
+    guard.disarm();
 
     Ok(RunResult { exit_code, outcome })
 }
@@ -628,19 +691,23 @@ impl HostAwaitHandler for EchoHandler {
 ///
 /// Each accepted connection is dispatched to a new thread so concurrent guest
 /// `host_await` calls do not block one another.
-fn vsock_relay(uds_path: &str, _vsock_port: u32, handler: Arc<dyn HostAwaitHandler>) {
-    use std::os::unix::net::UnixListener;
-
+fn bind_vsock_uds(uds_path: &Path) -> Option<std::os::unix::net::UnixListener> {
     // Firecracker requires the UDS path to not exist yet.
     let _ = fs::remove_file(uds_path);
-    let listener = match UnixListener::bind(uds_path) {
-        Ok(l) => l,
+    match std::os::unix::net::UnixListener::bind(uds_path) {
+        Ok(l) => Some(l),
         Err(e) => {
             eprintln!("axon-vm: vsock relay bind failed: {e}");
-            return;
+            None
         }
-    };
+    }
+}
 
+fn vsock_relay(
+    listener: std::os::unix::net::UnixListener,
+    _vsock_port: u32,
+    handler: Arc<dyn HostAwaitHandler>,
+) {
     for stream in listener.incoming() {
         match stream {
             Ok(mut s) => {
