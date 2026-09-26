@@ -254,6 +254,9 @@ struct Obs {
     matched: Option<u64>,
     evidence: Vec<OpaqueRef>,
     liability_micro: u64,
+    /// The workspace the run LEFT (re-imported after it). `None` when
+    /// nothing was launched or the backend produces no workspace.
+    output: Option<Acf1Ref>,
 }
 
 fn receipt(req: &ComputeRequest, backend: &str, o: Obs) -> ExecutionReceipt {
@@ -264,6 +267,7 @@ fn receipt(req: &ComputeRequest, backend: &str, o: Obs) -> ExecutionReceipt {
         matched,
         evidence,
         liability_micro,
+        output,
     } = o;
     ExecutionReceipt {
         schema: Default::default(),
@@ -280,7 +284,7 @@ fn receipt(req: &ComputeRequest, backend: &str, o: Obs) -> ExecutionReceipt {
         }),
         backend_profile_ref: opaque(backend),
         input_workspace_ref: req.workspace_version_ref.clone(),
-        output_workspace_ref: None,
+        output_workspace_ref: output,
         policy_digest: req.policy_digest.clone(),
         status,
         process_exit_code: exit.and_then(|c| u8::try_from(c).ok()),
@@ -355,19 +359,142 @@ impl Drop for RunDir {
 /// What a request's `argv` resolved to.
 #[derive(Debug)]
 struct Target {
+    /// The file the interpreter runs: the candidate's `argv[0]`, or a check
+    /// suite's entry.
     file: String,
     filter: Option<String>,
+    /// The CANDIDATE's bytes.
     bound: Bound,
+    /// A registered check suite (`argv[0] = "check:<id>"`): its own
+    /// WorkspaceVersion, materialized read-only beside — never inside — the
+    /// candidate.
+    suite: Option<Suite>,
+}
+
+#[derive(Debug)]
+struct Suite {
+    id: String,
+    version: Acf1Ref,
 }
 
 impl Target {
-    /// The directory the check reads `file` under.
+    /// The directory the interpreter reads `file` under.
     fn dir(&self, cfg: &SubmitConfig) -> PathBuf {
-        match &self.bound {
-            Bound::Legacy => cfg.workspace.clone(),
-            Bound::Version { dir, .. } => dir.0.join("candidate"),
+        match (&self.suite, &self.bound) {
+            (Some(_), Bound::Version { dir, .. }) => dir.0.join("check"),
+            (_, Bound::Legacy) => cfg.workspace.clone(),
+            (None, Bound::Version { dir, .. }) => dir.0.join("candidate"),
         }
     }
+
+    /// For a check suite, the text the admission probe scans: the entry
+    /// with each `mod NAME` line replaced by the candidate's `NAME.ax` (the
+    /// module the suite will actually load through `AXON_PATH`). A module
+    /// the candidate does not hold stays a `mod` line, which scans as EVERY
+    /// effect (deny-by-default) — never as none. `None` for a plain file.
+    fn scan_source(&self) -> Option<String> {
+        let (Some(_), Some(cand)) = (&self.suite, self.candidate_dir()) else {
+            return None;
+        };
+        let Bound::Version { dir, .. } = &self.bound else {
+            return None;
+        };
+        let entry = std::fs::read_to_string(dir.0.join("check").join(&self.file)).ok()?;
+        let mut out = String::new();
+        for line in entry.lines() {
+            let name = line.trim().strip_prefix("mod ").map(str::trim);
+            let inlined = name
+                .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                .and_then(|n| {
+                    let p = cand.join(format!("{n}.ax"));
+                    std::fs::symlink_metadata(&p)
+                        .ok()
+                        .filter(|m| m.is_file())
+                        .and_then(|_| std::fs::read_to_string(p).ok())
+                });
+            match inlined {
+                Some(module) => out.push_str(&module),
+                None => out.push_str(line),
+            }
+            out.push('\n');
+        }
+        Some(out)
+    }
+
+    /// The private copy of the candidate, when there is one.
+    fn candidate_dir(&self) -> Option<PathBuf> {
+        match &self.bound {
+            Bound::Version { dir, .. } => Some(dir.0.join("candidate")),
+            Bound::Legacy => None,
+        }
+    }
+}
+
+/// What the Fabric saw AFTER the run.
+struct PostRun {
+    output: Option<Acf1Ref>,
+    /// Why the verdict cannot stand for the candidate, if it cannot.
+    problem: Option<String>,
+}
+
+/// Re-derive the workspace the run left (the receipt's
+/// `output_workspace_ref`), and whether the verdict still names the
+/// candidate: the output must equal the input, and a check suite's own
+/// bytes must be what was registered. An output version is PUBLISHED, so a
+/// receipt's output ref is always retrievable.
+fn post_run(req: &ComputeRequest, cfg: &SubmitConfig, t: &Target) -> PostRun {
+    let input = &req.workspace_version_ref;
+    let mut problem = None;
+    if let (Some(s), Bound::Version { dir, .. }) = (&t.suite, &t.bound) {
+        match WorkspaceTree::import_dir(&dir.0.join("check"), &Quota::default()) {
+            Ok(tr) if tr.reference() == s.version => {}
+            Ok(tr) => {
+                problem = Some(format!(
+                    "check suite `{}` changed during the run ({} → {})",
+                    s.id,
+                    s.version,
+                    tr.reference()
+                ))
+            }
+            Err(e) => {
+                problem = Some(format!(
+                    "check suite `{}` unreadable after the run: {e}",
+                    s.id
+                ))
+            }
+        }
+    }
+    let output = match &t.bound {
+        Bound::Legacy => std::fs::read(cfg.workspace.join(&t.file))
+            .ok()
+            .map(|b| workspace_digest(&t.file, &b)),
+        Bound::Version { dir, .. } => {
+            let tree = WorkspaceTree::import_dir(&dir.0.join("candidate"), &Quota::default());
+            match tree.map_err(|e| e.to_string()).and_then(|tr| {
+                WorkspaceStore::open(&cfg.state_dir)
+                    .and_then(|st| st.publish(&tr))
+                    .map_err(|e| e.to_string())
+            }) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    problem.get_or_insert(format!("candidate unreadable after the run: {e}"));
+                    None
+                }
+            }
+        }
+    };
+    match &output {
+        Some(o) if o == input => {}
+        Some(o) => {
+            problem.get_or_insert(format!(
+                "the run changed the candidate ({input} → {o}); the verdict names neither"
+            ));
+        }
+        None => {
+            problem.get_or_insert("no output workspace could be observed".into());
+        }
+    }
+    PostRun { output, problem }
 }
 
 /// `argv` for a registered check is `[file]` or `[file, filter]`; for an
@@ -399,6 +526,9 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
             ))
         }
     };
+    if let Some(id) = file.strip_prefix("check:") {
+        return check_suite_target(req, cfg, id, filter);
+    }
     let p = Path::new(&file);
     if p.is_absolute()
         || p.components()
@@ -435,6 +565,7 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
                 file,
                 filter,
                 bound: Bound::Legacy,
+                suite: None,
             });
         } else {
             return Err(SubmitError::Conflict(format!(
@@ -463,6 +594,80 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
         file,
         filter,
         bound: Bound::Version { version, dir },
+        suite: None,
+    })
+}
+
+/// `argv = ["check:<id>", filter?]`: the operator-registered check suite
+/// `<id>` judges the candidate, which must be a PUBLISHED WorkspaceVersion.
+/// The suite root is imported at dispatch and must still be the version the
+/// operator pinned; it is materialized read-only into `<run>/check`, the
+/// candidate into `<run>/candidate`, and the suite reaches the candidate
+/// only through `AXON_PATH`. Neither directory contains the other.
+fn check_suite_target(
+    req: &ComputeRequest,
+    cfg: &SubmitConfig,
+    id: &str,
+    filter: Option<String>,
+) -> Result<Target, SubmitError> {
+    if req.job_kind != JobKind::RegisteredCheck {
+        return Err(SubmitError::Malformed(
+            "a registered check suite runs only as registered_check".into(),
+        ));
+    }
+    let c = cfg
+        .registry
+        .check(id)
+        .ok_or_else(|| SubmitError::Unregistered(format!("check suite `{id}` is not registered")))?
+        .clone();
+    let store =
+        WorkspaceStore::open(&cfg.state_dir).map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let cand = &req.workspace_version_ref;
+    if !store.contains(cand) {
+        return Err(SubmitError::Conflict(format!(
+            "check suite `{id}` judges a published WorkspaceVersion; {cand} is not one"
+        )));
+    }
+    let tree = WorkspaceTree::import_dir(&c.root, &Quota::default())
+        .map_err(|e| SubmitError::Unregistered(format!("check suite `{id}` refused: {e}")))?;
+    if tree.reference().as_str() != c.workspace_version_ref {
+        return Err(SubmitError::Unregistered(format!(
+            "check suite `{id}` is {} on disk, not the registered {}",
+            tree.reference(),
+            c.workspace_version_ref
+        )));
+    }
+    if !tree
+        .entries()
+        .iter()
+        .any(|e| e.path == c.entry && matches!(e.kind, workspace::EntryKind::File { .. }))
+    {
+        return Err(SubmitError::Unregistered(format!(
+            "check suite `{id}` has no regular file `{}`",
+            c.entry
+        )));
+    }
+    let version = store
+        .publish(&tree)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    let dir = RunDir::new(&cfg.state_dir, req.operation_id.as_str())?;
+    store
+        .materialize(cand, &dir.0.join("candidate"), false)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    store
+        .materialize(&version, &dir.0.join("check"), true)
+        .map_err(|e| SubmitError::Workspace(e.to_string()))?;
+    Ok(Target {
+        file: c.entry,
+        filter,
+        bound: Bound::Version {
+            version: cand.clone(),
+            dir,
+        },
+        suite: Some(Suite {
+            id: id.to_string(),
+            version,
+        }),
     })
 }
 
@@ -473,13 +678,16 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
 /// code path every axon-os job takes — may this program run on this backend
 /// under THIS grant, with THIS approval policy? The real effect runs later,
 /// after the journal's launch record, bounded by the same grant's ceiling.
-struct AdmissionProbe(axon_os::Isolation);
+struct AdmissionProbe(axon_os::Isolation, Option<String>);
 
 impl axon_os::Runtime for AdmissionProbe {
     fn isolation(&self) -> axon_os::Isolation {
         self.0
     }
     fn declared_effects(&self, p: &Path) -> axon_os::DeclaredEffects {
+        if let Some(src) = &self.1 {
+            return axon_os::runtime::scan_effects(src);
+        }
         match std::fs::read_to_string(p) {
             Ok(src) => axon_os::runtime::scan_effects(&src),
             Err(_) => axon_os::DeclaredEffects::unknown(),
@@ -510,6 +718,7 @@ fn supervisor_admits(
     profile: &Profile,
     grant: &ResolvedGrant,
     program: &Path,
+    scan_source: Option<String>,
 ) -> Result<String, String> {
     use axon_os::IsolationRequirement;
     let requirement =
@@ -529,7 +738,7 @@ fn supervisor_admits(
         ));
     }
     let manifest = grant.manifest_for(program, format!("fabric {}", req.operation_id));
-    let rt = AdmissionProbe(profile.isolation);
+    let rt = AdmissionProbe(profile.isolation, scan_source);
     // The job path is the GRANT FILE: its `.approval` sibling is the sign-off
     // token axon-os verifies against (program, grant).
     let rec = axon_os::supervise_requiring(
@@ -653,6 +862,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     matched: None,
                     evidence: vec![],
                     liability_micro: 0,
+                    output: None,
                 },
             );
             record_unlaunched(&journal, &req, &input_digest, cfg, &scope, &why, &r)?;
@@ -702,7 +912,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
 
     // 6. Supervisor admission (axon-os).
     let program = target.dir(cfg).join(&target.file);
-    let approval = match supervisor_admits(&req, &profile, &grant, &program) {
+    let approval = match supervisor_admits(&req, &profile, &grant, &program, target.scan_source()) {
         Ok(a) => a,
         Err(why) => {
             let r = receipt(
@@ -715,6 +925,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     matched: None,
                     evidence: vec![],
                     liability_micro: 0,
+                    output: None,
                 },
             );
             record_unlaunched(&journal, &req, &input_digest, cfg, &scope, &why, &r)?;
@@ -751,6 +962,10 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 Bound::Version { version, .. } => json!({"workspace_version_ref": version}),
                 Bound::Legacy => json!({"legacy_single_file": target.file}),
             },
+            // The suite's identity only — never its bytes.
+            "check_suite": target.suite.as_ref().map(|s| json!({
+                "id": s.id, "workspace_version_ref": s.version,
+            })),
         }),
         authority_ref: format!("{}|{}", req.principal_ref, req.grant_ref),
         authority_epoch: cfg.expected_epoch,
@@ -800,9 +1015,28 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     let local = if is_linux {
         None
     } else {
-        let cache = TrialCache::for_trial(&cfg.state_dir, &req.trial_id)
-            .map_err(|e| SubmitError::Workspace(e.to_string()))?;
-        Some(host_executor(&exe, &req, &ceiling, &cache)?)
+        // Past the reservation, every refusal CANCELS (released: nothing
+        // was launched) — a `?` here would strand the reservation as held.
+        let built = TrialCache::for_trial(&cfg.state_dir, &req.trial_id)
+            .map_err(|e| SubmitError::Workspace(e.to_string()))
+            .and_then(|cache| host_executor(&exe, &req, &ceiling, &cache));
+        let mut l = match built {
+            Ok(l) => l,
+            Err(e) => {
+                journal.cancel(&req.operation_id, &format!("not launched: {e}"), None)?;
+                return Err(e);
+            }
+        };
+        // A check suite reaches the candidate ONLY as a module path; the
+        // operator's ambient AXON_PATH is never inherited.
+        l = l.with_env(
+            "AXON_PATH",
+            target
+                .candidate_dir()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
+        Some(l)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {
         journal.cancel(&req.operation_id, &format!("executable changed: {e}"), None)?;
@@ -818,7 +1052,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 rel_path: &file,
                 filter: filter.as_deref(),
             });
-            local_receipt(&req, &journal, res, filter.as_deref(), liability)?
+            let seen = post_run(&req, cfg, &target);
+            local_receipt(&req, &journal, res, filter.as_deref(), liability, seen)?
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
@@ -845,6 +1080,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                         matched: None,
                         evidence: vec![],
                         liability_micro: liability,
+                        output: None,
                     },
                 ),
                 None,
@@ -870,8 +1106,10 @@ fn local_receipt(
     res: std::io::Result<CheckReport>,
     filter: Option<&str>,
     liability: u64,
+    seen: PostRun,
 ) -> Result<Outcome, SubmitError> {
     let id = backend::LOCAL_INTERPRETER.id;
+    let PostRun { output, problem } = seen;
     match res {
         Ok(rep) => {
             // Verification is judged for the NAMED check (the filter), and
@@ -928,6 +1166,16 @@ fn local_receipt(
                 // failing named test is not evidence of a pass.
                 verification = ReceiptVerification::Unknown;
             }
+            if problem.is_some()
+                && matches!(
+                    verification,
+                    ReceiptVerification::Passed | ReceiptVerification::Failed
+                )
+            {
+                // The judged bytes are not the bytes the run left behind (or
+                // the check's own inputs moved): no verdict about either.
+                verification = ReceiptVerification::Unknown;
+            }
             journal.complete(&req.operation_id, Billing::Unknown)?;
             Ok((
                 receipt(
@@ -940,10 +1188,11 @@ fn local_receipt(
                         matched: Some(matched),
                         evidence,
                         liability_micro: liability,
+                        output,
                     },
                 ),
                 Some(report_json),
-                None,
+                problem,
             ))
         }
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
@@ -960,6 +1209,7 @@ fn local_receipt(
                         matched: None,
                         evidence: vec![],
                         liability_micro: liability,
+                        output: output.clone(),
                     },
                 ),
                 None,
@@ -982,6 +1232,7 @@ fn local_receipt(
                         matched: None,
                         evidence: vec![],
                         liability_micro: liability,
+                        output,
                     },
                 ),
                 None,
@@ -1054,6 +1305,7 @@ fn linux_receipt(
                 matched: None,
                 evidence,
                 liability_micro: liability,
+                output: None,
             },
         ),
         None,
@@ -1157,6 +1409,7 @@ fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
             matched: None,
             evidence: vec![],
             liability_micro: liability,
+            output: None,
         },
     );
     Submission {

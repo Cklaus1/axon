@@ -137,12 +137,19 @@ fn cortex_repair_adjudicates_through_the_fabric() {
     let last = receipts.last().unwrap();
     assert_eq!(last["verification"], "passed", "{last}");
     assert_eq!(last["status"], "completed");
-    // And its workspace ref binds the REPAIRED file, not the broken one.
+    // And its workspace ref binds the REPAIRED file, not the broken one: the
+    // one-file WorkspaceVersion of those bytes (B261), and the run left
+    // exactly that version behind (output == input).
     let repaired = std::fs::read(s.env.ws.join("broken.ax")).unwrap();
-    assert_eq!(
-        last["input_workspace_ref"],
-        axon_cortex::runner::fabric_workspace_digest("broken.ax", &repaired)
-    );
+    let want = axon_cortex::runner::single_file_workspace_version_ref("broken.ax", &repaired);
+    assert_eq!(last["input_workspace_ref"], want);
+    assert_eq!(last["output_workspace_ref"], want);
+    for r in receipts {
+        assert_eq!(
+            r["output_workspace_ref"], r["input_workspace_ref"],
+            "every check left its candidate as it found it: {r}"
+        );
+    }
     assert_ne!(
         receipts[0]["input_workspace_ref"], last["input_workspace_ref"],
         "the pre-flight judged different bytes"

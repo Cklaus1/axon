@@ -109,6 +109,29 @@ linking this crate, because this crate depends on `axon-cortex`.
   `axon-fabric workspace-import --state DIR --root DIR` publishes a tree.
   Mode bits are no boundary for root: the store's integrity is re-hashing,
   not permissions.
+* **Check suites (B264).** A `cortex-check-registry/1` file may carry
+  `checks: [{id, visibility: visible|hidden, root, entry,
+  workspace_version_ref}]`. A request with `argv = ["check:<id>", filter]`
+  judges a PUBLISHED candidate version: the suite root is imported at
+  dispatch and must still be the pinned version (else `unregistered`, zero
+  launches), then the candidate is materialized into `<run>/candidate` and
+  the suite read-only into `<run>/check` — never inside the candidate — and
+  the suite reaches the candidate only through `AXON_PATH` (the operator's
+  ambient `AXON_PATH` is never inherited). Admission scans the suite entry
+  with each `mod NAME` replaced by the candidate's `NAME.ax`; an unresolved
+  module still scans as every effect. `CheckRegistry::subject_visible_checks`
+  never lists a hidden suite. The journal records a suite's identity, never
+  its bytes.
+* **Output binding (B264/B265).** After a local run the Fabric re-imports
+  what the run left: the receipt's `output_workspace_ref` is that version
+  (published, so retrievable), or the historical digest of the file for a
+  historical ref. If it differs from the input, or a suite's own bytes moved,
+  a pass/fail verdict becomes `unknown` with the reason. The cortex
+  `FabricSubmitExecutor` sends the one-file WorkspaceVersion of the checked
+  file and accepts a report only if the receipt's input AND output refs are
+  that version. Candidate code runs inside the verifier process: a grant
+  that allows fs reads lets it read `<run>/check` — the effect ceiling, not
+  the directory layout, is what bounds that.
 
 `acf1:` identities (`executable_digest`, `workspace_digest`) delegate to the
 single canonicaliser `axon_cortex::runner::acf1_canonical_bytes`, which the

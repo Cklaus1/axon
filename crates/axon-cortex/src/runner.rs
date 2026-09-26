@@ -1775,6 +1775,33 @@ fn file_stamp(_p: &Path) -> Stamp {
 #[derive(Debug, Clone, Default)]
 pub struct CheckRegistry {
     entries: Vec<(String, RegisteredExecutable)>,
+    checks: Vec<RegisteredCheck>,
+}
+
+/// Whether a registered check's SOURCE may be shown to the subject (B264).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckVisibility {
+    /// The subject may see the check's bytes (e.g. to reproduce a failure).
+    Visible,
+    /// The subject never sees the check's bytes: the Fabric materializes
+    /// them into a SEPARATE read-only WorkspaceVersion that is never part of
+    /// the candidate's workspace.
+    Hidden,
+}
+
+/// A registered check suite: a directory pinned by its WorkspaceVersion
+/// reference, and the `.ax` entry file in it the interpreter runs. The
+/// candidate is reached through `AXON_PATH` (`mod <name>` in the entry), so
+/// the check's bytes and the candidate's never share a directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredCheck {
+    pub id: String,
+    pub visibility: CheckVisibility,
+    pub root: PathBuf,
+    pub entry: String,
+    /// `acf1:` WorkspaceVersion of `root` the operator pinned. The Fabric
+    /// imports `root` at dispatch and refuses the check if it differs.
+    pub workspace_version_ref: String,
 }
 
 /// The id the local interpreter executor is registered under.
@@ -1834,7 +1861,27 @@ impl CheckRegistry {
         Ok(())
     }
 
-    /// Load `{"schema":"cortex-check-registry/1","executors":[{"id","path","sha256"}]}`.
+    /// A registered check suite by id.
+    pub fn check(&self, id: &str) -> Option<&RegisteredCheck> {
+        self.checks.iter().find(|c| c.id == id)
+    }
+
+    /// The checks whose source MAY be shown to the subject. A context
+    /// builder uses this list; a hidden check is never in it.
+    pub fn subject_visible_checks(&self) -> impl Iterator<Item = &RegisteredCheck> {
+        self.checks
+            .iter()
+            .filter(|c| c.visibility == CheckVisibility::Visible)
+    }
+
+    /// Register a check suite (operator input).
+    pub fn register_check(&mut self, c: RegisteredCheck) {
+        self.checks.retain(|k| k.id != c.id);
+        self.checks.push(c);
+    }
+
+    /// Load `{"schema":"cortex-check-registry/1","executors":[{"id","path","sha256"}]}`,
+    /// plus an optional `"checks":[{"id","visibility":"visible"|"hidden","root","entry","workspace_version_ref"}]`.
     /// Every entry is verified against its stated digest; one bad entry fails
     /// the whole load (a partially trusted registry is not a registry).
     pub fn load(file: &Path) -> Result<Self, String> {
@@ -1869,6 +1916,55 @@ impl CheckRegistry {
             };
             reg.register_expected(id, &p, sha)
                 .map_err(|r| r.to_string())?;
+        }
+        for c in v
+            .get("checks")
+            .map(|x| {
+                x.as_array()
+                    .ok_or("check registry `checks` is not an array")
+            })
+            .transpose()?
+            .into_iter()
+            .flatten()
+        {
+            let field = |k: &str| {
+                c.get(k)
+                    .and_then(|x| x.as_str())
+                    .ok_or_else(|| format!("check registry check missing `{k}`"))
+            };
+            let visibility = match field("visibility")? {
+                "visible" => CheckVisibility::Visible,
+                "hidden" => CheckVisibility::Hidden,
+                other => {
+                    return Err(format!(
+                        "check visibility must be `visible` or `hidden`, not `{other}`"
+                    ))
+                }
+            };
+            let root = Path::new(field("root")?);
+            let root = if root.is_relative() {
+                base.join(root)
+            } else {
+                root.to_path_buf()
+            };
+            let r = field("workspace_version_ref")?;
+            let hex = r.strip_prefix("acf1:").unwrap_or("");
+            if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+                return Err(format!(
+                    "check workspace_version_ref `{r}` is not acf1:<hex>"
+                ));
+            }
+            let id = field("id")?;
+            if reg.check(id).is_some() {
+                return Err(format!("check id `{id}` registered twice"));
+            }
+            reg.register_check(RegisteredCheck {
+                id: id.to_string(),
+                visibility,
+                root,
+                entry: field("entry")?.to_string(),
+                workspace_version_ref: r.to_string(),
+            });
         }
         Ok(reg)
     }
@@ -2225,8 +2321,11 @@ pub const FABRIC_SUBMIT_ID: &str = "axon-fabric";
 /// sha256, so what adjudicates is still never chosen by request text.
 ///
 /// Each dispatch gets a fresh operation id, and its `workspace_version_ref`
-/// binds the exact bytes of the checked file, so the receipt names the
-/// artifact it judged.
+/// is the one-file WorkspaceVersion of the checked file (B261), which the
+/// Fabric copies into its store and judges. A report is accepted only when
+/// the receipt's `input_workspace_ref` AND `output_workspace_ref` are that
+/// same version: the receipt names the artifact it judged, and the artifact
+/// did not move under the verdict.
 pub struct FabricSubmitExecutor {
     cfg: FabricDispatch,
     submit_bin: std::sync::Mutex<Pin>,
@@ -2336,7 +2435,7 @@ impl FabricSubmitExecutor {
             "job_kind": "registered_check",
             "registered_executable_ref": LOCAL_AXON_TEST_ID,
             "executable_digest": fabric_executable_digest(LOCAL_AXON_TEST_ID, &self.interpreter_sha256),
-            "workspace_version_ref": fabric_workspace_digest(req.rel_path, &bytes),
+            "workspace_version_ref": single_file_workspace_version_ref(req.rel_path, &bytes),
             "semantic_state_ref": null,
             "policy_digest": self.cfg.policy_digest,
             "required": {
@@ -2561,6 +2660,17 @@ impl CheckExecutor for FabricSubmitExecutor {
                 v.get("reason")
                     .and_then(|r| r.as_str())
                     .unwrap_or("no reason")
+            )));
+        }
+        // The receipt must bind THIS candidate: the version sent in, and the
+        // same version left behind. A verdict about other bytes — or one
+        // whose output moved under it — is no verdict about the candidate.
+        let sent = &request["workspace_version_ref"];
+        let rc = &v["receipt"];
+        if &rc["input_workspace_ref"] != sent || &rc["output_workspace_ref"] != sent {
+            return Err(std::io::Error::other(format!(
+                "Fabric receipt does not bind the candidate {sent}: input {}, output {}",
+                rc["input_workspace_ref"], rc["output_workspace_ref"]
             )));
         }
         // No check report ⇒ no verdict (refused, timed out, outcome unknown…).
