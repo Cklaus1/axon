@@ -242,3 +242,100 @@ fn an_orphan_is_not_resumed_under_a_superseded_epoch() {
     assert_eq!(spawn_count(&env.spawns), 0);
     assert_eq!(env.launch_records(), 0);
 }
+
+/// A crash INSIDE `Branches::cancel` leaves the cancelled marker written and a
+/// branch op still Reserved (the exact on-disk state of that window, made here
+/// by a real crash of the op's own submit after reserve, then the marker).
+/// Recovery converges from either side: a re-submit of the orphan releases it
+/// and is refused (the branch is cancelled), and re-running the cancel is
+/// idempotent on the marker and finishes the job.
+#[test]
+fn a_crash_inside_branch_cancellation_converges_on_restart() {
+    use axon_fabric::branches::Branches;
+    use axon_loop_contracts::{ArmId, OpaqueRef, TaskId};
+    let env = Env::new();
+    let d = env.dir.path().join("tree-base");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("f.ax"), FIXTURE).unwrap();
+    let tenant = axon_loop_contracts::TenantId::new("tenant-t").unwrap();
+    let base = axon_fabric::workspace::WorkspaceStore::open(&env.cfg(0).state_dir, &tenant)
+        .unwrap()
+        .import_dir(&d, &axon_fabric::workspace::Quota::default())
+        .unwrap();
+    let br = Branches::open(&env.cfg(0).state_dir, &scope());
+    let exp = TaskId::new("exp-r").unwrap();
+    let arm = ArmId::new("challenger-1").unwrap();
+    br.open_experiment(
+        &exp,
+        &base,
+        axon_fabric::ResourceVector {
+            model_micro_usd: 1_000,
+            exec_ms: 100_000,
+            verify_ms: 0,
+            retries: 0,
+        },
+        &[
+            (
+                ArmId::new("incumbent").unwrap(),
+                OpaqueRef::new("writer:a").unwrap(),
+            ),
+            (arm.clone(), OpaqueRef::new("writer:b").unwrap()),
+        ],
+        &[OpaqueRef::new("approver:independent").unwrap()],
+    )
+    .unwrap();
+    let run = br
+        .experiment(&exp)
+        .unwrap()
+        .branch(&arm)
+        .unwrap()
+        .run_id
+        .clone();
+    let mut req = request(&env, "op-branch-orphan", "t_ok");
+    req["trial_id"] = run.as_str().into();
+    req["workspace_version_ref"] = base.as_str().into();
+    crash_submit_at(&env, &req, Boundary::AfterReserve);
+    assert_eq!(held(&env), 100);
+
+    // The cancel crashed after its marker: write exactly that.
+    let marker_file = walk_arm_dir(&env.cfg(0).state_dir, arm.as_str()).join("cancelled.json");
+    std::fs::write(&marker_file, br#"{"reason":"crashed mid-cancel"}"#).unwrap();
+    assert!(br.is_cancelled(&exp, &arm));
+    assert_eq!(
+        held(&env),
+        100,
+        "the crash window: marker written, op still held"
+    );
+
+    // Recovery 1: re-submitting the orphan releases it and is refused.
+    let e = submit(&req.to_string(), &env.cfg(0)).unwrap_err();
+    assert!(matches!(e, SubmitError::Branch(_)), "{e}");
+    assert_eq!(held(&env), 0, "the orphan's reservation is released");
+    // Recovery 2: re-running the cancel is idempotent and changes nothing now.
+    let (j, _) = axon_fabric::Journal::open(&env.journal).unwrap();
+    let done = br.cancel(&j, &exp, &arm, "retry after crash").unwrap();
+    assert!(done.is_empty(), "{done:?}");
+    assert_eq!(
+        j.view(&op("op-branch-orphan")).unwrap().state,
+        OpState::Cancelled
+    );
+    assert_eq!(spawn_count(&env.spawns), 0);
+}
+
+/// The arm's directory under the branches root (its layout is private to the
+/// crate; located by name).
+fn walk_arm_dir(root: &Path, arm: &str) -> PathBuf {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(arm) {
+                    return p;
+                }
+                stack.push(p);
+            }
+        }
+    }
+    panic!("no arm dir {arm} under {}", root.display())
+}

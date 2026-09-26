@@ -905,6 +905,17 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         .map_err(|e| SubmitError::Workspace(e.to_string()))?;
     if let Some((exp, br)) = &branch {
         if branches.is_cancelled(&exp.experiment_id, &br.arm_id) {
+            // A pre-launch orphan of a cancelled branch is released here: a
+            // crash inside `Branches::cancel` (marker written, ops not yet
+            // cancelled) must not leave its reservation held until someone
+            // happens to re-run the cancel. Nothing launched, so nothing to bill.
+            if resume.is_some() {
+                journal.cancel(
+                    &req.operation_id,
+                    "orphaned before launch in a cancelled branch",
+                    None,
+                )?;
+            }
             return Err(SubmitError::Branch(format!(
                 "branch {}/{} is cancelled",
                 exp.experiment_id, br.arm_id
