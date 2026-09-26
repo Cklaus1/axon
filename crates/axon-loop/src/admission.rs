@@ -222,6 +222,45 @@ pub(crate) fn derive(
             }
         }
     }
+    // A verdict counts only while its verifier still holds (re-audit 4). The
+    // evaluation recorded which issuer and which registered key authenticated
+    // each counted verdict; a verifier the operator has since untrusted, or
+    // re-keyed, vouches for nothing any more — at admission and at every
+    // re-derivation (activation, rollback), so revocation is not retroactive
+    // only to what has not happened yet.
+    let config = tx.store.config()?;
+    let verifiers = config.verifiers();
+    for arm in &eval.arms {
+        for t in &arm.trials {
+            if !matches!(
+                t.outcome,
+                crate::evl::Outcome::VerifiedPass | crate::evl::Outcome::Fail
+            ) {
+                continue;
+            }
+            let v = t.verification.as_ref().ok_or_else(|| {
+                refused(format!(
+                    "trial {} counts a verdict but the evaluation does not record which \
+                     verifier authenticated it (it predates verdict citation): re-evaluate",
+                    t.trial_id
+                ))
+            })?;
+            let key_now = config
+                .verifier_keys
+                .get(&v.issuer_ref)
+                .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk));
+            if !verifiers.contains(&v.issuer_ref)
+                || eval.subject_issuers.contains(&v.issuer_ref)
+                || key_now.as_deref() != Some(v.key_id.as_str())
+            {
+                return Err(refused(format!(
+                    "trial {}'s verdict was authenticated by {} under {}, which the operator no \
+                     longer trusts with that key: its verdict no longer counts",
+                    t.trial_id, v.issuer_ref, v.key_id
+                )));
+            }
+        }
+    }
     // Hypothesis history AS OF the evaluation, so the count cannot change
     // between `admit` and a later re-derivation.
     let proposals = tx

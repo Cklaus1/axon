@@ -62,6 +62,13 @@ pub fn key_fingerprint(public_key: &[u8]) -> String {
     format!("ed25519:{}", &hex(&h)[..16])
 }
 
+/// The key id of a registered 64-hex public key, or `None` if it is not one.
+pub fn key_id_of_hex(public_key_hex: &str) -> Option<String> {
+    unhex(public_key_hex)
+        .filter(|k| k.len() == 32)
+        .map(|k| key_fingerprint(&k))
+}
+
 /// A fresh Ed25519 key: `(PKCS#8 private key, 64-hex public key)`. For key
 /// provisioning (`axon-fabric keygen`) and test fixtures.
 pub fn generate() -> Result<(Vec<u8>, String), String> {

@@ -249,3 +249,82 @@ fn admission_refuses_wrong_corpus_role() {
     ));
     assert_eq!(snapshot(w.dir.path()), before);
 }
+
+/// Re-audit 4 (clause auditor, executed): removing a verifier's key or trust
+/// did not stop its verdicts from counting — admission and activation read
+/// only the stored evaluation. Now each counted verdict is re-checked against
+/// the CURRENT config: its issuer still trusted, its registered key still the
+/// one it verified under. Positive control: an unrevoked experiment ACCEPTs.
+///
+/// Mutation: drop the re-check in `admission::derive` → red.
+#[test]
+fn a_revoked_verifier_s_verdicts_stop_counting() {
+    let setup = |exp: &str| {
+        let w = world();
+        freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+        let (_, e) = evaluate(
+            &w.s,
+            &evl_request(exp, &w.inc, &w.cand, &specs, &EvlOpts::default()),
+        )
+        .unwrap();
+        (w, e)
+    };
+    let edit = |w: &World, f: &dyn Fn(&mut axon_loop::store::Config)| {
+        let mut cfg = w.s.config().unwrap();
+        f(&mut cfg);
+        w.s.write_config(&cfg).unwrap();
+    };
+    let v = OpaqueRef::new(VERIFIER).unwrap();
+
+    let (w, e) = setup("ok");
+    assert_eq!(
+        admit(&w.s, "ok", &e, ADMITTER, false).unwrap().0.decision,
+        Decision::Accept
+    );
+
+    // Key removed after the evaluation: nothing to admit.
+    let (w, e) = setup("unkeyed");
+    edit(&w, &|c| {
+        c.verifier_keys.remove(&v);
+    });
+    let err = admit(&w.s, "unkeyed", &e, ADMITTER, false).unwrap_err();
+    assert!(
+        matches!(err, LoopError::Refused(ref m) if m.contains("no longer trusts")),
+        "{err}"
+    );
+
+    // Re-keyed: the verdicts were authenticated under the OLD key.
+    let (w, e) = setup("rekeyed");
+    let (_, other) = axon_loop_contracts::attestation::generate().unwrap();
+    edit(&w, &|c| {
+        c.verifier_keys.insert(v.clone(), other.clone());
+    });
+    assert!(admit(&w.s, "rekeyed", &e, ADMITTER, false).is_err());
+
+    // Untrusted AFTER the admission: the activation re-derives and refuses,
+    // writing nothing.
+    let (w, e) = setup("late");
+    let (rec, adm) = admit(&w.s, "late", &e, ADMITTER, false).unwrap();
+    assert_eq!(rec.decision, Decision::Accept);
+    edit(&w, &|c| c.trusted_verifiers.retain(|x| x != &v));
+    let before = snapshot(w.dir.path());
+    let err = pointer::transition(
+        &w.s,
+        &tparse(&transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            false,
+        )),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, LoopError::Refused(ref m) if m.contains("no longer trusts")),
+        "{err}"
+    );
+    assert_eq!(snapshot(w.dir.path()), before);
+}
