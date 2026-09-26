@@ -368,3 +368,34 @@ fn cross_language_vectors() {
         }
     }
 }
+
+/// MiCode's REAL old-peer documents, vendored verbatim from micode
+/// `docs/axon-support/closed-loop-profile/micode-old-peer-vectors.json`
+/// (`v022/micode-stage5-ld`, commit dd0b18e3). The `old_peer_axon_bridge_v0`
+/// case in `vectors.json` GUESSED the bridge document as `{"schema":
+/// "axon-bridge/v0", …}`; the real `AxonBundle` has no `schema` key at all, so
+/// it reaches `not_a_profile` through the schema-ABSENT branch rather than the
+/// schema-not-a-profile one. Both are kept: the guessed case still pins the
+/// tagged branch, this one pins what a real old MiCode sends. `vectors.json` is
+/// left unchanged because MiCode pins it by SHA-256.
+#[test]
+fn micodes_real_old_peer_documents_are_not_a_profile() {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/closed-loop-profile/micode-old-peer-vectors.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
+    let cases = v["negotiate"].as_array().unwrap();
+    assert_eq!(cases.len(), 2, "MiCode's old-peer vector set changed");
+    for c in cases {
+        let name = c["name"].as_str().unwrap();
+        let offer = c["offer"].as_str().unwrap();
+        let doc: Value = serde_json::from_str(offer).unwrap();
+        assert!(
+            doc.get("schema").is_none(),
+            "{name}: a real old-peer document carries no `schema`"
+        );
+        match negotiate_wire(Some(offer), &caps(&c["local"])) {
+            Ok(a) => panic!("{name}: ACCEPTED {:?}", a.document),
+            Err(e) => check_unsupported(name, &e, &c["expect"]),
+        }
+    }
+}
