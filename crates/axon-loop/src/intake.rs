@@ -158,6 +158,14 @@ pub struct IntakeRecord {
     pub verification_receipt_ref: Option<Ref>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_request_ref: Option<Ref>,
+    /// `cl22:` of the verifier's attestation (`fabric-attestations/`) and the
+    /// id of the operator-registered key it verified under: WHICH signature
+    /// authenticated this verdict, so it can be re-checked later. Absent, like
+    /// the refs above, when the sidecar names no verifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_attestation_ref: Option<Ref>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_key_id: Option<String>,
 }
 
 /// What `intake_episode` returns.
@@ -320,10 +328,11 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     // Record: bytes first (content-addressed, idempotent), then the ledger.
     store.put_cas("episodes", &ep)?;
     store.put_cas("contexts", &ctx)?;
+    let mut attestation_ref = None;
     if let Some((req, rc, att, _)) = &verification {
         store.put_cas("fabric-requests", req)?;
         store.put_cas("fabric-receipts", rc)?;
-        store.put_cas("fabric-attestations", att)?;
+        attestation_ref = Some(store.put_cas("fabric-attestations", att)?);
     }
     let record = IntakeRecord {
         schema: IntakeSchema,
@@ -358,6 +367,8 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
             .as_ref()
             .map(|(req, _, _, _)| digest(req))
             .transpose()?,
+        verification_attestation_ref: attestation_ref,
+        verification_key_id: verification.as_ref().map(|v| v.3.clone()),
     };
     let seq = tx.append(Event::EpisodeIntake {
         scope: ep.scope.clone(),

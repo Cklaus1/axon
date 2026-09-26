@@ -648,6 +648,26 @@ fn a_fabric_check_on_the_output_tree_is_recorded_as_the_verification() {
         out.record.verification_request_ref,
         Some(digest_value(&req).unwrap())
     );
+    // WHICH signature authenticated it: the attestation (stored) and the
+    // registered key's id. Ed25519 is deterministic, so re-signing the same
+    // documents reproduces the bytes intake stored.
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let att_ref = digest_value(&att).unwrap();
+    assert_eq!(
+        out.record.verification_attestation_ref,
+        Some(att_ref.clone())
+    );
+    assert_eq!(out.record.verification_key_id, out.verification_key_id);
+    assert_eq!(
+        out.record.verification_key_id.as_deref(),
+        att["key_id"].as_str()
+    );
+    assert!(c
+        .s
+        .root()
+        .join("fabric-attestations")
+        .join(format!("{}.json", att_ref.hex()))
+        .exists());
     // The documents are held, content-addressed, for any later re-check.
     let hex = digest_value(&rc).unwrap().hex().to_string();
     assert!(c
@@ -672,6 +692,8 @@ fn an_unverified_record_serialises_without_the_new_fields() {
     let v = serde_json::to_value(&out.record).unwrap();
     assert!(v.get("verification_receipt_ref").is_none());
     assert!(v.get("verification_request_ref").is_none());
+    assert!(v.get("verification_attestation_ref").is_none());
+    assert!(v.get("verification_key_id").is_none());
 }
 
 /// Each case changes ONE thing from the positive control; every refusal writes
