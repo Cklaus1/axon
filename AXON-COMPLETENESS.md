@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 51 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 56 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -568,4 +568,39 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** AXON_PATH held only the candidate directory, and Axon never searches the entry file's own directory, so EVERY `mod` the suite declared, including its own helper modules, resolved from the candidate. A candidate shipping a module named like a suite helper replaced the rubric's code; the suite digest pin still matched because the suite's files were never read.
 - **Reproduced:** Mutation run (module_path reverted to the candidate only): crates/axon-fabric/tests/check_effects.rs a_candidate_cannot_shadow_a_module_of_the_suite fails, the candidate's broken double judged PASSED by its own helper.ax. Found by independent G01 re-audit 2.
 - **Fix:** Suite runs get AXON_PATH = <run>/check:<run>/candidate (suite first) and the admission scan resolves modules in the same order. By inspection only (no microVM in the DEV environment, not executed): the Linux microVM path runs a single file and passes no module path, so a suite `mod` there should fail as unresolved rather than resolve from the candidate. (`169f0dd5`)
+
+### FG-053 — crates/axon-loop/src/pointer.rs (security, fixed)
+
+- **Claimed:** ADR-001 D3 (23824d8c): a protected scope activates a policy only on a protected-class evaluation.
+- **Reality:** The check lived only in check_activate and was skipped for any transition labelled mechanism_test; rollback never consulted it. A development-class evaluation therefore activated — and was served — in a protected scope as a mechanism-test fixture, and a dev-admitted policy came back by rollback after the scope was protected.
+- **Reproduced:** G01 independent re-audit 3 (wf_85472584), executed by two auditors in throwaway worktrees at 87273274: mechanism-test activation returned Ok with active_mechanism_test=true in a protected scope; pause-protect-rollback returned Ok with the dev-admitted policy active. Pinned by a_protected_scope_serves_no_mechanism_test_fixture and a_rollback_in_a_protected_scope_needs_a_protected_admission (mutations M17, M18).
+- **Fix:** protected_scope_gate runs on EVERY Activate/Rollback in a protected scope: no mechanism-test fixture is served; an admission-backed target needs a re-derived admission whose journalled evaluation is protected; the incumbent-of-record is exempt by design. Not covered (ADR §5 activation revalidation, pending): a policy already active when the scope is protected stays active until the next transition. (`e7cd36dc`)
+
+### FG-054 — crates/axon-loop/src/evl.rs (security, fixed)
+
+- **Claimed:** Intake and EVL apply the same verification rule (verify_check_evidence), so a verdict intake refuses cannot count in evaluation.
+- **Reality:** They shared the function but not its subject set: EVL's omitted the trial's observer. A check run as the observer principal, or a verdict issued by the observer as a trusted keyed verifier, was refused at intake and counted by EVL.
+- **Reproduced:** G01 independent re-audit 3 (clause auditor), executed at 87273274: EVL counted two verified passes and admitted; intake refused the same evidence. Pinned by a_check_run_as_the_observer_never_counts_at_either_door, whose EVL half forges intake records at the store level so only EVL's own rule can refuse (mutation M16).
+- **Fix:** judge uses subjects ∪ {observer} per trial for every subject check. Since 9465657c evaluation also reads only intaken episodes, so the production path refuses at intake first. (`e7cd36dc`)
+
+### FG-055 — scripts/loop_interop_gate.sh (reporting, fixed)
+
+- **Claimed:** FG-050 residual: on a single-uid host the signing key is protected by the closed-loop agent's tool scope, proven on real binaries by interop gate section 12.
+- **Reality:** Section 12 could not fail on a leak: its refusal grep ran over the whole provider request, whose system prompt and tool descriptions always contain 'denied'/'refus', and its leak check looked for the key's base64 only — a raw or hex leak passed unseen.
+- **Reproduced:** G01 independent re-audit 3 (cross-system reviewer), executed: with the scope guard absent the agent's bash returned the PKCS#8 bytes and all six section-12 assertions still passed. After the fix, the new positive control (no scope) must trip the detector; it failed on one fresh key until the detector learned to read JSON-wrapped tool output (2ea688dc).
+- **Fix:** Assertions read only tool_result blocks and require each tool's own refusal text; the detector probes every window of the key's SEED as hex, base64 at each alignment and decoded raw text, including string leaves of JSON-wrapped output (simulated over 5000 keys: 0 misses, 0 false positives); a positive control proves the detector sees a real leak. (`2a3cdeab`)
+
+### FG-056 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** G01 clause (4): what ran is what the operator pinned — the verifier's suite at a pinned version, never candidate bytes.
+- **Reality:** The receipt recorded check-suite:<id>@<version> only, and the check registry — whose `entry` chooses the file to run — is caller-named. Any other file of the pinned suite tree (for example a lenient test of the same name) ran under the same identity and its verdict verified.
+- **Reproduced:** G01 independent re-audit 3 (verdict adversary), reasoned from code at 87273274 (the gate's suite has one file). Pinned since by intake's refusal of a verdict recorded for another entry of the pinned version and Fabric's receipt test (mutation M43).
+- **Fix:** Fabric records check-suite:<id>@<version>#<entry> inside the signed receipt and its journal; verifier and task-acceptance pins name the entry exactly. (`c63d9cef`)
+
+### FG-057 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** A verdict the verifier signs depends only on the pinned interpreter, the pinned suite and the candidate.
+- **Reality:** Fabric's check process inherited the launcher's whole environment, and interpreter behaviour follows ambient AXON_* variables: AXON_STRICT=1 alone turns a passing check into no verdict.
+- **Reproduced:** Measured: axon test of a suite that drops a Result passes, and under AXON_STRICT=1 aborts with a type error. Pinned by the_launchers_environment_does_not_steer_a_signed_verdict through the real binary with AXON_STRICT=1 in its environment (mutation M44). Found by G01 independent re-audit 3.
+- **Fix:** Fabric's check executor runs from an empty environment (LocalInterpreterExecutor::with_clean_env): only the effect ceiling, the trial's cache dirs and the module path reach it. (`bfed1ace`)
 
