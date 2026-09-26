@@ -29,6 +29,10 @@
 //! axon-loop --store DIR evl     evaluate   --in evl-request.json
 //! axon-loop --store DIR admit              --in admit-request.json
 //! axon-loop             tel     summarize  --in tel-request.json
+//!                       (optional `price_schedule: {ref, document}` pins the
+//!                       schedule every usage/request must name — G10; optional
+//!                       `fabric_attempts: [{request, receipt}]` joins Fabric
+//!                       receipts per attempt ref, execution cost unknown — D10)
 //! axon-loop --store DIR intake  episode    --in sidecar.json --context FILE|DIR
 //!                                          --ack FILE|DIR [--projection FILE] [--source-episode FILE]
 //! ```
@@ -41,6 +45,7 @@
 //! the ack (G6). A non-null `projection_ref` requires `--projection`.
 
 use axon_loop::error::LoopError;
+use axon_loop::price::PinnedSchedule;
 use axon_loop::store::{contract_from_value, strict_record, Store};
 use axon_loop::{admission, evl, evo, intake, plan, pointer, tel};
 use axon_loop_contracts::{
@@ -57,6 +62,27 @@ use std::io::Read;
 struct TelRequest {
     schema: String,
     episodes: Vec<Value>,
+    /// The schedule every usage and request must name, pinned by content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    price_schedule: Option<TelSchedule>,
+    /// Fabric attempts to join per attempt ref. Requires `price_schedule`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fabric_attempts: Option<Vec<TelAttempt>>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TelSchedule {
+    #[serde(rename = "ref")]
+    reference: Ref,
+    document: Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TelAttempt {
+    request: Value,
+    receipt: Value,
 }
 
 struct Args {
@@ -249,9 +275,53 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                 let ep: LoopEpisode = contract_from_value(&format!("episodes[{i}]"), e)?;
                 eps.push(ep);
             }
-            let s = tel::summarize(eps.iter().map(|e| (&e.usage, Some(e.status))))?;
-            Ok(json!({"schema":"axon.loop.tel-summary/1","summary":s,
-                      "token_breakdown":"unavailable: Usage v1 has no token fields"}))
+            let items = || eps.iter().map(|e| (&e.usage, Some(e.status)));
+            let schedule = match &req.price_schedule {
+                Some(p) => Some(PinnedSchedule::pin(&p.reference, &p.document.to_string())?),
+                None => None,
+            };
+            match (schedule, &req.fabric_attempts) {
+                (None, Some(_)) => Err(LoopError::Refused(
+                    "fabric_attempts require a pinned price_schedule (G10)".into(),
+                )),
+                (Some(sched), Some(atts)) => {
+                    let mut attempts = Vec::new();
+                    for (i, t) in atts.iter().enumerate() {
+                        attempts.push(tel::FabricAttempt {
+                            request: contract_from_value(
+                                &format!("fabric_attempts[{i}].request"),
+                                &t.request,
+                            )?,
+                            receipt: contract_from_value(
+                                &format!("fabric_attempts[{i}].receipt"),
+                                &t.receipt,
+                            )?,
+                        });
+                    }
+                    let j = tel::join(&sched, items(), &attempts, 0)?;
+                    Ok(
+                        json!({"schema":"axon.loop.tel-summary/1","summary":j.summary,
+                              "fabric_join":{
+                                  "price_schedule_ref":j.price_schedule_ref,
+                                  "fabric_attempts":j.fabric_attempts,
+                                  "identical_duplicates":j.identical_duplicates,
+                                  "unjoined_attempt_refs":j.unjoined_attempt_refs,
+                                  "unreferenced_receipts":j.unreferenced_receipts,
+                                  "execution_cost_basis":j.execution_cost_basis},
+                              "token_breakdown":"unavailable: Usage v1 has no token fields"}),
+                    )
+                }
+                (schedule, None) => {
+                    if let Some(sched) = &schedule {
+                        for e in &eps {
+                            sched.check_usage(&e.usage)?;
+                        }
+                    }
+                    let s = tel::summarize(items())?;
+                    Ok(json!({"schema":"axon.loop.tel-summary/1","summary":s,
+                              "token_breakdown":"unavailable: Usage v1 has no token fields"}))
+                }
+            }
         }
         ["intake", "episode"] => {
             a.only(&["in", "context", "ack", "projection", "source-episode"])?;
