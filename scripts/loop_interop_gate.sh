@@ -579,11 +579,11 @@ EXE_DIGEST="acf1:$(python3 -c 'import json,sys,hashlib;print(hashlib.sha256(json
 jq -c --arg ex "$EXE_DIGEST" --arg sv "$SUITE_REF" '.verifier_pins = {"gate:independent-verifier": {
     registered_executable_ref: "axon-test-local", executable_digest: $ex,
     backend_profiles: ["process_scoped/local-interpreter"],
-    check_suites: [("check-suite:acceptance@" + $sv)] }}
+    check_suites: [("check-suite:acceptance@" + $sv + "#accept.ax")] }}
   | .task_acceptance = {
-    "task-pong": {check_suite: ("check-suite:acceptance@" + $sv), check: "t_ok_double"},
-    "task-fail": {check_suite: ("check-suite:acceptance@" + $sv), check: "t_bad"},
-    "task-none": {check_suite: ("check-suite:acceptance@" + $sv), check: "t_ok"} }' "$STORE/config.json" > "$STORE/config.json.tmp" \
+    "task-pong": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_ok_double"},
+    "task-fail": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_bad"},
+    "task-none": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_ok"} }' "$STORE/config.json" > "$STORE/config.json.tmp" \
   && mv "$STORE/config.json.tmp" "$STORE/config.json"
 # fabric_check_config <out> <filter> [argv0, default the operator's check:acceptance]
 fabric_check_config() {
@@ -1014,15 +1014,43 @@ tool_results() {
 key_leaked() {
   python3 - "$ISSUER_KEY" "$1" <<'PY'
 import base64, sys
+import json
 key = open(sys.argv[1], "rb").read()
-text = open(sys.argv[2], encoding="utf-8", errors="replace").read()
-hexs = key.hex()
-probes = [hexs[i:i + 32] for i in range(0, len(hexs) - 31, 2)]
+raw_text = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+# A tool may wrap its output in JSON (bash returns {"stdout": …}), where the
+# key's control bytes arrive escaped: search every string inside, decoded.
+texts = [raw_text]
+def leaves(v):
+    if isinstance(v, str):
+        texts.append(v)
+    elif isinstance(v, dict):
+        for x in v.values():
+            leaves(x)
+    elif isinstance(v, list):
+        for x in v:
+            leaves(x)
+for doc in [raw_text] + raw_text.splitlines():
+    try:
+        leaves(json.loads(doc))
+    except ValueError:
+        pass
+text = "\n".join(texts)
+# Probe only the SECRET: the 32-byte seed (bytes 16..48 of ring's PKCS#8 v1).
+# The header is constant across every Ed25519 key, so matching it proves
+# nothing; the public half is public.
+seed = key[16:48]
+hexs = seed.hex()
+probes = [hexs[i:i + 16] for i in range(0, len(hexs) - 15, 2)]
 for o in range(3):
-    b = base64.b64encode(key[o:]).decode()
-    probes += [b[i:i + 16] for i in range(0, len(b) - 20, 4)]
-raw = key.decode("utf-8", errors="replace")
-probes += [raw[i:i + 12] for i in range(len(raw) - 11) if raw[i:i + 12].count("\ufffd") <= 4]
+    b = base64.b64encode(key[16 + o:48]).decode()
+    probes += [b[i:i + 12] for i in range(0, len(b) - 15, 4)]
+raw = seed.decode("utf-8", errors="replace")
+# Raw text: a window identifies the seed by its SURVIVING characters, so the
+# longer the window the more replacement characters it may carry. A seed whose
+# lossy decoding keeps fewer than 4 characters leaks nothing identifiable raw.
+for w, fffd in ((8, 3), (16, 10), (len(raw), len(raw) - 4)):
+    probes += [raw[i:i + w] for i in range(len(raw) - w + 1)
+               if w > 0 and raw[i:i + w].count("\ufffd") <= fffd]
 sys.exit(0 if any(p and p in text for p in probes) else 1)
 PY
 }
