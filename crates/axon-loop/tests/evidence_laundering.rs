@@ -68,8 +68,8 @@ fn run(exp: &str, edit: impl FnOnce(&mut Value)) -> Run {
     let (adm, _) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
     let after = axon_loop::pointer::load(&w.s, &scope()).unwrap();
     (
-        c.verified_pass as u64,
-        c.assigned as u64,
+        c.verified_pass,
+        c.assigned,
         adm.decision,
         adm.reasons,
         before != after,
