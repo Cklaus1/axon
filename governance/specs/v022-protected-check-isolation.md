@@ -59,7 +59,7 @@ Existing findings are reclassified explicitly below, never hidden or downgraded.
 | 4 | Ambient module-path fallthrough (trial-cache `~/.axon/lib`, interpreter bindir) | fixed: `AXON_PATH_EXCLUSIVE` | FG-060; M53. Fabric does not probe that the pinned interpreter honours it (MINOR) |
 | 5 | Path-list injection into the module path (`:` in the state dir) | fixed | FG-059; M52 |
 | 6 | Candidate-controlled verifier environment | fixed: clean environment and applied empty ceiling | FG-057; M44, M55 |
-| 7 | Cross-frame `break` / `continue` | fixed: contained at every frame edge (functions, closures, predicates, handler arms) | FG-063/064/065; M58, M59 |
+| 7 | Cross-frame `break` / `continue` | fixed: contained at every frame edge (functions, closures, predicates, handler arms) | FG-063/064/065; M59 (M58 retired as equivalent) |
 | 8 | Cross-frame `return` | believed contained: `call_fn` ends a `Return` at the callee | not yet independently probed |
 | 9 | Refinement / predicate / attribute execution escaping into verifier control flow | fixed for loop control (7). Other effects of predicates are not yet assessed | FG-065 |
 | 10 | Effect-handler or closure escape | loop control contained (7). A candidate-defined NAMED handler used by the suite is not probed | — |

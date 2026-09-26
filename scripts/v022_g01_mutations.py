@@ -348,6 +348,25 @@ MUTATIONS = [
 ]
 
 
+# Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
+# candidate code must not alter what the operator's check runs or what PASS
+# means. Kept here so nothing is lost, but certified under PCI, not G01
+# (user decision 2026-09-26). M58 is equivalent since M59 (whole-call
+# containment) and is excluded from every scope's kill list.
+PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62"}
+RETIRED = {"M58"}
+
+
+def in_scope(mid, scope):
+    if mid in RETIRED:
+        return False
+    if scope == "g01":
+        return mid not in PCI_IDS
+    if scope == "pci":
+        return mid in PCI_IDS
+    return True
+
+
 def sh(cmd):
     return subprocess.run(cmd, cwd=ROOT, shell=True, capture_output=True, text=True)
 
@@ -387,8 +406,11 @@ def sha(path):
 
 
 def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: v022_g01_mutations.py OUT.json")
+    args = [a for a in sys.argv[1:] if not a.startswith("--scope=")]
+    scope = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--scope=")), "g01")
+    if len(args) != 1 or scope not in ("g01", "pci", "all"):
+        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|all] OUT.json")
+    sys.argv = [sys.argv[0], args[0]]
     dirty = sh("git status --porcelain -- crates").stdout.strip()
     if dirty:
         sys.exit(f"refused: uncommitted changes under crates/ — a mutation run is evidence about a commit\n{dirty}")
@@ -412,6 +434,8 @@ def main():
     results, ok = [], True
     baselines = {}
     for (mid, guard, rel, old, new, pkg, target, test) in MUTATIONS:
+        if not in_scope(mid, scope):
+            continue
         key = (pkg, target, test)
         if key not in baselines:
             baselines[key] = cargo_test(pkg, target, test)[0]
@@ -441,7 +465,8 @@ def main():
                          "target": target, "test": test, "baseline": base, "result": result,
                          "kill_evidence": evidence})
         print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}", flush=True)
-    doc = {"schema": "axon-v022-mutation-run/2", "gate": "G01", "commit": commit,
+    doc = {"schema": "axon-v022-mutation-run/2", "gate": "G01" if scope == "g01" else scope,
+           "scope": scope, "commit": commit,
            "toolchain": toolchain,
            "all_killed": ok, "mutations": results}
     with open(sys.argv[1], "w") as f:

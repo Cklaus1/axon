@@ -6,6 +6,15 @@ trusted issuer lookup and bind profile/configuration/artifact/verifier revision;
 subject-generated, stale or cross-task evidence is rejected even if its JSON and hashes
 validate").
 
+**How this claim reads that statement (scoped, 2026-09-26).** "Subject-generated evidence" means
+evidence the subject MADE in place of the verifier's: a forged or replayed receipt, attestation,
+request, sidecar or intake record. That evidence is what this claim rejects. Candidate code
+influencing the verifier's OWN run is not evidence the subject generated; it is Protected Check
+Isolation, a separate prerequisite, not claimed here. Examples are shadowing suite definitions,
+escaping its frame, or ending the test early. Four consecutive final reviews (candidates 1-4)
+found blockers of that isolation kind and none of this kind. That is why the property was split
+out.
+
 It does not certify the rest of the G01 family. Each of those gates stays PARTIAL until its own
 clauses hold:
 - **G01-r22-registered-check** needs a "real protected host path"; the microVM emits no verdict
@@ -18,12 +27,17 @@ clauses hold:
 **Registration rule.** The candidate is frozen: exact Axon and MiCode SHAs, clean trees, this
 document. It is registered when all of the following hold:
 - every clause below has named evidence;
-- every mutation in `scripts/v022_g01_mutations.py` is killed at the frozen Axon SHA;
+- every mutation in the G01 scope of `scripts/v022_g01_mutations.py` (`--scope g01`) is killed
+  at the frozen Axon SHA;
 - the real-binary interop gate and the named MiCode G01 gates pass against the frozen pair;
 - one final independent re-audit of the frozen pair finds zero claim-level blockers.
 
 Nothing is edited during that review. Its findings are classified:
-- **BLOCKER:** directly falsifies a clause below, or a prerequisite it explicitly names.
+- **BLOCKER:** directly falsifies a clause below: authenticity, provenance or binding.
+- **PCI finding:** candidate code alters what the verifier's check executes or what PASS means.
+  It is recorded against Protected Check Isolation, which stays PARTIAL. It does not block G01,
+  because that property is explicitly not claimed here and protected readiness stays NOT READY
+  until it passes.
 - **MAJOR-ADJACENT:** a real defect outside this claim. It is recorded in the sweep and the
   false-green ledger, and it does not block.
 - **MINOR:** a proof, test or documentation weakness that does not falsify a clause.
@@ -59,8 +73,22 @@ History:
     (FG-065).
   - A candidate module redefined a suite helper's impl, `let` or refinement (FG-066).
   - Both are fixed in 2175cc1b. Candidate 5 is frozen after this.
+- Candidate 5 (axon 6e81b246) failed its own registration rule in the frozen proof run: 60/61,
+  M58 survived. M59's whole-call containment supersedes the body-level guard M58 mutates. The
+  candidate was judged literally, so no review ran and nothing was registered from it.
+- **Scoped (this version).** Per the user's decision, G01 is authenticity, provenance and binding
+  only. Protected Check Isolation is its explicit prerequisite. The isolation guarantees that
+  candidates 1-5 carried in clauses 2 and 4 now live in PCI, with their tests and mutations. This
+  version gets one new frozen certification.
 
 ## The claim
+
+**Scope: authenticity, provenance and binding, only.** The claim is that a verdict which counts
+was really produced and signed by the operator's trusted verifier, for exactly this task,
+trial, tree and pinned check, and was not replayed or substituted. It does NOT claim that the
+operator's check ran undisturbed by candidate code. That is the separate prerequisite
+**Protected Check Isolation** (`governance/specs/v022-protected-check-isolation.md`); see
+"Prerequisite" below.
 
 A verification verdict (passed or failed) counts toward evaluation, admission
 or promotion only if all of the following hold.
@@ -83,14 +111,8 @@ or promotion only if all of the following hold.
    - this process produced the receipt. A replay is never signed, because the journal path is
      the caller's.
    - the workload could not read the key: it ran in the protected microVM, or its admitted grant
-     gives it no effect at all.
-   - the check ran from an empty environment, apart from the ceiling, the trial caches and the
-     module path. The empty ceiling is applied by the executor, not merely intended.
-   - its modules resolved ONLY from the suite and the candidate (`AXON_PATH_EXCLUSIVE`), never
-     from the trial cache's `~/.axon/lib` or the interpreter's own library; a state dir that
-     would split the module path (a `:`) is refused before anything is written. The candidate
-     and the suite hold plain files and directories only: a tree containing a symbolic link is
-     refused before launch, so no link can lead a module lookup out of the tree.
+     gives it no effect at all. The empty ceiling is applied by the executor, not merely
+     intended.
 3. **The verifier is trusted and independent.** Evaluation is the only door where a verdict
    counts, and it judges by this subject set:
    - the trial's observer;
@@ -105,23 +127,15 @@ or promotion only if all of the following hold.
    - the verifier revision (executable and digest) and its compute profile;
    - exactly one suite identity, `check-suite:<id>@<version>#<entry>`, pinned for that verifier;
    - the task's own registered acceptance check: that suite identity plus the exact test name.
-   - that test counts as passed only if it COMPLETED. Loop control never leaves the frame it was
-     written in. A `break`/`continue` that reaches the edge of any of these is a failure at that
-     edge:
-     - a function call (parameter and return refinements included);
-     - a closure call;
-     - a refinement or `@[verify]` predicate;
-     - an effect-handler arm.
 
-     It can neither unwind the test nor end a loop the operator's test owns.
-   - every definition in the merged program is unique: fn, type, enum, module, module-level
-     `let`, named refinement and trait impl (E0002). A candidate module cannot displace a
-     suite helper's definition.
+   The requester chooses neither the test, nor the version, nor the entry file. No
+   repository-controlled configuration source (MiCode project TOML, or a `.env` discovered from
+   the working directory) may set `axon.*`, so the judged repository cannot choose its own
+   verifier configuration.
 
-   The requester chooses neither the test, nor the version, nor the entry file. The suite's own
-   modules resolve before the candidate's. No repository-controlled configuration source (MiCode
-   project TOML, or a `.env` discovered from the working directory) may set `axon.*`, so the
-   judged repository cannot choose its own verifier configuration.
+   Whether the pinned check then ran as the operator wrote it is PCI, not this clause. That
+   covers candidate code shadowing suite modules or definitions, escaping its frame, or ending
+   the test early.
 5. **The semantic joins hold.**
    - The identity join covers task, trial, attempt, operation and execution.
    - The request tree, the receipt's input, the sidecar's verified tree and the episode's output
@@ -147,14 +161,29 @@ or promotion only if all of the following hold.
      the key id.
    - The intake record names the attestation and key that authenticated it.
 
+## Prerequisite: Protected Check Isolation (not claimed here)
+
+An authentic, correctly bound verdict is trustworthy for protected use only if the check it
+reports also ran without candidate influence. That is Protected Check Isolation, a separate gate
+whose status is **PARTIAL**. Accordingly:
+- **Overall protected-verifier readiness is NOT READY** until PCI passes, whatever G01's status.
+- Any protected-verifier or promotion claim must cite both G01 and PCI. G01 alone is never
+  sufficient protected verification.
+- No admission or release logic reads a gate registration today, and a protected scope requires
+  protected (microVM) evidence that no real producer emits yet (Known gaps). So registering G01
+  does not make any protected promotion reachable.
+
+The isolation fixes made during G01's reviews are recorded under PCI, with their tests and
+mutations: FG-052, FG-057, FG-059, FG-060, FG-062, FG-063, FG-064, FG-065 and FG-066.
+
 ## Evidence
 
 | Clause | Tests (unit/integration) | Mutations | Real binaries (`loop_interop_gate.sh`) |
 |---|---|---|---|
 | 1 | `attestation.rs` unit tests; `intake.rs` authenticated, each-rule and one-scope tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 M54 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
-| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 M57 | §8 (2): effectful grant withheld; replay unsigned |
+| 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal and applied-ceiling tests | M01 M40–M42 M55 | §8 (2): effectful grant withheld; replay unsigned |
 | 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
-| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M58–M62 | §8 (4): another pinned revision refused; task and filter pin cases |
+| 4 | `intake.rs` pinned, task-only, two-version and entry tests; MiCode `config` closure tests | M06 M07 M26–M30 M43 M47 | §8 (4): another pinned revision refused; task and filter pin cases |
 | 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
 | 6 | `protected_class.rs` (including a protected-class mechanism fixture and rollback revalidation) | M11–M13 M17–M20 M51 | not exercised (see gaps) |
 | 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 M48 | §8 (7): the record names the key id and the stored attestation |
@@ -199,10 +228,6 @@ TOML or `.env` may set `axon.*` (`config`).
   journal re-runs and re-signs an operation already run elsewhere. Uniqueness per attempt comes
   from intake's identity rule, which records one set of bytes per trial identity, not from
   Fabric.
-- **Unshipped suite modules fall through to the candidate.** A `mod` the operator's suite
-  declares but does not ship resolves from the candidate. Suite completeness is the operator's
-  registration duty; the suite's own modules always win (FG-052).
-
 ## Known gaps (not claimed; tracked)
 
 - **No real protected verdict exists yet.** The Linux microVM profile emits no suite verdict
@@ -224,21 +249,6 @@ TOML or `.env` may set `axon.*` (`config`).
 - **Pins are checked when the verdict is authenticated.** Verifier pins and task acceptance
   (clause 4) are checked at intake and evaluation, not re-checked at admission. Withdrawing a pin
   later does not retract an evaluated verdict, whereas untrusting or re-keying the verifier does.
-- **The admission scan does not see `use a::b`.** Such an import loads a module without a `mod`
-  line. Resolution is confined to the suite and candidate (clause 2), and the empty ceiling
-  denies effects at run time, so the scan is not the barrier.
-- **Interpreter-side guards need a rebuilt binary.** Fabric tests execute the built `axon`
-  interpreter. The mutation driver builds it once, so interpreter guards are mutated through their
-  unit tests (M56). A pinned interpreter older than `AXON_PATH_EXCLUSIVE` would not honour it;
-  Fabric does not probe that capability.
-- **Two other test-semantics hazards are MAJOR-ADJACENT (candidate-2 review), not claimed.**
-  - A candidate's `exit(0)` counts as a clean pass whenever the grant allows IO. Every locally
-    signable check has an empty ceiling, and `exit` needs IO, so no signed verdict can arise from
-    it today. It must be closed before the microVM produces suite verdicts.
-  - A test that returns `Err`, for example via `?` over the candidate's output, counts as a
-    pass. That depends on how the operator's own suite is written.
-
-  Both are tracked in the sweep.
 - **An untested legacy guard.** A counted verdict in an evaluation from before verdict citation
   is refused at admission, but no test drives that legacy shape.
 - **Learning inputs are outside G01.** EVO `propose` reads caller-supplied episodes and trusts a
@@ -248,14 +258,10 @@ TOML or `.env` may set `axon.*` (`config`).
   applies with or without the closed-loop scope. Only the bash row exercises the scope. MiCode's
   closed-loop tool denial is a denylist (`bash`, `run_code`, `run_tests`, `check`), so a future
   tool that shells out must be added to it.
-- **Parser hardening is pending.** The verdict is parsed from merged stdout and stderr. Under the
-  empty ceiling, candidate code cannot print, and a failing named test's own result line cannot
-  be suppressed, so a fail cannot become a pass (reasoned, not executed). A dedicated result
-  channel is still pending.
-- **Equivalent mutants.** Two guards are documented where they stand, and neither is in the
-  kill list:
-  - No test can make EVL's cited-only-if-counted filter (X23) fire alone.
-  - The test runner's escaped-`break` arm (M56, retired) cannot be reached since `call_fn`
-    stops loop control at every function boundary (M58). Re-audit 4 showed X18, the intake
-  role-upgrade rule, is not equivalent. It is the only intake guard for that case, and is now
+- **Isolation matters are PCI's.** Test-completion semantics (`exit(0)`, an `Err`-returning test),
+  module and definition confinement, the admission scan, parser hardening and interpreter-side
+  guards are tracked in `governance/specs/v022-protected-check-isolation.md`, not here.
+- **Equivalent mutants.** No test can make EVL's cited-only-if-counted filter (X23) fire alone;
+  it is documented where it stands and is not in the kill list. Re-audit 4 showed X18, the
+  intake role-upgrade rule, is not equivalent: it is the only intake guard for that case, and is
   M45.
