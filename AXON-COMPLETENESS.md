@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 46 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 47 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -533,4 +533,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The supervisor is a background job of a non-interactive shell, so every managed job and its descendants inherited SIGINT and SIGQUIT as IGNORED (SigIgn 0x6). A test asserting that Ctrl+C ends a process could not pass under the gate, and any behaviour depending on a default SIGINT/SIGQUIT was measured under a disposition no user ever has.
 - **Reproduced:** bash -c 'setsid <test> &': MiCode signals_still_end_onboarding_after_the_key_prompt fails ('SIGINT ... did not end MiCode'); in the foreground it passes. A managed child's /proc/self/status showed SigIgn 0000000000000006.
 - **Fix:** The job is exec'd through env --default-signal=INT,QUIT (python3 shim fallback; refused where neither exists). managed_run_gate check 3h asserts default SIGINT/SIGQUIT in a job and its grandchild; the pre-fix launch fails it. Found by the v0.22 Stage-5 paired verification (MiCode suite harness). (`f3c44208`)
+
+### FG-048 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** Fabric dispatches only under an authority epoch it has read from the operator's axon-loop store, at submit and again at the dispatch recheck; a store it cannot read is treated as stale.
+- **Reality:** The epoch was read through axon_loop::Store::open_dir, which CREATES a missing root, and a store with no pointer answers epoch 0. An absent, unmounted or mistyped store therefore became a fresh store at epoch 0 and authorized every request expecting 0.
+- **Reproduced:** Move the configured loop store away and submit a request with --expected-epoch 0: the check ran and a completed receipt was returned, both at submit and when the store disappeared between submit and dispatch (tests/peer_failure_matrix.rs, before the fix).
+- **Fix:** The epoch source requires the store to exist and be configured (config.json) and otherwise refuses: StaleEpoch at submit with nothing journalled, a released cancel at dispatch. Mutation: without the check, 2/5 peer-failure tests fail. Found building the B280 G16-r22-peer-failure-matrix. (`1595a2fe`)
 

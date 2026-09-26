@@ -2123,6 +2123,17 @@
       "status": "fixed",
       "severity": "correctness",
       "commit": "f3c44208"
+    },
+    {
+      "id": "FG-048",
+      "where": "crates/axon-fabric/src/submit.rs",
+      "claimed": "Fabric dispatches only under an authority epoch it has read from the operator's axon-loop store, at submit and again at the dispatch recheck; a store it cannot read is treated as stale.",
+      "reality": "The epoch was read through axon_loop::Store::open_dir, which CREATES a missing root, and a store with no pointer answers epoch 0. An absent, unmounted or mistyped store therefore became a fresh store at epoch 0 and authorized every request expecting 0.",
+      "reproduced": "Move the configured loop store away and submit a request with --expected-epoch 0: the check ran and a completed receipt was returned, both at submit and when the store disappeared between submit and dispatch (tests/peer_failure_matrix.rs, before the fix).",
+      "fix": "The epoch source requires the store to exist and be configured (config.json) and otherwise refuses: StaleEpoch at submit with nothing journalled, a released cancel at dispatch. Mutation: without the check, 2/5 peer-failure tests fail. Found building the B280 G16-r22-peer-failure-matrix.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "1595a2fe"
     }
   ]
 }
