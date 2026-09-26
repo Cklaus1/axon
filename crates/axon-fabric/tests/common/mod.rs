@@ -435,6 +435,9 @@ pub fn qualified_linux_cfg(dir: &Path, issuer: &Issuer, evidence: &Value) -> Lin
 /// A stand-in for `scripts/fc_linux_profile.sh` that writes the documented
 /// `axon-linux-microvm-result/1` shape and appends to `<out_root>/launches`
 /// each time it is actually run (so "the launcher never ran" is checkable).
+/// It also records what the Fabric handed it: its argv, one line per run, in
+/// `<out_root>/argv`, and a copy of the `--policy FILE` contents in
+/// `<out_root>/delivered-policy.json` (absent when no `--policy` was given).
 pub fn stand_in_launcher(
     env: &Env,
     exit: i32,
@@ -448,10 +451,14 @@ pub fn stand_in_launcher(
     let body = format!(
         r#"#!/bin/sh
 if [ "$1" = "--verify-result" ]; then exit {verify_exit}; fi
+ARGV="$*"
 OUT=""
-while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
+POLICY=""
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; --policy) POLICY="$2"; shift 2;; *) shift;; esac; done
 mkdir -p "$OUT/out"
 echo launched >> "$OUT/../launches"
+echo "$ARGV" >> "$OUT/../argv"
+if [ -n "$POLICY" ]; then cat "$POLICY" > "$OUT/../delivered-policy.json"; fi
 cat > "$OUT/result.json" <<J
 {{"schema":"axon-linux-microvm-result/1","status":"x","workload_exit":0,
  "output_bound":{bound},"outputs":{{"stdout":{{"sha256":"ab","bytes":1}}}},
