@@ -232,6 +232,70 @@ python3 -B scripts/cortex_honesty_invariant.py --pkg "$PKG" --execution-registry
   --also-known docs/axon_cortex_v0_15/axon-cortex-build-v0_15 \
   || note_fail "honesty invariant (gate_manifest / task_manifest vs $REGISTRY)"
 
+# ── 2b. pack coherence the package validator does not check (stdlib) ─────────
+# G00-r22-pack-integrity asks that "every new task/gate has a source-derived or
+# explicitly proposed rationale and execution recipe". tools/validate_package.py
+# checks the manifests, owner exports, dependency closures, generated views,
+# parent bytes and Fabric bytes (stage 3), but NOT this clause: it never reads
+# a requirement's `basis` or the acceptance text in build/WORK_PACKAGES_V022.md.
+# It trips on such an edit only INCIDENTALLY (stale AXON_CORTEX_MASTER.md view,
+# owner-export digest), and both are regenerable. Measured on a scratch copy:
+# B284's acceptance line for G00-r22-pack-integrity deleted AND B284's basis
+# blanked, then the owner-export lock re-digested, the views regenerated
+# (package_views.py --write), the sums resealed and the pins moved — validator
+# PASS, 567-test suite PASS, gate PASS. So it is checked here: each of the 32 r22 work
+# packages has a requirement row with a non-empty basis and a WORK_PACKAGES
+# section carrying a numbered implementation sequence (the recipe) and, for
+# every gate target, the gate's manifest text verbatim; every r22 gate is owned
+# by exactly such a section.
+echo "── cortex v0.22: pack coherence (every r22 task/gate has rationale + recipe) ──"
+python3 -B - "$PKG" <<'PY' || note_fail "pack coherence (r22 rationale / execution recipe)"
+import json, os, re, sys
+pkg = sys.argv[1]
+ld = lambda n: json.load(open(os.path.join(pkg, n), encoding="utf-8"))
+gd = {g["id"]: g for g in ld("gate_manifest.json")["gates"]}
+new = {t["id"]: t for t in ld("integration/V022_WORK_PACKAGES.json")["tasks"]}
+reqs = ld("integration/V022_REQUIREMENTS.json")["requirements"]
+wp = open(os.path.join(pkg, "build/WORK_PACKAGES_V022.md"), encoding="utf-8").read()
+sections = {m.group(1): m for m in re.finditer(r"^## (B\d+) — .*$", wp, re.M)}
+starts = sorted(m.start() for m in sections.values()) + [len(wp)]
+body = {tid: wp[m.start():starts[starts.index(m.start()) + 1]] for tid, m in sections.items()}
+err, covered = [], set()
+if len(new) < 32: err.append(f"NON-VACUITY: {len(new)} r22 work packages < 32")
+basis = {}
+for r in reqs: basis.setdefault(r.get("task"), []).append((r.get("basis") or "").strip())
+for tid, t in sorted(new.items()):
+    if not basis.get(tid) or not all(basis[tid]): err.append(f"{tid}: requirement row missing or empty `basis` (rationale)")
+    sec = body.get(tid)
+    if sec is None: err.append(f"{tid}: no '## {tid} — …' section in build/WORK_PACKAGES_V022.md"); continue
+    rec = sec.split("### Implementation sequence", 1)
+    if len(rec) < 2 or not re.search(r"^1\. \S", rec[1].split("\n### ", 1)[0], re.M):
+        err.append(f"{tid}: no numbered '### Implementation sequence' (execution recipe)")
+    for gid in t["gate_targets"]:
+        g = gd.get(gid)
+        if g is None: err.append(f"{tid}: gate target {gid} not in gate_manifest.json"); continue
+        if f"**{gid}** — {g['description']}" not in sec:
+            err.append(f"{tid}: acceptance line for {gid} missing or differs from the manifest text")
+        else: covered.add(gid)
+r22 = {g for g in gd if "-r22-" in g}
+for gid in sorted(r22 - covered): err.append(f"{gid}: no work-package section carries its acceptance text")
+if len(r22) < 80: err.append(f"NON-VACUITY: {len(r22)} r22 gates < 80")
+if err:
+    print("  pack coherence FAILED:"); [print("   ", e) for e in err[:20]]; sys.exit(1)
+print(f"  {len(new)} r22 work packages: basis + numbered recipe + verbatim acceptance text; {len(covered)}/{len(r22)} r22 gates covered")
+PY
+
+# G00-r22-package-gate-upgrade: "an older vendored pack is retained until
+# references migrate deliberately". Checked, not assumed: the v0.15 pack and its
+# gate must still exist and scripts/gate.sh must still invoke that gate.
+OLD_PKG="docs/axon_cortex_v0_15/axon-cortex-build-v0_15"
+if [ ! -f "$OLD_PKG/SHA256SUMS_v0_15.json" ] || [ ! -x scripts/cortex_package_gate.sh ] \
+   || ! grep -qE '^[^#]*\./scripts/cortex_package_gate\.sh' scripts/gate.sh; then
+  note_fail "the older v0.15 pack or its gate is no longer retained and invoked (G00-r22-package-gate-upgrade)"
+else
+  echo "  older pack retained: $OLD_PKG, gated by scripts/cortex_package_gate.sh (invoked by scripts/gate.sh)"
+fi
+
 # Resolve the pinned interpreter once; the validator prefers it too.
 has_pin() { "$1" -B -c "import importlib.metadata as m, sys; sys.exit(0 if m.version('jsonschema') == '$PINNED_JSONSCHEMA' else 1)" 2>/dev/null; }
 VENV="$TGT/cortex-v022-venv"
@@ -375,4 +439,7 @@ if [ ${#FAILURES[@]} -gt 0 ]; then
   exit 1
 fi
 VAL="validator PASS"; [ "${VAL_SKIPPED:-0}" = 1 ] && VAL="validator SKIPPED"
-echo "$NAME: PASS — integrity pinned + both directions, honesty holds, $VAL; offline suite: $SUITE"
+# The scope is part of the verdict (G00-r22-honest-status): an offline pass here
+# is documentation/reference conformance, not a product gate.
+echo "  scope: package conformance only — 0 product gates executed; NOT Rust implementation, physical backend evidence, real MiCode interoperability or measured self-improvement"
+echo "$NAME: PASS — integrity pinned + both directions, honesty holds, coherence holds, $VAL; offline suite: $SUITE"
