@@ -311,6 +311,16 @@ MUTATIONS = [
      '        if let Some(c) = &self.limits.effect_ceiling {\n            cmd.env("AXON_ALLOWED_EFFECTS", c);',
      '        if let Some(c) = self.limits.effect_ceiling.as_ref().filter(|c| !c.is_empty()) {\n            cmd.env("AXON_ALLOWED_EFFECTS", c);',
      'axon-fabric', '--test attestation', 'the_empty_ceiling_is_applied_not_just_intended'),
+    ('M56', 'interpreter: an escaped break/continue does not pass a test',
+     'crates/axon-core/src/interp.rs',
+     '        Err(Flow::Break) | Err(Flow::Continue) => Err(\n            "a `break`/`continue` escaped a function and unwound the test before it completed"\n                .to_string(),\n        ),',
+     '        Err(Flow::Break) | Err(Flow::Continue) => Ok(()),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_does_not_pass_a_test'),
+    ('M57', 'Fabric: a candidate holding a symlink is refused',
+     'crates/axon-fabric/src/submit.rs',
+     '    refuse_links(\n        cv.entries\n            .iter()\n            .map(|e| (e.path.as_str(), e.mode == workspace::MODE_LINK)),\n        "the candidate",\n    )?;',
+     '    let _ = &cv;',
+     'axon-fabric', '--test check_effects', 'a_candidate_holding_a_symlink_is_refused'),
 ]
 
 

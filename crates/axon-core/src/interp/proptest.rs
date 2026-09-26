@@ -88,8 +88,15 @@ pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(),
     match interp.call_fn(f, args.to_vec()) {
         Ok(_) => Ok(()),
         Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m),
-        // A stray return/exit is treated as a pass (the assert didn't fire).
-        Err(_) => Ok(()),
+        // A `return` or `exit(0)` is a clean finish.
+        Err(Flow::Return(_)) | Err(Flow::Exit(0)) => Ok(()),
+        // A `break`/`continue` escaping a function unwound the property
+        // before its assertions ran: not a pass (v0.22 G01 final re-audit).
+        Err(Flow::Break) | Err(Flow::Continue) => Err(
+            "a `break`/`continue` escaped a function and unwound the property before it completed"
+                .to_string(),
+        ),
+        Err(other) => Err(super::flow_to_msg(other)),
     }
 }
 

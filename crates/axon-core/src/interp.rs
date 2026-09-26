@@ -2574,8 +2574,21 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         Err(Flow::MultiShotUnsound(m)) => Err(m),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
-        // A stray return/break/continue escaping the fn — treat as clean.
-        Err(_) => Ok(()),
+        // `return` from the test fn itself is a clean finish.
+        Err(Flow::Return(_)) => Ok(()),
+        // A `break` / `continue` (or an effect-handler completion) that
+        // escapes a function unwinds the test BEFORE its assertions ran: the
+        // test did not complete, so it did not pass. It used to count as
+        // clean, which let a candidate's function end the operator's
+        // acceptance test early and have Fabric sign a pass (v0.22 G01 final
+        // re-audit, executed).
+        Err(Flow::Break) | Err(Flow::Continue) => Err(
+            "a `break`/`continue` escaped a function and unwound the test before it completed"
+                .to_string(),
+        ),
+        Err(Flow::HandlerDone(_)) => {
+            Err("an effect handler completed outside its handled computation".to_string())
+        }
     }
 }
 
@@ -4125,6 +4138,25 @@ fn interp_eval_coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    /// v0.22 G01 final re-audit: a `break` escaping a function called by a
+    /// test used to count as a clean pass, so candidate code could end an
+    /// acceptance test before its assertion ran. It is a failure now; a test
+    /// that completes still passes.
+    #[test]
+    fn an_escaped_break_or_continue_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        assert!(run_test_fn(&prog, "t_break").is_err());
+        assert!(run_test_fn(&prog, "t_continue").is_err());
+        assert!(run_test_fn(&prog, "t_ok").is_ok());
+    }
     use super::*;
 
     fn run(src: &str) -> i32 {

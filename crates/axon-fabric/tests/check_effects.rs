@@ -711,3 +711,95 @@ fn a_check_loads_no_module_from_outside_the_suite_and_the_candidate() {
         sub.reason
     );
 }
+
+/// v0.22 G01 final re-audit blocker (executed): a `break`/`continue` escaping
+/// a candidate function unwound the operator's acceptance test before its
+/// assertion ran, and the interpreter counted that as a PASS — so Fabric
+/// signed a pass for a candidate the suite fails. The test did not complete,
+/// so it did not pass. Positive control: the honest candidate passes.
+///
+/// Mutation: treat an escaped break/continue as clean again → red.
+#[test]
+fn an_escaped_break_does_not_pass_the_operators_test() {
+    let (s, r) = suite_with_helper(&[(
+        "f.ax",
+        "fn double(n: i64) -> i64 {\n    if n > 0 { break }\n    n * 0\n}\n",
+    )]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_ne!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+    let (s, r) = suite_with_helper(&[]);
+    let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        sub.reason
+    );
+}
+
+/// v0.22 G01 final re-audit blocker (executed): import checks a symlink's
+/// target LEXICALLY, so a chain — `z/a/b -> ../..`, then `f/h.ax` through it —
+/// stays "inside" the tree on paper and lands outside it once materialized.
+/// The candidate's `use f::h` then loaded a module planted in the state dir,
+/// and Fabric signed the pass. A check now refuses any tree holding a link,
+/// before anything is launched. Positive control: the same candidate with a
+/// real f/h.ax passes (a_check_loads_no_module_from_outside_the_suite_and_the_candidate).
+///
+/// Mutation: drop the candidate's link refusal in `check_suite_target` → red.
+#[cfg(unix)]
+#[test]
+fn a_candidate_holding_a_symlink_is_refused() {
+    let s = with_suite(
+        "mod f\nmod helper\nuse f.{double}\nuse helper.{want}\n\n\
+         @[test]\nfn hidden_completion() { assert_eq(double(21), want()) }\n",
+        "hidden",
+    );
+    std::fs::write(s.suite_root.join("helper.ax"), "fn want() -> i64 { 42 }\n").unwrap();
+    let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut reg: Value =
+        serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+    reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+    std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+    let ws = &s.env.ws;
+    std::fs::write(
+        ws.join("f.ax"),
+        "use f::h\n\nfn double(n: i64) -> i64 { d2(n) }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(ws.join("z/a")).unwrap();
+    std::fs::create_dir_all(ws.join("f")).unwrap();
+    std::os::unix::fs::symlink("../..", ws.join("z/a/b")).unwrap();
+    std::os::unix::fs::symlink("../z/a/b/../../../plant/h.ax", ws.join("f/h.ax")).unwrap();
+    let cfg = s.env.cfg(0);
+    // The planted module: three levels above the materialized candidate.
+    std::fs::create_dir_all(cfg.state_dir.join("plant")).unwrap();
+    std::fs::write(
+        cfg.state_dir.join("plant/h.ax"),
+        "fn d2(n: i64) -> i64 { n * 2 }\n",
+    )
+    .unwrap();
+    // Import accepts the chain (its check is lexical) — that is the hole.
+    let candidate = WorkspaceStore::open(&cfg.state_dir, &tenant())
+        .unwrap()
+        .import_dir(ws, &Quota::default())
+        .expect("import accepts the link chain");
+    let s = Suite {
+        candidate,
+        suite_ref,
+        ..s
+    };
+    let r = suite_request(&s, "op-link");
+    let e = submit(&r.to_string(), &s.env.cfg(0)).unwrap_err();
+    assert_eq!(e.kind(), "malformed", "{e}");
+    assert!(e.to_string().contains("symbolic link"), "{e}");
+    assert_untouched(&s.env, "candidate with a symlink");
+}

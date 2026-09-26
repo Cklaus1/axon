@@ -671,6 +671,12 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
     let v = store
         .load(&version)
         .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    refuse_links(
+        v.entries
+            .iter()
+            .map(|e| (e.path.as_str(), e.mode == workspace::MODE_LINK)),
+        "the candidate",
+    )?;
     if !v
         .entries
         .iter()
@@ -690,6 +696,27 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
         bound: Bound::Version { version, dir },
         suite: None,
     })
+}
+
+/// A check Fabric may vouch for runs over plain files and directories only.
+/// Import checks a link's target LEXICALLY, and a chain of links (one to a
+/// parent, the next through it) resolves outside the tree once materialized —
+/// so a candidate could make its modules load from the trial cache or any
+/// absolute path, and the same tree ref pass or fail on bytes outside it
+/// (v0.22 G01 final re-audit, executed). Refused before anything is launched.
+fn refuse_links<'a>(
+    paths: impl Iterator<Item = (&'a str, bool)>,
+    what: &str,
+) -> Result<(), SubmitError> {
+    for (path, is_link) in paths {
+        if is_link {
+            return Err(SubmitError::Malformed(format!(
+                "{what} holds a symbolic link ({path}): a check runs only over plain files, so \
+                 nothing outside the tree can decide its verdict"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// `argv = ["check:<id>", filter?]`: the operator-registered check suite
@@ -722,8 +749,26 @@ fn check_suite_target(
             "check suite `{id}` judges a published WorkspaceVersion; {cand} is not one"
         )));
     }
+    let cv = store
+        .load(cand)
+        .map_err(|e| SubmitError::Conflict(e.to_string()))?;
+    refuse_links(
+        cv.entries
+            .iter()
+            .map(|e| (e.path.as_str(), e.mode == workspace::MODE_LINK)),
+        "the candidate",
+    )?;
     let tree = WorkspaceTree::import_dir(&c.root, &Quota::default())
         .map_err(|e| SubmitError::Unregistered(format!("check suite `{id}` refused: {e}")))?;
+    refuse_links(
+        tree.entries().iter().map(|e| {
+            (
+                e.path.as_str(),
+                matches!(e.kind, workspace::EntryKind::Symlink),
+            )
+        }),
+        &format!("check suite `{id}`"),
+    )?;
     if tree.reference().as_str() != c.workspace_version_ref {
         return Err(SubmitError::Unregistered(format!(
             "check suite `{id}` is {} on disk, not the registered {}",
