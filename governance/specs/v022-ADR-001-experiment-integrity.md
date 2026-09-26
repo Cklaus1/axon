@@ -1,8 +1,8 @@
 # v0.22 ADR-001 — Experiment-integrity architecture: authority, isolation, admission, producer fidelity
 
-Status: **PROPOSED — operator decisions required (§6).** Nothing here unblocks CX-21 /
-CODING-STRATEGY-001, which stays **PREREGISTERED / NOT_RUN** until every prerequisite in §7
-is proven by executable, discriminating evidence.
+Status: **ACCEPTED 2026-09-26 — operator decisions D1-D6 recorded in §6.** Acceptance does
+not unblock CX-21 / CODING-STRATEGY-001, which stays **PREREGISTERED / NOT_RUN** until every
+prerequisite in §7 has executable, discriminating evidence. Stage 7 likewise.
 
 Date: 2026-09-26. Inputs (preserved, read-only runs):
 - the 80-gate audit `wf_f213aa49`: `.axon-v022/sweep/audit_wf_f213aa49.json` (raw findings; counts
@@ -130,16 +130,19 @@ execute, unless a toolchain guest is qualified. That is a preregistration amendm
   more willing to ACCEPT. Today's economics are fail-safe by accident (both arms must be Known,
   and MiCode emits `estimated`).
 
-## 6. Operator decisions required
+## 6. Operator decisions (recorded 2026-09-26)
 
-| id | decision | recommended |
+| id | decision | ruling |
 |---|---|---|
-| D1 | Host hardening for protected mode: disable WSL interop (`/etc/wsl.conf [interop] enabled=false`, restart WSL); run agents and MiCode as a non-root uid outside `docker`/`sudo`/`adm`; create custodian (`axon-fabric`), verifier (`axon-verifier`) and per-arm trial uids | yes: without it, no protected claim holds on this host |
-| D2 | Adopt the Option-C authority hybrid (§3) | yes |
-| D3 | The local backend is development-only; only the microVM is protected-eligible (§4) | yes |
-| D4 | CX-21 preregistration amendment: restrict the first protected run to guest-executable task families; economics `report_only` until metered receipts exist | yes |
-| D5 | The operator generates and holds the root, admitter and qualification keys (agents never create or hold them), and signs the B263 evidence (S3-6) | required |
-| D6 | Deployment shape for the custodian: a systemd socket-activated unit vs a manual launch | socket-activated |
+| D1 | Host hardening | **APPROVED, as profile separation.** The existing root-equivalent WSL environment is NOT made protected. **DEV**: WSL allowed, sudo/docker/root-equivalent tooling allowed, local backend allowed, **no protected or promotion claims**. **PROTECTED**: a dedicated Linux control boundary (a separate VM/host, not this WSL session); WSL interop disabled or absent; agents run as non-root identities without sudo/docker authority; separate custodian, verifier and admission identities; protected trials execute through the qualified microVM backend. |
+| D2 | Authority | **APPROVED: the hybrid.** An operator-owned custodian issues connection-bound capabilities. Design for attestation epoch and nonce/freshness, but **freeze the authority interface before building key-rotation machinery**. Caller-supplied paths, registries, principals or grants must never define the authority the caller is judged against. |
+| D3 | Local backend | **APPROVED.** DEVELOPMENT-ONLY: ineligible for protected CX-21 trials, admission evidence, promotion qualification, and security/isolation claims. The protected microVM profile is the protected-eligible path. |
+| D4 | CODING-STRATEGY-001 v1 | **APPROVED.** Initial protected tasks are restricted to task families executable under the qualified guest/Fabric model. Collect every available economic/resource measurement (wall time, tokens, model calls, retries, tool calls, Fabric execution, verification overhead); **monetary economics are REPORT-ONLY** until complete metered attempt receipts exist. **UNKNOWN cost never becomes zero.** Expand after the protected infrastructure and metering mature. |
+| D5 | Keys | **APPROVED.** The operator retains every private root, admission, qualification and B263 evidence key. Agents may receive only public keys, key ids/fingerprints, canonical unsigned payloads and the resulting signatures. No private key material reaches Claude, MiCode, candidate workspaces or guest execution. B263 remains pending the operator's signature. |
+| D6 | Custodian deployment | **Profile-specific.** PROTECTED: a systemd socket-activated custodian (e.g. `/run/axon/custodian.sock`, owner `axon-custodian`, group `axon-client`); the service, socket and authority material are OS-owned and cannot be replaced or modified by ordinary agents. DEVELOPMENT: a manual launch (e.g. `--dev`) is supported for debugging and tests only. |
+
+Governing rule: *implementation says fixed ≠ gate registered*. Implementation, then mutation, then
+real interop, then independent re-audit, then registration.
 
 ## 7. Prerequisites before any protected experiment (user-set, 2026-09-26)
 
