@@ -155,8 +155,22 @@ echo "── gate: VISION.md focus ───────────────
 # a skipped offline suite is visible. check_v022_runtime_evidence.py is NOT a
 # stage: it has no success exit code.
 echo "── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──"
+# A strict run is release-grade: let the gate bootstrap its pinned-jsonschema
+# venv (it never installs globally) rather than skip the pack's offline suite.
+[ "$STRICT" = 1 ] && export CORTEX_V022_BOOTSTRAP_VENV="${CORTEX_V022_BOOTSTRAP_VENV:-1}"
 if c22=$(./scripts/cortex_package_gate_v022.sh 2>&1); then
   case "$(printf '%s\n' "$c22" | tail -1)" in
+    "cortex_package_gate_v022: PASS — "*"offline suite: SKIPPED"*)
+      # A release-grade (--strict) run must EXECUTE the pack's 567 offline
+      # conformance tests. The gate's PASS line still reads PASS when the
+      # pinned interpreter is unavailable, which is right for a developer run
+      # and wrong for a strict one: a strict receipt certifies a release.
+      if [ "$STRICT" = 1 ]; then
+        printf '%s\n' "$c22" | tail -3
+        fail "cortex v0.22 offline conformance suite SKIPPED in a --strict run (set CORTEX_V022_PYTHON or allow the venv bootstrap)"
+      else
+        echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')"
+      fi ;;
     "cortex_package_gate_v022: PASS — "*) echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')" ;;
     *) printf '%s\n' "$c22" | tail -8; fail "cortex v0.22 package gate exited 0 without its PASS line" ;;
   esac
