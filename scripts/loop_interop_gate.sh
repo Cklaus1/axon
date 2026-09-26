@@ -670,18 +670,28 @@ axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" 
   --verification-request "$VREQ" --verification-receipt "$VRC" >/dev/null 2>"$WORK/g01-noatt.err"
 check "G01: the right documents WITHOUT the attestation are refused (exit 4)" eq "$?" 4
 check "G01: ...as unauthenticated" grep -q "not authenticated" "$WORK/g01-noatt.err"
+# The real Fabric never signs a REPLAY: the journal is the caller's to name, so
+# a replayed receipt may be one the caller wrote (the signing oracle, FG-051).
+"$AXF" submit --request "$VREQ" --journal "$FAB/ops.journal" --check-registry "$FAB/checks.json" \
+  --grant-registry "$FAB/grants/grants.json" --store "$STORE" --tenant "$TENANT" --family "$FAMILY" \
+  --expected-epoch "$RES_EPOCH" --state "$FAB/state" > "$WORK/g01-replay.json"
+check "G01: the real Fabric replays the verification receipt unsigned" \
+  eq "$(jq -c '[.replayed, .receipt_attestation, (.attestation_withheld|test("replayed"))]' "$WORK/g01-replay.json")" '[true,null,true]'
 # An impostor: a REAL Fabric process run against a registry of its own that
 # pins ITS key under the verifier's name — the one thing a local caller can do.
-# It replays the same operation and signs a genuine-looking attestation of the
-# very same receipt; only the operator's key registration tells them apart.
+# On a journal of its own it runs the same request afresh and signs a
+# genuine-looking attestation; only the operator's key registration tells the
+# two apart.
 IMP_PK="$("$AXF" keygen --out "$WORK/impostor.pk8" | jq -r .public_key)"
 jq --arg k "$WORK/impostor.pk8" --arg pk "$IMP_PK" '.signer.key_path = $k | .signer.public_key = $pk' \
   "$FAB/checks.json" > "$WORK/impostor-checks.json"
-"$AXF" submit --request "$VREQ" --journal "$FAB/ops.journal" --check-registry "$WORK/impostor-checks.json" \
+cp -a "$FAB/state" "$WORK/impostor-state"
+"$AXF" submit --request "$VREQ" --journal "$WORK/impostor.journal" --check-registry "$WORK/impostor-checks.json" \
   --grant-registry "$FAB/grants/grants.json" --store "$STORE" --tenant "$TENANT" --family "$FAMILY" \
-  --expected-epoch "$RES_EPOCH" --state "$FAB/state" > "$WORK/g01-impostor.json"
-check "G01: the impostor Fabric replayed the same receipt" \
-  eq "$(jq -c '[.replayed, (.receipt|tojson)]' "$WORK/g01-impostor.json")" "$(jq -c --slurpfile r "$VRC" '[true, ($r[0]|tojson)]' -n)"
+  --expected-epoch "$RES_EPOCH" --state "$WORK/impostor-state" > "$WORK/g01-impostor.json"
+check "G01: the impostor Fabric ran and signed the same operation under its own key" \
+  eq "$(jq -c '[.replayed, .receipt_attestation.operation_id, .receipt_attestation.public_key]' "$WORK/g01-impostor.json")" \
+  "$(jq -cn --arg pk "$IMP_PK" '[false, "trial-g3-op", $pk]')"
 jq -c .receipt_attestation "$WORK/g01-impostor.json" > "$WORK/g01-impostor-att.json"
 axl intake episode --in "$G3_EP" --context "$CL/context" --ack "$CL/policy-ack" \
   --verification-request "$VREQ" --verification-receipt "$VRC" \

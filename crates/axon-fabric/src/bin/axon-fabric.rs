@@ -46,7 +46,9 @@
 //! readable by no one else, and derives exactly the pinned public key. After
 //! the receipt is FINAL, Fabric signs an `acf-receipt-attestation/1` binding
 //! issuer, key id, request and receipt digests and the receipt's identity —
-//! but only if the check workload could not have reached the key: the admitted
+//! never for a replay (the journal is the caller's to name, so a replayed
+//! receipt may be one the caller wrote), and only if the check workload could
+//! not have reached the key: the admitted
 //! grant gives it no effect at all (the local interpreter cannot path-scope a
 //! read, so any IO would reach the key file), or it ran in the protected
 //! microVM. Otherwise `"receipt_attestation"` is `null` with
@@ -281,54 +283,18 @@ fn submit(a: &Args) {
                     let req: axon_loop_contracts::ComputeRequest =
                         axon_loop_contracts::parse(&text)
                             .unwrap_or_else(|e| refuse("malformed", &e.to_string(), 3));
-                    // The signer is a VERIFIER identity: it vouches only for a
-                    // registered check's verdict, never for arbitrary execution.
-                    let is_check = req.job_kind == axon_loop_contracts::JobKind::RegisteredCheck;
-                    // ...and only a verdict from an OPERATOR-registered suite:
-                    // a check file of the candidate's own tree is candidate
-                    // bytes, which can never define the rubric.
-                    let registered_suite =
-                        req.argv.first().is_some_and(|a| a.starts_with("check:"));
-                    // What the op RAN under, as journalled — for a replay too.
-                    // Never the grant registry this call happens to supply.
-                    let (isolated, effectless) = match &s.ran_under {
-                        Some(r) => (
-                            r.backend == axon_fabric::backend::LINUX_MICROVM_PROTECTED.id,
-                            r.effect_ceiling.is_empty(),
-                        ),
-                        None => (false, false),
-                    };
-                    if !is_check {
-                        (
-                            None,
-                            Some(
-                                "not a registered_check: the verifier signs verdicts, not \
-                                 execution",
-                            ),
-                        )
-                    } else if !registered_suite {
-                        (
-                            None,
-                            Some(
-                                "the check is a file of the candidate's tree, not an \
-                                 operator-registered suite (check:<id>): candidate bytes cannot \
-                                 define the rubric, so the verifier does not vouch for it",
-                            ),
-                        )
-                    } else if isolated || effectless {
-                        let att =
-                            axon_loop_contracts::attestation::sign(&key, &id, &req, &s.receipt)
-                                .unwrap_or_else(|e| refuse("io", &e, 2));
-                        (Some(att), None)
-                    } else {
-                        (
-                            None,
-                            Some(
-                                "the admitted grant gives the check workload file, network or \
-                                 exec effects on a backend that cannot path-scope them, so the \
-                                 workload could have read the signing key: no attestation",
-                            ),
-                        )
+                    match axon_fabric::signing::attestation_decision(
+                        &req,
+                        s.replayed,
+                        s.ran_under.as_ref(),
+                    ) {
+                        Ok(()) => {
+                            let att =
+                                axon_loop_contracts::attestation::sign(&key, &id, &req, &s.receipt)
+                                    .unwrap_or_else(|e| refuse("io", &e, 2));
+                            (Some(att), None)
+                        }
+                        Err(why) => (None, Some(why)),
                     }
                 }
             };

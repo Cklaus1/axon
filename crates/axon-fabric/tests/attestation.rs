@@ -327,3 +327,63 @@ fn a_suite_run_without_a_verdict_still_names_its_suite() {
         "{out}"
     );
 }
+
+/// The signing oracle (G01 re-audit 2): the journal is the CALLER's to name,
+/// so a replay returns whatever receipt that file holds. Before this, a replay
+/// whose journal said "ran effect-free" was signed — so a caller who wrote a
+/// journal holding a fabricated verdict got the verifier's signature on it.
+/// Now no replay is signed: not a genuine one, and not a forged one.
+#[test]
+fn a_replay_is_never_signed_not_even_a_genuine_one() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.dir.path().join("grants-pure")).unwrap();
+    let pure = env.dir.path().join("grants-pure").join("grants.json");
+    write_grant_registry(&pure, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+    let key = env.dir.path().join("issuer.pk8");
+    let pk = keygen(&key).1["public_key"].as_str().unwrap().to_string();
+    let reg = registry_with(
+        &env,
+        "reg.json",
+        Some(json!({"issuer_ref": "fabric:verifier", "key_path": key, "public_key": pk})),
+    );
+    let req = suite_request(&env, "op-r").to_string();
+
+    // Positive control: the run itself is signed.
+    let (c, first) = fabric(&submit_args(&env, &reg, &pure), Some(&req));
+    assert_eq!(c, 0, "{first}");
+    assert_eq!(first["replayed"], json!(false));
+    assert!(first["receipt_attestation"].is_object(), "{first}");
+
+    // A journal the caller wrote: the genuine one with the verdict flipped.
+    // Fabric replays the fabricated receipt — and does not vouch for it.
+    let forged = env.dir.path().join("forged.journal");
+    let text = std::fs::read_to_string(&env.journal).unwrap();
+    assert!(text.contains(r#""verification":"passed""#), "{text}");
+    std::fs::write(
+        &forged,
+        text.replace(r#""verification":"passed""#, r#""verification":"failed""#),
+    )
+    .unwrap();
+    let mut args = submit_args(&env, &reg, &pure);
+    let j = args.iter().position(|a| a == "--journal").unwrap() + 1;
+    args[j] = forged.display().to_string();
+    let (c, out) = fabric(&args, Some(&req));
+    assert_eq!(c, 0, "{out}");
+    assert_eq!(out["replayed"], json!(true), "{out}");
+    assert_eq!(
+        out["receipt"]["verification"], "failed",
+        "the replay served the caller's bytes"
+    );
+    assert_eq!(out["receipt_attestation"], json!(null), "{out}");
+
+    // The genuine replay: same receipt, not re-signed.
+    let (c, again) = fabric(&submit_args(&env, &reg, &pure), Some(&req));
+    assert_eq!(c, 0, "{again}");
+    assert_eq!(again["replayed"], json!(true));
+    assert_eq!(again["receipt"], first["receipt"]);
+    assert_eq!(again["receipt_attestation"], json!(null), "{again}");
+    assert_eq!(
+        again["attestation_withheld"],
+        json!(axon_fabric::signing::REPLAYED)
+    );
+}
