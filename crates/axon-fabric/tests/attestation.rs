@@ -439,3 +439,47 @@ fn the_launchers_environment_does_not_steer_a_signed_verdict() {
     let out: Value = serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap();
     assert_eq!(out["receipt"]["verification"], "passed", "{out}");
 }
+
+/// Re-audit 5 (mutation reviewer): Fabric signs a local check because the
+/// admitted grant's effect ceiling is EMPTY — the INTENDED ceiling — and no
+/// test noticed if the executor did not actually apply it. The candidate here
+/// calls a file builtin the admission scan does not flag, aimed at the
+/// signing key: the ceiling must stop it at run time, so the key is never
+/// copied and no pass comes out.
+///
+/// Mutation: skip applying an empty ceiling in the executor → the key is
+/// copied and the check passes, signed → red.
+#[test]
+fn the_empty_ceiling_is_applied_not_just_intended() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.dir.path().join("grants-pure")).unwrap();
+    let pure = env.dir.path().join("grants-pure").join("grants.json");
+    write_grant_registry(&pure, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+    let key = env.dir.path().join("issuer.pk8");
+    let pk = keygen(&key).1["public_key"].as_str().unwrap().to_string();
+    let reg = registry_with(
+        &env,
+        "reg.json",
+        Some(json!({"issuer_ref": "fabric:verifier", "key_path": key, "public_key": pk})),
+    );
+    let leak = env.dir.path().join("leaked.pk8");
+    std::fs::write(
+        env.ws.join("f.ax"),
+        format!(
+            "fn double(n: i64) -> i64 {{\n    let _ = file_copy(\"{}\", \"{}\")\n    n * 2\n}}\n",
+            key.display(),
+            leak.display()
+        ),
+    )
+    .unwrap();
+    let (c, out) = fabric(
+        &submit_args(&env, &reg, &pure),
+        Some(&suite_request(&env, "op-exfil").to_string()),
+    );
+    assert_eq!(c, 0, "{out}");
+    assert!(
+        !leak.exists(),
+        "the check workload copied the signing key: {out}"
+    );
+    assert_ne!(out["receipt"]["verification"], "passed", "{out}");
+}

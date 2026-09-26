@@ -324,6 +324,26 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
             }
         }
     }
+    // One Fabric verification decides one trial in ONE scope. The attestation
+    // binds no loop scope (an attestation v2 item), so without this a single
+    // signed verdict could be recorded again under another tenant or family
+    // and count there as an independent trial (re-audit 5, executed).
+    if let Some((_, rc, _, _)) = &verification {
+        let rc_ref = digest(rc)?;
+        for e in tx.entries() {
+            if let Event::EpisodeIntake { intake, .. } = &e.event {
+                if intake.scope != ep.scope
+                    && intake.verification_receipt_ref.as_ref() == Some(&rc_ref)
+                {
+                    return Err(refused(format!(
+                        "verification {rc_ref} was already recorded in scope {}/{}: one \
+                         verdict decides one trial in one scope",
+                        intake.scope.tenant_id, intake.scope.task_family
+                    )));
+                }
+            }
+        }
+    }
 
     // Record: bytes first (content-addressed, idempotent), then the ledger.
     store.put_cas("episodes", &ep)?;

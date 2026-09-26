@@ -1659,3 +1659,68 @@ fn a_verdict_from_another_pinned_version_of_the_suite_does_not_decide_the_task()
     let (ctx, ep, req, rc) = for_task(&c, "task-1", rc2);
     run_ctx(&c, &ctx, &ep, &req, &rc).unwrap();
 }
+
+/// Re-audit 5 (clause auditor, executed): the claim said intake's scope bind
+/// refuses reuse of a verdict across scopes; nothing did — the verification
+/// documents carry no scope, and the identity-conflict check is per scope. The
+/// SAME genuinely signed check, cited by an episode re-scoped to another
+/// tenant, is now refused and writes nothing. Positive control: the first
+/// scope records it.
+///
+/// Mutation: drop the cross-scope refusal in `intake_episode` → red.
+#[test]
+fn one_verdict_decides_one_trial_in_one_scope() {
+    let c = case(Some(500));
+    let (req, rc) = (check_request(), check_receipt("passed", 2));
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    run_v(&c, &ep, Some(&req), Some(&rc)).unwrap();
+
+    // The same documents, scope B: tenant-b's own policy, view, ack, context.
+    let rescope = |v: &Value| -> Value {
+        serde_json::from_str(&v.to_string().replace("\"tenant-a\"", "\"tenant-b\"")).unwrap()
+    };
+    let names: Vec<CandidateId> = CANDIDATES
+        .iter()
+        .map(|c| CandidateId::new(*c).unwrap())
+        .collect();
+    let cs = axon_loop::candidates::CandidateSet::parse(
+        &json!({"schema":"axon.loop.candidate-set/1","scope":rescope(&scope_json()),
+                "candidates":names,"issuer_ref":common::ADMITTER})
+        .to_string(),
+    )
+    .unwrap();
+    axon_loop::candidates::put(&c.s, &cs).unwrap();
+    let p_b: PolicyEnvelope =
+        parse(&rescope(&serde_json::to_value(&c.p).unwrap()).to_string()).unwrap();
+    axon_loop::candidates::put_policy(&c.s, &p_b).unwrap();
+    let ctx_b = rescope(&c.ctx);
+    let ack_b = ack(&p_b);
+    // (the fixture's sidecar hard-codes scope A; re-scope it too)
+    let ep_b = verified(
+        &rescope(&sidecar(&p_b, &ctx_b, &ack_b, &c.src, Some(500))),
+        &req,
+        &rc,
+        "passed",
+    );
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let before = snapshot(c.s.root());
+    let e = intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep_b.to_string(),
+            context: &ctx_b.to_string(),
+            acks: &[ack_b.to_string()],
+            projection: None,
+            source_episode: None,
+            verification_request: Some(req.to_string()).as_deref(),
+            verification_receipt: Some(rc.to_string()).as_deref(),
+            verification_attestation: Some(att.to_string()).as_deref(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("already recorded in scope")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
+}
