@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 50 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 51 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -561,4 +561,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The journal is the CALLER's to name (--journal) and carries no integrity. A replay returns whatever receipt that file holds, and the 'ran under' it was judged by came from the same file. Anyone able to run the Fabric binary with the operator's check registry could write a journal holding a fabricated verdict, marked effect-free, and receive the verifier's genuine signature on it: a signing oracle introduced by the FG-050 fix itself.
 - **Reproduced:** Mutation run (the replay refusal in signing.rs disabled): crates/axon-fabric/tests/attestation.rs a_replay_is_never_signed_not_even_a_genuine_one fails at the forged-journal step, the real binary returning a receipt_attestation over a verdict the test flipped from passed to failed in a copied journal. Found by independent G01 re-audit 2.
 - **Fix:** No replay is ever signed (signing::attestation_decision, a pure function tested per branch including the protected-microVM one); a replay is served unattested with attestation_withheld naming why. Interop gate: the real Fabric replays unsigned; the impostor case runs afresh on its own journal. Consequence: a retried check that replays carries no attestation, so MiCode cites no verdict (toward Unknown, never toward a pass). (`50b5c059`)
+
+### FG-052 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** The rubric is the operator's: a registered check suite is materialized read-only outside the candidate, pinned by digest, and reaches the candidate only through AXON_PATH, so candidate bytes cannot define the rubric.
+- **Reality:** AXON_PATH held only the candidate directory, and Axon never searches the entry file's own directory, so EVERY `mod` the suite declared, including its own helper modules, resolved from the candidate. A candidate shipping a module named like a suite helper replaced the rubric's code; the suite digest pin still matched because the suite's files were never read.
+- **Reproduced:** Mutation run (module_path reverted to the candidate only): crates/axon-fabric/tests/check_effects.rs a_candidate_cannot_shadow_a_module_of_the_suite fails, the candidate's broken double judged PASSED by its own helper.ax. Found by independent G01 re-audit 2.
+- **Fix:** Suite runs get AXON_PATH = <run>/check:<run>/candidate (suite first) and the admission scan resolves modules in the same order. The Linux microVM path runs a single file with no module path, so a suite `mod` there fails closed (unresolved), not open. (`169f0dd5`)
 

@@ -2167,6 +2167,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "50b5c059"
+    },
+    {
+      "id": "FG-052",
+      "where": "crates/axon-fabric/src/submit.rs",
+      "claimed": "The rubric is the operator's: a registered check suite is materialized read-only outside the candidate, pinned by digest, and reaches the candidate only through AXON_PATH, so candidate bytes cannot define the rubric.",
+      "reality": "AXON_PATH held only the candidate directory, and Axon never searches the entry file's own directory, so EVERY `mod` the suite declared, including its own helper modules, resolved from the candidate. A candidate shipping a module named like a suite helper replaced the rubric's code; the suite digest pin still matched because the suite's files were never read.",
+      "reproduced": "Mutation run (module_path reverted to the candidate only): crates/axon-fabric/tests/check_effects.rs a_candidate_cannot_shadow_a_module_of_the_suite fails, the candidate's broken double judged PASSED by its own helper.ax. Found by independent G01 re-audit 2.",
+      "fix": "Suite runs get AXON_PATH = <run>/check:<run>/candidate (suite first) and the admission scan resolves modules in the same order. The Linux microVM path runs a single file with no module path, so a suite `mod` there fails closed (unresolved), not open.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "169f0dd5"
     }
   ]
 }
