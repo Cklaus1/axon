@@ -6,6 +6,7 @@ mod common;
 use axon_loop::admission::Decision;
 use axon_loop::error::LoopError;
 use axon_loop::safety::{self, SafetyState, ViolationCode};
+use axon_loop_contracts::Ref;
 use common::*;
 use serde_json::{json, Value};
 
@@ -286,4 +287,105 @@ fn a_violation_wins_and_the_state_is_fixed_at_evaluation() {
     report(&w, &r, None).unwrap();
     let (adm, _) = admit(&w.s, "late", &e, ADMITTER, false).unwrap();
     assert_eq!(adm.decision, Decision::Accept, "{:?}", adm.reasons);
+}
+
+/// ADR-001 §5 activation revalidation (safety): a violation recorded AFTER
+/// the evaluation leaves the admission as derived (ACCEPT) but blocks making
+/// the candidate active — on activation, and on a later rollback back to it.
+/// Positive control: with no finding, activation and the rollback succeed.
+///
+/// Mutation: drop `safety_still_holds` from `check_activate` → red.
+#[test]
+fn a_violation_found_after_evaluation_blocks_activation_and_rollback() {
+    let act = |w: &World, adm: &Ref| {
+        axon_loop::pointer::transition(
+            &w.s,
+            &tparse(&transition(
+                "a1",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(adm),
+                false,
+            )),
+        )
+    };
+    let back = |w: &World| {
+        axon_loop::pointer::transition(
+            &w.s,
+            &tparse(&transition(
+                "r1",
+                "rollback",
+                &w.cand_ref,
+                Some(&w.inc_ref),
+                2,
+                Some(&w.baseline),
+                false,
+            )),
+        )
+        .unwrap();
+    };
+    let forward = |w: &World, adm: &Ref| {
+        axon_loop::pointer::transition(
+            &w.s,
+            &tparse(&transition(
+                "r2",
+                "rollback",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                3,
+                Some(adm),
+                false,
+            )),
+        )
+    };
+    for late in [false, true] {
+        // Activation.
+        let (w, v) = acceptable("act");
+        let (_, e) = evaluate(&w.s, &v).unwrap();
+        let (rec, adm) = admit(&w.s, "act", &e, ADMITTER, false).unwrap();
+        assert_eq!(rec.decision, Decision::Accept);
+        if late {
+            let r = safety_report(
+                &candidate_trial(&v, 0),
+                "violation",
+                Some("scope_violation"),
+                OBSERVER,
+            );
+            report(&w, &r, None).unwrap();
+            let before = snapshot(w.dir.path());
+            let err = act(&w, &adm).unwrap_err();
+            assert!(
+                matches!(err, LoopError::Refused(ref m) if m.contains("reported unsafe")),
+                "{err}"
+            );
+            assert_eq!(snapshot(w.dir.path()), before);
+        } else {
+            act(&w, &adm).unwrap();
+        }
+
+        // Rollback back to the candidate after a finding against it.
+        let (w, v) = acceptable("rb");
+        let (_, e) = evaluate(&w.s, &v).unwrap();
+        let (_, adm) = admit(&w.s, "rb", &e, ADMITTER, false).unwrap();
+        act(&w, &adm).unwrap();
+        back(&w);
+        if late {
+            let r = safety_report(
+                &candidate_trial(&v, 1),
+                "violation",
+                Some("secret_exposure"),
+                OBSERVER,
+            );
+            report(&w, &r, None).unwrap();
+            let err = forward(&w, &adm).unwrap_err();
+            assert!(
+                matches!(err, LoopError::Refused(ref m) if m.contains("reported unsafe")),
+                "{err}"
+            );
+        } else {
+            forward(&w, &adm).unwrap();
+        }
+    }
 }

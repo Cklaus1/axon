@@ -426,12 +426,38 @@ fn check_rollback(
             ));
         }
     } else {
-        admission::rederive(tx, adm_ref, admitters).map_err(|e| {
+        let adm = admission::rederive(tx, adm_ref, admitters).map_err(|e| {
             refused(format!(
                 "rollback target's admission no longer holds ({e}); no safe predecessor: issue a \
                  pause instead"
             ))
         })?;
+        safety_still_holds(tx, &adm)?;
+    }
+    Ok(())
+}
+
+/// ADR-001 §5 activation revalidation, safety half: the admission fixed the
+/// candidate's safety as the evaluation saw it; a violation recorded SINCE —
+/// against any of the candidate's trials in that evaluation — blocks making it
+/// active, on activation and on rollback alike.
+fn safety_still_holds(tx: &Tx, adm: &crate::admission::AdmissionRecord) -> Result<()> {
+    let (_, eval) = crate::evl::load_journalled(tx, &adm.evaluation_ref)?;
+    let now = crate::safety::states(tx, &adm.scope);
+    let arm = eval.arm_for_policy(&adm.target_policy_ref)?;
+    for t in &arm.trials {
+        let key = (
+            t.task_id.as_str().to_string(),
+            arm.arm_id.as_str().to_string(),
+            t.trial_id.as_str().to_string(),
+        );
+        if let Some(crate::safety::SafetyState::Violation { code }) = now.get(&key) {
+            return Err(refused(format!(
+                "trial {} was reported unsafe ({code:?}) after the evaluation: the candidate \
+                 cannot be made active",
+                t.trial_id
+            )));
+        }
     }
     Ok(())
 }
@@ -505,6 +531,7 @@ fn check_activate(
     if !adm.deployment_enabled {
         return Err(refused("the admitted plan has deployment_enabled = false"));
     }
+    safety_still_holds(tx, &adm)?;
     Ok(())
 }
 
