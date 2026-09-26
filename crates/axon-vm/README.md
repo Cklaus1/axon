@@ -4,22 +4,24 @@ The confidential microVM substrate: a Firecracker launcher, BPF policy
 generation, attestation, a principal registry and cross-VM quorum. It ships as
 the `axon-vm` CLI and, since v0.22 (B262), as a library target.
 
-## Two entry points that do not enforce the same things
+## One admission, two entry points (D-019)
 
 | entry | where | what runs before launch |
 |---|---|---|
-| `axon-vm run` (CLI) | `src/main.rs` `cmd_run` | null-grant refusal; an env override may only narrow the grant; kernel attestation against a pinned baseline (no TOFU; `AXON_CI_NO_KVM` is not a bypass); extended-TCB compare; quorum |
-| `axon_vm::run_in_firecracker` (library) | `src/lib.rs`, `src/firecracker.rs` | **none of the above.** Only the launch path was moved |
+| `axon_vm::admit` (library) | `src/admit.rs` | null-grant refusal; an env override may only narrow the manifest grant; kernel attestation against a pinned digest (no TOFU; `--no-attest` / `KernelPin::DevBypass` is the only bypass); extended-TCB compare against a pin (no TOFU) |
+| `axon_vm::run_in_firecracker` (library) | `src/firecracker.rs` | requires a `LaunchSpec` holding an `AdmittedLaunch` — constructible ONLY by `admit` (private fields; a `compile_fail` doctest pins this) — and a `FirecrackerBin` resolved to an ABSOLUTE path (no bare/relative `firecracker`, no `which`) |
+| `axon-vm run` (CLI) | `src/main.rs` `cmd_run` | calls `admit` (same exit codes and messages, pinned by `tests/cli_parity.rs`), then the CLI-only quorum (R33) and chain (R34) gates |
 
-The library entry point **does not enforce `cmd_run`'s grant and attestation
-gates**. `MmdsPayload.allowed_effects` is still an `Option`. The guest kernel
-fails closed on a null policy, so the impact today is "may boot an unattested
-kernel", not "runs without policy". The gap is **latent**: the only callers
-are `src/main.rs` and `tests/lib_launch.rs`. `axon-fabric` imports only
-`BACKEND_PROFILE`, and its `axon-metal-fc-nojailer` backend is eligible for
-nothing. Any future library caller would inherit none of the gates.
+The gates were moved into `admit.rs`, not duplicated. The admitted grant is
+baked into the `MmdsPayload` the admission carries and the attested kernel is
+the kernel the launch boots, so a caller cannot pair an admission with a
+different grant or image. `MmdsPayload.allowed_effects` is a `Vec`: a `null`
+grant cannot be represented, and an EMPTY list is deny-all (the repo-wide `""`
+= deny-all reading).
 
-Recorded as `governance/cortex-v015/DISCREPANCIES.md` D-019. Open, Stage 3.
+Still CLI-only: the quorum (R33) and attestation-chain (R34) gates. The kernel
+is measured at admission and opened again by Firecracker at boot, so a swap
+between the two is not detected (measure-then-use window).
 
 ## What the library's profile is
 
@@ -33,7 +35,6 @@ it uses `scripts/fc_linux_profile.sh` and the jailer.
 
 ## Open defects
 
-* **The library skips the pre-launch gates** (above, D-019).
 * **ACF-G22: child and sockets leak on post-spawn errors.** In
   `src/firecracker.rs`, every `?` after the Firecracker child is spawned
   returns without killing the child or removing the API and vsock sockets.

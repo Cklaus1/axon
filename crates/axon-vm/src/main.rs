@@ -22,11 +22,19 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 // B262: the Firecracker launch path lives in the library target now.
+use axon_vm::admit::{
+    admit, extended_baseline_path, kernel_baseline_path, AdmitError, AdmitRequest, ExtendedTcb,
+    KernelPin,
+};
+#[cfg(test)]
+use axon_vm::admit::{effects_not_granted_by, measure_and_attest_inner};
+#[cfg(test)]
+use axon_vm::firecracker::MmdsPayload;
 #[cfg(test)]
 use axon_vm::firecracker::{
     embed_policy_in_cmdline, parse_guest_sentinel, EchoHandler, HostAwaitHandler,
 };
-use axon_vm::firecracker::{run_in_firecracker, GuestOutcome, LaunchSpec, MmdsPayload};
+use axon_vm::firecracker::{run_in_firecracker, FirecrackerBin, GuestOutcome, LaunchSpec};
 
 use axon_attest::{
     measure_host_stack, measure_kernel, measure_kernel_bytes, report_to_json,
@@ -51,11 +59,7 @@ const CHAIN_VERIFY_FAIL_EXIT_CODE: i32 = 15;
 /// R31: extended measurement failed — required component missing/unreadable (exit 12).
 const EXTENDED_TCB_MEASURE_FAIL: i32 = 12;
 
-/// R31/T52: the measured extended TCB did not match the pinned expectation, or
-/// no expectation was pinned at all. Shares the attestation exit code (10) with
-/// the kernel-baseline gate — both mean "the software about to run is not the
-/// software that was blessed".
-const EXTENDED_TCB_MISMATCH: i32 = 10;
+// R31/T52 extended-TCB mismatch (exit 10) is `axon_vm::admit::ATTESTATION_EXIT_CODE`.
 
 /// R33: cross-VM safety quorum not met — insufficient approvals (or empty/timeout
 /// in the fuller protocol). Reserved per `governance/specs/R33-cross-vm-safety-quorum.md`
@@ -1228,184 +1232,90 @@ fn cmd_run(
         None
     };
 
-    // Derive allowed effects: an explicit AXON_VM_ALLOWED_EFFECTS override (comma-
-    // separated effect names) tightens the policy beyond the manifest — useful for
-    // defense-in-depth and for exercising the in-kernel syscall gate. Otherwise prefer
-    // the manifest's effect union, fall back to the principal, then open.
-    let allowed_effects = if let Ok(forced) = env::var("AXON_VM_ALLOWED_EFFECTS") {
-        let forced: Vec<String> = forced
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        // The override may only TIGHTEN. It replaced the manifest outright, so
-        // `AXON_VM_ALLOWED_EFFECTS=FS,Net,Exec` on a program whose `.axmeta`
-        // grants only `FS` delivered all three to the guest — an environment
-        // variable widening a grant past the program's own signed manifest.
-        //
-        // R36 §S0 names this as one of four fail-open policy-provenance
-        // defaults and says the fix outright: it "must be checked as a subset
-        // rather than a replacement". The comment above already claimed the
-        // override "tightens the policy beyond the manifest"; only the claim was
-        // true.
-        //
-        // Checked ONLY against a manifest. With no manifest the override is the
-        // sole grant and there is nothing to be a subset of — and the
-        // no-grant-at-all path below already refuses that case.
-        if let Some(union) = manifest.effect_union.as_ref() {
-            let extra = effects_not_granted_by(&forced, union);
-            if !extra.is_empty() {
-                eprintln!(
-                    "axon-vm: AXON_VM_ALLOWED_EFFECTS may only narrow the manifest's \
-                     effect grant, not widen it. Not in the manifest: {}. Manifest grants: {}.",
-                    extra.join(", "),
-                    union.join(", ")
-                );
-                process::exit(2);
-            }
-        }
-        Some(forced)
+    // D-019: the launch gates — narrow-only override (R36 §S0), no null grant
+    // (T48), kernel attestation with no TOFU (R26/P7-KRN-05) and, if requested,
+    // the extended TCB (R31/T52) — live in `axon_vm::admit`, which is the only
+    // way to obtain the `AdmittedLaunch` the launch API requires. This used to
+    // be the ONLY place they ran, so a library caller skipped all four. Exit
+    // codes and messages are unchanged (pinned by tests/cli_parity).
+    let effects_override = env::var("AXON_VM_ALLOWED_EFFECTS").ok();
+    let kernel_baseline = kernel_baseline_path();
+    let ext_baseline = extended_baseline_path();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let axon_os_path = exe_dir.join("axon-os");
+    let axon_audit_path = exe_dir.join("axon-audit-writer");
+    let axon_audit_opt = if axon_audit_path.exists() {
+        Some(axon_audit_path.as_path())
     } else {
-        manifest
-            .effect_union
-            .clone()
-            .or_else(|| principal.as_ref().map(|p| p.allowed_effects.clone()))
+        None
     };
-
-    // AUDIT T48 (finding OSK-P7-C3; R36 §2 site 1). `allowed_effects: None`
-    // serialises as `null`, and the guest kernel used to read an absent/non-array
-    // field as EffectSet(0xFF) — EVERY effect. That is not an exotic path: it is
-    // what this function emits for any program with no `.axmeta` manifest and no
-    // `--principal`, i.e. the DEFAULT run. The guest now denies on ambiguity, but
-    // launching with no grant at all is still a producer-side defect: it would
-    // boot a guest that can do nothing and report it as a policy violation,
-    // blaming the program for the launcher's omission. Refuse here and say which
-    // of the three sources to supply.
-    let Some(allowed_effects) = allowed_effects else {
-        let msg = concat!(
-            "no effect grant: the program has no `.axmeta` manifest ",
-            "(`axon build --emit-manifest`), no `--principal` was given, and ",
-            "AXON_VM_ALLOWED_EFFECTS is unset. Refusing to launch rather than ",
-            "sending a null policy to the guest"
-        );
-        if json_out {
-            let out = serde_json::json!({
-                "schema": "axon-vm-run/1",
-                "ok": false,
-                "run_id": run_id,
-                "exit_code": -1,
-                "error": msg,
-                "principal": principal_name,
-                "no_effect_grant": true,
-            });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    let admitted = admit(&AdmitRequest {
+        run_id: &run_id,
+        kernel: &kernel_path,
+        principal: principal_name.as_deref(),
+        manifest_effects: manifest.effect_union.as_deref(),
+        principal_effects: principal.as_ref().map(|p| p.allowed_effects.as_slice()),
+        effects_override: effects_override.as_deref(),
+        budget_tokens: principal.as_ref().map(|p| p.budget_tokens),
+        source_hash: Some(&source_hash),
+        seccomp_bpf_b64: seccomp_b64.as_deref(),
+        kernel_pin: if no_attest {
+            KernelPin::DevBypass
         } else {
-            eprintln!("axon-vm: {msg}");
-        }
-        process::exit(2);
-    };
-
-    let budget_tokens = principal.as_ref().map(|p| p.budget_tokens);
-
-    // Construct the MMDS payload.
-    let mmds_payload = MmdsPayload {
-        schema: "axon-vm-mmds/1".to_string(),
-        run_id: run_id.clone(),
-        principal: principal_name.clone(),
-        allowed_effects: Some(allowed_effects),
-        budget_tokens,
-        source_hash: Some(source_hash),
-        seccomp_bpf_b64: seccomp_b64,
-    };
-
-    // R26: mandatory kernel attestation before any VM boot.
-    // Measure the kernel and verify it against a PINNED expected digest —
-    // --expect-digest, else ~/.axon/kernel_baseline.sha256. Exits 10 on mismatch
-    // AND on no pin at all (no trust-on-first-use). --no-attest is the only
-    // bypass; no environment variable can disable this gate.
-    if let Err(e) = measure_and_attest(&kernel_path, no_attest, expect_digest.as_deref()) {
-        if json_out {
-            let out = serde_json::json!({
-                "schema": "axon-vm-run/1",
-                "ok": false,
-                "run_id": run_id,
-                "exit_code": -1,
-                "elapsed_ms": start.elapsed().as_millis(),
-                "error": e.to_string(),
-                "principal": principal_name,
-                "risk": manifest.risk,
-                "attestation_failed": true,
-            });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        } else {
-            eprintln!("axon-vm: {e}");
-        }
-        process::exit(10);
-    }
-
-    // R31: extended TCB gate — measure full safety stack before booting.
-    // Any measure failure → exit 12 (component missing/unreadable).
-    // The VM is NEVER spawned until this gate passes.
-    if extended_tcb {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
-        let axon_os_path = exe_dir.join("axon-os");
-        let axon_audit_path = exe_dir.join("axon-audit-writer");
-        let axon_audit_opt = if axon_audit_path.exists() {
-            Some(axon_audit_path.as_path())
-        } else {
-            None
-        };
-        match measure_host_stack(&kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
-            Ok(ext) => {
-                // AUDIT T52 (finding P4-OS-11). This printed
-                // "✓ extended TCB: … (4/4 components verified)" and moved on. It
-                // had MEASURED four components and verified none: `verify_extended`
-                // was never called and no expected value existed to call it with.
-                // The flag's own doc promised "Mismatch → exit 10", an arm nothing
-                // could reach.
-                //
-                // Same rule as the T32 kernel baseline: an expectation is
-                // REQUIRED, and its absence is a refusal rather than
-                // trust-on-first-use. TOFU against a user-writable file is not a
-                // gate — an attacker who can swap a TCB component can also delete
-                // the baseline, and the next boot would bless the tampered stack.
-                let expected = expect_axtcb1_ext.clone().or_else(|| {
-                    std::fs::read_to_string(extended_baseline_path())
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                });
-                let Some(expected) = expected else {
-                    eprintln!(
-                        "axon-vm: --extended-tcb requires a pinned expectation. Measured {} \
-                         but have nothing to verify it against.\n                           Pin it once:  axon-vm attest --kernel <path> --extended-tcb --pin-extended\n                           Or pass:      --expect-axtcb1-ext {}",
-                        ext.axtcb1_ext, ext.axtcb1_ext
-                    );
-                    process::exit(EXTENDED_TCB_MISMATCH);
-                };
-                match verify_extended(&ext, &expected) {
-                    Ok(()) => eprintln!(
-                        "✓ extended TCB verified against pin: {} (4/4 components)",
-                        ext.axtcb1_ext
-                    ),
-                    Err(e) => {
-                        eprintln!("axon-vm: EXTENDED TCB MISMATCH: {e}");
-                        eprintln!("  expected {expected}");
-                        eprintln!("  measured {}", ext.axtcb1_ext);
-                        process::exit(EXTENDED_TCB_MISMATCH);
-                    }
+            KernelPin::Verify {
+                expect_digest: expect_digest.as_deref(),
+                baseline: &kernel_baseline,
+            }
+        },
+        extended_tcb: extended_tcb.then_some(ExtendedTcb {
+            axon_os: &axon_os_path,
+            axon_audit: axon_audit_opt,
+            expect: expect_axtcb1_ext.as_deref(),
+            baseline: &ext_baseline,
+        }),
+    });
+    let admitted = match admitted {
+        Ok(a) => a,
+        Err(e) => {
+            let json_extra = match &e {
+                AdmitError::NoEffectGrant => Some(serde_json::json!({
+                    "schema": "axon-vm-run/1",
+                    "ok": false,
+                    "run_id": run_id,
+                    "exit_code": -1,
+                    "error": e.to_string(),
+                    "principal": principal_name,
+                    "no_effect_grant": true,
+                })),
+                AdmitError::KernelAttestation(_) => Some(serde_json::json!({
+                    "schema": "axon-vm-run/1",
+                    "ok": false,
+                    "run_id": run_id,
+                    "exit_code": -1,
+                    "elapsed_ms": start.elapsed().as_millis(),
+                    "error": e.to_string(),
+                    "principal": principal_name,
+                    "risk": manifest.risk,
+                    "attestation_failed": true,
+                })),
+                // These three were always plain stderr, even under --json.
+                AdmitError::OverrideWidens { .. }
+                | AdmitError::ExtendedTcbUnpinned { .. }
+                | AdmitError::ExtendedTcbMismatch { .. }
+                | AdmitError::ExtendedTcbMeasure(_) => None,
+            };
+            match json_extra {
+                Some(out) if json_out => {
+                    println!("{}", serde_json::to_string_pretty(&out).unwrap())
                 }
+                _ => eprintln!("axon-vm: {e}"),
             }
-            Err(e) => {
-                eprintln!("axon-vm: extended TCB measurement failed: {e}");
-                process::exit(EXTENDED_TCB_MEASURE_FAIL);
-            }
+            process::exit(e.exit_code());
         }
-    }
+    };
 
     // R33: cross-VM safety quorum gate — collected BEFORE any VM boots.
     // The Firecracker launch never runs unless the quorum check passes.
@@ -1490,16 +1400,18 @@ fn cmd_run(
         fc_socket.unwrap_or_else(|| PathBuf::from(format!("/tmp/axon-vm-{}.sock", process::id())));
 
     // Launch Firecracker, configure the VM, and run the program.
-    let result = run_in_firecracker(&LaunchSpec {
-        program: &program,
-        kernel: &kernel_path,
-        initrd: &initrd_path,
-        mem_mib,
-        vcpus,
-        vsock_port,
-        socket_path: &socket_path,
-        mmds: &mmds_payload,
-        principal_mem_mib: principal.as_ref().map(|p| p.mem_mib),
+    let result = FirecrackerBin::resolve().and_then(|firecracker| {
+        run_in_firecracker(&LaunchSpec {
+            admitted: &admitted,
+            firecracker: &firecracker,
+            program: &program,
+            initrd: &initrd_path,
+            mem_mib,
+            vcpus,
+            vsock_port,
+            socket_path: &socket_path,
+            principal_mem_mib: principal.as_ref().map(|p| p.mem_mib),
+        })
     });
 
     let elapsed_ms = start.elapsed().as_millis();
@@ -2535,23 +2447,6 @@ static SYSCALL_TABLE: &[(&str, u32)] = &[
 /// A sidecar that exists but cannot be read is now an error the caller must
 /// handle. Absent stays `Ok(None)` — that is a real, distinct state ("no policy
 /// declared"), and the caller refuses on it separately.
-/// Effects in `forced` that the manifest's `union` does not grant.
-///
-/// Empty means the override is a subset — a narrowing, which is what
-/// `AXON_VM_ALLOWED_EFFECTS` is for. Anything returned is an attempted WIDENING
-/// of a program's own signed grant by an environment variable, which R36 §S0
-/// names as a fail-open policy-provenance default.
-///
-/// Extracted so the rule is testable without booting a VM: the call site is
-/// inside the launch path and exits the process.
-fn effects_not_granted_by(forced: &[String], union: &[String]) -> Vec<String> {
-    forced
-        .iter()
-        .filter(|e| !union.contains(e))
-        .cloned()
-        .collect()
-}
-
 fn load_manifest(program: &Path) -> Result<Option<AxonManifest>, String> {
     let meta_path = program.with_extension("axmeta");
     if !meta_path.exists() {
@@ -2579,107 +2474,7 @@ fn sha256_file(path: &Path) -> String {
 
 // ── R26: kernel attestation gate ─────────────────────────────────────────────
 
-/// Path of the on-disk kernel baseline pin (`~/.axon/kernel_baseline.sha256`).
-/// Where the pinned extended-TCB (`axtcb1-ext:`) baseline lives (AUDIT T52).
-/// Sibling of `kernel_baseline_path`, same no-trust-on-first-use rule.
-fn extended_baseline_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_default();
-    PathBuf::from(format!("{}/.axon/axtcb1_ext_baseline", home))
-}
-
-fn kernel_baseline_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_default();
-    PathBuf::from(format!("{}/.axon/kernel_baseline.sha256", home))
-}
-
-/// Measure the kernel at `kernel_path` and verify it against a PINNED expected
-/// digest — either `expect_digest` (operator-supplied, strongest) or the stored
-/// baseline in `~/.axon/kernel_baseline.sha256`.
-///
-/// - Mismatch: returns `Err`; the caller exits 10 (kernel tampered / wrong image).
-/// - **No pin at all: also a refusal.** There is deliberately no trust-on-first-use
-///   here. TOFU against a user-writable file is not a gate: an attacker who can
-///   swap the kernel can also `rm` the baseline, and the next boot would silently
-///   bless the tampered image as the new baseline (P7-KRN-05). Establish a
-///   baseline explicitly with `axon-vm attest --kernel <path> --pin-baseline`.
-/// - `no_attest = true`: prints a WARNING and short-circuits to `Ok` (dev mode).
-///   This is the ONLY bypass. `AXON_CI_NO_KVM=1` used to disable the gate here as
-///   well — an ambient inherited environment variable silently turning off the
-///   TCB check on a production host — and no longer does.
-///
-/// Uses `axon_attest::measure_kernel` from the R26 attestation crate, so the
-/// digest is byte-identical with what `axon-vm attest` records.
-fn measure_and_attest(
-    kernel_path: &Path,
-    no_attest: bool,
-    expect_digest: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let baseline_path = kernel_baseline_path();
-    measure_and_attest_inner(kernel_path, no_attest, expect_digest, &baseline_path)
-}
-
-/// Inner implementation of `measure_and_attest`, parameterised over the baseline
-/// path so tests can use a temp directory rather than writing to `~/.axon/`.
-fn measure_and_attest_inner(
-    kernel_path: &Path,
-    no_attest: bool,
-    expect_digest: Option<&str>,
-    baseline_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if no_attest {
-        eprintln!("[axon-vm] WARNING: --no-attest: skipping attestation (dev mode only)");
-        return Ok(());
-    }
-
-    // Kernel must exist before we can measure it.
-    if !kernel_path.exists() {
-        return Err(format!("kernel not found: {}", kernel_path.display()).into());
-    }
-
-    // Measure using axon-attest — same SHA-256 algorithm as `axon-vm attest`.
-    let measurement = measure_kernel(kernel_path)?;
-    let digest_hex = hex::encode(measurement.digest);
-
-    // An operator-supplied pin wins over the on-disk baseline: it does not depend
-    // on a file the attacker can reach.
-    let (expected, source) = match expect_digest {
-        Some(d) => (d.trim().to_string(), "--expect-digest"),
-        None => match fs::read_to_string(baseline_path) {
-            Ok(b) => (b.trim().to_string(), "baseline"),
-            Err(_) => {
-                eprintln!("[axon-vm] ATTESTATION FAILED: no pinned kernel baseline");
-                eprintln!("[axon-vm]   measured: {digest_hex}");
-                eprintln!(
-                    "[axon-vm]   expected: (none — {} is absent)",
-                    baseline_path.display()
-                );
-                eprintln!(
-                    "[axon-vm]   pin it explicitly:  axon-vm attest --kernel {} --pin-baseline",
-                    kernel_path.display()
-                );
-                eprintln!("[axon-vm]   or pass:            --expect-digest <sha256>");
-                eprintln!("[axon-vm]   or, for dev only:   --no-attest");
-                return Err(
-                    "attestation failed: no pinned baseline (refusing to trust on first use)"
-                        .into(),
-                );
-            }
-        },
-    };
-
-    if expected != digest_hex {
-        eprintln!("[axon-vm] ATTESTATION FAILED: kernel digest mismatch");
-        eprintln!("[axon-vm]   expected: {expected} ({source})");
-        eprintln!("[axon-vm]   got:      {digest_hex}");
-        return Err("attestation failed: kernel tampered".into());
-    }
-    eprintln!(
-        "[axon-vm] attestation OK: digest {} ({source})",
-        &digest_hex[..16]
-    );
-
-    Ok(())
-}
+// (The attestation gate and its baseline paths moved to `axon_vm::admit`, D-019.)
 
 // ── Gap 7: Principal registry ─────────────────────────────────────────────────
 
@@ -3349,7 +3144,7 @@ mod tests {
             schema: "axon-vm-mmds/1".to_string(),
             run_id: "test-run-1".to_string(),
             principal: Some("test-agent".to_string()),
-            allowed_effects: Some(vec!["AI".to_string(), "Net".to_string()]),
+            allowed_effects: vec!["AI".to_string(), "Net".to_string()],
             budget_tokens: Some(5000),
             source_hash: None,
             seccomp_bpf_b64: None,

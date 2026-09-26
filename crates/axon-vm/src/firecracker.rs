@@ -20,6 +20,8 @@ use std::{env, fs, process};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
+use crate::admit::AdmittedLaunch;
+
 /// A tested engine/enclosure/guest/OS/architecture combination. Deliberately a
 /// flat description rather than a tier: consumers match on the fields they
 /// require (G13-r22-guest-truth).
@@ -80,7 +82,10 @@ pub struct MmdsPayload {
     pub schema: String,
     pub run_id: String,
     pub principal: Option<String>,
-    pub allowed_effects: Option<Vec<String>>,
+    /// The admitted effect grant (D-019). Not optional: a `null` grant is
+    /// refused by [`crate::admit::admit`] and cannot be represented here. An
+    /// EMPTY list is deny-all.
+    pub allowed_effects: Vec<String>,
     pub budget_tokens: Option<u64>,
     pub source_hash: Option<String>,
     pub seccomp_bpf_b64: Option<String>,
@@ -148,16 +153,21 @@ pub fn parse_guest_sentinel(line: &str) -> Option<GuestOutcome> {
 /// allow). `principal_mem_mib` is the only field of the CLI's `Principal` the
 /// launch path ever read, so the library takes just that rather than the
 /// CLI-private registry type.
+///
+/// D-019: a launch REQUIRES an [`AdmittedLaunch`] — which only
+/// [`crate::admit::admit`] can construct — and a [`FirecrackerBin`] resolved to
+/// an absolute path. The kernel booted and the policy delivered are the ones
+/// the admission attested and granted; there is no field to substitute either.
 #[derive(Debug, Clone, Copy)]
 pub struct LaunchSpec<'a> {
+    pub admitted: &'a AdmittedLaunch,
+    pub firecracker: &'a FirecrackerBin,
     pub program: &'a Path,
-    pub kernel: &'a Path,
     pub initrd: &'a Path,
     pub mem_mib: u64,
     pub vcpus: u64,
     pub vsock_port: u32,
     pub socket_path: &'a Path,
-    pub mmds: &'a MmdsPayload,
     /// The principal's memory cap, if any. Enforced with a BALLOON, not a cgroup
     /// (there is no jailer) — see [`BACKEND_PROFILE`].
     pub principal_mem_mib: Option<u64>,
@@ -168,21 +178,21 @@ pub struct LaunchSpec<'a> {
 /// change is the argument packaging above.
 pub fn run_in_firecracker(spec: &LaunchSpec<'_>) -> Result<RunResult, Box<dyn std::error::Error>> {
     let LaunchSpec {
+        admitted,
+        firecracker,
         program,
-        kernel,
         initrd,
         mem_mib,
         vcpus,
         vsock_port,
         socket_path,
-        mmds,
         principal_mem_mib,
     } = *spec;
-    // Check Firecracker is installed.
-    let fc_bin = which_firecracker()?;
+    let kernel = admitted.kernel();
+    let mmds = admitted.mmds();
 
     // Spawn Firecracker.
-    let mut fc = Command::new(&fc_bin)
+    let mut fc = Command::new(firecracker.path())
         .arg("--api-sock")
         .arg(socket_path)
         .stdin(Stdio::null())
@@ -669,27 +679,55 @@ fn vsock_relay(uds_path: &str, _vsock_port: u32, handler: Arc<dyn HostAwaitHandl
 
 // ── Helper: find Firecracker binary ──────────────────────────────────────────
 
-pub fn which_firecracker() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    for candidate in &[
-        "firecracker",
-        "/usr/local/bin/firecracker",
-        "/opt/firecracker/firecracker",
-    ] {
-        let path = PathBuf::from(candidate);
-        if path.exists() {
-            return Ok(path);
-        }
-        // Try PATH lookup.
-        if let Ok(out) = Command::new("which").arg(candidate).output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !s.is_empty() {
-                    return Ok(PathBuf::from(s));
+/// A Firecracker binary resolved to an ABSOLUTE path (D-019).
+///
+/// The old `which_firecracker` accepted a bare relative `firecracker` if a file
+/// of that name sat in the current directory, and otherwise whatever `which`
+/// printed — so the VMM that ran depended on the caller's cwd. The field is
+/// private: a `FirecrackerBin` can only come from [`FirecrackerBin::resolve`] or
+/// [`FirecrackerBin::at`], both of which refuse a relative path.
+#[derive(Debug, Clone)]
+pub struct FirecrackerBin(PathBuf);
+
+impl FirecrackerBin {
+    /// Look in the fixed install locations, then in the ABSOLUTE entries of
+    /// `PATH` (relative `PATH` entries are skipped — they resolve against cwd).
+    pub fn resolve() -> Result<Self, Box<dyn std::error::Error>> {
+        let mut candidates = vec![
+            PathBuf::from("/usr/local/bin/firecracker"),
+            PathBuf::from("/opt/firecracker/firecracker"),
+        ];
+        if let Some(path) = env::var_os("PATH") {
+            for dir in env::split_paths(&path) {
+                if dir.is_absolute() {
+                    candidates.push(dir.join("firecracker"));
                 }
             }
         }
+        for c in candidates {
+            if let Ok(fc) = Self::at(&c) {
+                return Ok(fc);
+            }
+        }
+        Err("firecracker not found in PATH or /usr/local/bin; install from github.com/firecracker-microvm/firecracker".into())
     }
-    Err("firecracker not found in PATH or /usr/local/bin; install from github.com/firecracker-microvm/firecracker".into())
+
+    /// Use exactly this binary. It must be an absolute path to a regular file.
+    pub fn at(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        if !path.is_absolute() {
+            return Err(
+                format!("firecracker path must be absolute, got {}", path.display()).into(),
+            );
+        }
+        if !path.is_file() {
+            return Err(format!("firecracker not a regular file: {}", path.display()).into());
+        }
+        Ok(FirecrackerBin(path.to_path_buf()))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
 }
 
 // ── Policy-in-cmdline embedding ───────────────────────────────────────────────
@@ -700,4 +738,32 @@ pub fn embed_policy_in_cmdline(base_cmdline: &str, mmds: &MmdsPayload) -> String
     let json = serde_json::to_string(mmds).unwrap_or_default();
     let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
     format!("{base_cmdline} axon.policy={b64}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D-019: a bare or relative `firecracker` resolved against the caller's cwd,
+    /// so which VMM ran depended on where you stood. Refused now.
+    #[test]
+    fn firecracker_bin_refuses_a_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let stub = dir.path().join("firecracker");
+        fs::write(&stub, "#!/bin/sh\n").unwrap();
+        assert!(FirecrackerBin::at(&stub).is_ok(), "absolute file accepted");
+        assert!(FirecrackerBin::at(Path::new("firecracker")).is_err());
+        assert!(FirecrackerBin::at(Path::new("./firecracker")).is_err());
+        // A relative path that DOES name an existing file (cargo runs tests from
+        // the crate dir) is still refused: existence is not the point, cwd is.
+        assert!(Path::new("src/lib.rs").is_file());
+        assert!(FirecrackerBin::at(Path::new("src/lib.rs")).is_err());
+        assert!(
+            FirecrackerBin::at(dir.path()).is_err(),
+            "a directory is not a binary"
+        );
+        if let Ok(fc) = FirecrackerBin::resolve() {
+            assert!(fc.path().is_absolute());
+        }
+    }
 }
