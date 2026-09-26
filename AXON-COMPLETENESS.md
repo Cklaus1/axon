@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 48 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 49 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -547,4 +547,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The negative re-pointed the ALREADY-RECORDED pinned episode at the tampered canonical episode under a new trial_id. Axon's identity bind refused that before the cost join ran, so the assertion (exit 4 only) passed without the property ever being exercised. The same shape hid a real defect: a v014 canonical episode's never-written micro_cents 0 was read by both peers as a KNOWN ZERO spend.
 - **Reproduced:** KEEP=1 run of the gate: both refusals read `refused: bind: task/arm/trial/attempt/operation/execution mismatch`, not a unit-conversion refusal.
 - **Fix:** The negatives now use a fresh task's sidecar changed only in source_episode_ref, and assert the refusal text comes from the cost join ("ZERO spend" / "NO known spend"). The spend itself is read through one pinned migration table on both peers (micode 7070c8ca, axon source_episode_spend). Found building G16-r22-negotiation. (`6838969b`)
+
+### FG-050 — crates/axon-loop/src/intake.rs (security, fixed)
+
+- **Claimed:** Verification evidence comes from an independent verifier: intake and EVL accept a verdict only when its issuer_ref is on the operator's trusted_verifiers list and is not the subject.
+- **Reality:** The trusted identity was only a STRING. Nothing in the evidence proved that the named verifier produced it: any actor able to reproduce the receipt JSON (every digest is reproducible from the documents) and write the trusted name into the sidecar was indistinguishable from the verifier. MiCode even copied the issuer name from its own config. The store config said so itself: 'Not authentication'.
+- **Reproduced:** Before 1ef1aa19, axon-loop intake recorded a sidecar whose verification.issuer_ref named the trusted verifier with no proof of origin; the new adversarial suite's self-signed and no-attestation cases were accepted with the attestation block removed (mutation run).
+- **Fix:** Detached Ed25519 acf-receipt-attestation/1 over an explicit domain-separated binding (schema, issuer, key id, request and receipt digests, receipt identity), signed by Fabric's OPERATOR-configured signer only for final receipts whose workload could not read the key; operator-held verifier_keys; intake and EVL accept a verdict only if it verifies, with the semantic joins still required. Mutation-tested at every guard; interop gate vs the pre-attestation MiCode fails exactly the attestation-dependent assertions. Residual: on a single-uid host the key is protected by file mode and by the closed-loop agent's tool scope (gate section 12), not by uid separation. (`1ef1aa19`)
 

@@ -2145,6 +2145,17 @@
       "status": "fixed",
       "severity": "reporting",
       "commit": "6838969b"
+    },
+    {
+      "id": "FG-050",
+      "where": "crates/axon-loop/src/intake.rs",
+      "claimed": "Verification evidence comes from an independent verifier: intake and EVL accept a verdict only when its issuer_ref is on the operator's trusted_verifiers list and is not the subject.",
+      "reality": "The trusted identity was only a STRING. Nothing in the evidence proved that the named verifier produced it: any actor able to reproduce the receipt JSON (every digest is reproducible from the documents) and write the trusted name into the sidecar was indistinguishable from the verifier. MiCode even copied the issuer name from its own config. The store config said so itself: 'Not authentication'.",
+      "reproduced": "Before 1ef1aa19, axon-loop intake recorded a sidecar whose verification.issuer_ref named the trusted verifier with no proof of origin; the new adversarial suite's self-signed and no-attestation cases were accepted with the attestation block removed (mutation run).",
+      "fix": "Detached Ed25519 acf-receipt-attestation/1 over an explicit domain-separated binding (schema, issuer, key id, request and receipt digests, receipt identity), signed by Fabric's OPERATOR-configured signer only for final receipts whose workload could not read the key; operator-held verifier_keys; intake and EVL accept a verdict only if it verifies, with the semantic joins still required. Mutation-tested at every guard; interop gate vs the pre-attestation MiCode fails exactly the attestation-dependent assertions. Residual: on a single-uid host the key is protected by file mode and by the closed-loop agent's tool scope (gate section 12), not by uid separation.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "1ef1aa19"
     }
   ]
 }
