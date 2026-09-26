@@ -399,6 +399,14 @@ fn missing_engine_digests_are_refused() {
 }
 
 #[test]
+fn a_manifest_that_pins_no_engine_is_refused() {
+    let mut m: Value = serde_json::from_str(&lx_manifest(GUEST)).unwrap();
+    m.as_object_mut().unwrap().remove("engine");
+    let w = World::with_manifest(&m.to_string());
+    w.assert_refused(w.cfg(&w.evidence()), "pins no engine");
+}
+
+#[test]
 fn engine_digests_differing_from_the_manifest_pins_are_refused() {
     let mut m: Value = serde_json::from_str(&lx_manifest(GUEST)).unwrap();
     m["engine"] = json!({"firecracker_sha256": "f".repeat(64), "jailer_sha256": TEST_JAILER_SHA});
@@ -448,8 +456,9 @@ fn repo() -> PathBuf {
 }
 
 /// The actual qualifying record (`.axon-v022/evidence/b263/20260924T080432Z.json`,
-/// 32 PASS / 0 FAIL / 4 BLOCKED, unsigned) against the committed manifest it
-/// names. Refused as unsigned; and signing it would not be enough, because its
+/// 32 PASS / 0 FAIL / 4 BLOCKED, unsigned) against the manifest it NAMES —
+/// pinned as a fixture, because the committed manifest has since been rebuilt
+/// (Stage 3 L5b) and a record must be judged against its own manifest. Refused as unsigned; and signing it would not be enough, because its
 /// four BLOCKED assertions are unwaived.
 #[test]
 fn the_real_b263_record_is_refused() {
@@ -457,7 +466,8 @@ fn the_real_b263_record_is_refused() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/b263-20260924T080432Z.json");
     let env = Env::new();
     let d = env.dir.path();
-    let manifest = repo().join("profiles/linux-microvm/manifest.json");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/manifest-at-b263-20260924T080432Z.json");
     let ev: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
     assert_eq!(ev["counts"]["BLOCKED"], 4);
     assert_eq!(ev["profile"]["manifest_sha256"], sha256_file(&manifest));
@@ -491,6 +501,55 @@ fn the_real_b263_record_is_refused() {
     let e = lx.qualification().unwrap_err();
     assert!(e.contains("x1_guest_policy_channel"), "{e}");
     assert!(e.contains("not covered by an issuer-signed waiver"), "{e}");
+}
+
+/// The Stage-3 re-qualification (`.axon-v022/evidence/b263/20260926T002631Z.json`,
+/// 39 PASS / 0 FAIL / 2 BLOCKED: x3 host boundary, x4 trusted issuer), judged
+/// against the COMMITTED manifest it names. Refused unsigned; and signed by a
+/// trusted key it is still refused, because x3/x4 are unwaived — closing it
+/// needs the operator's signature AND, on WSL2, an x3 waiver (S3-6, D7).
+#[test]
+fn the_stage3_requalification_record_is_refused_until_signed_and_waived() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/b263-20260926T002631Z.json");
+    let env = Env::new();
+    let d = env.dir.path();
+    let manifest = repo().join("profiles/linux-microvm/manifest.json");
+    let ev: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
+    assert_eq!(ev["counts"]["BLOCKED"], 2);
+    assert_eq!(ev["counts"]["FAIL"], 0);
+    assert_eq!(ev["profile"]["manifest_sha256"], sha256_file(&manifest));
+    std::fs::copy(&fixture, d.join("evidence.json")).unwrap();
+    let issuer = Issuer::generate();
+    issuer.trust_in(&d.join("trusted_issuers"), "operator");
+    let mut trust = backend::QualificationTrust::for_manifest(&manifest);
+    trust.issuers_dir = d.join("trusted_issuers");
+    trust.clock = backend::Clock::FixedUnix(backend::parse_utc("2026-09-26T01:00:00Z").unwrap());
+    let lx = LinuxProfileConfig {
+        launcher: stand_in_launcher(&env, 0, true, true, 0),
+        manifest,
+        artifacts_dir: None,
+        evidence: d.join("evidence.json"),
+        evidence_signature: None,
+        waivers: None,
+        trust,
+        out_root: d.join("lx-out"),
+    };
+    std::fs::create_dir_all(&lx.out_root).unwrap();
+    let w = World {
+        env,
+        issuer,
+        manifest_sha: String::new(),
+    };
+    w.assert_refused(lx.clone(), "unsigned");
+    let bytes = std::fs::read(&lx.evidence).unwrap();
+    std::fs::write(sig_of(&lx.evidence), w.issuer.sign(&bytes)).unwrap();
+    let e = lx.qualification().unwrap_err();
+    assert!(e.contains("not covered by an issuer-signed waiver"), "{e}");
+    assert!(
+        !e.contains("x1_guest_policy_channel"),
+        "x1 must now PASS: {e}"
+    );
 }
 
 /// The committed repository state: `profiles/linux-microvm/trusted_issuers/`
