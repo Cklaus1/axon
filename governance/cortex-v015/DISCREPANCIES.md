@@ -987,3 +987,12 @@ OpaqueRef/Ref mismatch G10 forbids. Stage 5 (B270, `07a19b13`) now REFUSES that
 mismatch (`crates/axon-loop/src/price.rs`; `tests/tel_price.rs`), so the package fixture
 would be refused by the implementation. Package-side; the vendored pack is not edited.
 Proposed: file upstream.
+
+## D-030 — Axon's WorkspaceVersion import is stricter than MiCode's recipe
+
+Axon refuses case/NFC path collisions and a path that is both a file and a directory;
+MiCode's recipe (`docs/axon-support/WORKSPACE_VERSION_RECIPE.md` §2 on the MiCode line)
+does not. For every tree BOTH accept the digest is byte-identical (cross-language fixture,
+`crates/axon-fabric/tests/fixtures/`). Proposed: MiCode adopts the collision class so a
+tree cannot bind on one side and be refused on the other. Also recorded: `bind_acf` is now
+stricter than the package's `tools/closed_loop_reference.py` on receipt roles and recheck.

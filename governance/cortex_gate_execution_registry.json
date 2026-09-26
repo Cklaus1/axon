@@ -54,6 +54,78 @@
         "PASS"
       ],
       "note": "B270. Cohort cost divides by every ASSIGNED trial; unknown-cost records are unresolved, never free; the request's price_schedule_ref must equal the pinned schedule's cl22 Ref. Tests named in scripts/v022_stage5_gates.sh (axon-loop/tests/tel_price.rs). G10-r22-full-task-cost stays NOT_RUN: no operator execution price schedule (D10)."
+    },
+    {
+      "gate_id": "G03-r22-workspace-import",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B261. WorkspaceVersion import refuses .., absolute, escaping symlinks, devices/FIFOs/sockets, non-UTF-8, control chars, duplicates, case/NFC collisions, file-and-dir, quota overflow (D11); digest byte-identical to MiCode's recipe via a cross-language fixture. axon-fabric/tests/workspace.rs."
+    },
+    {
+      "gate_id": "G28-r22-workspace-not-context",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B261/B264. A hash-only WorkspaceProjection cannot be materialized; hidden check suites are materialized read-only beside, never inside, the candidate and reach it only via AXON_PATH. axon-fabric/tests/{workspace,check_effects}.rs. Caveat: candidate code runs in the verifier process, so the effect ceiling, not the directory layout, keeps it from reading the suite."
+    },
+    {
+      "gate_id": "G03-r22-check-effects",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B264. Substituted argv/executable, stale epoch \u2192 zero launch records; post-run change to candidate or suite makes the verdict unknown; executor refuses a receipt whose refs are not the version it sent. axon-fabric/tests/check_effects.rs."
+    },
+    {
+      "gate_id": "G32-r22-receipt-roles",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B265. bind_acf refuses a context/request/receipt standing in as the verifier and a completed status not supervisor_observed; cross-tenant evidence is unknown with a reason. axon-loop/tests/evl.rs."
+    },
+    {
+      "gate_id": "G32-r22-artifact-recheck",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B265. A pass whose checked output is not exactly the receipt's output_workspace_ref is refused (checked in bind_acf itself). axon-loop/tests/evl.rs, axon-fabric/tests/check_effects.rs."
+    },
+    {
+      "gate_id": "G08-r22-logical-branches",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B271. Branches from one frozen published base, each with its own run id/writer, budgets carved inside one regime (Journal::reserve_within). axon-fabric/tests/branches.rs. No CLI verb yet."
+    },
+    {
+      "gate_id": "G11-r22-workspace-cas",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B271. Publish requires expected head, current epoch, branch writer, a passing receipt from this journal/branch binding the exact version, and a declared approver who is not the writer; concurrent publishers: exactly one wins. Approvers/writers are declared names, not signatures. axon-fabric/tests/branches.rs."
+    },
+    {
+      "gate_id": "G08-r22-branch-cancellation",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B271. Cancelling a branch keeps every record and any liability and leaves sibling branches untouched. axon-fabric/tests/branches.rs."
     }
   ],
   "tasks": [],
