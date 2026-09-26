@@ -6,6 +6,13 @@ Usage: linux_profile_manifest.py <dist-dir> <profile-dir>
 Every artifact the launcher consumes is recorded by sha256. The launcher
 (scripts/fc_linux_profile.sh) re-hashes each artifact against THIS manifest
 before booting, so an artifact swapped after the build refuses to launch.
+
+The VMM ENGINE (firecracker + jailer) is pinned here too, in `engine`, with the
+exact field names axon-fabric's qualification() compares an evidence record's
+`engine` block against. It was not pinned at all: the launcher exec'd whatever
+sat at /usr/local/bin, so a swapped VMM ran with the same qualification as the
+one that was measured. FC_BIN / JAILER_BIN override the paths pinned (the
+launcher's defaults are the same two paths).
 """
 import hashlib
 import json
@@ -75,6 +82,16 @@ def main():
                        "sha256": sha(os.path.join(prof, "guest-init.sh"))},
         "artifacts": {},
     }
+    fc_bin = os.environ.get("FC_BIN", "/usr/local/bin/firecracker")
+    jailer_bin = os.environ.get("JAILER_BIN", "/usr/local/bin/jailer")
+    manifest["engine"] = {
+        "firecracker_path": fc_bin,
+        "firecracker_version": first_line([fc_bin, "--version"]),
+        "firecracker_sha256": sha(fc_bin),
+        "jailer_path": jailer_bin,
+        "jailer_version": first_line([jailer_bin, "--version"]),
+        "jailer_sha256": sha(jailer_bin),
+    }
     # axon-guest-init is pinned like axon: it is the in-guest policy channel
     # (reads `axon.policy=` from the kernel cmdline), so a swapped binary is a
     # swapped policy enforcer.
@@ -88,7 +105,7 @@ def main():
     with open(os.path.join(dist, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")
-    print(json.dumps(manifest["artifacts"], indent=2))
+    print(json.dumps({"artifacts": manifest["artifacts"], "engine": manifest["engine"]}, indent=2))
 
 
 if __name__ == "__main__":

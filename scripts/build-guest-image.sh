@@ -148,7 +148,7 @@ build_rootfs_linux() {
         cargo build --locked -p axon-core \
             --target x86_64-unknown-linux-musl \
             --no-default-features --bin axon --release --quiet
-    local AXON_BIN="target/x86_64-unknown-linux-musl/release/axon"
+    local AXON_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon"
     if ! file "$AXON_BIN" | grep -q 'static'; then
         echo "[build-guest-image] ERROR: $AXON_BIN is not statically linked" >&2
         exit 1
@@ -163,7 +163,7 @@ build_rootfs_linux() {
     RUSTFLAGS="-C target-feature=+crt-static" \
         cargo build --locked -p axon-guest-init \
             --target x86_64-unknown-linux-musl --release --quiet
-    local INIT_BIN="target/x86_64-unknown-linux-musl/release/axon-guest-init"
+    local INIT_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon-guest-init"
     if ! file "$INIT_BIN" | grep -q 'static'; then
         echo "[build-guest-image] ERROR: $INIT_BIN is not statically linked" >&2
         exit 1
@@ -225,7 +225,7 @@ build_initramfs() {
             --release \
             --quiet
 
-    local AXON_BIN="target/x86_64-unknown-linux-musl/release/axon"
+    local AXON_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon"
     local INITDIR
     INITDIR="$(mktemp -d)"
     # AUDIT T12: INITDIR is `local` to this function, but an EXIT trap runs in
@@ -249,7 +249,7 @@ build_initramfs() {
                 --target x86_64-unknown-linux-musl \
                 --release \
                 --quiet
-        local INIT_BIN="target/x86_64-unknown-linux-musl/release/axon-guest-init"
+        local INIT_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon-guest-init"
         cp "$INIT_BIN" "$INITDIR/init"
         chmod +x "$INITDIR/init"
         strip "$INITDIR/init" 2>/dev/null || true

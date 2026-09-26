@@ -9,6 +9,14 @@
 #   fc_linux_profile.sh --program PROG.ax --out DIR [options]
 #
 #   --program FILE        Axon program run as /work/job/program.ax (required)
+#   --policy FILE         capability policy, schema axon-vm-mmds/1 (required).
+#                         Validated here (strict JSON, known keys only, grantable
+#                         effect names, constrains something) and embedded as
+#                         exactly one `axon.policy=<standard padded base64 of
+#                         the file's exact bytes>` kernel-cmdline word, which
+#                         axon-guest-init enforces in the guest. A request for an
+#                         axis this profile cannot project (path or host scope)
+#                         is REFUSED, never silently dropped.
 #   --out DIR             result directory, must not exist or be empty (required)
 #   --put SRC:DEST        copy SRC into the workspace drive at DEST (repeatable)
 #   --vcpus N             guest vCPUs                        (default 1)
@@ -19,16 +27,38 @@
 #   --workspace-mib N     workspace drive size = output cap  (default 64)
 #   --timeout-s N         wall-clock limit, then cgroup.kill (default 60)
 #   --id ID               jail id (default b263-<random>)
-#   --manifest FILE       artifact pins (default dist/guest-linux/manifest.json)
+#   --manifest FILE       artifact + engine pins (default dist/guest-linux/manifest.json)
+#   --fc-bin FILE         firecracker binary (default /usr/local/bin/firecracker;
+#   --jailer-bin FILE     jailer binary       default /usr/local/bin/jailer).
+#                         Either must still match the manifest's `engine` pin —
+#                         these exist so qualification can prove a swapped
+#                         engine is refused, not to bypass the pin.
+#
+# Test hooks (qualification only; every hooked run lists them in result.json
+# `test_hooks`, and neither can make a run admissible that would not be):
+#   FC_PROFILE_TEST_POLICY_WORD=W   (set, possibly empty) put W on the cmdline
+#                                   INSTEAD of the validated policy word, so the
+#                                   GUEST's refusal of an absent/empty/malformed
+#                                   policy is observable. No policy sha is
+#                                   recorded, so the run is never admissible.
+#   FC_PROFILE_TEST_EMBED_POLICY=F  validate and record --policy as usual but
+#                                   embed F's bytes: the guest then reports a
+#                                   digest the host did not send.
 #
 # Exit status:
 #   0   workload ran, exit 0, output bound to the serial digest
 #   10  workload ran, nonzero exit (see result.json workload_exit)
 #   20  wall-clock timeout: VMM killed
 #   21  VMM died without a completed run (crash, host OOM kill, boot failure)
-#   22  refused before launch (artifact digest != manifest, bad input, not root)
+#   22  refused before launch (artifact or engine digest != manifest, policy
+#       absent/invalid/over-long, bad input, not root) — nothing acquired
+#       when refused in the pin block
 #   23  output drive and serial digest disagree (result NOT admissible)
 #   24  cleanup incomplete (result.json lists what was left)
+#   25  policy unbound: the guest reported (serial `B263-POLICY sha=<hex>`) a
+#       policy other than the one the host embedded, or none (NOT admissible)
+#   26  engine unbound: the VMM that ran is not the pinned firecracker (the
+#       jailer's chroot copy or the running image differ; NOT admissible)
 #
 # DIR on return: result.json, serial.log, jailer.log, workspace.img (the
 # returned drive), out/ (files extracted from the drive WITHOUT mounting it on
@@ -43,6 +73,11 @@ CHROOT_BASE="/srv/axon-b263"
 CG_PARENT="axon-b263"
 FC_BIN="/usr/local/bin/firecracker"
 JAILER_BIN="/usr/local/bin/jailer"
+# x86 COMMAND_LINE_SIZE is 2048; the kernel keeps 2047 bytes and silently drops
+# the rest. axon-guest-init refuses a cmdline over 2046 bytes as possibly
+# truncated, so the launcher refuses to build one instead of booting a guest
+# that will refuse.
+CMDLINE_MAX=2046
 
 BOOT_ARGS="console=ttyS0 reboot=k panic=1 pci=off acpi=off root=/dev/vda rootfstype=squashfs ro init=/init loglevel=4"
 
@@ -80,8 +115,12 @@ if [[ "${1:-}" == "--verify-result" ]]; then
     rm -rf "$T"
     S="$(sed -n 's/.*B263-OUT stdout=\([0-9a-f]*\) exit=.*/\1/p' "$VD/serial.log" | tr -d '\r' | tail -1)"
     R="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["outputs"]["stdout"]["sha256"])' "$VD/result.json" 2>/dev/null)"
-    echo "{\"drive\":\"$D\",\"serial\":\"$S\",\"result\":\"$R\"}"
-    [[ -n "$D" && "$D" == "$S" && "$D" == "$R" ]] && exit 0
+    # the policy the guest reported (FIRST line: printed before the workload
+    # starts, so a workload cannot pre-empt it) must be the one recorded
+    SP="$(sed -n 's/.*B263-POLICY sha=\([0-9a-f]*\).*/\1/p' "$VD/serial.log" | tr -d '\r' | head -1)"
+    RP="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("policy_sha256") or "")' "$VD/result.json" 2>/dev/null)"
+    echo "{\"drive\":\"$D\",\"serial\":\"$S\",\"result\":\"$R\",\"policy_serial\":\"$SP\",\"policy_result\":\"$RP\"}"
+    [[ -n "$D" && "$D" == "$S" && "$D" == "$R" && -n "$RP" && "$SP" == "$RP" ]] && exit 0
     exit 23
 fi
 
@@ -95,12 +134,16 @@ inject() {  # fault injection for cleanup qualification (FC_PROFILE_INJECT_FAIL)
 PROGRAM="" OUT="" VCPUS=1 ADIR="" MEM_MIB=256 CG_MEM_MAX="" CG_PIDS_MAX=16
 CG_CPU_MAX="100000 100000" WS_MIB=64 TIMEOUT_S=60 ID="" MANIFEST="$REPO/dist/guest-linux/manifest.json"
 PUTS=()
+POLICY=""
 
 die_usage() { echo "fc_linux_profile: $*" >&2; exit 22; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --program) PROGRAM="$2"; shift 2 ;;
+        --policy) POLICY="$2"; shift 2 ;;
+        --fc-bin) FC_BIN="$2"; shift 2 ;;
+        --jailer-bin) JAILER_BIN="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --put) PUTS+=("$2"); shift 2 ;;
         --vcpus) VCPUS="$2"; shift 2 ;;
@@ -118,6 +161,10 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$PROGRAM" && -f "$PROGRAM" ]] || die_usage "--program FILE required"
 [[ -n "$OUT" ]] || die_usage "--out DIR required"
+# the jailer names the chroot after the exec file's basename; JAIL_DIR below
+# assumes `firecracker`
+[[ "$(basename "$FC_BIN")" == firecracker ]] || die_usage "--fc-bin must be a file named 'firecracker'"
+[[ -f "$FC_BIN" && -f "$JAILER_BIN" ]] || die_usage "firecracker/jailer binary missing ($FC_BIN, $JAILER_BIN)"
 [[ "$(id -u)" == 0 ]] || die_usage "must run as root (jailer needs it to drop to the profile uid)"
 [[ -z "$CG_MEM_MAX" ]] && CG_MEM_MAX=$(( (MEM_MIB + 128) * 1024 * 1024 ))
 [[ -z "$ID" ]] && ID="b263-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
@@ -148,6 +195,31 @@ PIN_KERNEL="$(read_pin vmlinux)"; PIN_ROOTFS="$(read_pin rootfs.sqfs)"; PIN_AXON
 GOT_KERNEL="$(sha256sum "$KERNEL" | cut -d' ' -f1)"
 GOT_ROOTFS="$(sha256sum "$ROOTFS" | cut -d' ' -f1)"
 PROG_SHA="$(sha256sum "$PROGRAM" | cut -d' ' -f1)"
+# refuse_prelaunch REASON [EXTRA_JSON_FIELDS] — nothing has been acquired yet
+refuse_prelaunch() {
+    python3 - "$OUT/result.json" "$ID" "$1" "${2:-{\}}" <<'PY'
+import json, sys
+p, jid, reason, extra = sys.argv[1:5]
+r = {"schema": "axon-linux-microvm-result/1", "id": jid, "status": "launch-refused",
+     "exit_code": 22, "reason": reason, "admissible": False, "acquired": []}
+r.update(json.loads(extra))
+json.dump(r, open(p, "w"), indent=2)
+PY
+    echo "fc_linux_profile: REFUSED: $1 (nothing acquired)" >&2
+    exit 22
+}
+# ── 1a. engine: firecracker + jailer must match the manifest's `engine` pins.
+# They were exec'd from fixed paths with no digest check, so a swapped VMM ran
+# under the qualification of the one that was measured.
+read_engine_pin() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); v=(m.get("engine") or {}).get(sys.argv[2]); print(v if isinstance(v,str) else "")' "$MANIFEST" "$1"; }
+PIN_FC="$(read_engine_pin firecracker_sha256)"; PIN_JAILER="$(read_engine_pin jailer_sha256)"
+GOT_FC="$(sha256sum "$FC_BIN" | cut -d' ' -f1)"
+GOT_JAILER="$(sha256sum "$JAILER_BIN" | cut -d' ' -f1)"
+ENGINE_JSON="{\"engine\":{\"firecracker\":{\"path\":$(json_str "$FC_BIN"),\"pinned\":\"$PIN_FC\",\"actual\":\"$GOT_FC\"},\"jailer\":{\"path\":$(json_str "$JAILER_BIN"),\"pinned\":\"$PIN_JAILER\",\"actual\":\"$GOT_JAILER\"}}}"
+[[ "$PIN_FC" =~ ^[0-9a-f]{64}$ && "$PIN_JAILER" =~ ^[0-9a-f]{64}$ ]] \
+    || refuse_prelaunch "manifest carries no engine pins (engine.firecracker_sha256 / engine.jailer_sha256); an unpinned VMM is not launched" "$ENGINE_JSON"
+[[ "$GOT_FC" == "$PIN_FC" && "$GOT_JAILER" == "$PIN_JAILER" ]] \
+    || refuse_prelaunch "engine digest does not match manifest" "$ENGINE_JSON"
 if [[ "$GOT_KERNEL" != "$PIN_KERNEL" || "$GOT_ROOTFS" != "$PIN_ROOTFS" ]]; then
     cat > "$OUT/result.json" <<EOF
 {"schema":"axon-linux-microvm-result/1","id":"$ID","status":"launch-refused",
@@ -158,6 +230,76 @@ EOF
     echo "fc_linux_profile: REFUSED: artifact digest mismatch (nothing acquired)" >&2
     exit 22
 fi
+
+# ── 1b. policy: validated and encoded BEFORE anything is acquired ─────────────
+TEST_HOOKS=()
+POLICY_SHA="" POLICY_BYTES=0 POLICY_WORD=""
+if [[ -n "${FC_PROFILE_TEST_POLICY_WORD+x}" ]]; then
+    TEST_HOOKS+=("FC_PROFILE_TEST_POLICY_WORD")
+    POLICY_WORD="$FC_PROFILE_TEST_POLICY_WORD"
+else
+    [[ -n "$POLICY" ]] || refuse_prelaunch "no --policy: the guest refuses to run a workload without a capability policy, so the launcher does not boot one"
+    [[ -f "$POLICY" ]] || refuse_prelaunch "--policy $POLICY is not a file"
+    PV="$(python3 - "$POLICY" <<'PY' 2>&1
+import json, sys
+# Strict: duplicate keys (compared as decoded), NaN/Infinity, non-UTF-8, a
+# non-object top level, unknown keys and wrong types are all refusals. The
+# guest parser is equally strict about duplicates and schema; this adds what it
+# cannot see from inside: an axis the profile cannot enforce.
+raw = open(sys.argv[1], "rb").read()
+def fail(m): print(m); sys.exit(1)
+def no_dups(pairs):
+    seen = set()
+    for k, _ in pairs:
+        if k in seen: fail(f"duplicate key {k!r}")
+        seen.add(k)
+    return dict(pairs)
+def no_const(c): fail(f"non-finite number {c}")
+try: text = raw.decode("utf-8")
+except UnicodeDecodeError as e: fail(f"not UTF-8: {e}")
+try: p = json.loads(text, object_pairs_hook=no_dups, parse_constant=no_const)
+except json.JSONDecodeError as e: fail(f"malformed JSON: {e}")
+if not isinstance(p, dict): fail("top-level value is not a JSON object")
+if p.get("schema") != "axon-vm-mmds/1": fail(f"schema must be 'axon-vm-mmds/1', got {p.get('schema')!r}")
+# ACF-G26 / operator default D8: path and host scope are NOT projected into this
+# profile's guest. A request for them is refused by name — the guest's parser
+# ignores unknown keys, so passing one through would read as enforced.
+SCOPE = {"fs", "fs_read", "fs_write", "fs_scope", "paths", "path", "net", "net_hosts",
+         "hosts", "host", "scope", "exec_scope"}
+KNOWN = {"schema", "principal", "allowed_effects", "budget_tokens", "source_hash",
+         "seccomp_bpf_b64", "run_id"}
+scope = sorted(k for k in p if k in SCOPE)
+if scope: fail(f"unsupported axis: {scope} (path/host scope is not projected into the linux-microvm guest; refused, not ignored)")
+unknown = sorted(k for k in p if k not in KNOWN)
+if unknown: fail(f"unknown key(s) {unknown}: an axis the guest does not read would be silently unenforced")
+GRANTABLE = {"AI", "Bpf", "Chan", "Exec", "Hal", "IO", "Net", "Pure", "Random", "Tee", "Time"}
+ae = p.get("allowed_effects")
+if ae is not None:
+    if not isinstance(ae, list) or not all(isinstance(e, str) for e in ae): fail("allowed_effects must be a list of strings")
+    bad = sorted(e for e in ae if e not in GRANTABLE)
+    if bad: fail(f"allowed_effects names {bad}, which are not effects (valid: {sorted(GRANTABLE)})")
+bt = p.get("budget_tokens")
+if bt is not None and (isinstance(bt, bool) or not isinstance(bt, int) or bt < 0): fail("budget_tokens must be a non-negative integer")
+for k in ("principal", "source_hash", "seccomp_bpf_b64", "run_id"):
+    if p.get(k) is not None and not isinstance(p[k], str): fail(f"{k} must be a string")
+if ae is None and bt is None and p.get("seccomp_bpf_b64") is None:
+    fail("policy constrains nothing (no allowed_effects, budget_tokens or seccomp_bpf_b64)")
+PY
+)" || refuse_prelaunch "invalid --policy: $PV"
+    POLICY_SHA="$(sha256sum "$POLICY" | cut -d' ' -f1)"
+    POLICY_BYTES="$(stat -c %s "$POLICY")"
+    EMBED="$POLICY"
+    if [[ -n "${FC_PROFILE_TEST_EMBED_POLICY:-}" ]]; then
+        TEST_HOOKS+=("FC_PROFILE_TEST_EMBED_POLICY")
+        EMBED="$FC_PROFILE_TEST_EMBED_POLICY"
+    fi
+    POLICY_WORD="axon.policy=$(base64 -w0 < "$EMBED")"
+fi
+BOOT_ARGS_FULL="$BOOT_ARGS${POLICY_WORD:+ $POLICY_WORD}"
+CMDLINE_BYTES="$(printf '%s' "$BOOT_ARGS_FULL" | wc -c)"
+(( CMDLINE_BYTES <= CMDLINE_MAX )) \
+    || refuse_prelaunch "kernel cmdline would be $CMDLINE_BYTES bytes (> $CMDLINE_MAX): the guest kernel may truncate the policy word" "{\"cmdline_bytes\":$CMDLINE_BYTES}"
+TEST_HOOKS_JSON="$(printf '%s\n' "${TEST_HOOKS[@]:-}" | python3 -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')"
 
 # ── cleanup: runs on every exit path; records what it did and what remained ──
 ACQUIRED=()
@@ -198,6 +340,7 @@ PY
         umount -l "$m" 2>/dev/null
     done
     rm -rf "$JAIL_DIR" 2>/dev/null
+    [[ -n "${ENGINE_DIR:-}" ]] && rm -rf "$ENGINE_DIR" 2>/dev/null
     ip netns del "$NETNS" 2>/dev/null
 
     # verification — independent re-observation, not trust in the calls above
@@ -206,6 +349,7 @@ PY
     pgrep -f -- "--id $ID( |$)" >/dev/null 2>&1 && left+=("process-matching-id")
     [[ -e "$CG_DIR" ]] && left+=("cgroup:$CG_DIR")
     [[ -e "$JAIL_DIR" ]] && left+=("chroot:$JAIL_DIR")
+    [[ -n "${ENGINE_DIR:-}" && -e "$ENGINE_DIR" ]] && left+=("engine-copy:$ENGINE_DIR")
     grep -q -- "$JAIL_DIR" /proc/mounts && left+=("mount-under:$JAIL_DIR")
     ip netns list 2>/dev/null | grep -qw -- "$NETNS" && left+=("netns:$NETNS")
     local left_json
@@ -259,6 +403,17 @@ if [[ "$(sha256sum "$CHROOT/vmlinux" | cut -d' ' -f1)" != "$PIN_KERNEL" ||
     echo "fc_linux_profile: REFUSED: chroot copy digest mismatch" >&2
     STATUS="launch-refused"; RC=22; exit 22
 fi
+# The engine is exec'd from a PRIVATE root-only copy whose digest is re-checked,
+# not from the path checked in the pin block (TOCTOU between check and exec).
+ENGINE_DIR="$(mktemp -d /run/axon-b263-engine.XXXXXX)"; ACQUIRED+=("engine-copy:$ENGINE_DIR")
+chmod 0700 "$ENGINE_DIR"
+cp "$FC_BIN" "$ENGINE_DIR/firecracker"; cp "$JAILER_BIN" "$ENGINE_DIR/jailer"
+chmod 0755 "$ENGINE_DIR/firecracker" "$ENGINE_DIR/jailer"
+if [[ "$(sha256sum "$ENGINE_DIR/firecracker" | cut -d' ' -f1)" != "$PIN_FC" ||
+      "$(sha256sum "$ENGINE_DIR/jailer" | cut -d' ' -f1)" != "$PIN_JAILER" ]]; then
+    echo "fc_linux_profile: REFUSED: engine copy digest mismatch" >&2
+    STATUS="launch-refused"; RC=22; exit 22
+fi
 # read-only to the VMM uid at the FILE level too, not only is_read_only
 chown root:root "$CHROOT/vmlinux" "$CHROOT/rootfs.sqfs"; chmod 0444 "$CHROOT/vmlinux" "$CHROOT/rootfs.sqfs"
 # workspace goes in via a hard link-free copy so the VMM owns only that file
@@ -268,7 +423,7 @@ cat > "$CHROOT/vm.json" <<EOF
 {
   "boot-source": {
     "kernel_image_path": "vmlinux",
-    "boot_args": "$BOOT_ARGS"
+    "boot_args": "$BOOT_ARGS_FULL"
   },
   "drives": [
     {"drive_id": "rootfs", "path_on_host": "rootfs.sqfs", "is_root_device": true, "is_read_only": true},
@@ -294,9 +449,9 @@ START_NS=$(date +%s%N)
 ACQUIRED+=("cgroup:$CG_DIR")
 # env -i: nothing from the invoking shell (API keys, AXON_* policy) reaches the VMM
 env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-    "$JAILER_BIN" \
+    "$ENGINE_DIR/jailer" \
     --id "$ID" --uid "$PUID" --gid "$PGID" \
-    --exec-file "$FC_BIN" \
+    --exec-file "$ENGINE_DIR/firecracker" \
     --chroot-base-dir "$CHROOT_BASE" \
     --cgroup-version 2 --parent-cgroup "$CG_PARENT" \
     --cgroup "memory.max=$CG_MEM_MAX" --cgroup "memory.swap.max=0" \
@@ -309,7 +464,7 @@ FC_PID=$!
 ACQUIRED+=("vmm-pid:$FC_PID")
 cat > "$OUT/launch.json" <<EOF
 {"id":"$ID","vmm_pid":$FC_PID,"chroot":"$CHROOT","cgroup":"$CG_DIR","netns":"$NETNS",
- "uid":$PUID,"gid":$PGID,"started_ns":$START_NS}
+ "uid":$PUID,"gid":$PGID,"started_ns":$START_NS,"policy_sha256":"$POLICY_SHA","test_hooks":$TEST_HOOKS_JSON}
 EOF
 if [[ "${FC_PROFILE_INJECT_FAIL:-}" == after-launch ]]; then
     # let the jailer finish creating the cgroup + chroot mounts, then fail
@@ -370,6 +525,7 @@ for _ in $(seq 400); do
     if [[ "$(cat /proc/$FC_PID/comm 2>/dev/null)" == firecracker ]] &&
        grep -qs "fc_vcpu" /proc/$FC_PID/task/*/comm; then
         HOST_OBS="$(observe)"; echo "$HOST_OBS" > "$OUT/host_observed.json"
+        ENGINE_RUN_SHA="$(sha256sum /proc/$FC_PID/exe 2>/dev/null | cut -d' ' -f1)"
         break
     fi
     sleep 0.01
@@ -390,6 +546,8 @@ END_NS=$(date +%s%N)
 
 # ── 6. return the output drive and bind it to the serial digest ───────────────
 cp "$CHROOT/workspace.img" "$OUT/workspace.img" 2>/dev/null
+# the jailer's own copy of the engine inside the chroot, i.e. what it exec'd
+ENGINE_CHROOT_SHA="$(sha256sum "$CHROOT/firecracker" 2>/dev/null | cut -d' ' -f1)"
 ROOTFS_AFTER_SHA="$(sha256sum "$CHROOT/rootfs.sqfs" 2>/dev/null | cut -d' ' -f1)"
 if [[ -f "$OUT/workspace.img" ]]; then
     RD="$(mktemp -d)"
@@ -401,12 +559,25 @@ mkdir -p "$OUT/out"
 SERIAL_OUT_SHA="$(sed -n 's/.*B263-OUT stdout=\([0-9a-f]*\) exit=.*/\1/p' "$OUT/serial.log" | tr -d '\r' | tail -1)"
 SERIAL_EXIT="$(sed -n 's/.*B263-OUT stdout=[0-9a-f]* exit=\([0-9]*\).*/\1/p' "$OUT/serial.log" | tr -d '\r' | tail -1)"
 DONE=false; grep -q "B263-DONE" "$OUT/serial.log" && DONE=true
+# FIRST B263-POLICY line: guest-init.sh prints it before the workload starts, so
+# a workload writing to the console later cannot pre-empt it.
+SERIAL_POLICY="$(grep -a -m1 'B263-POLICY ' "$OUT/serial.log" | sed 's/.*B263-POLICY //' | tr -d '\r')"
+SERIAL_POLICY_SHA="$(printf '%s' "$SERIAL_POLICY" | sed -n 's/^sha=\([0-9a-f]\{64\}\)$/\1/p')"
+POLICY_BOUND=false
+[[ -n "$POLICY_SHA" && "$SERIAL_POLICY_SHA" == "$POLICY_SHA" ]] && POLICY_BOUND=true
+ENGINE_BOUND=true
+[[ "$ENGINE_CHROOT_SHA" == "$PIN_FC" ]] || ENGINE_BOUND=false
+[[ -z "${ENGINE_RUN_SHA:-}" || "$ENGINE_RUN_SHA" == "$PIN_FC" ]] || ENGINE_BOUND=false
 DRIVE_OUT_SHA=""; [[ -f "$OUT/out/stdout" ]] && DRIVE_OUT_SHA="$(sha256sum "$OUT/out/stdout" | cut -d' ' -f1)"
 WORKLOAD_EXIT=""; [[ -f "$OUT/out/exit" ]] && WORKLOAD_EXIT="$(tr -d '\n' < "$OUT/out/exit")"
 
 if [[ "$STATUS" != "timeout" ]]; then
-    if [[ "$DONE" != true ]]; then
+    if [[ "$ENGINE_BOUND" != true ]]; then
+        STATUS="engine-unbound"; RC=26
+    elif [[ "$DONE" != true ]]; then
         STATUS="vmm-died"; RC=21
+    elif [[ "$POLICY_BOUND" != true ]]; then
+        STATUS="policy-unbound"; RC=25
     elif [[ -z "$DRIVE_OUT_SHA" || "$DRIVE_OUT_SHA" != "$SERIAL_OUT_SHA" || "$WORKLOAD_EXIT" != "$SERIAL_EXIT" ]]; then
         STATUS="output-unbound"; RC=23
     elif [[ "$WORKLOAD_EXIT" == 0 ]]; then
@@ -431,9 +602,22 @@ r = {
   "schema": "axon-linux-microvm-result/1",
   "id": "$ID", "status": "$STATUS",
   "program_sha256": "$PROG_SHA",
+  "admissible": "$STATUS" in ("ok", "workload-failed"),
+  "test_hooks": json.loads('$TEST_HOOKS_JSON'),
   "boot_args": "$BOOT_ARGS",
+  "cmdline_bytes": $CMDLINE_BYTES,
+  "policy_sha256": "$POLICY_SHA" or None,
+  "policy": {"channel": "kernel cmdline, one word axon.policy=<base64>",
+             "sha256": "$POLICY_SHA" or None, "bytes": $POLICY_BYTES,
+             "serial_report": "$SERIAL_POLICY" or None,
+             "serial_sha256": "$SERIAL_POLICY_SHA" or None,
+             "bound": "$POLICY_BOUND" == "true"},
+  "engine": {"firecracker_pinned": "$PIN_FC", "jailer_pinned": "$PIN_JAILER",
+             "firecracker_chroot_copy_sha256": "$ENGINE_CHROOT_SHA" or None,
+             "firecracker_running_exe_sha256": "${ENGINE_RUN_SHA:-}" or None,
+             "bound": "$ENGINE_BOUND" == "true"},
   "jail": {"uid": $PUID, "gid": $PGID, "chroot_base": "$CHROOT_BASE", "cgroup_parent": "$CG_PARENT",
-           "netns": "empty (lo only)", "network_interfaces": 0, "mmds": "not configured",
+           "netns": "empty (lo only)", "network_interfaces": 0, "mmds": "not configured (policy rides the kernel cmdline)",
            "api_socket": "none (--no-api)", "seccomp": "firecracker default filter"},
   "artifacts": {"vmlinux": "$GOT_KERNEL", "rootfs.sqfs": "$GOT_ROOTFS", "axon_pinned": "$PIN_AXON"},
   "limits": {"vcpus": $VCPUS, "mem_mib": $MEM_MIB, "cg_memory_max": "$CG_MEM_MAX",

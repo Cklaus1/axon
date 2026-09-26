@@ -1,0 +1,12 @@
+// B263 x1e: the policy's effect ceiling is ENFORCED in the guest. The program
+// spawns a native process that leaves a file on the output drive. Under an
+// IO-only ceiling the spawn is a SandboxViolation (exit 8) and the file never
+// appears; under IO+Exec it runs (positive control). `IO` never implies spawn.
+fn main() {
+    println("X1E-BEGIN")
+    match exec("/bin/sh", ["-c", "echo exec-ran > /work/out/exec_ran.txt; echo spawned"]) {
+        Ok(o) => print(o)
+        Err(e) => println("X1E-EXEC-ERR {e}")
+    }
+    println("X1E-END")
+}
