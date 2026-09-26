@@ -162,6 +162,33 @@
         "PASS"
       ],
       "note": "B282. Each laundering class \u2014 mutated receipt, forged issuer identity, hash-only success, missing attempt, cross-tenant reference \u2014 on individually schema-valid documents with re-derived digests, driven through independent evaluation -> admission -> the fenced pointer: never a verified pass, never Accepted, pointer never moves, each refused by its own first-line check (mutation-proven), with a clean positive control Accepted (axon-loop evidence_laundering.rs). Intake step 8 refuses laundered Fabric verification evidence (intake.rs)."
+    },
+    {
+      "gate_id": "G13-r22-journal-before-effect",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B260. Intent durable before begin returns; a real crash at each submit boundary (after intent, reserve, launch record, terminal) recovers exactly one recorded op with no blind re-execution; the same OperationId with changed input is a conflict with zero effects; the journal survives restart (torn tail truncated, state visible after reopen). axon-fabric journal.rs, submit.rs, restart_matrix.rs."
+    },
+    {
+      "gate_id": "G21-r22-inconclusive-valid",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B274 mechanism. Too little evidence, liability, unknowns, regression or no economic benefit gives Inconclusive/Reject, never a forced winner (zero-pass and zero-vs-zero never Accepted); thresholds cannot change after outcomes (freeze is permanent, plan shopping refused, trials before freeze refused). axon-loop evl_admission.rs, redteam.rs. The PILOT's own frozen values are Stage 7."
+    },
+    {
+      "gate_id": "G11-r22-policy-cas",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B278 mechanism. Activation checks the expected active policy, the monotonic epoch fence, the exact admitted candidate (activating anything but the admitted policy, or under an unknown admission, is refused), the candidate list and revocation immediately before publication; concurrent activations (threads and two real CLI processes) have exactly one winner; a replayed or stale activation never overwrites. Every refusal writes zero bytes. axon-loop pointer.rs, candidates.rs, cli.rs."
     }
   ],
   "tasks": [],

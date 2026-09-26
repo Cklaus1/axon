@@ -61,6 +61,16 @@ GATES=(
   "G03-r22-joint-bypass|axon-fabric|check_effects|*8"
   "G32-r22-evidence-laundering|axon-loop|evidence_laundering|a_clean_bundle_is_accepted_positive_control laundered_evidence_never_crosses_independent_admission"
   "G32-r22-evidence-laundering|axon-loop|intake|verification_that_does_not_join_is_refused_with_the_store_unchanged"
+  # 80-gate sweep: gates whose every clause an existing test asserts (verified
+  # clause by clause, .axon-v022/sweep/GATE_SWEEP.json).
+  "G13-r22-journal-before-effect|axon-fabric|journal|intent_is_on_disk_before_begin_returns same_operation_id_with_a_different_input_digest_is_a_conflict a_torn_final_line_is_truncated_and_everything_before_it_survives"
+  "G13-r22-journal-before-effect|axon-fabric|submit|same_op_different_input_is_a_conflict_with_zero_effects the_submitted_ops_state_is_visible_after_reopen duplicate_op_same_input_returns_the_same_receipt_without_re_execution"
+  "G13-r22-journal-before-effect|axon-fabric|restart_matrix|a_pre_launch_crash_is_resumed_once_and_never_repeated a_crash_after_the_launch_record_is_unknown_never_rerun a_crash_between_terminal_and_receipt_is_explicit_and_never_rerun"
+  "G21-r22-inconclusive-valid|axon-loop|evl_admission|inconclusive_on_small_sample_liability_and_unknowns reject_on_inferiority_or_no_economic_benefit"
+  "G21-r22-inconclusive-valid|axon-loop|redteam|j201_zero_pass_candidate_never_accepted j201_zero_vs_zero_never_accepted g7_plan_shopping_is_refused g6_freeze_is_permanent g7_trials_before_freeze_are_refused"
+  "G11-r22-policy-cas|axon-loop|pointer|concurrent_threads_exactly_one_wins replayed_transition_id_is_idempotent_and_conflicting_reuse_refused revoked_active_policy_makes_resolve_pause refusals_change_no_bytes a_replayed_activation_after_authority_moved_does_not_reactivate"
+  "G11-r22-policy-cas|axon-loop|candidates|g2_baseline_and_activation_recheck_the_list"
+  "G11-r22-policy-cas|axon-loop|cli|cli_two_processes_race_exactly_one_wins"
 )
 
 for row in "${GATES[@]}"; do
