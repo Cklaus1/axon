@@ -27,6 +27,18 @@
 //! refunded. Its reservation is kept as an unresolved liability until someone
 //! [`Journal::settle`]s it with evidence.
 //!
+//! # Settlement (G13-r22-billing-settlement)
+//!
+//! A settlement is an accounting receipt: `(origin, sequence, actual)` for one
+//! operation. Replaying the IDENTICAL receipt (same origin, same sequence,
+//! same op, same content) is idempotent — nothing is written. Anything else
+//! that would settle an op a second time, or reuse one `(origin, sequence)`
+//! for a different op or different content, is a CONFLICT: it is refused AND
+//! recorded (`settle_conflict`), and from then on the op is DISPUTED — its
+//! committed amount is the componentwise maximum of its reservation and every
+//! amount any receipt claimed, held as liability. A dispute never lowers
+//! what is committed and never turns an unknown cost into a known one.
+//!
 //! # Accounting
 //!
 //! Per scope, committed = held (Reserved/Launched) + liability (terminal with
@@ -113,6 +125,14 @@ impl ResourceVector {
         }
         Ok(())
     }
+    fn componentwise_max(self, o: Self) -> Self {
+        ResourceVector {
+            model_micro_usd: self.model_micro_usd.max(o.model_micro_usd),
+            exec_ms: self.exec_ms.max(o.exec_ms),
+            verify_ms: self.verify_ms.max(o.verify_ms),
+            retries: self.retries.max(o.retries),
+        }
+    }
     fn saturating_add(self, o: Self) -> Self {
         ResourceVector {
             model_micro_usd: self.model_micro_usd.saturating_add(o.model_micro_usd),
@@ -190,6 +210,17 @@ pub struct OpView {
     /// recorded for this op, once. A duplicate submit returns THIS rather than
     /// re-executing.
     pub outcome: Option<serde_json::Value>,
+    /// The accepted settlement receipt, if the op's unknown cost was settled.
+    pub settlement: Option<SettlementReceipt>,
+    /// Conflicting settlement receipts that were refused and recorded. Non-empty
+    /// means DISPUTED: the op is held at the conservative maximum as liability.
+    pub disputes: Vec<SettlementReceipt>,
+}
+
+impl OpView {
+    pub fn disputed(&self) -> bool {
+        !self.disputes.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -237,10 +268,33 @@ pub struct RecoveryReport {
     pub pending_reserved: Vec<OperationId>,
 }
 
-/// Settlement of an unresolved liability with evidence of the actual cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Settlement of an unresolved liability with evidence of the actual cost:
+/// an accounting receipt identified by `(origin, sequence)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settlement {
+    /// Who issued the accounting receipt (e.g. a metering source). Non-empty.
+    pub origin: String,
+    /// The receipt's sequence number within `origin`.
+    pub sequence: u64,
     pub actual: ResourceVector,
+}
+
+/// A settlement receipt as recorded against an op.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementReceipt {
+    pub origin: String,
+    pub sequence: u64,
+    pub actual: ResourceVector,
+}
+
+/// What [`Journal::settle`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settle {
+    /// A new settlement was recorded and fsynced.
+    Recorded,
+    /// The identical receipt (origin, sequence, op, content) was already
+    /// recorded; nothing was written.
+    AlreadySettled,
 }
 
 #[derive(Debug)]
@@ -261,6 +315,14 @@ pub enum JournalError {
         requested: Box<Intent>,
     },
     UnknownOp(OperationId),
+    /// A settlement receipt that is not an identical duplicate of the one on
+    /// record: refused, and RECORDED as a dispute (see the module docs).
+    SettlementConflict {
+        op: OperationId,
+        reason: String,
+    },
+    /// A settlement receipt with no usable identity (empty origin).
+    InvalidSettlement(String),
     UnknownScope(Box<Scope>),
     /// A budget scope was redeclared with a different ceiling.
     ScopeConflict {
@@ -299,6 +361,11 @@ impl std::fmt::Display for JournalError {
                 "operation {op} is already recorded with a different request; refusing"
             ),
             JournalError::UnknownOp(op) => write!(f, "unknown operation {op}"),
+            JournalError::SettlementConflict { op, reason } => write!(
+                f,
+                "operation {op}: conflicting settlement receipt refused and recorded: {reason}"
+            ),
+            JournalError::InvalidSettlement(why) => write!(f, "invalid settlement: {why}"),
             JournalError::UnknownScope(s) => write!(f, "unknown budget scope {s:?}"),
             JournalError::ScopeConflict { scope, .. } => {
                 write!(
@@ -371,7 +438,17 @@ enum Rec {
     },
     Settled {
         op: OperationId,
+        origin: String,
+        sequence: u64,
         actual: ResourceVector,
+    },
+    /// A refused, conflicting settlement receipt, kept as evidence.
+    SettleConflict {
+        op: OperationId,
+        origin: String,
+        sequence: u64,
+        actual: ResourceVector,
+        reason: String,
     },
     /// The outcome document for a terminal op. At most one per op.
     Outcome {
@@ -397,6 +474,9 @@ struct State {
 
 enum Change {
     None,
+    /// An identical duplicate of what is already recorded: the live path writes
+    /// nothing, and a journal containing one is not one it could have written.
+    Duplicate,
     Scope(Scope, ResourceVector),
     Op(Box<OpView>),
 }
@@ -451,6 +531,8 @@ impl State {
                     billing: None,
                     reason: None,
                     outcome: None,
+                    settlement: None,
+                    disputes: Vec::new(),
                 }))
             }
             Rec::Reserved { op } => {
@@ -545,13 +627,59 @@ impl State {
                 v.reason = Some(reason.clone());
                 Change::Op(Box::new(v))
             }
-            Rec::Settled { op, actual } => {
-                let mut v = get(op)?;
-                if !(v.state.is_terminal() && v.billing == Some(Billing::Unknown)) {
-                    return Err(bad(&v, "settled"));
+            Rec::Settled {
+                op,
+                origin,
+                sequence,
+                actual,
+            } => {
+                let r = SettlementReceipt {
+                    origin: origin.clone(),
+                    sequence: *sequence,
+                    actual: *actual,
+                };
+                match self.settle_check(op, &r)? {
+                    SettleCheck::Duplicate => Change::Duplicate,
+                    SettleCheck::Conflict(reason) => {
+                        return Err(JournalError::SettlementConflict {
+                            op: op.clone(),
+                            reason,
+                        })
+                    }
+                    SettleCheck::New => {
+                        let mut v = get(op)?;
+                        // A disputed op stays disputed; its billing stays
+                        // unknown (committed at the conservative maximum).
+                        if v.disputes.is_empty() {
+                            v.billing = Some(Billing::Known(*actual));
+                        }
+                        v.settlement = Some(r);
+                        Change::Op(Box::new(v))
+                    }
                 }
-                v.billing = Some(Billing::Known(*actual));
-                Change::Op(Box::new(v))
+            }
+            Rec::SettleConflict {
+                op,
+                origin,
+                sequence,
+                actual,
+                reason: _,
+            } => {
+                let r = SettlementReceipt {
+                    origin: origin.clone(),
+                    sequence: *sequence,
+                    actual: *actual,
+                };
+                // Only a receipt that IS a conflict may be recorded as one.
+                match self.settle_check(op, &r)? {
+                    SettleCheck::Conflict(_) => {
+                        let mut v = get(op)?;
+                        v.billing = Some(Billing::Unknown);
+                        v.disputes.push(r);
+                        Change::Op(Box::new(v))
+                    }
+                    _ => return Err(bad(&get(op)?, "settle_conflict")),
+                }
             }
             Rec::Outcome { op, outcome } => {
                 let mut v = get(op)?;
@@ -564,9 +692,57 @@ impl State {
         })
     }
 
+    /// Classify a settlement receipt against the recorded state.
+    fn settle_check(
+        &self,
+        op: &OperationId,
+        r: &SettlementReceipt,
+    ) -> Result<SettleCheck, JournalError> {
+        if r.origin.is_empty() {
+            return Err(JournalError::InvalidSettlement(
+                "settlement origin must be non-empty".into(),
+            ));
+        }
+        let v = self
+            .ops
+            .get(op)
+            .ok_or_else(|| JournalError::UnknownOp(op.clone()))?;
+        if let Some(prev) = &v.settlement {
+            if prev == r {
+                return Ok(SettleCheck::Duplicate);
+            }
+            return Ok(SettleCheck::Conflict(format!(
+                "already settled by {}#{} for {:?}; {}#{} claims {:?}",
+                prev.origin, prev.sequence, prev.actual, r.origin, r.sequence, r.actual
+            )));
+        }
+        // Only an op whose cost is unknown can be settled (a disputed op's
+        // billing is unknown too).
+        if !(v.state.is_terminal() && v.billing == Some(Billing::Unknown)) {
+            return Err(JournalError::InvalidTransition {
+                op: op.clone(),
+                from: v.state,
+                to: "settled",
+            });
+        }
+        // One receipt settles at most one op.
+        if let Some(other) = self.ops.values().find(|o| {
+            o.intent.op != *op
+                && o.settlement
+                    .as_ref()
+                    .is_some_and(|s| s.origin == r.origin && s.sequence == r.sequence)
+        }) {
+            return Ok(SettleCheck::Conflict(format!(
+                "receipt {}#{} already settled operation {}",
+                r.origin, r.sequence, other.intent.op
+            )));
+        }
+        Ok(SettleCheck::New)
+    }
+
     fn commit(&mut self, c: Change) {
         match c {
-            Change::None => {}
+            Change::None | Change::Duplicate => {}
             Change::Scope(s, c) => {
                 self.scopes.insert(s, c);
             }
@@ -590,6 +766,16 @@ impl State {
             match (v.state, v.billing) {
                 (OpState::Intended, _) => {}
                 (OpState::Reserved | OpState::Launched, _) => u.held = u.held.saturating_add(r),
+                // Disputed: the componentwise maximum of the reservation and
+                // every amount any receipt claimed, held as liability.
+                _ if v.disputed() => {
+                    let m = v
+                        .settlement
+                        .iter()
+                        .chain(&v.disputes)
+                        .fold(r, |m, s| m.componentwise_max(s.actual));
+                    u.liability = u.liability.saturating_add(m)
+                }
                 (_, Some(Billing::Known(a))) => u.charged = u.charged.saturating_add(a),
                 (_, Some(Billing::Unknown)) => u.liability = u.liability.saturating_add(r),
                 // A released cancel (never launched).
@@ -598,6 +784,12 @@ impl State {
         }
         Ok(u)
     }
+}
+
+enum SettleCheck {
+    New,
+    Duplicate,
+    Conflict(String),
 }
 
 // ── the journal ─────────────────────────────────────────────────────────────
@@ -713,6 +905,12 @@ impl Journal {
                     line: lineno,
                     reason: format!("record does not replay: {e}"),
                 })?;
+            if matches!(change, Change::Duplicate) {
+                return Err(JournalError::Corrupt {
+                    line: lineno,
+                    reason: "duplicate settlement record (the live path never writes one)".into(),
+                });
+            }
             state.commit(change);
             seq = line.seq;
             good_len += n as u64;
@@ -779,8 +977,17 @@ impl Journal {
     /// concurrent caller sees either none or all of it. A validation failure
     /// writes nothing.
     fn append(&self, rec: Rec) -> Result<(), JournalError> {
+        self.append_inner(rec).map(|_| ())
+    }
+
+    /// [`Self::append`], reporting whether a record was written (`false` for
+    /// an identical duplicate, which writes nothing).
+    fn append_inner(&self, rec: Rec) -> Result<bool, JournalError> {
         let mut g = self.lock();
         let change = g.state.transition(&rec)?;
+        if matches!(change, Change::Duplicate) {
+            return Ok(false);
+        }
         let line = Line {
             seq: g.seq + 1,
             rec,
@@ -791,7 +998,7 @@ impl Journal {
         g.file.sync_data()?;
         g.seq += 1;
         g.state.commit(change);
-        Ok(())
+        Ok(true)
     }
 
     pub fn declare_budget(
@@ -877,13 +1084,40 @@ impl Journal {
         })
     }
 
-    /// Resolve an unknown-cost liability with evidence of the actual cost. The
+    /// Resolve an unknown-cost liability with an accounting receipt. The
     /// operation's STATE does not change: an OutcomeUnknown op stays unknown.
-    pub fn settle(&self, op: &OperationId, s: Settlement) -> Result<(), JournalError> {
-        self.append(Rec::Settled {
+    ///
+    /// Idempotent ONLY for the identical receipt (origin, sequence, op and
+    /// content). Any other second settlement of the op, or any reuse of the
+    /// receipt's `(origin, sequence)` for another op, is refused with
+    /// [`JournalError::SettlementConflict`] and the refused receipt is
+    /// RECORDED, leaving the op disputed (see the module docs).
+    pub fn settle(&self, op: &OperationId, s: Settlement) -> Result<Settle, JournalError> {
+        let Settlement {
+            origin,
+            sequence,
+            actual,
+        } = s;
+        match self.append_inner(Rec::Settled {
             op: op.clone(),
-            actual: s.actual,
-        })
+            origin: origin.clone(),
+            sequence,
+            actual,
+        }) {
+            Ok(true) => Ok(Settle::Recorded),
+            Ok(false) => Ok(Settle::AlreadySettled),
+            Err(JournalError::SettlementConflict { op, reason }) => {
+                self.append(Rec::SettleConflict {
+                    op: op.clone(),
+                    origin,
+                    sequence,
+                    actual,
+                    reason: reason.clone(),
+                })?;
+                Err(JournalError::SettlementConflict { op, reason })
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Attach the terminal outcome document (once) to a terminal op.

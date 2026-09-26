@@ -19,7 +19,15 @@ linking this crate, because this crate depends on `axon-cortex`.
   journal keeps what the ledger has no notion of: durability, held vs
   liability vs charged, `OutcomeUnknown`, and release on a never-launched
   cancel (`carve`'s `used` never decreases, so it is re-derived per check
-  from the journal state rather than stored).
+  from the journal state rather than stored). An unknown cost keeps its
+  WHOLE reservation as liability. `settle` takes an accounting receipt
+  `(origin, sequence, actual)`: the identical receipt again is idempotent
+  (nothing written); any other second settlement of the op, or reuse of
+  `(origin, sequence)` for another op, is refused AND recorded
+  (`settle_conflict`), and the op is then DISPUTED — held as liability at the
+  componentwise max of its reservation and every claimed amount
+  (G13-r22-billing-settlement, `tests/journal.rs` `g13_*`). Resolving a
+  dispute is not implemented.
 * **`submit`**: `acf-compute-request/1` in, `acf-execution-receipt/1` out.
   Before the journal's launch record it strictly parses the request, rechecks
   the authority **epoch** against an `axon-loop` store, applies isolation and
