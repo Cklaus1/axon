@@ -112,11 +112,16 @@ class H(http.server.BaseHTTPRequestHandler):
         with lock:
             n[0] += 1; i = n[0]
         open(os.path.join(OUT, f"req-{i:04d}.json"), "wb").write(body)
+        # A one-shot scripted turn (section 10: a tool call): served once, then pong again.
+        sse, nxt = SSE, os.path.join(os.path.dirname(OUT), "next.sse")
+        with lock:
+            if os.path.exists(nxt):
+                sse = open(nxt, "rb").read(); os.remove(nxt)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Content-Length", str(len(SSE)))
+        self.send_header("Content-Length", str(len(sse)))
         self.send_header("Connection", "close")
-        self.end_headers(); self.wfile.write(SSE)
+        self.end_headers(); self.wfile.write(sse)
     def log_message(self, *a): pass
 s = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
 open(PORTFILE + ".tmp", "w").write(str(s.server_address[1])); os.rename(PORTFILE + ".tmp", PORTFILE)
@@ -180,7 +185,7 @@ run_micode() {
   local label="$1"; shift
   local before; before="$(nreq)"
   ( cd "$REPO" && env -u CARGO_TARGET_DIR -u MICODE_CONFIG_DIR \
-      -u MICODE_AXON_EXPECTED_CONTEXT -u MICODE_AXON_ACTIVE_POLICY \
+      -u MICODE_AXON_EXPECTED_CONTEXT -u MICODE_AXON_ACTIVE_POLICY -u MICODE_AXON_POLICY_AUTHORITY \
       HOME="$WORK/home" MICODE_PROVIDER=anthropic MICODE_PROVIDER_MODEL=claude-sonnet-5 \
       MICODE_PROVIDER_API_KEY=loop-interop-gate-not-a-real-key \
       MICODE_PROVIDER_BASE_URL="http://127.0.0.1:$PORT" MICODE_EPISODE_LOG=1 \
@@ -658,6 +663,62 @@ check "B256: a fabricated accept is recorded as failed, never agreed" eq "$(jq -
 check "B256: ...and names why" grep -q "does not hold" <<<"$(jq -r .failure "$PREC")"
 echo "loop_interop_gate: B256 section executed $(( PASS - B256_PASS0 + FAIL - B256_FAIL0 )) assertions, $(( FAIL - B256_FAIL0 )) failed"
 
+
+# ════════════════════════════════════════════════════════════════════════════
+section "10. G03: revocation is rechecked at TOOL EXECUTION (real pointer show → real MiCode)"
+# Last, because it revokes the section-2 policy, and a revoked policy's episodes
+# are refused at intake — the sections above rely on it being in force.
+# MiCode's fence reads the document `axon-loop pointer show` prints, so this is
+# where the two sides' formats must agree: a mismatch fails CLOSED (every call
+# refused), which the "in force" half below would catch.
+G03_PASS0=$PASS; G03_FAIL0=$FAIL
+# scripted_read: the provider's next turn is a `read` of src/main.rs.
+scripted_read() {
+  python3 - "$WORK/next.sse" <<'PY'
+import json, sys
+args = json.dumps({"path": "src/main.rs"})
+ev = lambda name, d: f"event: {name}\ndata: {json.dumps(d)}\n\n"
+sse = "".join([
+  ev("message_start", {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":None,"usage":{"input_tokens":5,"output_tokens":0}}}),
+  ev("content_block_start", {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu1","name":"read","input":{}}}),
+  ev("content_block_delta", {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":args}}),
+  ev("content_block_stop", {"type":"content_block_stop","index":0}),
+  ev("message_delta", {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+  ev("message_stop", {"type":"message_stop"})])
+open(sys.argv[1] + ".tmp", "w").write(sse)
+import os; os.rename(sys.argv[1] + ".tmp", sys.argv[1])
+PY
+}
+# the request that carried the read's tool_result back to the model
+result_req() { find "$REQ" -name 'req-*.json' | sort | tail -1; }
+expected_context "$WORK/exp-g03.json" trial-g03 challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+
+axl pointer show --tenant "$TENANT" --family "$FAMILY" > "$WORK/view-live.json"
+check "G03: pointer show exit 0" eq "$?" 0
+check "G03: the live view does not list the pinned policy as revoked" \
+  eq "$(jq --arg p "$POL_REF" '[.revocations.revoked[]|select(.policy_ref==$p)]|length' "$WORK/view-live.json")" 0
+scripted_read
+run_micode g03-live MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g03.json" \
+  MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" MICODE_AXON_POLICY_AUTHORITY="$WORK/view-live.json"
+check "G03 in force: micode exec succeeds" eq "$RC" 0
+check "G03 in force: two provider requests (the tool call, then its result)" eq "$NEWREQ" 2
+check "G03 in force: the read ran (its content reached the model)" grep -q 'println' "$(result_req)"
+check "G03 in force: no revocation refusal" bash -c "! grep -q 'was revoked' '$(result_req)'"
+
+axl pointer revoke --tenant "$TENANT" --family "$FAMILY" --policy "$POL_REF" \
+  --reason "cl22:$(printf 'c%.0s' $(seq 64))" --issuer op:gate-admitter > /dev/null
+check "G03: pointer revoke exit 0" eq "$?" 0
+axl pointer show --tenant "$TENANT" --family "$FAMILY" > "$WORK/view-revoked.json"
+check "G03: the view now lists the pinned policy as revoked" \
+  eq "$(jq --arg p "$POL_REF" '[.revocations.revoked[]|select(.policy_ref==$p)]|length' "$WORK/view-revoked.json")" 1
+scripted_read
+run_micode g03-revoked MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-g03.json" \
+  MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json" MICODE_AXON_POLICY_AUTHORITY="$WORK/view-revoked.json"
+check "G03 revoked: the task starts (the pin agreed at task start)" eq "$RC" 0
+check "G03 revoked: two provider requests (the tool call, then its refusal)" eq "$NEWREQ" 2
+check "G03 revoked: the read was refused at execution, naming the revocation" grep -q 'was revoked' "$(result_req)"
+check "G03 revoked: the file's content never reached the model" bash -c "! grep -q 'println' '$(result_req)'"
+echo "loop_interop_gate: G03 section executed $(( PASS - G03_PASS0 + FAIL - G03_FAIL0 )) assertions, $(( FAIL - G03_FAIL0 )) failed"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "summary"

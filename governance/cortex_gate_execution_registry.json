@@ -243,6 +243,15 @@
         "PASS"
       ],
       "note": "B276. A pass needs nonzero applicable checks: verification 'passed' with zero matched checks is invalid in the contract, a real interpreter run that exits 0 matching nothing is NotRun, and a named check that is absent is NotRun with 0 matched. Over exact candidate bytes: output changed after verification is never a pass. No offsetting: one failed check fails a whole suite whatever the rest scored, exit code zero never stands for a verdict, and low cost never offsets inferior quality at admission. axon-fabric submit.rs; axon-cortex check_executor.rs; axon-loop-contracts fixtures.rs; axon-loop evl.rs, evl_admission.rs."
+    },
+    {
+      "gate_id": "G03-r22-dispatch-recheck",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B267. Section 10 of the paired interop gate, real binaries both sides: a pinned MiCode task reads Axon's REAL `axon-loop pointer show` output at every tool execution. While the pinned policy is in force its `read` runs; after a REAL `axon-loop pointer revoke` the same task still starts (the pin agreed at task start) but the `read` is refused at execution and its content never reaches the model. Discriminates: against MiCode 29446ec9 (pre-fix) exactly the two revoked assertions fail. MiCode side (micode c1bc363c): the fence is checked before the gate AND immediately before execute (a revocation during an approval wait still stops the effect), refuses when the view cannot vouch (unreadable, other scope, older epoch), is inherited by children (derive_spec) and required at spawn (child_is_within); the shortlist is the enforced tool_allowlist so candidate identity holds in children; retries are new dispatched calls and rechecked. Tests: micode-core dispatch::tests::{a_revoked_pinned_policy_stops_the_next_call_and_every_retry, an_authority_view_that_cannot_vouch_for_the_pin_refuses_the_call, a_revocation_during_an_approval_wait_stops_the_effect}, scope::tests::a_child_must_carry_its_parents_authority_fence_unchanged, micode-delegate task_tool::tests::a_child_inherits_its_parents_authority_fence, micode closed_loop_v022_real_binary::a_revoked_policy_is_refused_at_tool_execution_through_the_real_binary (run by the Stage-5 micode-suite harness)."
     }
   ],
   "tasks": [],
