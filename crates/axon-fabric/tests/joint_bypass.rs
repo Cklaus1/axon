@@ -133,3 +133,30 @@ fn an_argv_file_outside_the_workspace_is_refused() {
     assert_eq!(spawn_count(&env.spawns), 0);
     assert_eq!(env.launch_records(), 0);
 }
+
+/// G26-r22-speculation-disabled: there is no speculative-effect path, and a
+/// request cannot ask for one — the request schema is closed, so any attempt
+/// to mark work speculative, pre-dispatch an alternative, or run a second
+/// dispatch authority is refused before anything is journalled or run.
+#[test]
+fn a_request_cannot_ask_for_speculative_dispatch() {
+    let env = Env::new();
+    for (i, (field, value)) in [
+        ("speculative", json!(true)),
+        ("speculate_alternatives", json!(2)),
+        ("dispatch_authority", json!("speculation-engine")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut r = request(&env, &format!("op-spec-{i}"), "t_ok");
+        r[field] = value;
+        let e = submit(&r.to_string(), &env.cfg(0)).unwrap_err();
+        assert_eq!(e.kind(), "malformed", "{field}: {e}");
+    }
+    assert!(
+        !env.journal_text().contains("op-spec-"),
+        "a speculative request was journalled"
+    );
+    assert_eq!(spawn_count(&env.spawns), 0);
+}

@@ -74,6 +74,8 @@ GATES=(
   "G13-r22-unknown-reconcile|axon-fabric|submit|a_timeout_after_launch_is_unknown_with_liability_and_is_never_retried sigkill_after_launch_reconciles_to_outcome_unknown_with_liability"
   "G13-r22-unknown-reconcile|axon-fabric|journal|g13_unknown_billing_keeps_the_full_reservation_as_liability_never_zero an_unknown_outcome_can_be_settled_but_not_completed"
   "G13-r22-unknown-reconcile|axon-fabric|restart_matrix|a_crash_after_the_launch_record_is_unknown_never_rerun"
+  "G26-r22-speculation-disabled|axon-fabric|joint_bypass|a_request_cannot_ask_for_speculative_dispatch"
+  "G26-r22-speculation-disabled|axon-fabric|branches|publication_requires_base_epoch_writer_exact_verified_output_and_approval each_branch_carves_within_its_declared_regime_and_is_isolated cancelling_a_losing_branch_keeps_its_record_and_leaves_the_winner_alone"
 )
 
 for row in "${GATES[@]}"; do

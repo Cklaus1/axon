@@ -207,6 +207,15 @@
         "PASS"
       ],
       "note": "B286. governance/v022_release_claims.json holds engineering_qualified, policy_activated and measured_improvement_supported as three separate fields; each may be true only with evidence of its own kind (a release-verified receipt; an admission plus its activation transition; a measured-claim report with population and uncertainty), one claim's evidence never stands for another's, no merged field is allowed, and absence leaves a claim false. All three are false today (no pilot, not release-verified). The validator self-tests the cases it must refuse before reading the record."
+    },
+    {
+      "gate_id": "G26-r22-speculation-disabled",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B272. No speculative-effect path exists, and a request cannot ask for one: marking work speculative, pre-dispatching alternatives or naming a second dispatch authority is refused by the closed request schema before the journal (nothing journalled, nothing spawned). An approved branch (B271) keeps exact selected bytes (publication requires the exact verified output), shared cost (every branch carves within one declared regime) and cancellation semantics (a cancelled branch keeps its record and liability) rather than becoming an alternate dispatch authority. axon-fabric joint_bypass.rs, branches.rs."
     }
   ],
   "tasks": [],
