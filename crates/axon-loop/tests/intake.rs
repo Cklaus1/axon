@@ -85,9 +85,11 @@ fn ack(p: &PolicyEnvelope) -> Value {
     })
 }
 
-fn source_episode(micro_cents: u64) -> Value {
-    json!({"episode_id": "ep-1", "cost": {"micro_cents": micro_cents, "tokens": 13,
-           "turns": 1, "tool_calls": 0, "wall_clock_ms": 5}})
+/// A canonical MiCode episode as MiCode writes it now: the legacy `micro_cents`
+/// default beside the explicit `spend_micro_cents` (`null` = unknown).
+fn source_episode(spend: Option<u64>) -> Value {
+    json!({"episode_id": "ep-1", "cost": {"micro_cents": 0, "spend_micro_cents": spend,
+           "tokens": 13, "turns": 1, "tool_calls": 0, "wall_clock_ms": 5}})
 }
 
 /// A MiCode-shaped sidecar for `p`, with `cost_micro` as MiCode's converter
@@ -155,7 +157,7 @@ fn case(micro_cents: Option<u64>) -> Case {
     drop(axon_loop::ledger::Tx::begin(&s).unwrap());
     let ctx = context(0, &"b".repeat(40));
     let ack = ack(&p);
-    let src = source_episode(micro_cents.unwrap_or(4_000));
+    let src = source_episode(micro_cents);
     let ep = sidecar(&p, &ctx, &ack, &src, micro_cents);
     Case {
         _dir: dir,
@@ -395,7 +397,10 @@ fn the_same_trial_with_different_bytes_is_a_conflict() {
 #[test]
 fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
     let c = case(Some(7_500));
-    let src = source_episode(0);
+    // A canonical episode written before the spend producer: v014's default 0,
+    // no spend field — no KNOWN spend, never a zero one.
+    let src = json!({"episode_id": "ep-1", "cost": {"micro_cents": 0, "tokens": 13,
+                     "turns": 1, "tool_calls": 0, "wall_clock_ms": 5}});
     let mut ep = c.ep.clone();
     ep["source_episode_ref"] = json!(digest_value(&src).unwrap());
     let before = snapshot(c.s.root());
@@ -417,7 +422,7 @@ fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
     assert!(
         m.contains("unit conversion")
             && m.contains("G1")
-            && m.contains("ZERO spend")
+            && m.contains("NO known spend")
             && m.contains("nothing recorded"),
         "{m}"
     );
@@ -886,4 +891,75 @@ fn a_repeated_trial_of_one_task_and_arm_is_recorded_as_its_own() {
     assert_eq!(second.ledger_seq, first.ledger_seq + 1);
     // The identical trial replays; nothing new is written.
     assert!(!run(&c, &c.ep, false).unwrap().recorded_now);
+}
+
+/// G16-r22-negotiation, Axon side of the pinned spend migration: every
+/// historical canonical-episode shape reads as MiCode's `ResourceCostWire`
+/// reads it — v014's never-written default 0 is UNKNOWN, a v0.22-dev null is
+/// unknown and a non-zero value is the spend, and the explicit field (null or a
+/// genuine 0) wins. A malformed cost is a shape error, not a guess. And the join
+/// refuses a known figure on either side against an unknown on the other.
+///
+/// Mutation: drop the `filter(|&c| c != 0)` on the legacy branch → the v014
+/// episode reads as a known zero and this fails.
+#[test]
+fn every_historical_spend_shape_is_read_through_the_pinned_table() {
+    use axon_loop::intake::source_episode_spend;
+    let spend = |cost: Value| source_episode_spend(&json!({"cost": cost}));
+    assert_eq!(
+        spend(json!({"micro_cents": 0})).unwrap(),
+        None,
+        "v014 default"
+    );
+    assert_eq!(
+        spend(json!({"micro_cents": null})).unwrap(),
+        None,
+        "v0.22-dev unknown"
+    );
+    assert_eq!(
+        spend(json!({"micro_cents": 7500})).unwrap(),
+        Some(7500),
+        "v0.22-dev spend"
+    );
+    assert_eq!(
+        spend(json!({"micro_cents": 0, "spend_micro_cents": null})).unwrap(),
+        None,
+        "now, unknown"
+    );
+    assert_eq!(
+        spend(json!({"micro_cents": 0, "spend_micro_cents": 0})).unwrap(),
+        Some(0),
+        "now, a genuine zero"
+    );
+    assert!(spend(json!({"micro_cents": -1})).is_err());
+    assert!(spend(json!({"spend_micro_cents": 1.5, "micro_cents": 0})).is_err());
+    assert!(
+        spend(json!({})).is_err(),
+        "a cost that states no spend at all"
+    );
+
+    // A known canonical spend against an "unknown" sidecar: a figure dropped.
+    let c = case(None);
+    let src = source_episode(Some(4_000));
+    let mut ep = c.ep.clone();
+    ep["source_episode_ref"] = json!(digest_value(&src).unwrap());
+    let before = snapshot(c.s.root());
+    let e = intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &c.ctx.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
+            source_episode: Some(&src.to_string()),
+            verification_request: None,
+            verification_receipt: None,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("dropped")),
+        "{e}"
+    );
+    assert_eq!(snapshot(c.s.root()), before);
 }

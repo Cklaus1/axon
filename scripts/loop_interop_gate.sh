@@ -337,22 +337,46 @@ H1="$(store_hash)"
 axl intake episode --in "$PIN_EP" --context "$CL/context" --ack "$CL/policy-ack" > "$WORK/intake2.json"
 check "re-intake is idempotent (recorded_now false)" eq "$(jq -r .recorded_now "$WORK/intake2.json")" false
 check "re-intake leaves store bytes unchanged" eq "$(store_hash)" "$H1"
-# The canonical MiCode episode the sidecar references. G1 is fixed in MiCode
-# (475f3641): cost.micro_cents is the task's metered spend, so the digest AND
-# the cost join under the 1e-8 → 1e-6 round-up rule.
+# The canonical MiCode episode the sidecar references. G1 is fixed in MiCode:
+# the episode states the task's metered spend (cost.spend_micro_cents, beside
+# the legacy micro_cents default), so the digest AND the cost join under the
+# 1e-8 → 1e-6 round-up rule.
 SRC_EP="$(find "$REPO/.micode/axon/episodes" -name '*.json' | while read -r f; do
   [ "cl22:$(python3 -c 'import json,sys,hashlib;v=json.load(open(sys.argv[1]));print(hashlib.sha256(json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())' "$f")" = "$(jq -r .source_episode_ref "$PIN_EP")" ] && echo "$f"; done | head -1)"
 check "source_episode_ref resolves to a canonical MiCode episode on disk" test -n "$SRC_EP"
-check "G1 fixed: canonical episode cost.micro_cents is the metered spend (7500), not 0" eq "$(jq -r .cost.micro_cents "$SRC_EP")" 7500
+check "G1 fixed: canonical episode cost.spend_micro_cents is the metered spend (7500), not 0" eq "$(jq -r .cost.spend_micro_cents "$SRC_EP")" 7500
 axl intake episode --in "$PIN_EP" --context "$CL/context" --ack "$CL/policy-ack" --source-episode "$SRC_EP" >/dev/null 2>"$WORK/src.err"
 check "G1 fixed: --source-episode join succeeds (digest + round-up cost conversion)" eq "$?" 0
-# A canonical episode whose cost disagrees is still refused, never repaired.
-jq -c '.cost.micro_cents = 0' "$SRC_EP" > "$WORK/src-zero.json"
-jq -c --arg r "cl22:$(python3 -c 'import json,sys,hashlib;v=json.load(open(sys.argv[1]));print(hashlib.sha256(json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())' "$WORK/src-zero.json")" \
-  '.source_episode_ref = $r | .identity.trial_id = "trial-src0"' "$PIN_EP" > "$WORK/ep-src-zero.json"
-axl intake episode --in "$WORK/ep-src-zero.json" --context "$CL/context" --ack "$CL/policy-ack" --source-episode "$WORK/src-zero.json" >/dev/null 2>"$WORK/src0.err"
-check "a zero canonical cost vs a metered sidecar is still refused (exit 4)" eq "$?" 4
-check "store unchanged by the source-episode cross-check" eq "$(store_hash)" "$H1"
+# A canonical episode whose cost disagrees is still refused, never repaired:
+# a stated zero, and (G16-r22-negotiation) a v014-shaped episode — its default
+# micro_cents 0 with no spend field is UNKNOWN through the pinned migration
+# table, never a free task.
+#
+# These run on a FRESH task's sidecar, changed ONLY in source_episode_ref, so
+# intake reaches the cost join. (They used to re-point the already-recorded
+# PIN_EP under a new trial_id — which the identity bind refused first, so the
+# "refused" assertion passed without the cost join ever running. The reason
+# checks below are what caught that.)
+cl22_of() { python3 -c 'import json,sys,hashlib;v=json.load(open(sys.argv[1]));print("cl22:"+hashlib.sha256(json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())' "$1"; }
+expected_context "$WORK/exp-src.json" trial-src challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+snap_cl
+run_micode src MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-src.json" MICODE_AXON_ACTIVE_POLICY="$WORK/active-policy.json"
+check "source-join task: micode exec succeeds" eq "$RC" 0
+SRC_SIDE="$(new_file "$CL/episodes" "$SN_EP")"
+SRC_CANON="$(find "$REPO/.micode/axon/episodes" -name '*.json' | while read -r f; do
+  [ "$(cl22_of "$f")" = "$(jq -r .source_episode_ref "$SRC_SIDE")" ] && echo "$f"; done | head -1)"
+check "source-join task: its canonical episode is on disk" test -n "$SRC_CANON"
+H2="$(store_hash)"
+for shape in $'zero\t.cost.spend_micro_cents = 0\tZERO spend' \
+             $'v014\tdel(.cost.spend_micro_cents) | .cost.micro_cents = 0\tNO known spend'; do
+  IFS=$'\t' read -r tag filt want <<<"$shape"
+  jq -c "$filt" "$SRC_CANON" > "$WORK/src-$tag.json"
+  jq -c --arg r "$(cl22_of "$WORK/src-$tag.json")" '.source_episode_ref = $r' "$SRC_SIDE" > "$WORK/ep-src-$tag.json"
+  axl intake episode --in "$WORK/ep-src-$tag.json" --context "$CL/context" --ack "$CL/policy-ack" --source-episode "$WORK/src-$tag.json" >/dev/null 2>"$WORK/src-$tag.err"
+  check "$tag canonical cost vs a metered sidecar is refused (exit 4)" eq "$?" 4
+  check "$tag: refused BY THE COST JOIN ($want), not by anything earlier" grep -q "$want" "$WORK/src-$tag.err"
+done
+check "store unchanged by the source-episode cross-checks" eq "$(store_hash)" "$H2"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "5. negative: bad policies → MiCode abstains to the incumbent, zero tool additions"
@@ -365,8 +389,20 @@ make_bad unknown-field '. + {"extra":"x"}'
 sed 's/"policy_id":"pol-dec-freq-1"/"policy_id":"pol-dec-freq-1","policy_id":"pol-evil"/' \
   "$WORK/active-policy.json" > "$WORK/bad-dup-key.json"
 check "dup-key fixture really has a duplicate key" eq "$(grep -o '"policy_id"' "$WORK/bad-dup-key.json" | wc -l)" 2
+# G16-r22-closed-wire: an ESCAPED alias of a key (`controls\u005fref` decodes to
+# `controls_ref`) is the same key twice once decoded, and a malformed digest is
+# not a digest. Both real peers must refuse them, not read the first or the
+# last. A different key from dup-key's, so the refusal (and MiCode's
+# content-addressed ack) is distinct, and naming `controls_ref` proves the peer
+# DECODED the escape — the raw text never repeats that key literally.
+CTRL="$(jq -r .controls_ref "$WORK/active-policy.json")"
+sed "s/\"controls_ref\":/\"controls\\\\u005fref\":\"$CTRL\",\"controls_ref\":/" \
+  "$WORK/active-policy.json" > "$WORK/bad-escaped-alias.json"
+check "escaped-alias fixture carries the escaped key once and the plain key once" \
+  bash -c "[ \$(grep -oF 'controls\\u005fref' '$WORK/bad-escaped-alias.json' | wc -l) -eq 1 ] && [ \$(grep -oF '\"controls_ref\"' '$WORK/bad-escaped-alias.json' | wc -l) -eq 1 ]"
+make_bad malformed-digest '.controls_ref = "cl22:not-a-digest"'
 i=0
-for name in added-tool authority-expansion unknown-field dup-key; do
+for name in added-tool authority-expansion unknown-field dup-key escaped-alias malformed-digest; do
   i=$((i+1))
   H="$(store_hash)"
   axl policy put --in "$WORK/bad-$name.json" >/dev/null 2>"$WORK/put-bad-$name.err"
@@ -395,7 +431,30 @@ for name in added-tool authority-expansion unknown-field dup-key; do
   check "$name: Axon intake refuses the fallback episode (exit 4)" eq "$?" 4
   check "$name: nothing recorded, store unchanged" bash -c "[ $(ledger_n) -eq $N ] && [ '$(store_hash)' = '$H' ]"
   echo "        reason: $(jq -r .pin.reason "$A" | cut -c1-110)"
+  if [ "$name" = escaped-alias ]; then
+    check "escaped-alias: MiCode decoded the escape (duplicate controls_ref)" \
+      bash -c "jq -r .pin.reason '$A' | grep -q 'duplicate.*controls_ref'"
+    check "escaped-alias: Axon names the decoded duplicate too" grep -q 'controls_ref' "$WORK/put-bad-$name.err"
+  fi
 done
+
+# G16-r22-closed-wire, unsafe numbers, where each peer READS numbers: MiCode's
+# expected context (authority_epoch) and Axon's pointer transition
+# (expected_epoch). 2^53+1 is not exactly representable in a double, so a reader
+# that coerces would act on a different epoch than the one written.
+expected_context "$WORK/exp-unsafe.json" trial-unsafe challenger-1 "$HEAD_SHA" "$RES_EPOCH"
+sed 's/"authority_epoch":[0-9]*/"authority_epoch":9007199254740993/' "$WORK/exp-unsafe.json" > "$WORK/exp-unsafe2.json"
+check "unsafe-number fixture carries 2^53+1" grep -q '9007199254740993' "$WORK/exp-unsafe2.json"
+run_micode unsafe MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-unsafe2.json"
+check "unsafe number: MiCode refuses the context before any provider request" \
+  bash -c "[ $RC -ne 0 ] && [ $NEWREQ -eq 0 ]"
+H="$(store_hash)"
+jq -c '.transition_id="gate-unsafe" | .expected_epoch=1 | .next_epoch=2' "$WORK/activate.json" \
+  | sed 's/"expected_epoch":1/"expected_epoch":9007199254740993/' > "$WORK/unsafe-transition.json"
+check "unsafe-number transition fixture carries 2^53+1" grep -q '9007199254740993' "$WORK/unsafe-transition.json"
+axl pointer transition --in "$WORK/unsafe-transition.json" >/dev/null 2>"$WORK/unsafe-transition.err"
+check "unsafe number: Axon pointer transition refuses it as malformed (exit 3)" eq "$?" 3
+check "unsafe number: store unchanged" eq "$(store_hash)" "$H"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "6. negative: context mismatch → TASK_NOT_STARTED, zero provider requests"

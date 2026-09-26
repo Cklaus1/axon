@@ -297,6 +297,24 @@
         "PASS"
       ],
       "note": "B266, third use site. Named MiCode tests, run by exact name against the paired MiCode revision: every result a child of a closed-loop task returns is classified against the parent's CURRENT context before the parent sees it \u2014 the parent's current integration head (re-observed at intake, not the launch head), its current declaration (model route, build namespace, whether it still declares a context at all) and its declared write set. Stale worker success is directly_integratable / needs_rebase / conflicting / obsolete, obsolete outranking conflicting, and the class rides the result as a runtime footer the child cannot author, plus a written receipt; a receipt that cannot be produced renders as 'integrability unknown; do not merge', never as integratable. MiCode never merges a child's work, so nothing is admitted against a different base. result_receipt::tests::a_result_is_classified_against_the_parents_current_context (every class and every obsolete condition); assembly::tests::v022_a_returned_result_is_classified_against_the_parents_current_context (the production driver, real git: own work / parent landed a commit / write outside the set / parent rewound \u2014 mutations recorded in the test)."
+    },
+    {
+      "gate_id": "G16-r22-closed-wire",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B256. BOTH REAL PEERS, real binaries, before any model call or dispatch (loop_interop_gate.sh): section 5 feeds each malformed policy document to real `axon-loop policy put` (refused, store unchanged) and to real `micode exec` (abstains, zero tool additions, the incumbent's single provider request) \u2014 duplicate key; ESCAPED-ALIAS key (`controls\\u005fref`, each peer names the DECODED duplicate `controls_ref`, proving it decoded the escape); unknown closed field; malformed digest; tool-adding shortlist; authority_expansion. Unsafe numbers where each peer reads numbers: 2^53+1 as MiCode's expected-context authority_epoch (refused before any provider request) and as Axon's pointer-transition expected_epoch (exit 3, store unchanged). Incompatible required capabilities: section 9, the real cortex-policy-adapter and real MiCode with no common closed-loop profile \u2014 explicit unsupported, persisted, zero model calls, distinct from an old peer. Syntactic fixtures alone are not claimed: every case above crosses a real process boundary."
+    },
+    {
+      "gate_id": "G16-r22-negotiation",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "B256. Old peer / absent peer (loop_interop_gate.sh sections 0 and 9): MiCode with no expected context runs as the incumbent and writes no closed-loop artefact; the real adapter and MiCode negotiate closed-loop-profile/1 with every outcome persisted before the first model call \u2014 agreed, old peer (explicit, retained-authority incumbent), no common profile (explicit unsupported), fabricated accept (recorded failed). Old episodes remain readable through PINNED adapters, never reinterpreted: MiCode's canonical episode spend (micode 7070c8ca) \u2014 v014 episodes carry a never-written micro_cents 0 which the in-place G1 change had read as a KNOWN ZERO (every historical episode free); spend is now appended as spend_micro_cents and one pinned table on both peers reads v014 0 as unknown (MiCode episode::tests::every_historical_spend_shape_reads_without_reinterpretation over a whole v014 episode; Axon intake::every_historical_spend_shape_is_read_through_the_pinned_table), and the real join refuses a v014-shaped canonical episode against a metered sidecar BY THE COST JOIN (section 4; discriminates vs micode 09717d17). Axon's own Cortex episode format and digest rule are pinned unchanged since the v0.22 base (axon-cortex conformance::a_pre_v022_episode_reads_and_keeps_its_digest). Axon-side negotiation vectors: v022_stage5_gates.sh (axon-loop-contracts profile, cortex-policy-adapter negotiate)."
     }
   ],
   "tasks": [],

@@ -503,7 +503,10 @@ fn a_policy_that_names_any_other_authority_dimension_is_refused_at_put() {
         bad[field] = value;
         let (c, _, err) = run(d.path(), &["policy", "put"], Some(&bad));
         assert_eq!(c, 3, "{field}: {err}");
-        assert!(err.contains(field), "{field}: the refusal names the field: {err}");
+        assert!(
+            err.contains(field),
+            "{field}: the refusal names the field: {err}"
+        );
     }
     assert_eq!(snapshot(d.path()), before, "a refused policy wrote nothing");
     assert_eq!(run(d.path(), &["policy", "put"], Some(&good)).0, 0);

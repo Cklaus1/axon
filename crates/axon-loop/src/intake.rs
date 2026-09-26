@@ -41,10 +41,14 @@
 //!    `sidecar_policy_ref` is the episode's `policy_ref`, or the episode is
 //!    refused;
 //! 7. optionally the canonical MiCode episode (`--source-episode`): its
-//!    `cl22:` is the sidecar's `source_episode_ref`, and a KNOWN
-//!    `usage.cost_micro` equals its `cost.micro_cents` converted 1e-8 → 1e-6
-//!    rounding UP ([`cost_micro_from_micro_cents`]). An unknown (`null`) cost
-//!    stays `null` — it is never compared as, or recorded as, `0`.
+//!    `cl22:` is the sidecar's `source_episode_ref`, and its spend
+//!    ([`source_episode_spend`], read through the pinned migration table)
+//!    AGREES with `usage.cost_micro`: a known spend converts 1e-8 → 1e-6
+//!    rounding UP ([`cost_micro_from_micro_cents`]) to exactly the sidecar's
+//!    figure, and an unknown one is unknown on both sides. Neither side's
+//!    known figure may stand against the other's unknown — that is a fact
+//!    dropped or invented between the two documents. An unknown cost is never
+//!    compared as, or recorded as, `0`.
 //!
 //! 8. the verification evidence (v0.22 G3, D12). Under D12 only MiCode's
 //!    acceptance CHECK runs through Fabric; the agent's own execution stays
@@ -603,6 +607,40 @@ fn check_verification(
     Ok(Some((req, rc)))
 }
 
+/// The canonical MiCode episode's spend in micro-cents (1e-8 USD), read through
+/// the SAME pinned migration table MiCode's `ResourceCostWire` applies
+/// (G16-r22-negotiation: old episodes stay readable, nothing is reinterpreted):
+///
+/// * `cost.spend_micro_cents` present (MiCode since the adapter): `null` is
+///   unknown, a number is the spend — including a genuine `0`;
+/// * absent, the legacy `cost.micro_cents`: `null` is unknown, a non-zero
+///   number is the spend (only the v0.22 producer wrote one), and `0` is
+///   UNKNOWN — MiCode's v014 base never wrote the field, so every episode it
+///   produced carries the default `0` whatever its task cost. Reading that as
+///   a known zero would make every historical episode free.
+pub fn source_episode_spend(v: &Value) -> Result<Option<u64>> {
+    let number = |ptr: &str| -> Result<Option<Option<u64>>> {
+        match v.pointer(ptr) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(x) => x.as_u64().map(|n| Some(Some(n))).ok_or_else(|| {
+                shape(format!(
+                    "source episode: {ptr} is not an unsigned integer or null"
+                ))
+            }),
+        }
+    };
+    if let Some(spend) = number("/cost/spend_micro_cents")? {
+        return Ok(spend);
+    }
+    match number("/cost/micro_cents")? {
+        Some(legacy) => Ok(legacy.filter(|&c| c != 0)),
+        None => Err(shape(
+            "source episode: cost states neither spend_micro_cents nor micro_cents",
+        )),
+    }
+}
+
 fn check_source_episode(text: &str, ep: &LoopEpisode) -> Result<()> {
     let v: Value = parse_value(text).map_err(semantic("source episode"))?;
     let r = digest_value(&v)?;
@@ -612,30 +650,47 @@ fn check_source_episode(text: &str, ep: &LoopEpisode) -> Result<()> {
             ep.source_episode_ref
         )));
     }
-    let mc = v
-        .pointer("/cost/micro_cents")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| shape("source episode: cost.micro_cents is not an unsigned integer"))?;
-    if let Some(c) = ep.usage.cost_micro {
-        let want = cost_micro_from_micro_cents(Some(mc)).expect("some");
-        if c != want {
-            // G1: never repaired here. The join is refused; the message names
-            // which side's figure is the likely producer gap so the operator
-            // does not chase a wire bug.
-            let hint = if mc == 0 && c > 0 {
-                " — the canonical episode records ZERO spend while the sidecar \
-                 records a metered cost: the MiCode producer did not write \
-                 cost.micro_cents on the canonical episode (interop gap G1). \
-                 Axon does not substitute either figure; fix the producer"
-            } else {
-                " — the two figures disagree under the 1e-8 → 1e-6 round-up rule"
-            };
+    let spend = source_episode_spend(&v)?;
+    match (spend, ep.usage.cost_micro) {
+        (None, None) => {}
+        (Some(mc), None) => {
             return Err(refused(format!(
-                "unit conversion: canonical episode {} records {mc} micro-cents (1e-8) = \
-                 {want} cost_micro (1e-6, rounded up), but the sidecar says {c}{hint}; \
-                 source-episode join refused, nothing recorded",
+                "unit conversion: canonical episode {} records a spend of {mc} micro-cents but \
+                 the sidecar's cost is unknown — a known figure was dropped between the two \
+                 documents; source-episode join refused, nothing recorded",
                 ep.source_episode_ref
             )));
+        }
+        (None, Some(c)) => {
+            return Err(refused(format!(
+                "unit conversion: canonical episode {} records NO known spend (null, or the \
+                 default 0 of an episode written before the spend producer) but the sidecar \
+                 says {c} cost_micro — the MiCode producer did not state the spend on the \
+                 canonical episode (interop gap G1). Axon does not substitute either figure; \
+                 fix the producer. Source-episode join refused, nothing recorded",
+                ep.source_episode_ref
+            )));
+        }
+        (Some(mc), Some(c)) => {
+            let want = cost_micro_from_micro_cents(Some(mc)).expect("some");
+            if c != want {
+                // G1: never repaired here. The join is refused; the message names
+                // which side's figure is the likely producer gap so the operator
+                // does not chase a wire bug.
+                let hint = if mc == 0 && c > 0 {
+                    " — the canonical episode states ZERO spend while the sidecar \
+                 records a metered cost (interop gap G1). Axon does not \
+                 substitute either figure; fix the producer"
+                } else {
+                    " — the two figures disagree under the 1e-8 → 1e-6 round-up rule"
+                };
+                return Err(refused(format!(
+                    "unit conversion: canonical episode {} records {mc} micro-cents (1e-8) = \
+                 {want} cost_micro (1e-6, rounded up), but the sidecar says {c}{hint}; \
+                 source-episode join refused, nothing recorded",
+                    ep.source_episode_ref
+                )));
+            }
         }
     }
     Ok(())
