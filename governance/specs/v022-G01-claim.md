@@ -138,7 +138,7 @@ or promotion only if all of the following hold.
 | 1 | `attestation.rs` unit tests; `intake.rs` authenticated, each-rule and one-scope tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 M54 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
 | 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 M57 | §8 (2): effectful grant withheld; replay unsigned |
 | 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
-| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M56 M58 | §8 (4): another pinned revision refused; task and filter pin cases |
+| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M58 | §8 (4): another pinned revision refused; task and filter pin cases |
 | 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
 | 6 | `protected_class.rs` (including a protected-class mechanism fixture and rollback revalidation) | M11–M13 M17–M20 M51 | not exercised (see gaps) |
 | 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 M48 | §8 (7): the record names the key id and the stored attestation |
@@ -236,7 +236,10 @@ TOML or `.env` may set `axon.*` (`config`).
   empty ceiling, candidate code cannot print, and a failing named test's own result line cannot
   be suppressed, so a fail cannot become a pass (reasoned, not executed). A dedicated result
   channel is still pending.
-- **One guard is an equivalent mutant.** No test can make EVL's cited-only-if-counted filter
-  (X23) fire alone, and it is documented where it stands. Re-audit 4 showed X18, the intake
+- **Equivalent mutants.** Two guards are documented where they stand, and neither is in the
+  kill list:
+  - No test can make EVL's cited-only-if-counted filter (X23) fire alone.
+  - The test runner's escaped-`break` arm (M56, retired) cannot be reached since `call_fn`
+    stops loop control at every function boundary (M58). Re-audit 4 showed X18, the intake
   role-upgrade rule, is not equivalent. It is the only intake guard for that case, and is now
   M45.
