@@ -1,0 +1,17 @@
+exit: Some(1)
+--- stdout ---
+{
+  "elapsed_ms": N,
+  "error": "firecracker not found in PATH or /usr/local/bin; install from github.com/firecracker-microvm/firecracker",
+  "exit_code": -1,
+  "guest_outcome": "launch-failed",
+  "ok": false,
+  "principal": null,
+  "risk": null,
+  "run_id": "vm-N-N",
+  "schema": "axon-vm-run/2"
+}
+
+--- stderr ---
+[axon-vm] WARNING: --no-attest: skipping attestation (dev mode only)
+
