@@ -898,6 +898,26 @@ zero FAIL assertions."*
   not digest-checked at launch.
 * `acpi=off` deviation, recorded in the README and `kernel-overlay.config`,
   not in `manifest.json` fields.
+
+**Stage 3 status (2026-09-26; each fix mutation-verified in its lane).**
+
+| finding above | now |
+|---|---|
+| `qualification()` ignores BLOCKED / signature / freshness / digests / dirty trees | **fixed** — issuer-signed Ed25519 evidence, BLOCKED only under a signed unexpired waiver, fresh, engine digests pinned by the manifest (now REQUIRED), clean trees, host + caveat carried into receipts (`5fbf44d3`, `f10f055c`) |
+| guest runs `guest-init.sh`, no in-guest policy | **fixed** — the workload runs under `axon-guest-init`, which reads `axon.policy=` from the kernel cmdline and fails closed; the no-policy bypass is compiled out (`b0b66c99`, `6b9d8c24`); the launcher requires and binds `--policy` (`46c9ec34`); Fabric sends the admitted grant ceiling as that policy and lifts its refusal only on signed evidence with x1 PASS (`ac763e21`) |
+| manifest `axon_tree_dirty_at_build: true` | **fixed** — rebuilt from a clean tree (`d5a2c670`) |
+| firecracker/jailer not digest-checked | **fixed** — pinned in `manifest.engine`, checked before acquisition, re-checked in the chroot and on the running VMM (`4cc62633`, `46c9ec34`; b263 `g4`) |
+| `HardwareIsolated` accepted an unqualified VM | **fixed** (`0f21a9fd`) |
+
+New qualification record `evidence/b263/20260926T002631Z.json` (operator-side, unsigned,
+rev `d5a2c670`, clean): **39 PASS / 0 FAIL / 2 BLOCKED** — x1a–x1e PASS (ACF-G25, in-guest
+policy enforced and bound), x2 PASS as "unsupported axis refuses" (ACF-G26, operator default
+D8 — path/host projection NOT implemented), **x3 L0 boundary and x4 trusted issuer still
+BLOCKED**. Fabric refuses it: unsigned, and x3/x4 unwaived.
+
+**D-020 stays OPEN** until S3-6: the operator signs the record with their issuer key (x4) and
+decides whether to sign a waiver for x3 on this WSL2-nested host (D7). Neither can be done by an
+agent without making the record self-certifying.
 * `axon-fabric` tests exercise Linux dispatch through a STAND-IN launcher
   (`crates/axon-fabric/tests/submit.rs:550-560`); they say nothing about the VM.
   Neither `fc_linux_profile.sh` nor `b263_qualify.sh` is invoked by `gate.sh`
