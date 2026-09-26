@@ -28,8 +28,10 @@
 //!    requirement — approval → isolation → intersect → admit, as for every
 //!    axon-os job. The check then runs under `AXON_ALLOWED_EFFECTS` DERIVED
 //!    from the admitted grant ([`crate::grants::effect_ceiling`]), never from
-//!    an operator flag. The Linux profile has no guest policy channel (B263
-//!    x1, Stage 3): it is eligible only for a grant that withholds nothing.
+//!    an operator flag. The Linux profile receives the SAME ceiling as its
+//!    guest policy (`--policy`, `axon-vm-mmds/1`), but a grant that withholds
+//!    an effect is eligible there only when the signed qualification shows
+//!    B263 x1 (the guest policy channel) as PASS.
 //! 7. **Journal**: intent (fsynced) → reserve (atomic budget carve) →
 //!    **epoch recheck + executable re-verify** → launch record → effect →
 //!    terminal record → receipt recorded.
@@ -490,8 +492,20 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         path_scoped_grant: crate::grants::is_path_scoped(grant.grant()),
         reproducible: grant.grant().reproducible,
     };
-    let profile = match backend::select(&req, cfg.linux.as_ref(), needs) {
-        Ok(p) => p,
+    // The interpreter effect ceiling the ADMITTED grant induces. The Linux
+    // profile carries it into the guest as its policy, which must fit the
+    // guest cmdline — a policy that does not is refused like any other
+    // unsatisfiable requirement, before anything is launched.
+    let ceiling = crate::grants::effect_ceiling(grant.grant());
+    let selected = backend::select(&req, cfg.linux.as_ref(), needs).and_then(|p| {
+        if p.id == backend::LINUX_MICROVM_PROTECTED.id {
+            backend::GuestPolicy::for_grant(&req, &ceiling).map(|g| (p, Some(g)))
+        } else {
+            Ok((p, None))
+        }
+    });
+    let (profile, guest_policy) = match selected {
+        Ok(s) => s,
         Err(backend::Unsupported(why)) => {
             let r = receipt(
                 &req,
@@ -563,7 +577,6 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
 
     // 6. Supervisor admission (axon-os).
     let program = cfg.workspace.join(&target.as_ref().expect("set above").0);
-    let ceiling = crate::grants::effect_ceiling(grant.grant());
     let approval = match supervisor_admits(&req, &profile, &grant, &program) {
         Ok(a) => a,
         Err(why) => {
@@ -675,7 +688,10 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
             let lx = cfg.linux.as_ref().expect("selected only when configured");
-            let res = backend::run_linux_profile(lx, &cfg.workspace.join(&file), &req);
+            let policy = guest_policy
+                .as_ref()
+                .expect("built when the profile was selected");
+            let res = backend::run_linux_profile(lx, &cfg.workspace.join(&file), &req, policy);
             let q = qualified.as_ref().expect("qualified at dispatch");
             linux_receipt(&req, &journal, res, q, liability)?
         }

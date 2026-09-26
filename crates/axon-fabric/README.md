@@ -45,7 +45,20 @@ linking this crate, because this crate depends on `axon-cortex`.
   path/host-scoped grant (the interpreter's ceiling is coarse effect names),
   a reproducible (hermetic) grant (the executor inherits the Fabric's
   environment), and on `linux-microvm-protected` any grant that withholds an
-  effect (no guest policy channel — in-guest enforcement is Stage 3, B263 x1).
+  effect UNLESS the signed qualification record shows `x1_guest_policy_channel`
+  as `PASS` (a waived BLOCKED x1 does not count; today's record has it
+  BLOCKED, so the refusal stands).
+* **Guest policy (S3-5).** Every `linux-microvm-protected` launch passes
+  `--policy FILE` to the launcher: an `axon-vm-mmds/1` JSON whose
+  `allowed_effects` is that same grant-derived ceiling (`""` ⇒ `[]`, deny-all —
+  never omitted, never "unrestricted"), plus `run_id` (the operation id) and
+  `principal`. The launcher carries it on the kernel cmdline
+  (`axon.policy=<base64>`) for `axon-guest-init`. The file is written beside
+  the operation's `--out` dir (`<out_root>/<op>.policy.json`, create-new) and
+  its sha256 goes into the receipt as `guest-policy-sha256:`. A policy whose
+  cmdline word exceeds `GUEST_POLICY_WORD_MAX` (the guest's 2046-byte limit
+  minus a 512-byte reserve for the launcher's boot args and Firecracker's
+  device words) is `unsupported` before anything is journalled as launched.
 * **`backend`**: three backend profiles, chosen by what each one *is*, with no
   fallback between them:
   * `process_scoped/local-interpreter` runs registered checks and has no

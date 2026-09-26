@@ -9,10 +9,20 @@
 //! | `axon-metal-fc-nojailer` | `axon-vm` lib: Firecracker, NO jailer, custom Axon guest kernel (not Linux) | **nothing** — the guest kernel demonstrates the syscall gate and does not execute programs (K5 remaining work), so it can neither run a job nor produce a verdict |
 //! | `linux-microvm-protected` | `scripts/fc_linux_profile.sh`: Firecracker under jailer, pinned Linux 6.1 guest, empty netns, host cgroups (B263) | `interpreter_run`, `hardware_isolation=true`, `os=linux` — and ONLY while its manifest sha256 equals the qualification evidence record's |
 //!
-//! Limitations of the Linux profile that are REFUSALS here (B263 x1/x2): it
-//! has no guest policy channel, so a request that needs an effect ceiling
-//! delivered into the guest is ineligible; and it does not preserve
-//! path-scoped grants, so a path-scoped grant is ineligible.
+//! Every Linux-profile launch carries the admitted grant's effect ceiling to
+//! the guest as an `axon-vm-mmds/1` policy file (`--policy FILE`; the launcher
+//! puts it on the kernel cmdline as `axon.policy=<base64>`, which
+//! `axon-guest-init` reads). An empty ceiling is `allowed_effects: []` —
+//! deny-all, never "unrestricted". A policy too large for the guest cmdline is
+//! refused before anything is launched ([`GuestPolicy::for_grant`]).
+//!
+//! Limitations of the Linux profile that are REFUSALS here (B263 x1/x2):
+//! delivering a policy is not the same as the qualification having SHOWN the
+//! guest enforces it, so a request that needs an effect ceiling inside the
+//! guest is eligible ONLY when the signed evidence records
+//! `x1_guest_policy_channel` as PASS (a waived BLOCKED x1 does not count); and
+//! the profile does not preserve path-scoped grants, so a path-scoped grant is
+//! ineligible.
 
 use std::path::{Path, PathBuf};
 
@@ -205,7 +215,14 @@ pub struct LinuxQualification {
     pub jailer_sha256: String,
     /// BLOCKED assertions admitted only under an issuer-signed waiver.
     pub waived: Vec<String>,
+    /// The signed record shows [`X1_GUEST_POLICY_CHANNEL`] as `PASS`: the
+    /// guest was qualified as enforcing the policy the Fabric delivers. A
+    /// BLOCKED x1 — waived or not — and an absent x1 are both `false`.
+    pub guest_policy_channel: bool,
 }
+
+/// The B263 assertion that qualifies the guest policy channel (ACF-G25).
+pub const X1_GUEST_POLICY_CHANNEL: &str = "x1_guest_policy_channel";
 
 fn sha256_file(p: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
@@ -439,6 +456,7 @@ impl LinuxProfileConfig {
         };
         let blocked = with("BLOCKED");
         let failed = with("FAIL");
+        let guest_policy_channel = with("PASS").iter().any(|n| n == X1_GUEST_POLICY_CHANNEL);
         // RULE:fail-zero
         if ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty() {
             return Err(format!(
@@ -601,6 +619,7 @@ impl LinuxProfileConfig {
             firecracker_sha256: eng["firecracker_sha256"].as_str().unwrap_or("").into(),
             jailer_sha256: eng["jailer_sha256"].as_str().unwrap_or("").into(),
             waived: blocked,
+            guest_policy_channel,
         })
     }
 }
@@ -680,7 +699,8 @@ pub fn select(
                 p.id
             ))
         })?;
-        lx.qualification()
+        let q = lx
+            .qualification()
             .map_err(|why| Unsupported(format!("{} ineligible: {why}", p.id)))?;
         if !p.job_kinds.contains(&req.job_kind) {
             return Err(Unsupported(format!(
@@ -689,10 +709,12 @@ pub fn select(
                 p.id, req.job_kind
             )));
         }
-        if needs.guest_policy_channel {
+        // Lifted by the SIGNED EVIDENCE, never by a code constant: the policy
+        // is always delivered, but only a PASS x1 shows the guest enforces it.
+        if needs.guest_policy_channel && !q.guest_policy_channel {
             return Err(Unsupported(format!(
-                "{}: the request needs an effect ceiling inside the guest, and this profile has no \
-                 guest policy channel (B263 x1)",
+                "{}: the request needs an effect ceiling inside the guest, and the qualification \
+                 evidence does not show {X1_GUEST_POLICY_CHANNEL} as PASS (B263 x1)",
                 p.id
             )));
         }
@@ -888,16 +910,109 @@ pub fn interpret_linux_result(
     }
 }
 
-/// Run one `interpreter_run` through the Linux profile launcher.
+/// Schema of the policy the guest reads (`axon-guest-init`).
+pub const GUEST_POLICY_SCHEMA: &str = "axon-vm-mmds/1";
+/// The guest refuses a kernel cmdline longer than this (x86
+/// `COMMAND_LINE_SIZE` 2048 minus the terminator and a truncation margin —
+/// `axon-guest-init`'s `CMDLINE_MAX_SAFE`).
+pub const GUEST_CMDLINE_MAX_SAFE: usize = 2048 - 2;
+/// Bytes of the cmdline NOT available to the policy word: the launcher's own
+/// boot args (`BOOT_ARGS` in `scripts/fc_linux_profile.sh`) plus what
+/// Firecracker appends (one `virtio_mmio.device=…` word per device).
+pub const LAUNCHER_CMDLINE_RESERVE: usize = 512;
+/// The longest ` axon.policy=<base64>` word (separator included) admitted.
+pub const GUEST_POLICY_WORD_MAX: usize = GUEST_CMDLINE_MAX_SAFE - LAUNCHER_CMDLINE_RESERVE;
+
+/// An `axon-vm-mmds/1` policy that FITS the guest's kernel cmdline. The only
+/// constructor checks the size, so [`run_linux_profile`] cannot be handed a
+/// policy the guest kernel would truncate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestPolicy {
+    json: String,
+}
+
+impl GuestPolicy {
+    /// The policy for `req` under the admitted grant's effect `ceiling` (the
+    /// same `AXON_ALLOWED_EFFECTS` value the host executor receives). `""` is
+    /// `allowed_effects: []` — deny every effect, never "unrestricted".
+    pub fn for_grant(req: &ComputeRequest, ceiling: &str) -> Result<GuestPolicy, Unsupported> {
+        let payload = axon_vm::firecracker::MmdsPayload {
+            schema: GUEST_POLICY_SCHEMA.into(),
+            run_id: req.operation_id.as_str().into(),
+            principal: Some(req.principal_ref.as_str().into()),
+            allowed_effects: ceiling
+                .split(',')
+                .filter(|e| !e.is_empty())
+                .map(String::from)
+                .collect(),
+            budget_tokens: None,
+            source_hash: None,
+            seccomp_bpf_b64: None,
+        };
+        let json = serde_json::to_string(&payload)
+            .map_err(|e| Unsupported(format!("guest policy does not serialize: {e}")))?;
+        // Measured with the encoding the guest decodes (standard padded base64).
+        let word = axon_vm::firecracker::embed_policy_in_cmdline("", &payload).len();
+        if word > GUEST_POLICY_WORD_MAX {
+            return Err(Unsupported(format!(
+                "{}: the guest policy needs a {word}-byte cmdline word, over the \
+                 {GUEST_POLICY_WORD_MAX}-byte budget (guest cmdline limit {GUEST_CMDLINE_MAX_SAFE} \
+                 minus {LAUNCHER_CMDLINE_RESERVE} reserved); the kernel would truncate it",
+                LINUX_MICROVM_PROTECTED.id
+            )));
+        }
+        Ok(GuestPolicy { json })
+    }
+
+    /// The exact bytes written to the `--policy` file.
+    pub fn json(&self) -> &str {
+        &self.json
+    }
+}
+
+/// Run one `interpreter_run` through the Linux profile launcher, delivering
+/// `policy` to the guest with `--policy FILE`.
 pub fn run_linux_profile(
     lx: &LinuxProfileConfig,
     program: &Path,
     req: &ComputeRequest,
+    policy: &GuestPolicy,
 ) -> LinuxRun {
     let out = lx.out_root.join(req.operation_id.as_str());
+    // Beside `--out`, never in it: the launcher requires a new/empty out dir.
+    let policy_file = lx
+        .out_root
+        .join(format!("{}.policy.json", req.operation_id.as_str()));
+    let written = std::fs::create_dir_all(&lx.out_root).and_then(|()| {
+        use std::io::Write as _;
+        // create_new: a pre-existing file (or symlink) is not ours to reuse.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&policy_file)?
+            .write_all(policy.json().as_bytes())
+    });
+    if let Err(e) = written {
+        return LinuxRun {
+            // The launcher was never invoked: nothing was acquired.
+            outcome: LinuxOutcome::Refused,
+            reason: format!(
+                "could not write the guest policy {}: {e}",
+                policy_file.display()
+            ),
+            evidence: vec![],
+            out_dir: out,
+        };
+    }
+    let policy_ref = format!(
+        "guest-policy-sha256:{}",
+        sha256_hex(policy.json().as_bytes())
+    );
     let timeout_s = req.limits.wall_time_ms.div_ceil(1000).max(1);
     let mut cmd = std::process::Command::new(&lx.launcher);
-    cmd.arg("--program")
+    cmd.arg("--policy")
+        .arg(&policy_file)
+        .arg("--program")
         .arg(program)
         .arg("--out")
         .arg(&out)
@@ -925,7 +1040,7 @@ pub fn run_linux_profile(
                 // nothing was acquired, yet we cannot prove that from here.
                 outcome: LinuxOutcome::Unknown,
                 reason: format!("could not run the launcher: {e}"),
-                evidence: vec![],
+                evidence: vec![policy_ref],
                 out_dir: out,
             };
         }
@@ -943,7 +1058,8 @@ pub fn run_linux_profile(
             .ok()
             .and_then(|s| s.code())
     };
-    let (outcome, reason, evidence) = interpret_linux_result(exit, &out, &mut verify);
+    let (outcome, reason, mut evidence) = interpret_linux_result(exit, &out, &mut verify);
+    evidence.push(policy_ref);
     LinuxRun {
         outcome,
         reason,
