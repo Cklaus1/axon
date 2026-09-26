@@ -61,7 +61,10 @@ or promotion only if all of the following hold.
      producer claim, so it can only make fewer trials count.
    - In a protected scope, every activation and every rollback of an admission-backed policy
      needs a re-derived admission whose journalled evaluation is protected. No mechanism-test
-     fixture is served there.
+     fixture is ACTIVATED there. One already active when the scope was protected stays until
+     the next transition; see Known gaps.
+   - In every scope, a rollback re-validates its predecessor now: a baseline's issuer must
+     still be trusted, and an admission must still re-derive (ADR-001 §5).
 7. **Evaluation reads only intaken evidence.**
    - A delivered episode counts only if intake recorded it in the scope.
    - Each counted verdict records the request, receipt and attestation digests, the issuer and
@@ -94,6 +97,12 @@ proof that no other guard exists.
   when it names a subject). The materialized run directory sits under a caller-named state dir,
   so a same-uid process could rewrite it mid-run.
 - **The DEV environment makes no protected claim (D1).**
+- **The attestation binds no loop scope.** It carries no tenant or family, so reuse of a verdict
+  across scopes is refused by intake's scope bind, not by the signature. Binding the scope is an
+  attestation v2 item (after D1/D2/D5).
+- **Unshipped suite modules fall through to the candidate.** A `mod` the operator's suite
+  declares but does not ship resolves from the candidate. Suite completeness is the operator's
+  registration duty; the suite's own modules always win (FG-052).
 
 ## Known gaps (not claimed; tracked)
 

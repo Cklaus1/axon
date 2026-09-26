@@ -353,7 +353,7 @@ pub fn transition(store: &Store, t: &PolicyTransition) -> Result<PointerRecord> 
                 return Err(refused(format!("{target} is revoked{hint}")));
             }
             if t.kind == TransitionKind::Rollback {
-                check_rollback(&cur, t, &target, &adm_ref)?;
+                check_rollback(&tx, &cur, t, &target, &adm_ref, &config.admitters())?;
             } else {
                 check_activate(&tx, &cur, t, &target, &adm_ref, &config.admitters())?;
             }
@@ -383,10 +383,12 @@ pub fn transition(store: &Store, t: &PolicyTransition) -> Result<PointerRecord> 
 }
 
 fn check_rollback(
+    tx: &Tx,
     cur: &PointerRecord,
     t: &PolicyTransition,
     target: &Ref,
     adm_ref: &Ref,
+    admitters: &std::collections::BTreeSet<OpaqueRef>,
 ) -> Result<()> {
     // History comes from the ledger replay, never from the editable file.
     let h = cur
@@ -410,6 +412,26 @@ fn check_rollback(
         } else {
             "mechanism_test label differs from the predecessor's activation"
         }));
+    }
+    // ADR-001 §5 rollback revalidation: the predecessor's authority must
+    // still hold NOW, not merely have held when it was first activated. A
+    // baseline needs its issuer still trusted (as route 1 of an activation
+    // does); an admission must still re-derive, its admitter still trusted.
+    // If not, there is no safe predecessor: refuse, and pause instead.
+    if let Ok(b) = tx.store.get_record::<BaselineRecord>("baselines", adm_ref) {
+        if !admitters.contains(&b.issuer_ref) {
+            return Err(refused(
+                "rollback target's baseline issuer is no longer trusted; no safe predecessor: \
+                 issue a pause instead",
+            ));
+        }
+    } else {
+        admission::rederive(tx, adm_ref, admitters).map_err(|e| {
+            refused(format!(
+                "rollback target's admission no longer holds ({e}); no safe predecessor: issue a \
+                 pause instead"
+            ))
+        })?;
     }
     Ok(())
 }

@@ -373,3 +373,94 @@ fn a_protected_evaluation_accepts_only_cleared_trials() {
         adm.reasons
     );
 }
+
+/// ADR-001 §5 rollback revalidation (re-audit 4: a rollback to the
+/// incumbent-of-record skipped the "baseline issuer still trusted" check that
+/// activating it performs). A rollback now re-validates its predecessor NOW:
+/// a baseline needs its issuer still trusted; an admission must still
+/// re-derive, its admitter still trusted. Otherwise refused, writing nothing.
+/// Positive control: the same rollbacks while the authority holds succeed.
+///
+/// Mutation: drop the revalidation block in `check_rollback` → red.
+#[test]
+fn a_rollback_revalidates_its_predecessor() {
+    const OTHER: &str = "op:admitter-2";
+    let untrust = |w: &World| {
+        let mut cfg = w.s.config().unwrap();
+        cfg.trusted_admitters.retain(|a| a.as_str() != ADMITTER);
+        w.s.write_config(&cfg).unwrap();
+    };
+    let as_other = |mut t: Value| {
+        t["issuer_ref"] = json!(OTHER);
+        t
+    };
+    for revoke in [true, false] {
+        let w = world();
+        let mut cfg = w.s.config().unwrap();
+        cfg.trusted_admitters
+            .push(axon_loop_contracts::OpaqueRef::new(OTHER).unwrap());
+        w.s.write_config(&cfg).unwrap();
+        let adm = dev_admitted(&w, "rv", false);
+        apply(
+            &w,
+            transition(
+                "a1",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(&adm),
+                false,
+            ),
+        )
+        .unwrap();
+        // Baseline predecessor, its issuer (ADMITTER) no longer trusted.
+        if revoke {
+            untrust(&w);
+        }
+        let before = snapshot(w.dir.path());
+        let r = apply(
+            &w,
+            as_other(transition(
+                "r1",
+                "rollback",
+                &w.cand_ref,
+                Some(&w.inc_ref),
+                2,
+                Some(&w.baseline),
+                false,
+            )),
+        );
+        if revoke {
+            let e = r.unwrap_err();
+            assert!(
+                matches!(e, LoopError::Refused(ref m) if m.contains("baseline issuer is no longer trusted")),
+                "{e}"
+            );
+            assert_eq!(snapshot(w.dir.path()), before);
+            continue;
+        }
+        r.unwrap();
+        // Admission predecessor, its admitter (ADMITTER) no longer trusted.
+        untrust(&w);
+        let before = snapshot(w.dir.path());
+        let e = apply(
+            &w,
+            as_other(transition(
+                "r2",
+                "rollback",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                3,
+                Some(&adm),
+                false,
+            )),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(e, LoopError::Refused(ref m) if m.contains("admission no longer holds")),
+            "{e}"
+        );
+        assert_eq!(snapshot(w.dir.path()), before);
+    }
+}
