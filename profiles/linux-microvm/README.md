@@ -18,9 +18,13 @@
 >   guest policy channel (ACF-G25), x2 scope preservation (ACF-G26), x3 the L0
 >   boundary, and x4 the trusted evidence issuer.
 > * **The record is unsigned.** It was produced by an unauthenticated local
->   root shell, and no issuer key exists (x4). Even so,
->   `axon-fabric`'s `qualification()` enables dispatch on `FAIL == 0` plus a
->   manifest match, ignoring BLOCKED (D-020).
+>   root shell, and no issuer key exists (x4). `axon-fabric`'s
+>   `qualification()` used to enable dispatch on `FAIL == 0` plus a manifest
+>   match, ignoring BLOCKED (D-020, FG-042). It now refuses: it requires a
+>   detached Ed25519 signature from a key in `trusted_issuers/` (empty — the
+>   operator holds the signing key, D6), no unwaived BLOCKED assertion,
+>   freshness, engine digests and clean trees. **So Fabric refuses this
+>   profile until a signed re-qualification exists (S3-6).**
 > * **The guest `axon` was built from a dirty tree.** `manifest.json` says
 >   `source.axon_tree_dirty_at_build: true` at `4cceb892`, so the rootfs cannot
 >   be reproduced from a commit.

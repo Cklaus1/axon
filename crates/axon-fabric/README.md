@@ -53,8 +53,24 @@ linking this crate, because this crate depends on `axon-cortex`.
   * `axon-metal-fc-nojailer` (the `axon-vm` library profile) is eligible for
     **nothing**.
   * `linux-microvm-protected` (`scripts/fc_linux_profile.sh`) runs
-    `interpreter_run` only, and only while its manifest sha256 matches the
-    qualification record.
+    `interpreter_run` only, and only while `qualification()` accepts its
+    evidence (FG-042, fixed in code in Stage 3): a detached Ed25519
+    signature over the exact record bytes (`<evidence>.sig`,
+    `axon-evidence-signature/1`) that verifies under a public key in
+    `profiles/linux-microvm/trusted_issuers/`; `result` `PASS` with no
+    BLOCKED assertion, or `PASS_WITH_BLOCKED` with every BLOCKED assertion
+    covered by an unexpired, reasoned, issuer-signed waiver
+    (`axon-b263-waiver/1`) bound to that record's sha256; `FAIL == 0`,
+    `PASS > 0`, `counts.BLOCKED` equal to the BLOCKED assertions; `end` not
+    in the future and within `--linux-evidence-max-age-s` (default 30 days);
+    firecracker/jailer sha256 recorded (and equal to the manifest's `engine`
+    pins when it has them); neither the evidence tree nor the manifest's
+    build tree dirty; `host` and `caveat` stated; and the manifest sha256
+    equal to the one qualified. The issuer, record sha256, host and caveat
+    (D2) go into every receipt's `evidence_refs`. **The committed tree has no
+    issuer key and no signed record, and the manifest says
+    `axon_tree_dirty_at_build: true`, so Fabric refuses this profile today**
+    — until the operator signs a re-qualification (S3-6).
 
 `acf1:` identities (`executable_digest`, `workspace_digest`) delegate to the
 single canonicaliser `axon_cortex::runner::acf1_canonical_bytes`, which the
@@ -91,7 +107,6 @@ Dependencies: `axon-loop-contracts`, `axon-loop` (epoch reads only),
 
 | defect | where | evidence |
 |---|---|---|
-| `LinuxProfileConfig::qualification()` accepts a record with BLOCKED > 0: it ignores the missing trusted issuer, host, freshness, engine digests and any signature. An unsigned JSON the operator can write enables protected dispatch | `src/backend.rs` `qualification` | D-020; B263 evidence 32 PASS / 0 FAIL / 4 BLOCKED |
 | Linux dispatch is tested only through a **stand-in launcher**, so the tests say nothing about the VM | `tests/submit.rs:550-560` | `F_guest_vm.json` B280 |
 | The Linux profile's guest is unpoliced (no in-guest effect ceiling). Fabric refuses requests that need one, so only grant-free `interpreter_run` reaches it | `src/backend.rs` `select` | D-020, operator decision D5 |
 | Cost is unmetered | `src/submit.rs` | above |

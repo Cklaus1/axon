@@ -8,7 +8,15 @@
 //!                    [--budget-micro N] [--budget-exec-ms N]
 //!                    [--linux-launcher SH --linux-manifest JSON
 //!                     --linux-evidence JSON [--linux-artifacts DIR]
+//!                     [--linux-evidence-sig SIG] [--linux-waivers JSON]
+//!                     [--linux-trusted-issuers DIR]
+//!                     [--linux-evidence-max-age-s N]
 //!                     --linux-out-root DIR]
+//!
+//! The Linux profile is eligible only for an issuer-signed evidence record
+//! (`<evidence>.sig` unless `--linux-evidence-sig`), verified against the
+//! Ed25519 public keys in `--linux-trusted-issuers` (default: the manifest's
+//! sibling `trusted_issuers/`), no older than the max age (default 30 days).
 //! axon-fabric status --journal FILE --op ID
 //! axon-fabric cancel --journal FILE --op ID --reason TEXT
 //! ```
@@ -30,7 +38,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use axon_fabric::backend::LinuxProfileConfig;
+use axon_fabric::backend::{LinuxProfileConfig, QualificationTrust, DEFAULT_EVIDENCE_MAX_AGE_S};
 use axon_fabric::submit::{scope, EpochSource, SubmitConfig};
 use axon_fabric::{Journal, ResourceVector};
 use axon_loop_contracts::{AuthorityEpoch, OperationId};
@@ -103,12 +111,23 @@ fn submit(a: &Args) {
         scope(&a.req("--tenant"), &a.req("--family")).unwrap_or_else(|e| refuse("usage", &e, 2));
     let expected = AuthorityEpoch::new(a.num("--expected-epoch", u64::MAX))
         .unwrap_or_else(|e| refuse("usage", &format!("--expected-epoch: {e}"), 2));
-    let linux = a.opt("--linux-launcher").map(|l| LinuxProfileConfig {
-        launcher: PathBuf::from(l),
-        manifest: PathBuf::from(a.req("--linux-manifest")),
-        artifacts_dir: a.opt("--linux-artifacts").map(PathBuf::from),
-        evidence: PathBuf::from(a.req("--linux-evidence")),
-        out_root: PathBuf::from(a.req("--linux-out-root")),
+    let linux = a.opt("--linux-launcher").map(|l| {
+        let manifest = PathBuf::from(a.req("--linux-manifest"));
+        let mut trust = QualificationTrust::for_manifest(&manifest);
+        if let Some(d) = a.opt("--linux-trusted-issuers") {
+            trust.issuers_dir = PathBuf::from(d);
+        }
+        trust.max_age_s = a.num("--linux-evidence-max-age-s", DEFAULT_EVIDENCE_MAX_AGE_S);
+        LinuxProfileConfig {
+            launcher: PathBuf::from(l),
+            manifest,
+            artifacts_dir: a.opt("--linux-artifacts").map(PathBuf::from),
+            evidence: PathBuf::from(a.req("--linux-evidence")),
+            evidence_signature: a.opt("--linux-evidence-sig").map(PathBuf::from),
+            waivers: a.opt("--linux-waivers").map(PathBuf::from),
+            trust,
+            out_root: PathBuf::from(a.req("--linux-out-root")),
+        }
     });
     let cfg = SubmitConfig {
         journal: PathBuf::from(a.req("--journal")),

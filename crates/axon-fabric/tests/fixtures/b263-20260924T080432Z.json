@@ -1,0 +1,403 @@
+{
+  "schema": "axon-b263-evidence/1",
+  "work_package": "B263",
+  "fabric_task": "ACF-T06",
+  "host": "WSL2-nested",
+  "caveat": "Nested virtualization under Hyper-V; the L0 hypervisor is outside the qualified boundary. (operator decision D2, .axon-v022/coordination/operator_decisions.json)",
+  "host_facts": {
+    "uname": "Linux evo-pc 6.18.40.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Fri Jul 31 22:12:15 UTC 2026 x86_64 GNU/Linux",
+    "kernel": "6.18.40.1-microsoft-standard-WSL2",
+    "kvm": {
+      "dev_kvm": true,
+      "nested": "1"
+    },
+    "cpu": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "cgroup": {
+      "version": 2,
+      "root_controllers": [
+        "cpuset",
+        "cpu",
+        "io",
+        "memory",
+        "hugetlb",
+        "pids",
+        "rdma"
+      ]
+    },
+    "os": "Ubuntu 26.04 LTS"
+  },
+  "invoker": {
+    "uid": 0,
+    "user": "root",
+    "authenticated": "local root shell only (no authenticated invoker identity)"
+  },
+  "command": "./scripts/b263_qualify.sh",
+  "source": {
+    "axon_git_rev": "706fdae4be2252dbe0ae46a2b53292075bb9d322",
+    "tree_dirty": false,
+    "harness_sha256": "a2b03a5145709f824b706efa5577e7d1abdd7ba484b48197e25db4dbda4cfc7f",
+    "launcher_sha256": "9d67d9e9322f5d43452589b388c8e26630ac9b24310ffa857719583470ae8325",
+    "guest_init_sha256": "d5f70710c951021a63da2a12aeb3d65b061b4490537499489e56c81fc62c67ad"
+  },
+  "engine": {
+    "firecracker": "Firecracker v1.10.1",
+    "firecracker_sha256": "96d25e000e5fcbf5b11dca0e1275b5d7dc0922ff8b8206aeaed98e515a8468dc",
+    "jailer": "Jailer v1.10.1",
+    "jailer_sha256": "8965e9ee855537561ac3adaf0b086a3882456fdc55472691f3bbe489199014ce"
+  },
+  "profile": {
+    "name": "linux-microvm-protected",
+    "manifest_sha256": "1847a962f95804cc298bb0b70f244bb640b45f2538500763155cd84ad6dbde5d",
+    "kernel": {
+      "version": "6.1.188",
+      "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.188.tar.xz",
+      "tarball_sha256": "ed4d0acb1307c235230c89efc094e210e6290593f94a7e617f28b1001101a33a",
+      "config_file": "profiles/linux-microvm/kernel-6.1-firecracker-v1.10.1.config",
+      "config_sha256": "391d8d498f89e56b391be5ea4a7501ebc44e6d094331ecaabdefed1da6b28a96",
+      "config_origin": "firecracker v1.10.1 resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config (unmodified)",
+      "overlay_file": "profiles/linux-microvm/kernel-overlay.config",
+      "overlay_sha256": "adab3938e959467f5f89795066154f2b281a90d4cc89b5693796dee3188ba91f",
+      "effective_config_sha256": "8b3980efcbd877c6ffb08282d33651e6ae506243658791fbb43276da806e13f7",
+      "cc": "gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0"
+    },
+    "busybox": {
+      "package": "busybox-static_1:1.37.0-7ubuntu1_ubuntu-26.04",
+      "sha256": "df12634c17fcdca839ae5dc47d7627b7558511f7645de7c99ccf097a0f28ed5b"
+    },
+    "artifacts": {
+      "vmlinux": {
+        "path": "dist/guest-linux/vmlinux",
+        "sha256": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
+        "bytes": 40879736
+      },
+      "rootfs.sqfs": {
+        "path": "dist/guest-linux/rootfs.sqfs",
+        "sha256": "db06610ac0543b391ac8e89f33558b10d29b3cdf04c6057588365637ea176c18",
+        "bytes": 4722688
+      },
+      "axon": {
+        "path": "dist/guest-linux/axon",
+        "sha256": "83aefe04c576a667e4a4313c7606f291683e6a4e05230e2674e0965214d42d89",
+        "bytes": 8136976
+      }
+    },
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off acpi=off root=/dev/vda rootfstype=squashfs ro init=/init loglevel=4",
+    "jail": {
+      "uid": 999,
+      "gid": 985,
+      "chroot_base": "/srv/axon-b263",
+      "cgroup_parent": "axon-b263",
+      "netns": "empty (lo only)",
+      "network_interfaces": 0,
+      "mmds": "not configured",
+      "api_socket": "none (--no-api)",
+      "seccomp": "firecracker default filter"
+    }
+  },
+  "fixture_labeling": "all runs are REAL launches of the profile; no mock or fixture result is counted",
+  "assertions": [
+    {
+      "name": "a1_boot_runs_ax_expected_stdout",
+      "status": "PASS",
+      "detail": "exit 0; stdout == fixtures/hello.expected (4a3e8feeb46723b7); wall 507 ms",
+      "gates": [
+        "ACF-G23",
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "a2_guest_is_pinned_linux_kernel",
+      "status": "PASS",
+      "detail": "serial reports 'Linux version 6.1.188' (pinned 6.1.188); not the axon-guest-kernel",
+      "gates": [
+        "G13-r22-guest-truth",
+        "ACF-G23"
+      ]
+    },
+    {
+      "name": "a3_loaded_interpreter_matches_pin",
+      "status": "PASS",
+      "detail": "guest-measured /usr/bin/axon = manifest axon sha 83aefe04c576a667",
+      "gates": [
+        "ACF-G24"
+      ]
+    },
+    {
+      "name": "a4_workload_file_artifact_returned",
+      "status": "PASS",
+      "detail": "/work/out/artifact.txt returned via drive, content verified",
+      "gates": [
+        "ACF-G23"
+      ]
+    },
+    {
+      "name": "h1_vmm_runs_as_dedicated_uid_gid",
+      "status": "PASS",
+      "detail": "real/eff/saved/fs uid=999 gid=985 (axonb263), CapEff=0000000000000000",
+      "gates": [
+        "ACF-G27",
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "h2_seccomp_filter_all_threads",
+      "status": "PASS",
+      "detail": "Seccomp=2 (filter) on every VMM thread (3 threads), NoNewPrivs=1",
+      "gates": [
+        "ACF-G27"
+      ]
+    },
+    {
+      "name": "h3_vmm_chrooted_own_mount_ns",
+      "status": "PASS",
+      "detail": "VMM / = jail root [\"dev\", \"firecracker\", \"firecracker.pid\", \"rootfs.sqfs\", \"run\", \"vm.json\", \"vmlinux\", \"workspace.img\"]; own mount ns",
+      "gates": [
+        "ACF-G27"
+      ]
+    },
+    {
+      "name": "h4_vmm_in_dedicated_cgroup_v2",
+      "status": "PASS",
+      "detail": "0::/axon-b263/b263-1d97c9cd812b; applied: memory.max=402653184 memory.swap.max=0 pids.max=16 cpu.max=100000 100000",
+      "gates": [
+        "ACF-G27"
+      ]
+    },
+    {
+      "name": "h5_no_secrets_reach_vmm_or_guest",
+      "status": "PASS",
+      "detail": "VMM environ empty; provider keys set in the launching shell absent from VMM env, guest output and serial; MMDS not configured",
+      "gates": [
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "b0_probe_completed",
+      "status": "PASS",
+      "detail": "probe ran to PROBE-END as a native descendant of axon (exec); launcher rc=0",
+      "gates": []
+    },
+    {
+      "name": "b1_no_guest_nic_no_vmm_route",
+      "status": "PASS",
+      "detail": "guest /sys/class/net = {lo}; VMM netns devices = {lo}; network-interfaces=[]",
+      "gates": [
+        "ACF-G28",
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "b2_positive_controls_tools_and_listener_work",
+      "status": "PASS",
+      "detail": "guest wget and raw nc both fetch the loopback httpd body (same tools, same code paths used for the egress probes); host listener on 172.17.232.52:35431 accepted the host's own connection",
+      "gates": [
+        "ACF-G28"
+      ]
+    },
+    {
+      "name": "b3_egress_to_host_ip_absent",
+      "status": "PASS",
+      "detail": "guest wget rc=1, nc rc=1 to 172.17.232.52:35431; host listener observed 0 connections during the guest run",
+      "gates": [
+        "ACF-G28",
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "b4_egress_public_metadata_dns_icmp_refused",
+      "status": "PASS",
+      "detail": "1.1.1.1 rc=1, 169.254.169.254 rc=1, DNS rc=1, ICMP 8.8.8.8 rc=1, bring-up eth0 rc=1",
+      "gates": [
+        "ACF-G28"
+      ]
+    },
+    {
+      "name": "c1_host_files_invisible_to_guest",
+      "status": "PASS",
+      "detail": "host canary token in 5 host paths (incl. /root, /etc, repo, ~/.aws): 0 file hits, 0 raw-block hits in guest; control token on workspace drive found (1 hit)",
+      "gates": [
+        "G03-r22-physical-isolation",
+        "ACF-G27"
+      ]
+    },
+    {
+      "name": "c2_only_declared_drives_no_host_share",
+      "status": "PASS",
+      "detail": "guest block devices = {vda (ro rootfs), vdb (workspace)}; 9p rc=255, virtiofs rc=255",
+      "gates": [
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "c3_provider_secret_absent_in_guest",
+      "status": "PASS",
+      "detail": "token exported as AXON_AI_API_KEY/ANTHROPIC_API_KEY/OPENAI_API_KEY in launcher env: 0 hits in guest env, /proc/cmdline, PID1 environ, serial; workload env = AXON_SEED,HOME,PATH,PWD,SHLVL,XDG_CACHE_HOME,",
+      "gates": [
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "c4_rootfs_read_only_unchanged",
+      "status": "PASS",
+      "detail": "vda ro flag=1; guest writes fail before (rc=1) and after an in-guest remount,rw (remount rc=0, mode then 'ro'; writes rc=1/1); raw /dev/vda write rc=1; host rootfs image sha after run == pin db06610ac0543b39",
+      "gates": [
+        "ACF-G24"
+      ]
+    },
+    {
+      "name": "d3_guest_pids_bound_enforced",
+      "status": "PASS",
+      "detail": "100 background children attempted; guest pids.max=32 refused 1 forks, pids.current=31",
+      "gates": [
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "d1_host_memory_limit_kills_vmm",
+      "status": "PASS",
+      "detail": "16 MiB control ok; 300 MiB run: VMM OOM-killed by host cgroup (oom_kill=1, memory.peak=167772160 <= memory.max=167772160), no result produced, status=vmm-died",
+      "gates": [
+        "ACF-G27",
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "d1b_oom_killed_run_fully_cleaned",
+      "status": "PASS",
+      "detail": "no process/cgroup/chroot/mount/netns left after host OOM kill",
+      "gates": [
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "name": "d2_guest_ram_bound_enforced",
+      "status": "PASS",
+      "detail": "128 MiB guest, 300 MiB request: workload OOM-killed by the guest cgroup (exit 137, memory.oom_kill=2), no MEM-TOUCHED; PID 1 survived and reported; VMM exited cleanly",
+      "gates": [
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "d4_host_pids_limit_enforced_on_vmm",
+      "status": "PASS",
+      "detail": "pids.max=1: the jailed VMM's thread creation refused by the host cgroup (pids.events max=1), guest never started (rc=21); pids.max=16 control = run (a) (pids.peak=3)",
+      "gates": [
+        "ACF-G27"
+      ]
+    },
+    {
+      "name": "e1_looping_guest_killed_at_timeout",
+      "status": "PASS",
+      "detail": "guest started, never finished; killed at wall 8268 ms (limit 8000), launcher returned in 8950 ms, status=timeout",
+      "gates": [
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "name": "e2_timeout_cleanup_complete",
+      "status": "PASS",
+      "detail": "VMM pid 1137061 gone; no process, cgroup, chroot, mount or netns for b263-89b09f0ec3a0 (host re-observed)",
+      "gates": [
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "name": "d5_host_cpu_limit_enforced",
+      "status": "PASS",
+      "detail": "cpu.max=50000/100000: nr_throttled=82, usage 4108820us over 8268000us wall (~49% of one CPU)",
+      "gates": [
+        "ACF-G27"
+      ]
+    },
+    {
+      "name": "f1_vmm_sigkill_detected_and_cleaned",
+      "status": "PASS",
+      "detail": "SIGKILL to running firecracker pid 1137414: launcher reported vmm-died (rc 21, no result admitted); no residue for b263-7998464a4856",
+      "gates": [
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "name": "f2_supervisor_death_orphans_reaped",
+      "status": "PASS",
+      "detail": "launcher SIGKILLed: orphaned [process uid-axonb263-process cgroup chroot netns] observed (VMM kept running -> cancel is not cleanup); --reap b263-a5213cae1fd8 removed all, re-observed clean",
+      "gates": [
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "name": "f3_injected_failure_after_each_acquisition",
+      "status": "PASS",
+      "detail": "failure injected after chroot / netns / VMM launch: every acquired resource released, re-observed clean: after-chroot:ok(acq=1) after-netns:ok(acq=2) after-launch:ok(acq=4)",
+      "gates": [
+        "G13-r22-launch-cleanup"
+      ]
+    },
+    {
+      "name": "g1_output_drive_sha256_bound",
+      "status": "PASS",
+      "detail": "run (a): stdout re-extracted from returned workspace.img == guest serial digest == result.json (4a3e8feeb46723b7); workspace_out_sha256=56c66c4a5dec2b65",
+      "gates": [
+        "G13-r22-profile-qualification",
+        "ACF-G23"
+      ]
+    },
+    {
+      "name": "g2_tampered_output_refused",
+      "status": "PASS",
+      "detail": "returned drive's /out/stdout replaced after the run: binding check refused (rc 23)",
+      "gates": [
+        "G13-r22-profile-qualification"
+      ]
+    },
+    {
+      "name": "g3_swapped_rootfs_refused_before_launch",
+      "status": "PASS",
+      "detail": "1-byte-modified rootfs: refused (rc 22), no VMM started, nothing acquired",
+      "gates": [
+        "ACF-G24"
+      ]
+    },
+    {
+      "name": "x1_guest_policy_channel",
+      "status": "BLOCKED",
+      "detail": "ACF-G25 needs a boot-policy protocol (absent/empty/malformed/mismatched policy fails closed). This profile deliberately has none (offline, no MMDS; axon-guest-init not included); defining one belongs to the axon-vm/Fabric owner. Not substituted.",
+      "gates": [
+        "ACF-G25"
+      ]
+    },
+    {
+      "name": "x2_scope_preservation",
+      "status": "BLOCKED",
+      "detail": "ACF-G26 needs a path/host-specific grant projected into VM policy; depends on the same missing policy channel. The profile is all-or-nothing (workspace rw, no net). Not substituted.",
+      "gates": [
+        "ACF-G26"
+      ]
+    },
+    {
+      "name": "x3_l0_hypervisor_boundary",
+      "status": "BLOCKED",
+      "detail": "Host is WSL2 with nested KVM under Hyper-V (operator decision D2). The L0 hypervisor and the WSL2 utility VM are outside the qualified boundary; no assertion here covers a guest escape through L0/L1.",
+      "gates": [
+        "G03-r22-physical-isolation"
+      ]
+    },
+    {
+      "name": "x4_trusted_evidence_issuer",
+      "status": "BLOCKED",
+      "detail": "G13-r22-profile-qualification requires binding to a TRUSTED evidence issuer. This evidence is produced and signed by nobody but the invoking root shell; no issuer key exists in this repo. The record is unsigned.",
+      "gates": [
+        "G13-r22-profile-qualification"
+      ]
+    }
+  ],
+  "counts": {
+    "total": 36,
+    "PASS": 32,
+    "FAIL": 0,
+    "BLOCKED": 4
+  },
+  "result": "PASS_WITH_BLOCKED",
+  "start": "2026-09-24T08:04:32Z",
+  "end": "2026-09-24T08:04:59Z"
+}

@@ -120,16 +120,91 @@ pub struct LinuxProfileConfig {
     pub artifacts_dir: Option<PathBuf>,
     /// The qualification evidence record (`axon-b263-evidence/1`).
     pub evidence: PathBuf,
+    /// Detached issuer signature over the EXACT evidence bytes
+    /// (`axon-evidence-signature/1`). `None` ⇒ `<evidence>.sig`.
+    pub evidence_signature: Option<PathBuf>,
+    /// Issuer-signed waivers (`axon-b263-waiver/1`) for BLOCKED assertions,
+    /// signed the same way at `<waivers>.sig`. `None` ⇒ no waivers, so any
+    /// BLOCKED assertion makes the profile ineligible.
+    pub waivers: Option<PathBuf>,
+    /// Who may issue evidence, how old it may be, and what "now" is.
+    pub trust: QualificationTrust,
     /// Parent of per-operation `--out` directories.
     pub out_root: PathBuf,
 }
 
-/// The facts eligibility is decided from.
+/// Default ceiling on the age of a qualification record: 30 days.
+pub const DEFAULT_EVIDENCE_MAX_AGE_S: u64 = 30 * 24 * 3600;
+pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/1";
+pub const WAIVER_SCHEMA: &str = "axon-b263-waiver/1";
+
+/// The time source freshness and waiver expiry are judged against. Injectable
+/// so a test can pin "now"; production uses the system clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clock {
+    System,
+    /// Seconds since the Unix epoch.
+    FixedUnix(i64),
+}
+
+impl Clock {
+    pub fn now_unix(&self) -> i64 {
+        match self {
+            Clock::System => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            Clock::FixedUnix(t) => *t,
+        }
+    }
+}
+
+/// The trust root for qualification evidence. Only PUBLIC keys live here; the
+/// signing key is held by the operator (decision D6) and never by this tree.
+#[derive(Debug, Clone)]
+pub struct QualificationTrust {
+    /// Directory of `*.pub` files, each the 64-hex-char Ed25519 public key of
+    /// a trusted evidence issuer. Absent or empty ⇒ nothing is trusted.
+    pub issuers_dir: PathBuf,
+    /// An evidence record whose `end` is older than this is stale.
+    pub max_age_s: u64,
+    pub clock: Clock,
+}
+
+impl QualificationTrust {
+    /// `<manifest dir>/trusted_issuers`, i.e.
+    /// `profiles/linux-microvm/trusted_issuers/` for the committed manifest.
+    pub fn for_manifest(manifest: &Path) -> QualificationTrust {
+        QualificationTrust {
+            issuers_dir: manifest
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("trusted_issuers"),
+            max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
+            clock: Clock::System,
+        }
+    }
+}
+
+/// The facts eligibility is decided from — and that a receipt carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinuxQualification {
     pub manifest_sha256: String,
     pub evidence_manifest_sha256: String,
     pub guest_axon_sha256: String,
+    /// sha256 of the exact evidence bytes the issuer signed.
+    pub evidence_sha256: String,
+    /// `ed25519:<first 16 hex of sha256(public key)>` of the issuer.
+    pub issuer: String,
+    pub host: String,
+    /// The record's caveat (e.g. the D2 nested-virtualisation caveat).
+    pub caveat: String,
+    /// The record's `end`, as written.
+    pub end: String,
+    pub firecracker_sha256: String,
+    pub jailer_sha256: String,
+    /// BLOCKED assertions admitted only under an issuer-signed waiver.
+    pub waived: Vec<String>,
 }
 
 fn sha256_file(p: &Path) -> Result<String, String> {
@@ -138,26 +213,368 @@ fn sha256_file(p: &Path) -> Result<String, String> {
     Ok(format!("{:x}", Sha256::digest(&b)))
 }
 
+fn sha256_hex(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(b))
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+fn is_hex64(v: &serde_json::Value) -> bool {
+    v.as_str()
+        .is_some_and(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+}
+
+fn non_empty(v: &serde_json::Value) -> Option<String> {
+    v.as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` (the evidence harness's format) → Unix seconds.
+/// Anything else is refused rather than guessed at.
+pub fn parse_utc(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() != 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+        || b[19] != b'Z'
+    {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| -> Option<i64> {
+        let t = &s[r];
+        t.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| t.parse().ok())
+            .flatten()
+    };
+    let (y, mo, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, se) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 59 {
+        return None;
+    }
+    // Days from civil (Howard Hinnant).
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let mp = (mo + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + se)
+}
+
+/// Load the trusted issuer public keys. A malformed key file is an error
+/// (fail closed), never skipped; no keys at all is an error too.
+fn trusted_issuers(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
+    let mut keys = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        let mut paths: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        for p in paths {
+            if p.extension().and_then(|e| e.to_str()) != Some("pub") {
+                continue;
+            }
+            let t = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+            match hex_decode(&t) {
+                Some(k) if k.len() == 32 => keys.push(k),
+                _ => {
+                    return Err(format!(
+                        "trusted issuer key {} is not a 64-hex-char Ed25519 public key",
+                        p.display()
+                    ))
+                }
+            }
+        }
+    }
+    if keys.is_empty() {
+        return Err(format!(
+            "no trusted evidence issuer is configured ({} holds no *.pub key); unsigned or \
+             self-authored evidence cannot qualify the profile",
+            dir.display()
+        ));
+    }
+    Ok(keys)
+}
+
+fn fingerprint(pk: &[u8]) -> String {
+    format!("ed25519:{}", &sha256_hex(pk)[..16])
+}
+
+/// Verify a detached `axon-evidence-signature/1` over `bytes`. Returns the
+/// issuer fingerprint. Each refusal is its own rule.
+fn verify_detached(
+    what: &str,
+    bytes: &[u8],
+    sig_path: &Path,
+    trusted: &[Vec<u8>],
+) -> Result<String, String> {
+    use ring::signature::{UnparsedPublicKey, ED25519};
+    let sig_file = match std::fs::read_to_string(sig_path) {
+        Ok(t) => Some(t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("{what} signature {}: {e}", sig_path.display())),
+    };
+    // RULE:unsigned
+    if sig_file.is_none() {
+        return Err(format!(
+            "{what} is unsigned: no detached signature at {}",
+            sig_path.display()
+        ));
+    }
+    let mut issuer = String::from("unsigned");
+    if let Some(t) = sig_file {
+        let sv: serde_json::Value =
+            serde_json::from_str(&t).map_err(|e| format!("{what} signature is not JSON: {e}"))?;
+        if sv["schema"] != EVIDENCE_SIGNATURE_SCHEMA || sv["alg"] != "ed25519" {
+            return Err(format!(
+                "{what} signature is not {EVIDENCE_SIGNATURE_SCHEMA} with alg ed25519"
+            ));
+        }
+        let pk = sv["public_key"]
+            .as_str()
+            .and_then(hex_decode)
+            .filter(|k| k.len() == 32)
+            .ok_or(format!("{what} signature has no 32-byte public_key"))?;
+        let sig = sv["signature"]
+            .as_str()
+            .and_then(hex_decode)
+            .filter(|s| s.len() == 64)
+            .ok_or(format!("{what} signature has no 64-byte signature"))?;
+        // RULE:issuer-trusted
+        if !trusted.contains(&pk) {
+            return Err(format!(
+                "{what} is signed by {}, which is not a trusted evidence issuer",
+                fingerprint(&pk)
+            ));
+        }
+        // RULE:signature-verifies
+        if UnparsedPublicKey::new(&ED25519, &pk)
+            .verify(bytes, &sig)
+            .is_err()
+        {
+            return Err(format!("{what} signature does not verify under {}: the bytes are not the ones the issuer signed", fingerprint(&pk)));
+        }
+        issuer = fingerprint(&pk);
+    }
+    Ok(issuer)
+}
+
+fn sidecar_sig(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push(".sig");
+    PathBuf::from(s)
+}
+
+struct Waiver {
+    reason: String,
+    expires: Option<i64>,
+}
+
 impl LinuxProfileConfig {
-    /// Eligible only if the manifest in use is byte-identical to the one the
-    /// evidence record qualified, and that record has zero FAIL assertions. A
-    /// changed manifest is ineligible — never "probably fine".
+    /// Eligible only if EVERY one of these holds (fail closed on each):
+    ///
+    /// * the evidence bytes carry a detached Ed25519 signature that verifies
+    ///   under a key in `trust.issuers_dir`;
+    /// * `result` is `PASS` with no BLOCKED assertion, or `PASS_WITH_BLOCKED`
+    ///   where every BLOCKED assertion is covered by an unexpired, reasoned,
+    ///   issuer-signed waiver bound to these exact evidence bytes; `FAIL == 0`,
+    ///   `PASS > 0`, and `counts.BLOCKED` agrees with the assertions;
+    /// * `end` is not in the future and not older than `trust.max_age_s`;
+    /// * the engine digests (firecracker, jailer) are recorded, and equal the
+    ///   manifest's `engine` pins when the manifest has them;
+    /// * neither the evidence tree nor the manifest's build tree was dirty;
+    /// * `host` and `caveat` are stated (the caveat travels into receipts);
+    /// * the manifest in use is byte-identical to the one qualified.
+    ///
+    /// A changed manifest is ineligible — never "probably fine".
     pub fn qualification(&self) -> Result<LinuxQualification, String> {
         let manifest_sha256 = sha256_file(&self.manifest)?;
-        let ev: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&self.evidence)
-                .map_err(|e| format!("evidence {}: {e}", self.evidence.display()))?,
-        )
-        .map_err(|e| format!("evidence is not JSON: {e}"))?;
+        let ev_bytes = std::fs::read(&self.evidence)
+            .map_err(|e| format!("evidence {}: {e}", self.evidence.display()))?;
+        let evidence_sha256 = sha256_hex(&ev_bytes);
+        // Authenticity first: nothing in an unauthenticated record is read
+        // as a claim.
+        let trusted = trusted_issuers(&self.trust.issuers_dir)?;
+        let sig_path = self
+            .evidence_signature
+            .clone()
+            .unwrap_or_else(|| sidecar_sig(&self.evidence));
+        let issuer = verify_detached("evidence record", &ev_bytes, &sig_path, &trusted)?;
+
+        let ev: serde_json::Value =
+            serde_json::from_slice(&ev_bytes).map_err(|e| format!("evidence is not JSON: {e}"))?;
         if ev["schema"] != "axon-b263-evidence/1" {
             return Err("evidence record schema is not axon-b263-evidence/1".into());
         }
         if ev["profile"]["name"] != LINUX_MICROVM_PROTECTED.id {
             return Err("evidence record is for a different profile".into());
         }
-        if ev["counts"]["FAIL"].as_u64() != Some(0) {
-            return Err("evidence record has FAIL assertions (or none counted)".into());
+        let now = self.trust.clock.now_unix();
+
+        // ── Verdict ────────────────────────────────────────────────────────
+        let assertions = ev["assertions"]
+            .as_array()
+            .ok_or("evidence record has no assertions list")?;
+        let with = |st: &str| -> Vec<String> {
+            assertions
+                .iter()
+                .filter(|a| a["status"] == st)
+                .map(|a| a["name"].as_str().unwrap_or("?").to_string())
+                .collect()
+        };
+        let blocked = with("BLOCKED");
+        let failed = with("FAIL");
+        // RULE:fail-zero
+        if ev["counts"]["FAIL"].as_u64() != Some(0) || !failed.is_empty() {
+            return Err(format!(
+                "evidence record has FAIL assertions (or none counted): {failed:?}"
+            ));
         }
+        // RULE:pass-count
+        if ev["counts"]["PASS"].as_u64().unwrap_or(0) == 0 {
+            return Err(
+                "evidence record counts no PASS assertion; an empty run qualifies nothing".into(),
+            );
+        }
+        // RULE:blocked-count
+        if ev["counts"]["BLOCKED"].as_u64() != Some(blocked.len() as u64) {
+            return Err(format!(
+                "evidence counts.BLOCKED {} disagrees with the {} BLOCKED assertion(s)",
+                ev["counts"]["BLOCKED"],
+                blocked.len()
+            ));
+        }
+        let result = ev["result"].as_str().unwrap_or("");
+        // RULE:result
+        if !((result == "PASS" && blocked.is_empty())
+            || (result == "PASS_WITH_BLOCKED" && !blocked.is_empty()))
+        {
+            return Err(format!("evidence result is {result:?}; only PASS, or PASS_WITH_BLOCKED with every BLOCKED waived, qualifies"));
+        }
+
+        // ── Waivers for BLOCKED assertions ──────────────────────────────────
+        let mut waivers = std::collections::BTreeMap::<String, Waiver>::new();
+        if let (false, Some(wp)) = (blocked.is_empty(), &self.waivers) {
+            let wb = std::fs::read(wp).map_err(|e| format!("waivers {}: {e}", wp.display()))?;
+            verify_detached("waiver file", &wb, &sidecar_sig(wp), &trusted)?;
+            let w: serde_json::Value =
+                serde_json::from_slice(&wb).map_err(|e| format!("waivers are not JSON: {e}"))?;
+            if w["schema"] != WAIVER_SCHEMA {
+                return Err(format!("waiver file schema is not {WAIVER_SCHEMA}"));
+            }
+            // RULE:waiver-bound
+            if w["evidence_sha256"].as_str() != Some(evidence_sha256.as_str()) {
+                return Err("waiver file is bound to a different evidence record; a waiver is not transferable".into());
+            }
+            for x in w["waivers"]
+                .as_array()
+                .ok_or("waiver file has no waivers list")?
+            {
+                let name = non_empty(&x["assertion"]).ok_or("a waiver names no assertion")?;
+                waivers.insert(
+                    name,
+                    Waiver {
+                        reason: non_empty(&x["reason"]).unwrap_or_default(),
+                        expires: x["expires"].as_str().and_then(parse_utc),
+                    },
+                );
+            }
+        }
+        for name in &blocked {
+            // RULE:blocked-unwaived
+            if !waivers.contains_key(name) {
+                return Err(format!(
+                    "BLOCKED assertion {name} is not covered by an issuer-signed waiver"
+                ));
+            }
+            // RULE:waiver-reason
+            if waivers.get(name).is_some_and(|w| w.reason.is_empty()) {
+                return Err(format!("the waiver for {name} states no reason"));
+            }
+            // RULE:waiver-expiry
+            if waivers
+                .get(name)
+                .is_some_and(|w| w.expires.is_none_or(|t| now >= t))
+            {
+                return Err(format!(
+                    "the waiver for {name} has expired (or states no parseable expiry)"
+                ));
+            }
+        }
+
+        // ── Freshness ───────────────────────────────────────────────────────
+        let end_s = ev["end"].as_str().unwrap_or("").to_string();
+        let end = parse_utc(&end_s).ok_or(format!(
+            "evidence end {end_s:?} is not a YYYY-MM-DDTHH:MM:SSZ time"
+        ))?;
+        // RULE:end-not-future
+        if end > now {
+            return Err(format!("evidence end {end_s} is in the future"));
+        }
+        // RULE:end-fresh
+        if (now - end) as u64 > self.trust.max_age_s {
+            return Err(format!(
+                "evidence end {end_s} is stale (older than {} s)",
+                self.trust.max_age_s
+            ));
+        }
+
+        // ── Engine, source, host ────────────────────────────────────────────
+        let m: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&self.manifest).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("manifest is not JSON: {e}"))?;
+        let eng = &ev["engine"];
+        // RULE:engine-digests
+        if !is_hex64(&eng["firecracker_sha256"]) || !is_hex64(&eng["jailer_sha256"]) {
+            return Err("evidence record lacks engine.firecracker_sha256 / engine.jailer_sha256; an unidentified VMM qualifies nothing".into());
+        }
+        let pin = &m["engine"];
+        // RULE:engine-pin
+        if !pin.is_null()
+            && (pin["firecracker_sha256"] != eng["firecracker_sha256"]
+                || pin["jailer_sha256"] != eng["jailer_sha256"])
+        {
+            return Err("evidence engine digests differ from the manifest's engine pins".into());
+        }
+        // RULE:tree-clean
+        if ev["source"]["tree_dirty"] != serde_json::Value::Bool(false) {
+            return Err("evidence was produced from a dirty (or unstated) source tree".into());
+        }
+        // RULE:manifest-clean
+        if m["source"]["axon_tree_dirty_at_build"] != serde_json::Value::Bool(false) {
+            return Err("manifest artifacts were built from a dirty (or unstated) tree".into());
+        }
+        let host = non_empty(&ev["host"]).unwrap_or_default();
+        // RULE:host
+        if host.is_empty() {
+            return Err("evidence record states no host".into());
+        }
+        let caveat = non_empty(&ev["caveat"]).unwrap_or_default();
+        // RULE:caveat
+        if caveat.is_empty() {
+            return Err(
+                "evidence record states no caveat; say what the boundary excludes, even if nothing"
+                    .into(),
+            );
+        }
+
+        // ── Manifest identity ───────────────────────────────────────────────
         let evidence_manifest_sha256 = ev["profile"]["manifest_sha256"]
             .as_str()
             .ok_or("evidence record has no profile.manifest_sha256")?
@@ -168,10 +585,6 @@ impl LinuxProfileConfig {
                  a changed manifest is not the qualified profile"
             ));
         }
-        let m: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&self.manifest).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| format!("manifest is not JSON: {e}"))?;
         let guest_axon_sha256 = m["artifacts"]["axon"]["sha256"]
             .as_str()
             .ok_or("manifest has no artifacts.axon.sha256")?
@@ -180,6 +593,14 @@ impl LinuxProfileConfig {
             manifest_sha256,
             evidence_manifest_sha256,
             guest_axon_sha256,
+            evidence_sha256,
+            issuer,
+            host,
+            caveat,
+            end: end_s,
+            firecracker_sha256: eng["firecracker_sha256"].as_str().unwrap_or("").into(),
+            jailer_sha256: eng["jailer_sha256"].as_str().unwrap_or("").into(),
+            waived: blocked,
         })
     }
 }
