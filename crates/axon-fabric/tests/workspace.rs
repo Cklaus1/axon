@@ -376,6 +376,17 @@ fn refuses_byte_quota_overflow() {
         },
         "quota_bytes",
     );
+    // An explicit entry list is held to the same byte quota.
+    let r = WorkspaceTree::from_entries(
+        vec![file("a"), file("b"), file("c")],
+        vec![],
+        &Quota {
+            bytes: 2,
+            ..Quota::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(r.class(), "quota_bytes");
     // Symlink targets count as content.
     let c = case();
     std::os::unix::fs::symlink("ok.txt", c.root.join("l")).unwrap(); // +6
