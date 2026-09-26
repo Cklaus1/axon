@@ -158,3 +158,145 @@ fn a_protected_scope_promotes_only_on_a_protected_evaluation() {
         w.cand_ref
     );
 }
+
+/// World `w` with the candidate admitted on a DEVELOPMENT-class evaluation
+/// (frozen before any protection): `(admission_ref)`. `mech` makes every
+/// trial a mechanism test and the admission a mechanism-test admission.
+fn dev_admitted(w: &World, exp: &str, mech: bool) -> Ref {
+    freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let o = EvlOpts {
+        role: if mech {
+            CorpusRole::MechanismTest
+        } else {
+            CorpusRole::Confirmation
+        },
+        ..EvlOpts::default()
+    };
+    let (_, e) = evaluate(&w.s, &evl_request(exp, &w.inc, &w.cand, &specs_for(w), &o)).unwrap();
+    let (rec, adm) = admit(&w.s, exp, &e, ADMITTER, mech).unwrap();
+    assert_eq!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
+    adm
+}
+
+fn apply(w: &World, t: Value) -> Result<Option<Ref>, LoopError> {
+    pointer::transition(&w.s, &tparse(&t)).map(|p| p.active_policy_ref)
+}
+
+/// Re-audit 3 (two auditors, executed): the D3 check skipped any transition
+/// labelled `mechanism_test`, so a development-class evaluation activated —
+/// and was served — in a protected scope. A protected scope serves no
+/// mechanism-test fixture. Positive control: unprotected, it activates.
+///
+/// Mutation: drop the mechanism-test refusal in `protected_scope_gate` → red.
+#[test]
+fn a_protected_scope_serves_no_mechanism_test_fixture() {
+    let w = world();
+    let adm = dev_admitted(&w, "mech", true);
+    protect(&w.s);
+    let before = snapshot(w.dir.path());
+    let e = apply(
+        &w,
+        transition(
+            "m1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            true,
+        ),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, LoopError::Refused(ref m) if m.contains("serves no mechanism-test")),
+        "{e}"
+    );
+    assert_eq!(snapshot(w.dir.path()), before);
+
+    let w = world();
+    let adm = dev_admitted(&w, "mech", true);
+    assert_eq!(
+        apply(
+            &w,
+            transition(
+                "m1",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(&adm),
+                true
+            )
+        )
+        .unwrap(),
+        Some(w.cand_ref.clone())
+    );
+}
+
+/// Re-audit 3 (executed): rollback never consulted D3, so a policy admitted
+/// on development evidence came back active after the scope was protected.
+/// In a protected scope, rolling back to the incumbent-of-record is allowed
+/// (the designed exemption); rolling back to the dev-admitted candidate is
+/// refused and writes nothing. Positive control: unprotected, both succeed.
+///
+/// Mutation: skip `protected_scope_gate` for rollback → red.
+#[test]
+fn a_rollback_in_a_protected_scope_needs_a_protected_admission() {
+    for protected in [true, false] {
+        let w = world();
+        let adm = dev_admitted(&w, "rb", false);
+        apply(
+            &w,
+            transition(
+                "a1",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(&adm),
+                false,
+            ),
+        )
+        .unwrap();
+        if protected {
+            protect(&w.s);
+        }
+        // Back to the incumbent-of-record: exempt, allowed either way.
+        apply(
+            &w,
+            transition(
+                "r1",
+                "rollback",
+                &w.cand_ref,
+                Some(&w.inc_ref),
+                2,
+                Some(&w.baseline),
+                false,
+            ),
+        )
+        .unwrap();
+        let before = snapshot(w.dir.path());
+        let r = apply(
+            &w,
+            transition(
+                "r2",
+                "rollback",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                3,
+                Some(&adm),
+                false,
+            ),
+        );
+        if protected {
+            let e = r.unwrap_err();
+            assert!(
+                matches!(e, LoopError::Refused(ref m) if m.contains("development-class evaluation")),
+                "{e}"
+            );
+            assert_eq!(snapshot(w.dir.path()), before);
+        } else {
+            assert_eq!(r.unwrap(), Some(w.cand_ref.clone()));
+        }
+    }
+}

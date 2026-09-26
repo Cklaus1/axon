@@ -108,6 +108,21 @@ MUTATIONS = [
      "let ctx_check = if let Err(e) = intake_join(&intaken, d) {",
      "let ctx_check = if let Err(e) = Ok::<(), String>(()) {",
      "axon-loop", "--test evidence_laundering", "an_episode_intake_never_recorded_never_counts"),
+    ("M16", "EVL: the trial's observer is a subject (as at intake)",
+     "crates/axon-loop/src/evl.rs",
+     ".chain([d.ctx.observed_issuer_ref.clone()])",
+     ".chain(std::iter::empty::<OpaqueRef>())",
+     "axon-loop", "--test evidence_laundering", "a_check_run_as_the_observer_never_counts_at_either_door"),
+    ("M17", "D3: a protected scope serves no mechanism-test fixture",
+     "crates/axon-loop/src/pointer.rs",
+     "    if t.mechanism_test {\n        return Err(refused(\n            \"scope is protected: it serves no mechanism-test fixture",
+     "    if false && t.mechanism_test {\n        return Err(refused(\n            \"scope is protected: it serves no mechanism-test fixture",
+     "axon-loop", "--test protected_class", "a_protected_scope_serves_no_mechanism_test_fixture"),
+    ("M18", "D3: rollback passes the protected-scope gate",
+     "crates/axon-loop/src/pointer.rs",
+     "            if config.protected_scopes.contains(scope) {\n                protected_scope_gate(",
+     "            if t.kind != TransitionKind::Rollback && config.protected_scopes.contains(scope) {\n                protected_scope_gate(",
+     "axon-loop", "--test protected_class", "a_rollback_in_a_protected_scope_needs_a_protected_admission"),
 ]
 
 

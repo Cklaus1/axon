@@ -438,3 +438,88 @@ fn an_episode_intake_never_recorded_never_counts() {
         rec.arms
     );
 }
+
+/// The candidate trials' verification check re-run AS THE TRIAL'S OBSERVER
+/// principal, genuinely re-signed by the trusted verifier, every ref re-derived.
+fn checked_by_the_observer(v: &mut Value) {
+    for t in candidate_trials(v) {
+        let observer = t["context"]["observed_issuer_ref"].clone();
+        t["verification_request"]["principal_ref"] = observer;
+        t["episode"]["verification"]["evidence_refs"] =
+            json!([digest_value(&t["verification_request"]).unwrap()]);
+        t["verification_attestation"] = attest(
+            VERIFIER,
+            &t["verification_request"],
+            &t["verification_receipt"],
+        );
+    }
+}
+
+/// G01 re-audit 3 (clause auditor, executed): EVL judged by a subject set
+/// WITHOUT the trial's observer, while intake's includes it — so a check run
+/// as the observer principal was refused at intake yet counted by EVL.
+///
+/// (a) Production order: intake refuses it, so it never counts.
+/// (b) EVL on its own: the genuine bundle is intaken, then a store-level
+///     writer forges intake records for the laundered episodes (bypassing
+///     intake's checks). EVL must still refuse them by its own subject rule.
+///     Mutation: drop the observer from EVL's per-trial subject set → red.
+#[test]
+fn a_check_run_as_the_observer_never_counts_at_either_door() {
+    let (pass, _, d, _, _, outcomes) = run("obs-a", checked_by_the_observer);
+    assert_eq!(pass, 0, "{outcomes:?}");
+    assert_ne!(d, Decision::Accept);
+    assert!(
+        outcomes
+            .iter()
+            .all(|(_, r)| r.contains("intake: refused") && r.contains("subject")),
+        "{outcomes:?}"
+    );
+
+    let w = world();
+    freeze_plan(&w.s, "obs-b", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let mut v = evl_request("obs-b", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    assert!(intake_all(&w.s, &v).is_empty());
+    let genuine: Vec<axon_loop::intake::IntakeRecord> = {
+        let tx = axon_loop::ledger::Tx::begin(&w.s).unwrap();
+        tx.entries()
+            .iter()
+            .filter_map(|e| match &e.event {
+                axon_loop::ledger::Event::EpisodeIntake { intake, .. } => Some((**intake).clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    checked_by_the_observer(&mut v);
+    let mut tx = axon_loop::ledger::Tx::begin(&w.s).unwrap();
+    for t in candidate_trials(&mut v) {
+        let ep: LoopEpisode = serde_json::from_value(t["episode"].clone()).unwrap();
+        let mut forged = genuine
+            .iter()
+            .find(|r| r.identity.trial_id == ep.identity.trial_id)
+            .unwrap()
+            .clone();
+        forged.episode_ref = digest(&ep).unwrap();
+        tx.append(axon_loop::ledger::Event::EpisodeIntake {
+            scope: scope(),
+            intake: Box::new(forged),
+        })
+        .unwrap();
+    }
+    drop(tx);
+    let (rec, _) = axon_loop::evl::evaluate(
+        &w.s,
+        &axon_loop::evl::parse_request(&v.to_string()).unwrap(),
+    )
+    .unwrap();
+    let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+    assert_eq!(c.verified_pass, 0, "{:?}", c.trials);
+    assert!(
+        c.trials
+            .iter()
+            .all(|t| t.outcome == Outcome::Unknown && t.reason.contains("subject")),
+        "{:?}",
+        c.trials
+    );
+}

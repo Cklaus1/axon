@@ -604,6 +604,14 @@ fn judge(
         subjects,
         class,
     } = *bench;
+    // The subject set for THIS trial: the evaluation's (request subjects, arm
+    // proposers) plus the trial's own observer — the set intake judged by, so
+    // the two doors cannot disagree about who may verify.
+    let subjects: &BTreeSet<OpaqueRef> = &subjects
+        .iter()
+        .cloned()
+        .chain([d.ctx.observed_issuer_ref.clone()])
+        .collect();
     if &d.ep.policy_ref != policy_ref {
         return (
             Outcome::Unknown,

@@ -357,6 +357,9 @@ pub fn transition(store: &Store, t: &PolicyTransition) -> Result<PointerRecord> 
             } else {
                 check_activate(&tx, &cur, t, &target, &adm_ref, &config.admitters())?;
             }
+            if config.protected_scopes.contains(scope) {
+                protected_scope_gate(&tx, t, &adm_ref, &config.admitters())?;
+            }
             let env: PolicyEnvelope = store.get_contract("policies", &target)?;
             // G2: every activation route (baseline, admission, rollback).
             crate::candidates::require_shortlist(&tx, &env)?;
@@ -480,18 +483,51 @@ fn check_activate(
     if !adm.deployment_enabled {
         return Err(refused("the admitted plan has deployment_enabled = false"));
     }
-    // ADR-001 D3: in a protected scope a real promotion rests on protected
-    // evidence only. A development-class evaluation (local interpreter) is
-    // recorded and reportable, never a promotion there.
-    if !t.mechanism_test && tx.store.config()?.protected_scopes.contains(&t.scope) {
-        let eval: crate::evl::EvaluationRecord =
-            tx.store.get_record("evaluations", &adm.evaluation_ref)?;
-        if eval.evaluation_class != crate::plan::EvaluationClass::Protected {
-            return Err(refused(
-                "scope is protected: a development-class evaluation cannot promote a policy \
-                 (ADR-001 D3)",
-            ));
-        }
+    Ok(())
+}
+
+/// ADR-001 D3, on EVERY route that makes a policy active in a protected scope
+/// — activate and rollback alike (re-audit 3: the check lived only in
+/// `check_activate`, and a `mechanism_test` label skipped even that):
+///
+/// * a protected scope serves no mechanism-test fixture;
+/// * a policy that became eligible by ADMISSION is active only on a
+///   re-derived admission whose evaluation is of the protected class — so a
+///   rollback to a predecessor admitted on development evidence is refused,
+///   whenever the scope was protected;
+/// * the incumbent-of-record is exempt, by design: it is an admitter's
+///   designation, not evaluated evidence, and a protected scope needs one to
+///   start (a comparative admission requires an active incumbent). Signed
+///   baselines are ADR-001 §3.4.
+///
+/// Not covered here (ADR-001 §5, activation revalidation, pending): a policy
+/// already ACTIVE when the operator protects the scope stays active until the
+/// next transition.
+fn protected_scope_gate(
+    tx: &Tx,
+    t: &PolicyTransition,
+    adm_ref: &Ref,
+    admitters: &std::collections::BTreeSet<OpaqueRef>,
+) -> Result<()> {
+    if t.mechanism_test {
+        return Err(refused(
+            "scope is protected: it serves no mechanism-test fixture (ADR-001 D3)",
+        ));
+    }
+    if tx
+        .store
+        .get_record::<BaselineRecord>("baselines", adm_ref)
+        .is_ok()
+    {
+        return Ok(());
+    }
+    let adm = admission::rederive(tx, adm_ref, admitters)?;
+    let (_, eval) = crate::evl::load_journalled(tx, &adm.evaluation_ref)?;
+    if eval.evaluation_class != crate::plan::EvaluationClass::Protected {
+        return Err(refused(
+            "scope is protected: a development-class evaluation cannot make a policy active \
+             (ADR-001 D3)",
+        ));
     }
     Ok(())
 }
