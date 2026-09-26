@@ -8,10 +8,12 @@ These files are BYTE COPIES, not generated and not hand-edited:
 | `acf-compute-request.schema.json` | v0.22 pack, `integration/compute-fabric-v0_1-reference/contracts/compute_request.schema.json` |
 | `acf-execution-receipt.schema.json` | v0.22 pack, `integration/compute-fabric-v0_1-reference/contracts/execution_receipt.schema.json` |
 
-Two files are CRATE-LOCAL, because the package defines no schema for these
-contracts: `local-policy-pin.schema.json` (`PolicyPin`) and
+Three files are CRATE-LOCAL, because the package defines no schema for these
+contracts: `local-policy-pin.schema.json` (`PolicyPin`),
 `local-policy-projection.schema.json` (`PolicyProjection`, the closed key set
-the reference's `bind_acf` checks).
+the reference's `bind_acf` checks), and `closed-loop-profile.schema.json`
+(`ProfileOffer` / `ProfileAccept`, B256; byte rules in
+`docs/CLOSED_LOOP_PROFILE_NEGOTIATION.md`).
 
 The schemas are ENFORCED, not just documented: `parse` validates every document
 against its contract's schema (`Contract::SCHEMA`, `src/schema.rs`) before

@@ -287,7 +287,7 @@ fn every_checked_in_schema_is_within_the_supported_subset() {
         scan(&schema, &p.display().to_string());
         n += 1;
     }
-    assert_eq!(n, 8, "six package schemas + two crate-local");
+    assert_eq!(n, 9, "six package schemas + three crate-local");
 }
 
 fn scan(v: &Value, at: &str) {
@@ -322,6 +322,7 @@ fn scan(v: &Value, at: &str) {
         "^(cl22|acf1|sha256):[0-9a-f]{64}$",
         "^acf1:[0-9a-f]{64}$",
         "^[A-Z]{3}$",
+        "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$",
     ];
     match v {
         Value::Object(o) => {

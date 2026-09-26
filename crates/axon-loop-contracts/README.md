@@ -21,6 +21,13 @@ any `axon` CLI verb.
     before serde runs.
 * `digest`: the package's `cl22:` sorted-key canonical digest. It is
   deliberately **not** `axc1` or `acf1`, and not the frozen episode digest.
+* `profile`: `closed-loop-profile/1`, the B256 offer/accept negotiation of
+  exact schema ids, feature flags (`usage/2`) and pinned adapters
+  (`cortex-policy-adapter/1`, `axon-bridge/v0`). `negotiate` is pure. An
+  absent or old peer, no common schema, or an unmet requirement is an explicit
+  `Unsupported` and never a fallback. **Not wired**: no transport calls it yet,
+  and the MiCode half does not exist. Rules:
+  `docs/CLOSED_LOOP_PROFILE_NEGOTIATION.md`.
 * `checks`: semantic checks that need no I/O (`bind_acf`, `bind_episode`,
   `check_paired_trial_context`, `check_shortlist`, …).
 
