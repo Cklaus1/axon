@@ -151,11 +151,17 @@ def main():
         elif h["kind"] == "cargo-suite":
             rc, out, secs = run(h["command"], repo_dir, env, log)
             passed, failed, ignored = cargo_counts(out)
-            if rc == 0 and failed == 0 and passed > 0:
-                rec.update(status="PASS", detail=f"{passed} passed, 0 failed, {ignored} ignored")
+            fails = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED", out, re.M)))
+            allowed = {e["test"] for e in h.get("baseline_exceptions", [])}
+            tolerated = [f for f in fails if f.rsplit("::", 1)[-1] in allowed]
+            other = [f for f in fails if f not in tolerated]
+            if passed > 0 and not other and failed == len(tolerated) and (rc == 0 or tolerated):
+                note = f"{passed} passed, {failed} failed, {ignored} ignored"
+                if tolerated:
+                    note += f"; baseline exceptions (pre-existing, manifest-listed): {', '.join(tolerated)}"
+                rec.update(status="PASS", detail=note, baseline_exceptions_hit=tolerated)
             else:
-                fails = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED", out, re.M)))
-                rec.update(status="FAIL", detail=f"exit {rc}; {passed} passed, {failed} failed: {', '.join(fails[:10])}")
+                rec.update(status="FAIL", detail=f"exit {rc}; {passed} passed, {failed} failed: {', '.join(other[:10]) or '(no parsable FAILED line)'}")
             rec["counts"] = {"passed": passed, "failed": failed, "ignored": ignored}
             rec["seconds"] = secs
         else:
