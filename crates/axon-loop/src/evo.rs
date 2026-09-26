@@ -66,6 +66,8 @@ pub enum Verdict {
     Accept,
     Reject,
     Inconclusive,
+    /// ADR-001 §5: refused on safety, before utility — distinct from Reject.
+    Vetoed,
 }
 
 /// One line of `hypotheses.jsonl`. History is append-only: a verdict is a

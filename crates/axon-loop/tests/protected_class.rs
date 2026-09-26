@@ -157,6 +157,9 @@ fn a_protected_scope_promotes_only_on_a_protected_evaluation() {
     freeze_plan(&w.s, "prot", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let mut v = evl_request("prot", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
     on_protected_backend(&mut v);
+    // ADR-001 §5: a protected evaluation ACCEPTs only trials an independent,
+    // authenticated monitor cleared.
+    clear_all(&w.s, &v);
     let (_, e) = evaluate(&w.s, &v).unwrap();
     let (rec, adm) = admit(&w.s, "prot", &e, ADMITTER, false).unwrap();
     assert_eq!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
@@ -344,4 +347,29 @@ fn each_d3_leg_on_a_development_backend_counts_nothing() {
             None => assert_eq!(c.verified_pass, 2, "{:?}", c.trials),
         }
     }
+}
+
+/// ADR-001 §5: in a PROTECTED evaluation an unknown safety state blocks
+/// ACCEPT — nothing independent and authenticated cleared the trials. The
+/// same protected experiment with every trial cleared by the monitor is
+/// ACCEPTED (a_protected_scope_promotes_only_on_a_protected_evaluation).
+///
+/// Mutation: drop the protected unknown-safety block in `decide` → ACCEPT.
+#[test]
+fn a_protected_evaluation_accepts_only_cleared_trials() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "unk", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let mut v = evl_request("unk", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    assert_eq!(rec.arm_for_policy(&w.cand_ref).unwrap().verified_pass, 2);
+    let (adm, _) = admit(&w.s, "unk", &e, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Inconclusive, "{:?}", adm.reasons);
+    assert!(
+        adm.reasons.iter().any(|r| r.contains("safety unknown")),
+        "{:?}",
+        adm.reasons
+    );
 }

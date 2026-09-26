@@ -36,6 +36,10 @@
 //! axon-loop --store DIR intake  episode    --in sidecar.json --context FILE|DIR
 //!                                          --ack FILE|DIR [--projection FILE] [--source-episode FILE]
 //!                                          [--verification-request FILE --verification-receipt FILE --verification-attestation FILE]
+//! axon-loop --store DIR safety  report     --in trial-safety.json [--signature FILE]
+//!                       (ADR-001 §5: a violation from a trusted monitor or the
+//!                       trial's own subject; a clearance only signed by an
+//!                       independent monitor under its registered key)
 //! ```
 //!
 //! `intake episode`: `--context` may name MiCode's `context/` directory, in
@@ -258,6 +262,16 @@ fn run(a: &Args) -> Result<Value, LoopError> {
             let req = evl::parse_request(&a.input()?)?;
             let (rec, r) = evl::evaluate(&a.store()?, &req)?;
             Ok(json!({"schema":"axon.loop.evl-result/1","evaluation_ref":r,"evaluation":rec}))
+        }
+        ["safety", "report"] => {
+            a.only(&["in", "signature"])?;
+            let sig = match a.flags.get("signature") {
+                Some(p) => Some(std::fs::read_to_string(p)?),
+                None => None,
+            };
+            let (report, seq) =
+                axon_loop::safety::report(&a.store()?, &a.input()?, sig.as_deref())?;
+            Ok(json!({"schema":"axon.loop.safety-result/1","ledger_seq":seq,"report":report}))
         }
         ["admit"] => {
             a.only(&["in"])?;

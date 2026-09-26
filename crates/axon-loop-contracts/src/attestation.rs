@@ -175,6 +175,109 @@ pub fn verify(
     Ok(key_id)
 }
 
+/// A detached signature over ONE document, domain-separated: the signed bytes
+/// are the canonical JSON of `{schema, domain, issuer_ref, key_id, doc_ref}`,
+/// so a signature made for one kind of document (`domain`) can never be
+/// presented as another's. The same key discipline as a receipt attestation:
+/// the public key must be the one the operator registered for the issuer.
+pub const DOCUMENT_SIGNATURE_SCHEMA: &str = "axon-document-signature/1";
+
+fn document_binding(
+    domain: &str,
+    issuer_ref: &OpaqueRef,
+    key_id: &str,
+    doc: &Value,
+) -> Result<Value, Refusal> {
+    Ok(json!({
+        "schema": DOCUMENT_SIGNATURE_SCHEMA,
+        "domain": domain,
+        "issuer_ref": issuer_ref.as_str(),
+        "key_id": key_id,
+        "doc_ref": crate::digest_value(doc)?.to_string(),
+    }))
+}
+
+/// Sign `doc` as `issuer_ref` for `domain`. For issuers (monitors) and tests.
+pub fn sign_document(
+    pkcs8: &[u8],
+    domain: &str,
+    issuer_ref: &OpaqueRef,
+    doc: &Value,
+) -> Result<Value, String> {
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let kp = Ed25519KeyPair::from_pkcs8(pkcs8)
+        .map_err(|_| "the issuer key is not a PKCS#8 Ed25519 private key".to_string())?;
+    let pk = kp.public_key().as_ref().to_vec();
+    let mut s = document_binding(domain, issuer_ref, &key_fingerprint(&pk), doc)
+        .map_err(|e| e.to_string())?;
+    let bytes = crate::canonical_bytes(&s).map_err(|e| e.to_string())?;
+    s["alg"] = json!("ed25519");
+    s["public_key"] = json!(hex(&pk));
+    s["signature"] = json!(hex(kp.sign(&bytes).as_ref()));
+    Ok(s)
+}
+
+/// Verify `sig` as `issuer_ref`'s `domain` signature of `doc` under the
+/// operator-registered `public_key_hex`. Returns the key id.
+pub fn verify_document(
+    sig: &Value,
+    domain: &str,
+    issuer_ref: &OpaqueRef,
+    doc: &Value,
+    public_key_hex: &str,
+) -> Result<String, Refusal> {
+    use ring::signature::{UnparsedPublicKey, ED25519};
+    let registered = unhex(public_key_hex)
+        .filter(|k| k.len() == 32)
+        .ok_or_else(|| {
+            shape(format!(
+                "the key registered for {issuer_ref} is not a 64-hex Ed25519 public key"
+            ))
+        })?;
+    let key_id = key_fingerprint(&registered);
+    let want = document_binding(domain, issuer_ref, &key_id, doc)?;
+    let obj = sig
+        .as_object()
+        .ok_or_else(|| shape("signature: not a JSON object"))?;
+    let bound = want.as_object().expect("an object");
+    for k in obj.keys() {
+        if !bound.contains_key(k) && !["alg", "public_key", "signature"].contains(&k.as_str()) {
+            return Err(shape(format!("signature: unknown field {k:?}")));
+        }
+    }
+    if sig["alg"] != "ed25519" {
+        return Err(shape("signature: alg is not ed25519"));
+    }
+    let presented = sig["public_key"]
+        .as_str()
+        .and_then(unhex)
+        .filter(|k| k.len() == 32)
+        .ok_or_else(|| shape("signature: no 32-byte public_key"))?;
+    if presented != registered {
+        return Err(shape(format!(
+            "signed by {}, not by {key_id}, the key the operator registered for {issuer_ref}",
+            key_fingerprint(&presented)
+        )));
+    }
+    for (field, want) in bound {
+        if &sig[field] != want {
+            return Err(shape(format!(
+                "signature: {field} is {} but the document it must vouch for has {want}",
+                sig[field]
+            )));
+        }
+    }
+    let s = sig["signature"]
+        .as_str()
+        .and_then(unhex)
+        .filter(|s| s.len() == 64)
+        .ok_or_else(|| shape("signature: no 64-byte signature"))?;
+    UnparsedPublicKey::new(&ED25519, &registered)
+        .verify(&crate::canonical_bytes(&want)?, &s)
+        .map_err(|_| shape(format!("signature does not verify under {key_id}")))?;
+    Ok(key_id)
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -336,5 +439,37 @@ mod tests {
         }
         assert!(public_key_of(b"not pkcs8").is_err());
         assert!(sign(b"not pkcs8", &issuer(), &req(), &rc()).is_err());
+    }
+
+    #[test]
+    fn a_document_signature_vouches_for_that_document_domain_and_issuer_only() {
+        let (k, pk) = generate().expect("key");
+        let doc = json!({"schema": "x/1", "finding": "clear", "n": 1});
+        let sig = sign_document(&k, "dom/1", &issuer(), &doc).expect("sign");
+        let id = verify_document(&sig, "dom/1", &issuer(), &doc, &pk).expect("verifies");
+        assert_eq!(sig["key_id"], id.as_str());
+        let other_doc = json!({"schema": "x/1", "finding": "clear", "n": 2});
+        assert!(
+            refusal(verify_document(&sig, "dom/1", &issuer(), &other_doc, &pk)).contains("doc_ref")
+        );
+        assert!(refusal(verify_document(&sig, "dom/2", &issuer(), &doc, &pk)).contains("domain"));
+        let other = OpaqueRef::new("fabric:someone-else").expect("ref");
+        assert!(refusal(verify_document(&sig, "dom/1", &other, &doc, &pk)).contains("issuer_ref"));
+        let (_, other_pk) = generate().expect("key");
+        assert!(
+            refusal(verify_document(&sig, "dom/1", &issuer(), &doc, &other_pk)).contains("not by")
+        );
+        // Self-signed but claiming the registered key: the signature fails.
+        let (k2, _) = generate().expect("key");
+        let mut forged = sign_document(&k2, "dom/1", &issuer(), &doc).expect("sign");
+        forged["public_key"] = json!(pk);
+        forged["key_id"] = sig["key_id"].clone();
+        assert!(
+            refusal(verify_document(&forged, "dom/1", &issuer(), &doc, &pk))
+                .contains("does not verify")
+        );
+        let mut extra = sig.clone();
+        extra["note"] = json!(1);
+        assert!(verify_document(&extra, "dom/1", &issuer(), &doc, &pk).is_err());
     }
 }

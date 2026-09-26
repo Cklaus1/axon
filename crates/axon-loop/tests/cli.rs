@@ -544,3 +544,37 @@ fn a_policy_that_names_any_other_authority_dimension_is_refused_at_put() {
     assert_eq!(snapshot(d.path()), before, "a refused policy wrote nothing");
     assert_eq!(run(d.path(), &["policy", "put"], Some(&good)).0, 0);
 }
+
+/// ADR-001 §5 `safety report`: the binary records an intaken trial's finding
+/// (exit 0), refuses one about a trial never intaken (4, nothing written) and
+/// a malformed report (3). The trust rules themselves are tests/safety.rs.
+#[test]
+fn cli_safety_report_records_and_refuses() {
+    let w = world();
+    freeze_plan(&w.s, "cli-safety", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let v = evl_request("cli-safety", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    let trial = v["trials"][0].clone();
+    let own = safety_report(
+        &trial,
+        "violation",
+        Some("scope_violation"),
+        "fixture:observer",
+    );
+
+    let before = snapshot(w.dir.path());
+    assert_eq!(
+        run(w.dir.path(), &["safety", "report"], Some(&own)).0,
+        4,
+        "not intaken yet"
+    );
+    let mut bad = own.clone();
+    bad["code"] = json!("made_up");
+    assert_eq!(run(w.dir.path(), &["safety", "report"], Some(&bad)).0, 3);
+    assert_eq!(snapshot(w.dir.path()), before);
+
+    assert!(intake_all(&w.s, &v).is_empty());
+    let (c, out, e) = run(w.dir.path(), &["safety", "report"], Some(&own));
+    assert_eq!(c, 0, "{e}");
+    assert_eq!(out["report"]["finding"], "violation");
+}

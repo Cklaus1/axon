@@ -88,6 +88,15 @@ pub struct Config {
     /// evaluation was development-class. Absent: `[]`; always serialized.
     #[serde(default)]
     pub protected_scopes: Vec<axon_loop_contracts::Scope>,
+    /// ADR-001 §5: independent safety monitors. A monitor may report a trial
+    /// UNSAFE by name (a report can only block, never admit); a CLEARANCE
+    /// counts only if signed under the key registered in `monitor_keys` by a
+    /// monitor that is not a subject of the trial. Absent: `[]` / `{}`;
+    /// always serialized.
+    #[serde(default)]
+    pub trusted_monitors: Vec<OpaqueRef>,
+    #[serde(default)]
+    pub monitor_keys: std::collections::BTreeMap<OpaqueRef, String>,
 }
 
 /// One task's operator-registered acceptance check (see [`Config::task_acceptance`]).
@@ -471,6 +480,10 @@ impl Store {
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
                     o.entry("protected_scopes")
                         .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                    o.entry("trusted_monitors")
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                    o.entry("monitor_keys")
+                        .or_insert_with(|| serde_json::Value::Object(Default::default()));
                 }
                 strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
             }
@@ -483,6 +496,8 @@ impl Store {
                 verifier_pins: Default::default(),
                 task_acceptance: Default::default(),
                 protected_scopes: Vec::new(),
+                trusted_monitors: Vec::new(),
+                monitor_keys: Default::default(),
             }),
         }
     }

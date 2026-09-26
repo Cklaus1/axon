@@ -63,6 +63,9 @@ pub enum Decision {
     Accept,
     Reject,
     Inconclusive,
+    /// ADR-001 §5: a safety violation in the candidate's arm. Decided before
+    /// any quality or economic criterion, which cannot offset it.
+    Vetoed,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -227,7 +230,7 @@ pub(crate) fn derive(
         .filter(|h| matches!(h, Hypothesis::Proposed { parent_policy_ref, .. } if parent_policy_ref == &inc_ref))
         .count() as u64;
 
-    let (decision, reasons) = decide(&rules, proposals, cand_arm, inc_arm);
+    let (decision, reasons) = decide(&rules, proposals, cand_arm, inc_arm, eval.evaluation_class);
     Ok(AdmissionRecord {
         schema: AdmissionSchema,
         decision,
@@ -336,11 +339,45 @@ fn decide(
     proposals: u64,
     cand_arm: &ArmResult,
     inc_arm: &ArmResult,
+    class: crate::plan::EvaluationClass,
 ) -> (Decision, Vec<String>) {
+    // ADR-001 §5, the VETO STAGE, before any utility: one unsafe attempt in
+    // the candidate's arm decides, whatever its quality or cost.
+    let vetoes: Vec<String> = cand_arm
+        .trials
+        .iter()
+        .filter_map(|t| match t.safety {
+            crate::safety::SafetyState::Violation { code } => Some(format!(
+                "safety veto: trial {} ({:?}) was reported unsafe: {code:?}",
+                t.trial_id, t.task_id
+            )),
+            _ => None,
+        })
+        .collect();
+    if !vetoes.is_empty() {
+        return (Decision::Vetoed, vetoes);
+    }
     let cand = facts(cand_arm);
     let inc = facts(inc_arm);
     let mut inconclusive = Vec::new();
     let mut reject = Vec::new();
+
+    // Unknown safety blocks ACCEPT where the evidence must be protected: no
+    // authenticated independent monitor cleared the trial. (A development
+    // evaluation promotes nothing in a protected scope anyway — D3.)
+    if class == crate::plan::EvaluationClass::Protected {
+        let unknown = cand_arm
+            .trials
+            .iter()
+            .filter(|t| t.safety != crate::safety::SafetyState::Clear)
+            .count();
+        if unknown > 0 {
+            inconclusive.push(format!(
+                "safety unknown: {unknown} candidate trial(s) have no authenticated independent \
+                 clearance, which a protected evaluation requires"
+            ));
+        }
+    }
 
     if proposals > 1 {
         inconclusive.push(format!(
@@ -463,6 +500,7 @@ impl From<Decision> for Verdict {
             Decision::Accept => Verdict::Accept,
             Decision::Reject => Verdict::Reject,
             Decision::Inconclusive => Verdict::Inconclusive,
+            Decision::Vetoed => Verdict::Vetoed,
         }
     }
 }

@@ -171,6 +171,12 @@ pub enum Event {
         scope: Scope,
         intake: Box<crate::intake::IntakeRecord>,
     },
+    /// ADR-001 §5: an accepted safety finding about one intaken trial
+    /// attempt (`crate::safety`). Evidence only; evaluation reads it.
+    SafetyReport {
+        scope: Scope,
+        report: Box<crate::safety::SafetyReport>,
+    },
     /// A trusted admitter registered the eligible candidate LIST behind a
     /// `candidate_set_ref` (bytes in `candidate-sets/`; see `crate::candidates`).
     CandidateSet {

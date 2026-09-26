@@ -176,6 +176,8 @@ impl Env {
             verifier_pins: Default::default(),
             task_acceptance: Default::default(),
             protected_scopes: Vec::new(),
+            trusted_monitors: Vec::new(),
+            monitor_keys: Default::default(),
         })
         .unwrap();
         let registry = dir.path().join("registry.json");

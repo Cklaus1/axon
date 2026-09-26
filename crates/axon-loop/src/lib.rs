@@ -42,6 +42,7 @@ pub mod plan;
 pub mod pointer;
 pub mod price;
 pub mod rules;
+pub mod safety;
 pub mod store;
 pub mod tasks;
 pub mod tel;

@@ -120,6 +120,14 @@ pub struct TrialResult {
     /// Absent on older records and on every Unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationEvidence>,
+    /// ADR-001 §5: the trial's safety as recorded when this evaluation was
+    /// made (`crate::safety`). Absent = unknown, so older records keep their
+    /// bytes.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::safety::SafetyState::is_unknown"
+    )]
+    pub safety: crate::safety::SafetyState,
 }
 
 /// Which signed verification a counted verdict rests on.
@@ -357,6 +365,9 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             _ => None,
         })
         .collect();
+    // Safety findings recorded so far: fixed into the record, so an admission
+    // re-derives from exactly what the evaluation saw.
+    let safety = crate::safety::states(&tx, &r.scope);
     let mut delivered: BTreeMap<(TaskId, ArmId, TrialId), Delivered> = BTreeMap::new();
     let mut evidence = BTreeSet::new();
     for (i, t) in r.trials.iter().enumerate() {
@@ -522,6 +533,14 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             // drift (re-audit 3: X23, an equivalent mutant).
             verification: authenticated
                 .filter(|_| matches!(outcome, Outcome::VerifiedPass | Outcome::Fail)),
+            safety: safety
+                .get(&(
+                    a.task_id.as_str().to_string(),
+                    a.arm_id.as_str().to_string(),
+                    a.trial_id.as_str().to_string(),
+                ))
+                .copied()
+                .unwrap_or_default(),
         });
     }
     for (id, arm) in arms.iter_mut() {

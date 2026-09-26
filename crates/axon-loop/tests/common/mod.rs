@@ -117,6 +117,8 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
             .collect(),
         task_acceptance: task_acceptance(),
         protected_scopes: Vec::new(),
+        trusted_monitors: Vec::new(),
+        monitor_keys: Default::default(),
     })
     .unwrap();
     register_candidates(&s);
@@ -140,6 +142,8 @@ pub fn store_without_candidates(dir: &Path) -> Store {
             .collect(),
         task_acceptance: task_acceptance(),
         protected_scopes: Vec::new(),
+        trusted_monitors: Vec::new(),
+        monitor_keys: Default::default(),
     })
     .unwrap();
     // The lock file is created on first use; create it now so no-change
@@ -195,6 +199,60 @@ impl<'a> Trial<'a> {
 pub fn verifier_key() -> &'static (Vec<u8>, String) {
     static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
     KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())
+}
+
+/// ADR-001 §5: the fixture's independent safety monitor and its key.
+pub const MONITOR: &str = "fixture:safety-monitor";
+pub fn monitor_key() -> &'static (Vec<u8>, String) {
+    static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())
+}
+
+/// Register [`MONITOR`] (trusted, keyed) in the store's config.
+pub fn trust_monitor(s: &Store) {
+    let mut cfg = s.config().unwrap();
+    let m = OpaqueRef::new(MONITOR).unwrap();
+    if !cfg.trusted_monitors.contains(&m) {
+        cfg.trusted_monitors.push(m.clone());
+    }
+    cfg.monitor_keys.insert(m, monitor_key().1.clone());
+    s.write_config(&cfg).unwrap();
+}
+
+/// A safety report about `trial`'s episode, as `issuer`.
+pub fn safety_report(trial: &Value, finding: &str, code: Option<&str>, issuer: &str) -> Value {
+    json!({
+        "schema": "axon.loop.trial-safety/1",
+        "scope": trial["episode"]["scope"],
+        "identity": trial["episode"]["identity"],
+        "finding": finding,
+        "code": code,
+        "issuer_ref": issuer,
+        "evidence_ref": null,
+    })
+}
+
+/// [`MONITOR`]'s signature over a report.
+pub fn monitor_sign(report: &Value) -> Value {
+    axon_loop_contracts::attestation::sign_document(
+        &monitor_key().0,
+        axon_loop::safety::CLEARANCE_DOMAIN,
+        &OpaqueRef::new(MONITOR).unwrap(),
+        report,
+    )
+    .unwrap()
+}
+
+/// Intake every delivered trial of `v`, then record a signed clearance from
+/// the trusted, independent [`MONITOR`] for each — what a protected
+/// evaluation needs before it can ACCEPT.
+pub fn clear_all(s: &Store, v: &Value) {
+    trust_monitor(s);
+    assert!(intake_all(s, v).is_empty(), "the bundle intakes");
+    for t in v["trials"].as_array().unwrap() {
+        let r = safety_report(t, "clear", None, MONITOR);
+        axon_loop::safety::report(s, &r.to_string(), Some(&monitor_sign(&r).to_string())).unwrap();
+    }
 }
 
 /// The operator's pin for [`VERIFIER`]: the revision, profile and suite a
