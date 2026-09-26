@@ -2323,6 +2323,28 @@
       "status": "fixed",
       "severity": "security",
       "commit": "bcf9c0a7"
+    },
+    {
+      "id": "FG-065",
+      "where": "crates/axon-core/src/interp.rs",
+      "claimed": "FG-064 fixed: loop control never crosses a function boundary.",
+      "reality": "The boundary was the fn body only: a break in a candidate fn's parameter/return refinement, its @[verify] predicate, or a candidate type's struct refinement (evaluated at the caller) still escaped and ended the operator test's loop, and the real Fabric binary signed that pass.",
+      "reproduced": "G01 final independent re-audit of candidate 4 (clause auditor, wf_3c389d3a), executed at c58166f6 through the real signed path. Pinned by interp::tests::loop_control_does_not_escape_through_a_predicate (all four shapes; M59).",
+      "fix": "contain_loop_control at every frame edge: the whole call (call_fn wraps call_fn_frame), every predicate evaluation, both effect-handler-arm evaluations.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "2175cc1b"
+    },
+    {
+      "id": "FG-066",
+      "where": "crates/axon-core/src/resolver.rs",
+      "claimed": "FG-052 / G01 clause 4: the suite's own modules always win; what ran is what the operator pinned.",
+      "reality": "A candidate module that `use`d a suite helper could redefine that helper's trait impl, module-level let or named refinement: the merged program kept the later definition (last-wins maps) and E0002 covered only fn/type/enum/mod, so a broken candidate passed the operator's test and Fabric signed it.",
+      "reproduced": "G01 final independent re-audit of candidate 4 (verdict adversary, wf_3c389d3a), executed through the real binary (signed pass). Pinned by resolver::tests::duplicate_let_refinement_or_impl_produces_e0002 (M60-M62) and check_effects a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant.",
+      "fix": "E0002 extends to module-level lets, named refinements and (trait, type) impls across the merged program.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "2175cc1b"
     }
   ]
 }

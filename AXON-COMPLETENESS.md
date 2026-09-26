@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 63 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 65 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -653,4 +653,18 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** 4e7851bc caught a break/continue only when it reached the test boundary. Loop control still crossed function boundaries, so a candidate's `break` landed in a loop the operator's test owned, ended it before any assertion ran, and the test returned normally — the real Fabric binary signed that pass.
 - **Reproduced:** G01 final independent re-audit of candidate 2 (clause auditor, wf_2f0bc4c3), executed at e42fe160 through the real binary (signed pass, attestation verified). Pinned by interp::tests::an_escaped_break_or_continue_does_not_pass_a_test (while/for/closure cases, M58) and an_escaped_break_cannot_end_the_operators_test_loop.
 - **Fix:** call_fn and call_closure turn a break/continue escaping their body into a panic; loop control never crosses a function boundary. (`bcf9c0a7`)
+
+### FG-065 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** FG-064 fixed: loop control never crosses a function boundary.
+- **Reality:** The boundary was the fn body only: a break in a candidate fn's parameter/return refinement, its @[verify] predicate, or a candidate type's struct refinement (evaluated at the caller) still escaped and ended the operator test's loop, and the real Fabric binary signed that pass.
+- **Reproduced:** G01 final independent re-audit of candidate 4 (clause auditor, wf_3c389d3a), executed at c58166f6 through the real signed path. Pinned by interp::tests::loop_control_does_not_escape_through_a_predicate (all four shapes; M59).
+- **Fix:** contain_loop_control at every frame edge: the whole call (call_fn wraps call_fn_frame), every predicate evaluation, both effect-handler-arm evaluations. (`2175cc1b`)
+
+### FG-066 — crates/axon-core/src/resolver.rs (security, fixed)
+
+- **Claimed:** FG-052 / G01 clause 4: the suite's own modules always win; what ran is what the operator pinned.
+- **Reality:** A candidate module that `use`d a suite helper could redefine that helper's trait impl, module-level let or named refinement: the merged program kept the later definition (last-wins maps) and E0002 covered only fn/type/enum/mod, so a broken candidate passed the operator's test and Fabric signed it.
+- **Reproduced:** G01 final independent re-audit of candidate 4 (verdict adversary, wf_3c389d3a), executed through the real binary (signed pass). Pinned by resolver::tests::duplicate_let_refinement_or_impl_produces_e0002 (M60-M62) and check_effects a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant.
+- **Fix:** E0002 extends to module-level lets, named refinements and (trait, type) impls across the merged program. (`2175cc1b`)
 

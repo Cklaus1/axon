@@ -52,6 +52,13 @@ History:
   DO_NOT_REGISTER on one executed blocker. FG-063's fix stopped a `break` at the test boundary
   only; a candidate's `break` still landed in a loop the operator's test owned. Loop control no
   longer crosses any function boundary (fixed: bcf9c0a7, FG-064). Candidate 3 is frozen after this.
+- Candidate 3 failed its own proof run: M56 survived, now retired as an equivalent mutant.
+- Final re-audit of frozen candidate 4 (wf_3c389d3a, axon c58166f6): three roles REGISTER, two
+  DO_NOT_REGISTER, each on one executed blocker.
+  - Loop control still escaped through a candidate's refinement and `@[verify]` predicates
+    (FG-065).
+  - A candidate module redefined a suite helper's impl, `let` or refinement (FG-066).
+  - Both are fixed in 2175cc1b. Candidate 5 is frozen after this.
 
 ## The claim
 
@@ -98,9 +105,18 @@ or promotion only if all of the following hold.
    - the verifier revision (executable and digest) and its compute profile;
    - exactly one suite identity, `check-suite:<id>@<version>#<entry>`, pinned for that verifier;
    - the task's own registered acceptance check: that suite identity plus the exact test name.
-   - that test counts as passed only if it COMPLETED. Loop control never crosses a function
-     boundary: a `break`/`continue` with no loop of its own in a candidate function is a failure
-     there. It can neither unwind the test nor end a loop the operator's test owns.
+   - that test counts as passed only if it COMPLETED. Loop control never leaves the frame it was
+     written in. A `break`/`continue` that reaches the edge of any of these is a failure at that
+     edge:
+     - a function call (parameter and return refinements included);
+     - a closure call;
+     - a refinement or `@[verify]` predicate;
+     - an effect-handler arm.
+
+     It can neither unwind the test nor end a loop the operator's test owns.
+   - every definition in the merged program is unique: fn, type, enum, module, module-level
+     `let`, named refinement and trait impl (E0002). A candidate module cannot displace a
+     suite helper's definition.
 
    The requester chooses neither the test, nor the version, nor the entry file. The suite's own
    modules resolve before the candidate's. No repository-controlled configuration source (MiCode
@@ -138,7 +154,7 @@ or promotion only if all of the following hold.
 | 1 | `attestation.rs` unit tests; `intake.rs` authenticated, each-rule and one-scope tests; `evidence_laundering.rs` unauthenticated-verdict; `evl_admission.rs` revoked verifier | M02 M03 M08 M50 M54 | §8: attestation kept, key, operation; no-attestation refused; impostor key refused |
 | 2 | `signing.rs` unit tests; `attestation.rs` (Fabric) replay, forged-journal, environment and applied-ceiling tests; `check_effects.rs` exit-0 rule, `:` state dir, no ambient modules | M01 M40–M42 M44 M49 M52 M53 M55 M57 | §8 (2): effectful grant withheld; replay unsigned |
 | 3 | `intake.rs` each-rule and proposer tests; `evidence_laundering.rs` observer at both doors; `redteam.rs` NS4 | M05 M10 M16 M37–M39 M46 | §8 (3): check run as the observer refused |
-| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M58 | §8 (4): another pinned revision refused; task and filter pin cases |
+| 4 | `intake.rs` pinned, task-only, two-version and entry tests; `check_effects.rs` shadowing | M04 M06 M07 M26–M30 M43 M47 M58–M62 | §8 (4): another pinned revision refused; task and filter pin cases |
 | 5 | `intake.rs` join test (failed-verdict tree, supervisor, one suite, role upgrade) | M09 M21–M25 M31–M36 M45 | §8: the cited-receipt join, with the genuine attestation, refused by "digests to"; positive tree, identity and supervisor on real bytes |
 | 6 | `protected_class.rs` (including a protected-class mechanism fixture and rollback revalidation) | M11–M13 M17–M20 M51 | not exercised (see gaps) |
 | 7 | `evidence_laundering.rs` intake-only and cites-evidence tests; `intake.rs` records attestation and key | M14 M15 M48 | §8 (7): the record names the key id and the stored attestation |
