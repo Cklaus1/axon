@@ -2112,6 +2112,17 @@
       "severity": "correctness",
       "commit": "9c5912e0",
       "ported_from": "FG-043@upgrade/cortex-v0_20 (donor commit ebf389e)"
+    },
+    {
+      "id": "FG-047",
+      "where": "scripts/run_managed.sh",
+      "claimed": "Every managed gate run (including certified strict gates) executes its jobs under the same process semantics as a real launch; only the resource limits (cgroup memory/swap, deadline) differ.",
+      "reality": "The supervisor is a background job of a non-interactive shell, so every managed job and its descendants inherited SIGINT and SIGQUIT as IGNORED (SigIgn 0x6). A test asserting that Ctrl+C ends a process could not pass under the gate, and any behaviour depending on a default SIGINT/SIGQUIT was measured under a disposition no user ever has.",
+      "reproduced": "bash -c 'setsid <test> &': MiCode signals_still_end_onboarding_after_the_key_prompt fails ('SIGINT ... did not end MiCode'); in the foreground it passes. A managed child's /proc/self/status showed SigIgn 0000000000000006.",
+      "fix": "The job is exec'd through env --default-signal=INT,QUIT (python3 shim fallback; refused where neither exists). managed_run_gate check 3h asserts default SIGINT/SIGQUIT in a job and its grandchild; the pre-fix launch fails it. Found by the v0.22 Stage-5 paired verification (MiCode suite harness).",
+      "status": "fixed",
+      "severity": "correctness",
+      "commit": "f3c44208"
     }
   ]
 }

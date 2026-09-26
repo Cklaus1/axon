@@ -203,7 +203,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 45 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 46 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -526,4 +526,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** A PRESENT tool that FAILED was reported as a skip: an axon-wasm build failure or a wasm-opt --asyncify failure printed 'skipping' and exited 0, so a broken toolchain or a failed instrumentation pass read as not-applicable.
 - **Reproduced:** PATH-shadowed wasm-opt that exits 1: harness exit 0, last line 'wasm-opt --asyncify failed — skipping'. Also a wasm-opt exiting 0 with no output and one emitting an uninstrumented module.
 - **Fix:** Absent tools still skip via harness_skip; a present tool that fails is FAIL with its stderr, and an artifact lacking the asyncify exports is FAIL. All three mutants now fail; the real toolchain passes. Found closing the 2026-09-24 Asyncify incident (governance/incidents/2026-09-24-asyncify-linear-memory.md). (`9c5912e0`)
+
+### FG-047 — scripts/run_managed.sh (correctness, fixed)
+
+- **Claimed:** Every managed gate run (including certified strict gates) executes its jobs under the same process semantics as a real launch; only the resource limits (cgroup memory/swap, deadline) differ.
+- **Reality:** The supervisor is a background job of a non-interactive shell, so every managed job and its descendants inherited SIGINT and SIGQUIT as IGNORED (SigIgn 0x6). A test asserting that Ctrl+C ends a process could not pass under the gate, and any behaviour depending on a default SIGINT/SIGQUIT was measured under a disposition no user ever has.
+- **Reproduced:** bash -c 'setsid <test> &': MiCode signals_still_end_onboarding_after_the_key_prompt fails ('SIGINT ... did not end MiCode'); in the foreground it passes. A managed child's /proc/self/status showed SigIgn 0000000000000006.
+- **Fix:** The job is exec'd through env --default-signal=INT,QUIT (python3 shim fallback; refused where neither exists). managed_run_gate check 3h asserts default SIGINT/SIGQUIT in a job and its grandchild; the pre-fix launch fails it. Found by the v0.22 Stage-5 paired verification (MiCode suite harness). (`f3c44208`)
 
