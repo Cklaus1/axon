@@ -23,6 +23,7 @@ ROWS=(
   "2b second-trait method|axon-fabric|check_effects|a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant"
   "3  symlink escape|axon-fabric|check_effects|a_candidate_holding_a_symlink_is_refused"
   "4  ambient module path|axon-fabric|check_effects|a_check_loads_no_module_from_outside_the_suite_and_the_candidate"
+  "4  ambient module path|axon-core|pci_isolation|an_exclusive_module_path_never_falls_through_to_ambient_dirs"
   "5  path-list injection|axon-fabric|check_effects|a_state_dir_that_would_split_the_module_path_is_refused"
   "6  verifier environment|axon-fabric|attestation|the_launchers_environment_does_not_steer_a_signed_verdict the_empty_ceiling_is_applied_not_just_intended"
   "7  loop control|axon-core|lib|interp::tests::loop_control_does_not_escape_through_a_predicate interp::tests::an_escaped_break_or_continue_does_not_pass_a_test interp::tests::no_control_transfer_escapes_a_frame"

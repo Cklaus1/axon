@@ -1234,8 +1234,10 @@ impl<'a> Resolver<'a> {
                 Item::TraitDef(t) => Some(t.name.as_str()),
                 Item::RefineDef(r) => Some(r.name.as_str()),
                 Item::LetDef { name, .. } => Some(name.as_str()),
-                Item::ModDecl(m) => Some(m.name.as_str()),
-                Item::ImplBlock(_) | Item::UseDecl(_) => None,
+                // A module name is not a value the candidate can misuse — and
+                // the suite's `mod f` names the CANDIDATE's own module, so
+                // counting it refused an honest candidate's local `f`.
+                Item::ModDecl(_) | Item::ImplBlock(_) | Item::UseDecl(_) => None,
             }
         }
         // The operator's globals: everything an UNSEALED item defines.
@@ -1271,10 +1273,15 @@ impl<'a> Resolver<'a> {
                     let n = match x {
                         Expr::Ident(n) => n,
                         Expr::Assign { name, .. } => name,
+                        Expr::StructLit { name, .. } => name,
                         _ => return,
                     };
-                    if suite.contains(n.as_str()) && !reached.contains(n) {
-                        reached.push(n.clone());
+                    // Every segment of a qualified name (`rubric::expected`,
+                    // `Enum::Variant`), not just the whole string.
+                    for seg in n.split("::") {
+                        if suite.contains(seg) && !reached.iter().any(|r| r == seg) {
+                            reached.push(seg.to_string());
+                        }
                     }
                 });
             }
@@ -3049,6 +3056,7 @@ mod tests {
             ("module-level initializer", "let STEAL = expected()\nfn double(n: i64) -> i64 { n }\n", "expected"),
             ("refinement predicate", "fn poke(x: i64) -> bool {\n    dict_set(TABLE, \"k\", 0)\n    true\n}\ntype Sneak = i64 where poke(_)\nfn double(n: Sneak) -> i64 { n }\n", "TABLE"),
             ("verify predicate", "@[verify(dict_get_or(TABLE, \"k\", 0) > 0)]\nfn double(n: i64) -> i64 { n }\n", "TABLE"),
+            ("qualified path", "fn double(n: i64) -> i64 { dict_get_or(rubric::expected(), \"k\", 0) }\n", "expected"),
         ] {
             let e = errors_with_code(&sealed_merge(suite, cand), E0004);
             assert!(e.iter().any(|m| m.contains(&format!("`{name}`"))), "{why}: {e:?}");
@@ -3056,9 +3064,12 @@ mod tests {
         // Honest: builtins and its own names only. The operator's suite may
         // still use the candidate's names (the interface), and an inline
         // refinement in each file no longer collides on `__refine_0`.
+        // The suite's `mod f` names the candidate's own module: a candidate
+        // local called `f` is not a reach into the suite.
         let r = sealed_merge(
-            "fn check(x: i64 where x > 0) -> i64 { double(x) }\n",
-            "fn helper(n: i64 where n >= 0) -> i64 { n * 2 }\nfn double(n: i64) -> i64 { helper(n) }\n",
+            "mod f\nfn check(x: i64 where x > 0) -> i64 { double(x) }\n",
+            "fn helper(n: i64 where n >= 0) -> i64 { n * 2 }\n\
+             fn double(n: i64) -> i64 {\n    let f = |k: i64| helper(k)\n    f(n)\n}\n",
         );
         assert!(r.errors.is_empty(), "{:?}", r.errors);
     }

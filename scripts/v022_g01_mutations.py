@@ -300,7 +300,7 @@ MUTATIONS = [
      'crates/axon-fabric/src/submit.rs',
      '        .with_env("AXON_PATH_EXCLUSIVE", "1");',
      ';',
-     'axon-fabric', '--test check_effects', 'a_check_loads_no_module_from_outside_the_suite_and_the_candidate'),
+     'axon-core', '--no-default-features --test pci_isolation', 'an_exclusive_module_path_never_falls_through_to_ambient_dirs'),
     ('M54', 'intake: one verdict decides one trial in one scope',
      'crates/axon-loop/src/intake.rs',
      '                if intake.scope != ep.scope\n',

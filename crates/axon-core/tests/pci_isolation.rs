@@ -60,3 +60,49 @@ fn a_candidate_cannot_rebind_a_suite_named_handler() {
         assert!(good.contains("\"status\":\"ok\""), "{tag} control: {good}");
     }
 }
+
+/// PCI 4: with `AXON_PATH_EXCLUSIVE=1` a module resolves ONLY from `AXON_PATH`
+/// — never from the ambient `~/.axon/lib` (a trial cache's HOME, which a
+/// previous trial could have written). Pinned here, at the resolver, because
+/// sealing (21) also refuses such a module's names end to end, so a Fabric
+/// verdict alone no longer shows which guard held.
+///
+/// Mutation: ignore `AXON_PATH_EXCLUSIVE` in `axon_search_dirs` → red.
+#[test]
+fn an_exclusive_module_path_never_falls_through_to_ambient_dirs() {
+    let d = std::env::temp_dir().join(format!("axon_pci_ambient_{}", std::process::id()));
+    let (home, src) = (d.join("home"), d.join("src"));
+    std::fs::create_dir_all(home.join(".axon/lib")).unwrap();
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        home.join(".axon/lib/planted.ax"),
+        "fn d2(n: i64) -> i64 { n * 2 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("main.ax"),
+        "mod planted\nuse planted.{d2}\nfn main() -> i64 { d2(21) }\n",
+    )
+    .unwrap();
+    let run = |exclusive: bool| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"));
+        c.arg("check")
+            .arg(src.join("main.ax"))
+            .env("HOME", &home)
+            .env("AXON_PATH", &src);
+        if exclusive {
+            c.env("AXON_PATH_EXCLUSIVE", "1");
+        }
+        c.output().unwrap()
+    };
+    // Control: without exclusivity the ambient module IS found.
+    assert!(
+        run(false).status.success(),
+        "control: ambient lib not searched"
+    );
+    let out = run(true);
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the ambient module resolved: {text}");
+    assert!(text.contains("not found"), "{text}");
+}
