@@ -81,8 +81,7 @@
         "G33-r22-decision-rule-freeze"
       ],
       "missing": [
-        "G01-r22-unknown-outcome",
-        "G11-r22-admission-disposition"
+        "G01-r22-unknown-outcome"
       ]
     },
     "no_open_blocking_false_greens": {
