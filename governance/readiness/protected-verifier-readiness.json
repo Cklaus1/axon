@@ -90,20 +90,14 @@
       ]
     },
     "no_open_blocking_false_greens": {
-      "status": "FAIL",
-      "open": [
-        {
-          "id": "FG-042",
-          "where": "crates/axon-fabric/src/backend.rs"
-        }
-      ]
+      "status": "PASS",
+      "evidence": "AXON-COMPLETENESS.json"
     }
   },
   "missing": [
     "protected_backend",
     "g01_on_protected_backend",
     "pci_on_protected_backend",
-    "verification_binding",
-    "no_open_blocking_false_greens"
+    "verification_binding"
   ]
 }

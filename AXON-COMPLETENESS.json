@@ -2076,8 +2076,10 @@
       "reality": "It checks schema, profile name, counts.FAIL==0 and the manifest sha256 only. It ignores counts.BLOCKED, the record's result (PASS_WITH_BLOCKED), the absence of any trusted evidence issuer (the record is unsigned; x4 BLOCKED), evidence freshness, and engine/guest digests against the build in use. A self-authored JSON file with FAIL:0 and a matching sha enables protected dispatch; the unit test fixture (tests/submit.rs:250) is exactly such a file.",
       "reproduced": "2026-09-24: a probe crate calling qualification() with manifest=profiles/linux-microvm/manifest.json (sha 1847a962\u2026) and evidence=.axon-v022/evidence/b263/20260924T080432Z.json (counts PASS 32 / FAIL 0 / BLOCKED 4, result PASS_WITH_BLOCKED, x4_trusted_evidence_issuer BLOCKED 'The record is unsigned') returned Ok(LinuxQualification{..}).",
       "fix": "qualification() now requires an Ed25519 detached signature from a trusted issuer (profiles/linux-microvm/trusted_issuers/), result PASS or every BLOCKED covered by a signed, unexpired, reasoned, record-bound waiver; FAIL==0, PASS>0, BLOCKED consistent; end fresh (<=30d, not future); engine digests present and equal to manifest pins when pinned; clean evidence and manifest trees; host+caveat stated, caveat carried into receipts. tests/qualification.rs (28 tests, per-rule mutation-checked, 5fbf44d3). The real 20260924T080432Z record is refused (unsigned). STAYS OPEN until S3-6: no operator-signed evidence exists, so the profile is (correctly) refused; closing requires the operator's signature and, on WSL2, an x3 waiver (D7).",
-      "status": "open",
-      "severity": "security"
+      "status": "fixed",
+      "severity": "security",
+      "commit": "5fbf44d3",
+      "reclassified": "2026-09-27, explicitly: the FALSE GREEN \u2014 an unsigned/BLOCKED/stale/unpinned record making the protected profile eligible \u2014 is fixed and verified (tests/qualification.rs, 30 tests incl. the real 20260924T080432Z record refused as unsigned). It had been kept open 'until S3-6', which conflated the false green with the separate fact that no operator-signed qualification exists yet. That remainder is NOT hidden: it is the derived readiness component `protected_backend` (NOT_RUN, governance/readiness/protected-verifier-readiness.json) and an operator item (S3-6 / B263 signature, governance/status/v022-experiments.json). Nothing reports protected eligibility today."
     },
     {
       "id": "FG-043",
