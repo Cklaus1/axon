@@ -1212,3 +1212,108 @@ cost_micro = 1000
         );
     }
 }
+
+/// PCI 4, isolated from sealing: the operator's OWN module resolution is
+/// confined too. A suite naming a module it does not ship must not pick one up
+/// from the trial cache's HOME (`~/.axon/lib`) — a previous trial could have
+/// written it, and that code would judge this candidate. With the path
+/// exclusive the module is not found (not a pass); honest control: shipped in
+/// the suite, the same suite passes.
+///
+/// Mutation: drop Fabric's `AXON_PATH_EXCLUSIVE` → the planted module judges
+/// the candidate → Passed → red.
+#[test]
+fn a_suite_module_never_resolves_from_the_trial_cache() {
+    // The suite ships `lib.ax` (declared by `mod lib`, so the admission scan
+    // accepts it), and `use lib::extra` loads `lib/extra.ax` with no `mod`
+    // line of its own: the scan sees nothing, resolution alone decides.
+    let accept = "mod f\nmod lib\nuse f.{double}\nuse lib::extra\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), want()) }\n";
+    let lib_ax = "fn lib_version() -> i64 { 1 }\n";
+    let planted = "fn want() -> i64 { 0 }\n";
+    // The candidate is wrong for the real answer (42) but right for the planted one.
+    let cand = "fn double(n: i64) -> i64 { n * 0 }\n";
+    let s = with_suite(accept, "hidden");
+    std::fs::write(s.suite_root.join("lib.ax"), lib_ax).unwrap();
+    let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut reg: Value =
+        serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+    reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+    std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+    std::fs::write(s.env.ws.join("f.ax"), cand).unwrap();
+    let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+        .unwrap()
+        .import_dir(&s.env.ws, &Quota::default())
+        .unwrap();
+    let s = Suite {
+        candidate,
+        suite_ref,
+        ..s
+    };
+    let r = suite_request(&s, "op-ambient");
+    let cfg = s.env.cfg(0);
+    let cache = axon_fabric::workspace::TrialCache::for_trial(
+        &cfg.state_dir,
+        &tenant(),
+        &axon_loop_contracts::TrialId::new(r["trial_id"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let lib = cache.root.join("home/.axon/lib/lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("extra.ax"), planted).unwrap();
+    let sub = submit(&r.to_string(), &cfg).unwrap();
+    assert_ne!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "a module from the trial cache judged the candidate: {:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+
+    // Control: the suite ships `extra` (the real answer); the honest candidate passes.
+    let accept2 = accept;
+    let s = with_suite(accept2, "hidden");
+    std::fs::write(s.suite_root.join("lib.ax"), lib_ax).unwrap();
+    std::fs::create_dir_all(s.suite_root.join("lib")).unwrap();
+    std::fs::write(
+        s.suite_root.join("lib/extra.ax"),
+        "fn want() -> i64 { 42 }\n",
+    )
+    .unwrap();
+    let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+        .unwrap()
+        .reference()
+        .to_string();
+    let mut reg: Value =
+        serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+    reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+    std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+    std::fs::write(
+        s.env.ws.join("f.ax"),
+        "fn double(n: i64) -> i64 { n * 2 }\n",
+    )
+    .unwrap();
+    let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+        .unwrap()
+        .import_dir(&s.env.ws, &Quota::default())
+        .unwrap();
+    let s = Suite {
+        candidate,
+        suite_ref,
+        ..s
+    };
+    let sub = submit(
+        &suite_request(&s, "op-ambient-ok").to_string(),
+        &s.env.cfg(0),
+    )
+    .unwrap();
+    assert_eq!(
+        sub.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?} {:?}",
+        sub.reason,
+        sub.check_report
+    );
+}

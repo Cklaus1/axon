@@ -300,7 +300,7 @@ MUTATIONS = [
      'crates/axon-fabric/src/submit.rs',
      '        .with_env("AXON_PATH_EXCLUSIVE", "1");',
      ';',
-     'axon-core', '--no-default-features --test pci_isolation', 'an_exclusive_module_path_never_falls_through_to_ambient_dirs'),
+     'axon-fabric', '--test check_effects', 'a_suite_module_never_resolves_from_the_trial_cache'),
     ('M54', 'intake: one verdict decides one trial in one scope',
      'crates/axon-loop/src/intake.rs',
      '                if intake.scope != ep.scope\n',
@@ -450,6 +450,11 @@ MUTATIONS = [
      '            Some("passed") | Some("failed") => {}',
      '            Some(_) | None => {}',
      'axon-fabric', '--test check_effects', 'the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate'),
+    ('M85', 'resolver: AXON_PATH_EXCLUSIVE removes the ambient module dirs',
+     'crates/axon-core/src/lib.rs',
+     '    if std::env::var("AXON_PATH_EXCLUSIVE").as_deref() == Ok("1") {\n        return dirs;\n    }',
+     '',
+     'axon-core', '--no-default-features --test pci_isolation', 'an_exclusive_module_path_never_falls_through_to_ambient_dirs'),
 ]
 
 
@@ -464,7 +469,7 @@ MUTATIONS = [
 PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M63", "M64", "M65", "M67", "M68", "M69", "M70", "M71",
            "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78",
-           "M79", "M80", "M81", "M82", "M83", "M84"}
+           "M79", "M80", "M81", "M82", "M83", "M84", "M85"}
 RETIRED = {"M58"}
 
 
