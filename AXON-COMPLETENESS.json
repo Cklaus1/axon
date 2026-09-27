@@ -2455,6 +2455,39 @@
       "status": "fixed",
       "severity": "security",
       "commit": "36ab754c"
+    },
+    {
+      "id": "FG-077",
+      "where": "crates/axon-core/src/interp.rs",
+      "claimed": "FG-074 / PCI 21: the candidate is SEALED \u2014 a name an unsealed item defines is refused.",
+      "reality": "Sealing was a static SYNTAX walk over Ident/Assign/StructLit names. A sealed candidate still reached the operator's code by a METHOD call (`n.answer()` dispatching to an operator impl on i64) and by a function NAMED IN A STRING (effect-free scheduler_spawn(\"expected\", n); @[goal(metric: \u2026)]) \u2014 reading the answer key: a signed-off pass under the empty ceiling.",
+      "reproduced": "PCI candidate-3 final review (wf_ac3db5df, axon 6932162c), executed by all five roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (M86, M89-M92, M95) and the Fabric sealing test (method, string cases).",
+      "fix": "Runtime sealing at the CALL edge (call_fn, and fn_by_name at resolution/spawn time) and the GLOBAL-READ edge; frames carry provenance (function by definition, closure by creating frame, handler arm by its `with`, initializer by its definition).",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "4cc6360e"
+    },
+    {
+      "id": "FG-078",
+      "where": "crates/axon-core/src/ast.rs",
+      "claimed": "ast::walk_expr is exhaustive \u2014 'the only mechanism that reliably keeps a walker complete'.",
+      "reality": "It skipped match-arm GUARDS, so every walker (the sealing check among them) missed code in `x if \u2026`: a sealed candidate read the operator's answer key in a guard \u2014 a signed-off pass.",
+      "reproduced": "PCI candidate-3 final review (wf_ac3db5df, axon 6932162c), executed by two roles. Pinned by resolver a_sealed_module_cannot_reach_the_operators_names (guard case, M93) and interp runtime_sealing_holds_without_the_static_check.",
+      "fix": "walk_expr visits guards; the runtime global-read edge refuses the read regardless.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "4cc6360e"
+    },
+    {
+      "id": "FG-079",
+      "where": "crates/axon-core/src/resolver.rs",
+      "claimed": "FG-072/FG-075: a refinement is disjoint from every name a type position can resolve to.",
+      "reality": "The checker accepts any name STARTING with a deferred prefix (Dict*, Goal*, Uncertain*, Temporal*) as a type, and the disjointness set did not include those; a candidate `type DictTable = Dict where poke(_)` ran inside the operator's `fn lookup(t: DictTable, \u2026)` and mutated its answer-key Dict: a signed-off pass.",
+      "reproduced": "PCI candidate-3 final review (wf_ac3db5df, axon 6932162c) (surface role, executed through submit). Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (deferred-prefix case, M94) and the runtime REFINEMENT edge (M88).",
+      "fix": "Deferred-prefix names join the disjointness set, and at runtime a candidate refinement never runs in operator code (seal_refine).",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "4cc6360e"
     }
   ]
 }

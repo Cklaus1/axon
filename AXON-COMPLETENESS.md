@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 75 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 78 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -737,4 +737,25 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** Cortex's FabricSubmitExecutor built its report from check_report.passed and ignored the receipt's verification, so Cortex accepted exactly the passes Fabric had recorded Unknown (missing completion evidence, nonzero exit, moved output).
 - **Reproduced:** PCI candidate-2 final review (wf_83d2bc17, axon 8289bf06) (scope role, executed). Pinned by check_effects the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate (M84).
 - **Fix:** Only a Fabric verdict of passed or failed is a verdict; anything else is an error (no verdict). (`36ab754c`)
+
+### FG-077 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** FG-074 / PCI 21: the candidate is SEALED — a name an unsealed item defines is refused.
+- **Reality:** Sealing was a static SYNTAX walk over Ident/Assign/StructLit names. A sealed candidate still reached the operator's code by a METHOD call (`n.answer()` dispatching to an operator impl on i64) and by a function NAMED IN A STRING (effect-free scheduler_spawn("expected", n); @[goal(metric: …)]) — reading the answer key: a signed-off pass under the empty ceiling.
+- **Reproduced:** PCI candidate-3 final review (wf_ac3db5df, axon 6932162c), executed by all five roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (M86, M89-M92, M95) and the Fabric sealing test (method, string cases).
+- **Fix:** Runtime sealing at the CALL edge (call_fn, and fn_by_name at resolution/spawn time) and the GLOBAL-READ edge; frames carry provenance (function by definition, closure by creating frame, handler arm by its `with`, initializer by its definition). (`4cc6360e`)
+
+### FG-078 — crates/axon-core/src/ast.rs (security, fixed)
+
+- **Claimed:** ast::walk_expr is exhaustive — 'the only mechanism that reliably keeps a walker complete'.
+- **Reality:** It skipped match-arm GUARDS, so every walker (the sealing check among them) missed code in `x if …`: a sealed candidate read the operator's answer key in a guard — a signed-off pass.
+- **Reproduced:** PCI candidate-3 final review (wf_ac3db5df, axon 6932162c), executed by two roles. Pinned by resolver a_sealed_module_cannot_reach_the_operators_names (guard case, M93) and interp runtime_sealing_holds_without_the_static_check.
+- **Fix:** walk_expr visits guards; the runtime global-read edge refuses the read regardless. (`4cc6360e`)
+
+### FG-079 — crates/axon-core/src/resolver.rs (security, fixed)
+
+- **Claimed:** FG-072/FG-075: a refinement is disjoint from every name a type position can resolve to.
+- **Reality:** The checker accepts any name STARTING with a deferred prefix (Dict*, Goal*, Uncertain*, Temporal*) as a type, and the disjointness set did not include those; a candidate `type DictTable = Dict where poke(_)` ran inside the operator's `fn lookup(t: DictTable, …)` and mutated its answer-key Dict: a signed-off pass.
+- **Reproduced:** PCI candidate-3 final review (wf_ac3db5df, axon 6932162c) (surface role, executed through submit). Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (deferred-prefix case, M94) and the runtime REFINEMENT edge (M88).
+- **Fix:** Deferred-prefix names join the disjointness set, and at runtime a candidate refinement never runs in operator code (seal_refine). (`4cc6360e`)
 
