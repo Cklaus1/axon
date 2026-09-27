@@ -4317,14 +4317,24 @@ mod tests {
                  fn solve(n: i64) -> i64 {\n    let k = grab()\n    let _ = k()\n    n * 0\n}\n",
             ),
         ];
+        // Each escape is tried from two operator test shapes, separately — one
+        // shape's own failure must not mask the other's escape: a direct call,
+        // and a call from inside the operator's own handler arm (where a
+        // smuggled `resume` lands).
+        let bodies = [
+            ("direct", "@[test]\nfn t() { assert_eq(solve(21), 42) }\n"),
+            (
+                "in the operator's arm",
+                "fn check(p: str) -> str {\n    assert_eq(solve(21), 42)\n    p\n}\n\
+                 @[test]\nfn t() {\n    with handler { on IO(p) => resume(check(p)) } {\n        println(\"go\")\n    }\n}\n",
+            ),
+        ];
         for (why, def) in escapes {
-            let src = format!(
-                "{def}fn check(p: str) -> str {{\n    assert_eq(solve(21), 42)\n    p\n}}\n\
-                 @[test]\nfn t() {{\n    with handler {{ on IO(p) => resume(check(p)) }} {{\n        println(\"go\")\n    }}\n    assert_eq(solve(21), 42)\n}}\n"
-            );
-            let prog = crate::parse_source(&src).expect("parses");
-            let end = run_test_fn_outcome(&prog, "t");
-            assert!(end.is_err(), "{why}: {end:?}");
+            for (shape, body) in bodies {
+                let prog = crate::parse_source(&format!("{def}{body}")).expect("parses");
+                let end = run_test_fn_outcome(&prog, "t");
+                assert!(end.is_err(), "{why} ({shape}): {end:?}");
+            }
         }
         let struct_src = "type Arg = { n: i64 } where if _.n > 0 { return 0 } else { true }\n\
                           fn make(n: i64) -> i64 {\n    let a = Arg { n: n }\n    a.n * 0\n}\n\
