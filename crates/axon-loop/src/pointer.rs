@@ -294,6 +294,16 @@ pub fn transition(store: &Store, t: &PolicyTransition) -> Result<PointerRecord> 
             t.issuer_ref
         )));
     }
+    // G11-r22-independent-admission / rollback-revalidate: a transition —
+    // activate, rollback, pause — is issued by an INDEPENDENT admitter, never
+    // by an identity that also produces or judges evidence (Compute Fabric).
+    if let Some(role) = crate::admission::other_loop_role(&config, &t.issuer_ref) {
+        return Err(refused(format!(
+            "self-promotion: issuer {} is also {role}; a transition issuer must hold no other \
+             loop role",
+            t.issuer_ref
+        )));
+    }
     if t.expected_epoch != cur.epoch {
         return Err(LoopError::Conflict(format!(
             "stale epoch: expected_epoch {} but current is {}",

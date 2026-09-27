@@ -573,3 +573,67 @@ fn a_real_crash_inside_a_transition_rolls_forward_exactly_once() {
         assert_eq!(epoch::current(&s, &scope()).unwrap().get(), 2, "{stage}");
     }
 }
+
+/// G11-r22-rollback-revalidate / independent-admission: a rollback is issued
+/// by an INDEPENDENT trusted admitter. Refused, writing nothing: an issuer
+/// outside the trusted-admitter set, and a trusted admitter that is also a
+/// trusted verifier (Compute Fabric) — it could otherwise move the pointer it
+/// produces evidence for. Honest control: the same rollback from the
+/// independent admitter succeeds.
+///
+/// Mutation: drop the issuer role check in `pointer::transition` → red.
+#[test]
+fn a_rollback_needs_an_independent_trusted_issuer() {
+    let w = world();
+    let adm = accepted(&w, "exp");
+    pointer::transition(
+        &w.s,
+        &t(transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            false,
+        )),
+    )
+    .unwrap();
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_admitters
+        .push(OpaqueRef::new(VERIFIER).unwrap());
+    w.s.write_config(&cfg).unwrap();
+    let rollback = |issuer: &str| {
+        let mut v = transition(
+            "rb",
+            "rollback",
+            &w.cand_ref,
+            Some(&w.inc_ref),
+            2,
+            Some(&w.baseline),
+            false,
+        );
+        v["issuer_ref"] = json!(issuer);
+        pointer::transition(&w.s, &t(v))
+    };
+    let before = snapshot(w.dir.path());
+    for (issuer, why) in [
+        ("op:stranger", "not in the trusted-admitter set"),
+        (VERIFIER, "a trusted verifier (Compute Fabric)"),
+    ] {
+        match rollback(issuer) {
+            Err(LoopError::Refused(m)) => assert!(m.contains(why), "{issuer}: {m}"),
+            o => panic!("{issuer} rolled back: {o:?}"),
+        }
+    }
+    assert_eq!(
+        snapshot(w.dir.path()),
+        before,
+        "a refused rollback wrote something"
+    );
+    rollback(ADMITTER).unwrap();
+    assert_eq!(
+        pointer::resolve(&w.s, &scope()).unwrap().pin.version.digest,
+        w.inc_ref
+    );
+}

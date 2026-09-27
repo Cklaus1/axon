@@ -141,6 +141,27 @@ fn liability(t: &Total) -> u64 {
     }
 }
 
+/// G11-r22-independent-admission: the loop role, other than admitter, that
+/// `who` also holds in the operator's config — a trusted verifier (Compute
+/// Fabric's issuer), a context observer or a safety monitor — if any. An
+/// identity that produces or judges evidence must not also admit a policy or
+/// move the pointer: Fabric could be listed as an admitter and self-promote.
+/// Used for the admitter of an admission AND the issuer of every transition.
+pub(crate) fn other_loop_role(
+    config: &crate::store::Config,
+    who: &OpaqueRef,
+) -> Option<&'static str> {
+    if config.verifiers().contains(who) {
+        Some("a trusted verifier (Compute Fabric)")
+    } else if config.observers().contains(who) {
+        Some("a context observer")
+    } else if config.trusted_monitors.contains(who) {
+        Some("a safety monitor")
+    } else {
+        None
+    }
+}
+
 /// The pure admission function. Refuses (Err) inputs that cannot be admitted
 /// at all; otherwise returns the complete record.
 pub(crate) struct Inputs<'a> {
@@ -171,30 +192,14 @@ pub(crate) fn derive(
             "admitter {admitter} is not in the trusted-admitter set"
         )));
     }
-    // G11-r22-independent-admission: no SELF-PROMOTION by any other loop role.
-    // An admitter that is also a trusted verifier (Compute Fabric's issuer), a
-    // context observer or a safety monitor would be judging evidence it
-    // produced itself — Fabric could be listed as an admitter. The proposer
-    // (EVO, whose `intervention` is the learned ranking/shortlist, so the
-    // RANKER), the subject and the evaluator are refused below. Checked here,
-    // so every re-derivation (activation, rollback) re-applies it.
-    {
-        let config = tx.store.config()?;
-        for (role, set) in [
-            ("a trusted verifier (Compute Fabric)", config.verifiers()),
-            ("a context observer", config.observers()),
-            (
-                "a safety monitor",
-                config.trusted_monitors.iter().cloned().collect(),
-            ),
-        ] {
-            if set.contains(admitter) {
-                return Err(refused(format!(
-                    "self-promotion: admitter {admitter} is also {role}; an admitter must hold no \
-                     other loop role"
-                )));
-            }
-        }
+    // G11-r22-independent-admission: no SELF-PROMOTION by another loop role.
+    // Checked here, so every re-derivation (activation, rollback) re-applies
+    // it. The proposer (the RANKER), subject and evaluator are refused below.
+    if let Some(role) = other_loop_role(&tx.store.config()?, admitter) {
+        return Err(refused(format!(
+            "self-promotion: admitter {admitter} is also {role}; an admitter must hold no other \
+             loop role"
+        )));
     }
     // Every binding field is checked, and named, separately.
     if eval.scope != plan.scope {
