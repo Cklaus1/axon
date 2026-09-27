@@ -380,6 +380,11 @@ MUTATIONS = [
      '                    if !traits.insert(t.name.as_str()) {',
      '                    if false && !traits.insert(t.name.as_str()) {',
      'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
+    ('M71', 'runner: a check runs in its own workspace, not the launcher\'s cwd',
+     'crates/axon-cortex/src/runner.rs',
+     '        cmd.current_dir(req.workspace)\n            .arg("test")',
+     '        cmd.arg("test")',
+     'axon-fabric', '--test check_effects', 'a_suites_runtime_fixture_is_the_pinned_one'),
 ]
 
 
@@ -392,7 +397,7 @@ MUTATIONS = [
 # ends a `return` at the callee, so the arm was unreachable and the mutant
 # equivalent; the arm now fails closed and M65 guards the one live path.
 PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
-           "M63", "M64", "M65", "M67", "M68", "M69", "M70"}
+           "M63", "M64", "M65", "M67", "M68", "M69", "M70", "M71"}
 RETIRED = {"M58"}
 
 

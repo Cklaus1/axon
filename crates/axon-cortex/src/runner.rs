@@ -2165,7 +2165,14 @@ impl CheckExecutor for LocalInterpreterExecutor {
         // Refusal happens here, before any Command is built.
         let exe = self.verified_path()?;
         let mut cmd = std::process::Command::new(&exe);
-        cmd.arg("test")
+        // The check runs IN its own workspace. It used to inherit the
+        // launcher's cwd, so a suite's relative runtime read (a fixture, an
+        // expected value) resolved OUTSIDE the tree the verifier pinned and
+        // digests — wherever the launcher happened to be — and a candidate
+        // with a write grant planted the answer there (PCI, executed through
+        // Fabric: a signed-off pass for a wrong candidate).
+        cmd.current_dir(req.workspace)
+            .arg("test")
             .arg(req.workspace.join(req.rel_path))
             .arg("--json");
         if let Some(f) = req.filter {

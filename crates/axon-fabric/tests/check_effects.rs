@@ -992,3 +992,70 @@ fn a_pass_needs_evidence_that_the_test_completed() {
         }
     }
 }
+
+/// PCI 17: a suite's RUNTIME inputs are the pinned suite's bytes. The check
+/// used to inherit the launcher's cwd, so the operator test's relative
+/// `read_file` of its own fixture resolved outside the pinned, digested tree:
+/// the honest candidate FAILED (no fixture there) and a candidate that wrote
+/// the "expected" value into the launcher's cwd PASSED — also when a
+/// candidate test (joining through the filter) restored it afterwards.
+///
+/// Now the check runs in its own (read-only) tree: the fixture is the
+/// operator's, a write to it is refused, and nothing lands beside the
+/// launcher. Mutation: drop `current_dir` in the runner → red.
+#[test]
+fn a_suites_runtime_fixture_is_the_pinned_one() {
+    const FIXTURE: &str = "pci_expected_fixture.txt";
+    let accept = format!(
+        "mod f\nuse f.{{double}}\n\nfn want() -> i64 {{\n    match read_file(\"{FIXTURE}\") {{\n        \
+         Ok(s) => match parse_int(s) {{\n            Ok(n) => n\n            Err(e) => 0 - 1\n        }}\n        \
+         Err(e) => 0 - 2\n    }}\n}}\n\n@[test]\nfn hidden_completion() {{\n    let got = double(21)\n    \
+         assert_eq(got, want())\n}}\n"
+    );
+    let plant = format!("    let _ = write_file(\"{FIXTURE}\", \"0\")\n");
+    for (why, cand, pass) in [
+        ("plant", format!("fn double(n: i64) -> i64 {{\n{plant}    0\n}}\n"), false),
+        (
+            "plant+restore",
+            format!(
+                "fn double(n: i64) -> i64 {{\n{plant}    0\n}}\n\n@[test]\n\
+                 fn hidden_completion_zrestore() {{\n    let _ = write_file(\"{FIXTURE}\", \"42\")\n}}\n"
+            ),
+            false,
+        ),
+        ("honest", "fn double(n: i64) -> i64 { n * 2 }\n".to_string(), true),
+    ] {
+        let s = with_suite(&accept, "hidden");
+        std::fs::write(s.suite_root.join(FIXTURE), "42").unwrap();
+        let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+            .unwrap()
+            .reference()
+            .to_string();
+        let mut reg: Value =
+            serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+        reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+        std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+        std::fs::write(s.env.ws.join("f.ax"), cand).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite {
+            candidate,
+            suite_ref,
+            ..s
+        };
+        let sub = submit(&suite_request(&s, "op-fixture").to_string(), &s.env.cfg(0)).unwrap();
+        let planted = std::env::current_dir().unwrap().join(FIXTURE);
+        let leaked = planted.exists();
+        let _ = std::fs::remove_file(&planted);
+        assert!(!leaked, "{why}: the check wrote into the launcher's cwd");
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+    }
+}
