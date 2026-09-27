@@ -505,6 +505,16 @@ MUTATIONS = [
      '            let sealed = self.seal.active && self.seal.globals.contains(name);',
      '            let sealed = false;',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+    ('M96', 'interpreter: a sealed frame has its OWN kernel (handles are per provenance)',
+     'crates/axon-core/src/interp.rs',
+     '        &self.kernels[usize::from(self.frame_sealed.get())]',
+     '        &self.kernels[0]',
+     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+    ('M97', 'interpreter: a whole-struct `where` runs under its type\'s provenance',
+     'crates/axon-core/src/interp/eval.rs',
+     '                                let sealed = self.frame_sealed.get() || self.seal_type(name);',
+     '                                let sealed = self.frame_sealed.get();',
+     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
 
@@ -520,7 +530,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M63", "M64", "M65", "M67", "M68", "M69", "M70", "M71",
            "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78",
            "M79", "M80", "M81", "M82", "M83", "M84", "M85",
-           "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95"}
+           "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95", "M96", "M97"}
 RETIRED = {"M58"}
 
 

@@ -433,6 +433,9 @@ struct Seal {
     fns: std::collections::HashSet<usize>,
     globals: std::collections::HashSet<String>,
     refines: std::collections::HashSet<String>,
+    /// Struct types defined in a sealed module: their whole-struct `where`
+    /// runs under THEIR provenance, whoever constructs one.
+    types: std::collections::HashSet<String>,
 }
 
 /// Capture-cell key marking a closure created in a SEALED frame. Starts with
@@ -553,7 +556,67 @@ struct SandboxScope {
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
 
+/// Per-provenance kernel state (PCI runtime sealing). Every table that holds
+/// objects addressed by HANDLE — fibers, supervisors, principals, stores, LLM
+/// gateways, kernel goals, sandboxes — plus the attribution and constraint
+/// state they drive. A sealed (candidate) frame gets its OWN instance, so an
+/// operator handle does not exist from a sealed frame, whatever id is guessed,
+/// and a candidate's fibers never run in the operator's scheduler (PCI
+/// candidate-4 review: forged fiber ids read the operator's reference result,
+/// reset its failed fibers, and a predicted principal token spent its budget).
+struct Kernel {
+    /// F3 (Phase 9): the name of the principal currently in scope for audit
+    /// attribution. Set via `principal_activate(handle)` to associate a kernel
+    /// principal with the execution context, so capability audit records carry the
+    /// principal name rather than the opaque "root" default. Defaults to "root".
+    current_principal: RefCell<String>,
+    /// Active `subject_to` constraint fn name during `goal_run_constrained`
+    /// (pillar-3 constrained search). When set, the optimizer scores an
+    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
+    /// score is still recorded in provenance. `None` outside a constrained goal
+    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
+    goal_constraint: RefCell<Option<String>>,
+    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
+    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
+    /// enforced by the KERNEL (the registry), not just as userland values. A
+    /// handle is a plain `i64` index. Empty until a program mints a root.
+    principals: RefCell<crate::kernel::PrincipalRegistry>,
+    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
+    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
+    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
+    /// failed, not a process abort). The interpreter owns the run loop (it has
+    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
+    scheduler: RefCell<crate::kernel::Scheduler>,
+    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
+    /// an ordered set of scheduler fibers and, when one fails, restarts the set
+    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
+    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
+    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
+    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
+    /// plus the log path it appends applied ops to, so its value survives a fresh
+    /// process and a retried op_id dedups cross-process under linearizable.
+    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
+    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
+    /// Each mediates AI calls with per-token cost metering debited from its
+    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
+    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
+    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
+    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
+    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
+    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
+    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
+    /// by `sandbox_create`; the handle is the index into this vec.
+    sandboxes: RefCell<Vec<SandboxEntry>>,
+    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
+    /// `sandbox_run` sets this before calling the user fn and restores it after.
+    /// `call_builtin` reads it to gate effectful builtins.
+    active_sandbox: Cell<i64>,
+}
+
 pub struct Interp<'p> {
+    /// The KERNEL tables, one per provenance: `kernels[0]` for the operator,
+    /// `kernels[1]` for sealed (candidate) frames — selected by `k()`.
+    kernels: [Kernel; 2],
     /// Protected Check Isolation, RUNTIME sealing: which definitions come from
     /// a sealed (candidate) module, and whether the frame now running is one.
     seal: Seal,
@@ -617,17 +680,6 @@ pub struct Interp<'p> {
     /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
     /// any goal optimization.
     current_goal: RefCell<Option<String>>,
-    /// F3 (Phase 9): the name of the principal currently in scope for audit
-    /// attribution. Set via `principal_activate(handle)` to associate a kernel
-    /// principal with the execution context, so capability audit records carry the
-    /// principal name rather than the opaque "root" default. Defaults to "root".
-    current_principal: RefCell<String>,
-    /// Active `subject_to` constraint fn name during `goal_run_constrained`
-    /// (pillar-3 constrained search). When set, the optimizer scores an
-    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
-    /// score is still recorded in provenance. `None` outside a constrained goal
-    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
-    goal_constraint: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -688,41 +740,6 @@ pub struct Interp<'p> {
     /// operation. `resume(v)` replays `body` (the handled `with`-block body) with
     /// `v` fed at the intercepted op and returns the continuation's value.
     resume_ctx: RefCell<Vec<ResumeCtx>>,
-    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
-    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
-    /// enforced by the KERNEL (the registry), not just as userland values. A
-    /// handle is a plain `i64` index. Empty until a program mints a root.
-    principals: RefCell<crate::kernel::PrincipalRegistry>,
-    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
-    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
-    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
-    /// failed, not a process abort). The interpreter owns the run loop (it has
-    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
-    scheduler: RefCell<crate::kernel::Scheduler>,
-    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
-    /// an ordered set of scheduler fibers and, when one fails, restarts the set
-    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
-    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
-    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
-    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
-    /// plus the log path it appends applied ops to, so its value survives a fresh
-    /// process and a retried op_id dedups cross-process under linearizable.
-    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
-    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
-    /// Each mediates AI calls with per-token cost metering debited from its
-    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
-    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
-    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
-    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
-    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
-    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
-    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
-    /// by `sandbox_create`; the handle is the index into this vec.
-    sandboxes: RefCell<Vec<SandboxEntry>>,
-    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
-    /// `sandbox_run` sets this before calling the user fn and restores it after.
-    /// `call_builtin` reads it to gate effectful builtins.
-    active_sandbox: Cell<i64>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -2769,6 +2786,9 @@ impl<'p> Interp<'p> {
                         Item::RefineDef(r) if sealed(r.span) => {
                             seal.refines.insert(r.name.clone());
                         }
+                        Item::TypeDef(t) if sealed(t.span) => {
+                            seal.types.insert(t.name.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -2817,8 +2837,32 @@ impl<'p> Interp<'p> {
 
         // Read the ambient effect ceiling once; both the sandbox registry
         // and the active-handle field below are derived from it.
-        let ambient = ambient_sandbox();
+        // Both kernels start identical — the SAME ambient effect ceiling, so a
+        // sealed frame may narrow it but never widen it.
+        let mk_kernel = || {
+            let ambient = ambient_sandbox();
+            Kernel {
+                current_principal: RefCell::new(
+                    std::env::var("AXON_PRINCIPAL")
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "root".to_string()),
+                ),
+                goal_constraint: RefCell::new(None),
+                principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
+                // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
+                // determinism): derive the round-robin start offset from the seed.
+                scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
+                supervisors: RefCell::new(Vec::new()),
+                stores: RefCell::new(Vec::new()),
+                llm_gateways: RefCell::new(Vec::new()),
+                goals: RefCell::new(Vec::new()),
+                active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
+                sandboxes: RefCell::new(ambient),
+            }
+        };
         Interp {
+            kernels: [mk_kernel(), mk_kernel()],
             seal,
             frame_sealed: Cell::new(false),
             fns,
@@ -2835,13 +2879,6 @@ impl<'p> Interp<'p> {
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
-            current_principal: RefCell::new(
-                std::env::var("AXON_PRINCIPAL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "root".to_string()),
-            ),
-            goal_constraint: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
@@ -2852,16 +2889,6 @@ impl<'p> Interp<'p> {
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
-            principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
-            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
-            // determinism): derive the round-robin start offset from the seed.
-            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
-            supervisors: RefCell::new(Vec::new()),
-            stores: RefCell::new(Vec::new()),
-            llm_gateways: RefCell::new(Vec::new()),
-            goals: RefCell::new(Vec::new()),
-            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
-            sandboxes: RefCell::new(ambient),
             refine_preds,
             main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
@@ -2890,14 +2917,17 @@ impl<'p> Interp<'p> {
             return Ok(());
         }
         let defs = std::mem::take(&mut self.global_defs);
-        let mut env = Env::new();
         for (name, expr) in &defs {
-            // Each initializer runs under its own definition's provenance.
+            // Each initializer runs under its own definition's provenance, in a
+            // FRESH environment: earlier globals are reached through
+            // `self.globals`, so the global-read edge (`seal_global`) sees every
+            // read. A shared env let a later initializer read an earlier global
+            // as a LOCAL, past the edge (PCI candidate-4 review).
             let sealed = self.seal.active && self.seal.globals.contains(name);
+            let mut env = Env::new();
             let v = self.with_frame(sealed, || self.eval(expr, &mut env))?;
-            env.define(name.clone(), v);
+            self.globals.insert(name.clone(), v);
         }
-        self.globals = env.snapshot();
         Ok(())
     }
 
@@ -2984,7 +3014,7 @@ impl<'p> Interp<'p> {
     /// F3 (Phase 9): the name of the principal currently in scope for audit
     /// attribution. Defaults to "root"; overridden by `principal_activate`.
     fn current_principal_name(&self) -> String {
-        self.current_principal.borrow().clone()
+        self.k().current_principal.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
@@ -3041,11 +3071,11 @@ impl<'p> Interp<'p> {
     /// and another for the telemetry writer. `IO` is the row the effect
     /// catalog gives filesystem and console builtins.
     fn provenance_write_permitted(&self) -> bool {
-        let handle = self.active_sandbox.get();
+        let handle = self.k().active_sandbox.get();
         if handle < 0 {
             return true; // no ceiling in force
         }
-        let sbs = self.sandboxes.borrow();
+        let sbs = self.k().sandboxes.borrow();
         match sbs.get(handle as usize) {
             Some(sb) => {
                 crate::interp::builtins::first_effect_outside_ceiling(sb, &["IO"]).is_none()
@@ -3127,6 +3157,17 @@ impl<'p> Interp<'p> {
             }
             None => Ok(None),
         }
+    }
+
+    /// Whether struct type `name` was defined in a sealed module.
+    pub(crate) fn seal_type(&self, name: &str) -> bool {
+        self.seal.active && self.seal.types.contains(name)
+    }
+
+    /// The kernel of the frame now running: the operator's, or the sealed
+    /// candidate's own. Handle-addressed state is only ever reached through it.
+    fn k(&self) -> &Kernel {
+        &self.kernels[usize::from(self.frame_sealed.get())]
     }
 
     /// Run `g` with the frame's provenance set to `sealed`, restoring it after.
@@ -4458,7 +4499,12 @@ mod tests {
                      @[test]\nfn t() { assert_eq(double(21), expected(21)) }\n\
                      @[test]\nfn t_key() { assert_eq(double(21), lookup(TABLE, \"k\")) }\n\
                      @[test]\nfn t_closure() { assert_eq(twice()(21), expected(21)) }\n\
-                     @[test]\nfn t_callback() { assert_eq(via(|n: i64| expected(n)), 42) }\n";
+                     @[test]\nfn t_callback() { assert_eq(via(|n: i64| expected(n)), 42) }\n\
+                     fn reference(n: i64) -> i64 { n * 7 + 5 }\n\
+                     @[test]\nfn t_fiber() {\n    let id = scheduler_spawn(\"reference\", 21)\n    scheduler_run()\n    assert_eq(solve(21), scheduler_result(id))\n}\n\
+                     fn check_one(x: i64) { assert_eq(double(x), x * 2) }\n\
+                     @[test]\nfn t_fanout() {\n    let a = scheduler_spawn(\"check_one\", 1)\n    let b = scheduler_spawn(\"check_one\", 2)\n    scheduler_run()\n    assert(!scheduler_failed(a) && !scheduler_failed(b))\n}\n\
+                     @[test]\nfn t_range() {\n    let r = Range { lo: 1, hi: 2 }\n    assert_eq(double(21), expected(21))\n}\n";
         let run = |cand: &str, test: &str| {
             let s = crate::parse_source_in(suite, intern_source("/pci-rt-suite/h.ax", suite))
                 .expect("suite parses");
@@ -4472,8 +4518,27 @@ mod tests {
             crate::resolver::set_sealed_module_dirs(&[]);
             out
         };
-        let base = "fn twice() -> fn(i64) -> i64 { |n: i64| n * 2 }\n\
-                    fn via(g: fn(i64) -> i64) -> i64 { g(21) }\n";
+        // Honest definitions of everything the suite imports; an attack
+        // replaces the ones it names (the interpreter keeps the LAST definition,
+        // so a base part is included only when the candidate does not define it).
+        let base_parts = [
+            (
+                "fn twice",
+                "fn twice() -> fn(i64) -> i64 { |n: i64| n * 2 }\n",
+            ),
+            ("fn via", "fn via(g: fn(i64) -> i64) -> i64 { g(21) }\n"),
+            ("fn solve", "fn solve(n: i64) -> i64 { n * 7 + 5 }\n"),
+            ("type Range", "type Range = { lo: i64, hi: i64 }\n"),
+        ];
+        let with_base = |cand: &str| -> String {
+            let mut out = cand.to_string();
+            for (key, def) in base_parts {
+                if !cand.contains(key) {
+                    out.push_str(def);
+                }
+            }
+            out
+        };
         for (why, cand, test) in [
             ("direct call", "fn double(n: i64) -> i64 { expected(n) }\n", "t"),
             ("method on a builtin type", "fn double(n: i64) -> i64 { n.answer() }\n", "t"),
@@ -4508,17 +4573,25 @@ mod tests {
                 "let STEAL = expected(21)\nfn double(n: i64) -> i64 { n * 2 }\n",
                 "t",
             ),
+            // PCI candidate-4 review: definition provenance and handle-addressed
+            // kernel state.
+            (
+                "a candidate struct's where, built by the operator",
+                "type Range = { lo: i64, hi: i64 } where expected(_.lo) > 0\nfn double(n: i64) -> i64 { n * 2 }\n",
+                "t_range",
+            ),
+            (
+                "an initializer reading an operator global",
+                "let STEAL = dict_get_or(TABLE, \"k\", 0)\nfn double(n: i64) -> i64 { n * 2 }\n",
+                "t",
+            ),
             (
                 "a candidate handler arm",
                 "fn double(n: i64) -> i64 {\n    with handler { on IO(p) => resume(expected(21)) } {\n        println(\"x\")\n    }\n    n * 0 + 42\n}\n",
                 "t",
             ),
         ] {
-            let cand = if cand.contains("fn twice") {
-                format!("{cand}fn via(g: fn(i64) -> i64) -> i64 {{ g(21) }}\n")
-            } else {
-                format!("{cand}{base}")
-            };
+            let cand = with_base(cand);
             // Refused BY THE SEAL — not failing for some unrelated reason.
             let out = run(&cand, test);
             assert!(
@@ -4528,9 +4601,35 @@ mod tests {
         }
         // Honest, and the interface: the operator calls the candidate, and a
         // closure the OPERATOR hands the candidate may call operator helpers.
-        let honest = format!("fn double(n: i64) -> i64 {{ n * 2 }}\n{base}");
-        for test in ["t", "t_closure", "t_callback"] {
+        let honest = with_base("fn double(n: i64) -> i64 { n * 2 }\n");
+        for test in [
+            "t",
+            "t_closure",
+            "t_callback",
+            "t_fiber",
+            "t_fanout",
+            "t_range",
+        ] {
             assert_eq!(run(&honest, test), Ok(TestEnd::Completed), "{test}");
+        }
+        // Forged HANDLES: the operator's fiber ids do not exist from a sealed
+        // frame (its own kernel), so reading the operator's result or erasing
+        // its failure does not work — the test FAILS rather than passing.
+        for (why, cand, test) in [
+            (
+                "reads the operator's fiber result by id",
+                "fn double(n: i64) -> i64 { n * 2 }\nfn solve(n: i64) -> i64 { scheduler_result(0) }\n",
+                "t_fiber",
+            ),
+            (
+                "restarts the operator's failed fibers",
+                "let CALLS = dict_new()\n\
+                 fn double(n: i64) -> i64 {\n    let c = dict_get_or(CALLS, \"c\", 0)\n    dict_set(CALLS, \"c\", c + 1)\n    if c == 0 { 999 } else {\n        scheduler_restart(0)\n        scheduler_restart(1)\n        n * 2\n    }\n}\n",
+                "t_fanout",
+            ),
+        ] {
+            let out = run(&with_base(cand), test);
+            assert!(out.is_err(), "{why}: {out:?}");
         }
     }
 

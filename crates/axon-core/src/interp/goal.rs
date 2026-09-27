@@ -104,7 +104,7 @@ impl<'p> Interp<'p> {
     /// `@[adaptive]`) call, so it never pollutes the provenance trajectory; the
     /// metric's REAL score is what `call_fn` already recorded.
     pub(super) fn apply_goal_constraint(&self, args: &[Value], score: f64) -> Result<f64, Flow> {
-        let cname = self.goal_constraint.borrow().clone();
+        let cname = self.k().goal_constraint.borrow().clone();
         let Some(cname) = cname else { return Ok(score) };
         let Some(cf) = self.fns.get(cname.as_str()).copied() else {
             return Ok(score);

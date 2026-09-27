@@ -569,7 +569,16 @@ impl<'p> Interp<'p> {
                                 };
                                 let mut pe = Env::new();
                                 pe.define("_".into(), sv.clone());
-                                if let Value::Bool(false) = crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")? {
+                                // A DEFINITION-owned predicate runs under its
+                                // definition's provenance: a candidate struct's
+                                // `where` ran unsealed when the OPERATOR built
+                                // one, and called operator code from there (PCI
+                                // candidate-4 review, executed).
+                                let sealed = self.frame_sealed.get() || self.seal_type(name);
+                                let held = self.with_frame(sealed, || {
+                                    crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")
+                                })?;
+                                if let Value::Bool(false) = held {
                                     return Err(Flow::RefineViolation(format!(
                                         "the constructed `{name}` violates its struct refinement \
                                          — the value does not satisfy the type's predicate"

@@ -1334,3 +1334,86 @@ fn a_suite_module_never_resolves_from_the_trial_cache() {
         sub.check_report
     );
 }
+
+/// PCI 21, candidate-4 review, SIGNABLE profile (empty ceiling):
+/// * handle-addressed kernel state — a sealed candidate read the result of the
+///   OPERATOR's scheduler fiber by guessing its id (`scheduler_result(0)`), a
+///   pass for a candidate that computes nothing. A sealed frame now has its OWN
+///   kernel, so an operator id does not exist from it;
+/// * definition provenance — a candidate struct's whole-struct `where` ran
+///   unsealed when the OPERATOR built one, and called operator code from there.
+///   It now runs under its type's (sealed) provenance.
+///
+/// Honest control: Passed.
+///
+/// Mutation: route every frame to the operator's kernel → red.
+#[test]
+fn a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition() {
+    const GRANT_PURE: &str = "\
+profile = \"restricted\"
+[grant]
+max_label = \"internal\"
+[grant.budget]
+cost_micro = 1000
+";
+    let accept = "mod f\nmod rubric\nuse f.{solve, Range}\nuse rubric.{reference}\n\n@[test]\nfn hidden_completion() {\n    let r = Range { lo: 1, hi: 2 }\n    let id = scheduler_spawn(\"reference\", 21)\n    scheduler_run()\n    assert_eq(solve(21), scheduler_result(id))\n}\n";
+    let rubric =
+        "fn reference(n: i64) -> i64 { n * 7 + 5 }\nfn secret(n: i64) -> i64 { n * 7 + 5 }\n";
+    let honest_range = "type Range = { lo: i64, hi: i64 }\n";
+    for (why, cand, pass) in [
+        (
+            "reads the operator's fiber result by id",
+            format!("{honest_range}fn solve(n: i64) -> i64 {{ scheduler_result(0) }}\n"),
+            false,
+        ),
+        (
+            "struct where built by the operator calls operator code",
+            "let STASH = dict_new()\n\
+             type Range = { lo: i64, hi: i64 } where stash(_.lo)\n\
+             fn stash(x: i64) -> bool {\n    let id = scheduler_spawn(\"secret\", 21)\n    scheduler_run()\n    dict_set(STASH, \"k\", scheduler_result(id))\n    true\n}\n\
+             fn solve(n: i64) -> i64 { dict_get_or(STASH, \"k\", 0 - 1) }\n"
+                .to_string(),
+            false,
+        ),
+        (
+            "honest",
+            format!("{honest_range}fn solve(n: i64) -> i64 {{ n * 7 + 5 }}\n"),
+            true,
+        ),
+    ] {
+        let s = with_suite(accept, "hidden");
+        std::fs::write(s.suite_root.join("rubric.ax"), rubric).unwrap();
+        let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+            .unwrap()
+            .reference()
+            .to_string();
+        let mut reg: Value =
+            serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+        reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+        std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+        write_grant_registry(&s.env.grant_registry, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+        std::fs::write(s.env.ws.join("f.ax"), &cand).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite {
+            candidate,
+            suite_ref,
+            ..s
+        };
+        let sub = submit(&suite_request(&s, "op-kernel").to_string(), &s.env.cfg(0)).unwrap();
+        assert_eq!(
+            sub.ran_under.as_ref().map(|r| r.effect_ceiling.as_str()),
+            Some(""),
+            "{why}: not the signable profile"
+        );
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+    }
+}
