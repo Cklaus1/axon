@@ -1605,6 +1605,11 @@ pub struct CheckRequest<'a> {
 /// distinguishable from "everything passed".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckReport {
+    /// `(test name, completion token)` for each passing test whose body
+    /// COMPLETED, as `axon test --completion-key-stdin` reports it (empty when
+    /// no key was given). A caller that needs affirmative completion evidence
+    /// checks the token with [`completion_token`].
+    pub completion: Vec<(String, String)>,
     pub failed: Vec<String>,
     pub passed: Vec<String>,
     pub total: usize,
@@ -2019,6 +2024,9 @@ struct ExecLimits {
     /// Start the check process from an EMPTY environment, so only what is
     /// set explicitly here reaches it.
     clean_env: bool,
+    /// A per-run completion secret, written to the check's stdin (never its
+    /// environment, which `/proc/self/environ` would expose).
+    completion_key: Option<Vec<u8>>,
 }
 
 impl LocalInterpreterExecutor {
@@ -2064,6 +2072,14 @@ impl LocalInterpreterExecutor {
     /// verdict someone vouches for must not depend on who launched it.
     pub fn with_clean_env(mut self) -> Self {
         self.limits.clean_env = true;
+        self
+    }
+
+    /// Ask the interpreter for affirmative completion evidence: it reads `key`
+    /// from stdin before any program code runs and tags each test whose body
+    /// COMPLETED with [`completion_token`].
+    pub fn with_completion_key(mut self, key: Vec<u8>) -> Self {
+        self.limits.completion_key = Some(key);
         self
     }
 
@@ -2155,6 +2171,9 @@ impl CheckExecutor for LocalInterpreterExecutor {
         if let Some(f) = req.filter {
             cmd.arg("--filter").arg(f);
         }
+        if self.limits.completion_key.is_some() {
+            cmd.arg("--completion-key-stdin");
+        }
         if self.limits.clean_env {
             cmd.env_clear();
         }
@@ -2218,10 +2237,20 @@ fn run_limited(
         }
     }
     let mut child = cmd
-        .stdin(Stdio::null())
+        .stdin(if limits.completion_key.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    if let (Some(key), Some(mut stdin)) = (&limits.completion_key, child.stdin.take()) {
+        use std::io::Write;
+        let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        // Written then closed: the program finds stdin at EOF.
+        let _ = writeln!(stdin, "{hex}");
+    }
     let cap = limits.max_output;
     let drain = |mut r: Box<dyn Read + Send>| {
         std::thread::spawn(move || {
@@ -2276,8 +2305,38 @@ fn run_limited(
 
 /// Parse `axon test --json` output. See `Runner::run_tests_json` for why the
 /// machine-readable form and why a missing summary is an error.
+/// The completion token `axon test --completion-key-stdin` issues for a test
+/// that completed: HMAC-SHA256(key, "axon-test-completion/1\0" + name), hex.
+/// The interpreter computes the same (axon-core main.rs `completion_token`).
+pub fn completion_token(key: &[u8], name: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let mut msg = b"axon-test-completion/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(&msg)
+        .finalize();
+    let outer = Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize();
+    outer.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<CheckReport> {
     let (mut failed, mut passed, mut total) = (Vec::new(), Vec::new(), None);
+    let mut completion = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         if !line.starts_with('{') {
@@ -2297,7 +2356,12 @@ pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<Check
             continue;
         };
         match status {
-            "ok" => passed.push(name.to_string()),
+            "ok" => {
+                if let Some(c) = v.get("completion").and_then(|c| c.as_str()) {
+                    completion.push((name.to_string(), c.to_string()));
+                }
+                passed.push(name.to_string())
+            }
             "failed" => failed.push(name.to_string()),
             // An unknown status is neither. Guessing which it resembles is
             // how a new status becomes a silent wrong answer.
@@ -2313,6 +2377,7 @@ pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<Check
         )));
     };
     Ok(CheckReport {
+        completion,
         failed,
         passed,
         total,
@@ -2742,6 +2807,7 @@ impl CheckExecutor for FabricSubmitExecutor {
                 .unwrap_or_default()
         };
         Ok(CheckReport {
+            completion: Vec::new(),
             failed: names("failed"),
             passed: names("passed"),
             total: rep["total"].as_u64().unwrap_or(0) as usize,

@@ -698,6 +698,18 @@ fn check_target(req: &ComputeRequest, cfg: &SubmitConfig) -> Result<Target, Subm
     })
 }
 
+/// 32 bytes from the OS RNG for one run's completion secret.
+fn fresh_completion_key() -> Result<Vec<u8>, SubmitError> {
+    use std::io::Read;
+    let mut k = vec![0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut k))
+        .map_err(|e| {
+            SubmitError::Workspace(format!("no randomness for the completion key: {e}"))
+        })?;
+    Ok(k)
+}
+
 /// A check Fabric may vouch for runs over plain files and directories only.
 /// Import checks a link's target LEXICALLY, and a chain of links (one to a
 /// parent, the next through it) resolves outside the tree once materialized —
@@ -1258,6 +1270,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     } else {
         None
     };
+    // A fresh completion secret per run: the check cannot know it, so it
+    // cannot forge the evidence that its test completed.
+    let completion_key = fresh_completion_key()?;
     let local = if is_linux {
         None
     } else {
@@ -1277,7 +1292,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         // A check suite reaches the candidate ONLY as a module path, after
         // its own directory; the operator's ambient AXON_PATH is never
         // inherited.
-        l = l.with_env("AXON_PATH", target.module_path());
+        l = l
+            .with_env("AXON_PATH", target.module_path())
+            .with_completion_key(completion_key.clone());
         Some(l)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {
@@ -1315,6 +1332,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 liability,
                 seen,
                 suite,
+                Some(&completion_key),
             )?
         }
         id if id == backend::LINUX_MICROVM_PROTECTED.id => {
@@ -1367,6 +1385,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
 
 type Outcome = (ExecutionReceipt, Option<Value>, Option<String>);
 
+#[allow(clippy::too_many_arguments)]
 fn local_receipt(
     req: &ComputeRequest,
     journal: &Journal,
@@ -1375,6 +1394,7 @@ fn local_receipt(
     liability: u64,
     seen: PostRun,
     suite: Option<String>,
+    completion_key: Option<&[u8]>,
 ) -> Result<Outcome, SubmitError> {
     let id = backend::LOCAL_INTERPRETER.id;
     let PostRun { output, problem } = seen;
@@ -1435,6 +1455,30 @@ fn local_receipt(
                 // failing named test is not evidence of a pass.
                 verification = ReceiptVerification::Unknown;
             }
+            // Protected Check Isolation, affirmative completion evidence: a
+            // pass needs the interpreter's completion token for every test it
+            // rests on — proof that the test BODY returned normally. An
+            // `exit(0)`, an `Err` return, or any escape that ends the test
+            // early issues no token, so it is Unknown however it got there;
+            // the token is keyed per run and handed over on stdin, so the
+            // program cannot forge it.
+            let mut incomplete = None;
+            if let (ReceiptVerification::Passed, Some(key)) = (verification, completion_key) {
+                let names: Vec<&str> = match filter {
+                    Some(n) => vec![n],
+                    None => rep.passed.iter().map(String::as_str).collect(),
+                };
+                if let Some(n) = names.into_iter().find(|n| {
+                    let want = axon_cortex::runner::completion_token(key, n);
+                    !rep.completion.iter().any(|(a, t)| a == n && *t == want)
+                }) {
+                    verification = ReceiptVerification::Unknown;
+                    incomplete = Some(format!(
+                        "check `{n}` passed without completion evidence: its body did not \
+                         provably return (an exit, an Err return or an escape ended it early)"
+                    ));
+                }
+            }
             if problem.is_some()
                 && matches!(
                     verification,
@@ -1461,7 +1505,7 @@ fn local_receipt(
                     },
                 ),
                 Some(report_json),
-                problem,
+                problem.or(incomplete),
             ))
         }
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {

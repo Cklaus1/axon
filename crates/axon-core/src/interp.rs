@@ -2552,10 +2552,27 @@ fn run_program_inner(
 /// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
 /// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
+    run_test_fn_outcome(program, name).map(|_| ())
+}
+
+/// How a test that did not fail ENDED — the affirmative evidence Protected
+/// Check Isolation rests on. `Completed` means the test body itself returned
+/// normally, with a value that is not an `Err`: its every assertion ran. A
+/// test ended by `exit(0)` from below it, or one that returned `Err`, is
+/// `EndedEarly`: `axon test` still reports it as passing (unchanged
+/// semantics), but no completion evidence is issued for it, so a check that
+/// requires completion does not count it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestEnd {
+    Completed,
+    EndedEarly(String),
+}
+
+pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, String> {
     on_deep_stack(|| run_test_fn_inner(program, name))
 }
 
-fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
+fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
     let mut interp = Interp::build(program);
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
@@ -2564,7 +2581,10 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         return Err(format!("no function `{name}`"));
     };
     match interp.call_fn(f, vec![]) {
-        Ok(_) => Ok(()),
+        Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(
+            "the test returned `Err`: it did not complete".to_string(),
+        )),
+        Ok(_) => Ok(TestEnd::Completed),
         Err(Flow::Panic(m)) => Err(m),
         // A verify failure inside a test is still a failure (drives
         // `@[test(should_fail)]`); surface its message like a panic.
@@ -2588,10 +2608,15 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // E1314 multi-shot-unsound inside a test is a failure (lets
         // `@[test(should_fail)]` assert the unsound-replay case is refused).
         Err(Flow::MultiShotUnsound(m)) => Err(m),
-        Err(Flow::Exit(0)) => Ok(()),
+        Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(
+            "`exit(0)` ended the test before it completed".to_string(),
+        )),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // `return` from the test fn itself is a clean finish.
-        Err(Flow::Return(_)) => Ok(()),
+        Err(Flow::Return(Value::Err(_))) => Ok(TestEnd::EndedEarly(
+            "the test returned `Err`: it did not complete".to_string(),
+        )),
+        Err(Flow::Return(_)) => Ok(TestEnd::Completed),
         // A `break` / `continue` (or an effect-handler completion) that
         // escapes a function unwinds the test BEFORE its assertions ran: the
         // test did not complete, so it did not pass. It used to count as
@@ -4230,6 +4255,41 @@ mod tests {
             passed.is_empty(),
             "these escapes passed the test: {passed:?}"
         );
+    }
+
+    #[test]
+    fn a_test_completes_only_when_its_body_returns_normally() {
+        // PCI 11/12/13: the affirmative completion point. `run_test_fn` still
+        // reports the early ends as "not failed" (existing `axon test`
+        // behaviour); what changes is that they are not `Completed`, so no
+        // completion evidence is issued for them.
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+             fn early(n: i64) -> i64 {\n    if n > 0 { return 5 }\n    n\n}\n\
+             @[test]\nfn t_done() { assert_eq(early(0), 0) }\n\
+             @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+             @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+             @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    assert_eq(n, 99)\n    Ok(n)\n}\n\
+             @[test]\nfn t_ok() -> Result<i64, str> { Ok(1) }\n\
+             @[test]\nfn t_return() { assert_eq(early(1), 99) }\n\
+             @[test]\nfn t_closure_return() {\n    let g = |n: i64| { if n > 0 { return 5 }  n }\n    assert_eq(g(1), 99)\n}\n",
+        )
+        .expect("parses");
+        let end = |t: &str| run_test_fn_outcome(&prog, t);
+        assert_eq!(end("t_done"), Ok(TestEnd::Completed));
+        assert_eq!(end("t_ok"), Ok(TestEnd::Completed));
+        for t in ["t_exit", "t_err", "t_q"] {
+            assert!(
+                matches!(end(t), Ok(TestEnd::EndedEarly(_))),
+                "{t}: {:?}",
+                end(t)
+            );
+        }
+        // PCI 8: a callee's `return` ends the callee, never the test — the
+        // assertion after it still runs and fails.
+        for t in ["t_return", "t_closure_return"] {
+            assert!(end(t).is_err(), "{t}: {:?}", end(t));
+        }
     }
 
     #[test]

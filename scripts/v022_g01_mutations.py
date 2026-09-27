@@ -345,6 +345,36 @@ MUTATIONS = [
      '                    if !refinements.insert(r.name.as_str()) {',
      '                    if false && !refinements.insert(r.name.as_str()) {',
      'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
+    ('M63', 'Fabric: a pass needs completion evidence for the test it rests on',
+     'crates/axon-fabric/src/submit.rs',
+     '            if let (ReceiptVerification::Passed, Some(key)) = (verification, completion_key) {',
+     '            if let (ReceiptVerification::Passed, Some(key)) = (verification, completion_key.filter(|_| false)) {',
+     'axon-fabric', '--test check_effects', 'a_pass_needs_evidence_that_the_test_completed'),
+    ('M64', 'Fabric: the completion token must verify under the run key (a forged one does not)',
+     'crates/axon-fabric/src/submit.rs',
+     '                    !rep.completion.iter().any(|(a, t)| a == n && *t == want)',
+     '                    !rep.completion.iter().any(|(a, t)| a == n && (*t == want || !t.is_empty()))',
+     'axon-fabric', '--test check_effects', 'a_pass_needs_evidence_that_the_test_completed'),
+    ('M65', 'interpreter: a test whose body evaluates to Err did not complete',
+     'crates/axon-core/src/interp.rs',
+     '        Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(',
+     '        Ok(Value::Err(_)) if false => Ok(TestEnd::EndedEarly(',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_test_completes_only_when_its_body_returns_normally'),
+    ('M66', 'interpreter: a test that returns Err (e.g. via ?) did not complete',
+     'crates/axon-core/src/interp.rs',
+     '        Err(Flow::Return(Value::Err(_))) => Ok(TestEnd::EndedEarly(',
+     '        Err(Flow::Return(Value::Err(_))) if false => Ok(TestEnd::EndedEarly(',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_test_completes_only_when_its_body_returns_normally'),
+    ('M67', 'interpreter: exit(0) inside a test is not completion',
+     'crates/axon-core/src/interp.rs',
+     '        Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(\n            "`exit(0)` ended the test before it completed".to_string(),\n        )),',
+     '        Err(Flow::Exit(0)) => Ok(TestEnd::Completed),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_test_completes_only_when_its_body_returns_normally'),
+    ('M68', 'axon test: a completion token is issued only for a completed test',
+     'crates/axon-core/src/main.rs',
+     '.filter(|_| r.completed)',
+     '.filter(|_| true)',
+     'axon-core', '--no-default-features --test test_completion', 'only_a_completed_test_is_issued_a_completion_token'),
 ]
 
 
@@ -353,7 +383,8 @@ MUTATIONS = [
 # means. Kept here so nothing is lost, but certified under PCI, not G01
 # (user decision 2026-09-26). M58 is equivalent since M59 (whole-call
 # containment) and is excluded from every scope's kill list.
-PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62"}
+PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
+           "M63", "M64", "M65", "M66", "M67", "M68"}
 RETIRED = {"M58"}
 
 

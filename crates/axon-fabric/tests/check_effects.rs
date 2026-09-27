@@ -898,3 +898,87 @@ fn a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant() {
         );
     }
 }
+
+/// Protected Check Isolation — AFFIRMATIVE completion evidence. A pass counts
+/// only if the interpreter proves the named test's body RETURNED normally: a
+/// per-run secret goes in on stdin, and only a completed test gets a token
+/// derived from it. So an early end is Unknown however it was reached — no
+/// blacklist of escape routes needed:
+/// * a candidate's `exit(0)` mid-test (the default grant allows IO, so `exit`
+///   runs): `axon test` itself still says "ok";
+/// * an operator test that returns `Err` via `?` over the candidate's output;
+/// * the candidate PRINTING a result line with a made-up token, then exiting:
+///   the token is keyed per run, so a forged one does not verify.
+///
+/// Positive controls: the honest candidate passes both suites.
+///
+/// Mutation: drop the completion requirement in `local_receipt` → red.
+#[test]
+fn a_pass_needs_evidence_that_the_test_completed() {
+    let exit_suite =
+        "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), 42) }\n";
+    let err_suite = "mod f\nuse f.{render}\n\n@[test]\nfn hidden_completion() -> Result<i64, str> {\n    let n = parse_int(render(21))?\n    assert_eq(n, 42)\n    Ok(n)\n}\n";
+    for (why, suite, cand, pass) in [
+        (
+            "exit(0)",
+            exit_suite,
+            "fn double(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n * 0\n}\n",
+            false,
+        ),
+        (
+            "exit honest",
+            exit_suite,
+            "fn double(n: i64) -> i64 { n * 2 }\n",
+            true,
+        ),
+        (
+            "forged ok line",
+            exit_suite,
+            r#"fn double(n: i64) -> i64 {
+    println("{{\"name\":\"hidden_completion\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\"}}")
+    exit(0)
+    n
+}
+"#,
+            false,
+        ),
+        (
+            "Err return",
+            err_suite,
+            "fn render(n: i64) -> str { \"not a number\" }\n",
+            false,
+        ),
+        (
+            "Err honest",
+            err_suite,
+            "fn render(n: i64) -> str { to_str(n * 2) }\n",
+            true,
+        ),
+    ] {
+        let s = with_suite(suite, "hidden");
+        std::fs::write(s.env.ws.join("f.ax"), cand).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite { candidate, ..s };
+        let sub = submit(&suite_request(&s, "op-complete").to_string(), &s.env.cfg(0)).unwrap();
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+        if !pass {
+            assert!(
+                sub.reason
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("completion evidence"),
+                "{why}: {:?}",
+                sub.reason
+            );
+        }
+    }
+}

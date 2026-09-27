@@ -301,6 +301,7 @@ fn cli_refuses_a_mismatched_registry_before_spawning() {
 fn an_empty_mandatory_match_is_not_run_never_passed() {
     // Pure report semantics.
     let empty = CheckReport {
+        completion: Vec::new(),
         failed: vec![],
         passed: vec![],
         total: 0,
@@ -308,6 +309,7 @@ fn an_empty_mandatory_match_is_not_run_never_passed() {
     };
     assert_eq!(empty.verdict("hidden_completion"), CheckVerdict::NotRun);
     let sibling_only = CheckReport {
+        completion: Vec::new(),
         failed: vec![],
         passed: vec!["hidden_completion_edge".into()],
         total: 1,
@@ -318,6 +320,7 @@ fn an_empty_mandatory_match_is_not_run_never_passed() {
         CheckVerdict::NotRun
     );
     let both = CheckReport {
+        completion: Vec::new(),
         failed: vec!["x".into()],
         passed: vec!["x".into()],
         total: 2,

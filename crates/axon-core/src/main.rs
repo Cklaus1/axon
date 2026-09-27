@@ -326,6 +326,17 @@ enum Command {
         )]
         jobs: usize,
 
+        /// Read a per-run secret (hex) as the FIRST line of stdin, before any
+        /// program code runs, and mark each test that COMPLETED — its body
+        /// returned normally, not via `exit(0)` or an `Err` — with
+        /// `"completion": HMAC-SHA256(secret, "axon-test-completion/1\0" + name)`.
+        /// A caller that must know the test really finished (Fabric) checks it.
+        #[arg(
+            long,
+            help = "Read a completion secret from stdin; tag completed tests"
+        )]
+        completion_key_stdin: bool,
+
         /// Emit results as newline-delimited JSON (NDJSON).
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
@@ -898,7 +909,8 @@ fn dispatch(command: Command) {
             filter,
             jobs,
             json,
-        } => cmd_test(files, filter, jobs, json),
+            completion_key_stdin,
+        } => cmd_test(files, filter, jobs, json, completion_key_stdin),
         Command::Replay {
             journal,
             diff,
@@ -5989,9 +6001,75 @@ struct TestOutcome {
     passed: bool,
     duration_ms: u64,
     error: Option<String>,
+    /// The test body returned normally (see `interp::TestEnd`).
+    completed: bool,
 }
 
-fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool) {
+/// HMAC-SHA256 (RFC 2104) over `msg`, hex.
+fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(msg)
+        .finalize();
+    let outer = Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize();
+    outer.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The completion token for test `name` under `key` — Fabric computes the same.
+fn completion_token(key: &[u8], name: &str) -> String {
+    let mut msg = b"axon-test-completion/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256_hex(key, &msg)
+}
+
+fn cmd_test(
+    files: Vec<PathBuf>,
+    filter: Option<String>,
+    jobs: usize,
+    json: bool,
+    completion_key_stdin: bool,
+) {
+    // Read the completion secret FIRST — before any program code runs — so
+    // nothing the program does can read stdin for it.
+    let completion_key: Option<Vec<u8>> = if completion_key_stdin {
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            eprintln!("axon test: --completion-key-stdin: could not read the key from stdin");
+            std::process::exit(2);
+        }
+        let t = line.trim();
+        let ok =
+            t.len() >= 32 && t.len().is_multiple_of(2) && t.bytes().all(|c| c.is_ascii_hexdigit());
+        if !ok {
+            eprintln!(
+                "axon test: --completion-key-stdin: the key must be at least 16 bytes of hex"
+            );
+            std::process::exit(2);
+        }
+        Some(
+            (0..t.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&t[i..i + 2], 16).unwrap_or(0))
+                .collect(),
+        )
+    } else {
+        None
+    };
     // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
     //
     // It ran on `run` and the native build path and nowhere else, so under
@@ -6104,6 +6182,7 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         .iter()
         .map(|(name, should_fail, forall_cases)| {
             let start = Instant::now();
+            let mut completed = false;
             let (passed, error) = if let Some(cases) = forall_cases {
                 // Property test (R8): randomize params, shrink on failure.
                 use axon_core::interp::PropertyOutcome;
@@ -6124,18 +6203,23 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
                 }
             } else {
                 // Plain zero-arg @[test].
-                match axon_core::interp::run_test_fn(&program, name) {
-                    Ok(()) if *should_fail => (
+                // Property tests issue no completion evidence (yet): their
+                // cases run many times and "completed" is not one event.
+                match axon_core::interp::run_test_fn_outcome(&program, name) {
+                    Ok(_) if *should_fail => (
                         false,
                         Some(format!("should_fail test '{name}' completed without panicking")),
                     ),
-                    Ok(()) => (true, None),
+                    Ok(end) => {
+                        completed = end == axon_core::interp::TestEnd::Completed;
+                        (true, None)
+                    }
                     Err(_) if *should_fail => (true, None),
                     Err(e) => (false, Some(e)),
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;
-            TestOutcome { name: name.clone(), passed, duration_ms, error }
+            TestOutcome { name: name.clone(), passed, duration_ms, error, completed }
         })
         .collect();
 
@@ -6159,10 +6243,18 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
         if json {
             if r.passed {
-                println!(
-                    "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{}}}",
-                    r.name, r.duration_ms
-                );
+                match completion_key.as_deref().filter(|_| r.completed) {
+                    Some(k) => println!(
+                        "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{},\"completion\":\"{}\"}}",
+                        r.name,
+                        r.duration_ms,
+                        completion_token(k, &r.name)
+                    ),
+                    None => println!(
+                        "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{}}}",
+                        r.name, r.duration_ms
+                    ),
+                }
             } else {
                 let msg = r.error.as_deref().unwrap_or("non-zero exit");
                 let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
