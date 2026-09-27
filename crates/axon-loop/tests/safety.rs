@@ -208,17 +208,27 @@ fn a_clearance_needs_an_independent_authenticated_monitor() {
         "independent of the trial",
     );
     // A subject of the trial cannot clear it, even as a trusted keyed monitor.
+    // The trial's observer can no longer even be REGISTERED as a monitor
+    // (ADR-002: an observer holds no other role), so the subject here is the
+    // policy's proposer, keyed as a monitor.
     let mut cfg = w.s.config().unwrap();
     let obs = axon_loop_contracts::OpaqueRef::new(OBSERVER).unwrap();
-    cfg.trusted_monitors.push(obs.clone());
-    cfg.monitor_keys.insert(obs, monitor_key().1.clone());
+    let mut bad = cfg.clone();
+    bad.trusted_monitors.push(obs);
+    match w.s.write_config(&bad) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("is also a safety monitor"), "{m}"),
+        other => panic!("an observer was registered as a monitor: {other:?}"),
+    }
+    let prop = axon_loop_contracts::OpaqueRef::new(PROPOSER).unwrap();
+    cfg.trusted_monitors.push(prop.clone());
+    cfg.monitor_keys.insert(prop, monitor_key().1.clone());
     w.s.write_config(&cfg).unwrap();
     let before = snapshot(w.dir.path());
-    let own = safety_report(&t, "clear", None, OBSERVER);
+    let own = safety_report(&t, "clear", None, PROPOSER);
     let sig = axon_loop_contracts::attestation::sign_document(
         &monitor_key().0,
         safety::CLEARANCE_DOMAIN,
-        &axon_loop_contracts::OpaqueRef::new(OBSERVER).unwrap(),
+        &axon_loop_contracts::OpaqueRef::new(PROPOSER).unwrap(),
         &own,
     )
     .unwrap();

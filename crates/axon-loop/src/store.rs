@@ -142,6 +142,54 @@ impl Config {
     pub fn observers(&self) -> BTreeSet<OpaqueRef> {
         self.trusted_observers.iter().cloned().collect()
     }
+
+    /// ADR-002: distinct keys and distinct roles — clean compromise
+    /// boundaries. No public key is registered for two roles (verifier,
+    /// safety monitor, preflight observer), and a preflight OBSERVER holds no
+    /// verifier, admitter or monitor identity: Fabric (the verifier) consumes
+    /// an observation and must not be able to mint one. Checked when the
+    /// config is written and whenever it is read.
+    pub fn check_separation(&self) -> std::result::Result<(), String> {
+        let mut seen: std::collections::BTreeMap<String, &'static str> = Default::default();
+        for (role, keys) in [
+            ("verifier", &self.verifier_keys),
+            ("safety monitor", &self.monitor_keys),
+            ("preflight observer", &self.observer_keys),
+        ] {
+            for k in keys.values() {
+                let k = k.to_ascii_lowercase();
+                if let Some(prev) = seen.insert(k.clone(), role) {
+                    if prev != role {
+                        return Err(format!(
+                            "config: one public key ({}…) is registered for two roles ({prev}, \
+                             {role}); every role needs its own key (ADR-002)",
+                            &k[..k.len().min(16)]
+                        ));
+                    }
+                }
+            }
+        }
+        let observers: BTreeSet<&OpaqueRef> = self
+            .trusted_observers
+            .iter()
+            .chain(self.observer_keys.keys())
+            .collect();
+        for o in observers {
+            for (role, set) in [
+                ("a trusted verifier", &self.trusted_verifiers),
+                ("a trusted admitter", &self.trusted_admitters),
+                ("a safety monitor", &self.trusted_monitors),
+            ] {
+                if set.contains(o) {
+                    return Err(format!(
+                        "config: preflight observer {o} is also {role}; an observer holds no other \
+                         role (ADR-002: the launcher cannot attest its own launch)"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -494,7 +542,11 @@ impl Store {
                     o.entry("observer_keys")
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
                 }
-                strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
+                let c: Config = strict_record(
+                    &serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?,
+                )?;
+                c.check_separation().map_err(crate::error::refused)?;
+                Ok(c)
             }
             None => Ok(Config {
                 schema: ConfigSchema,
@@ -513,6 +565,7 @@ impl Store {
     }
 
     pub fn write_config(&self, c: &Config) -> Result<()> {
+        c.check_separation().map_err(crate::error::refused)?;
         self.write_json(&self.root.join("config.json"), c)
     }
 

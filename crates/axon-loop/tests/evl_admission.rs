@@ -357,14 +357,22 @@ fn an_admitter_holds_no_other_loop_role() {
     )
     .unwrap();
     let mut cfg = w.s.config().unwrap();
-    for who in [VERIFIER, OBSERVER, MONITOR, PROPOSER, EVALUATOR, WORKER] {
+    // An observer cannot even be REGISTERED as an admitter (ADR-002), so its
+    // refusal happens at config write, before any admission.
+    let mut bad = cfg.clone();
+    bad.trusted_admitters
+        .push(OpaqueRef::new(OBSERVER).unwrap());
+    match w.s.write_config(&bad) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("is also a trusted admitter"), "{m}"),
+        other => panic!("an observer was registered as an admitter: {other:?}"),
+    }
+    for who in [VERIFIER, MONITOR, PROPOSER, EVALUATOR, WORKER] {
         cfg.trusted_admitters.push(OpaqueRef::new(who).unwrap());
     }
     w.s.write_config(&cfg).unwrap();
     let before = snapshot(w.dir.path());
     for (who, why) in [
         (VERIFIER, "a trusted verifier (Compute Fabric)"),
-        (OBSERVER, "a context observer"),
         (MONITOR, "a safety monitor"),
         (PROPOSER, "the proposer (ranker)"),
         (EVALUATOR, "it is the evaluator"),
@@ -537,4 +545,48 @@ fn a_verdict_attested_before_the_freeze_does_not_count() {
 
 fn specs_for(w: &World) -> Vec<Spec<'_>> {
     pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50))
+}
+
+/// ADR-002: every role has its own key and an observer holds no other role,
+/// so Fabric (a verifier) can consume an observation but never mint one. Both
+/// the write path and the read path refuse, so a hand-edited config.json does
+/// not smuggle a shared key past `write_config`.
+#[test]
+fn an_observer_key_and_identity_are_its_own() {
+    let w = world();
+    let base = w.s.config().unwrap();
+    let obs = OpaqueRef::new(OBSERVER).unwrap();
+    let ver = OpaqueRef::new(VERIFIER).unwrap();
+    // One key for two roles: the verifier's key also registered as an observer's.
+    let mut shared = base.clone();
+    shared.observer_keys.insert(
+        OpaqueRef::new("fixture:observer2").unwrap(),
+        verifier_key().1.clone(),
+    );
+    // An observer that is also a trusted verifier.
+    let mut dual = base.clone();
+    dual.trusted_verifiers.push(obs.clone());
+    for (bad, why) in [
+        (&shared, "registered for two roles"),
+        (&dual, "is also a trusted verifier"),
+    ] {
+        match w.s.write_config(bad) {
+            Err(LoopError::Refused(m)) => assert!(m.contains(why), "{m}"),
+            other => panic!("config accepted ({why}): {other:?}"),
+        }
+    }
+    // The read path refuses the same config written behind the store's back.
+    assert!(
+        base.verifier_keys.contains_key(&ver),
+        "fixture registers a verifier key"
+    );
+    std::fs::write(
+        w.dir.path().join("config.json"),
+        serde_json::to_vec(&shared).unwrap(),
+    )
+    .unwrap();
+    match w.s.config() {
+        Err(LoopError::Refused(m)) => assert!(m.contains("registered for two roles"), "{m}"),
+        other => panic!("a shared-key config was read back: {other:?}"),
+    }
 }
