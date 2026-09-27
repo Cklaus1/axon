@@ -93,7 +93,7 @@
   "follow_ups": {
     "G01": [
       "The PCI-adjacent MiCode .env findings recorded in REGISTRATION.md were fixed after registration: micode fc18bbc6 (MICODE_EXTENSIONS_TRUST_PROJECT and authority keys) and b72cf4c4 (provider endpoint/routing keys; .env closure derived from the project-layer denylist, credentials open). Tracked on PCI surface 20.",
-      "Verdict freshness binding (disclosed limitation): attestation v2 to bind plan ref / epoch / run nonce."
+      "Verdict freshness binding: ADDRESSED after registration by acf-receipt-attestation/2 (axon 6f5ed1e7, micode 1baa2f81): the signed binding carries Fabric's issued_ms and EVL does not count a verdict attested before the plan froze. The registered G01 claim (9ae4c605) is unchanged; this is new work, certified with the binding-gate batch."
     ],
     "PCI": [
       "MINOR: P/E/Var pseudo-builtins are not reserved names; W0003 text wrong for P; eval_prob_pred double-evaluates its operand.",
@@ -102,5 +102,8 @@
       "MINOR: interop gate lacks a negative completion case; MiCode .env closure gated by unit-test rows only.",
       "FUTURE: candidate @[test]s matched by the substring filter still run in the verifier process (surface 14); per-Kernel principal token stream; Cortex local adjudicator needs no completion evidence."
     ]
-  }
+  },
+  "operator_items": [
+    "PROTECTED profile: who runs the preflight OBSERVER and holds its key (G32: a protected context counts only if signed by a registered observer_keys entry). ADR-001 does not yet name the observer; mechanism implemented and fail-closed (axon 1a7c70b9)."
+  ]
 }

@@ -58,6 +58,31 @@ GATES=(
   "G03-r22-joint-bypass|axon-fabric|joint_bypass|a_repository_cannot_supply_its_own_registries an_outcome_cannot_be_reattached_or_attached_early an_argv_file_outside_the_workspace_is_refused"
   "G03-r22-joint-bypass|axon-fabric|workspace|a_legacy_single_file_swapped_before_launch_never_yields_a_verdict_on_the_original two_trials_caches_do_not_see_each_others_writes"
   "G03-r22-joint-bypass|axon-fabric|grant_authority|*7"
+  # Binding gates for PROTECTED_VERIFIER_READY (verification_binding_gates_pass,
+  # governance/status/v022-verifier-status.json).
+  # G11: independent admission — no other loop role (Fabric, observer, monitor,
+  # proposer/ranker, subject, evaluator) admits or issues a transition.
+  "G11-r22-independent-admission|axon-loop|evl_admission|an_admitter_holds_no_other_loop_role a_candidate_is_bound_to_one_experiment full_loop_accept_activate_future_task_rollback"
+  "G11-r22-independent-admission|axon-loop|pointer|a_rollback_needs_an_independent_trusted_issuer"
+  # G11: disposition — explicit reasons; only an ACCEPT by a currently trusted
+  # admitter activates; safety vetoes before utility.
+  "G11-r22-admission-disposition|axon-loop|evl_admission|only_an_accepted_currently_authorized_admission_activates reject_on_inferiority_or_no_economic_benefit inconclusive_on_small_sample_liability_and_unknowns"
+  "G11-r22-admission-disposition|axon-loop|safety|a_candidate_violation_vetoes_before_any_utility a_violation_wins_and_the_state_is_fixed_at_evaluation"
+  "G11-r22-admission-disposition|axon-loop|protected_class|a_protected_evaluation_accepts_only_cleared_trials"
+  # G11: rollback revalidates the predecessor NOW (issuer, admission, revocation,
+  # safety since, protected class).
+  "G11-r22-rollback-revalidate|axon-loop|pointer|a_rollback_needs_an_independent_trusted_issuer rollback_to_valid_predecessor_and_revoked_predecessor_refused"
+  "G11-r22-rollback-revalidate|axon-loop|protected_class|a_rollback_revalidates_its_predecessor a_rollback_in_a_protected_scope_needs_a_protected_admission"
+  "G11-r22-rollback-revalidate|axon-loop|safety|a_violation_found_after_evaluation_blocks_activation_and_rollback"
+  # G32: bindings against AUTHENTICATED records — the verifier by attestation,
+  # a protected context by its observer's signature, the input workspace.
+  "G32-r22-sidecar-bindings|axon-loop|protected_class|a_protected_context_is_authenticated_not_named"
+  "G32-r22-sidecar-bindings|axon-loop|intake|an_episode_is_bound_to_the_input_workspace_its_observer_saw verification_evidence_is_authenticated_not_named"
+  # G33: the decision rule is frozen and executable before the outcomes it
+  # judges (attestation /2 issued_ms); one evaluation per experiment, over
+  # exactly the manifest; no repeated-task inflation.
+  "G33-r22-decision-rule-freeze|axon-loop|evl_admission|a_verdict_attested_before_the_freeze_does_not_count"
+  "G33-r22-decision-rule-freeze|axon-loop|redteam|i3_i4_i7_i8_i13_i14_rules_must_be_executable g7_trials_before_freeze_are_refused g6_freeze_is_permanent ab9_ab10_one_evaluation_per_experiment_the_reject_stands ab9_the_single_evaluation_covers_exactly_the_manifest ab10_trial_ids_never_reused_across_experiments"
   "G03-r22-joint-bypass|axon-fabric|check_effects|*8"
   "G32-r22-evidence-laundering|axon-loop|evidence_laundering|a_clean_bundle_is_accepted_positive_control laundered_evidence_never_crosses_independent_admission"
   "G32-r22-evidence-laundering|axon-loop|intake|verification_that_does_not_join_is_refused_with_the_store_unchanged"
