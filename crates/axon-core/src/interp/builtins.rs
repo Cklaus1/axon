@@ -4030,6 +4030,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
                 let n = self
+                    .k()
                     .provenance
                     .borrow()
                     .get(&name)
@@ -4895,7 +4896,7 @@ impl<'p> Interp<'p> {
                 let name = as_str(&args[1])?.to_string();
                 let target = as_float(&args[2])?;
                 // Typo guard: `name` must be a defined fn or already-recorded goal.
-                if self.fn_by_name(&name)?.is_none() && !self.provenance.borrow().contains_key(&name) {
+                if self.fn_by_name(&name)?.is_none() && !self.k().provenance.borrow().contains_key(&name) {
                     return panic(format!(
                         "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
                     ));
@@ -5034,7 +5035,7 @@ impl<'p> Interp<'p> {
             "agent_detect_loop" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let store = self.provenance.borrow();
+                let store = self.k().provenance.borrow();
                 let stalled = match store.get(&name) {
                     // Need at least 3 points to call it a loop. The last 3 are a
                     // loop when their spread is within epsilon of the score scale.
@@ -5052,7 +5053,7 @@ impl<'p> Interp<'p> {
             "agent_uncertainty" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let store = self.provenance.borrow();
+                let store = self.k().provenance.borrow();
                 let u = match store.get(&name) {
                     Some(scores) if scores.len() >= 2 => {
                         let n = scores.len() as f64;
@@ -5076,7 +5077,7 @@ impl<'p> Interp<'p> {
             "agent_trace_len" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let store = self.provenance.borrow();
+                let store = self.k().provenance.borrow();
                 let len = store.get(&name).map(|s| s.len()).unwrap_or(0);
                 ok!(Value::Int(len as i64));
             }
@@ -5097,12 +5098,12 @@ impl<'p> Interp<'p> {
             // un-halt builtin: a reversible kill-switch is not a kill-switch.
             "corrigible_halt" => {
                 want(0)?;
-                self.corrigible_halted.set(true);
+                self.k().corrigible_halted.set(true);
                 ok!(Value::Unit);
             }
             "corrigible_halted" => {
                 want(0)?;
-                ok!(Value::Bool(self.corrigible_halted.get()));
+                ok!(Value::Bool(self.k().corrigible_halted.get()));
             }
 
             // ── Dict (string-keyed map) ──────────────────────────────────────

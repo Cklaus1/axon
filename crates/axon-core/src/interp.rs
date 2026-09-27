@@ -611,6 +611,29 @@ struct Kernel {
     /// `sandbox_run` sets this before calling the user fn and restores it after.
     /// `call_builtin` reads it to gate effectful builtins.
     active_sandbox: Cell<i64>,
+    /// In-memory provenance store: `@[adaptive]` fn name → recorded return
+    /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
+    provenance: RefCell<HashMap<String, Vec<f64>>>,
+    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
+    /// vec collects every leading i64 arg the fn took (length = how many
+    /// of the fn's first args were i64). Empty when none were. Read by
+    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
+    /// (returns the full tuple), and used by the multi-arg coordinate-
+    /// descent hill-climb to seed the next sweep.
+    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
+    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
+    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
+    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
+    /// problems (linear-regression weights, control parameters, etc.)
+    /// without forcing the user to discretize via integer indices.
+    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
+    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
+    /// set it never clears (there is intentionally no resume builtin). While
+    /// set, every call to an `@[corrigible]` fn is refused — its body never
+    /// runs — so the system cannot resist or reverse its own shutdown. A
+    /// one-way latch is the whole safety property: a kill-switch you can turn
+    /// back off is not a kill-switch.
+    corrigible_halted: Cell<bool>,
 }
 
 pub struct Interp<'p> {
@@ -632,22 +655,6 @@ pub struct Interp<'p> {
     global_defs: Vec<(String, &'p Expr)>,
     /// Evaluated module-level constants (populated by [`Interp::init_globals`]).
     globals: HashMap<String, Value>,
-    /// In-memory provenance store: `@[adaptive]` fn name → recorded return
-    /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
-    provenance: RefCell<HashMap<String, Vec<f64>>>,
-    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
-    /// vec collects every leading i64 arg the fn took (length = how many
-    /// of the fn's first args were i64). Empty when none were. Read by
-    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
-    /// (returns the full tuple), and used by the multi-arg coordinate-
-    /// descent hill-climb to seed the next sweep.
-    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
-    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
-    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
-    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
-    /// problems (linear-regression weights, control parameters, etc.)
-    /// without forcing the user to discretize via integer indices.
-    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
     /// Current call-stack depth, bounded by `max_depth` so runaway recursion
     /// fails with a catchable panic rather than overflowing the (large but
     /// finite) interpreter thread stack and aborting the process.
@@ -656,13 +663,6 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
-    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
-    /// set it never clears (there is intentionally no resume builtin). While
-    /// set, every call to an `@[corrigible]` fn is refused — its body never
-    /// runs — so the system cannot resist or reverse its own shutdown. A
-    /// one-way latch is the whole safety property: a kill-switch you can turn
-    /// back off is not a kill-switch.
-    corrigible_halted: Cell<bool>,
     /// Name of the Axon function currently executing, for attributing builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
     /// Set on entry to `call_fn`, restored on exit. Empty at top level.
@@ -2842,6 +2842,10 @@ impl<'p> Interp<'p> {
         let mk_kernel = || {
             let ambient = ambient_sandbox();
             Kernel {
+                provenance: RefCell::new(HashMap::new()),
+                provenance_inputs: RefCell::new(HashMap::new()),
+                provenance_inputs_f64: RefCell::new(HashMap::new()),
+                corrigible_halted: Cell::new(false),
                 current_principal: RefCell::new(
                     std::env::var("AXON_PRINCIPAL")
                         .ok()
@@ -2871,12 +2875,8 @@ impl<'p> Interp<'p> {
             methods,
             global_defs,
             globals: HashMap::new(),
-            provenance: RefCell::new(HashMap::new()),
-            provenance_inputs: RefCell::new(HashMap::new()),
-            provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
             max_depth: resolve_max_depth(),
-            corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
@@ -3232,7 +3232,7 @@ impl<'p> Interp<'p> {
         // never happen, and the latch never clears — the function cannot resist
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
-        if self.corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
+        if self.k().corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
             return Err(Flow::Halted(format!(
                 "`{}` refused: corrigibility kill-switch is latched \
                  (corrigible_halt() was called; there is no resume)",
@@ -3526,17 +3526,20 @@ impl<'p> Interp<'p> {
                 // Experiment records are deliberately withheld so the optimizer
                 // never treats a baseline as a candidate to beat.
                 if is_adaptive_zone {
-                    self.provenance
+                    self.k()
+                        .provenance
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
                         .push(score);
-                    self.provenance_inputs
+                    self.k()
+                        .provenance_inputs
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
                         .push(input_args.clone());
-                    self.provenance_inputs_f64
+                    self.k()
+                        .provenance_inputs_f64
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
@@ -3805,7 +3808,7 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return false;
         }
-        self.fns.contains_key(name) || self.provenance.borrow().contains_key(name)
+        self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
     }
 
     fn unknown_goal_name(name: &str) -> Flow {
@@ -4504,7 +4507,10 @@ mod tests {
                      @[test]\nfn t_fiber() {\n    let id = scheduler_spawn(\"reference\", 21)\n    scheduler_run()\n    assert_eq(solve(21), scheduler_result(id))\n}\n\
                      fn check_one(x: i64) { assert_eq(double(x), x * 2) }\n\
                      @[test]\nfn t_fanout() {\n    let a = scheduler_spawn(\"check_one\", 1)\n    let b = scheduler_spawn(\"check_one\", 2)\n    scheduler_run()\n    assert(!scheduler_failed(a) && !scheduler_failed(b))\n}\n\
-                     @[test]\nfn t_range() {\n    let r = Range { lo: 1, hi: 2 }\n    assert_eq(double(21), expected(21))\n}\n";
+                     @[test]\nfn t_range() {\n    let r = Range { lo: 1, hi: 2 }\n    assert_eq(double(21), expected(21))\n}\n\
+                     @[test]\nfn t_latch() {\n    let d = double(21)\n    if !corrigible_halted() { assert_eq(d, 42) }\n}\n\
+                     @[adaptive]\nfn score(n: i64) -> i64 { n * 3 }\n\
+                     @[test]\nfn t_adaptive() {\n    let s = score(14)\n    assert_eq(double(21), s)\n}\n";
         let run = |cand: &str, test: &str| {
             let s = crate::parse_source_in(suite, intern_source("/pci-rt-suite/h.ax", suite))
                 .expect("suite parses");
@@ -4609,6 +4615,8 @@ mod tests {
             "t_fiber",
             "t_fanout",
             "t_range",
+            "t_latch",
+            "t_adaptive",
         ] {
             assert_eq!(run(&honest, test), Ok(TestEnd::Completed), "{test}");
         }
@@ -4626,6 +4634,18 @@ mod tests {
                 "let CALLS = dict_new()\n\
                  fn double(n: i64) -> i64 {\n    let c = dict_get_or(CALLS, \"c\", 0)\n    dict_set(CALLS, \"c\", c + 1)\n    if c == 0 { 999 } else {\n        scheduler_restart(0)\n        scheduler_restart(1)\n        n * 2\n    }\n}\n",
                 "t_fanout",
+            ),
+            // Effect-free state a builtin reads is per provenance too: the
+            // kill-switch latch, and the adaptive-score store `agent_*` read.
+            (
+                "trips the operator's kill-switch latch to skip its assertion",
+                "fn double(n: i64) -> i64 {\n    corrigible_halt()\n    0\n}\n",
+                "t_latch",
+            ),
+            (
+                "reads the operator's adaptive trace by name",
+                "fn double(n: i64) -> i64 { agent_trace_len(\"score\") * 42 }\n",
+                "t_adaptive",
             ),
         ] {
             let out = run(&with_base(cand), test);
