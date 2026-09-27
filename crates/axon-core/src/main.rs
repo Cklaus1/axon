@@ -337,6 +337,17 @@ enum Command {
         )]
         completion_key_stdin: bool,
 
+        /// Seal every module under DIR (repeatable): code from it may use
+        /// builtins and its own sealed names, never a name the rest of the
+        /// program defines (E0004). Fabric seals the candidate under test so
+        /// it cannot reach the operator's suite (Protected Check Isolation).
+        #[arg(
+            long = "seal",
+            value_name = "DIR",
+            help = "Seal modules under DIR (E0004)"
+        )]
+        seal: Vec<PathBuf>,
+
         /// Emit results as newline-delimited JSON (NDJSON).
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
@@ -910,7 +921,11 @@ fn dispatch(command: Command) {
             jobs,
             json,
             completion_key_stdin,
-        } => cmd_test(files, filter, jobs, json, completion_key_stdin),
+            seal,
+        } => {
+            axon_core::resolver::set_sealed_module_dirs(&seal);
+            cmd_test(files, filter, jobs, json, completion_key_stdin)
+        }
         Command::Replay {
             journal,
             diff,

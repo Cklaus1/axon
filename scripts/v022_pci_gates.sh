@@ -30,9 +30,11 @@ ROWS=(
   "8/11/12 return, exit, Err|axon-core|lib|interp::tests::a_test_completes_only_when_its_body_returns_normally"
   "10 named handlers|axon-core|pci_isolation|a_candidate_cannot_rebind_a_suite_named_handler"
   "13 completion evidence|axon-core|test_completion|only_a_completed_test_is_issued_a_completion_token a_missing_or_short_completion_key_is_refused_before_any_test_runs"
-  "13 completion evidence|axon-fabric|check_effects|a_pass_needs_evidence_that_the_test_completed a_candidate_predicate_cannot_end_the_operators_test"
+  "13 completion evidence|axon-fabric|check_effects|a_pass_needs_evidence_that_the_test_completed a_candidate_predicate_cannot_end_the_operators_test the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate"
   "14 exit code|axon-fabric|check_effects|a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass"
   "17 working directory|axon-fabric|check_effects|a_suites_runtime_fixture_is_the_pinned_one"
+  "21 sealed candidate|axon-core|lib|resolver::tests::a_sealed_module_cannot_reach_the_operators_names"
+  "21 sealed candidate|axon-fabric|check_effects|a_sealed_candidate_cannot_reach_the_operators_names"
 )
 
 for row in "${ROWS[@]}"; do

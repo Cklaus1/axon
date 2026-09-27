@@ -90,6 +90,7 @@ HOST_BUILTINS='read_file|write_file|append_file|file_size|file_exists|dir_create
 '|http_get|http_post|http_sse|ai_complete|ai_extract|ai_cost_spent'\
 '|exec|spawn|chan_|goal_|agent_detect|agent_uncertainty|agent_trace|zephyr_'\
 '|dstore_'\
+'|srand'\
 '|random_|gaussian_sample|beta_sample|categorical_sample'\
 '|now_ms|sleep_ms|temporal_now'\
 '|atomic_|volatile_|port_in_|port_out_|ptr_from_addr|fn_addr|tee_|bpf_'

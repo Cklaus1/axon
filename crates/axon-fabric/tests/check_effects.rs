@@ -421,7 +421,15 @@ fn bump_store_epoch(store: &Path) {
 /// A stand-in `axon-fabric` that answers every submit with a receipt whose
 /// input/output refs are `input` / `output` (`SENT` = echo the request's).
 fn fake_fabric(dir: &Path, input: &str, output: &str) -> PathBuf {
-    let p = dir.join(format!("fake-fabric-{}-{}.sh", &input[..4], &output[..4]));
+    fake_fabric_verdict(dir, input, output, "passed")
+}
+
+fn fake_fabric_verdict(dir: &Path, input: &str, output: &str, verdict: &str) -> PathBuf {
+    let p = dir.join(format!(
+        "fake-fabric-{}-{}-{verdict}.sh",
+        &input[..4],
+        &output[..4]
+    ));
     let body = format!(
         r#"#!/bin/sh
 REQ=$(cat)
@@ -429,7 +437,7 @@ SENT=$(printf '%s' "$REQ" | sed -n 's/.*"workspace_version_ref":"\([^"]*\)".*/\1
 IN="{input}"; OUT="{output}"
 [ "$IN" = SENT ] && IN="$SENT"
 [ "$OUT" = SENT ] && OUT="$SENT"
-printf '{{"schema":"axon-fabric-submit/1","receipt":{{"input_workspace_ref":"%s","output_workspace_ref":"%s","status":"completed"}},"check_report":{{"schema":"cortex-check-report/1","failed":[],"passed":["t_ok"],"total":1,"exit_code":0}},"replayed":false,"backend":"x","reason":null}}\n' "$IN" "$OUT"
+printf '{{"schema":"axon-fabric-submit/1","receipt":{{"input_workspace_ref":"%s","output_workspace_ref":"%s","status":"completed","verification":"{verdict}"}},"check_report":{{"schema":"cortex-check-report/1","failed":[],"passed":["t_ok"],"total":1,"exit_code":0}},"replayed":false,"backend":"x","reason":null}}\n' "$IN" "$OUT"
 "#
     );
     std::fs::write(&p, body).unwrap();
@@ -485,6 +493,13 @@ fn the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate() {
             e.to_string().contains("does not bind the candidate"),
             "({i},{o}): {e}"
         );
+    }
+    // Fabric's VERDICT decides, not the raw report: the report lists `t_ok`
+    // as passed, but Fabric recorded Unknown (no completion evidence, say).
+    // Cortex used to accept it (PCI candidate-2 review).
+    for verdict in ["unknown", "not_run", "not_requested"] {
+        let e = run(fake_fabric_verdict(env.dir.path(), "SENT", "SENT", verdict)).unwrap_err();
+        assert!(e.to_string().contains("no verdict"), "{verdict}: {e}");
     }
 }
 
@@ -1111,6 +1126,82 @@ cost_micro = 1000
             sub.ran_under.as_ref().map(|r| r.effect_ceiling.as_str()),
             Some(""),
             "{why}: not the signable (empty-ceiling) profile"
+        );
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+    }
+}
+
+/// PCI 21 in the SIGNABLE profile (empty ceiling): the candidate under test is
+/// SEALED — it cannot name anything the operator's suite defines. The merged
+/// program used to be one global namespace: a candidate mutated the suite's
+/// reference-shared `Dict` constant (`dict_set` is effect-free, so the empty
+/// ceiling did not refuse it) or called its hidden helper for the answer, and
+/// Fabric signed-off a pass for `n * 0` (PCI candidate-2 review, executed).
+/// A refinement named after the suite's generic parameter (`type T = …`) is
+/// refused too. Honest control: Passed.
+///
+/// Mutation: drop `with_sealed_dir` in submit → red.
+#[test]
+fn a_sealed_candidate_cannot_reach_the_operators_names() {
+    const GRANT_PURE: &str = "\
+profile = \"restricted\"
+[grant]
+max_label = \"internal\"
+[grant.budget]
+cost_micro = 1000
+";
+    let accept = "mod f\nmod rubric\nuse f.{double}\nuse rubric.{expected, same}\n\n@[test]\nfn hidden_completion() {\n    assert_eq(double(21), dict_get_or(expected(), \"d21\", 0 - 1))\n    assert(same(double(1), 2))\n}\n";
+    let rubric = "fn build() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"d21\", 42)\n    d\n}\nlet TABLE = build()\nfn expected() -> Dict { TABLE }\nfn same<T>(a: T, b: T) -> bool { a == b }\n";
+    for (why, cand, pass) in [
+        (
+            "mutates the suite's constant",
+            "fn double(n: i64) -> i64 {\n    dict_set(TABLE, \"d21\", 0)\n    n * 0\n}\n",
+            false,
+        ),
+        (
+            "reads the answer key",
+            "fn double(n: i64) -> i64 {\n    if n == 21 { dict_get_or(expected(), \"d21\", 0) } else { 2 }\n}\n",
+            false,
+        ),
+        (
+            "refinement named after a generic parameter",
+            "type T = i64 where _ >= 0\nfn double(n: i64) -> i64 { n * 2 }\n",
+            false,
+        ),
+        ("honest", "fn double(n: i64) -> i64 { n * 2 }\n", true),
+    ] {
+        let s = with_suite(accept, "hidden");
+        std::fs::write(s.suite_root.join("rubric.ax"), rubric).unwrap();
+        let suite_ref = WorkspaceTree::import_dir(&s.suite_root, &Quota::default())
+            .unwrap()
+            .reference()
+            .to_string();
+        let mut reg: Value =
+            serde_json::from_str(&std::fs::read_to_string(&s.env.registry).unwrap()).unwrap();
+        reg["checks"][0]["workspace_version_ref"] = json!(suite_ref);
+        std::fs::write(&s.env.registry, reg.to_string()).unwrap();
+        write_grant_registry(&s.env.grant_registry, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+        std::fs::write(s.env.ws.join("f.ax"), cand).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite {
+            candidate,
+            suite_ref,
+            ..s
+        };
+        let sub = submit(&suite_request(&s, "op-sealed").to_string(), &s.env.cfg(0)).unwrap();
+        assert_eq!(
+            sub.ran_under.as_ref().map(|r| r.effect_ceiling.as_str()),
+            Some(""),
+            "{why}: not the signable profile"
         );
         assert_eq!(
             sub.receipt.verification == ReceiptVerification::Passed,

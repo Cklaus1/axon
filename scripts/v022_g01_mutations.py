@@ -420,6 +420,36 @@ MUTATIONS = [
      '                        } else {\n                            // True user↔user duplicate.\n                            self.emit_error(',
      '                        } else if false {\n                            // True user↔user duplicate.\n                            self.emit_error(',
      'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_fn_name_produces_e0002'),
+    ('M79', 'resolver: a sealed module cannot reach a name the operator defines (E0004)',
+     'crates/axon-core/src/resolver.rs',
+     '    if !sealed.is_empty() {\n        r.check_sealed(program, sealed);\n    }',
+     '    let _ = sealed;',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names'),
+    ('M80', 'Fabric: a registered suite runs with the candidate sealed',
+     'crates/axon-fabric/src/submit.rs',
+     '            l = l.with_sealed_dir(cand);',
+     '            let _ = cand;',
+     'axon-fabric', '--test check_effects', 'a_sealed_candidate_cannot_reach_the_operators_names'),
+    ('M81', 'runner: the sealed dirs reach `axon test --seal`',
+     'crates/axon-cortex/src/runner.rs',
+     '            cmd.arg("--seal").arg(d);',
+     '            let _ = d;',
+     'axon-fabric', '--test check_effects', 'a_sealed_candidate_cannot_reach_the_operators_names'),
+    ('M82', 'resolver: a refinement cannot reuse a generic parameter name',
+     'crates/axon-core/src/resolver.rs',
+     '                    || generic_names.contains(n)\n',
+     '',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
+    ('M83', 'parser: a synthetic inline refinement is unique per file',
+     'crates/axon-core/src/parser.rs',
+     '            format!("__refine_{}_{}", self.source.0, self.synthetic_refine_count)',
+     '            format!("__refine_{}", self.synthetic_refine_count)',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names'),
+    ('M84', 'Cortex via Fabric: only a Fabric verdict of passed/failed is a verdict',
+     'crates/axon-cortex/src/runner.rs',
+     '            Some("passed") | Some("failed") => {}',
+     '            Some(_) | None => {}',
+     'axon-fabric', '--test check_effects', 'the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate'),
 ]
 
 
@@ -433,7 +463,8 @@ MUTATIONS = [
 # equivalent; the arm now fails closed and M65 guards the one live path.
 PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M63", "M64", "M65", "M67", "M68", "M69", "M70", "M71",
-           "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78"}
+           "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78",
+           "M79", "M80", "M81", "M82", "M83", "M84"}
 RETIRED = {"M58"}
 
 

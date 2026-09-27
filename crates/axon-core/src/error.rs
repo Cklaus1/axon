@@ -17,7 +17,7 @@ pub const E0000: &str = "E0000"; // generic parse/IO error with no more-specific
 pub const E0001: &str = "E0001";
 pub const E0002: &str = "E0002";
 pub const E0003: &str = "E0003";
-pub const E0004: &str = "E0004"; // reserved (Phase 2): use of a non-exported item across modules
+pub const E0004: &str = "E0004"; // a sealed module (candidate under test) used a name the rest of the program defines
 
 // Type-check errors
 pub const E0301: &str = "E0301";
@@ -436,7 +436,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0001", "cannot find name in this scope"),
     ("E0002", "the name is defined more than once in this module"),
     ("E0003", "module not found on AXON_PATH"),
-    ("E0004", "reserved (Phase 2): use of a non-exported item across modules"),
+    ("E0004", "a sealed module (`axon test --seal`, the candidate under test) used a name the rest of the program defines"),
     ("E0301", "type-check failure with no more-specific code"),
     ("E0302", "a `Result` returned by a call is unused — warns by default, error under AXON_STRICT"),
     ("E0303", "type-check rule violation (Phase-1 R03)"),

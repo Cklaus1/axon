@@ -2027,6 +2027,9 @@ struct ExecLimits {
     /// A per-run completion secret, written to the check's stdin (never its
     /// environment, which `/proc/self/environ` would expose).
     completion_key: Option<Vec<u8>>,
+    /// Module directories the check runs SEALED (`axon test --seal`): code
+    /// from them cannot reach any name the rest of the program defines.
+    sealed: Vec<std::path::PathBuf>,
 }
 
 impl LocalInterpreterExecutor {
@@ -2080,6 +2083,14 @@ impl LocalInterpreterExecutor {
     /// COMPLETED with [`completion_token`].
     pub fn with_completion_key(mut self, key: Vec<u8>) -> Self {
         self.limits.completion_key = Some(key);
+        self
+    }
+
+    /// Run the check with every module under `dir` SEALED (`axon test
+    /// --seal`): the candidate under test may use builtins and its own names,
+    /// never a name the operator's suite defines (Protected Check Isolation).
+    pub fn with_sealed_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.limits.sealed.push(dir.into());
         self
     }
 
@@ -2180,6 +2191,9 @@ impl CheckExecutor for LocalInterpreterExecutor {
         }
         if self.limits.completion_key.is_some() {
             cmd.arg("--completion-key-stdin");
+        }
+        for d in &self.limits.sealed {
+            cmd.arg("--seal").arg(d);
         }
         if self.limits.clean_env {
             cmd.env_clear();
@@ -2791,6 +2805,21 @@ impl CheckExecutor for FabricSubmitExecutor {
                 "Fabric receipt does not bind the candidate {sent}: input {}, output {}",
                 rc["input_workspace_ref"], rc["output_workspace_ref"]
             )));
+        }
+        // Fabric's VERDICT decides, not the raw report: a report can list the
+        // named test as passed while Fabric recorded Unknown — no completion
+        // evidence, a nonzero exit, a moved output. Reading `passed` straight
+        // from the report let Cortex accept exactly the passes Fabric refused
+        // (PCI candidate-2 review). Only `passed` or `failed` is a verdict.
+        match rc["verification"].as_str() {
+            Some("passed") | Some("failed") => {}
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "Fabric recorded no verdict ({}): {}",
+                    other.unwrap_or("absent"),
+                    v.get("reason").and_then(|r| r.as_str()).unwrap_or("")
+                )))
+            }
         }
         // No check report ⇒ no verdict (refused, timed out, outcome unknown…).
         let rep = v

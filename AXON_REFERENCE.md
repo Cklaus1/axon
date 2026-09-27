@@ -142,7 +142,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0001` | cannot find name in this scope |
 | `E0002` | the name is defined more than once in this module |
 | `E0003` | module not found on AXON_PATH |
-| `E0004` | reserved (Phase 2): use of a non-exported item across modules |
+| `E0004` | a sealed module (`axon test --seal`, the candidate under test) used a name the rest of the program defines |
 | `E0301` | type-check failure with no more-specific code |
 | `E0302` | a `Result` returned by a call is unused — warns by default, error under AXON_STRICT |
 | `E0303` | type-check rule violation (Phase-1 R03) |

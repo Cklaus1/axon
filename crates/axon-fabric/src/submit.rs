@@ -1295,6 +1295,12 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
         l = l
             .with_env("AXON_PATH", target.module_path())
             .with_completion_key(completion_key.clone());
+        // A registered suite runs with the CANDIDATE sealed: its modules may
+        // use builtins and their own names, never a name the operator's suite
+        // defines (Protected Check Isolation; E0004).
+        if let (Some(_), Some(cand)) = (&target.suite, target.candidate_dir()) {
+            l = l.with_sealed_dir(cand);
+        }
         Some(l)
     };
     if let Some(Err(e)) = local.as_ref().map(|l| l.verify()) {

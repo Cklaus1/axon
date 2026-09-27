@@ -1203,7 +1203,15 @@ impl Parser {
         self.expect(&Token::Where)?;
         let predicate = self.parse_expr()?;
         let end = self.current_span().end;
-        let name = format!("__refine_{}", self.synthetic_refine_count);
+        // Qualified by the file's source id: numbered per file alone, the
+        // suite's and a candidate's first inline refinement were both
+        // `__refine_0`, and the merged program refused an honest candidate
+        // (E0002) — or, had it not, one predicate would have replaced the other.
+        let name = if self.source.is_unknown() {
+            format!("__refine_{}", self.synthetic_refine_count)
+        } else {
+            format!("__refine_{}_{}", self.source.0, self.synthetic_refine_count)
+        };
         self.synthetic_refine_count += 1;
         self.synthetic_refinements.push(RefineDef {
             name: name.clone(),
