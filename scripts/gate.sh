@@ -286,6 +286,10 @@ cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
 # or the filtered run executes fewer tests than listed.
 echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──"
 ./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
+# Protected Check Isolation — the prerequisite of any protected-verifier claim
+# (G01 alone is never sufficient): one row per surface, exact test names.
+echo "── gate: v0.22 Protected Check Isolation surfaces ──"
+./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
 # G29-r22-claim-separation: the repository's own three release claims stay
 # separate and false until each has evidence of its own kind.
 python3 -B scripts/v022_claim_separation.py || fail "v0.22 release-claim separation"

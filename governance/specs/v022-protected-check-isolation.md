@@ -81,6 +81,23 @@ PCI is certified for two things:
 
 A local run under a non-empty grant is a developer verdict (ADR-001 D1/D3), and PCI makes no claim for it (surface 18). The protected microVM backend is a separate prerequisite (surface 19).
 
+## Certification rule
+
+PCI is certified (its state becomes CERTIFIED, within "Scope of the claim") when a frozen
+candidate meets every condition below. The candidate is the exact Axon and MiCode SHAs, clean
+trees, and this document's hash.
+- `scripts/v022_pci_gates.sh` passes;
+- every `--scope=pci` mutation is killed at the frozen Axon SHA, with every baseline passing;
+- the Axon and MiCode suites plus clippy are green, and the real-binary interop and MiCode G01
+  gates still pass;
+- ONE final independent review of the frozen pair finds zero PCI BLOCKERs. A PCI BLOCKER is
+  candidate-controlled bytes altering the identity, dependencies, namespace, control flow or
+  pass/fail semantics of the operator's check, within the scope above, other than through the
+  candidate-under-test interface.
+
+Nothing is edited during that review. Findings outside the scope, or about other properties, are
+recorded as adjacent.
+
 ## Readiness state model
 
 | Item | State |
@@ -104,6 +121,8 @@ only on these conditions:
    17 was found and fixed.
 2. 18 is bounded out of the local claim (see "Scope of the claim"). 19 stays a prerequisite of any
    protected-verifier claim.
-3. The regression suite is the tests named in this table, plus `v022_g01_mutations.py --scope=pci`.
+3. Done: the regression suite is `scripts/v022_pci_gates.sh`, one row per surface with exact test
+   names, invoked by `scripts/gate.sh`. The mutation proof is
+   `v022_g01_mutations.py --scope=pci`.
 4. Freeze, run the proof sequence, then run one final independent review against this
    document.
