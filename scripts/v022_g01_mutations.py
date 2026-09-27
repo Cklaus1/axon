@@ -530,6 +530,83 @@ MUTATIONS = [
      '    if episode.input_workspace_ref != ctx.observed.workspace_ref {',
      '    if false && episode.input_workspace_ref != ctx.observed.workspace_ref {',
      'axon-loop', '--test intake', 'an_episode_is_bound_to_the_input_workspace_its_observer_saw'),
+    # Binding batch candidate 2 (review wf_d788c05a-be2): G11 x3 guards, ADR-002 and
+    # the ADR-001 §3.6 population. Scope `binding`; excluded from the registered g01 scope.
+    ('M101', 'transition: the issuer is independent of what it promotes',
+     'crates/axon-loop/src/admission.rs',
+     '    match role {\n        Some(role) => Err(refused(format!(\n            "self-promotion: transition issuer',
+     '    match role {\n        _ if true => Ok(()),\n        Some(role) => Err(refused(format!(\n            "self-promotion: transition issuer',
+     'axon-loop', '--test pointer', 'no_proposer_evaluator_or_subject_issues_a_promotion'),
+    ('M102', 'baseline: the issuer holds no other loop role',
+     'crates/axon-loop/src/pointer.rs',
+     '    if let Some(role) = crate::admission::other_loop_role(&config, &b.issuer_ref) {',
+     '    if let Some(role) = None::<&str> {',
+     'axon-loop', '--test pointer', 'a_baseline_issuer_holds_no_other_loop_role'),
+    ('M103', 'derive: a counted verdict is still pinned (profile, revision, suite, acceptance)',
+     'crates/axon-loop/src/admission.rs',
+     'crate::intake::check_pins(&config, &v.issuer_ref, &t.task_id, &req, &rc).map_err(',
+     'Ok::<(), LoopError>(()).map_err(',
+     'axon-loop', '--test protected_class', 'a_rollback_rechecks_profile_qualification'),
+    ('M104', "derive: a protected context's observer and key are still current",
+     'crates/axon-loop/src/admission.rs',
+     '                ) && !t.context_signed_by.as_ref().is_some_and(|c| {',
+     '                ) && false && !t.context_signed_by.as_ref().is_some_and(|c| {',
+     'axon-loop', '--test protected_class', 'a_protected_activation_rests_only_on_current_authority'),
+    ('M105', "derive: a clearance's monitor and key are still current",
+     'crates/axon-loop/src/admission.rs',
+     '                if t.safety == crate::safety::SafetyState::Clear\n',
+     '                if false && t.safety == crate::safety::SafetyState::Clear\n',
+     'axon-loop', '--test protected_class', 'a_protected_activation_rests_only_on_current_authority'),
+    ('M106', 'evl: the Fabric execution cost component is never omitted',
+     'crates/axon-loop/src/evl.rs',
+     '                if let Some((req, rcpt, _)) = &d.acf {\n                    exec_usages',
+     '                if let Some((req, rcpt, _)) = d.acf.as_ref().filter(|_| false) {\n                    exec_usages',
+     'axon-loop', '--test evl_admission', 'an_execution_cost_is_never_omitted_from_the_economics'),
+    ('M107', 'evl: only the issued attempt counts',
+     'crates/axon-loop/src/evl.rs',
+     'if &d.ep.identity.attempt_id != issued_attempt {',
+     'if false && &d.ep.identity.attempt_id != issued_attempt {',
+     'axon-loop', '--test assignment', 'a_later_attempt_is_never_swapped_in_for_the_issued_one'),
+    ('M108', 'evl: the request assigns exactly the journalled population',
+     'crates/axon-loop/src/evl.rs',
+     '    if requested.len() != issued.len()\n        || requested\n',
+     '    if false && (requested.len() != issued.len())\n        && requested\n',
+     'axon-loop', '--test assignment', 'a_trial_is_never_assigned_after_outcomes_exist'),
+    ('M109', 'evl: a protected trial is preflighted after its issue',
+     'crates/axon-loop/src/evl.rs',
+     '            && ctx.created_ms < assigned_ms\n',
+     '            && false\n',
+     'axon-loop', '--test assignment', 'a_protected_trial_runs_only_after_it_is_issued'),
+    ('M110', 'assign: no trial is intaken before it is issued',
+     'crates/axon-loop/src/plan.rs',
+     'if scope == &a.scope && trials.contains(&intake.identity.trial_id) {',
+     'if false {',
+     'axon-loop', '--test assignment', 'a_population_is_issued_before_any_outcome'),
+    ('M111', 'assign: the issuer holds no other loop role',
+     'crates/axon-loop/src/plan.rs',
+     'if let Some(role) = crate::admission::other_loop_role(&config, &a.issuer_ref) {',
+     'if let Some(role) = None::<&str> {',
+     'axon-loop', '--test assignment', 'the_population_is_issued_once_by_an_independent_admitter'),
+    ('M112', 'assign: the population is exactly manifest x arms x repetitions',
+     'crates/axon-loop/src/plan.rs',
+     '    crate::evl::check_population(&tx, &frozen, &population)?;\n',
+     '    let _ = &population;\n',
+     'axon-loop', '--test redteam', 'ab9_the_single_evaluation_covers_exactly_the_manifest'),
+    ('M113', 'admit: the admitter holds no other loop role',
+     'crates/axon-loop/src/admission.rs',
+     '    if let Some(role) = other_loop_role(&tx.store.config()?, admitter) {',
+     '    if let Some(role) = None::<&str> {',
+     'axon-loop', '--test evl_admission', 'an_admitter_holds_no_other_loop_role'),
+    ('M114', 'admit: the proposer (ranker) cannot admit its own candidate',
+     'crates/axon-loop/src/admission.rs',
+     '    if &proposer == admitter {',
+     '    if false && &proposer == admitter {',
+     'axon-loop', '--test evl_admission', 'an_admitter_holds_no_other_loop_role'),
+    ('M115', 'config: one key per role, checked on read as well as write (ADR-002)',
+     'crates/axon-loop/src/store.rs',
+     ')?;\n                c.check_separation().map_err(crate::error::refused)?;\n                Ok(c)',
+     ')?;\n                Ok(c)',
+     'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
 ]
 
 
@@ -547,15 +624,18 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M79", "M80", "M81", "M82", "M83", "M84", "M85",
            "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95", "M96", "M97"}
 RETIRED = {"M58"}
+BINDING_IDS = {f"M{n}" for n in range(101, 116)}
 
 
 def in_scope(mid, scope):
     if mid in RETIRED:
         return False
     if scope == "g01":
-        return mid not in PCI_IDS
+        return mid not in PCI_IDS and mid not in BINDING_IDS
     if scope == "pci":
         return mid in PCI_IDS
+    if scope == "binding":
+        return mid in BINDING_IDS
     return True
 
 
@@ -600,8 +680,8 @@ def sha(path):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--scope=")]
     scope = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--scope=")), "g01")
-    if len(args) != 1 or scope not in ("g01", "pci", "all"):
-        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|all] OUT.json")
+    if len(args) != 1 or scope not in ("g01", "pci", "binding", "all"):
+        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|all] OUT.json")
     sys.argv = [sys.argv[0], args[0]]
     dirty = sh("git status --porcelain -- crates").stdout.strip()
     if dirty:

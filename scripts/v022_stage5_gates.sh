@@ -63,16 +63,20 @@ GATES=(
   # G11: independent admission — no other loop role (Fabric, observer, monitor,
   # proposer/ranker, subject, evaluator) admits or issues a transition.
   "G11-r22-independent-admission|axon-loop|evl_admission|an_admitter_holds_no_other_loop_role a_candidate_is_bound_to_one_experiment full_loop_accept_activate_future_task_rollback"
-  "G11-r22-independent-admission|axon-loop|pointer|a_rollback_needs_an_independent_trusted_issuer"
+  "G11-r22-independent-admission|axon-loop|pointer|a_rollback_needs_an_independent_trusted_issuer no_proposer_evaluator_or_subject_issues_a_promotion a_baseline_issuer_holds_no_other_loop_role"
+  "G11-r22-independent-admission|axon-loop|assignment|the_population_is_issued_once_by_an_independent_admitter"
   # G11: disposition — explicit reasons; only an ACCEPT by a currently trusted
   # admitter activates; safety vetoes before utility.
   "G11-r22-admission-disposition|axon-loop|evl_admission|only_an_accepted_currently_authorized_admission_activates reject_on_inferiority_or_no_economic_benefit inconclusive_on_small_sample_liability_and_unknowns"
   "G11-r22-admission-disposition|axon-loop|safety|a_candidate_violation_vetoes_before_any_utility a_violation_wins_and_the_state_is_fixed_at_evaluation"
-  "G11-r22-admission-disposition|axon-loop|protected_class|a_protected_evaluation_accepts_only_cleared_trials"
+  "G11-r22-admission-disposition|axon-loop|protected_class|a_protected_evaluation_accepts_only_cleared_trials a_protected_activation_rests_only_on_current_authority"
+  "G11-r22-admission-disposition|axon-loop|evl_admission|an_execution_cost_is_never_omitted_from_the_economics"
+  "G11-r22-admission-disposition|axon-loop|assignment|a_later_attempt_is_never_swapped_in_for_the_issued_one a_trial_is_never_assigned_after_outcomes_exist a_population_is_issued_before_any_outcome a_protected_trial_runs_only_after_it_is_issued"
   # G11: rollback revalidates the predecessor NOW (issuer, admission, revocation,
   # safety since, protected class).
   "G11-r22-rollback-revalidate|axon-loop|pointer|a_rollback_needs_an_independent_trusted_issuer rollback_to_valid_predecessor_and_revoked_predecessor_refused"
-  "G11-r22-rollback-revalidate|axon-loop|protected_class|a_rollback_revalidates_its_predecessor a_rollback_in_a_protected_scope_needs_a_protected_admission"
+  "G11-r22-rollback-revalidate|axon-loop|protected_class|a_rollback_revalidates_its_predecessor a_rollback_in_a_protected_scope_needs_a_protected_admission a_rollback_rechecks_profile_qualification"
+  "G11-r22-rollback-revalidate|axon-loop|pointer|no_proposer_evaluator_or_subject_issues_a_promotion"
   "G11-r22-rollback-revalidate|axon-loop|safety|a_violation_found_after_evaluation_blocks_activation_and_rollback"
   # G32: bindings against AUTHENTICATED records — the verifier by attestation,
   # a protected context by its observer's signature, the input workspace.
