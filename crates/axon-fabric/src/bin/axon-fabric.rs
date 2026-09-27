@@ -44,7 +44,7 @@
 //! cannot choose an issuer name or supply a key. The signer is refused before
 //! any work unless the key file is a regular file owned by this uid and
 //! readable by no one else, and derives exactly the pinned public key. After
-//! the receipt is FINAL, Fabric signs an `acf-receipt-attestation/1` binding
+//! the receipt is FINAL, Fabric signs an `acf-receipt-attestation/2` binding
 //! issuer, key id, request and receipt digests and the receipt's identity —
 //! never for a replay (the journal is the caller's to name, so a replayed
 //! receipt may be one the caller wrote), and only if the check workload could
@@ -289,9 +289,19 @@ fn submit(a: &Args) {
                         s.ran_under.as_ref(),
                     ) {
                         Ok(()) => {
-                            let att =
-                                axon_loop_contracts::attestation::sign(&key, &id, &req, &s.receipt)
-                                    .unwrap_or_else(|e| refuse("io", &e, 2));
+                            let att = axon_loop_contracts::attestation::sign(
+                                &key,
+                                &id,
+                                &req,
+                                &s.receipt,
+                                // Fabric's own clock: the trusted anchor EVL
+                                // compares with the plan's freeze.
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis() as u64)
+                                    .unwrap_or(0),
+                            )
+                            .unwrap_or_else(|e| refuse("io", &e, 2));
                             (Some(att), None)
                         }
                         Err(why) => (None, Some(why)),

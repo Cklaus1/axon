@@ -67,7 +67,7 @@
 //!    did not complete yielding `unknown`. For ANY cited result the issuer must
 //!    be a trusted verifier that is not the subject, and the check must not
 //!    have run as the subject's principal. And the issuer must be
-//!    AUTHENTICATED, not merely named: an `acf-receipt-attestation/1`
+//!    AUTHENTICATED, not merely named: an `acf-receipt-attestation/2`
 //!    (`--verification-attestation`) must verify under the Ed25519 key the
 //!    operator registered for that issuer in `verifier_keys`, over exactly this
 //!    receipt's and request's cl22 (G01-r22-independent-issuer,
@@ -195,7 +195,7 @@ pub struct IntakeInput<'a> {
     /// the sidecar names a `verification.verifier_ref`.
     pub verification_request: Option<&'a str>,
     pub verification_receipt: Option<&'a str>,
-    /// Step 8: the issuer's `acf-receipt-attestation/1` over that receipt and
+    /// Step 8: the issuer's `acf-receipt-attestation/2` over that receipt and
     /// request, required with them.
     pub verification_attestation: Option<&'a str>,
 }

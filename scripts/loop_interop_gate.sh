@@ -613,7 +613,7 @@ g3_docs() {
   VRC="$CL/fabric/$(jq -r .verification.verifier_ref "$1" | cut -d: -f2).json"
   VREQ="$CL/fabric/$(jq -r '.verification.evidence_refs[0]' "$1" | cut -d: -f2).json"
   # Fabric's attestation of that receipt, kept by MiCode beside it.
-  VATT="$(grep -l '"acf-receipt-attestation/1"' "$CL"/fabric/*.json 2>/dev/null | while read -r f; do
+  VATT="$(grep -l '"acf-receipt-attestation/2"' "$CL"/fabric/*.json 2>/dev/null | while read -r f; do
     [ "$(jq -r .receipt_ref "$f")" = "$(jq -r .verification.verifier_ref "$1")" ] && echo "$f"; done | head -1)"
 }
 

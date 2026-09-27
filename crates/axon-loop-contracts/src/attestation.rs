@@ -6,7 +6,7 @@
 //! "a string on the operator's list", so a subject that copied the string (or a
 //! worker that claimed it) was indistinguishable from the verifier (FG-050).
 //! The receipt's schema is vendored and closed, so the proof is DETACHED: an
-//! `acf-receipt-attestation/1` in which the issuer signs, with an Ed25519 key,
+//! `acf-receipt-attestation/2` in which the issuer signs, with an Ed25519 key,
 //! the canonical JSON of one explicit, domain-separated binding:
 //!
 //! * `schema` — the domain: these bytes are an attestation of this version and
@@ -21,7 +21,12 @@
 //!   output workspace (artifact), backend profile, policy digest;
 //! * `operation_id`, `task_id`, `trial_id`, `attempt_id`, `execution_id` — the
 //!   receipt's identity, stated in the signed bytes even though the digests
-//!   imply it, so no reading of the attestation depends on re-deriving it.
+//!   imply it, so no reading of the attestation depends on re-deriving it;
+//! * `issued_ms` (`/2`) — the ISSUER's clock when it signed. A trusted time
+//!   anchor: the freeze-before-outcomes rule used to rest only on the unsigned
+//!   episode context, so a verdict minted before a plan froze could count after
+//!   it (the disclosed G01 freshness limitation; G33-r22-decision-rule-freeze).
+//!   EVL refuses to count a verdict attested before the plan froze.
 //!
 //! Cryptographic authenticity does NOT replace the semantic joins: intake still
 //! requires that this signed pair is the one the sidecar cites, for THIS trial,
@@ -31,13 +36,14 @@ use crate::error::{shape, Refusal};
 use crate::{ComputeRequest, ExecutionReceipt, OpaqueRef};
 use serde_json::{json, Value};
 
-pub const ATTESTATION_SCHEMA: &str = "acf-receipt-attestation/1";
+pub const ATTESTATION_SCHEMA: &str = "acf-receipt-attestation/2";
 
 /// Every field an attestation binds, in one place: the signed bytes are the
 /// canonical JSON of exactly this object.
 fn binding(
     issuer_ref: &OpaqueRef,
     key_id: &str,
+    issued_ms: u64,
     req: &ComputeRequest,
     rc: &ExecutionReceipt,
 ) -> Result<Value, Refusal> {
@@ -45,6 +51,7 @@ fn binding(
         "schema": ATTESTATION_SCHEMA,
         "issuer_ref": issuer_ref.as_str(),
         "key_id": key_id,
+        "issued_ms": issued_ms,
         "request_ref": crate::digest(req)?.to_string(),
         "receipt_ref": crate::digest(rc)?.to_string(),
         "operation_id": rc.operation_id.as_str(),
@@ -91,19 +98,22 @@ pub fn public_key_of(pkcs8: &[u8]) -> Result<String, String> {
     Ok(hex(kp.public_key().as_ref()))
 }
 
-/// Sign the attestation of `rc` answering `req`, as `issuer_ref`. For the
-/// issuer (Fabric's operator-configured signer) and tests only.
+/// Sign the attestation of `rc` answering `req`, as `issuer_ref`, at the
+/// issuer's clock `issued_ms`. For the issuer (Fabric's operator-configured
+/// signer) and tests only.
 pub fn sign(
     pkcs8: &[u8],
     issuer_ref: &OpaqueRef,
     req: &ComputeRequest,
     rc: &ExecutionReceipt,
+    issued_ms: u64,
 ) -> Result<Value, String> {
     use ring::signature::{Ed25519KeyPair, KeyPair};
     let kp = Ed25519KeyPair::from_pkcs8(pkcs8)
         .map_err(|_| "the issuer key is not a PKCS#8 Ed25519 private key".to_string())?;
     let pk = kp.public_key().as_ref().to_vec();
-    let mut doc = binding(issuer_ref, &key_fingerprint(&pk), req, rc).map_err(|e| e.to_string())?;
+    let mut doc = binding(issuer_ref, &key_fingerprint(&pk), issued_ms, req, rc)
+        .map_err(|e| e.to_string())?;
     let bytes = crate::canonical_bytes(&doc).map_err(|e| e.to_string())?;
     doc["alg"] = json!("ed25519");
     doc["public_key"] = json!(hex(&pk));
@@ -130,10 +140,12 @@ pub fn verify(
             ))
         })?;
     let key_id = key_fingerprint(&registered);
-    let want = binding(issuer_ref, &key_id, req, rc)?;
     let obj = doc
         .as_object()
         .ok_or_else(|| shape("attestation: not a JSON object"))?;
+    let issued_ms = issued_ms(doc)
+        .ok_or_else(|| shape("attestation: no issued_ms (the issuer's signing time)"))?;
+    let want = binding(issuer_ref, &key_id, issued_ms, req, rc)?;
     let bound = want.as_object().expect("an object");
     for k in obj.keys() {
         if !bound.contains_key(k) && !["alg", "public_key", "signature"].contains(&k.as_str()) {
@@ -180,6 +192,12 @@ pub fn verify(
             ))
         })?;
     Ok(key_id)
+}
+
+/// The issuer's signing time an attestation states. Authenticated only by
+/// [`verify`] (it is in the signed binding); read it after verifying.
+pub fn issued_ms(doc: &Value) -> Option<u64> {
+    doc.get("issued_ms").and_then(Value::as_u64)
 }
 
 /// A detached signature over ONE document, domain-separated: the signed bytes
@@ -327,7 +345,7 @@ mod tests {
     /// A key, its public half, and a genuine attestation of (req, rc).
     fn signed() -> (Vec<u8>, String, Value) {
         let (k, pk) = generate().expect("key");
-        let doc = sign(&k, &issuer(), &req(), &rc()).expect("sign");
+        let doc = sign(&k, &issuer(), &req(), &rc(), 1_000).expect("sign");
         (k, pk, doc)
     }
 
@@ -361,6 +379,7 @@ mod tests {
             "trial_id",
             "attempt_id",
             "execution_id",
+            "issued_ms",
         ] {
             let mut d = doc.clone();
             d[field] = json!("x");
@@ -369,6 +388,25 @@ mod tests {
                 "{field} altered, still verified"
             );
         }
+    }
+
+    /// `/2`: the issuer's signing time is in the SIGNED bytes — moving it
+    /// (say, after a plan's freeze) breaks the signature, so a verdict cannot
+    /// be re-dated into counting.
+    #[test]
+    fn the_signing_time_is_signed() {
+        let (_, pk, doc) = signed();
+        assert_eq!(issued_ms(&doc), Some(1_000));
+        assert!(verify(&doc, &issuer(), &req(), &rc(), &pk).is_ok());
+        let mut later = doc.clone();
+        later["issued_ms"] = json!(9_999_999);
+        let e = verify(&later, &issuer(), &req(), &rc(), &pk)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("does not verify"), "{e}");
+        let mut none = doc.clone();
+        none.as_object_mut().unwrap().remove("issued_ms");
+        assert!(verify(&none, &issuer(), &req(), &rc(), &pk).is_err());
     }
 
     /// The document is untouched; what it is checked AGAINST differs.
@@ -399,7 +437,7 @@ mod tests {
         // presented key and key id say "registered", the signature does not.
         let (_, pk, _) = signed();
         let (k2, _) = generate().expect("key");
-        let mut forged = sign(&k2, &issuer(), &req(), &rc()).expect("sign");
+        let mut forged = sign(&k2, &issuer(), &req(), &rc(), 1_000).expect("sign");
         forged["public_key"] = json!(pk);
         forged["key_id"] = json!(key_fingerprint(&unhex(&pk).expect("hex")));
         assert!(refusal(verify(&forged, &issuer(), &req(), &rc(), &pk)).contains("does not verify"));
@@ -445,7 +483,7 @@ mod tests {
             );
         }
         assert!(public_key_of(b"not pkcs8").is_err());
-        assert!(sign(b"not pkcs8", &issuer(), &req(), &rc()).is_err());
+        assert!(sign(b"not pkcs8", &issuer(), &req(), &rc(), 1_000).is_err());
     }
 
     #[test]

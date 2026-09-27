@@ -484,3 +484,57 @@ fn only_an_accepted_currently_authorized_admission_activates() {
         w.inc_ref
     );
 }
+
+/// G33-r22-decision-rule-freeze / G01 freshness: the rule is frozen BEFORE
+/// the outcomes it judges. `acf-receipt-attestation/2` signs the verifier's
+/// clock (`issued_ms`); a verdict attested before the plan froze does not
+/// count — here genuinely signed by the TRUSTED verifier, only dated earlier.
+/// Before `/2` the ordering rested on the unsigned episode context alone.
+/// Honest control: the same evaluation with current attestations accepts.
+///
+/// Mutation: drop the `issued < freeze_ms` rule in EVL's judge → red.
+#[test]
+fn a_verdict_attested_before_the_freeze_does_not_count() {
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let mut v = evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    for t in v["trials"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .filter(|t| t["episode"]["identity"]["arm_id"] == "challenger-1")
+    {
+        let req: ComputeRequest =
+            serde_json::from_value(t["verification_request"].clone()).unwrap();
+        let rc: ExecutionReceipt =
+            serde_json::from_value(t["verification_receipt"].clone()).unwrap();
+        t["verification_attestation"] = axon_loop_contracts::attestation::sign(
+            &verifier_key().0,
+            &OpaqueRef::new(VERIFIER).unwrap(),
+            &req,
+            &rc,
+            1, // long before the freeze
+        )
+        .unwrap();
+    }
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let arm = rec.arm_for_policy(&w.cand_ref).unwrap();
+    assert_eq!(arm.verified_pass, 0, "a pre-freeze verdict counted");
+    assert_eq!(arm.unknown, 2);
+    let t = &arm.trials[0];
+    assert!(t.reason.contains("before the plan froze"), "{:?}", t.reason);
+
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let (rec, _) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default()),
+    )
+    .unwrap();
+    assert_eq!(rec.arm_for_policy(&w.cand_ref).unwrap().verified_pass, 2);
+}
+
+fn specs_for(w: &World) -> Vec<Spec<'_>> {
+    pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50))
+}

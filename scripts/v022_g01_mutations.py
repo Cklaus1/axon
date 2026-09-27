@@ -102,8 +102,8 @@ MUTATIONS = [
      "axon-loop", "--test protected_class", "a_protected_plan_counts_only_protected_backends"),
     ("M14", "EVL: a counted verdict cites its evidence",
      "crates/axon-loop/src/evl.rs",
-     "            Ok(ev) => *authenticated = Some(ev),",
-     "            Ok(_ev) => {}",
+     "            Ok((ev, _)) => *authenticated = Some(ev),",
+     "            Ok((_ev, _)) => {}",
      "axon-loop", "--test evidence_laundering",
      "a_counted_verdict_cites_the_evidence_it_was_authenticated_on"),
     ("M15", "EVL: only an intaken episode is evaluated (ADR-001 §8)",
@@ -515,6 +515,11 @@ MUTATIONS = [
      '                                let sealed = self.frame_sealed.get() || self.seal_type(name);',
      '                                let sealed = self.frame_sealed.get();',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+    ('M98', 'EVL: a verdict attested before the plan froze does not count (attestation /2 issued_ms)',
+     'crates/axon-loop/src/evl.rs',
+     '            Ok((ev, issued)) if issued < freeze_ms => {',
+     '            Ok((ev, issued)) if false && issued < freeze_ms => {',
+     'axon-loop', '--test evl_admission', 'a_verdict_attested_before_the_freeze_does_not_count'),
 ]
 
 

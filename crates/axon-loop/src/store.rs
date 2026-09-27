@@ -59,7 +59,7 @@ pub struct Config {
     /// operator registered for each trusted verifier. Membership in
     /// `trusted_verifiers` names who may vouch; this is what lets a vouching
     /// be AUTHENTICATED — verification evidence is accepted only with an
-    /// `acf-receipt-attestation/1` that verifies under the key registered for
+    /// `acf-receipt-attestation/2` that verifies under the key registered for
     /// its issuer. A trusted verifier with no key here can vouch for nothing
     /// (fail closed). Absent in a config written before this field: read as
     /// `{}`; always serialized.

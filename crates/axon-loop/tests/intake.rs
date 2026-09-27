@@ -144,9 +144,14 @@ fn attest(sk: &[u8], issuer: &str, req: &Value, rc: &Value) -> Value {
         &OpaqueRef::new(issuer).unwrap(),
         &serde_json::from_value(req.clone()).unwrap(),
         &serde_json::from_value(rc.clone()).unwrap(),
+        // Fixed, so re-signing reproduces the stored bytes; intake does not
+        // judge freshness (EVL compares it with the plan's freeze).
+        FIXTURE_ISSUED_MS,
     )
     .unwrap()
 }
+
+const FIXTURE_ISSUED_MS: u64 = 1_700_000_000_000;
 
 fn case(micro_cents: Option<u64>) -> Case {
     let dir = tempfile::tempdir().unwrap();
@@ -1501,6 +1506,7 @@ fn each_verification_rule_is_load_bearing_on_its_own() {
         &OpaqueRef::new(&subject_id).unwrap(),
         &serde_json::from_value(req.clone()).unwrap(),
         &serde_json::from_value(rc_f.clone()).unwrap(),
+        FIXTURE_ISSUED_MS,
     )
     .unwrap();
     let e = run_va(&c, &ep_c, Some(&req), Some(&rc_f), Some(&att_c)).unwrap_err();

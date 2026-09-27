@@ -245,6 +245,7 @@ fn an_unauthenticated_verdict_never_counts() {
                         &OpaqueRef::new(common::VERIFIER).unwrap(),
                         &req,
                         &rc,
+                        axon_loop::now_ms(),
                     )
                     .unwrap();
                 }

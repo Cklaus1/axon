@@ -68,7 +68,7 @@ pub struct DeliveredTrial {
     pub projection: Value,
     /// G01-r22-independent-issuer: the VERIFICATION evidence the episode cites
     /// (`verification.verifier_ref`): the registered check's request and
-    /// receipt, and the verifier's `acf-receipt-attestation/1` over them —
+    /// receipt, and the verifier's `acf-receipt-attestation/2` over them —
     /// never the trial's execution documents. A verdict (passed or failed)
     /// counts only if [`crate::intake::verify_check_evidence`] accepts them,
     /// exactly as intake does; otherwise the trial is `Unknown`.
@@ -542,6 +542,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         &a.policy_ref,
                         &Bench {
                             epoch,
+                            freeze_ms: frozen.freeze_ms,
                             verifiers: &verifiers,
                             config: &config,
                             subjects: &subjects,
@@ -662,6 +663,8 @@ fn intake_join(
 /// `evaluate`, identical for every arm.
 struct Bench<'a> {
     epoch: AuthorityEpoch,
+    /// When the plan froze: a verdict ATTESTED before it does not count.
+    freeze_ms: u64,
     verifiers: &'a BTreeSet<OpaqueRef>,
     config: &'a crate::store::Config,
     subjects: &'a BTreeSet<OpaqueRef>,
@@ -677,6 +680,7 @@ fn judge(
 ) -> Judged {
     let Bench {
         epoch,
+        freeze_ms,
         verifiers,
         config,
         subjects,
@@ -754,16 +758,22 @@ fn judge(
                 subjects,
             )
             .and_then(|(q, r, a, key_id)| {
-                Ok(VerificationEvidence {
-                    request_ref: digest(&q)?,
-                    receipt_ref: digest(&r)?,
-                    attestation_ref: digest_value(&a)?,
-                    issuer_ref: v
-                        .issuer_ref
-                        .clone()
-                        .ok_or_else(|| refused("an authenticated verdict names no issuer"))?,
-                    key_id,
-                })
+                // Authenticated by `verify` above (it is in the signed bytes).
+                let issued = axon_loop_contracts::attestation::issued_ms(&a)
+                    .ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;
+                Ok((
+                    VerificationEvidence {
+                        request_ref: digest(&q)?,
+                        receipt_ref: digest(&r)?,
+                        attestation_ref: digest_value(&a)?,
+                        issuer_ref: v
+                            .issuer_ref
+                            .clone()
+                            .ok_or_else(|| refused("an authenticated verdict names no issuer"))?,
+                        key_id,
+                    },
+                    issued,
+                ))
             })
             .map_err(|e| (UnknownKind::Unverifiable, e.to_string())),
             _ => Err((
@@ -773,7 +783,17 @@ fn judge(
         };
         match checked {
             Err((kind, e)) => return unknown(kind, format!("unauthenticated verification: {e}")),
-            Ok(ev) => *authenticated = Some(ev),
+            Ok((ev, issued)) if issued < freeze_ms => {
+                return unknown(
+                    UnknownKind::Unverifiable,
+                    format!(
+                        "verdict attested at {issued} ms, before the plan froze at {freeze_ms} ms \
+                         (verifier {}): an outcome that predates the rule cannot be judged by it",
+                        ev.issuer_ref
+                    ),
+                )
+            }
+            Ok((ev, _)) => *authenticated = Some(ev),
         }
     }
     match v.result {

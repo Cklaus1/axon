@@ -340,6 +340,7 @@ pub fn attest(issuer: &str, req: &Value, rc: &Value) -> Value {
         &OpaqueRef::new(issuer).unwrap(),
         &serde_json::from_value(req.clone()).unwrap(),
         &serde_json::from_value(rc.clone()).unwrap(),
+        axon_loop::now_ms(),
     )
     .unwrap()
 }
