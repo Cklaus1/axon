@@ -659,88 +659,7 @@ pub fn verify_check_evidence(
     let att = parse_value(att_text).map_err(semantic("verification attestation"))?;
     let key_id = axon_loop_contracts::attestation::verify(&att, issuer, &req, &rc, key)
         .map_err(|e| refused(format!("verification attestation refused: {e}")))?;
-    // What the verifier ran must be what the operator pinned for it.
-    let pin = config.verifier_pins.get(issuer).ok_or_else(|| {
-        refused(format!(
-            "verifier {issuer} has no operator pin (revision, profile, suite): its verdict cannot \
-             be tied to what the operator trusts it to run"
-        ))
-    })?;
-    if req.registered_executable_ref.as_str() != pin.registered_executable_ref
-        || req.executable_digest.as_str() != pin.executable_digest
-    {
-        return Err(refused(format!(
-            "verifier revision: the check ran {} ({}), not the pinned {} ({})",
-            req.registered_executable_ref,
-            req.executable_digest,
-            pin.registered_executable_ref,
-            pin.executable_digest
-        )));
-    }
-    if !pin
-        .backend_profiles
-        .iter()
-        .any(|p| p == rc.backend_profile_ref.as_str())
-    {
-        return Err(refused(format!(
-            "compute profile: the verdict came from {}, not a profile pinned for verifier {issuer}",
-            rc.backend_profile_ref
-        )));
-    }
-    let entry = req.argv.first().map(String::as_str).unwrap_or("");
-    let Some(suite_id) = entry.strip_prefix("check:") else {
-        return Err(refused(format!(
-            "rubric: the check ran {entry:?}, a file of the candidate's own tree — candidate \
-             bytes cannot define the acceptance rubric; a verification must run an \
-             operator-registered suite (check:<id>)"
-        )));
-    };
-    let suites: Vec<&str> = rc
-        .evidence_refs
-        .iter()
-        .map(OpaqueRef::as_str)
-        .filter(|e| e.starts_with("check-suite:"))
-        .collect();
-    let recorded = match suites.as_slice() {
-        [one] => *one,
-        _ => {
-            return Err(refused(
-                "rubric: the receipt does not record exactly one check suite version",
-            ))
-        }
-    };
-    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))
-        || !pin.check_suites.iter().any(|p| p == recorded)
-    {
-        return Err(refused(format!(
-            "rubric: suite {recorded} is not a version pinned for verifier {issuer}"
-        )));
-    }
-    // ...and it must be THIS task's acceptance check, as the operator
-    // registered it: that suite at that version, that exact test.
-    let acc = config
-        .task_acceptance
-        .get(&ep.identity.task_id)
-        .ok_or_else(|| {
-            refused(format!(
-                "acceptance: task {} has no operator-registered acceptance check, so no verdict \
-                 can decide it",
-                ep.identity.task_id
-            ))
-        })?;
-    let acc_suite = acc
-        .check_suite
-        .strip_prefix("check-suite:")
-        .and_then(|x| x.split('@').next())
-        .unwrap_or("");
-    if req.argv != [format!("check:{acc_suite}"), acc.check.clone()] || recorded != acc.check_suite
-    {
-        return Err(refused(format!(
-            "acceptance: the check ran {:?} ({recorded}), not task {}'s registered acceptance \
-             check {} in {}",
-            req.argv, ep.identity.task_id, acc.check, acc.check_suite
-        )));
-    }
+    check_pins(config, issuer, &ep.identity.task_id, &req, &rc)?;
     if subject.contains(&req.principal_ref) {
         return Err(refused(format!(
             "the check ran as principal {}, the subject itself: a task cannot verify itself",
@@ -811,6 +730,101 @@ pub fn verify_check_evidence(
         return Err(refused("matched_checks differs from the check receipt's"));
     }
     Ok((req, rc, att, key_id))
+}
+
+/// What the verifier ran must be what the operator pins for it NOW: the
+/// verifier revision, the compute profile, a pinned suite version, and the
+/// task's registered acceptance check. Applied at intake, and again whenever an
+/// admission is (re-)derived (activation, rollback), so withdrawing a pin — a
+/// profile no longer qualified, a new revision, a changed rubric — stops a
+/// verdict counting (review wf_d788c05a-be2, G11 blockers).
+pub(crate) fn check_pins(
+    config: &crate::store::Config,
+    issuer: &OpaqueRef,
+    task: &axon_loop_contracts::TaskId,
+    req: &ComputeRequest,
+    rc: &ExecutionReceipt,
+) -> Result<()> {
+    // What the verifier ran must be what the operator pinned for it.
+    let pin = config.verifier_pins.get(issuer).ok_or_else(|| {
+        refused(format!(
+            "verifier {issuer} has no operator pin (revision, profile, suite): its verdict cannot \
+             be tied to what the operator trusts it to run"
+        ))
+    })?;
+    if req.registered_executable_ref.as_str() != pin.registered_executable_ref
+        || req.executable_digest.as_str() != pin.executable_digest
+    {
+        return Err(refused(format!(
+            "verifier revision: the check ran {} ({}), not the pinned {} ({})",
+            req.registered_executable_ref,
+            req.executable_digest,
+            pin.registered_executable_ref,
+            pin.executable_digest
+        )));
+    }
+    if !pin
+        .backend_profiles
+        .iter()
+        .any(|p| p == rc.backend_profile_ref.as_str())
+    {
+        return Err(refused(format!(
+            "compute profile: the verdict came from {}, not a profile pinned for verifier {issuer}",
+            rc.backend_profile_ref
+        )));
+    }
+    let entry = req.argv.first().map(String::as_str).unwrap_or("");
+    let Some(suite_id) = entry.strip_prefix("check:") else {
+        return Err(refused(format!(
+            "rubric: the check ran {entry:?}, a file of the candidate's own tree — candidate \
+             bytes cannot define the acceptance rubric; a verification must run an \
+             operator-registered suite (check:<id>)"
+        )));
+    };
+    let suites: Vec<&str> = rc
+        .evidence_refs
+        .iter()
+        .map(OpaqueRef::as_str)
+        .filter(|e| e.starts_with("check-suite:"))
+        .collect();
+    let recorded = match suites.as_slice() {
+        [one] => *one,
+        _ => {
+            return Err(refused(
+                "rubric: the receipt does not record exactly one check suite version",
+            ))
+        }
+    };
+    if !recorded.starts_with(&format!("check-suite:{suite_id}@"))
+        || !pin.check_suites.iter().any(|p| p == recorded)
+    {
+        return Err(refused(format!(
+            "rubric: suite {recorded} is not a version pinned for verifier {issuer}"
+        )));
+    }
+    // ...and it must be THIS task's acceptance check, as the operator
+    // registered it: that suite at that version, that exact test.
+    let acc = config.task_acceptance.get(task).ok_or_else(|| {
+        refused(format!(
+            "acceptance: task {} has no operator-registered acceptance check, so no verdict \
+                 can decide it",
+            task
+        ))
+    })?;
+    let acc_suite = acc
+        .check_suite
+        .strip_prefix("check-suite:")
+        .and_then(|x| x.split('@').next())
+        .unwrap_or("");
+    if req.argv != [format!("check:{acc_suite}"), acc.check.clone()] || recorded != acc.check_suite
+    {
+        return Err(refused(format!(
+            "acceptance: the check ran {:?} ({recorded}), not task {}'s registered acceptance \
+             check {} in {}",
+            req.argv, task, acc.check, acc.check_suite
+        )));
+    }
+    Ok(())
 }
 
 /// The canonical MiCode episode's spend in micro-cents (1e-8 USD), read through

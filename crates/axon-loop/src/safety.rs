@@ -129,6 +129,7 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
     subjects.extend(crate::evo::proposer_in(&tx, &r.scope, &intaken.policy_ref));
     let is_monitor = config.trusted_monitors.contains(&r.issuer_ref);
     let is_subject = subjects.contains(&r.issuer_ref);
+    let mut key_id = None;
     match r.finding {
         Finding::Violation => {
             if !is_monitor && !is_subject {
@@ -166,6 +167,7 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
                 key,
             )
             .map_err(|e| refused(format!("clearance signature refused: {e}")))?;
+            key_id = axon_loop_contracts::attestation::key_id_of_hex(key);
         }
     }
     for e in tx.entries() {
@@ -178,6 +180,7 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
     let seq = tx.append(Event::SafetyReport {
         scope: r.scope.clone(),
         report: Box::new(r.clone()),
+        key_id,
     })?;
     Ok((r, seq))
 }
@@ -188,7 +191,10 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
 pub fn states(tx: &Tx, scope: &Scope) -> BTreeMap<(String, String, String), SafetyState> {
     let mut m: BTreeMap<(String, String, String), SafetyState> = BTreeMap::new();
     for e in tx.entries() {
-        let Event::SafetyReport { scope: s, report } = &e.event else {
+        let Event::SafetyReport {
+            scope: s, report, ..
+        } = &e.event
+        else {
             continue;
         };
         if s != scope {

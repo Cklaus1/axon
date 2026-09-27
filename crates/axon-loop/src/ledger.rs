@@ -176,6 +176,11 @@ pub enum Event {
     SafetyReport {
         scope: Scope,
         report: Box<crate::safety::SafetyReport>,
+        /// A clearance: the monitor key its signature verified under, so a
+        /// re-derivation can require that key to still be the monitor's.
+        /// Absent on violations and on older entries (bytes unchanged).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key_id: Option<String>,
     },
     /// A trusted admitter registered the eligible candidate LIST behind a
     /// `candidate_set_ref` (bytes in `candidate-sets/`; see `crate::candidates`).

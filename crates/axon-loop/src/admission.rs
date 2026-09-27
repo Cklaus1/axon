@@ -339,6 +339,73 @@ pub(crate) fn derive(
                     t.trial_id, v.issuer_ref, v.key_id
                 )));
             }
+            // ...and what it ran must still be what the operator PINS for it
+            // (ADR-001 §5: "verifier keys and pins"; rollback: "profile
+            // qualification"). The check's own documents, stored at intake.
+            let req: axon_loop_contracts::ComputeRequest =
+                tx.store.get_contract("fabric-requests", &v.request_ref)?;
+            let rc: axon_loop_contracts::ExecutionReceipt =
+                tx.store.get_contract("fabric-receipts", &v.receipt_ref)?;
+            crate::intake::check_pins(&config, &v.issuer_ref, &t.task_id, &req, &rc).map_err(
+                |e| {
+                    refused(format!(
+                        "trial {}'s verdict is no longer pinned by the operator ({e}): its \
+                         verdict no longer counts",
+                        t.trial_id
+                    ))
+                },
+            )?;
+        }
+    }
+    // A PROTECTED decision also rests on each trial's clearance and on each
+    // counted trial's authenticated preflight context. Both are re-checked
+    // against the CURRENT operator authority at every derivation, as the
+    // verdict's verifier is above: a monitor or observer untrusted, or
+    // re-keyed, since then vouches for nothing (review wf_d788c05a-be2).
+    if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
+        let observers = config.observers();
+        let key_now = |keys: &std::collections::BTreeMap<OpaqueRef, String>, who: &OpaqueRef| {
+            keys.get(who)
+                .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk))
+        };
+        for arm in &eval.arms {
+            for t in &arm.trials {
+                if matches!(
+                    t.outcome,
+                    crate::evl::Outcome::VerifiedPass | crate::evl::Outcome::Fail
+                ) && !t.context_signed_by.as_ref().is_some_and(|c| {
+                    observers.contains(&c.issuer_ref)
+                        && key_now(&config.observer_keys, &c.issuer_ref).as_deref()
+                            == Some(c.key_id.as_str())
+                }) {
+                    return Err(refused(format!(
+                        "trial {}'s protected context is not authenticated by an observer the \
+                         operator still trusts with the key it was verified under: its verdict \
+                         no longer counts",
+                        t.trial_id
+                    )));
+                }
+                if t.safety == crate::safety::SafetyState::Clear
+                    && !tx.entries().iter().any(|e| {
+                        e.seq <= eval_seq
+                            && matches!(&e.event, Event::SafetyReport { scope, report, key_id }
+                                if scope == &eval.scope
+                                    && report.finding == crate::safety::Finding::Clear
+                                    && report.identity.task_id == t.task_id
+                                    && report.identity.arm_id == arm.arm_id
+                                    && report.identity.trial_id == t.trial_id
+                                    && config.trusted_monitors.contains(&report.issuer_ref)
+                                    && key_id.is_some()
+                                    && key_now(&config.monitor_keys, &report.issuer_ref) == *key_id)
+                    })
+                {
+                    return Err(refused(format!(
+                        "trial {}'s clearance is not from a monitor the operator still trusts with \
+                         the key it was signed under: the trial is no longer cleared",
+                        t.trial_id
+                    )));
+                }
+            }
         }
     }
     // Hypothesis history AS OF the evaluation, so the count cannot change

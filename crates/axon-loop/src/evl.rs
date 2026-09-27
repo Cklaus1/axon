@@ -170,6 +170,20 @@ pub struct TrialResult {
         skip_serializing_if = "crate::safety::SafetyState::is_unknown"
     )]
     pub safety: crate::safety::SafetyState,
+    /// PROTECTED class, counted trial: the observer whose signature
+    /// authenticated the preflight context, and the key it verified under, so
+    /// every re-derivation can require that authority still to be current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_signed_by: Option<SignedBy>,
+}
+
+/// Who signed a document, under which operator-registered key.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignedBy {
+    pub issuer_ref: OpaqueRef,
+    /// `ed25519:<16 hex>`.
+    pub key_id: String,
 }
 
 /// Which signed verification a counted verdict rests on.
@@ -663,6 +677,25 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                 ))
                 .copied()
                 .unwrap_or_default(),
+            // A counted protected trial passed `authenticated_context` under
+            // the CURRENT observer key; record which, for re-derivation.
+            context_signed_by: delivered
+                .get(&key)
+                .filter(|_| {
+                    frozen.evaluation_class == crate::plan::EvaluationClass::Protected
+                        && matches!(outcome, Outcome::VerifiedPass | Outcome::Fail)
+                })
+                .and_then(|d| {
+                    let who = &d.ctx.observed_issuer_ref;
+                    config
+                        .observer_keys
+                        .get(who)
+                        .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk))
+                        .map(|key_id| SignedBy {
+                            issuer_ref: who.clone(),
+                            key_id,
+                        })
+                }),
         });
     }
     for (id, arm) in arms.iter_mut() {

@@ -583,3 +583,194 @@ fn a_protected_context_is_authenticated_not_named() {
         "the observer's own signature must count"
     );
 }
+
+/// World with the candidate ACCEPTed on a PROTECTED evaluation (protected
+/// backend, every trial cleared, every context observer-signed).
+fn protected_accepted(exp: &str) -> (World, Ref) {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let mut v = evl_request(exp, &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (_, e) = evaluate(&w.s, &v).unwrap();
+    let (rec, adm) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
+    assert_eq!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
+    (w, adm)
+}
+
+fn withdraw(w: &World, f: impl FnOnce(&mut axon_loop::store::Config)) {
+    let mut cfg = w.s.config().unwrap();
+    f(&mut cfg);
+    w.s.write_config(&cfg).unwrap();
+}
+
+fn fresh_key() -> String {
+    axon_loop_contracts::attestation::generate().unwrap().1
+}
+
+/// G11-r22-admission-disposition: "only accepted and CURRENTLY authorized
+/// evidence permits activation". Every authority a protected ACCEPT rests on
+/// — the clearing monitor, the context observer, the verifier's pins and the
+/// task's acceptance check — is re-checked when the admission is activated;
+/// withdrawing any one refuses the activation, writing nothing. Positive
+/// control: nothing withdrawn, it activates (review wf_d788c05a-be2).
+#[test]
+fn a_protected_activation_rests_only_on_current_authority() {
+    type Withdrawal = fn(&mut axon_loop::store::Config);
+    let cases: [(&str, Withdrawal, &str); 7] = [
+        (
+            "monitor-untrusted",
+            |c| c.trusted_monitors.clear(),
+            "no longer cleared",
+        ),
+        (
+            "monitor-rekeyed",
+            |c| {
+                let m = OpaqueRef::new(MONITOR).unwrap();
+                c.monitor_keys.insert(m, fresh_key());
+            },
+            "no longer cleared",
+        ),
+        (
+            "observer-untrusted",
+            |c| {
+                let o = OpaqueRef::new(OBSERVER).unwrap();
+                c.trusted_observers.retain(|x| x != &o);
+                c.observer_keys.remove(&o);
+            },
+            "protected context is not authenticated",
+        ),
+        (
+            "observer-rekeyed",
+            |c| {
+                c.observer_keys
+                    .insert(OpaqueRef::new(OBSERVER).unwrap(), fresh_key());
+            },
+            "protected context is not authenticated",
+        ),
+        (
+            "profile-withdrawn",
+            |c| {
+                c.verifier_pins
+                    .get_mut(&OpaqueRef::new(VERIFIER).unwrap())
+                    .unwrap()
+                    .backend_profiles
+                    .retain(|p| p != PROTECTED);
+            },
+            "compute profile",
+        ),
+        (
+            "revision-changed",
+            |c| {
+                c.verifier_pins
+                    .get_mut(&OpaqueRef::new(VERIFIER).unwrap())
+                    .unwrap()
+                    .executable_digest = format!("acf1:{}", "f".repeat(64));
+            },
+            "verifier revision",
+        ),
+        (
+            "acceptance-withdrawn",
+            |c| c.task_acceptance.clear(),
+            "acceptance",
+        ),
+    ];
+    for (name, f, why) in cases {
+        let (w, adm) = protected_accepted(name);
+        withdraw(&w, f);
+        let before = snapshot(w.dir.path());
+        let t = transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            false,
+        );
+        match apply(&w, t) {
+            Err(LoopError::Refused(m)) => assert!(m.contains(why), "{name}: {m}"),
+            o => panic!("{name}: activated on withdrawn authority: {o:?}"),
+        }
+        assert_eq!(
+            snapshot(w.dir.path()),
+            before,
+            "{name}: a refusal wrote something"
+        );
+    }
+    let (w, adm) = protected_accepted("control");
+    let t = transition(
+        "a1",
+        "activate",
+        &w.inc_ref,
+        Some(&w.cand_ref),
+        1,
+        Some(&adm),
+        false,
+    );
+    assert_eq!(apply(&w, t).unwrap(), Some(w.cand_ref.clone()));
+}
+
+/// G11-r22-rollback-revalidate: "a rollback rechecks … profile
+/// qualification". A predecessor admitted on verdicts from a compute profile
+/// the operator has since withdrawn is not reinstated: there is no safe
+/// predecessor, and nothing is written.
+#[test]
+fn a_rollback_rechecks_profile_qualification() {
+    let (w, adm) = protected_accepted("rb-profile");
+    apply(
+        &w,
+        transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            false,
+        ),
+    )
+    .unwrap();
+    apply(
+        &w,
+        transition(
+            "r1",
+            "rollback",
+            &w.cand_ref,
+            Some(&w.inc_ref),
+            2,
+            Some(&w.baseline),
+            false,
+        ),
+    )
+    .unwrap();
+    withdraw(&w, |c| {
+        c.verifier_pins
+            .get_mut(&OpaqueRef::new(VERIFIER).unwrap())
+            .unwrap()
+            .backend_profiles
+            .retain(|p| p != PROTECTED);
+    });
+    let before = snapshot(w.dir.path());
+    match apply(
+        &w,
+        transition(
+            "r2",
+            "rollback",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            3,
+            Some(&adm),
+            false,
+        ),
+    ) {
+        Err(LoopError::Refused(m)) => assert!(
+            m.contains("no safe predecessor") && m.contains("compute profile"),
+            "{m}"
+        ),
+        o => panic!("rolled back onto a withdrawn profile: {o:?}"),
+    }
+    assert_eq!(snapshot(w.dir.path()), before);
+}
