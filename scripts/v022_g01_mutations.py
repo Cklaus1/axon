@@ -462,10 +462,12 @@ def main():
     # The Fabric integration tests exec the `axon` interpreter from the target
     # dir: build it from THIS tree first, so no baseline or kill rests on a
     # stale binary, and record which one it was.
-    built = subprocess.run(
-        ["bash", "-c", "source scripts/lib_bounded_run.sh && bounded_run 16G 1800 "
-         "cargo build -q -p axon-core --no-default-features --bin axon"],
-        cwd=ROOT, capture_output=True, text=True)
+    def build_interpreter():
+        return subprocess.run(
+            ["bash", "-c", "source scripts/lib_bounded_run.sh && bounded_run 16G 1800 "
+             "cargo build -q -p axon-core --no-default-features --bin axon"],
+            cwd=ROOT, capture_output=True, text=True)
+    built = build_interpreter()
     if built.returncode != 0:
         sys.exit(f"refused: could not build the axon interpreter\n{built.stderr[-2000:]}")
     target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
@@ -503,12 +505,23 @@ def main():
                     f.write(original)
             if sha(path) != before:
                 sys.exit(f"FATAL: {rel} not restored after {mid}")
+            # An integration-test kill of an axon-core mutant rebuilds the
+            # shared interpreter binary FROM THE MUTANT. Rebuild it from the
+            # restored tree, or every later Fabric row runs a mutated
+            # interpreter.
+            if rel.startswith("crates/axon-core/") and "--lib" not in target:
+                if build_interpreter().returncode != 0:
+                    sys.exit(f"FATAL: could not rebuild the interpreter after {mid}")
         good = base == "passed" and result == "killed"
         ok &= good
         results.append({"id": mid, "guard": guard, "file": rel, "package": pkg,
                          "target": target, "test": test, "baseline": base, "result": result,
                          "kill_evidence": evidence})
         print(f"{'OK ' if good else 'BAD'} {mid} baseline={base} {result}  {guard}", flush=True)
+    # The run must end on the interpreter it started with.
+    if toolchain["axon_bin_sha256"] is not None and sha(axon_bin) != toolchain["axon_bin_sha256"]:
+        print(f"BAD interpreter binary changed during the run ({axon_bin})", flush=True)
+        ok = False
     doc = {"schema": "axon-v022-mutation-run/2", "gate": "G01" if scope == "g01" else scope,
            "scope": scope, "commit": commit,
            "toolchain": toolchain,
