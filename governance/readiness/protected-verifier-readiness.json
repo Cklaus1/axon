@@ -82,11 +82,9 @@
       ],
       "missing": [
         "G01-r22-unknown-outcome",
-        "G32-r22-sidecar-bindings",
         "G11-r22-independent-admission",
         "G11-r22-admission-disposition",
-        "G11-r22-rollback-revalidate",
-        "G33-r22-decision-rule-freeze"
+        "G11-r22-rollback-revalidate"
       ]
     },
     "no_open_blocking_false_greens": {

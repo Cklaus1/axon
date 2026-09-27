@@ -1,0 +1,372 @@
+{
+ "schema": "axon-v022-final-review/1",
+ "workflow_run": "wf_d788c05a-be2",
+ "axon_sha": "363b783416f450fe733784e827e9fc1900fe944b",
+ "micode_sha": "1baa2f815765b303505ef6e854dc285eef3a4391",
+ "reviews": [
+  {
+   "gate": "G33-r22-decision-rule-freeze: \"The exact statistical method, sample/horizon, multiple-comparison handling, minimum worthwhile improvement, quality margin, missing-data rule and cluster unit are frozen before protected results; optional stopping or repeated tasks do not inflate independent sample size.\" Judged against the frozen Axon tree at 363b783416f450fe733784e827e9fc1900fe944b, on the protected-class path.",
+   "findings": [
+    {
+     "title": "Which attempt counts for a task is chosen after outcomes exist (best-of-k selection flips a protected REJECT to ACCEPT)",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "nearest: \"optional stopping or repeated tasks do not inflate independent sample size\". The literal clause is not falsified, because the independent sample size stays at the number of manifest tasks. The defect falls under sibling gates: G08-r21-evolution-preregister (\"repeated-trial identity, stopping rule ... frozen before outcomes are visible\"), G10-r22-cohort-denominator (\"successes alone cannot redefine ... experiment population\") and G33-preregister (\"assignment/stopping rules\").",
+     "evidence": "`EvlRequest.assigned` is supplied at evaluation time. No ledger event pre-issues assignments or attempt ids, although ADR-001 \u00a73 item 6 says \"Assignments and attempt ids are issued, and stored in the operator-owned store, BEFORE execution\". Intake has no experiment binding, and attestation /2 carries no nonce. `evl::evaluate` checks only that the assignment is manifest \u00d7 arms \u00d7 `repetitions` and that trial ids are unique among EVALUATED trials. Executed probe (crates/axon-loop/tests/g33_probe.rs in a /var/tmp copy of the frozen tree, since deleted), PROTECTED class (protected_scopes, protected backend pin, attestation /2, monitor clearance via clear_all): (1) Honest control: candidate c0=FAIL, c1=PASS, incumbent 2/2 gives `CONTROL decision=Reject reasons=[\"quality inferiority established: candidate \u2264 1/2 passes vs incumbent \u2265 2/2 beyond margin\"]`. (2) Attack: the candidate makes a second post-freeze attempt at task-0 (c0b=PASS). All attempts are intaken and cleared. The evaluation request then assigns only c0b, giving `PICK cand assigned=2 pass=2 fail=0 unknown=0` and `PICK decision=Accept reasons=[\"all frozen plan criteria established\"] cand distinct_tasks=2`, evaluation_class=Protected.",
+     "executed": true,
+     "fix": "Carry out ADR-001 \u00a73 item 6. Have a trusted admitter journal the assignment (task, arm, trial_id or attempt ids) BEFORE execution, as part of the freeze or as a ledger event right after it. Then have `evl::evaluate` require `assigned` to equal that journalled set. Also refuse, or count as part of the population, any intaken episode for the experiment's arms and tasks whose trial id is not in it. Binding the experiment id or a single-use nonce into the attestation, as the ADR describes, closes the same hole from the verifier side."
+    },
+    {
+     "title": "The gate's evidence rows do not cite the test that pins 'repeated tasks do not inflate independent sample size'",
+     "classification": "MINOR",
+     "clause": "none (proof weakness)",
+     "evidence": "The clause holds in the code by construction. `plan::freeze` refuses a manifest with fewer tasks than `independent_units`. `evl::evaluate` requires exactly the manifest \u00d7 `repetitions`. `admission::decide` checks `distinct_tasks` (a count of tasks, not trials) against `independent_units`. The test that pins the freeze refusal, `evl_admission::inconclusive_on_small_sample_liability_and_unknowns`, sits under G21's row, not G33's. No existing test uses repetitions > 1 with a manifest smaller than independent_units. My probe g33_probe_repetitions_do_not_inflate_units (repetitions=2, independent_units=3, 2-task manifest) was refused at freeze: \"the task manifest has 2 task(s) < independent_units 3\". The `distinct_tasks < independent_units` branch in `decide` cannot be reached once freeze and evaluation coverage both hold, so no mutation can be killed there.",
+     "executed": true,
+     "fix": "Add a repetitions>1 test to the G33 row in scripts/v022_stage5_gates.sh (freeze refused when manifest < units even with repetitions=2, and an admission's distinct_tasks equals the manifest size, not the trial count). Cite inconclusive_on_small_sample_liability_and_unknowns in that row as well."
+    },
+    {
+     "title": "analysis_method_ref is a free reference that nothing binds to the executed method",
+     "classification": "MINOR",
+     "clause": "nearest: \"The exact statistical method ... [is] frozen\"",
+     "evidence": "`PilotPlan.analysis_method_ref` only has to be non-null to freeze; nothing checks what it points to. The method actually applied is the hard-coded `decide` behind `uncertainty_rule = exact_bounds` (the only value `Rules::parse` accepts), and that value is inside the frozen plan digest. So the method is frozen, but the plan's method reference could name a different document.",
+     "executed": false,
+     "fix": "Require analysis_method_ref to equal a fixed digest of the rule-grammar and method version (as is already done for rollback_policy_ref), or reject any other value at freeze."
+    },
+    {
+     "title": "Independent units are identified by task name, not task content",
+     "classification": "FUTURE",
+     "clause": "nearest: \"repeated tasks do not inflate independent sample size\"",
+     "evidence": "A TaskManifest is a sorted, duplicate-free list of TaskId strings registered by a trusted admitter. Nothing binds a task id to distinct content (input workspace, acceptance suite). A manifest that lists the same underlying task under two ids would count it as two units. Only a trusted admitter can register a manifest, so this is operator-trust hardening, not a way around the gate.",
+     "executed": false,
+     "fix": "Bind each manifest task to a content digest (input workspace plus acceptance pin), and refuse a manifest in which two ids share one."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Statistical method, quality margin, minimum worthwhile improvement, missing-data rule, multiplicity and cluster unit are frozen and executable",
+     "evidence": "Every rule field is part of the PilotPlan digest. `plan::freeze` refuses any unset operator field and any rule `rules::Rules::parse` cannot execute: quality_margin=pass_rate_margin_ppm, economic_threshold=min_cost_reduction_ppm, missing_data_rule=unknown_bounds, uncertainty_rule=exact_bounds, multiplicity_rule=single_candidate, independent_unit=task. `admission::derive` re-parses Rules from the FROZEN plan loaded by digest. Re-registering a frozen id is refused, and one candidate can be frozen in only one experiment. I re-ran the row tests: i3_i4_i7_i8_i13_i14_rules_must_be_executable, g6_freeze_is_permanent and g7 all pass."
+    },
+    {
+     "part": "Frozen before protected results",
+     "evidence": "A trial whose context `created_ms` is earlier than the freeze's ledger `recorded_ms` is refused (g7_trials_before_freeze_are_refused). In a protected evaluation the context is authenticated by the observer's registered key. A verdict whose signed attestation /2 `issued_ms` is earlier than `freeze_ms` is Unknown (a_verdict_attested_before_the_freeze_does_not_count passes, and mutant M98 is killed). The admission refuses an evaluation whose `eval_seq` is at or before `freeze_seq`. The evaluation class is fixed at freeze, so a plan frozen as development cannot promote in a protected scope."
+    },
+    {
+     "part": "Sample/horizon frozen",
+     "evidence": "task_manifest_ref, independent_units and repetitions are frozen. There is ONE evaluation per experiment, and it must cover exactly manifest \u00d7 both arms \u00d7 repetitions. Trial ids are unique across the scope's evaluations. Tests ab9_ab10_one_evaluation_per_experiment_the_reject_stands, ab9_the_single_evaluation_covers_exactly_the_manifest and ab10_trial_ids_never_reused_across_experiments all pass (re-run)."
+    },
+    {
+     "part": "Optional stopping and repeated tasks do not inflate independent sample size",
+     "evidence": "Sample size is counted as distinct tasks (`ArmFacts.distinct_tasks`), never as trials. Freeze requires the manifest to hold at least independent_units tasks: executed with repetitions=2, independent_units=3 on 2 tasks, it was refused. Undelivered trials stay in the denominator as missing, so withholding cannot shrink the population. A second evaluation, and so a re-roll after a REJECT, is refused. A second candidate from the same incumbent makes admission INCONCLUSIVE by multiplicity. The exact_bounds method has no sampling model whose uncertainty repetitions could shrink. In the best-of-k probe, distinct_tasks stayed at 2."
+    },
+    {
+     "part": "Proof run",
+     "evidence": "bind1/summary.txt: 1e stage5 gates PASS. 1e.log shows G33 evl_admission 1/1 and redteam 6/6. The mutation run killed 97 of 97, including M98 on the issued_ms freeze guard. The frozen tree was left clean at 363b7834, and the scratch copy at /var/tmp/bind-final-G33-r22-decision-rule-freeze has been removed."
+    }
+   ],
+   "verdict": "REGISTER"
+  },
+  {
+   "gate": "G11-r22-admission-disposition",
+   "findings": [
+    {
+     "title": "Protected activation still rests on safety clearances, preflight contexts and verifier pins the operator has since withdrawn; only verifier membership and key are re-checked",
+     "classification": "BLOCKER",
+     "clause": "only accepted and currently authorized evidence permits activation",
+     "evidence": "EXECUTED on a copy of 363b783 (tests/probe_g11.rs, now deleted). Setup: a protected scope, a protected-class evaluation on the protected backend, every trial cleared by a signed MONITOR clearance and every context signed by OBSERVER, admitted ACCEPT. Then config.write_config withdrew authority, and pointer::transition activate was called:\n(a) trusted_monitors and monitor_keys cleared after the admission: Ok(Some(cand_ref)), activated.\n(b) the same withdrawal BEFORE admit: admit still returns Accept ['all frozen plan criteria established'] and activation succeeds.\n(c) trusted_observers and observer_keys cleared: Ok(Some(cand_ref)).\n(d) verifier_pins[VERIFIER].backend_profiles and check_suites emptied and task_acceptance cleared: Ok(Some(cand_ref)).\nControl, same setup: clearing verifier_keys is refused with \"trial c0's verdict was authenticated by fixture:independent-verifier under ed25519:502146c6edaf81fd, which the operator no longer trusts with that key\".\nCause: admission::derive, which rederive re-runs at activation and rollback, re-checks current authority only for verdict verifiers (trusted_verifiers plus verifier_keys key_id). Clearances are frozen into TrialResult.safety at evaluation (evl.rs `safety::states`), contexts are checked against observers/observer_keys only inside evl::evaluate, and verifier_pins/task_acceptance are consulted only in intake::verify_check_evidence. Nothing re-checks any of them at activation. A protected ACCEPT depends on the clearances (decide() makes non-Clear INCONCLUSIVE when the class is Protected) and on the contexts. ADR-001 \u00a75 lists 'verifier keys and pins' among the current state activation must revalidate, so the pins omission is not an ADR-accepted limitation. The named test only_an_accepted_currently_authorized_admission_activates covers only an admitter untrusted after admission.",
+     "executed": true,
+     "fix": "In admission::derive (so admit, activation and rollback all apply it), re-validate every piece of evidence the decision rests on against CURRENT config.\n- Clearances: record the clearing monitor's issuer and key_id per trial in TrialResult. Require that monitor to still be in trusted_monitors with the same monitor_keys key id; otherwise treat the trial as Unknown (INCONCLUSIVE under Protected), or refuse.\n- Protected contexts: record the observer and key_id, and require both still to be current in trusted_observers and observer_keys.\n- Verdicts: re-check VerificationEvidence against current verifier_pins and task_acceptance (the stored request/receipt refs allow it).\nAdd a paired test for each of the four withdrawals, with a positive control."
+    },
+    {
+     "title": "Admission economics omit the always-unknown Fabric execution cost and report the arms as Known, so a candidate with a huge execution cost is ACCEPTed as the cheaper arm",
+     "classification": "BLOCKER",
+     "clause": "stale/unknown costs or safety failures cannot be hidden by aggregate utility",
+     "evidence": "EXECUTED (probe_execution_cost_omitted_from_admission, protected scope and protected evaluation). Each candidate trial's ACF execution receipt was set to cost_micro=900000 (the request reservation max_cost_micro=100000; incumbent receipts at 25), and the episode acf_receipt_ref was re-derived. Intake, evaluate and admit all accepted it:\n- evaluation arm economics: challenger Known{cost_micro:100}, incumbent Known{cost_micro:200};\n- admission: Accept ['all frozen plan criteria established'], candidate.total=Known{100}, incumbent.total=Known{200};\n- activation: Ok(Some(cand_ref)).\nCause: evl::evaluate builds arm.economics with tel::summarize_with_missing over the episodes' model `usage` only. It never adds the per-attempt execution component. Under D10 that component is always ExecutionCost::Unknown and holds max(reservation, receipt liability, receipt cost), which tel::join adds and which tel.rs documents as making 'a joined total ... never a known number today \u2014 which is the truthful answer'. The admission therefore treats an unknown cost as zero (contrary to ADR D4, 'UNKNOWN cost never becomes zero'), passes the economic-benefit criterion on a subset of cost, and states the arm total as Known.\nRelated: in this protected evaluation the producer-asserted usage state 'final' is taken as final with no operator-signed metering, and the usage price_schedule_ref (cl22:ddd\u2026) is never checked against the request's schedule (fixture:synthetic-not-pricing) or any pinned schedule.\nReachability note: the frozen MiCode sidecar emits only 'estimated'/'unknown' (micode-persist/src/loop_sidecar.rs:166), so the real pair reaches Unresolved and INCONCLUSIVE. That is the fail-safe-by-accident that ADR \u00a75 acknowledges for producer-final. The sidecar schema admits 'final', though, and the execution-cost omission applies to any Known model cost.",
+     "executed": true,
+     "fix": "Build arm economics in evaluate with the tel::join path: the pinned price schedule, and the trial's ACF request/receipt as FabricAttempt. Each attempt then contributes its Unknown execution component with reserved liability, and the totals are Unresolved until an execution schedule exists (D10). Bind the usage and request schedule refs to the plan's pinned schedule. In a protected class, downgrade a producer-asserted 'final' to 'estimated' unless operator-signed metering backs it (ADR \u00a75). Add a test where only the candidate's execution receipt differs and the decision must not be ACCEPT."
+    },
+    {
+     "title": "The incumbent-of-record activates with no evidence at all",
+     "classification": "MINOR",
+     "clause": "only accepted and currently authorized evidence permits activation",
+     "evidence": "pointer::check_activate route 1 activates the baseline policy from PAUSED on a BaselineRecord: an admitter designation with no evaluation. The only current-authority check is that the issuer is still trusted, and protected_scope_gate exempts it by design. It is documented as the necessary bootstrap and is not an admission disposition, so it is not counted against the gate.",
+     "executed": false,
+     "fix": "State in the gate evidence that the baseline route is outside admission. Signed baselines (ADR \u00a73.4) as planned."
+    },
+    {
+     "title": "The gate's named tests do not exercise evidence authority withdrawn between admission and activation, or execution cost",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "The rows are evl_admission (3), safety (2) and protected_class (1). Re-run in the probe copy: 7/7 pass, including a_violation_found_after_evaluation_blocks_activation_and_rollback. only_an_accepted_currently_authorized_admission_activates withdraws only admitter trust. No test withdraws a monitor, an observer or a verifier pin, and no test varies the Fabric execution cost. Both blockers above passed the full suite and the 97/97 mutation run undetected.",
+     "executed": true,
+     "fix": "Add the probe scenarios as named tests on the G11-r22-admission-disposition rows, each paired with a positive control."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Accepted, rejected and inconclusive (and vetoed) have explicit immutable reasons",
+     "evidence": "admission::decide always returns a non-empty reasons Vec: every INCONCLUSIVE, REJECT (with the inconclusive reasons appended) and VETO reason names its trigger, and ACCEPT gives 'all frozen plan criteria established'. The AdmissionRecord is stored by put_cas under its content digest. get_record re-checks the digest (check_name), and rederive at activation and rollback requires the recomputed record to be byte-identical to the stored one. The hypothesis history is fixed as of eval_seq, so the reasons re-derive deterministically."
+    },
+    {
+     "part": "Only ACCEPT activates; non-accept dispositions and hand-written admissions are refused",
+     "evidence": "rederive refuses an admission not journalled by admit, one that does not re-derive identically, and one whose decision is not Accept. check_activate adds: target equals the admission's candidate, incumbent equals the active policy (H1), evaluation epoch equals the current epoch (K1), mechanism label matches, deployment_enabled, no revocation, and safety_still_holds. Named tests only_an_accepted_currently_authorized_admission_activates, reject_on_inferiority_or_no_economic_benefit and inconclusive_on_small_sample_liability_and_unknowns were re-run: pass."
+    },
+    {
+     "part": "Current authority re-checked for the admitter, the transition issuer and the verdict verifiers' membership and key",
+     "evidence": "derive re-checks that the admitter is in the trusted-admitter set and holds no other loop role, and that each counted verdict's issuer is still in trusted_verifiers with the same verifier_keys key_id. Executed control: clearing verifier_keys after ACCEPT refuses activation."
+    },
+    {
+     "part": "Safety violations cannot be offset by utility",
+     "evidence": "decide() runs the veto stage before any quality or economic criterion: any candidate-arm Violation gives VETOED. safety_still_holds refuses activation or rollback when a violation is recorded after the evaluation. Under a protected class, Unknown safety makes the decision INCONCLUSIVE. Tests a_candidate_violation_vetoes_before_any_utility, a_violation_wins_and_the_state_is_fixed_at_evaluation, a_violation_found_after_evaluation_blocks_activation_and_rollback and a_protected_evaluation_accepts_only_cleared_trials were re-run: pass."
+    },
+    {
+     "part": "Unknown, estimated, missing or multi-currency costs recorded in usage make economics INCONCLUSIVE, never zero",
+     "evidence": "tel::summarize_with_missing gives Unresolved for any estimated, unknown, liability or missing record. single_total returns None for multiple currencies, and facts() maps that to Unresolved. decide pushes 'economics cannot be established' unless both totals are Known. This holds only for costs that are in usage: the Fabric execution component is omitted (second blocker)."
+    }
+   ],
+   "verdict": "DO_NOT_REGISTER"
+  },
+  {
+   "gate": "G11-r22-rollback-revalidate: A rollback rechecks predecessor artifact, current applicability, permissions, profile qualification and revocation; a revoked or weaker predecessor causes a paused/refused state, not unsafe fallback.",
+   "findings": [
+    {
+     "title": "A rollback does not recheck profile qualification: a predecessor admitted on verdicts from a compute profile the operator has since withdrawn is reinstated, including in a protected scope",
+     "classification": "BLOCKER",
+     "clause": "A rollback rechecks predecessor artifact, current applicability, permissions, profile qualification and revocation; a revoked or weaker predecessor causes a paused/refused state, not unsafe fallback.",
+     "evidence": "On the protected path, check_rollback (crates/axon-loop/src/pointer.rs:395-448) calls admission::rederive, and the pointer then applies protected_scope_gate (pointer.rs:565-592). The only profile check among these is `eval.evaluation_class == Protected`. That class is fixed at freeze from config.protected_scopes, and PROTECTED_PROFILES is a compiled constant, so it can never change. admission::derive (admission.rs:273-311) re-checks a counted verdict's verifier for trust, subject status and key_id. It never re-checks config.verifier_pins, the operator's per-verifier record of which backend_profiles (plus executable revision and suites) a verdict may come from. That record is enforced only at intake (intake.rs:663-718, 'compute profile: the verdict came from X, not a profile pinned for verifier'). ADR-001 \u00a75 lists 'verifier keys and pins' for activation revalidation and 'profile qualification' for rollback. EXECUTED in a copy of 363b7834 at /var/tmp/bind-final-G11-r22-rollback-revalidate, since removed, using the repo's own fixtures (probe appended to protected_class.rs): (1) protect the scope and pin linux-microvm-protected. (2) Run a protected evaluation on the protected backend, with every trial cleared by the monitor. (3) The admission is ACCEPT. Then activate the candidate and roll back to the baseline. (4) The operator removes 'linux-microvm-protected' from VERIFIER's pin backend_profiles; the pin now lists only [\"fabric:local-interpreter\"]. (5) Roll back to the candidate under its admission: it returns Ok(Some(cl22:9b38a47d\u2026)), and pointer::resolve then serves cl22:9b38a47d\u2026 to new tasks. So the predecessor's evidence is now weaker than any new verdict could be, because intake would refuse a verdict from that profile. The rollback still succeeds rather than refusing. The same happens in a development scope, executed: narrowing backend_profiles gives Ok, and changing the pinned executable_digest (the verifier revision) also gives Ok. Not executed, but the same code path: a changed task_acceptance pin is not re-checked either. No test or mutation in bind1/mutations.json covers pin or profile revalidation.",
+     "executed": true,
+     "fix": "In admission::derive (so that activation and rollback both get it), re-check each counted verdict against the CURRENT verifier_pins and task_acceptance, not only trust and key_id. That means recording in VerificationEvidence (or reloading from the CAS'd verification request and receipt refs) the backend_profile_ref, registered_executable_ref/executable_digest and check suite, and refusing when any of them is no longer pinned. Do the same for the protected-profile leg once a qualification-evidence ref exists (ADR-001 D3). Add a rollback test that narrows the pin after admission and expects a refusal ('no safe predecessor: issue a pause instead') with the store unchanged, plus a mutation that removes the new check."
+    },
+    {
+     "title": "A transition issuer (activate/rollback) is not checked against the proposer (ranker), evaluator or subject of the policy it moves to",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "none (G11-r22-independent-admission: 'proposer, learned ranker and Compute Fabric have no self-promotion right'; the review context's rule 'an admitter or transition issuer may hold no other loop role \u2026 proposer (the ranker), subject or evaluator')",
+     "evidence": "pointer::transition (pointer.rs:291-306) checks only that the issuer is in trusted_admitters and holds no role in other_loop_role (verifier, observer or monitor, admission.rs:150-163). Neither transition nor check_rollback/check_activate compares t.issuer_ref with adm.proposer_ref, adm.evaluator_ref or the evaluation's subject_issuers. EXECUTED in the probe copy: after activating the candidate and rolling back to the baseline, the operator adds agent:proposer (the EVO proposer of the candidate), evl:evaluator or agent:worker (the subject) to trusted_admitters. A rollback to the candidate issued by each of them returns Ok(Some(cl22:9b38a47d\u2026)). The admission itself remains independent, and this needs the operator to list that identity as an admitter, so it is a self-publication gap rather than a missing recheck on the predecessor. It lies outside this gate's literal list.",
+     "executed": true,
+     "fix": "In pointer::transition, for Activate and Rollback targets reached through an admission, refuse when t.issuer_ref equals the re-derived admission's proposer_ref or evaluator_ref, or is one of the evaluation's subject_issuers. Add tests for each role."
+    },
+    {
+     "title": "The baseline issuer is rechecked at rollback for trust but not for independence",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "none (the independence rule for admitters; the gate's 'permissions' is satisfied by the trust recheck)",
+     "evidence": "check_rollback's baseline branch (pointer.rs:431-437) checks only `admitters.contains(&b.issuer_ref)`, and designate_baseline (pointer.rs:179-186) also does not call other_loop_role. EXECUTED: activate the candidate, then add ADMITTER, the baseline's issuer, to trusted_verifiers, and have op:admitter-2 issue a rollback to the baseline. It returns Ok(Some(cl22:b609b068\u2026)). The admission-predecessor control under the same config is refused: 'rollback target's admission no longer holds (\u2026 admitter op:admitter is also a trusted verifier (Compute Fabric) \u2026)'. So the two predecessor kinds are revalidated asymmetrically.",
+     "executed": true,
+     "fix": "Apply other_loop_role to the baseline issuer in designate_baseline, in check_activate route 1 and in check_rollback's baseline branch."
+    },
+    {
+     "title": "In a protected scope the incumbent-of-record is exempt from the evidence-class floor, and the gate's tests do not cover a qualification or pin change",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "protected_scope_gate returns Ok for any baseline ref (pointer.rs:576-582), documented as a design exemption (signed baselines are ADR-001 \u00a73.4). Of the 5 named tests, all of which I re-ran and which passed, and the killed mutations X21, M51 and 'D3: rollback passes the protected-scope gate', none varies verifier pins, task_acceptance or profile qualification. That is why the BLOCKER above survives a green 97/97 mutation run.",
+     "executed": true,
+     "fix": "Add the pin-narrowing rollback test and a mutation for it. Track signed baselines (\u00a73.4) as the protected-scope answer to the baseline exemption."
+    },
+    {
+     "title": "A refused rollback leaves a non-revoked but superseded current policy active instead of pausing atomically as ADR-001 \u00a75 describes",
+     "classification": "FUTURE",
+     "clause": "none",
+     "evidence": "ADR-001 \u00a75 says that if rollback revalidation fails 'it pauses atomically'. The code refuses and writes nothing, and the operator must issue a separate fenced pause. When the current policy is revoked, resolve() already returns Paused, which I executed ('active policy \u2026 is revoked; issue a fenced pause or rollback'). The gate allows 'paused/refused', so this falsifies nothing.",
+     "executed": true,
+     "fix": "Optionally let a failed rollback carry an atomic pause fallback within the same transaction."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Revocation: a revoked predecessor is refused, and a revoked active policy pauses new tasks",
+     "evidence": "pointer.rs:357-364 refuses a revoked target with 'no safe predecessor: issue a pause instead'. resolve (pointer.rs:240-244) returns Paused for a revoked active policy. Both EXECUTED in the probe ('cl22:9b38\u2026 is revoked; no safe predecessor\u2026' and Paused('active policy \u2026 is revoked\u2026')). rollback_to_valid_predecessor_and_revoked_predecessor_refused passes, and the store is unchanged on refusal."
+    },
+    {
+     "part": "Predecessor artifact",
+     "evidence": "The target envelope is loaded with store.get_contract, which re-digests it against its ref (store.rs:580-609). require_shortlist re-checks it against the registered candidate list, and its scope must match. Baseline and admission records are digest-checked through get_record."
+    },
+    {
+     "part": "Current applicability and predecessor identity",
+     "evidence": "The target must be in the ledger-replayed history for this scope, cite the same admission or baseline it was active under, and carry the same mechanism_test label (pointer.rs:404-425). protected_scope_gate is evaluated against the CURRENT config.protected_scopes, so a development-admitted predecessor is refused once the scope is protected (a_rollback_in_a_protected_scope_needs_a_protected_admission, re-run and passing)."
+    },
+    {
+     "part": "Permissions: issuer trust and the predecessor's authority",
+     "evidence": "The issuer must be a current trusted admitter and not a verifier, observer or monitor (a_rollback_needs_an_independent_trusted_issuer, re-run). A baseline predecessor needs its issuer still trusted. An admission predecessor must re-derive identically, as ACCEPT, from a still-trusted, independent admitter, with verdicts from still-trusted, same-key verifiers (a_rollback_revalidates_its_predecessor, re-run; my probe control refused a predecessor whose admitter had become a verifier)."
+    },
+    {
+     "part": "Safety revalidation",
+     "evidence": "safety_still_holds blocks a rollback to a predecessor whose trials were reported unsafe after the evaluation (a_violation_found_after_evaluation_blocks_activation_and_rollback, re-run and passing)."
+    },
+    {
+     "part": "Refusals write nothing (no unsafe fallback)",
+     "evidence": "Snapshot equality after refusal is asserted in the named tests. transition() appends only after every check passes (pointer.rs:386-391)."
+    }
+   ],
+   "verdict": "DO_NOT_REGISTER"
+  },
+  {
+   "gate": "G11-r22-independent-admission: Policy admission requires a non-subject authority, complete artifact/experiment/verifier bindings and the prespecified evidence rule; proposer, learned ranker and Compute Fabric have no self-promotion right.",
+   "findings": [
+    {
+     "title": "The proposer (the ranker), the evaluator or a subject can issue the activation (promotion) of the candidate it proposed, evaluated or ran",
+     "classification": "BLOCKER",
+     "clause": "proposer, learned ranker and Compute Fabric have no self-promotion right.",
+     "evidence": "pointer::transition (crates/axon-loop/src/pointer.rs:291-306) checks the issuer in only two ways: membership in config.admitters(), and admission::other_loop_role (admission.rs:150-163). other_loop_role covers only trusted verifier (Fabric), observer and monitor. Nothing in transition, check_activate or check_rollback compares t.issuer_ref with the re-derived admission's proposer_ref or evaluator_ref, or with the evaluation's subject_issuers. rederive re-checks the ADMITTER's independence, not the issuer's. The code's own rationale for refusing Fabric as issuer is that it 'could otherwise move the pointer it produces evidence for' (the pointer.rs comment; test a_rollback_needs_an_independent_trusted_issuer, tagged to this gate). That makes issuing the transition the promotion act, and evl_admission asserts that 'admission does not activate'. Executed probe on a git-archive copy of 363b7834 (world() fixtures): ADMITTER admits ACCEPT. Then PROPOSER ('agent:proposer', the candidate's EVO proposer, i.e. the ranker) is added to trusted_admitters and issues the activate transition itself: Ok((2, Some(cand_ref))), and pointer::resolve returns the candidate. The same activation succeeds with EVALUATOR ('evl:evaluator') and WORKER ('agent:worker', a subject issuer) as issuer. The design rule in the review brief ('An admitter or transition issuer may hold no other loop role: \u2026 proposer (the ranker), subject or evaluator') is enforced for the admitter but not for the transition issuer. Mitigation, which does not cure it: an independent ACCEPT admission is still required first.",
+     "executed": true,
+     "fix": "In pointer::transition, for Activate and Rollback routes that re-derive an admission, refuse when t.issuer_ref equals adm.proposer_ref or adm.evaluator_ref, or is in the evaluation's subject_issuers. Because proposer and evaluator names are not registered, also refuse any issuer recorded as an EVO proposer or evaluator in the scope. Add a test that issues activate and rollback as PROPOSER, EVALUATOR and WORKER (each listed as a trusted admitter), asserts refusal and that nothing is written, and add a mutation row for the new check."
+    },
+    {
+     "title": "Compute Fabric (a trusted verifier) listed as an admitter can designate the scope's incumbent-of-record",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "none (role separation outside the admission path; not self-promotion, because Fabric produces no policy)",
+     "evidence": "pointer::designate_baseline (pointer.rs:179-214) checks only config.admitters().contains(issuer) and never calls other_loop_role. Executed probe: with VERIFIER in trusted_admitters, a baseline with issuer_ref=VERIFIER is accepted (Ok(cl22:561f\u2026)). An independent admitter then activates it from paused (epoch 1). check_rollback's baseline branch likewise re-checks only admitter membership. EVO candidates cannot become baselines, so the proposer cannot use this route.",
+     "executed": true,
+     "fix": "Apply other_loop_role, and the proposer/evaluator/subject exclusion, to designate_baseline, revoke, and the baseline branch of check_activate/check_rollback."
+    },
+    {
+     "title": "The subject set used for admitter independence is evaluator-declared and omits the trials' context expecting parent (the producer harness)",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "Policy admission requires a non-subject authority (interpretive: whether the producer harness counts as 'the subject')",
+     "evidence": "derive refuses an admitter in eval.subject_issuers. That set is the EvlRequest's own subject_issuers plus the arm proposers (evl.rs evaluate). ctx.expected_issuer_ref, which MiCode sets to the harness (exec_context.rs), is never added. Executed: adding 'fixture:parent' (the expected_issuer_ref of every fixture trial) to trusted_admitters and admitting as it gives Ok(Accept); the eval's subject_issuers were [agent:proposer, agent:worker]. If the evaluator omits a subject from the request, that subject can admit.",
+     "executed": true,
+     "fix": "Derive the subject set from recorded evidence as well: every trial's ctx.expected_issuer_ref, and the episode producer where recorded. Do not rely only on the evaluator's list."
+    },
+    {
+     "title": "Proposer, admitter, evaluator and subject identities are unauthenticated names, so disjointness is compared by name and the proposer chooses its own name",
+     "classification": "FUTURE",
+     "clause": "ADR-001 \u00a73.4 (signed promotion, disjointness by key fingerprint) and D1 (the development host makes no protected claims)",
+     "evidence": "EvoRequest.proposer_ref and AdmitRequest.admitter_ref are caller-supplied strings. Executed: a candidate proposed with proposer_ref='agent:alias-of-proposer' is admitted ACCEPT by 'agent:proposer' (listed as an admitter). This is the caller-claimed-identity shape that ADR-001 \u00a71/\u00a73.4 defers to signed operator promotion on the protected profile; PROTECTED_VERIFIER_READY=false.",
+     "executed": true,
+     "fix": "Implement ADR-001 \u00a73.4: detached operator Ed25519 signatures on admit and transition, and role disjointness compared by key fingerprint."
+    },
+    {
+     "title": "The evidence rule is prespecified (frozen before evaluation), but no authority registers or approves it",
+     "classification": "FUTURE",
+     "clause": "ADR-001 \u00a73.4 ('plan.operator_approved: bool becomes a signed approval_ref')",
+     "evidence": "plan::register and plan::freeze take no issuer. operator_approved is a bool, and approval_ref is an unverified Ref. The proposer can therefore author the thresholds that the (mechanical) admission then applies. Freeze-before-evaluation, one experiment per candidate, and the evaluation bound to plan_ref and freeze_seq do hold. Not executed; this is from reading the code.",
+     "executed": false,
+     "fix": "Require a trusted and independent issuer, and a verified signed approval_ref, at plan freeze."
+    },
+    {
+     "title": "Re-derivation revalidates each verifier's trust and key id but not its pin",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "ADR-001 \u00a75 ('revalidates current state (epochs, verifier keys and pins, \u2026)'); this belongs to rollback-revalidate/disposition, not this gate's wording",
+     "evidence": "admission::derive (admission.rs:279-311) re-checks verifiers.contains(issuer), subject exclusion and key_id against verifier_keys. It never consults config.verifier_pins, so an operator re-pin (a new suite, revision or profile) does not invalidate verdicts at activation or rollback. Not executed.",
+     "executed": false,
+     "fix": "Record the pin in VerificationEvidence and require it to equal the current verifier_pins entry in derive."
+    },
+    {
+     "title": "The binding proof does not mutate the admission role-separation or binding guards; the per-field experiment_id binding is an equivalent (redundant) check",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "mutations.json (97/97 killed) has no mutation of other_loop_role, the proposer, evaluator or subject checks in derive, the binding checks, or the issuer role check in pointer::transition. The tests do say 'Mutation: \u2026 \u2192 red'. I executed three on the copy: disabling other_loop_role, and removing the proposer==admitter check, each turned an_admitter_holds_no_other_loop_role red. Removing the eval.experiment_id != plan.experiment_id check SURVIVED, because the plan_ref binding covers it (the plan bytes include experiment_id).",
+     "executed": true,
+     "fix": "Add mutation rows for each role and binding guard in derive and for the transition issuer check, and document experiment_id as defended by plan_ref (or test it separately)."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Admission refuses an admitter outside trusted_admitters, or one that is a trusted verifier (Fabric), observer, monitor, the candidate's proposer (ranker), the evaluator or a listed subject issuer. Each refusal writes nothing.",
+     "evidence": "admission.rs:190-255. The gate test an_admitter_holds_no_other_loop_role passes (1e.log OK rows). I executed it on a copy: disabling other_loop_role or the proposer check turns it red."
+    },
+    {
+     "part": "Re-derivation at activation and rollback re-applies admitter trust and role separation, and requires an identical ACCEPT record.",
+     "evidence": "admission::rederive (admission.rs:384-422), called from check_activate, check_rollback and protected_scope_gate; full_loop_accept_activate_future_task_rollback passes."
+    },
+    {
+     "part": "Experiment, plan and freeze bindings, plus artifact bindings to the candidate and incumbent policy digests, controls and evidence refs",
+     "evidence": "derive checks scope, experiment_id, plan_ref, freeze_seq, and that the eval was journalled after the freeze, then runs check_candidate. The record binds target and incumbent policy refs, controls_ref, evaluation_ref and evidence_refs. EVL binds episodes to exact policy, context and receipt bytes and to the output tree. Plan freeze refuses a second experiment for the same candidate (a_candidate_is_bound_to_one_experiment)."
+    },
+    {
+     "part": "Verifier bindings",
+     "evidence": "Each counted verdict records a VerificationEvidence (request, receipt and attestation refs, issuer, key_id). derive refuses a verdict whose issuer is no longer trusted, is a subject, or was re-keyed (M50 killed). EVL refuses verdicts attested before the freeze (M98)."
+    },
+    {
+     "part": "Prespecified evidence rule",
+     "evidence": "Rules::parse on the frozen plan decides ACCEPT, REJECT, INCONCLUSIVE or VETOED deterministically. The plan must be frozen, with its rules parseable, before evaluation. There is one evaluation per experiment, and the corpus role must match the admission's mechanism_test."
+    },
+    {
+     "part": "Compute Fabric cannot self-promote",
+     "evidence": "axon-fabric uses axon_loop only to read the epoch (submit.rs:90-91) and has no admit or transition path. Fabric listed as admitter is refused at admit (an_admitter_holds_no_other_loop_role) and as transition issuer (a_rollback_needs_an_independent_trusted_issuer)."
+    },
+    {
+     "part": "Frozen trees untouched",
+     "evidence": "axon-s3 is still at 363b7834 with a clean status, and micode-v022-wt is clean. The probe copy /var/tmp/bind-final-G11-r22-independent-admission has been removed."
+    }
+   ],
+   "verdict": "DO_NOT_REGISTER"
+  },
+  {
+   "gate": "G32-r22-sidecar-bindings",
+   "findings": [
+    {
+     "title": "A protected evaluation can pick the best attempt of a trial: a recorded failing attempt is replaced by a later passing one",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "none (the binding of each delivered attempt is validated; the fault is in which attempt EVL counts, which is G10/G21/AB9 territory)",
+     "evidence": "Executed a probe (copy of 363b7834 in /var/tmp, since deleted) using the tests/common fixtures. The scope was protected, the verifier pinned to linux-microvm-protected, and the plan frozen, so the evaluation class was Protected. Both challenger trials' first attempts (-a1) failed and were intaken. A second attempt of each (-a2) was then intaken with a new attempt/operation/execution id, a genuinely observer-signed context and a genuinely attested passing check. The EVL request delivered only -a2. Result: challenger verified_pass went 0 -> 2 and fail went 2 -> 0, with no refusal. The cause: EVL keys delivered trials by (task, arm, trial) and ignores attempt_id; intake's conflict rule compares the full TrialIdentity, so a new attempt is never a conflict; nothing requires every intaken attempt to be counted, or only an operator-issued final one. ADR-001 \u00a73.6 says 'Assignments and attempt ids are issued, and stored ... BEFORE execution', but that is not built. Each attempt's evidence is correctly bound and authenticated, so the G32 wording holds; population selection is what fails.",
+     "executed": true,
+     "fix": "In evl::evaluate, gather every EpisodeIntake of each assigned (task, arm, trial) in scope and refuse (or count Unknown/worst-of) when more than one attempt is intaken and the delivered one is not the operator-designated final attempt. Better: issue attempt ids in the store before execution (ADR-001 \u00a73.6) and count only issued attempts. Add a protected-class test that cherry-picks attempts."
+    },
+    {
+     "title": "EVO propose accepts a never-intaken episode with a fabricated verification because it names the trusted verifier",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "nearest: \"matching hash-shaped strings or a worker issuer claim cannot authenticate evidence\" (EVO propose is a learning input, not the sidecar import route)",
+     "evidence": "Executed a probe: store_with_config, then discovery_episode(inc) with verification.verifier_ref and evidence_refs set to random cl22 values, no attestation, never intaken, and issuer_ref = the trusted verifier's name. evo::propose accepted it, and the candidate policy's discovery_evidence_refs contains the forged episode's ref. evo.rs:226-234 trusts `verifiers.contains(issuer)` by name. This is disclosed in governance/specs/v022-G01-claim.md ('EVO propose ... trusts a verdict by issuer name'). No consumer reads discovery_evidence_refs as proof, the mutation is seed-chosen, and confirmation/reporting episodes are refused, so no protected result rests on it. It is still the name-as-authentication pattern that FG-050 removed from intake.",
+     "executed": true,
+     "fix": "Make EVO accept only episodes with an EpisodeIntake record in scope (as EVL does since ADR-001 \u00a78), or run intake::verify_check_evidence on each discovery episode."
+    },
+    {
+     "title": "In a protected trial the policy link is still the producer's claim; neither observer nor verifier signs it",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "nearest: \"Import validates ... policy ... bindings against authenticated stored records\" (not falsified: the binding is checked against the stored policy bytes and the frozen plan's arm refs)",
+     "evidence": "Code reading, not executed. ExecutionContextReceipt (context.rs) carries identity, scope and observed facts, but no policy_ref or controls_ref. The acf-receipt-attestation/2 binding (attestation.rs `binding`) carries request/receipt digests, identity ids and issued_ms, but no policy, arm or scope. So in a protected evaluation, which policy an episode ran under rests on the MiCode-written episode.policy_ref and ack. Intake re-digests these against the stored policy and EVL checks them against the frozen arm, so a hash is never accepted without bytes. Still, no third party vouches that the worker executed that policy. v022-G01-claim.md discloses this ('does not authenticate that the arm's policy produced that tree'), and ADR-001 \u00a73.3/\u00a74 plan the fix (attestation v2 binding experiment/arm/trial, and Fabric-materialized per-arm trees).",
+     "executed": false,
+     "fix": "Have the preflight observer sign the pinned policy_ref/controls_ref into the context (or a signed ack). Bind experiment/arm/scope into attestation v2 as ADR-001 \u00a73.3 plans."
+    },
+    {
+     "title": "Intake in a protected scope records an unauthenticated observer name, and safety.rs builds its subject set from it",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "intake.rs never checks context_signature; only EVL does, and only for the Protected class (evl.rs authenticated_context). IntakeRecord.observed_issuer_ref is documented as 'not authenticated'. safety::report builds subjects from intaken.observed_issuer_ref, so a worker naming a monitor as its observer disqualifies that monitor's clearance. That only fails safe (the trial becomes Unknown and ACCEPT is blocked), and EVL refuses the unsigned context anyway. Nothing counts on the unauthenticated name.",
+     "executed": false,
+     "fix": "Verify context_signature at intake when the scope is in protected_scopes (or record whether it verified), so every consumer of the intake record sees an authenticated observer."
+    },
+    {
+     "title": "The gate's named evidence covers three facets; the rest of the clause rests on neighbouring tests and mutations",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "v022_stage5_gates.sh rows 79-80 name only a_protected_context_is_authenticated_not_named, an_episode_is_bound_to_the_input_workspace_its_observer_saw and verification_evidence_is_authenticated_not_named. I re-ran all three on the frozen tree and they pass. The task/arm/trial/attempt/operation, principal, policy, effective-control and output-workspace facets are covered by other tests and killed mutants (M05, M09, M10, M21, M24, M25, M32-M36, M46, M99, M100 in mutations.json; all 97 killed), but none of those is in this gate's rows.",
+     "executed": true,
+     "fix": "Add the tests that kill M09/M32 (identity), M46 (principal), M21/M34 (output workspace) and the policy/controls join to G32-r22-sidecar-bindings' rows, so every noun in the gate has a named witness."
+    },
+    {
+     "title": "Attestation /2 binds no scope, arm or nonce; one verdict per scope is enforced by the store, not the signature",
+     "classification": "FUTURE",
+     "clause": "none",
+     "evidence": "attestation.rs binding() has no tenant/family/arm/experiment/nonce. intake.rs refuses to record one receipt in a second scope, and EVL's trial-id uniqueness blocks cross-arm reuse inside an evaluation. ADR-001 \u00a73.3 plans a v2 binding with store_id, journal_id, epoch, experiment/arm/trial and a single-use nonce.",
+     "executed": false,
+     "fix": "Implement the ADR-001 \u00a73.3 attestation binding after D1/D2/D5."
+    }
+   ],
+   "holding": [
+    {
+     "part": "task/arm/trial/attempt/operation bindings",
+     "evidence": "bind_episode requires episode.identity == ctx.identity, the full TrialIdentity including arm and execution. verify_check_evidence requires the attested check request/receipt task/trial/attempt/operation ids and the receipt execution_id to equal the episode's (M09/M32 killed). In a PROTECTED evaluation the context identity is authenticated by the observer's signature under observer_keys (evl.rs authenticated_context; a_protected_context_is_authenticated_not_named passes, M99 killed)."
+    },
+    {
+     "part": "principal",
+     "evidence": "The check request's principal_ref is inside the verifier-signed request digest and must not be a subject: the observer, stored proposers, and in EVL the request subject_issuers (intake.rs:744, M46 killed)."
+    },
+    {
+     "part": "policy / effective context",
+     "evidence": "Intake loads the policy with store.get_contract, which re-digests the CAS bytes against the name. bind_episode checks policy_ref == digest(policy), context_ref == digest(ctx), scope, controls_ref and candidate_set_ref == the policy's, and the current epoch. The ack is located by content, and revoked policies are refused. EVL additionally requires ep.policy_ref to be the assigned arm's policy, and the evaluated policies must be exactly the frozen plan's two arms (compared by digest)."
+    },
+    {
+     "part": "input/output workspace",
+     "evidence": "episode.input_workspace_ref == ctx.observed.workspace_ref; the context is signed by the observer in protected-class evaluations (an_episode_is_bound_to_the_input_workspace_its_observer_saw passes, M100 killed). The attested check request workspace, receipt input, verification.output_workspace_ref and episode.output_workspace_ref must all agree (M21/M33/M34 killed)."
+    },
+    {
+     "part": "verifier bindings authenticated, not named",
+     "evidence": "verifier_ref must be the cl22 of the delivered receipt bytes, and evidence_refs exactly [cl22 of the request]. The issuer must be trusted, not a subject, and hold a registered key. The acf-receipt-attestation/2 must verify under that registered key over exactly these digests and ids. The pinned revision, profile, suite and task acceptance check must match. Re-ran verification_evidence_is_authenticated_not_named on the frozen tree; it passes and refuses a missing, self-signed, other-registered-key, cross-request/receipt/trial, tampered or subject-signed attestation, writing nothing."
+    },
+    {
+     "part": "hash-shaped strings / worker issuer claims cannot authenticate (protected path)",
+     "evidence": "Every ref is recomputed from delivered or stored bytes, never accepted as a string. EVL counts only intaken episodes and re-runs verify_check_evidence. A protected context counts only with the observer's detached signature under observer_keys: unsigned, unregistered-key and other-name signatures give verified_pass 0 in the executed test. The development-class name rule is by design (ADR-001 D1/D3)."
+    }
+   ],
+   "verdict": "REGISTER"
+  }
+ ]
+}

@@ -333,6 +333,24 @@
         "PASS"
       ],
       "note": "Registered 2026-09-26 at axon 9ae4c605 + micode dd4ea0a9 against governance/specs/v022-G01-claim.md (sha256 12ce46ec...). SCOPE: authenticity, provenance and binding only. A counted verification verdict carries an Ed25519 acf-receipt-attestation/1 from the operator-configured Fabric signer, binding request/receipt digests and operation/task/trial/attempt/execution ids; Fabric signs only a registered_check it just ran, never a replay, and only when the workload could not reach the key (empty ceiling applied); the issuer is trusted and outside the subject set; the pinned suite, interpreter and axon.* config are what ran; revocation or re-key stops a verdict counting at admission and activation. Real-binary evidence: loop_interop_gate.sh section 8 (impostor/replay/tamper negatives); mutation proof governance/proofs/v022-g01/mutations-9ae4c605.json (--scope g01, 50/50). PREREQUISITE: Protected Check Isolation (governance/specs/v022-protected-check-isolation.md) is PARTIAL; G01 alone is never sufficient protected verification and overall protected-verifier readiness is NOT READY. Record: governance/proofs/v022-g01/REGISTRATION.md (includes the disclosed no-freshness-binding limitation)."
+    },
+    {
+      "gate_id": "G32-r22-sidecar-bindings",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding batch candidate 1, REGISTERED at axon 363b7834 + micode 1baa2f81 (governance/proofs/v022-binding/REGISTRATION.md; review wf_d788c05a-be2, zero blockers). Import validates task/arm/trial/attempt/operation, principal, policy, effective context (observer-signed in a protected evaluation), input/output workspace and verifier bindings against stored records; hash-shaped strings or a worker issuer claim do not authenticate evidence. axon-loop intake.rs, evl.rs; tests protected_class.rs, intake.rs."
+    },
+    {
+      "gate_id": "G33-r22-decision-rule-freeze",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding batch candidate 1, REGISTERED at axon 363b7834 + micode 1baa2f81 (governance/proofs/v022-binding/REGISTRATION.md; review wf_d788c05a-be2, zero blockers). Method, sample/horizon, multiplicity, minimum improvement, quality margin, missing-data rule and cluster unit are frozen in the plan before any outcome (preflight before freeze is refused; a verdict attested before the freeze does not count); repeated tasks do not inflate independent units. axon-loop plan.rs, rules.rs, evl.rs; tests evl_admission.rs, redteam.rs."
     }
   ],
   "tasks": [],
