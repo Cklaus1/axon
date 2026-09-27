@@ -907,6 +907,20 @@ fn judge(
         },
         None => (d.ep.status == EpisodeStatus::Cancelled).then_some(UnknownKind::Cancelled),
     };
+    // A run that did not finish has no verdict that counts: a check over what
+    // a cancelled or timed-out run left behind is not the trial's outcome, and
+    // counting it would average the interruption away. (A pass is already
+    // impossible: the contract requires `completed`; this is the failure.)
+    if let (Some(k), VerificationResult::Passed | VerificationResult::Failed) = (run_end, v.result)
+    {
+        return unknown(
+            k,
+            format!(
+                "the run ended {k:?} (status {:?}): a verdict about its output does not count",
+                d.ep.status
+            ),
+        );
+    }
     match v.result {
         VerificationResult::Passed => {
             let issuer_ok = v

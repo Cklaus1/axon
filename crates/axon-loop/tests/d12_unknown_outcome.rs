@@ -244,3 +244,34 @@ fn a_protected_evaluation_never_counts_a_d12_trial() {
     );
     assert!(r.reason.contains("D12 local execution"), "{}", r.reason);
 }
+
+/// A run that ended cancelled has no counted verdict, even an authenticated
+/// failure of its output: the interruption is the outcome (non-D12, so the
+/// verdict would otherwise count as a Fail).
+#[test]
+fn a_cancelled_run_does_not_count_its_failed_check() {
+    let w = world();
+    freeze_plan(&w.s, "cancel", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let mut specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    specs.iter_mut().find(|s| s.3 == "c0").unwrap().4 = Out::Fail;
+    let mut v = evl_request("cancel", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    let t = trial_mut(&mut v, "c0");
+    t["episode"]["status"] = json!("cancelled");
+    t["acf_receipt"]["status"] = json!("canceled");
+    t["acf_receipt"]["process_exit_code"] = Value::Null;
+    t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+    let r = c
+        .trials
+        .iter()
+        .find(|x| x.trial_id.as_str() == "c0")
+        .unwrap();
+    assert_eq!(
+        (r.outcome, r.unknown_kind),
+        (Outcome::Unknown, Some(UnknownKind::Cancelled)),
+        "{}",
+        r.reason
+    );
+    assert_eq!(c.fail, 0, "{c:?}");
+}
