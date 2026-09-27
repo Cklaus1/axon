@@ -351,6 +351,24 @@
         "PASS"
       ],
       "note": "Binding batch candidate 1, REGISTERED at axon 363b7834 + micode 1baa2f81 (governance/proofs/v022-binding/REGISTRATION.md; review wf_d788c05a-be2, zero blockers). Method, sample/horizon, multiplicity, minimum improvement, quality margin, missing-data rule and cluster unit are frozen in the plan before any outcome (preflight before freeze is refused; a verdict attested before the freeze does not count); repeated tasks do not inflate independent units. axon-loop plan.rs, rules.rs, evl.rs; tests evl_admission.rs, redteam.rs."
+    },
+    {
+      "gate_id": "G11-r22-independent-admission",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding candidate 2b, REGISTERED at axon bd3637ab + micode e7fdb739 (governance/proofs/v022-binding-c2/REGISTRATION.md; review wf_8aad6d16-ad6, zero blockers). Admission and the promotion act (activate/rollback transition, baseline designation, population issue) require a trusted admitter holding no other loop role and independent of the candidate's proposer (ranker), evaluator and subjects, re-derived against current config; complete scope/experiment/plan/freeze/verifier bindings; the frozen rule. axon-loop admission.rs, pointer.rs, plan.rs; tests evl_admission.rs, pointer.rs, assignment.rs."
+    },
+    {
+      "gate_id": "G11-r22-rollback-revalidate",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Binding candidate 2b, REGISTERED at axon bd3637ab + micode e7fdb739 (governance/proofs/v022-binding-c2/REGISTRATION.md; review wf_8aad6d16-ad6, zero blockers). A rollback re-derives the predecessor's admission against CURRENT authority (admitter, issuer independence, verifier trust/key, pins incl. compute profile qualification, protected contexts and clearances), refuses revoked or no-longer-holding predecessors ('no safe predecessor: issue a pause instead'). axon-loop pointer.rs, admission.rs; tests pointer.rs, protected_class.rs, safety.rs."
     }
   ],
   "tasks": [],

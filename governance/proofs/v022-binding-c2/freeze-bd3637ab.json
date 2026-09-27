@@ -1,0 +1,17 @@
+{
+ "schema": "axon-v022-binding-freeze/1",
+ "candidate": "2b",
+ "gates": [
+  "G11-r22-independent-admission",
+  "G11-r22-admission-disposition",
+  "G11-r22-rollback-revalidate"
+ ],
+ "axon_sha": "bd3637ab1b373a74e4d39cd67e07289b2b7af229",
+ "micode_sha": "e7fdb7395da4fcd58625e752ffaaf77886d82235",
+ "stage5_runner_sha256": "201ebb6c5fcd99d61a663229a50662cd03de5a3fa6da5ae21ca32c9496efb6f5",
+ "mutation_driver_sha256": "203712df416f5de28c12e6e9cfeba0a004d2e93a08265cac2a1a6419a50ce6d2",
+ "mutation_scope": "all",
+ "interop_gate_sha256": "aea74bbe396894a630794882e66c5303f0ebe6a0970df3f5b3f83578dd2cd598",
+ "prior_review": "wf_d788c05a-be2 (candidate 1: G11 x3 DO_NOT_REGISTER, 4 blockers)",
+ "note": "candidate 2 (6cd4ea5c) failed its mutation step: 4 rows not applicable after refactors; retargeted in bd3637ab"
+}

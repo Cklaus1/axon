@@ -82,9 +82,7 @@
       ],
       "missing": [
         "G01-r22-unknown-outcome",
-        "G11-r22-independent-admission",
-        "G11-r22-admission-disposition",
-        "G11-r22-rollback-revalidate"
+        "G11-r22-admission-disposition"
       ]
     },
     "no_open_blocking_false_greens": {
