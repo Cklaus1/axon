@@ -85,7 +85,7 @@ A local run under a non-empty grant is a developer verdict (ADR-001 D1/D3), and 
 
 | Item | State |
 |---|---|
-| G01-r22-independent-issuer (authenticity / provenance) | pending: scoped candidate 6 (9ae4c605) under its one final review. Candidate 5 failed its own registration rule and was not registered |
+| G01-r22-independent-issuer (authenticity / provenance) | **REGISTERED** 2026-09-26 at 9ae4c605 + micode dd4ea0a9 (`governance/proofs/v022-g01/REGISTRATION.md`), with this document as its prerequisite |
 | Protected Check Isolation | **PARTIAL**: not yet certified. 14/15 are partial or MINOR, 18 is scoped out and 19 is open. The fixes for 2b, 11-13 and 17 are on v022/veto |
 | **Overall protected-verifier readiness** | **NOT READY** |
 

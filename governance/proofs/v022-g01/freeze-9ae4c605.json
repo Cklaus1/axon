@@ -1,0 +1,7 @@
+{"schema":"axon-v022-g01-freeze/1","candidate":6,"scoped":true,"gate":"G01-r22-independent-issuer",
+ "axon_sha":"9ae4c605db3a44ba650909df69896383accc1afb","micode_sha":"dd4ea0a97a31486678b6c9f715c94c8ea38500b2",
+ "claim_sha256":"12ce46ecd701fd06f54f5190d2f1a6d9e7fa296e8d9abc086971967f1098aadf",
+ "pci_spec_sha256":"9c6ca86972a74f85256c3a819faa0f3d8a93cb75482d9d5ee624d451e8f7b19d",
+ "mutation_driver_sha256":"658eaae2c5e46914c6b80eec5b29b1949330554f13d246102df0076b6ca7609a","mutation_scope":"g01",
+ "interop_gate_sha256":"a3ceefef4108f00a85b4a28906c8d766f532ab1913be874ad307067e3eff5229",
+ "micode_gates_sha256":"aecaf0a01e3cbcc939ad506012858fc2446066c96bd09592fce171e9e9369365"}

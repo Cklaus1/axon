@@ -324,6 +324,15 @@
         "PASS"
       ],
       "note": "B259. A fake Axon filename cannot dispatch native shell work: an EXECUTABLE shebang script named evil.ax, aimed at a sentinel outside the workspace, submitted as a registered check (with and without a filter) is handed to the registered Axon interpreter as SOURCE \u2014 the interpreter spawn is counted, the receipt is Failed, never Passed \u2014 and as interpreter_run is an explicit Unsupported with nothing spawned; the sentinel never appears; an argv that smuggles a command after the file is refused as malformed (axon-fabric joint_bypass::a_fake_axon_file_is_interpreted_never_executed_as_native_shell \u2014 mutation: execute the argv file directly in the check executor instead of `axon test <file>` \u2192 the spawn and sentinel assertions fail, measured). argv is only [file] / [file, filter] under the workspace (an_argv_file_outside_the_workspace_is_refused). Legacy interpreter runs keep their declared-effect and authority semantics: the whole interp\u2194codegen/AOT/wasm parity suite and the effect-ceiling harnesses gate.sh already runs (parity_all.sh; AXON_ALLOWED_EFFECTS is passed through to the check process)."
+    },
+    {
+      "gate_id": "G01-r22-independent-issuer",
+      "executed_by": "scripts/loop_interop_gate.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "Registered 2026-09-26 at axon 9ae4c605 + micode dd4ea0a9 against governance/specs/v022-G01-claim.md (sha256 12ce46ec...). SCOPE: authenticity, provenance and binding only. A counted verification verdict carries an Ed25519 acf-receipt-attestation/1 from the operator-configured Fabric signer, binding request/receipt digests and operation/task/trial/attempt/execution ids; Fabric signs only a registered_check it just ran, never a replay, and only when the workload could not reach the key (empty ceiling applied); the issuer is trusted and outside the subject set; the pinned suite, interpreter and axon.* config are what ran; revocation or re-key stops a verdict counting at admission and activation. Real-binary evidence: loop_interop_gate.sh section 8 (impostor/replay/tamper negatives); mutation proof governance/proofs/v022-g01/mutations-9ae4c605.json (--scope g01, 50/50). PREREQUISITE: Protected Check Isolation (governance/specs/v022-protected-check-isolation.md) is PARTIAL; G01 alone is never sufficient protected verification and overall protected-verifier readiness is NOT READY. Record: governance/proofs/v022-g01/REGISTRATION.md (includes the disclosed no-freshness-binding limitation)."
     }
   ],
   "tasks": [],
