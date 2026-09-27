@@ -2488,6 +2488,28 @@
       "status": "fixed",
       "severity": "security",
       "commit": "4cc6360e"
+    },
+    {
+      "id": "FG-080",
+      "where": "crates/axon-core/src/interp.rs",
+      "claimed": "PCI 21: a sealed candidate cannot reach the operator's names, state or code; disclosed limit \u2014 a candidate's own fibers can only be observed in the scheduler's counts.",
+      "reality": "Handle-addressed kernel state (scheduler fibers, principals, supervisors, kernel goals, LLM gateways, sandboxes) was ONE per-interpreter table with sequential/predictable ids. A sealed candidate read the operator's fiber result by guessing its id, reset the operator's failed fibers (a candidate wrong on an input passed), and spent the operator's principal budget with a predicted token: Fabric Passed under the empty ceiling. The disclosed limit was not an honest bound.",
+      "reproduced": "PCI candidate-4 final review (wf_11b2f5cb, axon b4af72bf), executed by all five roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (forged read/restart cases, M96) and check_effects a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition.",
+      "fix": "One kernel per provenance (`Kernel`, `kernels[2]`, `k()`): an operator handle does not exist from a sealed frame, and candidate fibers never run in the operator's scheduler. Both start from the same ambient effect ceiling.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "1f1c7261"
+    },
+    {
+      "id": "FG-081",
+      "where": "crates/axon-core/src/interp/eval.rs",
+      "claimed": "PCI 21: every frame carries its definition's provenance; a candidate refinement never runs in operator code.",
+      "reality": "A candidate struct's WHOLE-STRUCT `where` ran in the constructor's frame. When the operator built one, it ran unsealed and called operator code by name from there, and a closure created inside it carried no sealed marker (a persistent unsealed capability): Fabric Passed.",
+      "reproduced": "PCI candidate-4 final review (wf_11b2f5cb, axon b4af72bf), executed by two roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (struct-where case, M97) and the Fabric test above.",
+      "fix": "A definition-owned predicate runs under its definition's provenance: sealed struct types are recorded (Seal.types) and their `where` runs sealed whoever constructs one.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "1f1c7261"
     }
   ]
 }

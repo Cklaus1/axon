@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 78 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 80 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -758,4 +758,18 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The checker accepts any name STARTING with a deferred prefix (Dict*, Goal*, Uncertain*, Temporal*) as a type, and the disjointness set did not include those; a candidate `type DictTable = Dict where poke(_)` ran inside the operator's `fn lookup(t: DictTable, …)` and mutated its answer-key Dict: a signed-off pass.
 - **Reproduced:** PCI candidate-3 final review (wf_ac3db5df, axon 6932162c) (surface role, executed through submit). Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (deferred-prefix case, M94) and the runtime REFINEMENT edge (M88).
 - **Fix:** Deferred-prefix names join the disjointness set, and at runtime a candidate refinement never runs in operator code (seal_refine). (`4cc6360e`)
+
+### FG-080 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** PCI 21: a sealed candidate cannot reach the operator's names, state or code; disclosed limit — a candidate's own fibers can only be observed in the scheduler's counts.
+- **Reality:** Handle-addressed kernel state (scheduler fibers, principals, supervisors, kernel goals, LLM gateways, sandboxes) was ONE per-interpreter table with sequential/predictable ids. A sealed candidate read the operator's fiber result by guessing its id, reset the operator's failed fibers (a candidate wrong on an input passed), and spent the operator's principal budget with a predicted token: Fabric Passed under the empty ceiling. The disclosed limit was not an honest bound.
+- **Reproduced:** PCI candidate-4 final review (wf_11b2f5cb, axon b4af72bf), executed by all five roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (forged read/restart cases, M96) and check_effects a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition.
+- **Fix:** One kernel per provenance (`Kernel`, `kernels[2]`, `k()`): an operator handle does not exist from a sealed frame, and candidate fibers never run in the operator's scheduler. Both start from the same ambient effect ceiling. (`1f1c7261`)
+
+### FG-081 — crates/axon-core/src/interp/eval.rs (security, fixed)
+
+- **Claimed:** PCI 21: every frame carries its definition's provenance; a candidate refinement never runs in operator code.
+- **Reality:** A candidate struct's WHOLE-STRUCT `where` ran in the constructor's frame. When the operator built one, it ran unsealed and called operator code by name from there, and a closure created inside it carried no sealed marker (a persistent unsealed capability): Fabric Passed.
+- **Reproduced:** PCI candidate-4 final review (wf_11b2f5cb, axon b4af72bf), executed by two roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (struct-where case, M97) and the Fabric test above.
+- **Fix:** A definition-owned predicate runs under its definition's provenance: sealed struct types are recorded (Seal.types) and their `where` runs sealed whoever constructs one. (`1f1c7261`)
 

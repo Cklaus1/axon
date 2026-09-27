@@ -68,3 +68,10 @@ None was a blocker. The claim is judged literally, and each item below is record
 - The interpreter is pinned by path.
 - Mutation-coverage gaps: EVL's door gate, M03's target, re-key/TOFU/rollback guards, the
   isolated "issuer trusted" conjunct, equivalent guards, and the unmutated MiCode-side guards.
+
+## Follow-up (after registration; not part of what was certified)
+
+- The PCI-adjacent MiCode `.env` findings recorded above have since been FIXED in MiCode
+  fc18bbc6 (`MICODE_EXTENSIONS_TRUST_PROJECT` and the other authority keys) and b72cf4c4 (the
+  provider endpoint and routing keys: the `.env` closure is derived from the project-layer
+  denylist, credentials stay open). Tracked on PCI surface 20.
