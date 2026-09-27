@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 65 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 68 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -667,4 +667,25 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** A candidate module that `use`d a suite helper could redefine that helper's trait impl, module-level let or named refinement: the merged program kept the later definition (last-wins maps) and E0002 covered only fn/type/enum/mod, so a broken candidate passed the operator's test and Fabric signed it.
 - **Reproduced:** G01 final independent re-audit of candidate 4 (verdict adversary, wf_3c389d3a), executed through the real binary (signed pass). Pinned by resolver::tests::duplicate_let_refinement_or_impl_produces_e0002 (M60-M62) and check_effects a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant.
 - **Fix:** E0002 extends to module-level lets, named refinements and (trait, type) impls across the merged program. (`2175cc1b`)
+
+### FG-067 — crates/axon-fabric/src/submit.rs (security, fixed)
+
+- **Claimed:** A Fabric `Passed` for a registered check means the operator's named test passed.
+- **Reality:** A pass was inferred from the ABSENCE of a failure. A candidate's `exit(0)` mid-test (reachable under the default IO grant), or an operator test returning `Err` (e.g. `?` over the candidate's output), ended the test before its assertions and `axon test` reported it ok, so Fabric recorded Passed. Not locally SIGNABLE (signable checks run under an empty ceiling, and `exit` needs IO), but the verdict itself was false.
+- **Reproduced:** G01 candidate-2 review (wf_2f0bc4c3), reclassified to PCI 11/12; re-executed through submit. Pinned by check_effects a_pass_needs_evidence_that_the_test_completed (exit(0), forged ok line, Err return, honest controls), interp a_test_completes_only_when_its_body_returns_normally, tests/test_completion.rs (M63-M65, M67, M68).
+- **Fix:** Affirmative completion evidence: Fabric hands a fresh per-run secret to `axon test --completion-key-stdin`, which tags only a test whose body returned normally with HMAC(key, name); a Passed verdict requires a verifying token, else Unknown. (`89256bd3`)
+
+### FG-068 — crates/axon-core/src/resolver.rs (security, fixed)
+
+- **Claimed:** FG-066: a candidate cannot redefine a suite helper's impl; E0002 covers every definition in the merged program.
+- **Reality:** E0002 keyed impls by (trait, type), but method calls dispatch on (type name, method name) with last-wins. A candidate's `impl Other for Expect { fn check … }` beside the suite's `impl Judge for Expect` was accepted, and when the suite imported its helper before the candidate the no-op `check` replaced the operator's assertion: Fabric signed-off a pass for `double(n) = n * 0`.
+- **Reproduced:** 2026-09-26 PCI 2b probe, executed through submit on the pre-fix binary (Passed). Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (M69, M70) and check_effects a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant (second-trait method).
+- **Fix:** Methods are unique by their dispatch key (the interpreter's `type_name_of`, method name) across the merged program; trait names are unique. (`abaf8bbd`)
+
+### FG-069 — crates/axon-cortex/src/runner.rs (security, fixed)
+
+- **Claimed:** Surface 6 / FG-057: the check runs from a clean, operator-controlled environment on the pinned suite bytes.
+- **Reality:** The check inherited the LAUNCHER's cwd. An operator test's relative runtime read of its own fixture resolved outside the pinned, digested suite tree, so the honest candidate failed and a candidate with a write grant planted the expected value beside the launcher and passed (also with a restore by a filter-joined candidate test).
+- **Reproduced:** 2026-09-26 PCI probe through submit (grant:test): plant and plant+restore Passed, honest Failed; the planted file landed in the test process's cwd. Pinned by check_effects a_suites_runtime_fixture_is_the_pinned_one (M71).
+- **Fix:** The runner sets the check's cwd to its workspace (`<run>/check`, materialized read-only). (`2b880aeb`)
 

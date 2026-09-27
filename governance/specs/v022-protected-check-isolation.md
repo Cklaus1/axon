@@ -54,28 +54,39 @@ Existing findings are reclassified explicitly below, never hidden or downgraded.
 |---|---|---|---|
 | 1 | Module or import shadowing of operator-suite modules | fixed: the suite's directory resolves first | FG-052; `a_candidate_cannot_shadow_a_module_of_the_suite` (M04) |
 | 2 | Candidate redefinition of operator-suite fns, types, enums, modules, `let`s, named refinements and trait impls | fixed: E0002 across the merged program | FG-066; resolver `duplicate_let_refinement_or_impl_produces_e0002` (M60-M62); `a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant` |
-| 2b | Trait DEFINITIONS, and methods added by a second impl of a different trait for the same type | **open**, not yet probed | — |
+| 2b | Trait DEFINITIONS, and methods added by a second impl of a different trait for the same type | **fixed** (was live: a signed-off pass). Methods are unique by their DISPATCH key (`type_name_of`, name) across the merged program; trait names are unique (a duplicate trait was not live, since trait methods carry no bodies) | FG-068; resolver `duplicate_let_refinement_or_impl_produces_e0002` (M69, M70); `a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant` (second-trait method) |
 | 3 | Symlink or path escape from the candidate or suite tree | fixed: any link is refused before launch (candidate side mutated; suite side untested) | FG-062; `a_candidate_holding_a_symlink_is_refused` (M57) |
 | 4 | Ambient module-path fallthrough (trial-cache `~/.axon/lib`, interpreter bindir) | fixed: `AXON_PATH_EXCLUSIVE` | FG-060; M53. Fabric does not probe that the pinned interpreter honours it (MINOR) |
 | 5 | Path-list injection into the module path (`:` in the state dir) | fixed | FG-059; M52 |
 | 6 | Candidate-controlled verifier environment | fixed: clean environment and applied empty ceiling | FG-057; M44, M55 |
 | 7 | Cross-frame `break` / `continue` | fixed: contained at every frame edge (functions, closures, predicates, handler arms) | FG-063/064/065; M59 (M58 retired as equivalent) |
-| 8 | Cross-frame `return` | believed contained: `call_fn` ends a `Return` at the callee | not yet independently probed |
+| 8 | Cross-frame `return` | contained, probed: `call_fn` ends a `Return` at the callee, so a candidate function's or closure's `return` never ends the test (the assertion after it runs) | interp `a_test_completes_only_when_its_body_returns_normally` (`t_return`, `t_closure_return`) |
 | 9 | Refinement / predicate / attribute execution escaping into verifier control flow | fixed for loop control (7). Other effects of predicates are not yet assessed | FG-065 |
-| 10 | Effect-handler or closure escape | loop control contained (7). A candidate-defined NAMED handler used by the suite is not probed | — |
-| 11 | **`exit(0)` or equivalent early successful termination** | **open** (reclassified from G01 MAJOR-ADJACENT). A candidate's `exit(0)` counts as a clean test pass. Unsignable today, because every locally signable check has an empty ceiling and `exit` needs IO. Live once the microVM signs suite verdicts under an IO grant | candidate-2 review (wf_2f0bc4c3) |
-| 12 | **A test returning `Err` treated as success** | **open** (reclassified from G01 MAJOR-ADJACENT). An operator test that returns `Err`, for example via `?` over the candidate's output, counts as passed | candidate-2 review (wf_2f0bc4c3) |
-| 13 | A pass signed although the required assertion or completion point was not reached | open as a general property. 7, 11 and 12 are instances. There is no positive "completed" marker yet; completion is inferred from the absence of a failure | — |
+| 10 | Effect-handler or closure escape | loop control contained (7). Named handlers: not live, probed — a named handler is desugared per FILE at parse time, so a candidate's same-named handler cannot rebind the suite's, in either merge order. Interface note: a closure the SUITE hands to the candidate runs under whatever handler the candidate installs; that is the candidate-under-test interface, by the suite's own choice | `tests/pci_isolation.rs` `a_candidate_cannot_rebind_a_suite_named_handler` |
+| 11 | **`exit(0)` or equivalent early successful termination** | **fixed by 13** (reclassified from G01 MAJOR-ADJACENT). `axon test` still reports the test ok, but it issues no completion token, so Fabric records Unknown | FG-067; `a_pass_needs_evidence_that_the_test_completed` (M63, M67, M68) |
+| 12 | **A test returning `Err` treated as success** | **fixed by 13** (reclassified from G01 MAJOR-ADJACENT). A test whose body yields `Err` (tail value, `return` or `?`) is EndedEarly: no token | FG-067; interp `a_test_completes_only_when_its_body_returns_normally` (M65); `a_pass_needs_evidence_that_the_test_completed` |
+| 13 | A pass signed although the required assertion or completion point was not reached | **fixed: affirmative completion evidence.** Fabric generates a fresh 32-byte secret per run and hands it to `axon test --completion-key-stdin`, which reads it BEFORE any program code runs. Only a test whose body returned normally (not `Err`) gets `HMAC-SHA256(key, "axon-test-completion/1\0" + name)` on its ok line. A Passed verdict requires a verifying token for the named test (or every passed test), else Unknown. A forged ok line printed by the candidate does not verify. This replaces enumerating escapes: any route that ends the body early yields no token. Scope: plain `@[test]`s; property tests issue no token, so a verdict resting on one is Unknown | FG-067; M63-M65, M67, M68; `tests/test_completion.rs` (independent HMAC vector) |
 | 14 | Candidate `@[test]` functions joining the run through the substring filter | partial: only the exact named test decides the verdict. A candidate test still runs in the verifier's process and changes the exit code | FUTURE finding (candidate-4 review) |
 | 15 | A candidate suppressing the failing test's own result line (Failed → NotRun) | open as MINOR: it fails closed | candidate-4 review |
 | 16 | The admission scan does not see `use a::b` | mitigated: resolution is confined (4) and the ceiling is empty | G01 claim, known gaps |
+| 17 | The check's working directory (relative runtime reads of the suite's own fixtures) | **fixed** (was live under an IO grant: a pass for a wrong candidate, and the honest one failed). The check inherited the LAUNCHER's cwd, so a relative read resolved outside the pinned, digested tree and a candidate planted the answer there. The check now runs in `<run>/check`, which is materialized read-only | FG-069; `a_suites_runtime_fixture_is_the_pinned_one` (M71) |
+| 18 | An effectful grant reaching the VERIFIER's own state as the same uid (the Fabric state dir, workspace store, journal, registry file, other trials) | **open, by construction of the local backend.** A local check runs as the launcher's uid. Under a grant with `fs_write` beyond the empty ceiling it can write whatever that uid can. Under `Exec` it can do anything the uid can, including `chmod`-ing the read-only suite tree. PCI cannot hold for a local run under such a grant. **Scoped out of the local claim (see "Scope of the claim")**, consistent with ADR-001 D3, under which the local backend is dev-only. Every locally SIGNABLE check runs under an empty ceiling (G01 clause 2) | ADR-001 D3; G01 clause 2 |
+| 19 | The microVM (protected) backend carries the same guarantees: cwd in the check tree, affirmative completion evidence, confined module path | **open, not claimed.** The completion key is wired only into the LOCAL executor, and no real protected producer emits evidence yet (G01 known gaps). A prerequisite of any protected-verifier claim | — |
+
+## Scope of the claim
+
+PCI is certified for two things:
+1. The **language-level** rules, which do not depend on the backend: resolution, uniqueness, frame containment and completion semantics (surfaces 1-2b, 7-13).
+2. The **local interpreter backend running a `registered_check` under the empty ceiling**, which is the only locally signable profile (surfaces 3-6, 14-17).
+
+A local run under a non-empty grant is a developer verdict (ADR-001 D1/D3), and PCI makes no claim for it (surface 18). The protected microVM backend is a separate prerequisite (surface 19).
 
 ## Readiness state model
 
 | Item | State |
 |---|---|
-| G01-r22-independent-issuer (authenticity / provenance) | pending: frozen candidate 5 under final review |
-| Protected Check Isolation | **PARTIAL**: surfaces 2b, 8, 10, 11, 12 and 13 are open or unprobed |
+| G01-r22-independent-issuer (authenticity / provenance) | pending: scoped candidate 6 (9ae4c605) under its one final review. Candidate 5 failed its own registration rule and was not registered |
+| Protected Check Isolation | **PARTIAL**: not yet certified. 14/15 are partial or MINOR, 18 is scoped out and 19 is open. The fixes for 2b, 11-13 and 17 are on v022/veto |
 | **Overall protected-verifier readiness** | **NOT READY** |
 
 G01 may register on zero authenticity or provenance blockers while PCI stays open. That holds
@@ -87,13 +98,12 @@ only on these conditions:
    no admission path reads a gate registration, and a protected scope also requires protected
    (microVM) evidence, which no real producer emits yet (G01 known gaps).
 
-## Next steps (after candidate 5's G01 decision)
+## Next steps
 
-1. Decide the semantics of 11 and 12. A check passes only if the operator's test body returns
-   normally, which is the positive completion point in 13. An `exit(…)` from below the test,
-   or an `Err` return, is a failure.
-2. Probe 2b, 8 and 10. Fix whatever is live.
-3. Build a PCI regression suite: one test per surface, run through the real submit path, plus a
-   mutation driver like G01's.
+1. Done: 11-13 (affirmative completion evidence), and 2b, 8, 10 probed (2b was live, now fixed).
+   17 was found and fixed.
+2. 18 is bounded out of the local claim (see "Scope of the claim"). 19 stays a prerequisite of any
+   protected-verifier claim.
+3. The regression suite is the tests named in this table, plus `v022_g01_mutations.py --scope=pci`.
 4. Freeze, run the proof sequence, then run one final independent review against this
    document.

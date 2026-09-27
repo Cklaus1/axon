@@ -2345,6 +2345,39 @@
       "status": "fixed",
       "severity": "security",
       "commit": "2175cc1b"
+    },
+    {
+      "id": "FG-067",
+      "where": "crates/axon-fabric/src/submit.rs",
+      "claimed": "A Fabric `Passed` for a registered check means the operator's named test passed.",
+      "reality": "A pass was inferred from the ABSENCE of a failure. A candidate's `exit(0)` mid-test (reachable under the default IO grant), or an operator test returning `Err` (e.g. `?` over the candidate's output), ended the test before its assertions and `axon test` reported it ok, so Fabric recorded Passed. Not locally SIGNABLE (signable checks run under an empty ceiling, and `exit` needs IO), but the verdict itself was false.",
+      "reproduced": "G01 candidate-2 review (wf_2f0bc4c3), reclassified to PCI 11/12; re-executed through submit. Pinned by check_effects a_pass_needs_evidence_that_the_test_completed (exit(0), forged ok line, Err return, honest controls), interp a_test_completes_only_when_its_body_returns_normally, tests/test_completion.rs (M63-M65, M67, M68).",
+      "fix": "Affirmative completion evidence: Fabric hands a fresh per-run secret to `axon test --completion-key-stdin`, which tags only a test whose body returned normally with HMAC(key, name); a Passed verdict requires a verifying token, else Unknown.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "89256bd3"
+    },
+    {
+      "id": "FG-068",
+      "where": "crates/axon-core/src/resolver.rs",
+      "claimed": "FG-066: a candidate cannot redefine a suite helper's impl; E0002 covers every definition in the merged program.",
+      "reality": "E0002 keyed impls by (trait, type), but method calls dispatch on (type name, method name) with last-wins. A candidate's `impl Other for Expect { fn check \u2026 }` beside the suite's `impl Judge for Expect` was accepted, and when the suite imported its helper before the candidate the no-op `check` replaced the operator's assertion: Fabric signed-off a pass for `double(n) = n * 0`.",
+      "reproduced": "2026-09-26 PCI 2b probe, executed through submit on the pre-fix binary (Passed). Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (M69, M70) and check_effects a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant (second-trait method).",
+      "fix": "Methods are unique by their dispatch key (the interpreter's `type_name_of`, method name) across the merged program; trait names are unique.",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "abaf8bbd"
+    },
+    {
+      "id": "FG-069",
+      "where": "crates/axon-cortex/src/runner.rs",
+      "claimed": "Surface 6 / FG-057: the check runs from a clean, operator-controlled environment on the pinned suite bytes.",
+      "reality": "The check inherited the LAUNCHER's cwd. An operator test's relative runtime read of its own fixture resolved outside the pinned, digested suite tree, so the honest candidate failed and a candidate with a write grant planted the expected value beside the launcher and passed (also with a restore by a filter-joined candidate test).",
+      "reproduced": "2026-09-26 PCI probe through submit (grant:test): plant and plant+restore Passed, honest Failed; the planted file landed in the test process's cwd. Pinned by check_effects a_suites_runtime_fixture_is_the_pinned_one (M71).",
+      "fix": "The runner sets the check's cwd to its workspace (`<run>/check`, materialized read-only).",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "2b880aeb"
     }
   ]
 }
