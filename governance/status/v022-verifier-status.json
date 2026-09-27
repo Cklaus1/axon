@@ -1,0 +1,106 @@
+{
+  "schema": "axon-v022-verifier-status/1",
+  "purpose": "The MUTABLE programme status of the verifier trust stack. Certified texts and records are IMMUTABLE and live at the paths in `certified_artifacts`, pinned by hash; readiness, follow-ups and experiment states change HERE, never in a certified file. Checked by scripts/v022_protected_readiness.py (run by scripts/gate.sh).",
+  "certified_artifacts": [
+    {
+      "what": "G01 claim (registered)",
+      "path": "governance/specs/v022-G01-claim.md",
+      "sha256": "12ce46ecd701fd06f54f5190d2f1a6d9e7fa296e8d9abc086971967f1098aadf"
+    },
+    {
+      "what": "G01 registration record",
+      "path": "governance/proofs/v022-g01/REGISTRATION.md",
+      "sha256": "9e9e49254a6b53cb76c4f532477607b1506096c97a607246d746b365dfc42b51"
+    },
+    {
+      "what": "PCI spec (certified)",
+      "path": "governance/specs/v022-protected-check-isolation.md",
+      "sha256": "bd5c6d326d04d12a7b3ab82b838d3e7aaa3e1bf90a9575d06f7d70f6992067ca"
+    },
+    {
+      "what": "PCI certification record",
+      "path": "governance/proofs/v022-pci/CERTIFICATION.md",
+      "sha256": "afb94d6a47d637adb4702e0df71dc14b6b1fcf3c14365c5b1c318fdae8d57b05"
+    }
+  ],
+  "milestone": {
+    "name": "PROTECTED_VERIFIER_READY",
+    "definition": "G01_registered AND PCI_certified AND protected_backend_carries_G01 AND protected_backend_carries_PCI AND verification_binding_gates_pass",
+    "components": {
+      "G01_registered": {
+        "requires_gates": [
+          "G01-r22-independent-issuer"
+        ],
+        "requires_files": [
+          "governance/proofs/v022-g01/REGISTRATION.md"
+        ]
+      },
+      "PCI_certified": {
+        "requires_gates": [],
+        "requires_files": [
+          "governance/proofs/v022-pci/CERTIFICATION.md"
+        ]
+      },
+      "protected_backend_carries_G01": {
+        "requires_gates": [
+          "G01-r22-registered-check",
+          "G01-r22-verifier-separation",
+          "G13-r22-profile-qualification",
+          "G13-r22-profile-eligibility",
+          "G13-r22-guest-truth"
+        ],
+        "requires_files": [],
+        "note": "The linux-microvm-protected profile must emit attested suite verdicts itself (G01 on the real protected host path)."
+      },
+      "protected_backend_carries_PCI": {
+        "requires_gates": [
+          "G03-r22-trial-isolation",
+          "G03-r22-physical-isolation"
+        ],
+        "requires_files": [
+          "governance/proofs/v022-pci-microvm/CERTIFICATION.md"
+        ],
+        "note": "PCI surface 19: completion evidence, sealing, per-provenance kernels and cwd confinement proven on the microVM backend, with parity to the local interpreter, by its own frozen certification."
+      },
+      "verification_binding_gates_pass": {
+        "requires_gates": [
+          "G01-r22-nonvacuous-outcome",
+          "G01-r22-unknown-outcome",
+          "G32-r22-receipt-roles",
+          "G32-r22-artifact-recheck",
+          "G32-r22-evidence-laundering",
+          "G32-r22-sidecar-bindings",
+          "G11-r22-independent-admission",
+          "G11-r22-admission-disposition",
+          "G11-r22-rollback-revalidate",
+          "G33-r22-decision-rule-freeze"
+        ],
+        "requires_files": []
+      }
+    },
+    "value": false
+  },
+  "gated_experiments": {
+    "stage7-pilot": {
+      "state": "PREREGISTERED",
+      "requires": "PROTECTED_VERIFIER_READY"
+    },
+    "CX-21 CODING-STRATEGY-001": {
+      "state": "PREREGISTERED",
+      "requires": "PROTECTED_VERIFIER_READY"
+    }
+  },
+  "follow_ups": {
+    "G01": [
+      "The PCI-adjacent MiCode .env findings recorded in REGISTRATION.md were fixed after registration: micode fc18bbc6 (MICODE_EXTENSIONS_TRUST_PROJECT and authority keys) and b72cf4c4 (provider endpoint/routing keys; .env closure derived from the project-layer denylist, credentials open). Tracked on PCI surface 20.",
+      "Verdict freshness binding (disclosed limitation): attestation v2 to bind plan ref / epoch / run nonce."
+    ],
+    "PCI": [
+      "MINOR: P/E/Var pseudo-builtins are not reserved names; W0003 text wrong for P; eval_prob_pred double-evaluates its operand.",
+      "MINOR: temporal_now/temporal_new/temporal_is_valid classed pure though they read the clock (should be Time).",
+      "MINOR: mutation-proof gaps (M89 message-kill; handler-arm contain_loop_control unmutated; M52/M60/M71 side-effect kills; tested-not-mutated sub-claims).",
+      "MINOR: interop gate lacks a negative completion case; MiCode .env closure gated by unit-test rows only.",
+      "FUTURE: candidate @[test]s matched by the substring filter still run in the verifier process (surface 14); per-Kernel principal token stream; Cortex local adjudicator needs no completion evidence."
+    ]
+  }
+}

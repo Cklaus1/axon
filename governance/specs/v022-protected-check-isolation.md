@@ -105,8 +105,8 @@ recorded as adjacent.
 | Item | State |
 |---|---|
 | G01-r22-independent-issuer (authenticity / provenance) | **REGISTERED** 2026-09-26 at 9ae4c605 + micode dd4ea0a9 (`governance/proofs/v022-g01/REGISTRATION.md`), with this document as its prerequisite |
-| Protected Check Isolation | **CERTIFIED** 2026-09-27 at 31413ca7 + micode b72cf4c4, within "Scope of the claim" (`governance/proofs/v022-pci/CERTIFICATION.md`); surface 19 (microVM) stays open |
-| **Overall protected-verifier readiness** | **NOT READY** — the protected (microVM) backend (19) carries none of these guarantees and emits no suite verdict yet |
+| Protected Check Isolation | **PARTIAL**: not yet certified. 14/15 are partial or MINOR, 18 is scoped out and 19 is open. The fixes for 2b, 11-13 and 17 are on v022/veto |
+| **Overall protected-verifier readiness** | **NOT READY** |
 
 G01 may register on zero authenticity or provenance blockers while PCI stays open. That holds
 only on these conditions:

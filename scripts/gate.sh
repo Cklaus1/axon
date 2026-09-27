@@ -290,6 +290,10 @@ echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) �
 # (G01 alone is never sufficient): one row per surface, exact test names.
 echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 ./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
+# Certified texts are immutable, and PROTECTED_VERIFIER_READY is derived from
+# evidence, never asserted; Stage 7 / CX-21 stay PREREGISTERED until it holds.
+echo "── gate: v0.22 protected-verifier readiness (certified artifacts pinned) ──"
+python3 -B scripts/v022_protected_readiness.py || fail "v0.22 protected-verifier readiness"
 # G29-r22-claim-separation: the repository's own three release claims stay
 # separate and false until each has evidence of its own kind.
 python3 -B scripts/v022_claim_separation.py || fail "v0.22 release-claim separation"
