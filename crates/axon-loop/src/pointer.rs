@@ -178,9 +178,26 @@ pub fn parse_baseline(text: &str) -> Result<BaselineRecord> {
 /// Designate the scope's incumbent-of-record. Returns the baseline ref.
 pub fn designate_baseline(store: &Store, b: &BaselineRecord) -> Result<Ref> {
     let mut tx = Tx::begin(store)?;
-    if !store.config()?.admitters().contains(&b.issuer_ref) {
+    let config = store.config()?;
+    if !config.admitters().contains(&b.issuer_ref) {
         return Err(refused(format!(
             "issuer {} is not a trusted admitter",
+            b.issuer_ref
+        )));
+    }
+    // The incumbent-of-record is chosen by an independent admitter, never by
+    // an identity that produces or judges evidence (review wf_d788c05a-be2).
+    if let Some(role) = crate::admission::other_loop_role(&config, &b.issuer_ref) {
+        return Err(refused(format!(
+            "baseline issuer {} is also {role}; it must hold no other loop role",
+            b.issuer_ref
+        )));
+    }
+    if tx.hypotheses(&b.scope, None).iter().any(|h| {
+        matches!(h, crate::evo::Hypothesis::Proposed { proposer_ref, .. } if proposer_ref == &b.issuer_ref)
+    }) {
+        return Err(refused(format!(
+            "baseline issuer {} is an EVO proposer (the ranker) in this scope",
             b.issuer_ref
         )));
     }
@@ -442,6 +459,7 @@ fn check_rollback(
                  pause instead"
             ))
         })?;
+        admission::issuer_independent(tx, &adm, &t.issuer_ref)?;
         safety_still_holds(tx, &adm)?;
     }
     Ok(())
@@ -511,6 +529,7 @@ fn check_activate(
         ));
     }
     let adm = admission::rederive(tx, adm_ref, admitters)?;
+    admission::issuer_independent(tx, &adm, &t.issuer_ref)?;
     if &adm.target_policy_ref != target {
         return Err(refused(format!(
             "admission {adm_ref} admits {}, not {target}",

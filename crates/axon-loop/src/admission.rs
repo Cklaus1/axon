@@ -162,6 +162,38 @@ pub(crate) fn other_loop_role(
     }
 }
 
+/// G11-r22-independent-admission: issuing the ACTIVATION (or a rollback) of a
+/// candidate is the promotion act, so its issuer is held to the admitter's
+/// independence: not the candidate's proposer (the ranker) — nor any EVO
+/// proposer on record in the scope, since proposer names are not registered —
+/// not the evaluator, and not a subject issuer of the evaluation the
+/// admission rests on. (The other loop roles are refused for every
+/// transition by [`other_loop_role`].)
+pub(crate) fn issuer_independent(tx: &Tx, adm: &AdmissionRecord, who: &OpaqueRef) -> Result<()> {
+    let proposer = adm.proposer_ref.as_ref() == Some(who)
+        || tx
+            .hypotheses(&adm.scope, None)
+            .iter()
+            .any(|h| matches!(h, Hypothesis::Proposed { proposer_ref, .. } if proposer_ref == who));
+    let (_, eval) = crate::evl::load_journalled(tx, &adm.evaluation_ref)?;
+    let role = if proposer {
+        Some("an EVO proposer (the ranker)")
+    } else if &adm.evaluator_ref == who {
+        Some("the evaluator")
+    } else if eval.subject_issuers.contains(who) {
+        Some("a subject issuer")
+    } else {
+        None
+    };
+    match role {
+        Some(role) => Err(refused(format!(
+            "self-promotion: transition issuer {who} is {role} of the admission it activates; \
+             the issuer must be independent of the candidate's proposer, evaluator and subjects"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The pure admission function. Refuses (Err) inputs that cannot be admitted
 /// at all; otherwise returns the complete record.
 pub(crate) struct Inputs<'a> {

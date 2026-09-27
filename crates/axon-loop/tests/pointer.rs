@@ -637,3 +637,86 @@ fn a_rollback_needs_an_independent_trusted_issuer() {
         w.inc_ref
     );
 }
+
+/// G11-r22-independent-admission: issuing the activation of a candidate IS
+/// the promotion act. Its proposer (the ranker), its evaluator and a subject
+/// issuer cannot issue it — nor a rollback to it — even when each is listed as
+/// a trusted admitter; an independent admitter can (review wf_d788c05a-be2).
+#[test]
+fn no_proposer_evaluator_or_subject_issues_a_promotion() {
+    let w = world();
+    let adm = accepted(&w, "exp");
+    let mut cfg = w.s.config().unwrap();
+    for who in [PROPOSER, EVALUATOR, WORKER] {
+        cfg.trusted_admitters.push(OpaqueRef::new(who).unwrap());
+    }
+    w.s.write_config(&cfg).unwrap();
+    let go = |kind: &str, expected: &Ref, target: &Ref, epoch: u64, a: &Ref, issuer: &str| {
+        let id = format!("{kind}-{epoch}-{}", issuer.replace(':', "-"));
+        let mut v = transition(&id, kind, expected, Some(target), epoch, Some(a), false);
+        v["issuer_ref"] = json!(issuer);
+        pointer::transition(&w.s, &t(v))
+    };
+    let refused_all = |kind: &str, expected: &Ref, target: &Ref, epoch: u64| {
+        let before = snapshot(w.dir.path());
+        for (who, why) in [
+            (PROPOSER, "an EVO proposer (the ranker)"),
+            (EVALUATOR, "the evaluator"),
+            (WORKER, "a subject issuer"),
+        ] {
+            match go(kind, expected, target, epoch, &adm, who) {
+                Err(LoopError::Refused(m)) => assert!(
+                    m.contains("self-promotion: transition issuer") && m.contains(why),
+                    "{kind} by {who}: {m}"
+                ),
+                o => panic!("{who} issued the {kind}: {o:?}"),
+            }
+        }
+        assert_eq!(
+            snapshot(w.dir.path()),
+            before,
+            "a refused {kind} wrote something"
+        );
+    };
+    refused_all("activate", &w.inc_ref, &w.cand_ref, 1);
+    go("activate", &w.inc_ref, &w.cand_ref, 1, &adm, ADMITTER).unwrap();
+    go(
+        "rollback",
+        &w.cand_ref,
+        &w.inc_ref,
+        2,
+        &w.baseline,
+        ADMITTER,
+    )
+    .unwrap();
+    // Back to the candidate: a rollback re-derives the same admission.
+    refused_all("rollback", &w.inc_ref, &w.cand_ref, 3);
+    go("rollback", &w.inc_ref, &w.cand_ref, 3, &adm, ADMITTER).unwrap();
+}
+
+/// The incumbent-of-record is designated by an independent admitter: not by
+/// Compute Fabric (a trusted verifier) nor by an EVO proposer, even listed as
+/// admitters.
+#[test]
+fn a_baseline_issuer_holds_no_other_loop_role() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store_with_config(dir.path());
+    let inc_ref = s.put_cas("policies", &incumbent()).unwrap();
+    let mut cfg = s.config().unwrap();
+    cfg.trusted_admitters
+        .push(OpaqueRef::new(VERIFIER).unwrap());
+    s.write_config(&cfg).unwrap();
+    let mut b = baseline_doc(&inc_ref);
+    b["issuer_ref"] = json!(VERIFIER);
+    let before = snapshot(dir.path());
+    match pointer::designate_baseline(&s, &pointer::parse_baseline(&b.to_string()).unwrap()) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("a trusted verifier"), "{m}"),
+        o => panic!("Fabric designated the incumbent-of-record: {o:?}"),
+    }
+    assert_eq!(snapshot(dir.path()), before);
+    pointer::designate_baseline(
+        &s,
+        &pointer::parse_baseline(&baseline_doc(&inc_ref).to_string()).unwrap(),
+    )
+    .unwrap();
+}
