@@ -720,3 +720,74 @@ fn a_baseline_issuer_holds_no_other_loop_role() {
     )
     .unwrap();
 }
+
+/// Review wf_8aad6d16-ad6 (found by two reviewers): the incumbent-of-record's
+/// issuer is rechecked for INDEPENDENCE, not only trust, when the baseline is
+/// rolled back to; and a revocation issuer holds no other loop role.
+#[test]
+fn a_baseline_issuer_is_independent_now_and_revocation_too() {
+    let w = world();
+    let adm = accepted(&w, "exp");
+    let go =
+        |id: &str, kind: &str, expected: &Ref, target: &Ref, epoch: u64, a: &Ref, issuer: &str| {
+            let mut v = transition(id, kind, expected, Some(target), epoch, Some(a), false);
+            v["issuer_ref"] = json!(issuer);
+            pointer::transition(&w.s, &t(v))
+        };
+    go("a1", "activate", &w.inc_ref, &w.cand_ref, 1, &adm, ADMITTER).unwrap();
+    // The baseline's issuer (ADMITTER) becomes Compute Fabric; another
+    // admitter tries to roll back to the baseline it designated.
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_verifiers
+        .push(OpaqueRef::new(ADMITTER).unwrap());
+    cfg.trusted_admitters
+        .push(OpaqueRef::new("op:admitter2").unwrap());
+    w.s.write_config(&cfg).unwrap();
+    let before = snapshot(w.dir.path());
+    match go(
+        "r1",
+        "rollback",
+        &w.cand_ref,
+        &w.inc_ref,
+        2,
+        &w.baseline,
+        "op:admitter2",
+    ) {
+        Err(LoopError::Refused(m)) => {
+            assert!(
+                m.contains("is now also") && m.contains("no safe predecessor"),
+                "{m}"
+            )
+        }
+        o => panic!("rolled back to a baseline whose issuer is now Fabric: {o:?}"),
+    }
+    assert_eq!(snapshot(w.dir.path()), before);
+    // From paused, the incumbent-of-record's activation (route 1) too.
+    let mut p = transition("p1", "pause", &w.cand_ref, None, 2, None, false);
+    p["issuer_ref"] = json!("op:admitter2");
+    pointer::transition(&w.s, &t(p)).unwrap();
+    let before = snapshot(w.dir.path());
+    match go(
+        "b1",
+        "activate",
+        &null_policy_ref(),
+        &w.inc_ref,
+        3,
+        &w.baseline,
+        "op:admitter2",
+    ) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("is now also"), "{m}"),
+        o => panic!("activated a baseline whose issuer is now Fabric: {o:?}"),
+    }
+    match pointer::revoke(
+        &w.s,
+        &scope(),
+        &w.cand_ref,
+        &r('e'),
+        &OpaqueRef::new(ADMITTER).unwrap(),
+    ) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("no other loop role"), "{m}"),
+        o => panic!("Fabric revoked: {o:?}"),
+    }
+    assert_eq!(snapshot(w.dir.path()), before);
+}

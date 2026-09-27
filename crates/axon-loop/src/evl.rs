@@ -175,6 +175,11 @@ pub struct TrialResult {
     /// every re-derivation can require that authority still to be current.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_signed_by: Option<SignedBy>,
+    /// Counted trial, any class: the observer its preflight context was
+    /// admitted under (a development evaluation judges it by this name), so a
+    /// re-derivation can require that observer to be trusted still.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_observer_ref: Option<OpaqueRef>,
 }
 
 /// Who signed a document, under which operator-registered key.
@@ -698,6 +703,10 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                 ))
                 .copied()
                 .unwrap_or_default(),
+            context_observer_ref: delivered
+                .get(&key)
+                .filter(|_| matches!(outcome, Outcome::VerifiedPass | Outcome::Fail))
+                .map(|d| d.ctx.observed_issuer_ref.clone()),
             // A counted protected trial passed `authenticated_context` under
             // the CURRENT observer key; record which, for re-derivation.
             context_signed_by: delivered
@@ -843,6 +852,18 @@ fn judge(
     if let Some((req, rcpt, proj)) = &d.acf {
         if let Err(e) = bind_acf(&d.ep, req, rcpt, proj) {
             return unknown(UnknownKind::Unbound, format!("unbound ACF evidence: {e}"));
+        }
+        // The trial's cost is stated in its execution's currency; a relabelled
+        // usage would move the arm's liability into another unit.
+        if d.ep.usage.currency.as_str() != req.limits.currency_code.as_str() {
+            return unknown(
+                UnknownKind::Unbound,
+                format!(
+                    "unbound: usage currency {} is not its execution request's {}",
+                    d.ep.usage.currency.as_str(),
+                    req.limits.currency_code.as_str()
+                ),
+            );
         }
     }
     // ADR-001 D3: a protected evaluation counts a trial only from protected

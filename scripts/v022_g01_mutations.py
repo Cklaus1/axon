@@ -535,8 +535,7 @@ MUTATIONS = [
      'axon-loop', '--test pointer', 'no_proposer_evaluator_or_subject_issues_a_promotion'),
     ('M102', 'baseline: the issuer holds no other loop role',
      'crates/axon-loop/src/pointer.rs',
-     '    if let Some(role) = crate::admission::other_loop_role(&config, &b.issuer_ref) {',
-     '    if let Some(role) = None::<&str> {',
+     '    if let Some(role) = crate::admission::other_loop_role(&config, &b.issuer_ref) {\n        return Err(refused(format!(\n            "baseline issuer {} is also', '    if let Some(role) = None::<&str> {\n        return Err(refused(format!(\n            "baseline issuer {} is also',
      'axon-loop', '--test pointer', 'a_baseline_issuer_holds_no_other_loop_role'),
     ('M103', 'derive: a counted verdict is still pinned (profile, revision, suite, acceptance)',
      'crates/axon-loop/src/admission.rs',
@@ -603,6 +602,41 @@ MUTATIONS = [
      ')?;\n                c.check_separation().map_err(crate::error::refused)?;\n                Ok(c)',
      ')?;\n                Ok(c)',
      'axon-loop', '--test evl_admission', 'an_observer_key_and_identity_are_its_own'),
+    ('M116', "facts: a multi-currency arm's liability is summed, never 0",
+     'crates/axon-loop/src/admission.rs',
+     '                .map(|c| c.unresolved_liability_micro)\n                .fold(0, u64::saturating_add),',
+     '                .map(|c| c.unresolved_liability_micro)\n                .fold(0, |_, _| 0),',
+     'axon-loop', '--lib', 'admission::decide_tests::a_multi_currency_arm_is_never_decided_as_known'),
+    ('M117', 'decide: an arm spanning currencies is never decided as known',
+     'crates/axon-loop/src/admission.rs',
+     '        if n != 1 && arm.assigned > arm.missing {',
+     '        if false && n != 1 && arm.assigned > arm.missing {',
+     'axon-loop', '--lib', 'admission::decide_tests::a_multi_currency_arm_is_never_decided_as_known'),
+    ('M118', "evl: a trial's usage is in its execution request's currency",
+     'crates/axon-loop/src/evl.rs',
+     '        if d.ep.usage.currency.as_str() != req.limits.currency_code.as_str() {',
+     '        if false && d.ep.usage.currency.as_str() != req.limits.currency_code.as_str() {',
+     'axon-loop', '--test evl_admission', 'a_relabelled_currency_never_hides_a_liability'),
+    ('M119', "rollback: the baseline's issuer is independent now",
+     'crates/axon-loop/src/pointer.rs',
+     '        baseline_issuer_independent(tx, &b)\n            .map_err(',
+     '        Ok::<(), LoopError>(())\n            .map_err(',
+     'axon-loop', '--test pointer', 'a_baseline_issuer_is_independent_now_and_revocation_too'),
+    ('M120', "activate: the baseline's issuer is independent now (route 1)",
+     'crates/axon-loop/src/pointer.rs',
+     '            baseline_issuer_independent(tx, &b)?;\n',
+     '',
+     'axon-loop', '--test pointer', 'a_baseline_issuer_is_independent_now_and_revocation_too'),
+    ('M121', 'revoke: the issuer holds no other loop role',
+     'crates/axon-loop/src/pointer.rs',
+     '    if let Some(role) = crate::admission::other_loop_role(&config, issuer) {',
+     '    if let Some(role) = None::<&str> {',
+     'axon-loop', '--test pointer', 'a_baseline_issuer_is_independent_now_and_revocation_too'),
+    ('M122', "derive: a counted trial's context observer is trusted still (any class)",
+     'crates/axon-loop/src/admission.rs',
+     '                if !observers_now.contains(o) {',
+     '                if false && !observers_now.contains(o) {',
+     'axon-loop', '--test evl_admission', 'a_development_verdict_rests_on_a_currently_trusted_observer'),
 ]
 
 
@@ -620,7 +654,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M79", "M80", "M81", "M82", "M83", "M84", "M85",
            "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95", "M96", "M97"}
 RETIRED = {"M58"}
-BINDING_IDS = {f"M{n}" for n in range(101, 116)}
+BINDING_IDS = {f"M{n}" for n in range(101, 123)}
 
 
 def in_scope(mid, scope):

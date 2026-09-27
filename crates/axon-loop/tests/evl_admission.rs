@@ -643,3 +643,101 @@ fn an_execution_cost_is_never_omitted_from_the_economics() {
         adm.reasons
     );
 }
+
+/// Review wf_8aad6d16-ad6 (G11-r22-admission-disposition, executed): one
+/// trial's usage relabelled to another currency made the arm's economics
+/// multi-currency, and the admission read its liability as 0 — the frozen
+/// liability tolerance passed and the candidate was ACCEPTed. Now the
+/// relabelled trial is Unbound (its usage is not in its execution's
+/// currency) and nothing is ACCEPTed; control: the same plan without the
+/// relabel is INCONCLUSIVE on the liability it really holds.
+#[test]
+fn a_relabelled_currency_never_hides_a_liability() {
+    let run = |relabel: bool| {
+        let w = world();
+        let exp = if relabel { "eur" } else { "usd" };
+        freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |v| {
+            v["budget_rule"] = json!("max_unresolved_liability_micro=300000")
+        })
+        .unwrap();
+        let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+        let mut v = evl_request(exp, &w.inc, &w.cand, &specs, &EvlOpts::default());
+        for t in v["trials"].as_array_mut().unwrap() {
+            if t["episode"]["identity"]["arm_id"] == "challenger-1" {
+                t["acf_receipt"]["cost_micro"] = json!(900_000);
+                t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
+                if relabel && t["episode"]["identity"]["trial_id"] == "c1" {
+                    t["episode"]["usage"]["currency"] = json!("EUR");
+                }
+            }
+        }
+        let (rec, e) = evaluate(&w.s, &v).unwrap();
+        let (adm, _) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
+        (rec, adm)
+    };
+    let (_, adm) = run(false);
+    assert_eq!(adm.decision, Decision::Inconclusive, "{:?}", adm.reasons);
+    assert!(
+        adm.reasons
+            .iter()
+            .any(|r| r.contains("exceeds plan tolerance")),
+        "{:?}",
+        adm.reasons
+    );
+    let (rec, adm) = run(true);
+    let c = rec.arm_for_policy(&rec.arms[1].policy_ref).unwrap();
+    let _ = c;
+    let cand = rec
+        .arms
+        .iter()
+        .find(|a| a.arm_id.as_str() == "challenger-1")
+        .unwrap();
+    let c1 = cand
+        .trials
+        .iter()
+        .find(|t| t.trial_id.as_str() == "c1")
+        .unwrap();
+    assert!(c1.reason.contains("usage currency EUR"), "{}", c1.reason);
+    assert_ne!(adm.decision, Decision::Accept, "{:?}", adm.reasons);
+}
+
+/// A development-class verdict counts only while the observer its context
+/// was admitted under is trusted: withdrawing it after admission refuses the
+/// activation (review wf_8aad6d16-ad6, MAJOR-ADJACENT, executed).
+#[test]
+fn a_development_verdict_rests_on_a_currently_trusted_observer() {
+    let w = world();
+    let adm = accepted(&w, "obs");
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_observers.retain(|o| o.as_str() != OBSERVER);
+    cfg.observer_keys.remove(&OpaqueRef::new(OBSERVER).unwrap());
+    w.s.write_config(&cfg).unwrap();
+    let before = snapshot(w.dir.path());
+    let t = transition(
+        "a1",
+        "activate",
+        &w.inc_ref,
+        Some(&w.cand_ref),
+        1,
+        Some(&adm),
+        false,
+    );
+    match pointer::transition(&w.s, &tparse(&t)) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("no longer trusts"), "{m}"),
+        o => panic!("activated on a withdrawn observer: {o:?}"),
+    }
+    assert_eq!(snapshot(w.dir.path()), before);
+}
+
+/// ADR-001 D4: a report-only ACCEPT says economics were not assessed.
+#[test]
+fn a_report_only_accept_says_so() {
+    let w = world();
+    let adm = accepted(&w, "ro");
+    let rec = axon_loop::admission::load(&w.s, &adm).unwrap();
+    assert!(
+        rec.reasons.iter().any(|r| r.contains("report-only")),
+        "{:?}",
+        rec.reasons
+    );
+}

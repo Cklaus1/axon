@@ -648,7 +648,7 @@ fn a_protected_activation_rests_only_on_current_authority() {
                 c.trusted_observers.retain(|x| x != &o);
                 c.observer_keys.remove(&o);
             },
-            "protected context is not authenticated",
+            "no longer trusts",
         ),
         (
             "observer-rekeyed",

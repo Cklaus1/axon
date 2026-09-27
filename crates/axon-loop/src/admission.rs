@@ -111,15 +111,23 @@ pub fn parse_request(text: &str) -> Result<AdmitRequest> {
 
 fn facts(a: &ArmResult) -> ArmFacts {
     let tasks: BTreeSet<_> = a.trials.iter().map(|t| &t.task_id).collect();
-    let total = a
-        .economics
-        .single_total()
-        .cloned()
-        .unwrap_or(Total::Unresolved {
+    // Not ONE currency: no total can be stated, and its liability is never
+    // invented as 0 — every currency's unresolved liability still counts
+    // against the plan's tolerance (review wf_8aad6d16-ad6, executed: a
+    // relabelled currency dropped the arm's whole execution liability).
+    let total = a.economics.single_total().cloned().unwrap_or_else(|| {
+        let by = &a.economics.by_currency;
+        Total::Unresolved {
             known_sum_micro: 0,
-            unknown_count: a.assigned,
-            unresolved_liability_micro: 0,
-        });
+            unknown_count: a
+                .assigned
+                .max(by.iter().map(|c| c.records).sum::<u64>() + a.economics.missing_records),
+            unresolved_liability_micro: by
+                .iter()
+                .map(|c| c.unresolved_liability_micro)
+                .fold(0, u64::saturating_add),
+        }
+    });
     ArmFacts {
         policy_ref: a.policy_ref.clone(),
         assigned: a.assigned,
@@ -355,6 +363,24 @@ pub(crate) fn derive(
                     ))
                 },
             )?;
+        }
+    }
+    // Every counted trial's context was admitted under a trusted observer;
+    // that observer must be trusted still, in every class (review
+    // wf_8aad6d16-ad6: a development-class observer withdrawn after admission
+    // did not block activation).
+    let observers_now = config.observers();
+    for arm in &eval.arms {
+        for t in &arm.trials {
+            if let Some(o) = &t.context_observer_ref {
+                if !observers_now.contains(o) {
+                    return Err(refused(format!(
+                        "trial {}'s context was admitted under observer {o}, which the operator \
+                         no longer trusts: its verdict no longer counts",
+                        t.trial_id
+                    )));
+                }
+            }
         }
     }
     // A PROTECTED decision also rests on each trial's clearance and on each
@@ -602,6 +628,17 @@ fn decide(
         }
     }
 
+    // An arm whose costs are not in ONE currency has no statable cost or
+    // liability: it is never decided as if they were known.
+    for (who, arm) in [("candidate", cand_arm), ("incumbent", inc_arm)] {
+        let n = arm.economics.by_currency.len();
+        if n != 1 && arm.assigned > arm.missing {
+            inconclusive.push(format!(
+                "the {who} arm's economics span {n} currencies: its cost and liability cannot be \
+                 stated in one unit"
+            ));
+        }
+    }
     // Unknown liability.
     let liab = liability(&cand.total).saturating_add(liability(&inc.total));
     if liab > rules.max_liability_micro {
@@ -671,10 +708,14 @@ fn decide(
     } else if !inconclusive.is_empty() {
         (Decision::Inconclusive, inconclusive)
     } else {
-        (
-            Decision::Accept,
-            vec!["all frozen plan criteria established".into()],
-        )
+        let mut reasons = vec!["all frozen plan criteria established".to_string()];
+        if rules.min_cost_reduction_ppm.is_none() {
+            reasons.push(
+                "economics report-only (ADR-001 D4): recorded in the arm facts, not assessed"
+                    .into(),
+            );
+        }
+        (Decision::Accept, reasons)
     }
 }
 
@@ -778,5 +819,42 @@ mod decide_tests {
             Decision::Accept,
             "report_only: cost decides nothing: {r:?}"
         );
+    }
+
+    /// An arm whose costs span two currencies has no statable cost or
+    /// liability: INCONCLUSIVE, and its liability is summed, never 0.
+    #[test]
+    fn a_multi_currency_arm_is_never_decided_as_known() {
+        let dev = crate::plan::EvaluationClass::Development;
+        let mut c = arm("c", 2, 50);
+        let usage = |cur: &str, state: &str, cost: Option<u64>, liab: u64, n: u32| {
+            serde_json::from_value::<axon_loop_contracts::Usage>(json!({
+                "state": state, "cost_micro": cost, "unresolved_liability_micro": liab,
+                "currency": cur, "price_schedule_ref": format!("cl22:{}", "d".repeat(64)),
+                "attempt_refs": [format!("cl22:{:064x}", n)],
+            }))
+            .unwrap()
+        };
+        let us = [
+            usage("USD", "final", Some(50), 0, 998),
+            usage("EUR", "unknown", None, 900_000, 999),
+        ];
+        c.economics = crate::tel::summarize_with_missing(
+            us.iter()
+                .map(|u| (u, Some(axon_loop_contracts::EpisodeStatus::Completed))),
+            0,
+        )
+        .unwrap();
+        assert_eq!(c.economics.by_currency.len(), 2);
+        match facts(&c).total {
+            Total::Unresolved {
+                unresolved_liability_micro,
+                ..
+            } => assert_eq!(unresolved_liability_micro, 900_000),
+            t => panic!("a two-currency arm was stated as {t:?}"),
+        }
+        let (d, r) = decide(&rules(None), 1, &c, &arm("i", 2, 100), dev);
+        assert_eq!(d, Decision::Inconclusive, "{r:?}");
+        assert!(r.iter().any(|x| x.contains("span 2 currencies")), "{r:?}");
     }
 }

@@ -152,9 +152,15 @@ pub fn revoke(
     issuer: &OpaqueRef,
 ) -> Result<Vec<Revocation>> {
     let mut tx = Tx::begin(store)?;
-    if !store.config()?.admitters().contains(issuer) {
+    let config = store.config()?;
+    if !config.admitters().contains(issuer) {
         return Err(refused(format!(
             "issuer {issuer} is not a trusted admitter"
+        )));
+    }
+    if let Some(role) = crate::admission::other_loop_role(&config, issuer) {
+        return Err(refused(format!(
+            "revocation issuer {issuer} is also {role}; it must hold no other loop role"
         )));
     }
     if !tx.is_revoked(scope, policy_ref) {
@@ -409,6 +415,28 @@ pub fn transition(store: &Store, t: &PolicyTransition) -> Result<PointerRecord> 
     Ok(next)
 }
 
+/// The incumbent-of-record's issuer is independent NOW, not only when it
+/// designated the baseline: it holds no other loop role and is no EVO
+/// proposer in the scope (review wf_8aad6d16-ad6, found by two reviewers).
+fn baseline_issuer_independent(tx: &Tx, b: &BaselineRecord) -> Result<()> {
+    let config = tx.store.config()?;
+    if let Some(role) = crate::admission::other_loop_role(&config, &b.issuer_ref) {
+        return Err(refused(format!(
+            "the baseline's issuer {} is now also {role}",
+            b.issuer_ref
+        )));
+    }
+    if tx.hypotheses(&b.scope, None).iter().any(|h| {
+        matches!(h, crate::evo::Hypothesis::Proposed { proposer_ref, .. } if proposer_ref == &b.issuer_ref)
+    }) {
+        return Err(refused(format!(
+            "the baseline's issuer {} is an EVO proposer in this scope",
+            b.issuer_ref
+        )));
+    }
+    Ok(())
+}
+
 fn check_rollback(
     tx: &Tx,
     cur: &PointerRecord,
@@ -452,6 +480,8 @@ fn check_rollback(
                  issue a pause instead",
             ));
         }
+        baseline_issuer_independent(tx, &b)
+            .map_err(|e| refused(format!("{e}; no safe predecessor: issue a pause instead")))?;
     } else {
         let adm = admission::rederive(tx, adm_ref, admitters).map_err(|e| {
             refused(format!(
@@ -516,6 +546,7 @@ fn check_activate(
             if !admitters.contains(&b.issuer_ref) {
                 return Err(refused("baseline issuer is no longer trusted"));
             }
+            baseline_issuer_independent(tx, &b)?;
             return Ok(());
         }
     }
