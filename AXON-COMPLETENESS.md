@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 72 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 75 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -716,4 +716,25 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** `(a - b).abs() > 1e-9` is false for NaN, so a candidate returning NaN passed any f64 assertion (with a completion token) under the empty ceiling. Native compared OEQ and failed it: an engine divergence too.
 - **Reproduced:** PCI candidate-1 final review (wf_fa4b8145, axon a193a82a), executed. Pinned by interp no_control_transfer_escapes_a_frame (M76).
 - **Fix:** Fail unless `a == b || |a-b| <= 1e-9` (NaN fails; inf == inf still passes, as natively). (`5e454380`)
+
+### FG-074 — crates/axon-core/src/resolver.rs (security, fixed)
+
+- **Claimed:** PCI property: candidate code reaches the operator's check only through the candidate-under-test interface (the names the suite imports from it).
+- **Reality:** The merged program was ONE global namespace and `use` restricted nothing. A candidate module called the operator's hidden helpers by name (reading the answer key), mutated a reference-shared Dict the suite held in a module-level `let` (dict_set is effect-free, so the empty ceiling did not refuse it), and did either from a module-level initializer that runs before any call through the interface: a signed-off pass for a wrong candidate.
+- **Reproduced:** PCI candidate-2 final review (wf_83d2bc17, axon 8289bf06), executed by three roles through submit under the empty ceiling. Pinned by resolver a_sealed_module_cannot_reach_the_operators_names (M79) and check_effects a_sealed_candidate_cannot_reach_the_operators_names (M80, M81).
+- **Fix:** Sealed modules: `axon test --seal DIR`; every expression a sealed item carries (body, @[verify], refinement predicate, struct where, let initializer), every `::` segment, is checked, and a name an unsealed item defines is refused (E0004). Fabric seals the candidate for every registered suite. (`36ab754c`)
+
+### FG-075 — crates/axon-core/src/resolver.rs (security, fixed)
+
+- **Claimed:** FG-072 / PCI 2: a refinement cannot reuse a type-level name.
+- **Reality:** FG-072's rule was a denylist (builtin, struct, enum names). A candidate `type T = Dict where P` became a precondition of the operator's own `fn same<T>` — its generic parameter — running candidate code inside the operator's helper: a signed-off pass.
+- **Reproduced:** PCI candidate-2 final review (wf_83d2bc17, axon 8289bf06), executed by four roles. Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (generic case, M82) and the Fabric sealing test.
+- **Fix:** Refinement names are disjoint from every generic parameter in the merged program too (fn, type, enum, trait, impl and impl-method generics). (`36ab754c`)
+
+### FG-076 — crates/axon-cortex/src/runner.rs (security, fixed)
+
+- **Claimed:** PCI 13: a pass without completion evidence is not a pass.
+- **Reality:** Cortex's FabricSubmitExecutor built its report from check_report.passed and ignored the receipt's verification, so Cortex accepted exactly the passes Fabric had recorded Unknown (missing completion evidence, nonzero exit, moved output).
+- **Reproduced:** PCI candidate-2 final review (wf_83d2bc17, axon 8289bf06) (scope role, executed). Pinned by check_effects the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate (M84).
+- **Fix:** Only a Fabric verdict of passed or failed is a verdict; anything else is an error (no verdict). (`36ab754c`)
 
