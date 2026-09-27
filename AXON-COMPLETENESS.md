@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 68 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 72 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -688,4 +688,32 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** The check inherited the LAUNCHER's cwd. An operator test's relative runtime read of its own fixture resolved outside the pinned, digested suite tree, so the honest candidate failed and a candidate with a write grant planted the expected value beside the launcher and passed (also with a restore by a filter-joined candidate test).
 - **Reproduced:** 2026-09-26 PCI probe through submit (grant:test): plant and plant+restore Passed, honest Failed; the planted file landed in the test process's cwd. Pinned by check_effects a_suites_runtime_fixture_is_the_pinned_one (M71).
 - **Fix:** The runner sets the check's cwd to its workspace (`<run>/check`, materialized read-only). (`2b880aeb`)
+
+### FG-070 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** PCI 7/8/13: control flow is contained at every frame edge; a candidate function's `return` never ends the operator's test; any route that ends the body early yields no completion token.
+- **Reality:** A `return` inside a candidate's parameter refinement, return refinement or @[verify] predicate propagated out of the callee (predicate sites contained only break/continue) and ended the operator's test as a normal completion with a valid completion token; Fabric signed-off a pass for `n * 0` under the empty ceiling.
+- **Reproduced:** PCI candidate-1 final review (wf_fa4b8145, axon a193a82a), executed by two roles through submit; re-executed on the a193a82a binary. Pinned by interp no_control_transfer_escapes_a_frame (M72) and check_effects a_candidate_predicate_cannot_end_the_operators_test.
+- **Fix:** contain_frame: a call or predicate may end only with a value or an abortive flow; every transfer (return/break/continue/resume) leaving the frame is an error; exhaustive match, no wildcard. (`5e454380`)
+
+### FG-071 — crates/axon-core/src/interp/eval.rs (security, fixed)
+
+- **Claimed:** PCI 10: effect-handler escape is contained.
+- **Reality:** (a) A `resume` closure created in a candidate handler arm and called later raised Flow::Resume, which crossed function frames past the operator's assertion to the operator's own arm site: Passed with a valid token under grant:test. (b) Flow::HandlerDone was caught by the NEAREST `with`, so a candidate's `with` swallowed a completion aimed at the operator's handler and the operator's with-body kept running.
+- **Reproduced:** PCI candidate-1 final review (wf_fa4b8145, axon a193a82a) (a, executed through submit); (b) found while fixing (a), executed (107 != 7). Pinned by interp no_control_transfer_escapes_a_frame (M73, M74).
+- **Fix:** Resume is refused at every frame edge (contain_frame); HandlerDone carries the handler-stack depth and only the `with` that pushed that frame catches it. (`5e454380`)
+
+### FG-072 — crates/axon-core/src/resolver.rs (security, fixed)
+
+- **Claimed:** PCI 2: candidate redefinition of operator-suite definitions is refused (E0002 across the merged program).
+- **Reality:** A named refinement was unique only among refinements. `type i64 = i64 where P` in the candidate made P a precondition of every i64 parameter of the operator's own helpers, injecting candidate code into the suite: a signed-off pass through Fabric.
+- **Reproduced:** PCI candidate-1 final review (wf_fa4b8145, axon a193a82a), executed through submit (empty ceiling). Pinned by resolver duplicate_let_refinement_or_impl_produces_e0002 (M75).
+- **Fix:** A refinement may not reuse a builtin, struct or enum type name (E0002). (`5e454380`)
+
+### FG-073 — crates/axon-core/src/interp/builtins.rs (correctness, fixed)
+
+- **Claimed:** assert_eq_f64 fails when its operands differ.
+- **Reality:** `(a - b).abs() > 1e-9` is false for NaN, so a candidate returning NaN passed any f64 assertion (with a completion token) under the empty ceiling. Native compared OEQ and failed it: an engine divergence too.
+- **Reproduced:** PCI candidate-1 final review (wf_fa4b8145, axon a193a82a), executed. Pinned by interp no_control_transfer_escapes_a_frame (M76).
+- **Fix:** Fail unless `a == b || |a-b| <= 1e-9` (NaN fails; inf == inf still passes, as natively). (`5e454380`)
 

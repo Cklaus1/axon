@@ -53,21 +53,21 @@ Existing findings are reclassified explicitly below, never hidden or downgraded.
 | # | Surface | State | Evidence / reference |
 |---|---|---|---|
 | 1 | Module or import shadowing of operator-suite modules | fixed: the suite's directory resolves first | FG-052; `a_candidate_cannot_shadow_a_module_of_the_suite` (M04) |
-| 2 | Candidate redefinition of operator-suite fns, types, enums, modules, `let`s, named refinements and trait impls | fixed: E0002 across the merged program | FG-066; resolver `duplicate_let_refinement_or_impl_produces_e0002` (M60-M62); `a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant` |
+| 2 | Candidate redefinition of operator-suite fns, types, enums, modules, `let`s, named refinements and trait impls, and a refinement reusing a TYPE name | fixed: E0002 across the merged program. A refinement named after a builtin, struct or enum type was accepted and became a precondition of every parameter of that type in the operator's helpers (FG-072, executed: a signed-off pass) | FG-066, FG-072; resolver `duplicate_let_refinement_or_impl_produces_e0002`, `duplicate_fn_name_produces_e0002` (M60-M62, M75, M78); `a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant` |
 | 2b | Trait DEFINITIONS, and methods added by a second impl of a different trait for the same type | **fixed** (was live: a signed-off pass). Methods are unique by their DISPATCH key (`type_name_of`, name) across the merged program; trait names are unique (a duplicate trait was not live, since trait methods carry no bodies) | FG-068; resolver `duplicate_let_refinement_or_impl_produces_e0002` (M69, M70); `a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant` (second-trait method) |
 | 3 | Symlink or path escape from the candidate or suite tree | fixed: any link is refused before launch (candidate side mutated; suite side untested) | FG-062; `a_candidate_holding_a_symlink_is_refused` (M57) |
 | 4 | Ambient module-path fallthrough (trial-cache `~/.axon/lib`, interpreter bindir) | fixed: `AXON_PATH_EXCLUSIVE` | FG-060; M53. Fabric does not probe that the pinned interpreter honours it (MINOR) |
 | 5 | Path-list injection into the module path (`:` in the state dir) | fixed | FG-059; M52 |
 | 6 | Candidate-controlled verifier environment | fixed: clean environment and applied empty ceiling | FG-057; M44, M55 |
-| 7 | Cross-frame `break` / `continue` | fixed: contained at every frame edge (functions, closures, predicates, handler arms) | FG-063/064/065; M59 (M58 retired as equivalent) |
-| 8 | Cross-frame `return` | contained, probed: `call_fn` ends a `Return` at the callee, so a candidate function's or closure's `return` never ends the test (the assertion after it runs) | interp `a_test_completes_only_when_its_body_returns_normally` (`t_return`, `t_closure_return`) |
-| 9 | Refinement / predicate / attribute execution escaping into verifier control flow | fixed for loop control (7). Other effects of predicates are not yet assessed | FG-065 |
-| 10 | Effect-handler or closure escape | loop control contained (7). Named handlers: not live, probed — a named handler is desugared per FILE at parse time, so a candidate's same-named handler cannot rebind the suite's, in either merge order. Interface note: a closure the SUITE hands to the candidate runs under whatever handler the candidate installs; that is the candidate-under-test interface, by the suite's own choice | `tests/pci_isolation.rs` `a_candidate_cannot_rebind_a_suite_named_handler` |
+| 7 | Cross-frame `break` / `continue` | fixed: every frame edge (fn, closure, predicate) is an ALLOWLIST (`contain_frame`): a call or predicate ends only with a value or an abortive flow. Handler arms contain loop control | FG-063/064/065, FG-070; M59 (M58 retired as equivalent) |
+| 8 | Cross-frame `return` | fixed: a callee's or closure's `return` ends at its own frame, and a `return` inside a predicate (parameter refinement, return refinement, struct/let refinement, `@[verify]`) is refused at the predicate edge. It used to end the operator's test as a normal completion with a valid token (FG-070, executed: a signed-off pass) | interp `a_test_completes_only_when_its_body_returns_normally`, `no_control_transfer_escapes_a_frame` (M72); Fabric `a_candidate_predicate_cannot_end_the_operators_test` (signable profile) |
+| 9 | Refinement / predicate / attribute execution escaping into verifier control flow | fixed for every transfer (7, 8, 10): predicates are frame edges. A predicate's other effects are bounded by the ceiling (empty in scope) | FG-065, FG-070 |
+| 10 | Effect-handler or closure escape | fixed: a `resume` cannot leave its frame (a closure smuggled out of a candidate's arm resumed the operator's handler past its assertion — FG-071), and a handler completion is ADDRESSED: `HandlerDone` carries the handler-stack depth and only the `with` that installed that handler catches it (a candidate `with` swallowed the operator's completion — FG-071). Named handlers: not live (desugared per file). Interface note: a closure the suite hands to the candidate runs under the candidate's handlers by the suite's own choice | FG-071; interp `no_control_transfer_escapes_a_frame` (M73, M74); `tests/pci_isolation.rs` |
 | 11 | **`exit(0)` or equivalent early successful termination** | **fixed by 13** (reclassified from G01 MAJOR-ADJACENT). `axon test` still reports the test ok, but it issues no completion token, so Fabric records Unknown | FG-067; `a_pass_needs_evidence_that_the_test_completed` (M63, M67, M68) |
 | 12 | **A test returning `Err` treated as success** | **fixed by 13** (reclassified from G01 MAJOR-ADJACENT). A test whose body yields `Err` (tail value, `return` or `?`) is EndedEarly: no token | FG-067; interp `a_test_completes_only_when_its_body_returns_normally` (M65); `a_pass_needs_evidence_that_the_test_completed` |
 | 13 | A pass signed although the required assertion or completion point was not reached | **fixed: affirmative completion evidence.** Fabric generates a fresh 32-byte secret per run and hands it to `axon test --completion-key-stdin`, which reads it BEFORE any program code runs. Only a test whose body returned normally (not `Err`) gets `HMAC-SHA256(key, "axon-test-completion/1\0" + name)` on its ok line. A Passed verdict requires a verifying token for the named test (or every passed test), else Unknown. A forged ok line printed by the candidate does not verify. This replaces enumerating escapes: any route that ends the body early yields no token. Scope: plain `@[test]`s; property tests issue no token, so a verdict resting on one is Unknown | FG-067; M63-M65, M67, M68; `tests/test_completion.rs` (independent HMAC vector) |
 | 14 | Candidate `@[test]` functions joining the run through the substring filter | partial: only the exact named test decides the verdict. A candidate test still runs in the verifier's process and changes the exit code | FUTURE finding (candidate-4 review) |
-| 15 | A candidate suppressing the failing test's own result line (Failed → NotRun) | open as MINOR: it fails closed | candidate-4 review |
+| 15 | A candidate suppressing the failing test's own result line (Failed → NotRun) | MINOR, fails closed. Failed-line JSON now escapes every control character, so a message cannot split the line | candidate-4 review; PCI candidate-1 review |
 | 16 | The admission scan does not see `use a::b` | mitigated: resolution is confined (4) and the ceiling is empty | G01 claim, known gaps |
 | 17 | The check's working directory (relative runtime reads of the suite's own fixtures) | **fixed** (was live under an IO grant: a pass for a wrong candidate, and the honest one failed). The check inherited the LAUNCHER's cwd, so a relative read resolved outside the pinned, digested tree and a candidate planted the answer there. The check now runs in `<run>/check`, which is materialized read-only | FG-069; `a_suites_runtime_fixture_is_the_pinned_one` (M71) |
 | 18 | An effectful grant reaching the VERIFIER's own state as the same uid (the Fabric state dir, workspace store, journal, registry file, other trials) | **open, by construction of the local backend.** A local check runs as the launcher's uid. Under a grant with `fs_write` beyond the empty ceiling it can write whatever that uid can. Under `Exec` it can do anything the uid can, including `chmod`-ing the read-only suite tree. PCI cannot hold for a local run under such a grant. **Scoped out of the local claim (see "Scope of the claim")**, consistent with ADR-001 D3, under which the local backend is dev-only. Every locally SIGNABLE check runs under an empty ceiling (G01 clause 2) | ADR-001 D3; G01 clause 2 |
@@ -127,3 +127,26 @@ only on these conditions:
    `v022_g01_mutations.py --scope=pci`.
 4. Freeze, run the proof sequence, then run one final independent review against this
    document.
+
+## History
+
+- **Candidate 1** (axon a193a82a + micode fc18bbc6), frozen and fully green (runner 15/15;
+  mutations `--scope=all` 68/68; Axon, MiCode, interop and MiCode gates). ONE final review
+  (wf_fa4b8145): **DO_NOT_CERTIFY** — three roles, three executed blockers (FG-070 predicate
+  `return`, FG-071 `resume` closure, FG-072 refinement named after a type); a fourth defect of the
+  same class (FG-071 handler completion caught by the wrong `with`) was found while fixing. Judged
+  literally: not certified.
+  - Lesson recorded: closing escapes one at a time did not converge (FG-063, 064, 065, 070, 071
+    are one class). The fix is structural — the frame edge is an allowlist with an exhaustive
+    match — and the affirmative completion token then means what it says.
+  - Adjacent, fixed: FG-073 (`assert_eq_f64` passed NaN); an `exit(0)` property case counted as a
+    pass; failed-line JSON did not escape newlines (15); a shared temp path made
+    `tests/test_completion.rs` flaky (it passed in candidate 1's proof run by luck); MiCode `.env`
+    could still redirect the provider endpoint and send the operator's key to a host the repo
+    chose (20, fixed by deriving the `.env` closure from the project denylist, credentials open).
+  - Recorded, not blocking: M52 and M71 kill on an asserted side effect rather than at the outcome
+    assertion; M60 is near-equivalent since M69 refuses the same override; as ROOT the read-only
+    check tree is not enforced by the kernel (17 then rests on the post-run suite digest, and in
+    scope the empty ceiling refuses every write anyway); the suite-side symlink refusal (3) has no
+    test; the real-binary interop gate exercises only the positive completion path; Cortex's own
+    hidden-check adjudicator does not require completion evidence (FUTURE).
