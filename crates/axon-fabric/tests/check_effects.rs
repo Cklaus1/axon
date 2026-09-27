@@ -871,12 +871,22 @@ fn a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant() {
     };
     let impl_accept = "mod f\nmod rubric\nuse f.{double}\nuse rubric.{Expect, Judge}\n\n@[test]\nfn hidden_completion() {\n    let e = Expect { want: 42 }\n    e.check(double(21))\n}\n";
     let impl_rubric = "type Expect = { want: i64 }\ntrait Judge { fn check(self: Expect, got: i64) }\nimpl Judge for Expect { fn check(self: Expect, got: i64) { assert_eq(got, self.want) } }\n";
+    let helper_first = "mod rubric\nmod f\nuse rubric.{Expect, Judge}\nuse f.{double}\n\n@[test]\nfn hidden_completion() {\n    let e = Expect { want: 42 }\n    e.check(double(21))\n}\n";
     let let_accept = "mod f\nmod rubric\nuse f.{double}\nuse rubric.{WANT}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), WANT) }\n";
     let let_rubric = "let WANT = 42\n";
     for (why, accept, rubric, cand, pass) in [
         ("impl override", impl_accept, impl_rubric,
          "use rubric\n\nfn double(n: i64) -> i64 { n * 0 }\nimpl Judge for Expect { fn check(self: Expect, got: i64) { } }\n", false),
         ("impl honest", impl_accept, impl_rubric, "fn double(n: i64) -> i64 { n * 2 }\n", true),
+        // PCI 2b: a DIFFERENT trait naming the same method on the suite's type.
+        // Method calls dispatch on (type, method), so the later impl replaced
+        // the suite's `check` — and needs no import of the rubric at all.
+        // Live when the candidate's module is merged AFTER the helper (modules
+        // merge in `use` order and the later definition won), so this suite
+        // imports them that way. Executed: a signed pass for `n * 0`.
+        ("second-trait method", helper_first, impl_rubric,
+         "trait Other { fn check(self: Expect, got: i64) }\nimpl Other for Expect { fn check(self: Expect, got: i64) { } }\nfn double(n: i64) -> i64 { n * 0 }\n", false),
+        ("second-trait honest", helper_first, impl_rubric, "fn double(n: i64) -> i64 { n * 2 }\n", true),
         ("let override", let_accept, let_rubric,
          "use rubric\n\nlet WANT = 0\nfn double(n: i64) -> i64 { n * 0 }\n", false),
         ("let honest", let_accept, let_rubric, "fn double(n: i64) -> i64 { n * 2 }\n", true),

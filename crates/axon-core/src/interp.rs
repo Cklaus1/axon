@@ -2581,6 +2581,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
         return Err(format!("no function `{name}`"));
     };
     match interp.call_fn(f, vec![]) {
+        // `call_fn` already ends a `return` (and a `?`) at the test's own
+        // frame, so a returned value arrives here as `Ok` — one arm decides
+        // both the tail value and an early `return`.
         Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(
             "the test returned `Err`: it did not complete".to_string(),
         )),
@@ -2612,11 +2615,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
             "`exit(0)` ended the test before it completed".to_string(),
         )),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
-        // `return` from the test fn itself is a clean finish.
-        Err(Flow::Return(Value::Err(_))) => Ok(TestEnd::EndedEarly(
-            "the test returned `Err`: it did not complete".to_string(),
-        )),
-        Err(Flow::Return(_)) => Ok(TestEnd::Completed),
+        // Unreachable: `call_fn` ends a `return` at the callee. Kept only so
+        // the match stays total; it grants nothing.
+        Err(Flow::Return(_)) => Err("`return` escaped the test's own frame".to_string()),
         // A `break` / `continue` (or an effect-handler completion) that
         // escapes a function unwinds the test BEFORE its assertions ran: the
         // test did not complete, so it did not pass. It used to count as
@@ -3636,7 +3637,7 @@ fn lit_to_val(lit: &Literal) -> Value {
     }
 }
 
-fn type_name_of(ty: &crate::ast::AxonType) -> String {
+pub(crate) fn type_name_of(ty: &crate::ast::AxonType) -> String {
     use crate::ast::AxonType::*;
     match ty {
         Named(n) => n.clone(),

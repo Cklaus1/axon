@@ -360,11 +360,6 @@ MUTATIONS = [
      '        Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(',
      '        Ok(Value::Err(_)) if false => Ok(TestEnd::EndedEarly(',
      'axon-core', '--no-default-features --lib', 'interp::tests::a_test_completes_only_when_its_body_returns_normally'),
-    ('M66', 'interpreter: a test that returns Err (e.g. via ?) did not complete',
-     'crates/axon-core/src/interp.rs',
-     '        Err(Flow::Return(Value::Err(_))) => Ok(TestEnd::EndedEarly(',
-     '        Err(Flow::Return(Value::Err(_))) if false => Ok(TestEnd::EndedEarly(',
-     'axon-core', '--no-default-features --lib', 'interp::tests::a_test_completes_only_when_its_body_returns_normally'),
     ('M67', 'interpreter: exit(0) inside a test is not completion',
      'crates/axon-core/src/interp.rs',
      '        Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(\n            "`exit(0)` ended the test before it completed".to_string(),\n        )),',
@@ -375,6 +370,16 @@ MUTATIONS = [
      '.filter(|_| r.completed)',
      '.filter(|_| true)',
      'axon-core', '--no-default-features --test test_completion', 'only_a_completed_test_is_issued_a_completion_token'),
+    ('M69', 'resolver: one method per (dispatch type, name) across all impls',
+     'crates/axon-core/src/resolver.rs',
+     '                            if !dispatch.insert((tn.clone(), m.name.clone())) {',
+     '                            if false && !dispatch.insert((tn.clone(), m.name.clone())) {',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
+    ('M70', 'resolver: a trait name is unique in the merged program',
+     'crates/axon-core/src/resolver.rs',
+     '                    if !traits.insert(t.name.as_str()) {',
+     '                    if false && !traits.insert(t.name.as_str()) {',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
 ]
 
 
@@ -382,9 +387,12 @@ MUTATIONS = [
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
 # (user decision 2026-09-26). M58 is equivalent since M59 (whole-call
-# containment) and is excluded from every scope's kill list.
+# containment) and is excluded from every scope's kill list. M66 (a test's
+# `Flow::Return(Err)` arm) was removed before any certified run: `call_fn`
+# ends a `return` at the callee, so the arm was unreachable and the mutant
+# equivalent; the arm now fails closed and M65 guards the one live path.
 PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
-           "M63", "M64", "M65", "M66", "M67", "M68"}
+           "M63", "M64", "M65", "M67", "M68", "M69", "M70"}
 RETIRED = {"M58"}
 
 

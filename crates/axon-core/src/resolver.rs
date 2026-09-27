@@ -910,6 +910,16 @@ impl<'a> Resolver<'a> {
         let mut refinements: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut impls: std::collections::HashSet<(String, String)> =
             std::collections::HashSet::new();
+        // What a method call DISPATCHES on: the interpreter keys methods by
+        // (receiver type name, method name), whatever trait supplied them. Two
+        // impls of DIFFERENT traits naming one method for one type (or a
+        // `Box<i64>` impl beside a `Box<T>` one) used to be accepted, and the
+        // later silently replaced the earlier — so a candidate's
+        // `impl Other for SuiteType { fn m … }` changed what the operator's
+        // own `x.m()` ran (PCI 2b, executed). Unique by dispatch key instead.
+        let mut dispatch: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        let mut traits: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let dup = |this: &mut Self, what: String, span: crate::span::Span| {
             this.emit_error(
                 Diagnostic::error(
@@ -1086,10 +1096,29 @@ impl<'a> Resolver<'a> {
                             format!("`impl {} for {:?}`", b.trait_name, b.for_type),
                             b.span,
                         );
+                    } else {
+                        let tn = crate::interp::type_name_of(&b.for_type);
+                        for m in &b.methods {
+                            if !dispatch.insert((tn.clone(), m.name.clone())) {
+                                dup(
+                                    self,
+                                    format!(
+                                        "the method `{}` on `{tn}` (a method call cannot tell \
+                                         two impls apart)",
+                                        m.name
+                                    ),
+                                    m.span,
+                                );
+                            }
+                        }
                     }
                 }
-                Item::TraitDef(_) => {
-                    // Phase 3: trait blocks processed in a dedicated pass.
+                Item::TraitDef(t) => {
+                    // Phase 3: trait blocks processed in a dedicated pass;
+                    // uniqueness here.
+                    if !traits.insert(t.name.as_str()) {
+                        dup(self, format!("the trait `{}`", t.name), t.span);
+                    }
                 }
                 Item::LetDef { name, span, .. } => {
                     let sym = Symbol::Fn {
@@ -2755,6 +2784,20 @@ mod tests {
                  impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
                  impl J for E { fn check(self: E, got: i64) { } }\nfn main() -> i64 { 0 }\n",
                 "impl J for",
+            ),
+            (
+                "same method from a second trait",
+                "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
+                 trait K { fn check(self: E, got: i64) }\n\
+                 impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
+                 impl K for E { fn check(self: E, got: i64) { } }\nfn main() -> i64 { 0 }\n",
+                "method `check` on `E`",
+            ),
+            (
+                "trait",
+                "trait J { fn check(self) -> i64 }\ntrait J { fn other(self) -> i64 }\n\
+                 fn main() -> i64 { 0 }\n",
+                "trait `J`",
             ),
         ] {
             let prog = crate::parse_source(src).expect("parses");
