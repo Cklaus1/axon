@@ -5,6 +5,7 @@
 //! |---|---|---|
 //! | `quality_margin` | `pass_rate_margin_ppm=<n>`, 0 ≤ n < 1 000 000 | noninferiority margin on verified-pass rate |
 //! | `economic_threshold` | `min_cost_reduction_ppm=<n>`, 0 ≤ n ≤ 1 000 000 | cost per task must fall by at least n/1e6 |
+//! | `economic_threshold` | `report_only` | ADR-001 D4: monetary economics are recorded and reported, and decide nothing, until complete metered attempt receipts exist |
 //! | `budget_rule` | `max_unresolved_liability_micro=<n>` | tolerance for unresolved liability across both arms |
 //! | `missing_data_rule` | `unknown_bounds` | an unknown or missing outcome counts as fail for the candidate and pass for the incumbent |
 //! | `uncertainty_rule` | `exact_bounds` | decide on worst/best-case bounds, no sampling model |
@@ -25,7 +26,8 @@ pub const PPM: u64 = 1_000_000;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Rules {
     pub margin_ppm: u64,
-    pub min_cost_reduction_ppm: u64,
+    /// `None`: `report_only` (ADR-001 D4) — economics decide nothing.
+    pub min_cost_reduction_ppm: Option<u64>,
     pub max_liability_micro: u64,
     pub independent_units: u64,
     pub candidate_budget: u64,
@@ -66,14 +68,22 @@ impl Rules {
                 "quality_margin {margin_ppm} ppm must be < 1000000 (a 100% margin accepts anything)"
             ));
         }
-        let min_cost_reduction_ppm = keyed(
-            "economic_threshold",
-            &p.economic_threshold,
-            "min_cost_reduction_ppm",
-        )?;
-        if min_cost_reduction_ppm > PPM {
-            return Err("economic_threshold above 100%".into());
-        }
+        // Under D10 every Fabric execution cost is unknown, so a cost
+        // criterion is never established; D4 makes that explicit and lets a
+        // plan say so up front instead of deciding every run INCONCLUSIVE.
+        let min_cost_reduction_ppm = if p.economic_threshold.as_deref() == Some("report_only") {
+            None
+        } else {
+            let n = keyed(
+                "economic_threshold",
+                &p.economic_threshold,
+                "min_cost_reduction_ppm",
+            )?;
+            if n > PPM {
+                return Err("economic_threshold above 100%".into());
+            }
+            Some(n)
+        };
         let max_liability_micro = keyed(
             "budget_rule",
             &p.budget_rule,

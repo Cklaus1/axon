@@ -467,7 +467,8 @@ fn j109_unpaired_task_sets_refused() {
 fn j202_q4_missing_trial_is_unknown_cost() {
     let w = world();
     freeze_plan_n(&w.s, "exp", &w.inc_ref, &w.cand_ref, 4, |v| {
-        v["quality_margin"] = json!("pass_rate_margin_ppm=500000")
+        v["quality_margin"] = json!("pass_rate_margin_ppm=500000");
+        v["economic_threshold"] = json!("min_cost_reduction_ppm=100000");
     })
     .unwrap();
     let specs = pair(&w.inc, &w.cand, 4, 3, 4, Some(100), Some(120));
@@ -480,8 +481,10 @@ fn j202_q4_missing_trial_is_unknown_cost() {
     assert!(
         matches!(
             c.economics.single_total(),
+            // 3 delivered trials' Fabric execution (unknown under D10) + the
+            // 1 missing trial, whose cost is unknown too — never zero.
             Some(axon_loop::tel::Total::Unresolved {
-                unknown_count: 1,
+                unknown_count: 4,
                 ..
             })
         ),

@@ -543,16 +543,17 @@ pub fn complete_plan(id: &str, inc: &Ref, cand: &Ref) -> Value {
     o.insert("order_rule".into(), json!("paired_tasks"));
     o.insert("cache_rule".into(), json!("not_enforced_here"));
     o.insert("quality_margin".into(), json!("pass_rate_margin_ppm=0"));
-    o.insert(
-        "economic_threshold".into(),
-        json!("min_cost_reduction_ppm=100000"),
-    );
+    // ADR-001 D4: monetary economics are report-only until metered receipts
+    // exist (every Fabric execution cost is unknown under D10). A test of the
+    // cost criterion sets `min_cost_reduction_ppm` itself.
+    o.insert("economic_threshold".into(), json!("report_only"));
     o.insert("uncertainty_rule".into(), json!("exact_bounds"));
     o.insert("missing_data_rule".into(), json!("unknown_bounds"));
     o.insert("multiplicity_rule".into(), json!("single_candidate"));
+    // Each Fabric attempt holds its reservation as unresolved liability (D10).
     o.insert(
         "budget_rule".into(),
-        json!("max_unresolved_liability_micro=0"),
+        json!("max_unresolved_liability_micro=100000000"),
     );
     p
 }

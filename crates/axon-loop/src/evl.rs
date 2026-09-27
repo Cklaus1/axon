@@ -562,6 +562,8 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     let mut arms: BTreeMap<ArmId, ArmResult> = BTreeMap::new();
     let mut usages: BTreeMap<ArmId, Vec<(axon_loop_contracts::Usage, Option<EpisodeStatus>)>> =
         BTreeMap::new();
+    let mut exec_usages: BTreeMap<ArmId, Vec<(axon_loop_contracts::Usage, Option<EpisodeStatus>)>> =
+        BTreeMap::new();
     for a in &r.assigned {
         let arm = arms.entry(a.arm_id.clone()).or_insert_with(|| ArmResult {
             arm_id: a.arm_id.clone(),
@@ -598,6 +600,16 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     .entry(a.arm_id.clone())
                     .or_default()
                     .push((d.ep.usage.clone(), Some(d.ep.status)));
+                // The Fabric EXECUTION is a cost component of its own: under
+                // D10 unknown, with its reservation as liability. Omitting it
+                // reported a partial cost as the arm's Known total (review
+                // wf_d788c05a-be2). A D12 trial ran no Fabric execution.
+                if let Some((req, rcpt, _)) = &d.acf {
+                    exec_usages.entry(a.arm_id.clone()).or_default().push((
+                        tel::execution_component(&d.ep.usage, req, rcpt)?,
+                        Some(d.ep.status),
+                    ));
+                }
                 let policy = &policies[&a.policy_ref];
                 // NS4p/NS4w: a subject (request subject issuer, arm proposer)
                 // never observes its own preflight, even if the operator
@@ -700,7 +712,12 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     }
     for (id, arm) in arms.iter_mut() {
         let us = usages.remove(id).unwrap_or_default();
-        arm.economics = tel::summarize_with_missing(us.iter().map(|(u, s)| (u, *s)), arm.missing)?;
+        let ex = exec_usages.remove(id).unwrap_or_default();
+        arm.economics = tel::summarize_with_execution(
+            us.iter().map(|(u, s)| (u, *s)),
+            ex.iter().map(|(u, s)| (u, *s)),
+            arm.missing,
+        )?;
         // ADR-001 §5: every assigned trial is exactly one of pass, fail, a
         // KIND of unknown, or missing. A trial counted twice or not at all is
         // refused here, before anything is written.

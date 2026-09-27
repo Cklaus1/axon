@@ -192,7 +192,10 @@ fn inconclusive_on_small_sample_liability_and_unknowns() {
     );
 
     let w = world();
-    freeze_plan(&w.s, "liab", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    freeze_plan(&w.s, "liab", &w.inc_ref, &w.cand_ref, |v| {
+        v["budget_rule"] = json!("max_unresolved_liability_micro=0")
+    })
+    .unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     let mut v = evl_request("liab", &w.inc, &w.cand, &specs, &EvlOpts::default());
     let mut tr = Trial::new(&w.cand, "task-0", "challenger-1", "c0");
@@ -229,12 +232,20 @@ fn reject_on_inferiority_or_no_economic_benefit() {
             .any(|x| x.contains("quality inferiority established")),
         "{r:?}"
     );
+    // A frozen COST criterion over Fabric-executed trials: each execution's
+    // cost is unknown (D10) and holds its reservation as liability, so the
+    // economics are never established — INCONCLUSIVE, never a known-cost
+    // ACCEPT on a partial total (review wf_d788c05a-be2). The Known-totals
+    // rejection is pinned on `decide` itself (admission.rs decide_tests).
     let w = world();
-    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(95));
-    let (d, r) = decision(&w, "pricey", &specs, EvlOpts::default(), |_| {});
-    assert_eq!(d, Decision::Reject);
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (d, r) = decision(&w, "costed", &specs, EvlOpts::default(), |v| {
+        v["economic_threshold"] = json!("min_cost_reduction_ppm=100000")
+    });
+    assert_eq!(d, Decision::Inconclusive, "{r:?}");
     assert!(
-        r.iter().any(|x| x.contains("economic benefit not met")),
+        r.iter()
+            .any(|x| x.contains("economics cannot be established")),
         "{r:?}"
     );
 }
@@ -589,4 +600,46 @@ fn an_observer_key_and_identity_are_its_own() {
         Err(LoopError::Refused(m)) => assert!(m.contains("registered for two roles"), "{m}"),
         other => panic!("a shared-key config was read back: {other:?}"),
     }
+}
+
+/// G11-r22-admission-disposition: "stale/unknown costs … cannot be hidden by
+/// aggregate utility". The Fabric EXECUTION is a cost component of every
+/// executed trial: unknown under D10, holding at least its reservation and
+/// any cost the receipt reports as liability. A candidate whose execution
+/// receipts report a huge cost is never ACCEPTed as the cheaper arm on its
+/// model usage alone, and its total is never stated as Known (review
+/// wf_d788c05a-be2, executed).
+#[test]
+fn an_execution_cost_is_never_omitted_from_the_economics() {
+    let w = world();
+    freeze_plan(&w.s, "exec", &w.inc_ref, &w.cand_ref, |v| {
+        v["economic_threshold"] = json!("min_cost_reduction_ppm=100000")
+    })
+    .unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let mut v = evl_request("exec", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    for t in v["trials"].as_array_mut().unwrap() {
+        if t["episode"]["identity"]["arm_id"] == "challenger-1" {
+            t["acf_receipt"]["cost_micro"] = json!(900_000);
+            t["episode"]["acf_receipt_ref"] = json!(digest_value(&t["acf_receipt"]).unwrap());
+        }
+    }
+    let (rec, e) = evaluate(&w.s, &v).unwrap();
+    let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+    match c.economics.single_total() {
+        Some(axon_loop::tel::Total::Unresolved {
+            unresolved_liability_micro,
+            ..
+        }) => assert!(*unresolved_liability_micro >= 2 * 900_000, "{c:?}"),
+        other => panic!("the candidate's cost was stated without its execution: {other:?}"),
+    }
+    let (adm, _) = admit(&w.s, "exec", &e, ADMITTER, false).unwrap();
+    assert_eq!(adm.decision, Decision::Inconclusive, "{:?}", adm.reasons);
+    assert!(
+        adm.reasons
+            .iter()
+            .any(|r| r.contains("economics cannot be established")),
+        "{:?}",
+        adm.reasons
+    );
 }

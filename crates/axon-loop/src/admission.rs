@@ -640,13 +640,16 @@ fn decide(
         }
     }
 
-    // Economics: only on fully known totals (a missing trial is unknown).
-    match (&cand.total, &inc.total) {
-        (Total::Known { cost_micro: cc }, Total::Known { cost_micro: ic })
+    // Economics: only on fully known totals (a missing trial is unknown), and
+    // not at all under `report_only` (ADR-001 D4): then they are recorded in
+    // the arm facts and decide nothing.
+    match (rules.min_cost_reduction_ppm, &cand.total, &inc.total) {
+        (None, _, _) => {}
+        (Some(t), Total::Known { cost_micro: cc }, Total::Known { cost_micro: ic })
             if cand.assigned > 0 && inc.assigned > 0 =>
         {
             let (t, cc, ic) = (
-                rules.min_cost_reduction_ppm as u128,
+                t as u128,
                 *cc as u128,
                 *ic as u128,
             );
@@ -688,5 +691,92 @@ impl From<Decision> for Verdict {
             Decision::Inconclusive => Verdict::Inconclusive,
             Decision::Vetoed => Verdict::Vetoed,
         }
+    }
+}
+
+#[cfg(test)]
+mod decide_tests {
+    use super::*;
+    use crate::evl::ArmResult;
+    use serde_json::json;
+
+    fn arm(id: &str, pass: u64, cost_each: u64) -> ArmResult {
+        let usages: Vec<axon_loop_contracts::Usage> = (0..2)
+            .map(|i| {
+                serde_json::from_value(json!({
+                    "state": "final", "cost_micro": cost_each, "unresolved_liability_micro": 0,
+                    "currency": "USD", "price_schedule_ref": format!("cl22:{}", "d".repeat(64)),
+                    "attempt_refs": [format!("cl22:{:064x}", i + if id == "c" { 100 } else { 0 })],
+                }))
+                .unwrap()
+            })
+            .collect();
+        ArmResult {
+            arm_id: axon_loop_contracts::ArmId::new(id).unwrap(),
+            policy_ref: Ref::new(format!(
+                "cl22:{}",
+                if id == "c" { "c" } else { "a" }.repeat(64)
+            ))
+            .unwrap(),
+            assigned: 2,
+            verified_pass: pass,
+            fail: 2 - pass,
+            unknown: 0,
+            missing: 0,
+            unknown_kinds: Default::default(),
+            trials: vec![],
+            economics: crate::tel::summarize_with_missing(
+                usages
+                    .iter()
+                    .map(|u| (u, Some(axon_loop_contracts::EpisodeStatus::Completed))),
+                0,
+            )
+            .unwrap(),
+        }
+    }
+
+    fn rules(min_cost: Option<u64>) -> Rules {
+        Rules {
+            margin_ppm: 0,
+            min_cost_reduction_ppm: min_cost,
+            max_liability_micro: 0,
+            independent_units: 0,
+            candidate_budget: 1,
+        }
+    }
+
+    /// The cost criterion over KNOWN totals (reachable once metered attempt
+    /// receipts exist, ADR-001 D4): a candidate not cheaper by the frozen
+    /// reduction is rejected with the reason stated; `report_only` lets cost
+    /// decide nothing.
+    #[test]
+    fn the_cost_rule_decides_only_when_it_is_frozen_and_known() {
+        let dev = crate::plan::EvaluationClass::Development;
+        let (d, r) = decide(
+            &rules(Some(100_000)),
+            1,
+            &arm("c", 2, 95),
+            &arm("i", 2, 100),
+            dev,
+        );
+        assert_eq!(d, Decision::Reject, "{r:?}");
+        assert!(
+            r.iter().any(|x| x.contains("economic benefit not met")),
+            "{r:?}"
+        );
+        let (d, r) = decide(
+            &rules(Some(100_000)),
+            1,
+            &arm("c", 2, 50),
+            &arm("i", 2, 100),
+            dev,
+        );
+        assert_eq!(d, Decision::Accept, "{r:?}");
+        let (d, r) = decide(&rules(None), 1, &arm("c", 2, 95), &arm("i", 2, 100), dev);
+        assert_eq!(
+            d,
+            Decision::Accept,
+            "report_only: cost decides nothing: {r:?}"
+        );
     }
 }

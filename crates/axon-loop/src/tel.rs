@@ -118,6 +118,37 @@ pub fn summarize_with_missing<'a>(
     summarize_components(items, std::iter::empty(), missing)
 }
 
+/// [`summarize_with_missing`] plus each attempt's EXECUTION component (see
+/// [`execution_component`]): what an evaluation reports per arm.
+pub(crate) fn summarize_with_execution<'a>(
+    model: impl IntoIterator<Item = (&'a Usage, Option<EpisodeStatus>)>,
+    execution: impl IntoIterator<Item = (&'a Usage, Option<EpisodeStatus>)>,
+    missing: u64,
+) -> Result<Summary> {
+    summarize_components(model, execution, missing)
+}
+
+/// One Fabric attempt's execution cost as a usage component, in the model
+/// usage's currency: under D10 always UNKNOWN, holding its reservation as
+/// liability (`crate::price::execution_cost`) — never zero, never omitted.
+pub(crate) fn execution_component(
+    model: &Usage,
+    req: &ComputeRequest,
+    rc: &ExecutionReceipt,
+) -> Result<Usage> {
+    let crate::price::ExecutionCost::Unknown {
+        reserved_liability_micro,
+    } = crate::price::execution_cost(req, rc);
+    Ok(Usage {
+        state: UsageState::Unknown,
+        cost_micro: None,
+        unresolved_liability_micro: reserved_liability_micro,
+        currency: model.currency.clone(),
+        price_schedule_ref: model.price_schedule_ref.clone(),
+        attempt_refs: vec![digest(rc)?],
+    })
+}
+
 /// The shared core. `model` and `execution` are separate COMPONENTS of the
 /// same attempts, so each has its own double-count check: an attempt may
 /// appear once in each, never twice in either.
