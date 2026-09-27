@@ -328,3 +328,62 @@ fn a_revoked_verifier_s_verdicts_stop_counting() {
     );
     assert_eq!(snapshot(w.dir.path()), before);
 }
+
+/// G11-r22-independent-admission: an admitter may hold NO other loop role,
+/// and every binding is refused by its own named reason. Compute Fabric (a
+/// trusted verifier), a context observer and a safety monitor could all be
+/// listed as trusted admitters before; the proposer — EVO's `intervention` is
+/// the learned ranking, so the proposer IS the ranker — the subject and the
+/// evaluator were refused, but only by a shared message nothing asserted.
+/// Each refusal writes nothing; the independent admitter still admits.
+///
+/// Mutation: drop the role-separation block in `derive` → red.
+#[test]
+fn an_admitter_holds_no_other_loop_role() {
+    let w = world();
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (_, eval_ref) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let mut cfg = w.s.config().unwrap();
+    for who in [VERIFIER, OBSERVER, MONITOR, PROPOSER, EVALUATOR, WORKER] {
+        cfg.trusted_admitters.push(OpaqueRef::new(who).unwrap());
+    }
+    w.s.write_config(&cfg).unwrap();
+    let before = snapshot(w.dir.path());
+    for (who, why) in [
+        (VERIFIER, "a trusted verifier (Compute Fabric)"),
+        (OBSERVER, "a context observer"),
+        (MONITOR, "a safety monitor"),
+        (PROPOSER, "the proposer (ranker)"),
+        (EVALUATOR, "it is the evaluator"),
+        (WORKER, "it is a subject issuer"),
+    ] {
+        match admit(&w.s, "exp", &eval_ref, who, false) {
+            Err(LoopError::Refused(m)) => assert!(m.contains(why), "{who}: {m}"),
+            other => panic!("{who} admitted: {other:?}"),
+        }
+    }
+    assert_eq!(snapshot(w.dir.path()), before, "a refusal wrote something");
+    let (rec, _) = admit(&w.s, "exp", &eval_ref, ADMITTER, false).unwrap();
+    assert_eq!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
+}
+
+/// G11-r22-independent-admission: complete experiment bindings. An evaluation
+/// cannot be admitted under another experiment's frozen plan because a
+/// candidate can be frozen in ONE experiment only (no plan shopping): the
+/// second freeze is refused, so no other plan exists to admit it under. The
+/// per-field `binding:` refusals in `derive` are the defence behind this.
+#[test]
+fn a_candidate_is_bound_to_one_experiment() {
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    match freeze_plan(&w.s, "other", &w.inc_ref, &w.cand_ref, |_| {}) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("no plan shopping"), "{m}"),
+        other => panic!("a second experiment froze the same candidate: {other:?}"),
+    }
+}

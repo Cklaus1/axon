@@ -171,12 +171,48 @@ pub(crate) fn derive(
             "admitter {admitter} is not in the trusted-admitter set"
         )));
     }
-    if eval.scope != plan.scope || eval.experiment_id != plan.experiment_id {
-        return Err(refused("evaluation belongs to a different experiment"));
+    // G11-r22-independent-admission: no SELF-PROMOTION by any other loop role.
+    // An admitter that is also a trusted verifier (Compute Fabric's issuer), a
+    // context observer or a safety monitor would be judging evidence it
+    // produced itself — Fabric could be listed as an admitter. The proposer
+    // (EVO, whose `intervention` is the learned ranking/shortlist, so the
+    // RANKER), the subject and the evaluator are refused below. Checked here,
+    // so every re-derivation (activation, rollback) re-applies it.
+    {
+        let config = tx.store.config()?;
+        for (role, set) in [
+            ("a trusted verifier (Compute Fabric)", config.verifiers()),
+            ("a context observer", config.observers()),
+            (
+                "a safety monitor",
+                config.trusted_monitors.iter().cloned().collect(),
+            ),
+        ] {
+            if set.contains(admitter) {
+                return Err(refused(format!(
+                    "self-promotion: admitter {admitter} is also {role}; an admitter must hold no \
+                     other loop role"
+                )));
+            }
+        }
     }
-    if eval.plan_ref != frozen.plan_ref || eval.freeze_seq != frozen.freeze_seq {
+    // Every binding field is checked, and named, separately.
+    if eval.scope != plan.scope {
+        return Err(refused("binding: evaluation scope differs from the plan's"));
+    }
+    if eval.experiment_id != plan.experiment_id {
         return Err(refused(
-            "evaluation was not made under this frozen plan (plan frozen after the evaluation?)",
+            "binding: evaluation belongs to a different experiment",
+        ));
+    }
+    if eval.plan_ref != frozen.plan_ref {
+        return Err(refused(
+            "binding: evaluation was made under a different plan",
+        ));
+    }
+    if eval.freeze_seq != frozen.freeze_seq {
+        return Err(refused(
+            "binding: evaluation was not made under this freeze (plan re-frozen after the evaluation?)",
         ));
     }
     if eval_seq <= frozen.freeze_seq {
@@ -198,11 +234,18 @@ pub(crate) fn derive(
     let proposer = crate::evo::proposer_in(tx, &plan.scope, &cand_ref)
         .ok_or_else(|| refused("candidate has no EVO proposer on record"))?;
     if &proposer == admitter {
-        return Err(refused("the proposer cannot admit its own candidate"));
-    }
-    if eval.subject_issuers.contains(admitter) || &eval.evaluator_ref == admitter {
         return Err(refused(
-            "the admitter must be independent of the subject and the evaluator",
+            "self-promotion: the proposer (ranker) cannot admit its own candidate",
+        ));
+    }
+    if eval.subject_issuers.contains(admitter) {
+        return Err(refused(
+            "the admitter must be independent of the subject: it is a subject issuer",
+        ));
+    }
+    if &eval.evaluator_ref == admitter {
+        return Err(refused(
+            "the admitter must be independent of the evaluator: it is the evaluator",
         ));
     }
     let want = if mechanism_test {
