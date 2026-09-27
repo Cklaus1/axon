@@ -1,0 +1,7 @@
+{"schema":"axon-v022-pci-freeze/1","candidate":5,"property":"Protected Check Isolation",
+ "axon_sha":"31413ca7abb6ff730e1b63718d4304c7a8402675","micode_sha":"b72cf4c4380335e5f5590181012e707cea259fab",
+ "pci_spec_sha256":"bd5c6d326d04d12a7b3ab82b838d3e7aaa3e1bf90a9575d06f7d70f6992067ca",
+ "pci_runner_sha256":"f8c87d11422f8857754c16243be45334ac19a1715cb8c102028782b52980decf",
+ "mutation_driver_sha256":"e4fcfa2188c2c3b5036bab95e93d3e2a17760bcfaa362d6c3a2b6f384d986838","mutation_scope":"all",
+ "interop_gate_sha256":"a3ceefef4108f00a85b4a28906c8d766f532ab1913be874ad307067e3eff5229",
+ "micode_gates_sha256":"aecaf0a01e3cbcc939ad506012858fc2446066c96bd09592fce171e9e9369365"}
