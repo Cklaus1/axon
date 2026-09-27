@@ -218,17 +218,24 @@ fn inconclusive_on_small_sample_liability_and_unknowns() {
 
 #[test]
 fn reject_on_inferiority_or_no_economic_benefit() {
+    // G11-r22-admission-disposition: explicit REASONS, asserted — not just
+    // the decision.
     let w = world();
     let specs = pair(&w.inc, &w.cand, 2, 2, 0, Some(100), Some(50));
-    assert_eq!(
-        decision(&w, "worse", &specs, EvlOpts::default(), |_| {}).0,
-        Decision::Reject
+    let (d, r) = decision(&w, "worse", &specs, EvlOpts::default(), |_| {});
+    assert_eq!(d, Decision::Reject);
+    assert!(
+        r.iter()
+            .any(|x| x.contains("quality inferiority established")),
+        "{r:?}"
     );
     let w = world();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(95));
-    assert_eq!(
-        decision(&w, "pricey", &specs, EvlOpts::default(), |_| {}).0,
-        Decision::Reject
+    let (d, r) = decision(&w, "pricey", &specs, EvlOpts::default(), |_| {});
+    assert_eq!(d, Decision::Reject);
+    assert!(
+        r.iter().any(|x| x.contains("economic benefit not met")),
+        "{r:?}"
     );
 }
 
@@ -386,4 +393,94 @@ fn a_candidate_is_bound_to_one_experiment() {
         Err(LoopError::Refused(m)) => assert!(m.contains("no plan shopping"), "{m}"),
         other => panic!("a second experiment froze the same candidate: {other:?}"),
     }
+}
+
+/// G11-r22-admission-disposition: only an ACCEPTED admission by a CURRENTLY
+/// authorized admitter permits activation. A genuinely journalled REJECT or
+/// INCONCLUSIVE — decided by the real rule, not hand-written — is refused at
+/// activation, and so is an ACCEPT whose admitter the operator has since
+/// untrusted. The pointer does not move in any of them.
+///
+/// Mutation: drop the `decision != Accept` refusal in `rederive` → red.
+#[test]
+fn only_an_accepted_currently_authorized_admission_activates() {
+    let activate = |w: &World, adm: &Ref| {
+        pointer::transition(
+            &w.s,
+            &tparse(&transition(
+                "a1",
+                "activate",
+                &w.inc_ref,
+                Some(&w.cand_ref),
+                1,
+                Some(adm),
+                false,
+            )),
+        )
+    };
+    for (exp, want, why) in [
+        ("worse", Decision::Reject, "quality inferiority established"),
+        (
+            "unk",
+            Decision::Inconclusive,
+            "noninferiority cannot be established",
+        ),
+    ] {
+        let w = world();
+        freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        let mut specs = pair(
+            &w.inc,
+            &w.cand,
+            2,
+            2,
+            if exp == "worse" { 0 } else { 2 },
+            Some(100),
+            Some(50),
+        );
+        if exp == "unk" {
+            specs[2].4 = Out::Unknown;
+        }
+        let (_, e) = evaluate(
+            &w.s,
+            &evl_request(exp, &w.inc, &w.cand, &specs, &EvlOpts::default()),
+        )
+        .unwrap();
+        let (rec, adm) = admit(&w.s, exp, &e, ADMITTER, false).unwrap();
+        assert_eq!(rec.decision, want, "{:?}", rec.reasons);
+        assert!(
+            rec.reasons.iter().any(|x| x.contains(why)),
+            "{:?}",
+            rec.reasons
+        );
+        match activate(&w, &adm) {
+            Err(LoopError::Refused(m)) => assert!(m.contains("not ACCEPT"), "{exp}: {m}"),
+            other => panic!("{exp}: a {want:?} admission activated: {other:?}"),
+        }
+        assert_eq!(
+            pointer::resolve(&w.s, &scope()).unwrap().pin.version.digest,
+            w.inc_ref
+        );
+    }
+    // An ACCEPT whose admitter was untrusted after admission.
+    let w = world();
+    freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let (_, e) = evaluate(
+        &w.s,
+        &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
+    )
+    .unwrap();
+    let (rec, adm) = admit(&w.s, "exp", &e, ADMITTER, false).unwrap();
+    assert_eq!(rec.decision, Decision::Accept, "{:?}", rec.reasons);
+    let mut cfg = w.s.config().unwrap();
+    cfg.trusted_admitters.retain(|a| a.as_str() != ADMITTER);
+    w.s.write_config(&cfg).unwrap();
+    match activate(&w, &adm) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("trusted-admitter"), "{m}"),
+        other => panic!("an untrusted admitter's ACCEPT activated: {other:?}"),
+    }
+    assert_eq!(
+        pointer::resolve(&w.s, &scope()).unwrap().pin.version.digest,
+        w.inc_ref
+    );
 }
