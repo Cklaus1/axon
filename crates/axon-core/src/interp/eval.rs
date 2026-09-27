@@ -72,6 +72,7 @@ impl<'p> Interp<'p> {
                 if let Some(v) = env.get(name) {
                     Ok(v.clone())
                 } else if let Some(v) = self.globals.get(name) {
+                    self.seal_global(name)?;
                     Ok(v.clone())
                 } else {
                     panic(format!("undefined identifier `{name}`"))
@@ -105,6 +106,7 @@ impl<'p> Interp<'p> {
                 if !self.refine_preds.is_empty() {
                     if let Some(crate::ast::AxonType::Named(rn)) = ty {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                            self.seal_refine(rn)?;
                             let mut pe = Env::new();
                             pe.define("_".into(), v.clone());
                             // Also bind the bound name for inline `let x: T where E[x] > k`.
@@ -540,6 +542,7 @@ impl<'p> Interp<'p> {
                                 if let crate::ast::AxonType::Named(rn) = &tf.ty {
                                     if let Some(pred) = self.refine_preds.get(rn.as_str()).copied()
                                     {
+                                        self.seal_refine(rn)?;
                                         if let Some(fv) = fmap.get(&tf.name) {
                                             let mut pe = Env::new();
                                             pe.define("_".into(), fv.clone());
@@ -607,12 +610,23 @@ impl<'p> Interp<'p> {
                 Ok(Value::Str(s))
             }
 
-            Expr::Lambda { params, body, .. } => Ok(Value::Closure {
-                params: params.iter().map(|p| p.name.clone()).collect(),
-                body: body.clone(),
-                // T40: a SHARED, persistent capture cell — see Value::Closure.
-                captured: std::rc::Rc::new(std::cell::RefCell::new(env.snapshot())),
-            }),
+            Expr::Lambda { params, body, .. } => {
+                let mut cell = env.snapshot();
+                // PCI: a closure remembers that a SEALED frame created it, so it
+                // runs sealed wherever it is later called.
+                if self.frame_sealed.get() {
+                    cell.insert(
+                        crate::interp::SEALED_CLOSURE_MARK.to_string(),
+                        Value::Bool(true),
+                    );
+                }
+                Ok(Value::Closure {
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    body: body.clone(),
+                    // T40: a SHARED, persistent capture cell — see Value::Closure.
+                    captured: std::rc::Rc::new(std::cell::RefCell::new(cell)),
+                })
+            }
 
             Expr::Comptime(inner) => self.eval(inner, env),
 
@@ -1036,6 +1050,7 @@ impl<'p> Interp<'p> {
             }
             // 4. A module-level closure constant.
             if let Some(Value::Closure { .. }) = self.globals.get(name) {
+                self.seal_global(name)?;
                 let c = self.globals.get(name).unwrap().clone();
                 return self.call_closure(c, argv);
             }
@@ -1081,6 +1096,7 @@ impl<'p> Interp<'p> {
             // can replay the continuation.
             body: body.clone(),
             env_snapshot: env.snapshot(),
+            sealed: self.frame_sealed.get(),
         };
         let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
@@ -1167,11 +1183,12 @@ impl<'p> Interp<'p> {
                         a.captured.clone(),
                         frame.body.clone(),
                         frame.env_snapshot.clone(),
+                        frame.sealed,
                     )
                 })
             })
         };
-        let Some((idx, binding, arm_body, captured, with_body, with_env)) = hit else {
+        let Some((idx, binding, arm_body, captured, with_body, with_env, arm_sealed)) = hit else {
             return Ok(None);
         };
 
@@ -1194,10 +1211,13 @@ impl<'p> Interp<'p> {
             let mut arm_env = Env::from_snapshot(captured);
             arm_env.push();
             let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-            let outcome = crate::interp::contain_loop_control(
-                bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
-                "an effect-handler arm",
-            );
+            // The arm runs under the provenance of the `with` that installed it.
+            let outcome = self.with_frame(arm_sealed, || {
+                crate::interp::contain_loop_control(
+                    bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
+                    "an effect-handler arm",
+                )
+            });
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
                 Err(Flow::Resume(v)) => Ok(Some(v)),
@@ -1218,10 +1238,12 @@ impl<'p> Interp<'p> {
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-        let outcome = crate::interp::contain_loop_control(
-            bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
-            "an effect-handler arm",
-        );
+        let outcome = self.with_frame(arm_sealed, || {
+            crate::interp::contain_loop_control(
+                bound.and_then(|_| self.eval(&arm_body, &mut arm_env)),
+                "an effect-handler arm",
+            )
+        });
         self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 

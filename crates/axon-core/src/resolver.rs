@@ -1182,6 +1182,12 @@ impl<'a> Resolver<'a> {
                 let taken = crate::types::Type::from_name(n).is_some()
                     || BUILTIN_GENERICS.contains(&n)
                     || generic_names.contains(n)
+                    // The checker accepts any name STARTING with a deferred
+                    // prefix (`DictTable`, `GoalX`) as a type — so a type
+                    // position can resolve to it (PCI candidate-3 review).
+                    || ["Uncertain", "Temporal", "Goal", "Dict"]
+                        .iter()
+                        .any(|p| n.starts_with(p))
                     || matches!(
                         self.table.lookup(n),
                         Some(Symbol::Type { .. }) | Some(Symbol::Enum { .. })
@@ -1207,13 +1213,7 @@ impl<'a> Resolver<'a> {
     /// candidate local that happens to share a suite global's name is refused
     /// too: that errs toward refusal, never toward access.
     fn check_sealed(&mut self, program: &Program, sealed: &[std::path::PathBuf]) {
-        let is_sealed = |span: crate::span::Span| -> bool {
-            crate::span::source_path_of(span.source).is_some_and(|p| {
-                let p = std::path::PathBuf::from(p);
-                let p = p.canonicalize().unwrap_or(p);
-                sealed.iter().any(|d| p.starts_with(d))
-            })
-        };
+        let is_sealed = |span: crate::span::Span| span_in_sealed(span, sealed);
         let item_span = |item: &Item| -> Option<crate::span::Span> {
             match item {
                 Item::FnDef(f) => Some(f.span),
@@ -2142,6 +2142,24 @@ pub fn set_sealed_module_dirs(dirs: &[std::path::PathBuf]) {
     *SEALED_DIRS.lock().unwrap_or_else(|p| p.into_inner()) = canon;
 }
 
+/// The sealed directories currently in force (see [`set_sealed_module_dirs`]).
+pub fn sealed_module_dirs() -> Vec<std::path::PathBuf> {
+    SEALED_DIRS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+/// Whether `span` lies in a file under one of `sealed` — the ONE provenance
+/// rule, shared by the static check here and the interpreter's runtime edge.
+pub fn span_in_sealed(span: crate::span::Span, sealed: &[std::path::PathBuf]) -> bool {
+    crate::span::source_path_of(span.source).is_some_and(|p| {
+        let p = std::path::PathBuf::from(p);
+        let p = p.canonicalize().unwrap_or(p);
+        sealed.iter().any(|d| p.starts_with(d))
+    })
+}
+
 /// Resolve all names in `program`.
 ///
 /// `file` is the source file path used to annotate diagnostics.
@@ -3016,6 +3034,11 @@ mod tests {
                 "type name `T`",
             ),
             (
+                "refinement named after a deferred-prefix type",
+                "type DictTable = Dict where _ != _\nfn main() -> i64 { 0 }\n",
+                "type name `DictTable`",
+            ),
+            (
                 "refinement named after a struct",
                 "type Point = { x: i64 }\ntype Point2 = i64 where _ > 0\ntype Point = Point where _.x > 0\nfn main() -> i64 { 0 }\n",
                 "type name `Point`",
@@ -3057,6 +3080,11 @@ mod tests {
             ("refinement predicate", "fn poke(x: i64) -> bool {\n    dict_set(TABLE, \"k\", 0)\n    true\n}\ntype Sneak = i64 where poke(_)\nfn double(n: Sneak) -> i64 { n }\n", "TABLE"),
             ("verify predicate", "@[verify(dict_get_or(TABLE, \"k\", 0) > 0)]\nfn double(n: i64) -> i64 { n }\n", "TABLE"),
             ("qualified path", "fn double(n: i64) -> i64 { dict_get_or(rubric::expected(), \"k\", 0) }\n", "expected"),
+            (
+                "match guard",
+                "fn double(n: i64) -> i64 {\n    match n {\n        x if dict_get_or(TABLE, \"k\", 0) > 0 => 1\n        _ => 0\n    }\n}\n",
+                "TABLE",
+            ),
         ] {
             let e = errors_with_code(&sealed_merge(suite, cand), E0004);
             assert!(e.iter().any(|m| m.contains(&format!("`{name}`"))), "{why}: {e:?}");

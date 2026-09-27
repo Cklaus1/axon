@@ -412,6 +412,33 @@ pub(crate) fn contain_frame(r: R, site: &str) -> R {
     }
 }
 
+/// Runtime provenance for Protected Check Isolation. The static check
+/// (`resolver::check_sealed`) is a SYNTAX walk and kept missing routes — a match
+/// guard, a method call, a function named in a string (`scheduler_spawn`,
+/// `@[goal(metric: …)]`), a refinement attaching by name (PCI candidate-3
+/// review). Every one of them ends in a CALL, a GLOBAL READ, or a REFINEMENT
+/// application, so the interpreter enforces sealing at exactly those three
+/// edges, whatever syntax led there:
+/// * a sealed frame may call only sealed functions (direct, method, or by
+///   name through any builtin) — plus builtins and closures handed to it;
+/// * a sealed frame may not read an unsealed global;
+/// * a sealed refinement never runs in an unsealed (operator) frame.
+///
+/// Frames carry provenance: a function by its definition's file, a closure by
+/// the frame that CREATED it (a marker in its capture cell), a handler arm by
+/// the frame that installed the `with`.
+#[derive(Default)]
+struct Seal {
+    active: bool,
+    fns: std::collections::HashSet<usize>,
+    globals: std::collections::HashSet<String>,
+    refines: std::collections::HashSet<String>,
+}
+
+/// Capture-cell key marking a closure created in a SEALED frame. Starts with
+/// NUL, so no source identifier can name or shadow it.
+pub(crate) const SEALED_CLOSURE_MARK: &str = "\u{0}sealed";
+
 pub(crate) fn contain_loop_control(r: R, site: &str) -> R {
     match r {
         Err(Flow::Break) | Err(Flow::Continue) => {
@@ -527,6 +554,10 @@ struct SandboxScope {
 // ── Interpreter ──────────────────────────────────────────────────────────────
 
 pub struct Interp<'p> {
+    /// Protected Check Isolation, RUNTIME sealing: which definitions come from
+    /// a sealed (candidate) module, and whether the frame now running is one.
+    seal: Seal,
+    frame_sealed: Cell<bool>,
     fns: HashMap<String, &'p FnDef>,
     #[allow(dead_code)]
     structs: HashMap<String, &'p TypeDef>,
@@ -748,6 +779,9 @@ struct HandlerFrame {
     /// intercepted op). Unused by the bare-tail-resume fast path.
     body: crate::ast::Expr,
     env_snapshot: HashMap<String, Value>,
+    /// Provenance of the frame that installed this handler: its arms run
+    /// under it (PCI runtime sealing).
+    sealed: bool,
 }
 
 /// A runtime handler arm: the payload binding, the arm body, and a snapshot of
@@ -2709,6 +2743,38 @@ fn verify_fn_label(fn_name: &str) -> String {
 impl<'p> Interp<'p> {
     pub fn build(program: &'p Program) -> Self {
         pin_ai_net_allowlist(program);
+        let seal = {
+            let dirs = crate::resolver::sealed_module_dirs();
+            let mut seal = Seal {
+                active: !dirs.is_empty(),
+                ..Seal::default()
+            };
+            if seal.active {
+                let sealed = |sp: crate::span::Span| crate::resolver::span_in_sealed(sp, &dirs);
+                for item in &program.items {
+                    match item {
+                        Item::FnDef(f) if sealed(f.span) => {
+                            seal.fns.insert(f as *const FnDef as usize);
+                        }
+                        Item::ImplBlock(b) => {
+                            for m in &b.methods {
+                                if sealed(m.span) || sealed(b.span) {
+                                    seal.fns.insert(m as *const FnDef as usize);
+                                }
+                            }
+                        }
+                        Item::LetDef { name, span, .. } if sealed(*span) => {
+                            seal.globals.insert(name.clone());
+                        }
+                        Item::RefineDef(r) if sealed(r.span) => {
+                            seal.refines.insert(r.name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            seal
+        };
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
         let mut enums = HashMap::new();
@@ -2753,6 +2819,8 @@ impl<'p> Interp<'p> {
         // and the active-handle field below are derived from it.
         let ambient = ambient_sandbox();
         Interp {
+            seal,
+            frame_sealed: Cell::new(false),
             fns,
             structs,
             enums,
@@ -2824,7 +2892,9 @@ impl<'p> Interp<'p> {
         let defs = std::mem::take(&mut self.global_defs);
         let mut env = Env::new();
         for (name, expr) in &defs {
-            let v = self.eval(expr, &mut env)?;
+            // Each initializer runs under its own definition's provenance.
+            let sealed = self.seal.active && self.seal.globals.contains(name);
+            let v = self.with_frame(sealed, || self.eval(expr, &mut env))?;
             env.define(name.clone(), v);
         }
         self.globals = env.snapshot();
@@ -2997,9 +3067,74 @@ impl<'p> Interp<'p> {
     }
 
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+        // PCI runtime sealing: the CALL edge (see `Seal`).
+        self.seal_call(f)?;
         // The WHOLE call — parameter refinements, body, return refinement,
-        // `@[verify]` — is one frame for loop control.
-        contain_frame(self.call_fn_frame(f, args), &format!("`{}`", f.name))
+        // `@[verify]` — is one frame for loop control, and runs under the
+        // callee's provenance.
+        let callee = self.fn_is_sealed(f);
+        self.with_frame(callee, || {
+            contain_frame(self.call_fn_frame(f, args), &format!("`{}`", f.name))
+        })
+    }
+
+    /// Whether `f` was defined in a sealed (candidate) module.
+    fn fn_is_sealed(&self, f: &FnDef) -> bool {
+        self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))
+    }
+
+    /// The call edge: a sealed frame may run only sealed functions.
+    fn seal_call(&self, f: &FnDef) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.fn_is_sealed(f) {
+            return panic(format!(
+                "sealed code (the candidate under test) cannot run `{}`, which the operator defines",
+                f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The global-read edge: a sealed frame may not read an operator global.
+    pub(crate) fn seal_global(&self, name: &str) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(name) {
+            return panic(format!(
+                "sealed code (the candidate under test) cannot read `{name}`, which the operator defines"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The refinement edge: a candidate's refinement never runs in operator
+    /// code (a refinement attaches BY NAME, so a candidate `type DictTable =
+    /// … where P` ran P inside the operator's helper — PCI candidate-3 review).
+    pub(crate) fn seal_refine(&self, rname: &str) -> Result<(), Flow> {
+        if self.seal.active && !self.frame_sealed.get() && self.seal.refines.contains(rname) {
+            return panic(format!(
+                "the refinement `{rname}` is the candidate's and cannot run in the operator's code"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Look up a function by NAME for a builtin that will run it (scheduler,
+    /// goal, sandbox …). The call edge applies at RESOLUTION time, so a name a
+    /// sealed frame queues cannot run later on the operator's behalf.
+    pub(crate) fn fn_by_name(&self, name: &str) -> Result<Option<&'p FnDef>, Flow> {
+        match self.fns.get(name).copied() {
+            Some(f) => {
+                self.seal_call(f)?;
+                Ok(Some(f))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Run `g` with the frame's provenance set to `sealed`, restoring it after.
+    pub(crate) fn with_frame<T>(&self, sealed: bool, g: impl FnOnce() -> T) -> T {
+        let prev = self.frame_sealed.replace(sealed);
+        let out = g();
+        self.frame_sealed.set(prev);
+        out
     }
 
     fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>) -> R {
@@ -3123,6 +3258,7 @@ impl<'p> Interp<'p> {
             for p in &f.params {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                        self.seal_refine(rname)?;
                         let val = env.get(&p.name).cloned().unwrap_or(Value::Unit);
                         let mut pred_env = Env::new();
                         pred_env.define("_".into(), val.clone());
@@ -3301,6 +3437,7 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                    self.seal_refine(rname)?;
                     // R20 Slice 2: evaluate the predicate with `_` bound to the
                     // return value AND the fn's params still in scope, so a
                     // RELATIONAL return refinement (e.g.
@@ -3580,13 +3717,17 @@ impl<'p> Interp<'p> {
         }
         // A closure's own `return` ends the closure; every other transfer is
         // refused at its edge, as for a named fn (`contain_frame`).
-        let out = contain_frame(
-            match self.eval(&body, &mut env) {
-                Err(Flow::Return(v)) => Ok(v),
-                other => other,
-            },
-            "a closure",
-        );
+        // A closure runs under the provenance of the frame that CREATED it.
+        let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);
+        let out = self.with_frame(origin, || {
+            contain_frame(
+                match self.eval(&body, &mut env) {
+                    Err(Flow::Return(v)) => Ok(v),
+                    other => other,
+                },
+                "a closure",
+            )
+        });
         // Write back only names the closure actually captured. A `let` introduced
         // inside the body lives in a pushed scope and must not leak into the
         // capture; a parameter shadowing a captured name must not overwrite it
@@ -4298,6 +4439,99 @@ mod tests {
             passed.is_empty(),
             "these escapes passed the test: {passed:?}"
         );
+    }
+
+    #[test]
+    fn runtime_sealing_holds_without_the_static_check() {
+        // PCI candidate-3 review: the STATIC sealing walk missed match guards,
+        // method calls, functions named in strings, refinements attaching by
+        // name. The runtime edges (call, global read, refinement) must hold on
+        // their own, so this builds the interpreter WITHOUT the resolver.
+        use crate::span::intern_source;
+        let suite = "fn expected(n: i64) -> i64 { n * 2 }\n\
+                     trait Answers { fn answer(self) -> i64 }\n\
+                     impl Answers for i64 { fn answer(self: i64) -> i64 { self * 2 } }\n\
+                     fn build() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", 42)\n    d\n}\n\
+                     let TABLE = build()\n\
+                     fn lookup(t: Loot, k: str) -> i64 { dict_get_or(t, k, 0) }\n\
+                     fn apply(g: fn(i64) -> i64) -> i64 { g(21) }\n\
+                     @[test]\nfn t() { assert_eq(double(21), expected(21)) }\n\
+                     @[test]\nfn t_key() { assert_eq(double(21), lookup(TABLE, \"k\")) }\n\
+                     @[test]\nfn t_closure() { assert_eq(twice()(21), expected(21)) }\n\
+                     @[test]\nfn t_callback() { assert_eq(via(|n: i64| expected(n)), 42) }\n";
+        let run = |cand: &str, test: &str| {
+            let s = crate::parse_source_in(suite, intern_source("/pci-rt-suite/h.ax", suite))
+                .expect("suite parses");
+            let c = crate::parse_source_in(cand, intern_source("/pci-rt-sealed/f.ax", cand))
+                .expect("candidate parses");
+            let prog = Program {
+                items: s.items.into_iter().chain(c.items).collect(),
+            };
+            crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from("/pci-rt-sealed")]);
+            let out = run_test_fn_outcome(&prog, test);
+            crate::resolver::set_sealed_module_dirs(&[]);
+            out
+        };
+        let base = "fn twice() -> fn(i64) -> i64 { |n: i64| n * 2 }\n\
+                    fn via(g: fn(i64) -> i64) -> i64 { g(21) }\n";
+        for (why, cand, test) in [
+            ("direct call", "fn double(n: i64) -> i64 { expected(n) }\n", "t"),
+            ("method on a builtin type", "fn double(n: i64) -> i64 { n.answer() }\n", "t"),
+            (
+                "function named in a string",
+                "fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"expected\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n",
+                "t",
+            ),
+            ("global read", "fn double(n: i64) -> i64 { dict_get_or(TABLE, \"k\", 0) }\n", "t_key"),
+            (
+                "match guard",
+                "fn double(n: i64) -> i64 {\n    match n {\n        x if dict_get_or(TABLE, \"k\", 0) > 0 => 42\n        _ => 0\n    }\n}\n",
+                "t_key",
+            ),
+            (
+                "refinement attaching to an operator annotation",
+                "fn poke(d: Dict) -> bool {\n    dict_set(d, \"k\", 0)\n    true\n}\ntype Loot = Dict where poke(_)\nfn double(n: i64) -> i64 { 0 }\n",
+                "t_key",
+            ),
+            (
+                "a candidate closure called by the operator",
+                "fn double(n: i64) -> i64 { n * 2 }\nfn twice() -> fn(i64) -> i64 { |n: i64| expected(n) }\n",
+                "t_closure",
+            ),
+            (
+                "queues an operator function for later",
+                "fn double(n: i64) -> i64 {\n    let _ = scheduler_spawn(\"expected\", n)\n    n * 2\n}\n",
+                "t",
+            ),
+            (
+                "module-level initializer",
+                "let STEAL = expected(21)\nfn double(n: i64) -> i64 { n * 2 }\n",
+                "t",
+            ),
+            (
+                "a candidate handler arm",
+                "fn double(n: i64) -> i64 {\n    with handler { on IO(p) => resume(expected(21)) } {\n        println(\"x\")\n    }\n    n * 0 + 42\n}\n",
+                "t",
+            ),
+        ] {
+            let cand = if cand.contains("fn twice") {
+                format!("{cand}fn via(g: fn(i64) -> i64) -> i64 {{ g(21) }}\n")
+            } else {
+                format!("{cand}{base}")
+            };
+            // Refused BY THE SEAL — not failing for some unrelated reason.
+            let out = run(&cand, test);
+            assert!(
+                matches!(&out, Err(m) if m.contains("sealed code") || m.contains("is the candidate's")),
+                "{why}: {out:?}"
+            );
+        }
+        // Honest, and the interface: the operator calls the candidate, and a
+        // closure the OPERATOR hands the candidate may call operator helpers.
+        let honest = format!("fn double(n: i64) -> i64 {{ n * 2 }}\n{base}");
+        for test in ["t", "t_closure", "t_callback"] {
+            assert_eq!(run(&honest, test), Ok(TestEnd::Completed), "{test}");
+        }
     }
 
     #[test]

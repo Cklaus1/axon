@@ -34,7 +34,7 @@ ROWS=(
   "13 completion evidence|axon-fabric|check_effects|a_pass_needs_evidence_that_the_test_completed a_candidate_predicate_cannot_end_the_operators_test the_cortex_executor_accepts_only_a_receipt_that_binds_its_candidate"
   "14 exit code|axon-fabric|check_effects|a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass"
   "17 working directory|axon-fabric|check_effects|a_suites_runtime_fixture_is_the_pinned_one"
-  "21 sealed candidate|axon-core|lib|resolver::tests::a_sealed_module_cannot_reach_the_operators_names"
+  "21 sealed candidate|axon-core|lib|resolver::tests::a_sealed_module_cannot_reach_the_operators_names interp::tests::runtime_sealing_holds_without_the_static_check"
   "21 sealed candidate|axon-fabric|check_effects|a_sealed_candidate_cannot_reach_the_operators_names"
 )
 

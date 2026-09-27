@@ -1157,7 +1157,7 @@ max_label = \"internal\"
 cost_micro = 1000
 ";
     let accept = "mod f\nmod rubric\nuse f.{double}\nuse rubric.{expected, same}\n\n@[test]\nfn hidden_completion() {\n    assert_eq(double(21), dict_get_or(expected(), \"d21\", 0 - 1))\n    assert(same(double(1), 2))\n}\n";
-    let rubric = "fn build() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"d21\", 42)\n    d\n}\nlet TABLE = build()\nfn expected() -> Dict { TABLE }\nfn same<T>(a: T, b: T) -> bool { a == b }\n";
+    let rubric = "fn build() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"d21\", 42)\n    d\n}\nlet TABLE = build()\nfn expected() -> Dict { TABLE }\nfn same<T>(a: T, b: T) -> bool { a == b }\nfn answer_of(n: i64) -> i64 { n * 2 }\ntrait Answers { fn answer(self) -> i64 }\nimpl Answers for i64 { fn answer(self: i64) -> i64 { self * 2 } }\n";
     for (why, cand, pass) in [
         (
             "mutates the suite's constant",
@@ -1167,6 +1167,23 @@ cost_micro = 1000
         (
             "reads the answer key",
             "fn double(n: i64) -> i64 {\n    if n == 21 { dict_get_or(expected(), \"d21\", 0) } else { 2 }\n}\n",
+            false,
+        ),
+        // PCI candidate-3 review: routes the static walk missed, each a
+        // signed-off pass — held now by the RUNTIME edges.
+        (
+            "calls an operator method on its own value",
+            "fn double(n: i64) -> i64 { n.answer() }\n",
+            false,
+        ),
+        (
+            "names an operator function in a string",
+            "fn double(n: i64) -> i64 {\n    let id = scheduler_spawn(\"answer_of\", n)\n    scheduler_run()\n    scheduler_result(id)\n}\n",
+            false,
+        ),
+        (
+            "reads the answer key in a match guard",
+            "fn double(n: i64) -> i64 {\n    match n {\n        x if x == 21 && dict_get_or(TABLE, \"d21\", 0) > 0 => dict_get_or(TABLE, \"d21\", 0)\n        _ => 2\n    }\n}\n",
             false,
         ),
         (

@@ -708,6 +708,12 @@ pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
         Expr::Match { subject, arms } => {
             walk_expr(subject, f);
             for a in arms {
+                // The GUARD is a sub-expression too. It was skipped, so every
+                // walker (the PCI sealing check among them) missed code in
+                // `x if …` (PCI candidate-3 review, executed).
+                if let Some(g) = &a.guard {
+                    walk_expr(g, f);
+                }
                 walk_expr(&a.body, f);
             }
         }

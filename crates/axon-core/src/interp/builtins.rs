@@ -4424,7 +4424,10 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let fn_name = as_str(&args[0])?.to_string();
                 let arg = as_int(&args[1])?;
-                if !self.fns.contains_key(&fn_name) {
+                // Resolved (and seal-checked) NOW: a fiber runs later, maybe in
+                // the operator's frame, so a sealed spawner may queue only its
+                // own functions.
+                if self.fn_by_name(&fn_name)?.is_none() {
                     return panic(format!(
                         "[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"
                     ));
