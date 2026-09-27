@@ -2510,6 +2510,17 @@
       "status": "fixed",
       "severity": "security",
       "commit": "1f1c7261"
+    },
+    {
+      "id": "FG-082",
+      "where": "crates/axon-core/src/interp.rs",
+      "claimed": "FG-080: kernel state is per provenance, so a sealed candidate cannot change what the operator's check computes through shared effect-free state.",
+      "reality": "The kill-switch latch (corrigible_halt/corrigible_halted) and the adaptive-score store (read by NAME via agent_trace_len/agent_detect_loop) were still shared. A candidate tripped the latch so operator code guarded by !corrigible_halted() skipped its assertion, or derived its answer from the operator's adaptive trace: a pass for a wrong candidate under the empty ceiling.",
+      "reproduced": "2026-09-27 self-audit of the per-provenance kernel (not a review finding), executed on 4cc6360e with a sealed candidate under the empty ceiling. Pinned by interp runtime_sealing_holds_without_the_static_check (latch and trace cases; M96 covers the split).",
+      "fix": "Provenance store and kill-switch latch move into the per-provenance Kernel; the AI token cap/cost counters stay shared on purpose (splitting a cap would grant a fresh budget; AI is refused under the empty ceiling).",
+      "status": "fixed",
+      "severity": "security",
+      "commit": "b5ea7705"
     }
   ]
 }

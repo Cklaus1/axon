@@ -204,7 +204,7 @@ A false green is a check, test, or matrix cell that REPORTED SUCCESS while the t
 
 The doctrine they all violate: **success must carry evidence; failure may never synthesize success.**
 
-**1 OPEN, 80 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
+**1 OPEN, 81 fixed.** An open false green blocks any completeness claim — a harder criterion than the unknown count, and deliberately so: unknowns shrink by doing work, false greens shrink only by admitting a check was lying. The two must never be traded against each other, because relabelling an unknown to improve its count manufactures a false green.
 
 ### FG-042 — crates/axon-fabric/src/backend.rs (security, **OPEN**)
 
@@ -772,4 +772,11 @@ The doctrine they all violate: **success must carry evidence; failure may never 
 - **Reality:** A candidate struct's WHOLE-STRUCT `where` ran in the constructor's frame. When the operator built one, it ran unsealed and called operator code by name from there, and a closure created inside it carried no sealed marker (a persistent unsealed capability): Fabric Passed.
 - **Reproduced:** PCI candidate-4 final review (wf_11b2f5cb, axon b4af72bf), executed by two roles through submit. Pinned by interp runtime_sealing_holds_without_the_static_check (struct-where case, M97) and the Fabric test above.
 - **Fix:** A definition-owned predicate runs under its definition's provenance: sealed struct types are recorded (Seal.types) and their `where` runs sealed whoever constructs one. (`1f1c7261`)
+
+### FG-082 — crates/axon-core/src/interp.rs (security, fixed)
+
+- **Claimed:** FG-080: kernel state is per provenance, so a sealed candidate cannot change what the operator's check computes through shared effect-free state.
+- **Reality:** The kill-switch latch (corrigible_halt/corrigible_halted) and the adaptive-score store (read by NAME via agent_trace_len/agent_detect_loop) were still shared. A candidate tripped the latch so operator code guarded by !corrigible_halted() skipped its assertion, or derived its answer from the operator's adaptive trace: a pass for a wrong candidate under the empty ceiling.
+- **Reproduced:** 2026-09-27 self-audit of the per-provenance kernel (not a review finding), executed on 4cc6360e with a sealed candidate under the empty ceiling. Pinned by interp runtime_sealing_holds_without_the_static_check (latch and trace cases; M96 covers the split).
+- **Fix:** Provenance store and kill-switch latch move into the per-provenance Kernel; the AI token cap/cost counters stay shared on purpose (splitting a cap would grant a fresh budget; AI is refused under the empty ceiling). (`b5ea7705`)
 
