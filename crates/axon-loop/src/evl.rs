@@ -265,11 +265,24 @@ struct Delivered {
     ep: LoopEpisode,
     ep_ref: Ref,
     ctx: ExecutionContextReceipt,
-    req: ComputeRequest,
-    rcpt: ExecutionReceipt,
-    proj: PolicyProjection,
+    /// The trial's EXECUTION documents, or `None` for a D12 trial (see
+    /// [`is_d12`]): its execution ran under local MiCode authority, so there
+    /// are none, and only its acceptance check went through Fabric.
+    acf: Option<(ComputeRequest, ExecutionReceipt, PolicyProjection)>,
     verification: [Value; 3],
     ctx_sig: Value,
+}
+
+/// ADR-001 D12: only the acceptance CHECK goes through Fabric; the agent's own
+/// execution stays under local MiCode authority, and the sidecar names its
+/// execution documents with MiCode's not-produced markers. Such a trial can
+/// still be JUDGED — its check evidence is Fabric's, authenticated exactly as
+/// intake authenticates it — so its non-success states stay distinct
+/// (G01-r22-unknown-outcome). It never COUNTS: nothing binds the verdict to
+/// the arm's execution, so an authenticated pass or fail is `Unbound`.
+fn is_d12(ep: &LoopEpisode) -> bool {
+    ep.acf_request_ref == crate::intake::micode_not_produced_ref("acf_request_ref")
+        && ep.acf_receipt_ref == crate::intake::micode_not_produced_ref("acf_receipt_ref")
 }
 
 /// Evaluate and store. Returns the record and its `cl22:` ref.
@@ -449,12 +462,36 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         let ep: LoopEpisode = contract_from_value(&format!("trials[{i}].episode"), &t.episode)?;
         let ctx: ExecutionContextReceipt =
             contract_from_value(&format!("trials[{i}].context"), &t.context)?;
-        let req: ComputeRequest =
-            contract_from_value(&format!("trials[{i}].acf_request"), &t.acf_request)?;
-        let rcpt: ExecutionReceipt =
-            contract_from_value(&format!("trials[{i}].acf_receipt"), &t.acf_receipt)?;
-        let proj: PolicyProjection =
-            contract_from_value(&format!("trials[{i}].projection"), &t.projection)?;
+        // A D12 trial has no execution documents; delivering some anyway is a
+        // contradiction, never a second source of truth.
+        let acf = if is_d12(&ep) {
+            if [&t.acf_request, &t.acf_receipt, &t.projection]
+                .iter()
+                .any(|v| !v.is_null())
+            {
+                return Err(refused(format!(
+                    "trials[{i}] ({}): the episode names MiCode's not-produced execution markers \
+                     (D12), so acf_request, acf_receipt and projection must be null",
+                    ep.identity.trial_id
+                )));
+            }
+            None
+        } else {
+            Some((
+                contract_from_value::<ComputeRequest>(
+                    &format!("trials[{i}].acf_request"),
+                    &t.acf_request,
+                )?,
+                contract_from_value::<ExecutionReceipt>(
+                    &format!("trials[{i}].acf_receipt"),
+                    &t.acf_receipt,
+                )?,
+                contract_from_value::<PolicyProjection>(
+                    &format!("trials[{i}].projection"),
+                    &t.projection,
+                )?,
+            ))
+        };
         let key = (
             ep.identity.task_id.clone(),
             ep.identity.arm_id.clone(),
@@ -480,8 +517,11 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             )));
         }
         let ep_ref = digest(&ep)?;
-        for d in [&ep_ref, &digest(&ctx)?, &digest(&req)?, &digest(&rcpt)?] {
-            evidence.insert(d.clone());
+        evidence.insert(ep_ref.clone());
+        evidence.insert(digest(&ctx)?);
+        if let Some((req, rcpt, _)) = &acf {
+            evidence.insert(digest(req)?);
+            evidence.insert(digest(rcpt)?);
         }
         if delivered
             .insert(
@@ -490,9 +530,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     ep,
                     ep_ref,
                     ctx,
-                    req,
-                    rcpt,
-                    proj,
+                    acf,
                     verification: [
                         t.verification_request.clone(),
                         t.verification_receipt.clone(),
@@ -611,11 +649,10 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             unknown_kind: kind,
             episode_ref: ep_ref,
             corpus_role: role,
-            // Only a counted verdict cites its evidence. Unreachable today:
-            // authentication already requires a trusted, independent issuer,
-            // and the receipt contract refuses a pass with no matched check,
-            // so no authenticated verdict is demoted afterwards. Kept against
-            // drift (re-audit 3: X23, an equivalent mutant).
+            // Only a counted verdict cites its evidence. Load-bearing since
+            // D12 judging (G01-r22-unknown-outcome): a D12 verdict is
+            // authenticated and THEN demoted to Unbound, and must not cite
+            // evidence as if it had counted.
             verification: authenticated
                 .filter(|_| matches!(outcome, Outcome::VerifiedPass | Outcome::Fail)),
             safety: safety
@@ -744,8 +781,10 @@ fn judge(
     if let Err(e) = bind_episode(&d.ep, policy, &d.ctx, epoch, verifiers, subjects) {
         return unknown(UnknownKind::Unbound, format!("unbound episode: {e}"));
     }
-    if let Err(e) = bind_acf(&d.ep, &d.req, &d.rcpt, &d.proj) {
-        return unknown(UnknownKind::Unbound, format!("unbound ACF evidence: {e}"));
+    if let Some((req, rcpt, proj)) = &d.acf {
+        if let Err(e) = bind_acf(&d.ep, req, rcpt, proj) {
+            return unknown(UnknownKind::Unbound, format!("unbound ACF evidence: {e}"));
+        }
     }
     // ADR-001 D3: a protected evaluation counts a trial only from protected
     // backends. The two legs prove DIFFERENT things (re-audit 3):
@@ -759,8 +798,15 @@ fn judge(
     // An absent verification receipt is skipped here and refused below as
     // unauthenticated whenever the episode cites a verdict.
     if class == crate::plan::EvaluationClass::Protected {
+        let Some((_, rcpt, _)) = &d.acf else {
+            return unknown(
+                UnknownKind::Unverifiable,
+                "D12 local execution (no Fabric execution receipt) is ineligible for a protected \
+                 evaluation (ADR-001 D3)",
+            );
+        };
         let legs = [
-            ("execution", Some(d.rcpt.backend_profile_ref.as_str())),
+            ("execution", Some(rcpt.backend_profile_ref.as_str())),
             (
                 "verification",
                 d.verification[1]["backend_profile_ref"].as_str(),
@@ -782,11 +828,15 @@ fn judge(
     // A verdict is evidence only if its VERIFICATION evidence joins and is
     // authenticated — the same rule intake applies, over the verification
     // check's own documents. An unauthenticated FAILURE is refused as surely
-    // as a pass: forged failures could otherwise sink an arm.
+    // as a pass: forged failures could otherwise sink an arm. A CITED unknown
+    // is authenticated too, so the kind it reports comes from the receipt the
+    // verifier signed (a timed-out or canceled check), not from the subject.
+    let mut check_receipt: Option<ExecutionReceipt> = None;
     if matches!(
         v.result,
         VerificationResult::Passed | VerificationResult::Failed
-    ) {
+    ) || (v.result == VerificationResult::Unknown && v.verifier_ref.is_some())
+    {
         let [req, rc, att] = &d.verification;
         let text = |x: &Value| (!x.is_null()).then(|| x.to_string());
         let checked = match (text(req), text(rc)) {
@@ -803,6 +853,7 @@ fn judge(
                 let issued = axon_loop_contracts::attestation::issued_ms(&a)
                     .ok_or_else(|| refused("an authenticated attestation states no issued_ms"))?;
                 Ok((
+                    r.clone(),
                     VerificationEvidence {
                         request_ref: digest(&q)?,
                         receipt_ref: digest(&r)?,
@@ -824,7 +875,7 @@ fn judge(
         };
         match checked {
             Err((kind, e)) => return unknown(kind, format!("unauthenticated verification: {e}")),
-            Ok((ev, issued)) if issued < freeze_ms => {
+            Ok((_, ev, issued)) if issued < freeze_ms => {
                 return unknown(
                     UnknownKind::Unverifiable,
                     format!(
@@ -834,9 +885,28 @@ fn judge(
                     ),
                 )
             }
-            Ok((ev, _)) => *authenticated = Some(ev),
+            Ok((r, ev, _)) => {
+                check_receipt = Some(r);
+                // Only a verdict is kept as the evidence a count may rest on;
+                // whether it counts is decided below (a D12 verdict does not).
+                if v.result != VerificationResult::Unknown {
+                    *authenticated = Some(ev);
+                }
+            }
         }
     }
+    let d12 = d.acf.is_none();
+    // How the run ended, where that is known: the execution receipt, or for a
+    // D12 trial the episode (MiCode folds any other ending into
+    // outcome_unknown). Informational: a kind never makes a trial count.
+    let run_end = match &d.acf {
+        Some((_, rcpt, _)) => match rcpt.status {
+            ReceiptStatus::TimedOut => Some(UnknownKind::TimedOut),
+            ReceiptStatus::Canceled => Some(UnknownKind::Cancelled),
+            _ => None,
+        },
+        None => (d.ep.status == EpisodeStatus::Cancelled).then_some(UnknownKind::Cancelled),
+    };
     match v.result {
         VerificationResult::Passed => {
             let issuer_ok = v
@@ -848,6 +918,8 @@ fn judge(
                     UnknownKind::Unmatched,
                     "vacuous: passed with zero matched checks",
                 )
+            } else if d12 {
+                unknown(UnknownKind::Unbound, D12_NOT_COUNTED)
             } else if !issuer_ok {
                 unknown(
                     UnknownKind::Unverifiable,
@@ -861,28 +933,43 @@ fn judge(
                 )
             }
         }
+        VerificationResult::Failed if d12 => unknown(UnknownKind::Unbound, D12_NOT_COUNTED),
         VerificationResult::Failed => (Outcome::Fail, "verifier reported failure".into(), None),
         VerificationResult::NotRun => unknown(
-            UnknownKind::NotRun,
+            run_end.unwrap_or(UnknownKind::NotRun),
             format!("verification not run (status {:?})", d.ep.status),
         ),
-        VerificationResult::Unknown => unknown(
-            // The execution receipt says how the run ended (the episode folds
-            // a timeout into outcome_unknown). Informational: the kind never
-            // makes a trial count.
-            match d.rcpt.status {
-                ReceiptStatus::TimedOut => UnknownKind::TimedOut,
-                ReceiptStatus::Canceled => UnknownKind::Cancelled,
-                ReceiptStatus::Completed
-                | ReceiptStatus::Failed
-                | ReceiptStatus::Denied
-                | ReceiptStatus::Unsupported
-                | ReceiptStatus::OutcomeUnknown => UnknownKind::MissingEvidence,
-            },
-            format!("verification unknown (status {:?})", d.ep.status),
-        ),
+        VerificationResult::Unknown => match check_receipt {
+            // The check itself did not reach a verdict, as the verifier signed.
+            Some(rc) => unknown(
+                match rc.status {
+                    ReceiptStatus::TimedOut => UnknownKind::TimedOut,
+                    ReceiptStatus::Canceled => UnknownKind::Cancelled,
+                    ReceiptStatus::Completed if rc.matched_checks.unwrap_or(0) == 0 => {
+                        UnknownKind::Unmatched
+                    }
+                    _ => UnknownKind::MissingEvidence,
+                },
+                format!(
+                    "the verification check ended {:?} with verification {:?} and {} matched \
+                     (status {:?})",
+                    rc.status,
+                    rc.verification,
+                    rc.matched_checks.unwrap_or(0),
+                    d.ep.status
+                ),
+            ),
+            None => unknown(
+                run_end.unwrap_or(UnknownKind::MissingEvidence),
+                format!("verification unknown (status {:?})", d.ep.status),
+            ),
+        },
     }
 }
+
+const D12_NOT_COUNTED: &str = "D12: the verdict is authenticated, but the execution it judges ran \
+     under local MiCode authority with no Fabric execution receipt, so nothing binds it to this \
+     arm: not counted";
 
 /// Load a stored evaluation.
 pub fn load(store: &Store, r: &Ref) -> Result<EvaluationRecord> {
