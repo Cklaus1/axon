@@ -511,3 +511,75 @@ fn a_protected_class_mechanism_test_is_still_not_served() {
     );
     assert_eq!(snapshot(w.dir.path()), before);
 }
+
+/// G32-r22-sidecar-bindings: in a PROTECTED evaluation a trial's preflight
+/// context is AUTHENTICATED, not named — the worker writes the context, so a
+/// receipt naming the trusted observer proves nothing on its own. Refused
+/// (the trial is unknown, never a pass): no signature; a signature under a key
+/// the operator did not register for the observer; a signature by another
+/// name. Honest control: the observer's own signature counts both passes.
+///
+/// Mutation: make `authenticated_context` accept everything → red.
+#[test]
+fn a_protected_context_is_authenticated_not_named() {
+    let run = |alter: &dyn Fn(&mut Value)| {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        trust_monitor(&w.s);
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        let mut v = evl_request("exp", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        for t in v["trials"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|t| t["episode"]["identity"]["arm_id"] == "challenger-1")
+        {
+            alter(t);
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        rec.arm_for_policy(&w.cand_ref).unwrap().clone()
+    };
+    let (other_sk, _) = axon_loop_contracts::attestation::generate().unwrap();
+    let sign_as = |sk: &[u8], who: &str, t: &Value| {
+        axon_loop_contracts::attestation::sign_document(
+            sk,
+            axon_loop::evl::CONTEXT_DOMAIN,
+            &OpaqueRef::new(who).unwrap(),
+            &t["context"],
+        )
+        .unwrap()
+    };
+    for (why, alter) in [
+        (
+            "unsigned",
+            Box::new(|t: &mut Value| {
+                t.as_object_mut().unwrap().remove("context_signature");
+            }) as Box<dyn Fn(&mut Value)>,
+        ),
+        (
+            "unregistered key",
+            Box::new(|t: &mut Value| t["context_signature"] = sign_as(&other_sk, OBSERVER, t)),
+        ),
+        (
+            "another name",
+            Box::new(|t: &mut Value| {
+                t["context_signature"] = sign_as(&observer_key().0, ADMITTER, t)
+            }),
+        ),
+    ] {
+        let arm = run(&*alter);
+        assert_eq!(arm.verified_pass, 0, "{why}: {:?}", arm.trials);
+        assert!(
+            arm.trials.iter().all(|t| t.reason.contains("context")),
+            "{why}: {:?}",
+            arm.trials
+        );
+    }
+    assert_eq!(
+        run(&|_| {}).verified_pass,
+        2,
+        "the observer's own signature must count"
+    );
+}

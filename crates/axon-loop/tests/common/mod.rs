@@ -119,6 +119,9 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
         protected_scopes: Vec::new(),
         trusted_monitors: Vec::new(),
         monitor_keys: Default::default(),
+        observer_keys: [(OpaqueRef::new(OBSERVER).unwrap(), observer_key().1.clone())]
+            .into_iter()
+            .collect(),
     })
     .unwrap();
     register_candidates(&s);
@@ -144,6 +147,9 @@ pub fn store_without_candidates(dir: &Path) -> Store {
         protected_scopes: Vec::new(),
         trusted_monitors: Vec::new(),
         monitor_keys: Default::default(),
+        observer_keys: [(OpaqueRef::new(OBSERVER).unwrap(), observer_key().1.clone())]
+            .into_iter()
+            .collect(),
     })
     .unwrap();
     // The lock file is created on first use; create it now so no-change
@@ -197,6 +203,14 @@ impl<'a> Trial<'a> {
 /// The fixture verifier's Ed25519 key `(PKCS#8, public hex)`, registered for
 /// [`VERIFIER`] in every fixture store (G01-r22-independent-issuer).
 pub fn verifier_key() -> &'static (Vec<u8>, String) {
+    static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())
+}
+
+/// G32-r22-sidecar-bindings: the fixture preflight observer's key, registered
+/// for [`OBSERVER`] in every fixture store; every fixture context it observed
+/// carries its signature (required only by a PROTECTED-class evaluation).
+pub fn observer_key() -> &'static (Vec<u8>, String) {
     static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
     KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())
 }
@@ -453,9 +467,20 @@ pub fn trial(t: &Trial) -> Value {
     } else {
         (Value::Null, Value::Null, Value::Null)
     };
+    let ctx_sig = if ctx.observed_issuer_ref.as_str() == OBSERVER {
+        axon_loop_contracts::attestation::sign_document(
+            &observer_key().0,
+            axon_loop::evl::CONTEXT_DOMAIN,
+            &ctx.observed_issuer_ref,
+            &serde_json::to_value(&ctx).unwrap(),
+        )
+        .unwrap()
+    } else {
+        Value::Null
+    };
     json!({"episode": ep, "context": ctx, "acf_request": req, "acf_receipt": rc, "projection": proj,
            "verification_request": vreq, "verification_receipt": vrc,
-           "verification_attestation": att})
+           "verification_attestation": att, "context_signature": ctx_sig})
 }
 
 /// A learning-eligible discovery episode (for EVO input).

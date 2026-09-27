@@ -1732,3 +1732,26 @@ fn one_verdict_decides_one_trial_in_one_scope() {
     );
     assert_eq!(snapshot(c.s.root()), before);
 }
+
+/// G32-r22-sidecar-bindings: the INPUT workspace binds at intake — the
+/// episode's `input_workspace_ref` must be the workspace the preflight
+/// observer saw (`context.observed.workspace_ref`). An episode claiming it
+/// started from another tree is refused by that reason, writing nothing.
+///
+/// Mutation: drop the input-workspace check in `bind_episode` → red.
+#[test]
+fn an_episode_is_bound_to_the_input_workspace_its_observer_saw() {
+    let c = case(Some(500));
+    let before = snapshot(c.s.root());
+    let mut v = c.ep.clone();
+    v["input_workspace_ref"] = json!(format!("acf1:{}", "7".repeat(64)));
+    match run(&c, &v, true) {
+        Err(LoopError::Refused(m)) => assert!(m.contains("wrong input workspace"), "{m}"),
+        other => panic!("an episode with another input workspace was recorded: {other:?}"),
+    }
+    assert_eq!(snapshot(c.s.root()), before);
+    assert!(
+        run(&c, &c.ep, true).unwrap().recorded_now,
+        "the bound episode records"
+    );
+}

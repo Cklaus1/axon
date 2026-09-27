@@ -178,6 +178,7 @@ impl Env {
             protected_scopes: Vec::new(),
             trusted_monitors: Vec::new(),
             monitor_keys: Default::default(),
+            observer_keys: Default::default(),
         })
         .unwrap();
         let registry = dir.path().join("registry.json");

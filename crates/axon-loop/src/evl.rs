@@ -78,7 +78,16 @@ pub struct DeliveredTrial {
     pub verification_receipt: Value,
     #[serde(default)]
     pub verification_attestation: Value,
+    /// G32-r22-sidecar-bindings: the preflight observer's detached signature
+    /// (`axon-document-signature/1`, domain [`CONTEXT_DOMAIN`]) over `context`.
+    /// Required in a PROTECTED-class evaluation. Omitted when absent, so a
+    /// request that never carried it keeps its canonical bytes.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub context_signature: Value,
 }
+
+/// The signature domain of a preflight context receipt.
+pub const CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -224,6 +233,34 @@ pub fn parse_request(text: &str) -> Result<EvlRequest> {
     strict_record(text)
 }
 
+/// G32-r22-sidecar-bindings: in a PROTECTED-class evaluation the preflight
+/// context is authenticated, not named — its observer's detached signature
+/// over exactly these bytes, under the key the operator registered in
+/// `observer_keys`. A development evaluation keeps the name rule (it makes no
+/// protected claim, ADR-001 D1/D3).
+fn authenticated_context(
+    config: &crate::store::Config,
+    class: crate::plan::EvaluationClass,
+    d: &Delivered,
+) -> std::result::Result<(), String> {
+    if class != crate::plan::EvaluationClass::Protected {
+        return Ok(());
+    }
+    let who = &d.ctx.observed_issuer_ref;
+    let key = config.observer_keys.get(who).ok_or_else(|| {
+        format!("observer {who} has no registered key: a protected context cannot be authenticated")
+    })?;
+    if d.ctx_sig.is_null() {
+        return Err(format!(
+            "the context is not authenticated: no signature by observer {who} was presented"
+        ));
+    }
+    let doc = serde_json::to_value(&d.ctx).map_err(|e| e.to_string())?;
+    axon_loop_contracts::attestation::verify_document(&d.ctx_sig, CONTEXT_DOMAIN, who, &doc, key)
+        .map(|_| ())
+        .map_err(|e| format!("context signature refused: {e}"))
+}
+
 struct Delivered {
     ep: LoopEpisode,
     ep_ref: Ref,
@@ -232,6 +269,7 @@ struct Delivered {
     rcpt: ExecutionReceipt,
     proj: PolicyProjection,
     verification: [Value; 3],
+    ctx_sig: Value,
 }
 
 /// Evaluate and store. Returns the record and its `cl22:` ref.
@@ -460,6 +498,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         t.verification_receipt.clone(),
                         t.verification_attestation.clone(),
                     ],
+                    ctx_sig: t.context_signature.clone(),
                 },
             )
             .is_some()
@@ -525,6 +564,8 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         "observer {} is a subject issuer: no self-observation",
                         d.ctx.observed_issuer_ref
                     ))
+                } else if let Err(e) = authenticated_context(&config, frozen.evaluation_class, d) {
+                    Err(e)
                 } else {
                     check_paired_trial_context(&d.ctx, now, epoch, &observers)
                         .map_err(|e| e.to_string())

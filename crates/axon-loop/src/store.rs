@@ -97,6 +97,13 @@ pub struct Config {
     pub trusted_monitors: Vec<OpaqueRef>,
     #[serde(default)]
     pub monitor_keys: std::collections::BTreeMap<OpaqueRef, String>,
+    /// G32-r22-sidecar-bindings: the Ed25519 PUBLIC key (64 hex) the operator
+    /// registered for each trusted preflight OBSERVER. In a PROTECTED-class
+    /// evaluation a trial's context counts only with a detached signature by
+    /// its `observed_issuer_ref` under this key — a worker that merely NAMES a
+    /// trusted observer authenticates nothing. Absent: `{}`; always serialized.
+    #[serde(default)]
+    pub observer_keys: std::collections::BTreeMap<OpaqueRef, String>,
 }
 
 /// One task's operator-registered acceptance check (see [`Config::task_acceptance`]).
@@ -484,6 +491,8 @@ impl Store {
                         .or_insert_with(|| serde_json::Value::Array(Vec::new()));
                     o.entry("monitor_keys")
                         .or_insert_with(|| serde_json::Value::Object(Default::default()));
+                    o.entry("observer_keys")
+                        .or_insert_with(|| serde_json::Value::Object(Default::default()));
                 }
                 strict_record(&serde_json::to_string(&v).map_err(|e| LoopError::Io(e.to_string()))?)
             }
@@ -498,6 +507,7 @@ impl Store {
                 protected_scopes: Vec::new(),
                 trusted_monitors: Vec::new(),
                 monitor_keys: Default::default(),
+                observer_keys: Default::default(),
             }),
         }
     }

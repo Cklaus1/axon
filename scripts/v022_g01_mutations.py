@@ -520,6 +520,16 @@ MUTATIONS = [
      '            Ok((ev, issued)) if issued < freeze_ms => {',
      '            Ok((ev, issued)) if false && issued < freeze_ms => {',
      'axon-loop', '--test evl_admission', 'a_verdict_attested_before_the_freeze_does_not_count'),
+    ('M99', 'EVL: a protected context is authenticated by its observer, not named',
+     'crates/axon-loop/src/evl.rs',
+     '    if class != crate::plan::EvaluationClass::Protected {\n        return Ok(());\n    }',
+     '    if true || class != crate::plan::EvaluationClass::Protected {\n        return Ok(());\n    }',
+     'axon-loop', '--test protected_class', 'a_protected_context_is_authenticated_not_named'),
+    ('M100', 'intake: the episode is bound to the input workspace its observer saw',
+     'crates/axon-loop-contracts/src/checks.rs',
+     '    if episode.input_workspace_ref != ctx.observed.workspace_ref {',
+     '    if false && episode.input_workspace_ref != ctx.observed.workspace_ref {',
+     'axon-loop', '--test intake', 'an_episode_is_bound_to_the_input_workspace_its_observer_saw'),
 ]
 
 
