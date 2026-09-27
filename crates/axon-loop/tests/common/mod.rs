@@ -178,6 +178,9 @@ pub struct Trial<'a> {
     pub verifier: &'a str,
     /// Preflight time; default: now (after any freeze made before the call).
     pub created_ms: Option<u64>,
+    /// The attempt suffix: identity `<trial>-<attempt>` (default `a1`, the
+    /// fixture's issued attempt).
+    pub attempt: &'a str,
 }
 
 impl<'a> Trial<'a> {
@@ -194,6 +197,7 @@ impl<'a> Trial<'a> {
             epoch: 1,
             verifier: VERIFIER,
             created_ms: None,
+            attempt: "a1",
         }
     }
 }
@@ -364,9 +368,9 @@ pub fn trial(t: &Trial) -> Value {
         task_id: TaskId::new(t.task).unwrap(),
         arm_id: ArmId::new(t.arm).unwrap(),
         trial_id: TrialId::new(t.trial).unwrap(),
-        attempt_id: AttemptId::new(format!("{}-a1", t.trial)).unwrap(),
-        operation_id: OperationId::new(format!("{}-op", t.trial)).unwrap(),
-        execution_id: ExecutionId::new(format!("{}-ex", t.trial)).unwrap(),
+        attempt_id: AttemptId::new(format!("{}-{}", t.trial, t.attempt)).unwrap(),
+        operation_id: OperationId::new(format!("{}-{}-op", t.trial, t.attempt)).unwrap(),
+        execution_id: ExecutionId::new(format!("{}-{}-ex", t.trial, t.attempt)).unwrap(),
     };
     let epoch = AuthorityEpoch::new(t.epoch).unwrap();
     let pref = digest(t.policy).unwrap();
@@ -838,7 +842,58 @@ pub fn ack_for(p: &PolicyEnvelope) -> Value {
 /// episodes reach the store in production. A trial intake REFUSES stays
 /// un-intaken — evaluation then counts it Unknown, never a pass — and the
 /// refusal reasons are returned so a test can pin them.
+/// ADR-001 §3.6: journal the request's population (issued attempt
+/// `<trial>-a1`, the fixture identity) as the independent ADMITTER, BEFORE
+/// any trial is intaken. Idempotent; a test that journalled its own
+/// assignment keeps it (a differing one is left for `evaluate` to refuse).
+pub fn assign_request(s: &Store, v: &Value) {
+    let _ = plan::assign(s, &assignment_of_request(v));
+}
+
+/// The assignment an operator would have issued for request `v`'s population.
+pub fn assignment_of_request(v: &Value) -> plan::AssignmentRecord {
+    let trials: Vec<Value> = v["assigned"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            let mut t = a.clone();
+            t["attempt_id"] = json!(format!("{}-a1", a["trial_id"].as_str().unwrap()));
+            t
+        })
+        .collect();
+    assignment_record(v["experiment_id"].as_str().unwrap(), trials)
+}
+
+pub fn assignment_record(exp: &str, trials: Vec<Value>) -> plan::AssignmentRecord {
+    let rec = json!({"schema":"axon.loop.assignment/1","experiment_id":exp,"scope":scope(),
+                     "issuer_ref":ADMITTER,"trials":trials});
+    plan::parse_assignment(&rec.to_string()).unwrap()
+}
+
+/// Journal an assignment of `trials` (`{task_id, arm_id, trial_id,
+/// attempt_id, policy_ref}`) for `exp`, issued by ADMITTER.
+pub fn assign(s: &Store, exp: &str, trials: Vec<Value>) {
+    // Best effort: a refused assignment (plan not frozen, a trial id reused,
+    // one already journalled) leaves `evaluate` to refuse the request.
+    let _ = plan::assign(s, &assignment_record(exp, trials));
+}
+
+/// Journal the standard population of `specs` BEFORE the trials are built (a
+/// protected trial must be preflighted after its assignment).
+pub fn assign_specs(s: &Store, exp: &str, specs: &[Spec]) {
+    let trials = specs
+        .iter()
+        .map(|(armid, p, task, t, _, _)| {
+            json!({"task_id": task, "arm_id": armid, "trial_id": t,
+                   "attempt_id": format!("{t}-a1"), "policy_ref": digest(*p).unwrap()})
+        })
+        .collect();
+    assign(s, exp, trials);
+}
+
 pub fn intake_all(s: &Store, v: &Value) -> Vec<(String, String)> {
+    assign_request(s, v);
     let acks: Vec<String> = v["policies"]
         .as_array()
         .unwrap()

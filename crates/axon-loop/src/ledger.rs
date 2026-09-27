@@ -171,6 +171,16 @@ pub enum Event {
         scope: Scope,
         intake: Box<crate::intake::IntakeRecord>,
     },
+    /// ADR-001 §3.6: the experiment's trials and attempt ids, issued by an
+    /// independent admitter AFTER the freeze and BEFORE execution (bytes in
+    /// `assignments/`, see `crate::plan::assign`). Only an issued attempt
+    /// intaken after this entry counts, so which attempt or trial is counted
+    /// is never chosen after outcomes exist.
+    Assignment {
+        experiment_id: String,
+        scope: Scope,
+        assignment_ref: Ref,
+    },
     /// ADR-001 §5: an accepted safety finding about one intaken trial
     /// attempt (`crate::safety`). Evidence only; evaluation reads it.
     SafetyReport {
@@ -642,6 +652,18 @@ impl Tx<'_> {
             Event::Evaluation {
                 evaluation_ref: a, ..
             } if a == evaluation_ref => Some((e.seq, &e.event)),
+            _ => None,
+        })
+    }
+
+    /// The experiment's journalled assignment: `(seq, assignment_ref)`.
+    pub fn assignment_of(&self, experiment_id: &str) -> Option<(u64, Ref)> {
+        self.entries.iter().find_map(|e| match &e.event {
+            Event::Assignment {
+                experiment_id: x,
+                assignment_ref,
+                ..
+            } if x == experiment_id => Some((e.seq, assignment_ref.clone())),
             _ => None,
         })
     }

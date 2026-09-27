@@ -358,29 +358,6 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         return Err(refused("the evaluator is a subject issuer"));
     }
 
-    let mut assigned_keys = BTreeSet::new();
-    for a in &r.assigned {
-        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) {
-            return Err(refused(format!("trial {} assigned twice", a.trial_id)));
-        }
-        if !policies.contains_key(&a.policy_ref) {
-            return Err(refused(format!(
-                "assigned arm policy {} not supplied",
-                a.policy_ref
-            )));
-        }
-    }
-    let arm_policy: BTreeMap<&ArmId, &Ref> = r
-        .assigned
-        .iter()
-        .map(|a| (&a.arm_id, &a.policy_ref))
-        .collect();
-    for a in &r.assigned {
-        if arm_policy[&a.arm_id] != &a.policy_ref {
-            return Err(refused(format!("arm {} assigned two policies", a.arm_id)));
-        }
-    }
-
     // AB9/AB10 — no evaluation shopping. ONE evaluation per frozen experiment,
     // covering EXACTLY the frozen task manifest × both arms × the planned
     // repetitions, with trial ids never seen in any earlier evaluation of the
@@ -394,49 +371,54 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
             r.experiment_id
         )));
     }
-    let manifest = crate::tasks::resolve(
-        &tx,
-        &frozen.plan.scope,
-        frozen.plan.task_manifest_ref.as_ref().expect("frozen"),
-    )?;
-    let reps = frozen.plan.repetitions.expect("frozen");
-    let mut per_arm_task: BTreeMap<(&Ref, &TaskId), u64> = BTreeMap::new();
-    let mut trial_ids: BTreeSet<&TrialId> = BTreeSet::new();
-    for a in &r.assigned {
-        if !trial_ids.insert(&a.trial_id) {
-            return Err(refused(format!(
-                "trial id {} is assigned twice in this evaluation",
-                a.trial_id
-            )));
-        }
-        *per_arm_task.entry((&a.policy_ref, &a.task_id)).or_default() += 1;
-    }
-    let arms_seen: BTreeSet<&Ref> = r.assigned.iter().map(|a| &a.policy_ref).collect();
-    if arms_seen.len() != 2 {
-        return Err(refused(
-            "the evaluation must assign both the incumbent and the candidate arm",
-        ));
-    }
-    for arm in &arms_seen {
-        let tasks: BTreeSet<TaskId> = per_arm_task
-            .keys()
-            .filter(|(p, _)| p == arm)
-            .map(|(_, t)| (*t).clone())
+    // ADR-001 §3.6: the population was issued BEFORE execution. The request
+    // assigns exactly the journalled trials; only each trial's issued attempt
+    // counts, and only if intaken after the assignment (below).
+    let (assigned_seq, assignment_ref) = tx.assignment_of(&r.experiment_id).ok_or_else(|| {
+        refused(format!(
+            "experiment {} has no assignment journalled before execution (ADR-001 §3.6): an \
+             independent admitter issues the trials and attempt ids with `plan assign` after the \
+             freeze, before any trial runs",
+            r.experiment_id
+        ))
+    })?;
+    let assignment: crate::plan::AssignmentRecord =
+        tx.store.get_record("assignments", &assignment_ref)?;
+    let issued: BTreeMap<(TaskId, ArmId, TrialId), (axon_loop_contracts::AttemptId, Ref)> =
+        assignment
+            .trials
+            .iter()
+            .map(|t| {
+                (
+                    (t.task_id.clone(), t.arm_id.clone(), t.trial_id.clone()),
+                    (t.attempt_id.clone(), t.policy_ref.clone()),
+                )
+            })
             .collect();
-        if tasks != manifest.task_set() {
-            return Err(refused(format!(
-                "arm {arm} is assigned {} task(s), but the frozen task manifest has {}: \
-                 the evaluation must cover exactly the manifest (no cherry-picked subset, no extras)",
-                tasks.len(),
-                manifest.tasks.len()
-            )));
-        }
-    }
-    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| **n != reps) {
+    let requested: BTreeMap<(TaskId, ArmId, TrialId), Ref> = r
+        .assigned
+        .iter()
+        .map(|a| {
+            (
+                (a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone()),
+                a.policy_ref.clone(),
+            )
+        })
+        .collect();
+    if requested.len() != issued.len()
+        || requested
+            .iter()
+            .any(|(k, p)| issued.get(k).map(|(_, ip)| ip) != Some(p))
+    {
         return Err(refused(format!(
-            "arm {arm} task {task} is assigned {n} time(s), plan repetitions = {reps}"
+            "the evaluation's assignment is not the one journalled before execution \
+             ({assignment_ref}): the population is never chosen after outcomes exist"
         )));
     }
+    let assigned_ms = tx.recorded_ms(assigned_seq);
+    let trial_ids: BTreeSet<&TrialId> = r.assigned.iter().map(|a| &a.trial_id).collect();
+    check_population(&tx, &frozen, &r.assigned)?;
+    let assigned_keys: BTreeSet<(TaskId, ArmId, TrialId)> = requested.keys().cloned().collect();
     for prior in tx.evaluations_in(&r.scope) {
         let old: EvaluationRecord = tx.store.get_record("evaluations", &prior)?;
         if let Some(t) = old
@@ -461,6 +443,8 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         .entries()
         .iter()
         .filter_map(|e| match &e.event {
+            // Every issued trial was intaken AFTER its assignment: `plan::assign`
+            // refuses a population any of whose trials was already intaken.
             Event::EpisodeIntake { scope, intake } if scope == &r.scope => {
                 Some((intake.episode_ref.clone(), (**intake).clone()))
             }
@@ -521,6 +505,17 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
         if ctx.created_ms > now {
             return Err(refused(format!(
                 "trials[{i}] ({}) claims a preflight in the future ({} ms > now {now} ms)",
+                ep.identity.trial_id, ctx.created_ms
+            )));
+        }
+        // PROTECTED class: the observer-signed preflight time must follow the
+        // assignment (in a development evaluation it is a producer claim).
+        if frozen.evaluation_class == crate::plan::EvaluationClass::Protected
+            && ctx.created_ms < assigned_ms
+        {
+            return Err(refused(format!(
+                "trials[{i}] ({}) was preflighted at {} ms, before its assignment was issued at \
+                 {assigned_ms} ms: a protected trial runs only after it is issued",
                 ep.identity.trial_id, ctx.created_ms
             )));
         }
@@ -634,27 +629,41 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                     check_paired_trial_context(&d.ctx, now, epoch, &observers)
                         .map_err(|e| e.to_string())
                 };
-                let (o, why, kind) = match ctx_check {
-                    Err(e) => unknown(
+                let issued_attempt = &issued[&key].0;
+                let (o, why, kind) = if &d.ep.identity.attempt_id != issued_attempt {
+                    // Only the issued attempt counts: another attempt of the
+                    // same trial is never swapped in for it (best-of-k).
+                    unknown(
                         UnknownKind::Unbound,
                         format!(
+                            "unbound: attempt {} is not this trial's issued attempt \
+                             {issued_attempt}; only the issued attempt counts",
+                            d.ep.identity.attempt_id
+                        ),
+                    )
+                } else {
+                    match ctx_check {
+                        Err(e) => unknown(
+                            UnknownKind::Unbound,
+                            format!(
                             "context not admissible (TASK_NOT_STARTED evidence, never a pass): {e}"
                         ),
-                    ),
-                    Ok(()) => judge(
-                        d,
-                        policy,
-                        &a.policy_ref,
-                        &Bench {
-                            epoch,
-                            freeze_ms: frozen.freeze_ms,
-                            verifiers: &verifiers,
-                            config: &config,
-                            subjects: &subjects,
-                            class: frozen.evaluation_class,
-                        },
-                        &mut authenticated,
-                    ),
+                        ),
+                        Ok(()) => judge(
+                            d,
+                            policy,
+                            &a.policy_ref,
+                            &Bench {
+                                epoch,
+                                freeze_ms: frozen.freeze_ms,
+                                verifiers: &verifiers,
+                                config: &config,
+                                subjects: &subjects,
+                                class: frozen.evaluation_class,
+                            },
+                            &mut authenticated,
+                        ),
+                    }
                 };
                 (o, why, kind, Some(d.ep_ref.clone()), Some(d.ep.corpus_role))
             }
@@ -1034,6 +1043,87 @@ fn judge(
 const D12_NOT_COUNTED: &str = "D12: the verdict is authenticated, but the execution it judges ran \
      under local MiCode authority with no Fabric execution receipt, so nothing binds it to this \
      arm: not counted";
+
+/// AB9/AB10 — the population: EXACTLY the frozen task manifest × both arms ×
+/// the planned repetitions, each trial once, one policy per arm, only the
+/// plan's arms. Checked when the population is ISSUED (`plan::assign`, before
+/// execution) and again when it is evaluated.
+pub(crate) fn check_population(
+    tx: &Tx,
+    frozen: &crate::plan::Frozen,
+    assigned: &[Assignment],
+) -> Result<()> {
+    let plan_arms: BTreeSet<&Ref> = [
+        frozen.plan.incumbent_policy_ref.as_ref().expect("frozen"),
+        frozen.plan.candidate_policy_ref.as_ref().expect("frozen"),
+    ]
+    .into();
+    let mut assigned_keys = BTreeSet::new();
+    for a in assigned {
+        if !assigned_keys.insert((a.task_id.clone(), a.arm_id.clone(), a.trial_id.clone())) {
+            return Err(refused(format!("trial {} assigned twice", a.trial_id)));
+        }
+        if !plan_arms.contains(&a.policy_ref) {
+            return Err(refused(format!(
+                "assigned arm policy {} not supplied",
+                a.policy_ref
+            )));
+        }
+    }
+    let arm_policy: BTreeMap<&ArmId, &Ref> = assigned
+        .iter()
+        .map(|a| (&a.arm_id, &a.policy_ref))
+        .collect();
+    for a in assigned {
+        if arm_policy[&a.arm_id] != &a.policy_ref {
+            return Err(refused(format!("arm {} assigned two policies", a.arm_id)));
+        }
+    }
+    let manifest = crate::tasks::resolve(
+        tx,
+        &frozen.plan.scope,
+        frozen.plan.task_manifest_ref.as_ref().expect("frozen"),
+    )?;
+    let reps = frozen.plan.repetitions.expect("frozen");
+    let mut per_arm_task: BTreeMap<(&Ref, &TaskId), u64> = BTreeMap::new();
+    let mut trial_ids: BTreeSet<&TrialId> = BTreeSet::new();
+    for a in assigned {
+        if !trial_ids.insert(&a.trial_id) {
+            return Err(refused(format!(
+                "trial id {} is assigned twice in this evaluation",
+                a.trial_id
+            )));
+        }
+        *per_arm_task.entry((&a.policy_ref, &a.task_id)).or_default() += 1;
+    }
+    let arms_seen: BTreeSet<&Ref> = assigned.iter().map(|a| &a.policy_ref).collect();
+    if arms_seen.len() != 2 {
+        return Err(refused(
+            "the evaluation must assign both the incumbent and the candidate arm",
+        ));
+    }
+    for arm in &arms_seen {
+        let tasks: BTreeSet<TaskId> = per_arm_task
+            .keys()
+            .filter(|(p, _)| p == arm)
+            .map(|(_, t)| (*t).clone())
+            .collect();
+        if tasks != manifest.task_set() {
+            return Err(refused(format!(
+                "arm {arm} is assigned {} task(s), but the frozen task manifest has {}: \
+                 the evaluation must cover exactly the manifest (no cherry-picked subset, no extras)",
+                tasks.len(),
+                manifest.tasks.len()
+            )));
+        }
+    }
+    if let Some(((arm, task), n)) = per_arm_task.iter().find(|(_, n)| **n != reps) {
+        return Err(refused(format!(
+            "arm {arm} task {task} is assigned {n} time(s), plan repetitions = {reps}"
+        )));
+    }
+    Ok(())
+}
 
 /// Load a stored evaluation.
 pub fn load(store: &Store, r: &Ref) -> Result<EvaluationRecord> {

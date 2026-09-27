@@ -21,9 +21,10 @@
 use crate::error::{refused, LoopError, Result};
 use crate::ledger::{Event, Tx};
 use crate::store::{strict_record, Store};
-use axon_loop_contracts::{AuthorityEpoch, PolicyEnvelope, Ref, Refusal, Scope, TaskId};
+use axon_loop_contracts::{AuthorityEpoch, OpaqueRef, PolicyEnvelope, Ref, Refusal, Scope, TaskId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 pub const PILOT_SCHEMA_TEXT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -457,4 +458,152 @@ pub fn ready(store: &Store, id: &str) -> Result<Frozen> {
 
 fn check_segment_id(id: &str) -> Result<()> {
     crate::store::check_segment("experiment id", id)
+}
+
+crate::record_tag!(AssignmentSchema, "axon.loop.assignment/1");
+
+/// One issued trial: which arm runs which task, under which trial and attempt
+/// id. The attempt id is the ONLY attempt of that trial that can count.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssuedTrial {
+    pub task_id: axon_loop_contracts::TaskId,
+    pub arm_id: axon_loop_contracts::ArmId,
+    pub trial_id: axon_loop_contracts::TrialId,
+    pub attempt_id: axon_loop_contracts::AttemptId,
+    pub policy_ref: Ref,
+}
+
+/// ADR-001 §3.6: "Assignments and attempt ids are issued, and stored in the
+/// operator-owned store, BEFORE execution." The population EVL judges is this
+/// record: an evaluation request must assign exactly these trials, only the
+/// issued attempt of each counts, and only if intaken after this record was
+/// journalled (review wf_d788c05a-be2: best-of-k attempt or trial selection
+/// flipped a REJECT to ACCEPT).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssignmentRecord {
+    pub schema: AssignmentSchema,
+    pub experiment_id: String,
+    pub scope: Scope,
+    /// A trusted admitter holding no other loop role, and not an EVO
+    /// proposer in the scope: whoever issues the population cannot be one who
+    /// benefits from choosing it.
+    pub issuer_ref: OpaqueRef,
+    pub trials: Vec<IssuedTrial>,
+}
+
+pub fn parse_assignment(text: &str) -> Result<AssignmentRecord> {
+    crate::store::strict_record(text)
+}
+
+/// Journal an experiment's assignment. Once per experiment (idempotent for the
+/// identical record), after the freeze, before any trial is intaken.
+pub fn assign(store: &Store, a: &AssignmentRecord) -> Result<Ref> {
+    store.plan_dir(&a.experiment_id)?;
+    let mut tx = Tx::begin(store)?;
+    let frozen = ready_in(&tx, &a.experiment_id)?;
+    if a.scope != frozen.plan.scope {
+        return Err(refused("assignment scope differs from the frozen plan"));
+    }
+    let config = store.config()?;
+    if !config.admitters().contains(&a.issuer_ref) {
+        return Err(refused(format!(
+            "assignment issuer {} is not a trusted admitter",
+            a.issuer_ref
+        )));
+    }
+    if let Some(role) = crate::admission::other_loop_role(&config, &a.issuer_ref) {
+        return Err(refused(format!(
+            "assignment issuer {} is also {role}; it must hold no other loop role",
+            a.issuer_ref
+        )));
+    }
+    if tx.hypotheses(&a.scope, None).iter().any(|h| {
+        matches!(h, crate::evo::Hypothesis::Proposed { proposer_ref, .. } if proposer_ref == &a.issuer_ref)
+    }) {
+        return Err(refused(format!(
+            "assignment issuer {} is an EVO proposer (the ranker) in this scope",
+            a.issuer_ref
+        )));
+    }
+    let r = axon_loop_contracts::digest(a)?;
+    if let Some((_, existing)) = tx.assignment_of(&a.experiment_id) {
+        if existing == r {
+            return Ok(r);
+        }
+        return Err(refused(format!(
+            "experiment {} already has its assignment {existing}: the population is issued once",
+            a.experiment_id
+        )));
+    }
+    let population: Vec<crate::evl::Assignment> = a
+        .trials
+        .iter()
+        .map(|t| crate::evl::Assignment {
+            task_id: t.task_id.clone(),
+            arm_id: t.arm_id.clone(),
+            trial_id: t.trial_id.clone(),
+            policy_ref: t.policy_ref.clone(),
+        })
+        .collect();
+    crate::evl::check_population(&tx, &frozen, &population)?;
+    let arms: BTreeSet<&Ref> = [
+        frozen.plan.incumbent_policy_ref.as_ref().expect("frozen"),
+        frozen.plan.candidate_policy_ref.as_ref().expect("frozen"),
+    ]
+    .into();
+    let mut trials = BTreeSet::new();
+    let mut attempts = BTreeSet::new();
+    for t in &a.trials {
+        if !arms.contains(&t.policy_ref) {
+            return Err(refused(format!(
+                "trial {} is assigned policy {}, not one of the frozen plan's arms",
+                t.trial_id, t.policy_ref
+            )));
+        }
+        if !trials.insert(&t.trial_id) || !attempts.insert((&t.trial_id, &t.attempt_id)) {
+            return Err(refused(format!("trial {} is issued twice", t.trial_id)));
+        }
+    }
+    // Trial ids are unique for the scope's lifetime: never one another
+    // experiment was issued or evaluated.
+    for e in tx.entries() {
+        if let Event::Assignment {
+            assignment_ref,
+            scope,
+            ..
+        } = &e.event
+        {
+            if scope == &a.scope {
+                let other: AssignmentRecord = store.get_record("assignments", assignment_ref)?;
+                if let Some(t) = other.trials.iter().find(|t| trials.contains(&t.trial_id)) {
+                    return Err(refused(format!(
+                        "trial id {} was already issued to experiment {}",
+                        t.trial_id, other.experiment_id
+                    )));
+                }
+            }
+        }
+    }
+    // No trial may already be intaken: the population is issued BEFORE
+    // execution, never chosen from outcomes already recorded.
+    for e in tx.entries() {
+        if let Event::EpisodeIntake { scope, intake } = &e.event {
+            if scope == &a.scope && trials.contains(&intake.identity.trial_id) {
+                return Err(refused(format!(
+                    "trial {} was intaken before its assignment: a population is issued before \
+                     execution, never chosen from recorded outcomes",
+                    intake.identity.trial_id
+                )));
+            }
+        }
+    }
+    store.put_cas("assignments", a)?;
+    tx.append(Event::Assignment {
+        experiment_id: a.experiment_id.clone(),
+        scope: a.scope.clone(),
+        assignment_ref: r.clone(),
+    })?;
+    Ok(r)
 }

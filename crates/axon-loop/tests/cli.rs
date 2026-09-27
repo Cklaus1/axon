@@ -392,6 +392,12 @@ fn cli_evo_evl_admit_tel_end_to_end() {
 
     let specs = pair(&inc, &cand, 2, 2, 2, Some(100), Some(50));
     let req = evl_request("exp", &inc, &cand, &specs, &EvlOpts::default());
+    // ADR-001 §3.6: an independent admitter issues the population (trials and
+    // attempt ids) after the freeze, before any trial is intaken.
+    let assignment = serde_json::to_value(assignment_of_request(&req)).unwrap();
+    let (c, v, e) = run(d.path(), &["plan", "assign"], Some(&assignment));
+    assert_eq!(c, 0, "{e}");
+    assert_eq!(v["trials"], 4, "{v}");
     // ADR-001 §8: the producer's episodes reach the store through `intake
     // episode` first; evaluation reads only what intake admitted.
     let docs = tempfile::tempdir().unwrap();

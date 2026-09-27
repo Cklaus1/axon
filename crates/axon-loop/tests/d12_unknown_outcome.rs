@@ -74,6 +74,7 @@ fn every_d12_non_success_keeps_its_kind_and_nothing_passes() {
     freeze_plan_n(&w.s, "d12", &w.inc_ref, &w.cand_ref, 10, |_| {}).unwrap();
     let mut specs = pair(&w.inc, &w.cand, 10, 10, 10, Some(100), Some(50));
     specs.iter_mut().find(|s| s.3 == "c1").unwrap().4 = Out::Fail;
+    assign_specs(&w.s, "d12", &specs);
     let mut v = evl_request("d12", &w.inc, &w.cand, &specs, &EvlOpts::default());
     for i in 0..10 {
         d12(trial_mut(&mut v, &format!("c{i}")));
@@ -163,6 +164,7 @@ fn a_cited_unknown_takes_its_kind_from_the_signed_check() {
     let w = world();
     freeze_plan(&w.s, "cited", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    assign_specs(&w.s, "cited", &specs);
     let mut v = evl_request("cited", &w.inc, &w.cand, &specs, &EvlOpts::default());
     cited_unknown(trial_mut(&mut v, "c0"), "timed_out", "unknown", None);
     cited_unknown(trial_mut(&mut v, "c1"), "completed", "not_run", Some(0));
@@ -186,6 +188,7 @@ fn a_d12_trial_with_execution_documents_is_refused() {
     let w = world();
     freeze_plan(&w.s, "mixed", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    assign_specs(&w.s, "mixed", &specs);
     let mut v = evl_request("mixed", &w.inc, &w.cand, &specs, &EvlOpts::default());
     let t = trial_mut(&mut v, "c0");
     let receipt = t["acf_receipt"].clone();
@@ -218,6 +221,7 @@ fn a_protected_evaluation_never_counts_a_d12_trial() {
     w.s.write_config(&cfg).unwrap();
     freeze_plan(&w.s, "prot", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    assign_specs(&w.s, "prot", &specs);
     let mut v = evl_request("prot", &w.inc, &w.cand, &specs, &EvlOpts::default());
     let t = trial_mut(&mut v, "c0");
     d12(t);
@@ -254,6 +258,7 @@ fn a_cancelled_run_does_not_count_its_failed_check() {
     freeze_plan(&w.s, "cancel", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let mut specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     specs.iter_mut().find(|s| s.3 == "c0").unwrap().4 = Out::Fail;
+    assign_specs(&w.s, "cancel", &specs);
     let mut v = evl_request("cancel", &w.inc, &w.cand, &specs, &EvlOpts::default());
     let t = trial_mut(&mut v, "c0");
     t["episode"]["status"] = json!("cancelled");

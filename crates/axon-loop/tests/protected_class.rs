@@ -78,6 +78,7 @@ fn a_protected_plan_counts_only_protected_backends() {
     protect(&w.s);
     freeze_plan(&w.s, "prot-dev", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    assign_specs(&w.s, "prot-dev", &specs);
     let (rec, e) = evaluate(
         &w.s,
         &evl_request("prot-dev", &w.inc, &w.cand, &specs, &EvlOpts::default()),
@@ -100,6 +101,7 @@ fn a_protected_plan_counts_only_protected_backends() {
     protect(&w.s);
     pin_protected_backend(&w.s);
     freeze_plan(&w.s, "prot-ok", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "prot-ok", &specs);
     let mut v = evl_request("prot-ok", &w.inc, &w.cand, &specs, &EvlOpts::default());
     on_protected_backend(&mut v);
     let (rec, _) = evaluate(&w.s, &v).unwrap();
@@ -155,6 +157,7 @@ fn a_protected_scope_promotes_only_on_a_protected_evaluation() {
     protect(&w.s);
     pin_protected_backend(&w.s);
     freeze_plan(&w.s, "prot", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "prot", &specs_for(&w));
     let mut v = evl_request("prot", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
     on_protected_backend(&mut v);
     // ADR-001 §5: a protected evaluation ACCEPTs only trials an independent,
@@ -329,6 +332,7 @@ fn each_d3_leg_on_a_development_backend_counts_nothing() {
         protect(&w.s);
         pin_protected_backend(&w.s);
         freeze_plan(&w.s, "legs", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "legs", &specs_for(&w));
         let mut v = evl_request("legs", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
         on_backends(&mut v, exec, verif);
         let (rec, _) = evaluate(&w.s, &v).unwrap();
@@ -361,6 +365,7 @@ fn a_protected_evaluation_accepts_only_cleared_trials() {
     protect(&w.s);
     pin_protected_backend(&w.s);
     freeze_plan(&w.s, "unk", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "unk", &specs_for(&w));
     let mut v = evl_request("unk", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
     on_protected_backend(&mut v);
     let (rec, e) = evaluate(&w.s, &v).unwrap();
@@ -481,6 +486,7 @@ fn a_protected_class_mechanism_test_is_still_not_served() {
         role: CorpusRole::MechanismTest,
         ..EvlOpts::default()
     };
+    assign_specs(&w.s, "pmech", &specs_for(&w));
     let mut v = evl_request("pmech", &w.inc, &w.cand, &specs_for(&w), &o);
     on_protected_backend(&mut v);
     clear_all(&w.s, &v);
@@ -528,6 +534,7 @@ fn a_protected_context_is_authenticated_not_named() {
         pin_protected_backend(&w.s);
         trust_monitor(&w.s);
         freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "exp", &specs_for(&w));
         let mut v = evl_request("exp", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
         on_protected_backend(&mut v);
         for t in v["trials"]
@@ -591,6 +598,7 @@ fn protected_accepted(exp: &str) -> (World, Ref) {
     protect(&w.s);
     pin_protected_backend(&w.s);
     freeze_plan(&w.s, exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, exp, &specs_for(&w));
     let mut v = evl_request(exp, &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
     on_protected_backend(&mut v);
     clear_all(&w.s, &v);

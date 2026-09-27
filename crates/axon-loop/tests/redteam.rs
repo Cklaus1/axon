@@ -30,6 +30,12 @@ fn refused_unchanged<T: std::fmt::Debug>(
 /// An EVALUATION refusal writes nothing. Intake runs first, as in production
 /// (it records evidence; it decides nothing), so the snapshot isolates what
 /// evaluation itself did.
+/// AB9/AB10/J109: a bad POPULATION is refused when it is issued (ADR-001
+/// §3.6, before any trial runs), writing nothing.
+fn population_refused(w: &World, v: &serde_json::Value) -> LoopError {
+    refused_unchanged(w, || plan::assign(&w.s, &assignment_of_request(v)))
+}
+
 fn eval_refused(w: &World, v: &serde_json::Value) -> LoopError {
     intake_all(&w.s, v);
     refused_unchanged(w, || evaluate(&w.s, v))
@@ -453,7 +459,7 @@ fn j109_unpaired_task_sets_refused() {
     for s in specs.iter_mut().skip(2) {
         s.2 = s.2.replace("task", "easy");
     }
-    let e = eval_refused(
+    let e = population_refused(
         &w,
         &evl_request("exp", &w.inc, &w.cand, &specs, &EvlOpts::default()),
     );
@@ -1088,7 +1094,7 @@ fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
     let full = pair(&w.inc, &w.cand, 4, 4, 2, Some(100), Some(50));
     // subset of tasks
     let subset: Vec<_> = full.iter().filter(|s| s.2 != "task-3").cloned().collect();
-    let e = eval_refused(
+    let e = population_refused(
         &w,
         &evl_request("exp", &w.inc, &w.cand, &subset, &EvlOpts::default()),
     );
@@ -1103,7 +1109,7 @@ fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
         Out::Pass,
         Some(50),
     ));
-    eval_refused(
+    population_refused(
         &w,
         &evl_request("exp", &w.inc, &w.cand, &extra, &EvlOpts::default()),
     );
@@ -1117,7 +1123,7 @@ fn ab9_the_single_evaluation_covers_exactly_the_manifest() {
         Out::Pass,
         Some(50),
     ));
-    let e = eval_refused(
+    let e = population_refused(
         &w,
         &evl_request("exp", &w.inc, &w.cand, &rep, &EvlOpts::default()),
     );
@@ -1143,13 +1149,13 @@ fn ab10_trial_ids_never_reused_across_experiments() {
     })
     .unwrap();
     let specs = pair(&w.inc, &c2, 2, 2, 2, Some(100), Some(50));
-    let e = eval_refused(
+    let e = population_refused(
         &w,
         &evl_request("exp2", &w.inc, &c2, &specs, &EvlOpts::default()),
     );
     assert!(
         e.to_string()
-            .contains("unique for the experiment's lifetime"),
+            .contains("was already issued to experiment exp"),
         "{e}"
     );
 }

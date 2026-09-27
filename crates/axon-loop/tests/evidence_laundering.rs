@@ -409,6 +409,7 @@ fn an_episode_intake_never_recorded_never_counts() {
     freeze_plan(&w.s, "raw", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
     let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
     let v = evl_request("raw", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    assign_request(&w.s, &v);
     let (rec, e) = axon_loop::evl::evaluate(
         &w.s,
         &axon_loop::evl::parse_request(&v.to_string()).unwrap(),

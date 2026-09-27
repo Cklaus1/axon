@@ -248,6 +248,15 @@ fn run(a: &Args) -> Result<Value, LoopError> {
             let r = plan::freeze(&a.store()?, a.flag("experiment")?)?;
             Ok(json!({"schema":"axon.loop.plan-freeze/1","plan_ref":r}))
         }
+        ["plan", "assign"] => {
+            a.only(&["in"])?;
+            let rec = plan::parse_assignment(&a.input()?)?;
+            let r = plan::assign(&a.store()?, &rec)?;
+            Ok(
+                json!({"schema":"axon.loop.plan-assign/1","experiment_id":rec.experiment_id,
+                      "assignment_ref":r,"trials":rec.trials.len()}),
+            )
+        }
         ["plan", "show"] => {
             a.only(&["experiment"])?;
             val(&plan::show(&a.store()?, a.flag("experiment")?)?)
