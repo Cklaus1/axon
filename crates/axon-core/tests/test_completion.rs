@@ -16,9 +16,13 @@ const KEY: &str = "000102030405060708090a0b0c0d0e0f";
 const T_DONE: &str = "b85dea18c9ae462e99521708e782bc551d35d21d7b708f05beb5abdf9416c195";
 
 fn run(stdin: &str) -> (i32, String) {
+    // A unique file per call: the tests run in parallel in one process, and a
+    // shared path let one truncate the source another child was reading.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
     let d = std::env::temp_dir().join(format!("axon_completion_{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
-    let f = d.join("t.ax");
+    let f = d.join(format!("t{}.ax", N.fetch_add(1, Ordering::Relaxed)));
     std::fs::write(
         &f,
         "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\

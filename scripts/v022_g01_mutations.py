@@ -325,10 +325,10 @@ MUTATIONS = [
      '            Err(Flow::Break) | Err(Flow::Continue) => {\n                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))\n            }\n',
      '',
      'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_does_not_pass_a_test'),
-    ('M59', 'interpreter: loop control is contained at every frame edge (fn, closure, predicate, handler arm)',
+    ('M59', 'interpreter: loop control is contained at every frame edge (fn, closure, predicate)',
      'crates/axon-core/src/interp.rs',
-     '        Err(Flow::Break) | Err(Flow::Continue) => {\n            panic(format!("`break`/`continue` outside a loop in {site}"))\n        }\n        other => other,',
-     '        other => {\n            let _ = site;\n            other\n        }',
+     '            Flow::Break | Flow::Continue => {\n                panic(format!("`break`/`continue` outside a loop in {site}"))\n            }',
+     '            Flow::Break => Err(Flow::Break),\n            Flow::Continue => Err(Flow::Continue),',
      'axon-core', '--no-default-features --lib', 'interp::tests::loop_control_does_not_escape_through_a_predicate'),
     ('M60', 'resolver: a trait impl is unique in the merged program',
      'crates/axon-core/src/resolver.rs',
@@ -385,6 +385,41 @@ MUTATIONS = [
      '        cmd.current_dir(req.workspace)\n            .arg("test")',
      '        cmd.arg("test")',
      'axon-fabric', '--test check_effects', 'a_suites_runtime_fixture_is_the_pinned_one'),
+    ('M72', 'interpreter: a `return` cannot leave its frame (predicates, callee edge)',
+     'crates/axon-core/src/interp.rs',
+     '            Flow::Return(_) => panic(format!("`return` escaped {site}")),',
+     '            Flow::Return(v) => Err(Flow::Return(v)),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+    ('M73', 'interpreter: a `resume` cannot leave its frame (smuggled closure)',
+     'crates/axon-core/src/interp.rs',
+     '            Flow::Resume(_) => panic(format!("`resume` escaped {site}")),',
+     '            Flow::Resume(v) => Err(Flow::Resume(v)),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+    ('M74', 'interpreter: a handler completion is caught only by the `with` that installed it',
+     'crates/axon-core/src/interp/eval.rs',
+     '            Err(Flow::HandlerDone(v, d)) if d == depth => v,',
+     '            Err(Flow::HandlerDone(v, _)) => v,',
+     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+    ('M75', 'resolver: a refinement cannot reuse a type name (builtin, struct, enum)',
+     'crates/axon-core/src/resolver.rs',
+     '                if taken {',
+     '                if false && taken {',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
+    ('M76', 'interpreter: assert_eq_f64 fails on NaN',
+     'crates/axon-core/src/interp/builtins.rs',
+     '                if !(a == b || (a - b).abs() <= 1e-9) {',
+     '                if (a - b).abs() > 1e-9 {',
+     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+    ('M77', 'interpreter: an exit(0) property case is not a pass',
+     'crates/axon-core/src/interp/proptest.rs',
+     '        Err(Flow::Exit(0)) => {\n            Err("`exit(0)` ended the property case before it completed".to_string())\n        }',
+     '        Err(Flow::Exit(0)) => Ok(()),',
+     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+    ('M78', 'resolver: a fn name is unique in the merged program',
+     'crates/axon-core/src/resolver.rs',
+     '                        } else {\n                            // True user↔user duplicate.\n                            self.emit_error(',
+     '                        } else if false {\n                            // True user↔user duplicate.\n                            self.emit_error(',
+     'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_fn_name_produces_e0002'),
 ]
 
 
@@ -397,7 +432,8 @@ MUTATIONS = [
 # ends a `return` at the callee, so the arm was unreachable and the mutant
 # equivalent; the arm now fails closed and M65 guards the one live path.
 PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
-           "M63", "M64", "M65", "M67", "M68", "M69", "M70", "M71"}
+           "M63", "M64", "M65", "M67", "M68", "M69", "M70", "M71",
+           "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78"}
 RETIRED = {"M58"}
 
 

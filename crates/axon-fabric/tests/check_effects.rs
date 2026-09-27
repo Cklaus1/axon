@@ -1059,3 +1059,65 @@ fn a_suites_runtime_fixture_is_the_pinned_one() {
         );
     }
 }
+
+/// PCI 7/8/13 in the SIGNABLE profile (empty ceiling): candidate code cannot
+/// end the operator's test as a normal completion by a transfer out of its own
+/// frame. A `return` inside a candidate's parameter refinement, return
+/// refinement or `@[verify]` predicate used to unwind the operator's test to a
+/// clean finish with a valid completion token, and Fabric signed-off a pass for
+/// `n * 0` (PCI candidate-1 review, executed). The frame edge is now an
+/// allowlist. Honest control: Passed.
+///
+/// Mutation: let `Flow::Return` through `contain_frame` → red.
+#[test]
+fn a_candidate_predicate_cannot_end_the_operators_test() {
+    const GRANT_PURE: &str = "\
+profile = \"restricted\"
+[grant]
+max_label = \"internal\"
+[grant.budget]
+cost_micro = 1000
+";
+    let suite =
+        "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), 42) }\n";
+    for (why, cand, pass) in [
+        (
+            "param refinement",
+            "fn double(n: i64 where if n > 0 { return 0 } else { true }) -> i64 { n * 0 }\n",
+            false,
+        ),
+        (
+            "return refinement",
+            "fn double(n: i64) -> (i64 where if _ == 0 { return 0 } else { true }) { n * 0 }\n",
+            false,
+        ),
+        (
+            "verify",
+            "@[verify(if value == 0 { return 0 } else { true })]\nfn double(n: i64) -> i64 { n * 0 }\n",
+            false,
+        ),
+        ("honest", "fn double(n: i64) -> i64 { n * 2 }\n", true),
+    ] {
+        let s = with_suite(suite, "hidden");
+        write_grant_registry(&s.env.grant_registry, &[("grant:test", PRINCIPAL, GRANT_PURE)]);
+        std::fs::write(s.env.ws.join("f.ax"), cand).unwrap();
+        let candidate = WorkspaceStore::open(&s.env.cfg(0).state_dir, &tenant())
+            .unwrap()
+            .import_dir(&s.env.ws, &Quota::default())
+            .unwrap();
+        let s = Suite { candidate, ..s };
+        let sub = submit(&suite_request(&s, "op-frame").to_string(), &s.env.cfg(0)).unwrap();
+        assert_eq!(
+            sub.ran_under.as_ref().map(|r| r.effect_ceiling.as_str()),
+            Some(""),
+            "{why}: not the signable (empty-ceiling) profile"
+        );
+        assert_eq!(
+            sub.receipt.verification == ReceiptVerification::Passed,
+            pass,
+            "{why}: {:?} {:?}",
+            sub.reason,
+            sub.check_report
+        );
+    }
+}

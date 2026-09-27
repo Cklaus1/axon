@@ -6257,7 +6257,18 @@ fn cmd_test(
                 }
             } else {
                 let msg = r.error.as_deref().unwrap_or("non-zero exit");
-                let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
+                // Every control character is escaped too: a raw newline in a
+                // message (which can carry candidate text) split the line and
+                // dropped the named test's result (PCI 15).
+                let escaped: String = msg
+                    .chars()
+                    .map(|c| match c {
+                        '\\' => "\\\\".to_string(),
+                        '"' => "\\\"".to_string(),
+                        c if (c as u32) < 0x20 => format!("\\u{:04x}", c as u32),
+                        c => c.to_string(),
+                    })
+                    .collect();
                 println!(
                     "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
                     r.name, r.duration_ms, escaped

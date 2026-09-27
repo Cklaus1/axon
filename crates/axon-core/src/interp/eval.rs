@@ -109,7 +109,7 @@ impl<'p> Interp<'p> {
                             pe.define("_".into(), v.clone());
                             // Also bind the bound name for inline `let x: T where E[x] > k`.
                             pe.define(name.clone(), v.clone());
-                            if let Value::Bool(false) = crate::interp::contain_loop_control(self.eval(pred, &mut pe), "a predicate")? {
+                            if let Value::Bool(false) = crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")? {
                                 return Err(Flow::RefineViolation(format!(
                                     "the value bound to `{}` (= {}) violates the refinement `{}` \
                                      — the value does not satisfy the type's predicate",
@@ -543,7 +543,7 @@ impl<'p> Interp<'p> {
                                         if let Some(fv) = fmap.get(&tf.name) {
                                             let mut pe = Env::new();
                                             pe.define("_".into(), fv.clone());
-                                            if let Value::Bool(false) = crate::interp::contain_loop_control(self.eval(pred, &mut pe), "a predicate")? {
+                                            if let Value::Bool(false) = crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")? {
                                                 return Err(Flow::RefineViolation(format!(
                                                     "field `{}` of `{}` (= {}) violates the refinement \
                                                      `{}` — the value does not satisfy the type's predicate",
@@ -566,7 +566,7 @@ impl<'p> Interp<'p> {
                                 };
                                 let mut pe = Env::new();
                                 pe.define("_".into(), sv.clone());
-                                if let Value::Bool(false) = crate::interp::contain_loop_control(self.eval(pred, &mut pe), "a predicate")? {
+                                if let Value::Bool(false) = crate::interp::contain_frame(self.eval(pred, &mut pe), "a predicate")? {
                                     return Err(Flow::RefineViolation(format!(
                                         "the constructed `{name}` violates its struct refinement \
                                          — the value does not satisfy the type's predicate"
@@ -1082,6 +1082,7 @@ impl<'p> Interp<'p> {
             body: body.clone(),
             env_snapshot: env.snapshot(),
         };
+        let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
         let result = self.eval(body, env);
         self.handlers.borrow_mut().pop();
@@ -1092,7 +1093,7 @@ impl<'p> Interp<'p> {
         // never raises this, so its behavior is unchanged).
         let mut value = match result {
             Ok(v) => v,
-            Err(Flow::HandlerDone(v)) => v,
+            Err(Flow::HandlerDone(v, d)) if d == depth => v,
             Err(e) => return Err(e),
         };
 
@@ -1231,7 +1232,7 @@ impl<'p> Interp<'p> {
             // The original suspended body is abandoned (the continuation was
             // reified via replay), so finish the block with HandlerDone — caught
             // by `eval_with_handler`.
-            Ok(v) => Err(Flow::HandlerDone(v)),
+            Ok(v) => Err(Flow::HandlerDone(v, idx)),
             // A stray tail `resume` that escaped without a ctx (shouldn't happen
             // on this path, but be safe): treat as a single-shot resume.
             Err(Flow::Resume(v)) => Ok(Some(v)),

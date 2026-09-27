@@ -194,7 +194,12 @@ pub enum Flow {
     /// path reifies the continuation by re-running the body, so the original
     /// suspended body is abandoned and its block value is `value`. Caught only by
     /// `eval_with_handler`; if it escapes, that is an interpreter bug.
-    HandlerDone(Value),
+    ///
+    /// The `usize` is the handler-stack index of the frame whose arm ran: only
+    /// the `with` block that pushed THAT frame may catch it. It used to be caught
+    /// by the nearest `with` of any kind, so a `with` in candidate code could
+    /// swallow a completion aimed at the operator's handler and keep running.
+    HandlerDone(Value, usize),
     /// Phase 6 (multi-shot): a handler arm tried to resume more than once (or
     /// resume non-tail) over a body that performs effects beyond the single
     /// intercepted operation — the replay-based continuation cannot soundly
@@ -368,6 +373,45 @@ type R = Result<Value, Flow>;
 /// the surrounding code is running. Without this, candidate code ended an
 /// operator test's loop before its assertions ran and the verdict was signed
 /// (v0.22 G01 final reviews, FG-063/064/065).
+/// A FRAME EDGE is an allowlist, not a list of known escapes (Protected Check
+/// Isolation 7/8/10/13). A call — named fn or closure — and a predicate
+/// evaluation may end only with a value or with an ABORTIVE flow that
+/// terminates or fails the program. Every flow that TRANSFERS control to some
+/// enclosing construct (`return`, `break`, `continue`, `resume`) is meaningful
+/// only inside the frame that raised it; leaving the frame is an error here.
+///
+/// Escapes used to be closed one at a time — `break` out of a callee (FG-063/
+/// 064), out of a predicate (FG-065), then `return` out of a predicate and a
+/// smuggled `resume` closure (PCI candidate-1 review): each let a candidate end
+/// the operator's test early as a normal completion. The match has no wildcard,
+/// so a new `Flow` variant must be classified here before the crate compiles.
+pub(crate) fn contain_frame(r: R, site: &str) -> R {
+    match r {
+        Ok(v) => Ok(v),
+        Err(f) => match f {
+            // Transfers: meaningful only inside the frame that raised them.
+            Flow::Return(_) => panic(format!("`return` escaped {site}")),
+            Flow::Break | Flow::Continue => {
+                panic(format!("`break`/`continue` outside a loop in {site}"))
+            }
+            Flow::Resume(_) => panic(format!("`resume` escaped {site}")),
+            // Abortive: they end or fail the program, so they may cross.
+            // `HandlerDone` is the one cross-frame completion, and it is
+            // addressed: only the `with` that installed its handler catches it.
+            Flow::Panic(_)
+            | Flow::VerifyFailed(_)
+            | Flow::Halted(_)
+            | Flow::AiPolicyUnreachable(_)
+            | Flow::Exit(_)
+            | Flow::HandlerDone(..)
+            | Flow::MultiShotUnsound(_)
+            | Flow::RefineViolation(_)
+            | Flow::GoalBudgetExhausted(_)
+            | Flow::SandboxViolation(_) => Err(f),
+        },
+    }
+}
+
 pub(crate) fn contain_loop_control(r: R, site: &str) -> R {
     match r {
         Err(Flow::Break) | Err(Flow::Continue) => {
@@ -2501,7 +2545,7 @@ fn run_program_inner(
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
-        Err(Flow::HandlerDone(_)) => {
+        Err(Flow::HandlerDone(..)) => {
             // A multi-shot handler's `HandlerDone` escaped its `with` block — an
             // interpreter bug (it is always caught by `eval_with_handler`). Treat
             // as a panic rather than a silent exit.
@@ -2628,7 +2672,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
             "a `break`/`continue` escaped a function and unwound the test before it completed"
                 .to_string(),
         ),
-        Err(Flow::HandlerDone(_)) => {
+        Err(Flow::HandlerDone(..)) => {
             Err("an effect handler completed outside its handled computation".to_string())
         }
     }
@@ -2955,7 +2999,7 @@ impl<'p> Interp<'p> {
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
         // The WHOLE call — parameter refinements, body, return refinement,
         // `@[verify]` — is one frame for loop control.
-        contain_loop_control(self.call_fn_frame(f, args), &format!("`{}`", f.name))
+        contain_frame(self.call_fn_frame(f, args), &format!("`{}`", f.name))
     }
 
     fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>) -> R {
@@ -3086,7 +3130,7 @@ impl<'p> Interp<'p> {
                         // `p: T where E[p] > k` that use the param name directly).
                         pred_env.define(p.name.clone(), val.clone());
                         if let Value::Bool(false) =
-                            contain_loop_control(self.eval(pred, &mut pred_env), "a predicate")?
+                            contain_frame(self.eval(pred, &mut pred_env), "a predicate")?
                         {
                             return Err(Flow::RefineViolation(format!(
                                 "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
@@ -3265,7 +3309,7 @@ impl<'p> Interp<'p> {
                     // `_` and evaluate against it instead of a bare env.
                     env.define("_".into(), result.clone());
                     if let Value::Bool(false) =
-                        contain_loop_control(self.eval(pred, &mut env), "a predicate")?
+                        contain_frame(self.eval(pred, &mut env), "a predicate")?
                     {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
@@ -3437,7 +3481,7 @@ impl<'p> Interp<'p> {
                         if let Some(s) = fields.get("source_tag") {
                             pred_env.define("source_tag".into(), s.clone());
                         }
-                        let outcome = contain_loop_control(
+                        let outcome = contain_frame(
                             self.eval(&spec.predicate, &mut pred_env),
                             "a predicate",
                         )?;
@@ -3491,10 +3535,8 @@ impl<'p> Interp<'p> {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
                     pred_env.define("value".into(), result.clone());
-                    let outcome = contain_loop_control(
-                        self.eval(&spec.predicate, &mut pred_env),
-                        "a predicate",
-                    )?;
+                    let outcome =
+                        contain_frame(self.eval(&spec.predicate, &mut pred_env), "a predicate")?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!(
                             "verify failed in {}: composite predicate did not hold (value {}{})",
@@ -3536,15 +3578,15 @@ impl<'p> Interp<'p> {
         for (p, a) in params.iter().zip(args) {
             env.define(p.clone(), a);
         }
-        let out = match self.eval(&body, &mut env) {
-            Ok(v) => Ok(v),
-            Err(Flow::Return(v)) => Ok(v),
-            // As for a named fn: loop control does not leave the closure.
-            Err(Flow::Break) | Err(Flow::Continue) => {
-                panic("`break`/`continue` outside a loop in a closure")
-            }
-            Err(other) => Err(other),
-        };
+        // A closure's own `return` ends the closure; every other transfer is
+        // refused at its edge, as for a named fn (`contain_frame`).
+        let out = contain_frame(
+            match self.eval(&body, &mut env) {
+                Err(Flow::Return(v)) => Ok(v),
+                other => other,
+            },
+            "a closure",
+        );
         // Write back only names the closure actually captured. A `let` introduced
         // inside the body lives in a pushed scope and must not leak into the
         // capture; a parameter shadowing a captured name must not overwrite it
@@ -4255,6 +4297,74 @@ mod tests {
         assert!(
             passed.is_empty(),
             "these escapes passed the test: {passed:?}"
+        );
+    }
+
+    #[test]
+    fn no_control_transfer_escapes_a_frame() {
+        // PCI candidate-1 review: `return` out of a predicate, and a `resume`
+        // smuggled out of a handler arm in a closure, both unwound the
+        // operator's test as a NORMAL completion (a completion token for a test
+        // whose assertion never ran). The frame edge is now an allowlist
+        // (`contain_frame`): whatever the transfer, it cannot leave the frame.
+        let escapes = [
+            ("param refinement", "fn solve(n: i64 where if n > 0 { return 0 } else { true }) -> i64 { n * 0 }\n"),
+            ("return refinement", "fn solve(n: i64) -> (i64 where if _ == 0 { return 0 } else { true }) { n * 0 }\n"),
+            ("verify", "@[verify(if value == 0 { return 0 } else { true })]\nfn solve(n: i64) -> i64 { n * 0 }\n"),
+            (
+                "resume closure",
+                "fn grab() -> fn() -> str {\n    with handler { on IO(p) => || resume(\"go\") } {\n        println(\"x\")\n        || \"never\"\n    }\n}\n\
+                 fn solve(n: i64) -> i64 {\n    let k = grab()\n    let _ = k()\n    n * 0\n}\n",
+            ),
+        ];
+        for (why, def) in escapes {
+            let src = format!(
+                "{def}fn check(p: str) -> str {{\n    assert_eq(solve(21), 42)\n    p\n}}\n\
+                 @[test]\nfn t() {{\n    with handler {{ on IO(p) => resume(check(p)) }} {{\n        println(\"go\")\n    }}\n    assert_eq(solve(21), 42)\n}}\n"
+            );
+            let prog = crate::parse_source(&src).expect("parses");
+            let end = run_test_fn_outcome(&prog, "t");
+            assert!(end.is_err(), "{why}: {end:?}");
+        }
+        let struct_src = "type Arg = { n: i64 } where if _.n > 0 { return 0 } else { true }\n\
+                          fn make(n: i64) -> i64 {\n    let a = Arg { n: n }\n    a.n * 0\n}\n\
+                          @[test]\nfn t() { assert_eq(make(21), 42) }\n";
+        let prog = crate::parse_source(struct_src).expect("parses");
+        assert!(
+            run_test_fn_outcome(&prog, "t").is_err(),
+            "struct refinement"
+        );
+
+        let prog = crate::parse_source(
+            // A handler completion is ADDRESSED: the IO arm (7, no resume)
+            // finishes the operator's `with`, not the nearest one — the
+            // candidate's Random handler used to swallow it (v was 107).
+            "fn c() -> i64 {\n    with handler { on Random(p) => resume(1) } {\n        println(\"x\")\n        5\n    }\n}\n\
+             @[test]\nfn t_handler() {\n    let v = with handler { on IO(p) => 7 } {\n        let r = c()\n        r + 100\n    }\n    assert_eq(v, 7)\n}\n\
+             @[test]\nfn t_nan() { assert_eq_f64(0.0 / 0.0, 2.0) }\n\
+             @[test]\nfn t_inf() { assert_eq_f64(1.0 / 0.0, 1.0 / 0.0) }\n\
+             fn honest(n: i64 where n >= 0) -> (i64 where _ >= 0) { n * 2 }\n\
+             @[test]\nfn t_honest() { assert_eq(honest(21), 42) }\n",
+        )
+        .expect("parses");
+        let end = |t: &str| run_test_fn_outcome(&prog, t);
+        assert_eq!(end("t_handler"), Ok(TestEnd::Completed));
+        assert!(end("t_nan").is_err(), "NaN passed an f64 assertion");
+        assert_eq!(end("t_inf"), Ok(TestEnd::Completed));
+        assert_eq!(end("t_honest"), Ok(TestEnd::Completed));
+
+        // A property case that `exit(0)`s did not complete either.
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    exit(0)\n    n\n}\n\
+             @[test]\n@[forall]\nfn p(n: i64) { assert_eq(bail(n), 99) }\n",
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                proptest::run_property_test(&prog, "p", 5),
+                proptest::PropertyOutcome::Failed { .. }
+            ),
+            "an exit(0) property case passed"
         );
     }
 

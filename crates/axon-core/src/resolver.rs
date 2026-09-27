@@ -1140,6 +1140,38 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+        // A named refinement shares the TYPE namespace. Named `i64` (or after a
+        // struct/enum), its predicate became a precondition of every parameter
+        // of that type in the merged program — candidate code injected into the
+        // entry of the operator's own helpers (PCI candidate-1 review, executed:
+        // a signed-off pass). Checked after the pass so order does not matter.
+        const BUILTIN_GENERICS: &[&str] = &[
+            "Option",
+            "Result",
+            "Chan",
+            "Dict",
+            "Uncertain",
+            "Temporal",
+            "Goal",
+        ];
+        for item in &program.items {
+            if let Item::RefineDef(r) = item {
+                let n = r.name.as_str();
+                let taken = crate::types::Type::from_name(n).is_some()
+                    || BUILTIN_GENERICS.contains(&n)
+                    || matches!(
+                        self.table.lookup(n),
+                        Some(Symbol::Type { .. }) | Some(Symbol::Enum { .. })
+                    );
+                if taken {
+                    dup(
+                        self,
+                        format!("the type name `{n}` (a refinement cannot reuse a type's name)"),
+                        r.span,
+                    );
+                }
+            }
+        }
     }
 
     // ── Pass 2: resolve bodies ────────────────────────────────────────────
@@ -2798,6 +2830,16 @@ mod tests {
                 "trait J { fn check(self) -> i64 }\ntrait J { fn other(self) -> i64 }\n\
                  fn main() -> i64 { 0 }\n",
                 "trait `J`",
+            ),
+            (
+                "refinement named after a builtin type",
+                "type i64 = i64 where _ != 1000\nfn main() -> i64 { 0 }\n",
+                "type name `i64`",
+            ),
+            (
+                "refinement named after a struct",
+                "type Point = { x: i64 }\ntype Point2 = i64 where _ > 0\ntype Point = Point where _.x > 0\nfn main() -> i64 { 0 }\n",
+                "type name `Point`",
             ),
         ] {
             let prog = crate::parse_source(src).expect("parses");

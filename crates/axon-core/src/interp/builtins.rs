@@ -3655,7 +3655,11 @@ impl<'p> Interp<'p> {
             "assert_eq_f64" => {
                 want(2)?;
                 let (a, b) = (as_float(&args[0])?, as_float(&args[1])?);
-                if (a - b).abs() > 1e-9 {
+                // Stated positively so NaN FAILS: `(a - b).abs() > 1e-9` is false
+                // for NaN, which let a NaN pass any f64 assertion (PCI candidate-1
+                // review, executed). Native compares OEQ, which NaN also fails;
+                // `a == b` keeps inf == inf passing, as it does natively.
+                if !(a == b || (a - b).abs() <= 1e-9) {
                     return Err(Flow::Panic(format!("assertion failed: {a} != {b}")));
                 }
                 ok!(Value::Unit);

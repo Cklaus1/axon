@@ -88,8 +88,13 @@ pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(),
     match interp.call_fn(f, args.to_vec()) {
         Ok(_) => Ok(()),
         Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m),
-        // A `return` or `exit(0)` is a clean finish.
-        Err(Flow::Return(_)) | Err(Flow::Exit(0)) => Ok(()),
+        // `call_fn` ends a `return` at the property fn's own frame, so this arm
+        // is unreachable; kept total. `exit(0)` ends the case BEFORE it
+        // completed, which is not a pass (PCI 11: affirmative completion).
+        Err(Flow::Return(_)) => Ok(()),
+        Err(Flow::Exit(0)) => {
+            Err("`exit(0)` ended the property case before it completed".to_string())
+        }
         // A `break`/`continue` escaping a function unwound the property
         // before its assertions ran: not a pass (v0.22 G01 final re-audit).
         Err(Flow::Break) | Err(Flow::Continue) => Err(
