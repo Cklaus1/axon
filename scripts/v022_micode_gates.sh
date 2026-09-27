@@ -47,6 +47,9 @@ rows=0
 # gate_id | package | target ("lib" or an integration test file) | exact test names
 # (lib names are module paths: `module::tests::name`)
 GATES=(
+  # G01-r22-unknown-outcome: only a FINISHED task is checked, so a cancelled or
+  # failed one records not_run with its status, never a contract-invalid verdict.
+  "G01-r22-unknown-outcome|micode|lib|assembly::acceptance_check_runs_only_for_a_finished_task::only_completed"
   # B267: the pinned policy's authority is rechecked at tool execution — before
   # the gate AND immediately before the effect, in children, on retries.
   "G03-r22-dispatch-recheck|micode-core|lib|dispatch::tests::a_revoked_pinned_policy_stops_the_next_call_and_every_retry dispatch::tests::an_authority_view_that_cannot_vouch_for_the_pin_refuses_the_call dispatch::tests::a_revocation_during_an_approval_wait_stops_the_effect scope::tests::a_child_must_carry_its_parents_authority_fence_unchanged"

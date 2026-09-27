@@ -191,7 +191,7 @@ expected_context() {
 run_micode() {
   local label="$1"; shift
   local before; before="$(nreq)"
-  ( cd "$REPO" && env -u CARGO_TARGET_DIR -u MICODE_CONFIG_DIR \
+  ( cd "${RUN_DIR:-$REPO}" && env -u CARGO_TARGET_DIR -u MICODE_CONFIG_DIR \
       -u MICODE_AXON_EXPECTED_CONTEXT -u MICODE_AXON_ACTIVE_POLICY -u MICODE_AXON_POLICY_AUTHORITY \
       HOME="$WORK/home" MICODE_PROVIDER=anthropic MICODE_PROVIDER_MODEL=claude-sonnet-5 \
       MICODE_PROVIDER_API_KEY=loop-interop-gate-not-a-real-key \
@@ -551,6 +551,12 @@ fn t_ok_zero() { assert_eq(double(0), 0) }
 
 @[test]
 fn t_bad() { assert_eq(double(2), 5) }
+
+@[test]
+fn t_spin() {
+    let i = 0
+    while true { i = i + 1 }
+}
 AX
 SUITE_REF="$("$AXF" workspace-import --state "$WORK/suite-ref" --tenant "$TENANT" --root "$SUITE" | jq -r .workspace_version_ref)"
 jq -n --arg p "$AXI" --arg s "$AXI_SHA" --arg k "$ISSUER_KEY" --arg pk "$ISSUER_PK" --arg sr "$SUITE" --arg sv "$SUITE_REF" \
@@ -583,7 +589,8 @@ jq -c --arg ex "$EXE_DIGEST" --arg sv "$SUITE_REF" '.verifier_pins = {"gate:inde
   | .task_acceptance = {
     "task-pong": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_ok_double"},
     "task-fail": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_bad"},
-    "task-none": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_ok"} }' "$STORE/config.json" > "$STORE/config.json.tmp" \
+    "task-none": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_ok"},
+    "task-spin": {check_suite: ("check-suite:acceptance@" + $sv + "#accept.ax"), check: "t_spin"} }' "$STORE/config.json" > "$STORE/config.json.tmp" \
   && mv "$STORE/config.json.tmp" "$STORE/config.json"
 # fabric_check_config <out> <filter> [argv0, default the operator's check:acceptance]
 fabric_check_config() {
@@ -851,6 +858,170 @@ check "G3: status without the submitting authority is refused (exit 7)" \
 # Machine-readable: the Stage-5 profile (governance/v022_stage5_verification.json)
 # requires this section to have EXECUTED, not merely the gate to have passed.
 echo "loop_interop_gate: G3 section executed $(( PASS - G3_PASS0 + FAIL - G3_FAIL0 )) assertions, $(( FAIL - G3_FAIL0 )) failed"
+
+# ════════════════════════════════════════════════════════════════════════════
+section "8b. G01-r22-unknown-outcome: non-success states stay distinct through the real bridge into EVL"
+# The claim: "Timeout, cancellation, unmatched checks, missing evidence and
+# unverifiable output remain distinct non-success states through the bridge
+# and statistical analysis; no default pass is supplied." Here the bridge is
+# real: MiCode's sidecars from the real binary, checks through real Fabric,
+# intake and `evl evaluate` through the real axon-loop, under a frozen plan
+# and a population issued before execution (ADR-001 §3.6). Under D12 no
+# MiCode verdict counts (its execution has no Fabric receipt), so even the
+# genuine pass and fail are Unbound, never a pass.
+# Cancellation: headless `micode exec` has no cancellation source, and
+# Fabric's own cancels are pre-launch refusals (MiCode records not_run). A
+# cancelled run's sidecar status is kept distinct in EVL (axon-loop
+# tests/d12_unknown_outcome.rs) and MiCode checks only a finished task
+# (micode acceptance_check_runs_only_for_a_finished_task); it has no
+# real-binary producer here, and that is stated, not faked.
+U_PASS0=$PASS; U_FAIL0=$FAIL
+# (1) a candidate: the REAL `evo propose` over a request the driver builds.
+( cd "$AXON_DIR" && CARGO_TARGET_DIR="$AXON_TGT" EVO_INCUMBENT="$WORK/active-policy.json" \
+    EVO_ELIGIBLE="$CANDIDATES" EVO_VERIFIER=gate:independent-verifier EVO_PROPOSER=agent:gate-proposer \
+    EVO_POLICY_ID=pol-evo-u1 EVO_OUT="$WORK/evo-req.json" \
+    cargo test --locked -q -p axon-loop --test interop_evo_driver -- --ignored --exact produce_request ) \
+    >"$WORK/evo-driver.log" 2>&1
+EVO_OUT="$(axl evo propose --in "$WORK/evo-req.json" 2>"$WORK/evo.err")"
+check "8b: evo propose produced a candidate of the active policy" eq "$?" 0
+U_CAND="$(jq -r .candidate_policy_ref <<<"$EVO_OUT")"
+jq -c .candidate <<<"$EVO_OUT" > "$WORK/cand-policy.json"
+# (2) the frozen plan over a registered manifest, economics report-only (D4).
+jq -n --arg t "$TENANT" --arg f "$FAMILY" '{schema:"axon.loop.task-manifest/1",scope:{tenant_id:$t,task_family:$f},
+  tasks:["task-fail","task-none","task-pong","task-spin"],issuer_ref:"op:gate-admitter"}' > "$WORK/u-manifest.json"
+U_TM="$(axl tasks put --in "$WORK/u-manifest.json" | jq -r .task_manifest_ref)"
+jq --arg t "$TENANT" --arg f "$FAMILY" --arg tm "$U_TM" --arg inc "$POL_REF" --arg cand "$U_CAND" \
+   --arg ctl "$(jq -r .controls_ref "$WORK/active-policy.json")" '
+  .experiment_id = "gate-unknown" | .scope = {tenant_id:$t, task_family:$f}
+  | .runtime_ready = true | .deployment_enabled = false | .operator_approved = true
+  | .task_manifest_ref = $tm | .controls_ref = $ctl | .incumbent_policy_ref = $inc | .candidate_policy_ref = $cand
+  | .repository_split_ref = ("cl22:"+("3"*64)) | .discovery_manifest_ref = ("cl22:"+("4"*64))
+  | .confirmation_manifest_ref = ("cl22:"+("5"*64)) | .reporting_manifest_ref = ("cl22:"+("6"*64))
+  | .analysis_method_ref = ("cl22:"+("7"*64)) | .data_use_ref = ("cl22:"+("f"*64))
+  | .rollback_policy_ref = ("cl22:"+("8"*64)) | .approval_ref = ("cl22:"+("9"*64))
+  | .independent_units = 4 | .repetitions = 2 | .candidate_budget = 1 | .independent_unit = "task"
+  | .order_rule = "paired_tasks" | .cache_rule = "not_enforced_here" | .quality_margin = "pass_rate_margin_ppm=0"
+  | .economic_threshold = "report_only" | .uncertainty_rule = "exact_bounds" | .missing_data_rule = "unknown_bounds"
+  | .multiplicity_rule = "single_candidate" | .budget_rule = "max_unresolved_liability_micro=100000000"' \
+  "$AXON_DIR/crates/axon-loop/tests/fixtures/pilot-template.json" > "$WORK/u-plan.json"
+axl plan register --in "$WORK/u-plan.json" >/dev/null 2>"$WORK/u-plan.err"; check "8b: plan register exit 0" eq "$?" 0
+axl plan freeze --experiment gate-unknown >/dev/null 2>"$WORK/u-freeze.err"; check "8b: plan freeze exit 0" eq "$?" 0
+# (3) the population, issued BEFORE any trial runs.
+U_TRIALS=(u-pong-1 u-pong-2 u-fail-1 u-fail-2 u-none-1 u-none-2 u-spin-1 u-spin-2)
+u_task() { local x="${1#u-}"; echo "task-${x%-*}"; }
+{ for t in "${U_TRIALS[@]}"; do
+    jq -nc --arg t "$t" --arg task "$(u_task "$t")" --arg p "$U_CAND" \
+      '{task_id:$task, arm_id:"challenger-1", trial_id:$t, attempt_id:($t+"-a1"), policy_ref:$p}'
+    jq -nc --arg t "i${t#u}" --arg task "$(u_task "$t")" --arg p "$POL_REF" \
+      '{task_id:$task, arm_id:"incumbent", trial_id:$t, attempt_id:($t+"-a1"), policy_ref:$p}'
+  done; } | jq -s --arg t "$TENANT" --arg f "$FAMILY" '{schema:"axon.loop.assignment/1", experiment_id:"gate-unknown",
+     scope:{tenant_id:$t,task_family:$f}, issuer_ref:"op:gate-admitter", trials:.}' > "$WORK/u-assign.json"
+axl plan assign --in "$WORK/u-assign.json" >/dev/null 2>"$WORK/u-assign.err"; check "8b: plan assign exit 0 (16 trials)" eq "$?" 0
+# (4) the candidate arm, through the real MiCode + Fabric.
+fabric_check_config "$WORK/u-fab-pass.json" t_ok_double
+fabric_check_config "$WORK/u-fab-fail.json" t_bad
+fabric_check_config "$WORK/u-fab-none.json" t_ok
+jq '.request_template.trial_id = "someone-else"' "$WORK/u-fab-pass.json" > "$WORK/u-fab-hijack.json"
+fabric_check_config "$WORK/u-fab-spin.json" t_spin
+jq '.request_template.limits.wall_time_ms = 2000' "$WORK/u-fab-spin.json" > "$WORK/u-fab-spin.tmp" && mv "$WORK/u-fab-spin.tmp" "$WORK/u-fab-spin.json"
+# Each trial is a SUBJECT in its own linked worktree (a paired trial is never
+# the primary integration checkout, and its write set is concrete); MiCode
+# observes the worktree and writes its closed-loop artefacts inside it.
+declare -A U_EP U_CL
+CL0="$CL"
+for t in "${U_TRIALS[@]}"; do
+  wt="$WORK/wt/$t"; mkdir -p "$WORK/wt"
+  g worktree add -q -b "trial/$t" "$wt" "$HEAD_SHA"
+  U_CL[$t]="$wt/.micode/axon/closed-loop"
+done
+for t in "${U_TRIALS[@]}"; do
+  CL="${U_CL[$t]}"; wt="$WORK/wt/$t"
+  case "$t" in
+    u-pong-*) cfg=u-fab-pass ;; u-fail-*) cfg=u-fab-fail ;; u-none-1) cfg=u-fab-none ;;
+    u-none-2) cfg=u-fab-hijack ;; u-spin-*) cfg=u-fab-spin ;;
+  esac
+  g3_context "$WORK/exp-$t.json" "$t" "$(u_task "$t")"
+  jq --arg wd "$(cd "$wt" && pwd -P)" --arg id "$t" --arg br "trial/$t" \
+    '.working_directory = $wd | .worktree_id = $id | .is_primary_worktree = false | .branch = $br
+     | .write_paths = ["src/main.rs"]' "$WORK/exp-$t.json" > "$WORK/exp-$t.tmp" && mv "$WORK/exp-$t.tmp" "$WORK/exp-$t.json"
+  snap_cl
+  RUN_DIR="$wt" run_micode "$t" MICODE_AXON_EXPECTED_CONTEXT="$WORK/exp-$t.json" \
+    MICODE_AXON_ACTIVE_POLICY="$WORK/cand-policy.json" MICODE_AXON_FABRIC_CHECK="$WORK/$cfg.json"
+  U_EP[$t]="$(new_file "$CL/episodes" "$SN_EP")"
+  [ -n "${U_EP[$t]}" ] || bad "8b: $t wrote no sidecar (rc $RC)"
+done
+CL="$CL0"
+CL="${U_CL[u-spin-1]}"
+check "8b: the timed-out check is cited as unknown, 0 matched" \
+  eq "$(jq -c '[.verification.result,.verification.matched_checks,(.verification.verifier_ref|type)]' "${U_EP[u-spin-1]}")" '["unknown",0,"string"]'
+check "8b: ...and Fabric signed it as timed_out" \
+  eq "$(g3_docs "${U_EP[u-spin-1]}"; jq -r .status "$VRC")" timed_out
+check "8b: the unmatched check is cited as unknown, 0 matched" \
+  eq "$(jq -c '[.verification.result,.verification.matched_checks]' "${U_EP[u-none-1]}")" '["unknown",0]'
+check "8b: the refused check is not_run with no verifier" \
+  eq "$(jq -c '[.verification.result,.verification.verifier_ref]' "${U_EP[u-none-2]}")" '["not_run",null]'
+CL="$CL0"
+# (5) intake every sidecar: the non-success ones are RECORDED, not dropped.
+u_ctx() { for f in "${U_CL[$1]}"/context/*.json; do [ "$(jq -r .identity.trial_id "$f")" = "$1" ] && echo "$f"; done | head -1; }
+U_INTAKE_OK=0
+for t in "${U_TRIALS[@]}"; do
+  CL="${U_CL[$t]}"; ep="${U_EP[$t]}"; args=()
+  if [ "$(jq -r .verification.verifier_ref "$ep")" != null ]; then
+    g3_docs "$ep"; args=(--verification-request "$VREQ" --verification-receipt "$VRC" --verification-attestation "$VATT")
+  fi
+  axl intake episode --in "$ep" --context "$CL/context" --ack "$CL/policy-ack" "${args[@]}" >/dev/null 2>"$WORK/u-intake-$t.err" \
+    && U_INTAKE_OK=$((U_INTAKE_OK + 1))
+done
+CL="$CL0"
+check "8b: all 8 candidate sidecars are intaken (no non-success state is dropped)" eq "$U_INTAKE_OK" 8
+# (6) the EVL request, from the real files. u-pong-2 is delivered WITHOUT its
+# check documents (missing evidence); u-fail-2 with the attestation of
+# another receipt (unverifiable).
+{ for t in "${U_TRIALS[@]}"; do
+    CL="${U_CL[$t]}"; ep="${U_EP[$t]}"; q=null; r=null; a=null
+    if [ "$(jq -r .verification.verifier_ref "$ep")" != null ]; then
+      g3_docs "$ep"; q="$VREQ"; r="$VRC"; a="$VATT"
+    fi
+    case "$t" in
+      u-pong-2) q=null; r=null ;;
+      u-fail-2) CL="${U_CL[u-fail-1]}"; g3_docs "${U_EP[u-fail-1]}"; a="$VATT" ;;
+    esac
+    jq -nc --slurpfile e "$ep" --slurpfile c "$(u_ctx "$t")" \
+      --argjson q "$( [ "$q" = null ] && echo null || cat "$q")" \
+      --argjson r "$( [ "$r" = null ] && echo null || cat "$r")" \
+      --argjson a "$( [ "$a" = null ] && echo null || cat "$a")" \
+      '{episode:$e[0], context:$c[0], acf_request:null, acf_receipt:null, projection:null,
+        verification_request:$q, verification_receipt:$r, verification_attestation:$a}'
+  done; } | jq -s --slurpfile inc "$WORK/active-policy.json" --slurpfile cand "$WORK/cand-policy.json" \
+      --slurpfile asg "$WORK/u-assign.json" --arg t "$TENANT" --arg f "$FAMILY" '{
+    schema:"axon.loop.evl-request/1", experiment_id:"gate-unknown", scope:{tenant_id:$t,task_family:$f},
+    evaluator_ref:"evl:gate-evaluator", subject_issuers:[], policies:[$inc[0], $cand[0]],
+    assigned:[$asg[0].trials[] | {task_id, arm_id, trial_id, policy_ref}], trials:. }' > "$WORK/u-evl.json"
+# The operator trusts MiCode's preflight observer (a development evaluation
+# judges the context by the observer's name, ADR-001 D1). It holds no other
+# role (ADR-002), which the store itself enforces on this write.
+U_OBS="$(jq -r .observed_issuer_ref "$(u_ctx u-pong-1)")"
+jq --arg o "$U_OBS" '.trusted_observers = [$o]' "$STORE/config.json" > "$STORE/config.json.tmp" \
+  && mv "$STORE/config.json.tmp" "$STORE/config.json"
+U_EVL="$(axl evl evaluate --in "$WORK/u-evl.json" 2>"$WORK/u-evl.err")"
+check "8b: evl evaluate over the real trials exit 0" eq "$?" 0
+u_arm() { jq -c --arg p "$1" '.evaluation.arms[] | select(.policy_ref == $p)' <<<"$U_EVL"; }
+u_kind() { u_arm "$U_CAND" | jq -r --arg t "$1" '.trials[] | select(.trial_id == $t) | [.outcome, .unknown_kind] | join("/")'; }
+for tk in u-pong-1:unknown/unbound u-pong-2:unknown/missing_evidence u-fail-1:unknown/unbound \
+          u-fail-2:unknown/unverifiable u-none-1:unknown/unmatched u-none-2:unknown/not_run \
+          u-spin-1:unknown/timed_out u-spin-2:unknown/timed_out; do
+  check "8b: ${tk%%:*} is ${tk#*:}" eq "$(u_kind "${tk%%:*}")" "${tk#*:}"
+done
+check "8b: no default pass: the candidate arm counts 0 pass, 0 fail" \
+  eq "$(u_arm "$U_CAND" | jq -c '[.verified_pass,.fail]')" '[0,0]'
+check "8b: the kinds are counted apart in the statistics" \
+  eq "$(u_arm "$U_CAND" | jq -c .unknown_kinds)" \
+  '{"missing_evidence":1,"not_run":1,"timed_out":2,"unbound":2,"unmatched":1,"unverifiable":1}'
+check "8b: every assigned trial is exactly one of pass/fail/kind/missing (both arms)" \
+  eq "$(jq -c '[.evaluation.arms[] | (.assigned == .verified_pass + .fail + ((.unknown_kinds // {}) | [.[]] | add // 0) + .missing)] | all' <<<"$U_EVL")" true
+check "8b: the undelivered incumbent trials are missing, never passed" \
+  eq "$(u_arm "$POL_REF" | jq -c '[.missing,.verified_pass]')" '[8,0]'
+echo "loop_interop_gate: 8b section executed $(( PASS - U_PASS0 + FAIL - U_FAIL0 )) assertions, $(( FAIL - U_FAIL0 )) failed"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "9. B256: real MiCode negotiates closed-loop-profile/1 with the REAL cortex-policy-adapter"
