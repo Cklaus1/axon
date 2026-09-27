@@ -1,0 +1,42 @@
+{
+  "schema": "cx21-readiness/1",
+  "status": "NOT_READY",
+  "derived_by": "scripts/protected_verifier_ready.py",
+  "components": {
+    "protected_verifier_ready": {
+      "status": "NOT_RUN",
+      "evidence": "governance/readiness/protected-verifier-readiness.json"
+    },
+    "experiment_spec_frozen": {
+      "status": "NOT_RUN",
+      "missing": [
+        "cx21_experiment_spec: no frozen document pinned"
+      ]
+    },
+    "task_suite_frozen": {
+      "status": "NOT_RUN",
+      "missing": [
+        "cx21_task_suite: no frozen document pinned"
+      ]
+    },
+    "contamination_controls": {
+      "status": "NOT_RUN",
+      "missing": [
+        "cx21_contamination_controls: no frozen document pinned"
+      ]
+    },
+    "analysis_plan_frozen": {
+      "status": "NOT_RUN",
+      "missing": [
+        "cx21_analysis_plan: no frozen document pinned"
+      ]
+    }
+  },
+  "missing": [
+    "protected_verifier_ready",
+    "experiment_spec_frozen",
+    "task_suite_frozen",
+    "contamination_controls",
+    "analysis_plan_frozen"
+  ]
+}

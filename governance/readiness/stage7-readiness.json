@@ -1,0 +1,35 @@
+{
+  "schema": "stage7-readiness/1",
+  "status": "NOT_READY",
+  "derived_by": "scripts/protected_verifier_ready.py",
+  "components": {
+    "protected_verifier_ready": {
+      "status": "NOT_RUN",
+      "evidence": "governance/readiness/protected-verifier-readiness.json"
+    },
+    "pilot_manifest_frozen": {
+      "status": "NOT_RUN",
+      "missing": [
+        "stage7_pilot_manifest: no frozen document pinned"
+      ]
+    },
+    "thresholds_frozen": {
+      "status": "NOT_RUN",
+      "missing": [
+        "stage7_thresholds: no frozen document pinned"
+      ]
+    },
+    "b263_qualification": {
+      "status": "NOT_RUN",
+      "missing": [
+        "b263_qualification: no frozen document pinned"
+      ]
+    }
+  },
+  "missing": [
+    "protected_verifier_ready",
+    "pilot_manifest_frozen",
+    "thresholds_frozen",
+    "b263_qualification"
+  ]
+}
