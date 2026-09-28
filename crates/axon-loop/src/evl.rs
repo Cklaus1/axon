@@ -206,6 +206,12 @@ pub struct VerificationEvidence {
     pub issuer_ref: OpaqueRef,
     /// The operator-registered key it verified under (`ed25519:<16 hex>`).
     pub key_id: String,
+    /// PROTECTED verdict: the `axon-psv-evidence/1` bundle it was joined over
+    /// (`fabric-psv-evidence/`), so admission can re-verify it from the
+    /// documents rather than trust the stored record (dev round
+    /// wf_336353cb-a2b, PSV-7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub psv_evidence_ref: Option<Ref>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -783,6 +789,12 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     for p in policies.values() {
         store.put_cas("policies", p)?;
     }
+    // The PSV bundles a counted protected verdict cites (psv_evidence_ref).
+    for t in &r.trials {
+        if !t.verification_psv_evidence.is_null() {
+            store.put_cas("fabric-psv-evidence", &t.verification_psv_evidence)?;
+        }
+    }
     let eref = store.put_cas("evaluations", &rec)?;
     if tx.evaluation_event(&eref).is_none() {
         tx.append(Event::Evaluation {
@@ -980,6 +992,11 @@ fn judge(
                             .clone()
                             .ok_or_else(|| refused("an authenticated verdict names no issuer"))?,
                         key_id,
+                        psv_evidence_ref: if d.psv.is_null() {
+                            None
+                        } else {
+                            Some(digest_value(&d.psv)?)
+                        },
                     },
                     issued,
                 ))

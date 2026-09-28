@@ -643,6 +643,20 @@ impl Store {
             .ok_or_else(|| crate::error::refused(format!("no {kind} record {r}")))
     }
 
+    /// A stored document's exact text, re-checked to digest to its name (a
+    /// hand-edited file is refused, not trusted).
+    pub fn get_cas_text(&self, kind: &str, r: &Ref) -> Result<String> {
+        let s = self.read_cas(kind, r)?;
+        let v: serde_json::Value = serde_json::from_str(&s)
+            .map_err(|e| LoopError::Io(format!("{kind} record {r} does not parse: {e}")))?;
+        if axon_loop_contracts::digest(&v)? != *r {
+            return Err(LoopError::Io(format!(
+                "{kind} record {r} does not digest to its name"
+            )));
+        }
+        Ok(s)
+    }
+
     /// Load a stored package contract (e.g. a `PolicyEnvelope`) under the
     /// contracts crate's schema-checked `parse`, and RE-CHECK that its bytes
     /// still digest to its name (a hand-edited file is refused, not trusted).

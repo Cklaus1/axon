@@ -213,6 +213,61 @@ pub(crate) struct Inputs<'a> {
     pub mechanism_test: bool,
 }
 
+/// A PROTECTED decision rests on verdicts, not on the stored record's word:
+/// every counted verdict is re-verified from its own stored documents,
+/// exactly as intake verified it. The attestation is checked under the
+/// operator's verifier root, and the PSV bundle under the operator's observer
+/// root with every join. The record, the ledger and the CAS are all writable
+/// by a store writer; the signatures are not (dev review round
+/// wf_336353cb-a2b, PSV-7: a development evaluation relabelled protected
+/// reached ACCEPT and activation).
+fn reverify_protected(
+    tx: &Tx,
+    config: &crate::store::Config,
+    eval: &crate::evl::EvaluationRecord,
+    t: &crate::evl::TrialResult,
+    v: &crate::evl::VerificationEvidence,
+    req: &axon_loop_contracts::ComputeRequest,
+    rc: &axon_loop_contracts::ExecutionReceipt,
+) -> Result<()> {
+    let fail = |e: String| {
+        refused(format!(
+            "trial {}'s protected verdict does not re-verify from its stored documents ({e}): \
+             it does not count",
+            t.trial_id
+        ))
+    };
+    if !axon_loop_contracts::protected_evidence::claims_protected(rc) {
+        return Err(fail("its receipt does not claim protected evidence".into()));
+    }
+    let ep_ref = t
+        .episode_ref
+        .as_ref()
+        .ok_or_else(|| fail("the trial cites no episode".into()))?;
+    let ep: axon_loop_contracts::LoopEpisode = tx.store.get_contract("episodes", ep_ref)?;
+    let text = |kind: &str, r: &Ref| tx.store.get_cas_text(kind, r);
+    let req_text = text("fabric-requests", &v.request_ref)?;
+    let rc_text = text("fabric-receipts", &v.receipt_ref)?;
+    let att_text = text("fabric-attestations", &v.attestation_ref)?;
+    let psv = v
+        .psv_evidence_ref
+        .as_ref()
+        .map(|r| text("fabric-psv-evidence", r))
+        .transpose()?;
+    let subjects: BTreeSet<OpaqueRef> = eval.subject_issuers.iter().cloned().collect();
+    crate::intake::verify_check_evidence(
+        &ep,
+        &req_text,
+        &rc_text,
+        Some(&att_text),
+        config,
+        &subjects,
+        psv.as_deref(),
+    )
+    .map_err(|e| fail(e.to_string()))?;
+    Ok(())
+}
+
 pub(crate) fn derive(
     tx: &Tx,
     i: Inputs,
@@ -372,6 +427,9 @@ pub(crate) fn derive(
                     ))
                 },
             )?;
+            if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
+                reverify_protected(tx, &config, eval, t, v, &req, &rc)?;
+            }
         }
     }
     // Every counted trial's context was admitted under a trusted observer;

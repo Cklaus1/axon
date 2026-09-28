@@ -822,6 +822,8 @@ MUTATIONS = [
     ('M251', "PSV-1 (r1): a sealed module's use resolves only in the sealed dirs", 'crates/axon-core/src/lib.rs', 'if in_sealed(&candidate) {', 'if false && in_sealed(&candidate) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_modules_use_never_reaches_an_unimported_suite_module'),
     ('M252', "PSV-6 (r1): the observation's epoch joins the trial's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if o.epoch != epoch {', '    if false && o.epoch != epoch {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M253', 'PSV-6 (r1): an epoch that moved during observation refuses the launch', 'crates/axon-fabric/src/submit.rs', 'Ok(now) if now == cfg.expected_epoch => Ok((launch, Some(v))),', '_ => Ok((launch, Some(v))),', 'axon-fabric', '--test psv_dispatch', 'an_epoch_that_moves_while_the_observer_runs_refuses_the_launch'),
+    ('M254', 'PSV-7 (r1): a protected decision re-verifies every counted verdict', 'crates/axon-loop/src/admission.rs', 'reverify_protected(tx, &config, eval, t, v, &req, &rc)?;', 'let _ = (eval, &req, &rc);', 'axon-loop', '--test psv7_relabel', 'development_verdicts_relabelled_protected_are_refused'),
+    ('M255', 'PSV-7 (r1): a counted protected verdict claims protected evidence', 'crates/axon-loop/src/admission.rs', '    if !axon_loop_contracts::protected_evidence::claims_protected(rc) {', '    if false && !axon_loop_contracts::protected_evidence::claims_protected(rc) {', 'axon-loop', '--test psv7_relabel', 'development_verdicts_relabelled_protected_are_refused'),
 ]
 
 
@@ -846,7 +848,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # (Fabric's own exit-0 check) remains killed.
 RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 254)}
+PSV_IDS = {f"M{n}" for n in range(137, 256)}
 
 
 def in_scope(mid, scope):
