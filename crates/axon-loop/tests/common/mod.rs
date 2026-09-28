@@ -103,6 +103,7 @@ pub fn fixture_key() -> axon_loop::store::LedgerKey {
 
 /// [`store_with_config`] with an explicit ledger key (`None` = unkeyed).
 pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerKey>) -> Store {
+    operator_root();
     let s = Store::open_dir_keyed(dir, key).unwrap();
     s.write_config(&Config {
         schema: ConfigSchema,
@@ -131,6 +132,7 @@ pub fn store_with_config_keyed(dir: &Path, key: Option<axon_loop::store::LedgerK
 
 /// A configured store with NO candidate list registered (G2 negatives).
 pub fn store_without_candidates(dir: &Path) -> Store {
+    operator_root();
     let s = Store::open_dir(dir).unwrap();
     s.write_config(&Config {
         schema: ConfigSchema,
@@ -206,6 +208,30 @@ impl<'a> Trial<'a> {
 /// whose references all bind.
 /// The fixture verifier's Ed25519 key `(PKCS#8, public hex)`, registered for
 /// [`VERIFIER`] in every fixture store (G01-r22-independent-issuer).
+/// O2: the OPERATOR's trust root for this test (thread) — the step an operator
+/// performs on a real host: installing the verifier's and the observer's public
+/// keys under `/etc/axon/trust/{verifier,observer}/`. Test builds only
+/// (`test-trust-root`); the store alone never makes a key authority. One root
+/// per test thread, so a test may revoke or install a key in isolation.
+pub fn operator_root() -> PathBuf {
+    thread_local! {
+        static ROOT: std::cell::OnceCell<PathBuf> = const { std::cell::OnceCell::new() };
+    }
+    let r = ROOT.with(|c| {
+        c.get_or_init(|| {
+            let d = tempfile::tempdir().unwrap().keep();
+            for (auth, key) in [("verifier", verifier_key()), ("observer", observer_key())] {
+                std::fs::create_dir_all(d.join(auth)).unwrap();
+                std::fs::write(d.join(auth).join("fixture.pub"), format!("{}\n", key.1)).unwrap();
+            }
+            d
+        })
+        .clone()
+    });
+    axon_loop_contracts::operator_trust::set_test_root(&r);
+    r
+}
+
 pub fn verifier_key() -> &'static (Vec<u8>, String) {
     static KEY: std::sync::OnceLock<(Vec<u8>, String)> = std::sync::OnceLock::new();
     KEY.get_or_init(|| axon_loop_contracts::attestation::generate().unwrap())

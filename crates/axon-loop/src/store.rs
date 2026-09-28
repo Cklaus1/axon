@@ -133,6 +133,22 @@ pub struct VerifierPin {
 }
 
 impl Config {
+    /// O2 (v022-psv-protocol.md §8): the key this store registers for `who`
+    /// in `map`, ONLY if the operator's root for `a` also holds it. For
+    /// PROTECTED evidence the store may narrow the operator's keys (name
+    /// which of them it accepts); it can never add one.
+    pub fn rooted_key<'k>(
+        map: &'k std::collections::BTreeMap<OpaqueRef, String>,
+        who: &OpaqueRef,
+        a: axon_loop_contracts::operator_trust::TrustAuthority,
+    ) -> std::result::Result<&'k String, String> {
+        let k = map
+            .get(who)
+            .ok_or_else(|| format!("{who} has no registered {} key", a.dir_name()))?;
+        axon_loop_contracts::operator_trust::rooted(a, k)?;
+        Ok(k)
+    }
+
     pub fn admitters(&self) -> BTreeSet<OpaqueRef> {
         self.trusted_admitters.iter().cloned().collect()
     }

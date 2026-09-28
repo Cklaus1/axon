@@ -682,6 +682,26 @@ pub fn verify_check_evidence(
     // Authentication, not naming: the issuer's own signature over exactly
     // these two documents, under the key the operator registered for it.
     let issuer = v.issuer_ref.as_ref().expect("checked just above");
+    // O2: a receipt that claims PROTECTED evidence is authenticated only under
+    // a verifier key the OPERATOR root holds; the store may name it, never
+    // supply it.
+    if rc
+        .evidence_refs
+        .iter()
+        .any(|e| e.as_str() == "evidence-class:protected")
+    {
+        crate::store::Config::rooted_key(
+            verifier_keys,
+            issuer,
+            axon_loop_contracts::operator_trust::TrustAuthority::Verifier,
+        )
+        .map_err(|e| {
+            refused(format!(
+                "protected evidence from verifier {issuer} is not authenticated under the \
+                 operator's verifier root: {e}"
+            ))
+        })?;
+    }
     let key = verifier_keys.get(issuer).ok_or_else(|| {
         refused(format!(
             "verifier {issuer} is trusted but has no registered key in verifier_keys: its \

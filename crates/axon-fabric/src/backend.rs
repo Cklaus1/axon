@@ -191,50 +191,9 @@ impl Clock {
     }
 }
 
-/// The operator's trust root, OUTSIDE any repository: root/custodian-owned,
-/// never writable by an agent. The repository may declare the key ids it
-/// expects, but it can never add authority (operator direction 2026-09-27:
-/// "the repo should never be able to redefine both what counts as a valid
-/// signature and which keys are trusted").
-pub const OPERATOR_TRUST_ROOT: &str = "/etc/axon/trust";
-
-/// One trust root PER AUTHORITY, so a key trusted for one purpose never becomes
-/// valid for another: `/etc/axon/trust/<authority>/`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrustAuthority {
-    /// B263 qualification records and protected-host certifications.
-    Qualification,
-    /// ADR-002 preflight observations.
-    Observer,
-    /// Fabric verifier (receipt attestation) keys.
-    Verifier,
-    /// Admission / transition authority.
-    Admission,
-}
-
-impl TrustAuthority {
-    pub const ALL: [TrustAuthority; 4] = [
-        TrustAuthority::Qualification,
-        TrustAuthority::Observer,
-        TrustAuthority::Verifier,
-        TrustAuthority::Admission,
-    ];
-    pub fn parse(s: &str) -> Option<TrustAuthority> {
-        TrustAuthority::ALL.into_iter().find(|a| a.dir_name() == s)
-    }
-    pub fn dir_name(self) -> &'static str {
-        match self {
-            TrustAuthority::Qualification => "qualification",
-            TrustAuthority::Observer => "observer",
-            TrustAuthority::Verifier => "verifier",
-            TrustAuthority::Admission => "admission",
-        }
-    }
-    /// The fixed, absolute production path.
-    pub fn operator_dir(self) -> PathBuf {
-        Path::new(OPERATOR_TRUST_ROOT).join(self.dir_name())
-    }
-}
+/// The operator's trust roots, OUTSIDE any repository: one implementation,
+/// shared with the loop (`axon_loop_contracts::operator_trust`).
+pub use axon_loop_contracts::operator_trust::{TrustAuthority, OPERATOR_TRUST_ROOT};
 
 /// Whether this build carries the TEST-ONLY trust constructors.
 pub const TEST_TRUST_BUILD: bool = cfg!(any(test, feature = "test-trust-root"));
@@ -318,52 +277,7 @@ fn check_owned_from(base: &Path, dir: &Path) -> Result<(), String> {
 /// with its whole chain and nothing listed.
 #[cfg(unix)]
 pub(crate) fn check_owned_chain(base: &Path, dir: &Path, entries: bool) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    if !dir.is_absolute() {
-        return Err(format!(
-            "{} is not an absolute path: a trust root is a fixed host path",
-            dir.display()
-        ));
-    }
-    let check = |p: &Path| -> Result<(), String> {
-        let m = std::fs::symlink_metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
-        if m.file_type().is_symlink() {
-            return Err(format!(
-                "{} is a symlink: a trust root is never redirected",
-                p.display()
-            ));
-        }
-        if m.uid() != 0 {
-            return Err(format!(
-                "{} is owned by uid {}, not root: an agent-writable trust root authorizes nothing",
-                p.display(),
-                m.uid()
-            ));
-        }
-        if m.mode() & 0o022 != 0 {
-            return Err(format!(
-                "{} is group- or other-writable (mode {:o}): it authorizes nothing",
-                p.display(),
-                m.mode() & 0o7777
-            ));
-        }
-        Ok(())
-    };
-    let rel = dir
-        .strip_prefix(base)
-        .map_err(|_| format!("{} is not below {}", dir.display(), base.display()))?;
-    let mut p = base.to_path_buf();
-    check(&p)?;
-    for c in rel.components() {
-        p.push(c);
-        check(&p)?;
-    }
-    if entries && std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
-        for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
-            check(&e.map_err(|e| e.to_string())?.path())?;
-        }
-    }
-    Ok(())
+    axon_loop_contracts::operator_trust::check_owned_chain(base, dir, entries)
 }
 
 #[cfg(not(unix))]

@@ -782,3 +782,95 @@ fn a_rollback_rechecks_profile_qualification() {
     }
     assert_eq!(snapshot(w.dir.path()), before);
 }
+
+/// O2 / A18 for the OBSERVER: in a protected evaluation a context signed by a
+/// key the STORE registers for the trusted observer — but that the operator's
+/// observer root does not hold — authenticates nothing. Installing that same
+/// key in the operator root (the operator's act) makes it count: the store
+/// narrows, it never adds.
+#[test]
+fn an_observer_key_planted_in_the_store_is_not_authority() {
+    let (planted_sk, planted_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let run = || {
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        trust_monitor(&w.s);
+        withdraw(&w, |c| {
+            c.observer_keys
+                .insert(OpaqueRef::new(OBSERVER).unwrap(), planted_pk.clone());
+        });
+        freeze_plan(&w.s, "exp", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, "exp", &specs_for(&w));
+        let mut v = evl_request("exp", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        for t in v["trials"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|t| t["episode"]["identity"]["arm_id"] == "challenger-1")
+        {
+            t["context_signature"] = axon_loop_contracts::attestation::sign_document(
+                &planted_sk,
+                axon_loop::evl::CONTEXT_DOMAIN,
+                &OpaqueRef::new(OBSERVER).unwrap(),
+                &t["context"],
+            )
+            .unwrap();
+        }
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        rec.arm_for_policy(&w.cand_ref).unwrap().clone()
+    };
+    let arm = run();
+    assert_eq!(arm.verified_pass, 0, "{:?}", arm.trials);
+    assert!(
+        arm.trials
+            .iter()
+            .all(|t| t.reason.contains("operator's observer root")),
+        "{:?}",
+        arm.trials
+    );
+    // The operator installs the key: now it is authority.
+    let root = common::operator_root().join("observer");
+    std::fs::write(
+        root.join(format!("planted-{}.pub", &planted_pk[..8])),
+        format!("{planted_pk}\n"),
+    )
+    .unwrap();
+    assert_eq!(run().verified_pass, 2, "an operator-rooted key counts");
+}
+
+/// O2: REVOCATION at the operator root. A protected admission whose verdicts
+/// and contexts were authenticated under keys the operator has since REMOVED
+/// from its root is not activated — even though the store still names both
+/// keys (the store never re-grants what the operator revoked). Per-thread test
+/// root: this revocation touches no other test.
+#[test]
+fn a_key_revoked_at_the_operator_root_no_longer_counts() {
+    for auth in ["verifier", "observer"] {
+        let (w, adm) = protected_accepted(&format!("revoke-{auth}"));
+        let key = common::operator_root().join(auth).join("fixture.pub");
+        let saved = std::fs::read(&key).unwrap();
+        std::fs::remove_file(&key).unwrap();
+        let before = snapshot(w.dir.path());
+        let t = transition(
+            "a1",
+            "activate",
+            &w.inc_ref,
+            Some(&w.cand_ref),
+            1,
+            Some(&adm),
+            false,
+        );
+        match apply(&w, t) {
+            Err(LoopError::Refused(_)) => {}
+            o => panic!("{auth}: activated on a revoked key: {o:?}"),
+        }
+        assert_eq!(
+            snapshot(w.dir.path()),
+            before,
+            "{auth}: a refusal wrote something"
+        );
+        std::fs::write(&key, saved).unwrap();
+    }
+}

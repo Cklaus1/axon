@@ -1755,3 +1755,54 @@ fn an_episode_is_bound_to_the_input_workspace_its_observer_saw() {
         "the bound episode records"
     );
 }
+
+/// O2 / A18 (v022-psv-protocol.md §8): PROTECTED evidence is authenticated
+/// only under a verifier key the OPERATOR root holds. A key planted in the
+/// store — registered for the trusted verifier's name and genuinely signing
+/// the documents — authenticates a development receipt, never a protected
+/// one. Control: the fixture key (installed in the operator root) authenticates
+/// the protected receipt.
+#[test]
+fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() {
+    let protected_rc = || {
+        let mut rc = check_receipt("passed", 2);
+        rc["evidence_refs"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("evidence-class:protected"));
+        rc
+    };
+    let req = check_request();
+    let (planted_sk, planted_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let plant = |c: &Case| {
+        let mut cfg = c.s.config().unwrap();
+        cfg.verifier_keys.insert(
+            axon_loop_contracts::OpaqueRef::new(common::VERIFIER).unwrap(),
+            planted_pk.clone(),
+        );
+        c.s.write_config(&cfg).unwrap();
+    };
+
+    // Planted key, protected claim: refused, for the operator-root reason.
+    let c = case(Some(500));
+    plant(&c);
+    let rc = protected_rc();
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
+    let e = run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).unwrap_err();
+    assert!(e.to_string().contains("operator's verifier root"), "{e}");
+
+    // Planted key, NO protected claim: development evidence, store keys suffice.
+    let c = case(Some(500));
+    plant(&c);
+    let rc = check_receipt("passed", 2);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
+    run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).expect("development: the store's key");
+
+    // Control: the operator-rooted fixture key authenticates the protected claim.
+    let c = case(Some(500));
+    let rc = protected_rc();
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    run_v(&c, &ep, Some(&req), Some(&rc)).expect("an operator-rooted key");
+}

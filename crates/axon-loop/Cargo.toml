@@ -19,6 +19,8 @@ libc = "0.2"
 axon-attest = { path = "../axon-attest" }
 
 [dev-dependencies]
+# The operator trust root in loop tests is a test root (O2).
+axon-loop-contracts = { path = "../axon-loop-contracts", features = ["test-trust-root"] }
 tempfile = "3"
 # The interop gate's policy producer (tests/intake_dec_driver.rs) is the real
 # DEC `to_policy_envelope`, not a hand-written envelope.

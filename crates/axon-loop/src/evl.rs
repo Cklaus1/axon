@@ -266,9 +266,14 @@ fn authenticated_context(
         return Ok(());
     }
     let who = &d.ctx.observed_issuer_ref;
-    let key = config.observer_keys.get(who).ok_or_else(|| {
-        format!("observer {who} has no registered key: a protected context cannot be authenticated")
-    })?;
+    // O2: in the protected class the observer's key is the OPERATOR's
+    // (`/etc/axon/trust/observer/`); the store may only name which one.
+    let key = crate::store::Config::rooted_key(
+        &config.observer_keys,
+        who,
+        axon_loop_contracts::operator_trust::TrustAuthority::Observer,
+    )
+    .map_err(|e| format!("observer {who}: a protected context cannot be authenticated: {e}"))?;
     if d.ctx_sig.is_null() {
         return Err(format!(
             "the context is not authenticated: no signature by observer {who} was presented"

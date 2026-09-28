@@ -333,10 +333,19 @@ pub(crate) fn derive(
                     t.trial_id
                 ))
             })?;
-            let key_now = config
-                .verifier_keys
-                .get(&v.issuer_ref)
-                .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk));
+            // O2: for a PROTECTED decision the verifier's key must still be in
+            // the operator's verifier root, not merely in the store.
+            let key_now = if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
+                crate::store::Config::rooted_key(
+                    &config.verifier_keys,
+                    &v.issuer_ref,
+                    axon_loop_contracts::operator_trust::TrustAuthority::Verifier,
+                )
+                .ok()
+            } else {
+                config.verifier_keys.get(&v.issuer_ref)
+            }
+            .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk));
             if !verifiers.contains(&v.issuer_ref)
                 || eval.subject_issuers.contains(&v.issuer_ref)
                 || key_now.as_deref() != Some(v.key_id.as_str())
@@ -401,7 +410,14 @@ pub(crate) fn derive(
                     crate::evl::Outcome::VerifiedPass | crate::evl::Outcome::Fail
                 ) && !t.context_signed_by.as_ref().is_some_and(|c| {
                     observers.contains(&c.issuer_ref)
-                        && key_now(&config.observer_keys, &c.issuer_ref).as_deref()
+                        && crate::store::Config::rooted_key(
+                            &config.observer_keys,
+                            &c.issuer_ref,
+                            axon_loop_contracts::operator_trust::TrustAuthority::Observer,
+                        )
+                        .ok()
+                        .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk))
+                        .as_deref()
                             == Some(c.key_id.as_str())
                 }) {
                     return Err(refused(format!(

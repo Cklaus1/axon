@@ -13,3 +13,8 @@ sha2 = "0.10"
 # Already in the workspace lockfile (axon-fabric, rustls); no new crate.
 ring = "0.17"
 axon-cortex = { path = "../axon-cortex" }
+
+[features]
+# TESTS ONLY: `operator_trust::set_test_root`. Enabled only as a
+# dev-dependency feature; a production build never contains the setter.
+test-trust-root = []

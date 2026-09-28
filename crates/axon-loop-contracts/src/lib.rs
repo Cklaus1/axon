@@ -31,6 +31,7 @@ pub mod context;
 pub mod episode;
 pub mod error;
 pub mod ids;
+pub mod operator_trust;
 pub mod policy;
 pub mod profile;
 pub mod receipt;
