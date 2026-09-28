@@ -858,10 +858,31 @@ fn load_module_recursive(
                         })
                         .collect();
 
+                    // A SEALED module (the candidate under test) imports only
+                    // from the sealed dirs: its `use` never pulls an operator
+                    // module into the program that the entry's own imports did
+                    // not (review round wf_336353cb-a2b, PSV-1: a candidate
+                    // `use` of an unimported suite module decided the verdict).
+                    let sealed = crate::resolver::sealed_module_dirs();
+                    let canon =
+                        |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+                    let in_sealed = |p: &std::path::Path| {
+                        let c = canon(p);
+                        sealed.iter().any(|d| c.starts_with(d))
+                    };
+                    let nested_dirs: Vec<std::path::PathBuf> = if in_sealed(&candidate) {
+                        search_dirs
+                            .iter()
+                            .filter(|d| in_sealed(d))
+                            .cloned()
+                            .collect()
+                    } else {
+                        search_dirs.to_vec()
+                    };
                     for nested in nested_uses {
                         load_module_recursive(
                             &nested,
-                            search_dirs,
+                            &nested_dirs,
                             already_loaded,
                             loading_stack,
                             loaded_items,

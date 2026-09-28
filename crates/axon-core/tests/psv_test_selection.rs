@@ -336,3 +336,68 @@ fn an_unreadable_suite_module_never_falls_through_to_the_candidate() {
         );
     }
 }
+
+/// Review round wf_336353cb-a2b (PSV-1, executed to a keyed PASS): a sealed
+/// candidate module's own `use` must not pull an operator module that the
+/// entry does not import into the program. Here the suite tree ships a
+/// reference module the entry never imports; the candidate defines nothing
+/// and only imports it. Control: the entry's OWN import of a candidate module
+/// still works (the honest candidate passes).
+#[test]
+fn a_sealed_modules_use_never_reaches_an_unimported_suite_module() {
+    use std::io::Write;
+    let run = |cand_f: &str| -> (String, String) {
+        let d = fresh(&format!("sealuse-{}", cand_f.len()));
+        std::fs::create_dir_all(d.join("cand")).unwrap();
+        std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::write(
+            d.join("suite/accept.ax"),
+            "mod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), 42) }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("suite/reference.ax"),
+            "fn double(x: i64) -> i64 { x * 2 }\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("cand/f.ax"), cand_f).unwrap();
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                "t_ok",
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .arg("--seal")
+            .arg(d.join("cand"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .env("AXON_PATH_EXCLUSIVE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        let out = c.wait_with_output().unwrap();
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, _) = run("fn double(x: i64) -> i64 { x * 2 }\n");
+    assert!(
+        ok.contains("\"status\":\"ok\""),
+        "control: an honest candidate passes: {ok}"
+    );
+    let (out, err) = run("mod reference\nuse reference\n");
+    assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
+}
