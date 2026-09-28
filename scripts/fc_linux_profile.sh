@@ -117,14 +117,14 @@ if [[ "${1:-}" == "--verify-result" ]]; then
     D="$( [[ -f "$T/stdout" ]] && sha256sum "$T/stdout" | cut -d' ' -f1 )"
     rm -rf "$T"
     S="$(sed -n 's/.*B263-OUT stdout=\([0-9a-f]*\) exit=.*/\1/p' "$VD/serial.log" | tr -d '\r' | tail -1)"
-    R="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["outputs"]["stdout"]["sha256"])' "$VD/result.json" 2>/dev/null)"
+    R="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["outputs"]["stdout"]["sha256"])' "$VD/result.json" 2>/dev/null)"
     # the policy the guest reported (FIRST line: printed before the workload
     # starts, so a workload cannot pre-empt it) must be the one recorded
     SP="$(sed -n 's/.*B263-POLICY sha=\([0-9a-f]*\).*/\1/p' "$VD/serial.log" | tr -d '\r' | head -1)"
-    RP="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("policy_sha256") or "")' "$VD/result.json" 2>/dev/null)"
+    RP="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("policy_sha256") or "")' "$VD/result.json" 2>/dev/null)"
     echo "{\"drive\":\"$D\",\"serial\":\"$S\",\"result\":\"$R\",\"policy_serial\":\"$SP\",\"policy_result\":\"$RP\"}"
     # PSV: the returned drive's verdict, the serial digest and the result's must agree.
-    PV="$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("psv"); print("" if p is None else (p.get("verdict_sha256") or "-"))' "$VD/result.json" 2>/dev/null)"
+    PV="$(python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])).get("psv"); print("" if p is None else (p.get("verdict_sha256") or "-"))' "$VD/result.json" 2>/dev/null)"
     if [[ -n "$PV" ]]; then
         T="$(mktemp -d)"
         debugfs -R "dump /out/verdict.json $T/v" "$VD/workspace.img" >/dev/null 2>&1
@@ -219,10 +219,10 @@ FC_PID=""
 STATUS="launch-refused"
 RC=22
 
-json_str() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
+json_str() { python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
 
 # ── 1. pins: every artifact must match the manifest BEFORE anything is acquired
-read_pin() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["artifacts"][sys.argv[2]]["sha256"])' "$MANIFEST" "$1"; }
+read_pin() { python3 -I -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["artifacts"][sys.argv[2]]["sha256"])' "$MANIFEST" "$1"; }
 [[ -z "$ADIR" ]] && ADIR="$REPO/dist/guest-linux"
 KERNEL="$ADIR/vmlinux"
 ROOTFS="$ADIR/rootfs.sqfs"
@@ -233,7 +233,7 @@ GOT_ROOTFS="$(sha256sum "$ROOTFS" | cut -d' ' -f1)"
 PROG_SHA=""; [[ "$PSV" == true ]] || PROG_SHA="$(sha256sum "$PROGRAM" | cut -d' ' -f1)"
 # refuse_prelaunch REASON [EXTRA_JSON_FIELDS] — nothing has been acquired yet
 refuse_prelaunch() {
-    python3 - "$OUT/result.json" "$ID" "$1" "${2:-{\}}" <<'PY'
+    python3 -I - "$OUT/result.json" "$ID" "$1" "${2:-{\}}" <<'PY'
 import json, sys
 p, jid, reason, extra = sys.argv[1:5]
 r = {"schema": "axon-linux-microvm-result/1", "id": jid, "status": "launch-refused",
@@ -247,7 +247,7 @@ PY
 # ── 1a. engine: firecracker + jailer must match the manifest's `engine` pins.
 # They were exec'd from fixed paths with no digest check, so a swapped VMM ran
 # under the qualification of the one that was measured.
-read_engine_pin() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); v=(m.get("engine") or {}).get(sys.argv[2]); print(v if isinstance(v,str) else "")' "$MANIFEST" "$1"; }
+read_engine_pin() { python3 -I -c 'import json,sys; m=json.load(open(sys.argv[1])); v=(m.get("engine") or {}).get(sys.argv[2]); print(v if isinstance(v,str) else "")' "$MANIFEST" "$1"; }
 PIN_FC="$(read_engine_pin firecracker_sha256)"; PIN_JAILER="$(read_engine_pin jailer_sha256)"
 GOT_FC="$(sha256sum "$FC_BIN" | cut -d' ' -f1)"
 GOT_JAILER="$(sha256sum "$JAILER_BIN" | cut -d' ' -f1)"
@@ -276,7 +276,7 @@ if [[ -n "${FC_PROFILE_TEST_POLICY_WORD+x}" ]]; then
 else
     [[ -n "$POLICY" ]] || refuse_prelaunch "no --policy: the guest refuses to run a workload without a capability policy, so the launcher does not boot one"
     [[ -f "$POLICY" ]] || refuse_prelaunch "--policy $POLICY is not a file"
-    PV="$(python3 - "$POLICY" <<'PY' 2>&1
+    PV="$(python3 -I - "$POLICY" <<'PY' 2>&1
 import json, sys
 # Strict: duplicate keys (compared as decoded), NaN/Infinity, non-UTF-8, a
 # non-object top level, unknown keys and wrong types are all refusals. The
@@ -336,7 +336,7 @@ BOOT_ARGS_FULL="$BOOT_ARGS${POLICY_WORD:+ $POLICY_WORD}"
 CMDLINE_BYTES="$(printf '%s' "$BOOT_ARGS_FULL" | wc -c)"
 (( CMDLINE_BYTES <= CMDLINE_MAX )) \
     || refuse_prelaunch "kernel cmdline would be $CMDLINE_BYTES bytes (> $CMDLINE_MAX): the guest kernel may truncate the policy word" "{\"cmdline_bytes\":$CMDLINE_BYTES}"
-TEST_HOOKS_JSON="$(printf '%s\n' "${TEST_HOOKS[@]:-}" | python3 -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')"
+TEST_HOOKS_JSON="$(printf '%s\n' "${TEST_HOOKS[@]:-}" | python3 -I -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')"
 
 # ── cleanup: runs on every exit path; records what it did and what remained ──
 ACQUIRED=()
@@ -353,7 +353,7 @@ cleanup() {
     # cgroup stats must be read BEFORE the directory is removed
     local cg_stats="{}"
     if [[ -d "$CG_DIR" ]]; then
-        cg_stats=$(python3 - "$CG_DIR" <<'PY'
+        cg_stats=$(python3 -I - "$CG_DIR" <<'PY'
 import sys, os, json
 d = sys.argv[1]
 def rd(n):
@@ -390,12 +390,12 @@ PY
     grep -q -- "$JAIL_DIR" /proc/mounts && left+=("mount-under:$JAIL_DIR")
     ip netns list 2>/dev/null | grep -qw -- "$NETNS" && left+=("netns:$NETNS")
     local left_json
-    left_json=$(printf '%s\n' "${left[@]:-}" | python3 -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')
+    left_json=$(printf '%s\n' "${left[@]:-}" | python3 -I -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')
     local acq_json
-    acq_json=$(printf '%s\n' "${ACQUIRED[@]:-}" | python3 -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')
+    acq_json=$(printf '%s\n' "${ACQUIRED[@]:-}" | python3 -I -c 'import sys,json; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')
     if [[ ${#left[@]} -gt 0 ]]; then STATUS="cleanup-incomplete"; RC=24; fi
 
-    python3 - "$OUT" "$STATUS" "$RC" "$ID" "$cg_stats" "$left_json" "$acq_json" \
+    python3 -I - "$OUT" "$STATUS" "$RC" "$ID" "$cg_stats" "$left_json" "$acq_json" \
         "$killed_by_cleanup" <<'PY'
 import json, os, sys
 out, status, rc, jid, cg, left, acq, killed = sys.argv[1:9]
@@ -547,7 +547,7 @@ fi
 
 # ── 5. host-side observation of the running VMM (independent of the guest) ───
 observe() {
-    python3 - "$FC_PID" "$CHROOT" <<'PY'
+    python3 -I - "$FC_PID" "$CHROOT" <<'PY'
 import os, sys, json
 pid, chroot = sys.argv[1], sys.argv[2]
 def rd(p):
@@ -670,7 +670,7 @@ if [[ "$STATUS" != "timeout" ]]; then
     fi
 fi
 
-python3 - "$OUT" <<PY
+python3 -I - "$OUT" <<PY
 import json, os, hashlib, sys
 out = sys.argv[1]
 def sha(p):
