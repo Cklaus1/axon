@@ -114,19 +114,33 @@ class H(http.server.BaseHTTPRequestHandler):
         open(os.path.join(OUT, f"req-{i:04d}.json"), "wb").write(body)
         # A one-shot scripted turn (section 10: a tool call): served once, then pong again.
         sse, nxt = SSE, os.path.join(os.path.dirname(OUT), "next.sse")
-        delay, dly = 0.0, os.path.join(os.path.dirname(OUT), "next.delay")
+        # next.delay: "SECONDS [COUNT] [body]" — stall the next COUNT (default 1) requests by
+        # SECONDS, before the response (default) or after its headers ("body": the provider
+        # answers 200 and then sends nothing, a first-byte stall).
+        delay, after_headers, dly = 0.0, False, os.path.join(os.path.dirname(OUT), "next.delay")
         with lock:
             if os.path.exists(nxt):
                 sse = open(nxt, "rb").read(); os.remove(nxt)
             if os.path.exists(dly):
-                delay = float(open(dly).read()); os.remove(dly)
-        if delay:
-            import time; time.sleep(delay)
+                f = open(dly).read().split()
+                delay, left = float(f[0]), int(f[1]) if len(f) > 1 else 1
+                after_headers = len(f) > 2 and f[2] == "body"
+                if left > 1: open(dly, "w").write(" ".join([f[0], str(left - 1)] + f[2:]))
+                else: os.remove(dly)
+        import time
+        if delay and not after_headers:
+            time.sleep(delay)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(sse)))
         self.send_header("Connection", "close")
-        self.end_headers(); self.wfile.write(sse)
+        self.end_headers()
+        if delay and after_headers:
+            self.wfile.flush(); time.sleep(delay)
+        try:
+            self.wfile.write(sse)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
     def log_message(self, *a): pass
 s = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
 open(PORTFILE + ".tmp", "w").write(str(s.server_address[1])); os.rename(PORTFILE + ".tmp", PORTFILE)
@@ -904,7 +918,7 @@ jq --arg t "$TENANT" --arg f "$FAMILY" --arg tm "$U_TM" --arg inc "$POL_REF" --a
   | .confirmation_manifest_ref = ("cl22:"+("5"*64)) | .reporting_manifest_ref = ("cl22:"+("6"*64))
   | .analysis_method_ref = ("cl22:"+("7"*64)) | .data_use_ref = ("cl22:"+("f"*64))
   | .rollback_policy_ref = ("cl22:"+("8"*64)) | .approval_ref = ("cl22:"+("9"*64))
-  | .independent_units = 4 | .repetitions = 3 | .candidate_budget = 1 | .independent_unit = "task"
+  | .independent_units = 4 | .repetitions = 4 | .candidate_budget = 1 | .independent_unit = "task"
   | .order_rule = "paired_tasks" | .cache_rule = "not_enforced_here" | .quality_margin = "pass_rate_margin_ppm=0"
   | .economic_threshold = "report_only" | .uncertainty_rule = "exact_bounds" | .missing_data_rule = "unknown_bounds"
   | .multiplicity_rule = "single_candidate" | .budget_rule = "max_unresolved_liability_micro=100000000"' \
@@ -912,7 +926,7 @@ jq --arg t "$TENANT" --arg f "$FAMILY" --arg tm "$U_TM" --arg inc "$POL_REF" --a
 axl plan register --in "$WORK/u-plan.json" >/dev/null 2>"$WORK/u-plan.err"; check "8b: plan register exit 0" eq "$?" 0
 axl plan freeze --experiment gate-unknown >/dev/null 2>"$WORK/u-freeze.err"; check "8b: plan freeze exit 0" eq "$?" 0
 # (3) the population, issued BEFORE any trial runs.
-U_TRIALS=(u-pong-1 u-pong-2 u-pong-3 u-fail-1 u-fail-2 u-fail-3 u-none-1 u-none-2 u-none-3 u-spin-1 u-spin-2 u-spin-3)
+U_TRIALS=(u-pong-1 u-pong-2 u-pong-3 u-pong-4 u-fail-1 u-fail-2 u-fail-3 u-fail-4 u-none-1 u-none-2 u-none-3 u-none-4 u-spin-1 u-spin-2 u-spin-3 u-spin-4)
 u_task() { local x="${1#u-}"; echo "task-${x%-*}"; }
 { for t in "${U_TRIALS[@]}"; do
     jq -nc --arg t "$t" --arg task "$(u_task "$t")" --arg p "$U_CAND" \
@@ -921,7 +935,7 @@ u_task() { local x="${1#u-}"; echo "task-${x%-*}"; }
       '{task_id:$task, arm_id:"incumbent", trial_id:$t, attempt_id:($t+"-a1"), policy_ref:$p}'
   done; } | jq -s --arg t "$TENANT" --arg f "$FAMILY" '{schema:"axon.loop.assignment/1", experiment_id:"gate-unknown",
      scope:{tenant_id:$t,task_family:$f}, issuer_ref:"op:gate-admitter", trials:.}' > "$WORK/u-assign.json"
-axl plan assign --in "$WORK/u-assign.json" >/dev/null 2>"$WORK/u-assign.err"; check "8b: plan assign exit 0 (24 trials)" eq "$?" 0
+axl plan assign --in "$WORK/u-assign.json" >/dev/null 2>"$WORK/u-assign.err"; check "8b: plan assign exit 0 (32 trials)" eq "$?" 0
 # (4) the candidate arm, through the real MiCode + Fabric.
 fabric_check_config "$WORK/u-fab-pass.json" t_ok_double
 fabric_check_config "$WORK/u-fab-fail.json" t_bad
@@ -963,7 +977,8 @@ for t in "${U_TRIALS[@]}"; do
   CL="${U_CL[$t]}"; wt="$WORK/wt/$t"
   case "$t" in
     u-pong-*) cfg=u-fab-pass ;; u-fail-1) cfg=u-fab-fail ;; u-fail-2) cfg=u-fab-unsigned ;;
-    u-fail-3) cfg=u-fab-crash ;; u-none-1) cfg=u-fab-none ;; u-none-2) cfg=u-fab-hijack ;;
+    u-fail-3) cfg=u-fab-crash ;; u-fail-4) cfg=u-fab-fail ;; u-none-1|u-none-4) cfg=u-fab-none ;;
+    u-none-2) cfg=u-fab-hijack ;;
     u-none-3) cfg=u-fab-refused ;; u-spin-2) cfg=u-fab-hang ;; u-spin-*) cfg=u-fab-spin ;;
   esac
   g3_context "$WORK/exp-$t.json" "$t" "$(u_task "$t")"
@@ -991,6 +1006,11 @@ open(sys.argv[1], "w").write("".join([
 PY
       echo 2 > "$WORK/next.delay"
       RUN_DIR="$wt" run_micode "$t" MICODE_BUDGET_MAX_WALL_CLOCK_SECS=1 "${env_t[@]}" ;;
+    u-pong-4)  # a provider that answers 200 and then sends nothing past a 1 s first-byte deadline,
+               # on the first try and both re-issues (review wf_bac07f9d-087)
+      echo "4 3 body" > "$WORK/next.delay"
+      RUN_DIR="$wt" run_micode "$t" MICODE_PROVIDER_FIRST_BYTE_TIMEOUT_SECS=1 "${env_t[@]}"
+      rm -f "$WORK/next.delay" ;;
     *) RUN_DIR="$wt" run_micode "$t" "${env_t[@]}" ;;
   esac
   U_EP[$t]="$(new_file "$CL/episodes" "$SN_EP")"
@@ -1009,8 +1029,10 @@ check "8b: the refused check is not_run with no verifier" \
 CL="$CL0"
 check "8b: SIGTERM ends the exec with a CANCELLED sidecar, not a missing one" \
   eq "$(jq -c '[.status,.verification.result]' "${U_EP[u-pong-2]}")" '["cancelled","not_run"]'
-check "8b: a run past its own deadline is failed + not_run, and says so" \
-  eq "$(jq -c '[.status,.verification.result,(.verification.evidence_refs|length)]' "${U_EP[u-pong-3]}")" '["failed","not_run",1]'
+for t in u-pong-3 u-pong-4; do
+  check "8b: $t, a run past its own deadline, is failed + not_run, and says so" \
+    eq "$(jq -c '[.status,.verification.result,(.verification.evidence_refs|length)]' "${U_EP[$t]}")" '["failed","not_run",1]'
+done
 for t in u-fail-2 u-fail-3 u-none-3 u-spin-2; do
   check "8b: $t is an uncited not_run stating one reason" \
     eq "$(jq -c '[.verification.result,.verification.verifier_ref,(.verification.evidence_refs|length)]' "${U_EP[$t]}")" '["not_run",null,1]'
@@ -1027,7 +1049,7 @@ for t in "${U_TRIALS[@]}"; do
     && U_INTAKE_OK=$((U_INTAKE_OK + 1))
 done
 CL="$CL0"
-check "8b: all 12 candidate sidecars are intaken (no non-success state is dropped)" eq "$U_INTAKE_OK" 12
+check "8b: all 16 candidate sidecars are intaken (no non-success state is dropped)" eq "$U_INTAKE_OK" 16
 # (6) the EVL request, from the real files as the bridge produced them.
 { for t in "${U_TRIALS[@]}"; do
     CL="${U_CL[$t]}"; ep="${U_EP[$t]}"; q=null; r=null; a=null
@@ -1056,20 +1078,22 @@ check "8b: evl evaluate over the real trials exit 0" eq "$?" 0
 u_arm() { jq -c --arg p "$1" '.evaluation.arms[] | select(.policy_ref == $p)' <<<"$U_EVL"; }
 u_kind() { u_arm "$U_CAND" | jq -r --arg t "$1" '.trials[] | select(.trial_id == $t) | [.outcome, .unknown_kind] | join("/")'; }
 for tk in u-pong-1:unknown/unbound u-pong-2:unknown/cancelled u-pong-3:unknown/timed_out \
-          u-fail-1:unknown/unbound u-fail-2:unknown/unverifiable u-fail-3:unknown/missing_evidence \
-          u-none-1:unknown/unmatched u-none-2:unknown/not_run u-none-3:unknown/not_run \
-          u-spin-1:unknown/timed_out u-spin-2:unknown/timed_out u-spin-3:unknown/timed_out; do
+          u-pong-4:unknown/timed_out u-fail-1:unknown/unbound u-fail-2:unknown/unverifiable \
+          u-fail-3:unknown/missing_evidence u-fail-4:unknown/unbound u-none-1:unknown/unmatched \
+          u-none-2:unknown/not_run u-none-3:unknown/not_run u-none-4:unknown/unmatched \
+          u-spin-1:unknown/timed_out u-spin-2:unknown/timed_out u-spin-3:unknown/timed_out \
+          u-spin-4:unknown/timed_out; do
   check "8b: ${tk%%:*} is ${tk#*:}" eq "$(u_kind "${tk%%:*}")" "${tk#*:}"
 done
 check "8b: no default pass: the candidate arm counts 0 pass, 0 fail" \
   eq "$(u_arm "$U_CAND" | jq -c '[.verified_pass,.fail]')" '[0,0]'
 check "8b: the kinds are counted apart in the statistics" \
   eq "$(u_arm "$U_CAND" | jq -c .unknown_kinds)" \
-  '{"cancelled":1,"missing_evidence":1,"not_run":2,"timed_out":4,"unbound":2,"unmatched":1,"unverifiable":1}'
+  '{"cancelled":1,"missing_evidence":1,"not_run":2,"timed_out":6,"unbound":3,"unmatched":2,"unverifiable":1}'
 check "8b: every assigned trial is exactly one of pass/fail/kind/missing (both arms)" \
   eq "$(jq -c '[.evaluation.arms[] | (.assigned == .verified_pass + .fail + ((.unknown_kinds // {}) | [.[]] | add // 0) + .missing)] | all' <<<"$U_EVL")" true
 check "8b: the undelivered incumbent trials are missing, never passed" \
-  eq "$(u_arm "$POL_REF" | jq -c '[.missing,.verified_pass]')" '[12,0]'
+  eq "$(u_arm "$POL_REF" | jq -c '[.missing,.verified_pass]')" '[16,0]'
 echo "loop_interop_gate: 8b section executed $(( PASS - U_PASS0 + FAIL - U_FAIL0 )) assertions, $(( FAIL - U_FAIL0 )) failed"
 
 # ════════════════════════════════════════════════════════════════════════════
