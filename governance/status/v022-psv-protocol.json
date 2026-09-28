@@ -49,7 +49,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "NOT_PROVEN \u2014 candidate 5 (e9a13f72) passed its frozen run but failed its independent review (PSV-1)",
+    "state": "NOT_PROVEN \u2014 candidate 6 (13927667) registered all 8 claims in its certifying review, but dev-loop round 1 falsified PSV-1, PSV-6 and PSV-7 on the same protocol code",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -219,12 +219,42 @@
       }
     },
     "candidate_6": {
-      "state": "fix landed in dev; not yet frozen",
+      "state": "frozen run green; certifying review REGISTER (8/8); superseded by dev-loop round 1 blockers",
       "fixed": [
         "PSV-1 module fall-through (amendment 14)"
       ],
       "matrix": "A28 (28 rows)",
-      "mutations": "M250 killed"
+      "mutations": "M250 killed",
+      "commit": "13927667",
+      "frozen_run": "fully green: 653 + 1579 axon tests, 5312 micode, 246/246 mutants killed, PCI 18 rows, stage5, readiness, matrix 28, preflight, real-guest boot 11/11, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_0bc40b69-da7",
+        "verdict": "REGISTER",
+        "register": [
+          "PSV-1",
+          "PSV-2",
+          "PSV-3",
+          "PSV-4",
+          "PSV-5",
+          "PSV-6",
+          "PSV-7",
+          "FIELD-ORIGIN"
+        ]
+      }
+    },
+    "dev_loop": {
+      "round_1": {
+        "run": "wf_336353cb-a2b",
+        "tree": "axon-s3-veto 29e8780b (protocol code identical to candidate 6)",
+        "agents": 16,
+        "blockers": [
+          "PSV-7: protected admission/activation never re-verify counted verdicts, and trust the stored evaluation_class (executed)",
+          "PSV-7: a protected trial's execution leg is an unsigned producer claim (executed)",
+          "PSV-6: the epoch is not re-checked after the observer runs (executed)",
+          "PSV-6: in protected mode the epoch's authority store is caller-chosen, and the loop never joins the observation's epoch (executed)",
+          "PSV-1: a sealed module's mod/use is not confined to the sealed dirs, so operator modules outside the entry's import closure can join the program (executed)"
+        ]
+      }
     }
   }
 }
