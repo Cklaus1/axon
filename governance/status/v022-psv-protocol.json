@@ -37,9 +37,29 @@
     ]
   },
   "psv_protocol_proven": {
-    "state": "PENDING_FROZEN_PROOF_AND_REVIEW",
-    "why": "All mechanisms (O1, M1-M4, O2) are landed and the negative matrix A1-A21 is complete, with each row citing tests that assert its refusal reason (scripts/psv_matrix_check.py). It is NOT claimed until a frozen exact-HEAD proof run (including MiCode interop and the real-guest boot test) and ONE independent review have passed.",
-    "matrix": "governance/specs/v022-psv-negative-matrix.md",
+    "state": "NOT_PROVEN \u2014 candidate 2 (8102d404) failed its independent review",
+    "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
+    "review": {
+      "run": "wf_d725935a-7ed",
+      "verdict": "DO_NOT_REGISTER",
+      "reviewers": 8,
+      "blockers": [
+        "B1 PSV-1: a sealed candidate's own @[test] functions are collected and run in the guest check and take part in the verdict (self-narrowing only, but it falsifies 'exactly the registered acceptance test')",
+        "B2 PSV-5: the loop checks launch-manifest, preflight-observation and guest-kernel/rootfs refs for presence and format only; nothing JOINS them (the claim 'intake/EVL verify each join' over-claimed)",
+        "B3 FIELD-ORIGIN: the suite/candidate bytes and tree digests come from the caller-supplied --state run dir, and are never compared with the registered/requested version; a swap between materialize and prepare gave a protected, signed Passed for a failing test"
+      ],
+      "majors_to_fix": [
+        "a guest-path Passed receipt has matched_checks=None, which fails the ExecutionReceipt contract, so intake would refuse every genuine protected pass",
+        "the frozen \u00a77 observation field verifier_sha256 is missing",
+        "the receipt lacks the qualification and guest-init digests that \u00a76 lists",
+        "the launcher's --verify-result inherits the caller's env (PATH), and runs before the secret is scrubbed",
+        "the guest input check accepts symlinks and skipped top-level entries, and does not require tree_digest == version"
+      ],
+      "majors_recorded_as_followups": [
+        "safety-monitor keys and protected_scopes come from the mutable store config (outside PSV; an O2-like follow-up)",
+        "admission re-derivation does not re-run protected_evidence::check"
+      ]
+    },
     "readiness_credit": "none"
   }
 }
