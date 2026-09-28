@@ -6,7 +6,8 @@ three protected components stay NOT_RUN until the operator-controlled environmen
 Rows are the gap map's A1–A19, the protocol spec's A20–A21, A22–A24 from the candidate-2
 independent review (wf_d725935a-7ed, B1–B3), A25–A26 from the candidate-3b review
 (wf_1bc28496-38e), A27 from the candidate-4 review (wf_ecfcd666-6c9), A28 from
-the candidate-5 review (wf_293dfdb6-9d8), and A29–A32 from dev review-loop round 1 (wf_336353cb-a2b). Every cited test asserts its row's
+the candidate-5 review (wf_293dfdb6-9d8), A29–A32 from dev review-loop round 1 (wf_336353cb-a2b), and A33–A36 from round 2
+(wf_7cb5856d-806). Every cited test asserts its row's
 SPECIFIC refusal (the reason, not only a non-pass), and runs in the fabric/psv/loop suites or in
 `gate.sh`. `scripts/psv_matrix_check.py` fails when a row is missing, cites no test, or cites a
 test that does not exist (`file::function`), so this table cannot silently rot.
@@ -48,6 +49,10 @@ depth, and each has its own test.
 | A30 | observation under another authority epoch (moved during observation, or a caller-chosen store) | Fabric: epoch re-read after the observer, launch refused; loop: `check_bundle` joins the observation's epoch to the trial's | `authority epoch is now`; `authority epoch` | `crates/axon-fabric/tests/psv_dispatch.rs::an_epoch_that_moves_while_the_observer_runs_refuses_the_launch`, `crates/axon-loop/tests/intake.rs::each_protected_join_is_verified_over_the_documents` |
 | A31 | development verdicts relabelled protected in the store | admission re-verifies every counted protected verdict from its documents under the operator roots | `does not re-verify` | `crates/axon-loop/tests/psv7_relabel.rs::development_verdicts_relabelled_protected_are_refused` |
 | A32 | an execution receipt relabelled to the protected backend | EVL: the protected execution leg needs Fabric's execution attestation under the operator's verifier root; admission re-verifies it | `not attested as a protected execution`; `execution` | `crates/axon-loop/tests/protected_class.rs::a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation`, `crates/axon-loop/tests/protected_class.rs::a_protected_admission_re_verifies_the_execution_leg_from_its_documents`, `crates/axon-fabric/src/signing.rs::only_a_protected_profile_execution_is_attested` |
+| A33 | a candidate module claims a suite module's name before the suite loads it | module loader: a sealed module's `use` of a name an operator dir holds is E0901 | `may not supply it`; no pass | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_module_never_supplies_an_operator_modules_name` |
+| A34 | stored counters, dropped or borrowed trials, or a relabelled class decide a protected admission | admission: counters equal the trials' outcomes over the frozen population; each counted trial re-verifies against its own episode; class equals the frozen plan's | `counts are not its trials`; `another trial's`; `class is not the frozen plan's` | `crates/axon-loop/tests/protected_class.rs::a_protected_decision_counts_only_its_re_verified_trials`, `crates/axon-loop/tests/protected_class.rs::a_counted_trial_cannot_borrow_another_trials_verdict`, `crates/axon-loop/tests/protected_class.rs::an_evaluation_class_other_than_the_frozen_plans_is_refused` |
+| A35 | forged unsigned clearances in the ledger | admission re-verifies each clearance's stored monitor signature under the operator's monitor root | `no longer cleared` | `crates/axon-loop/tests/protected_class.rs::a_forged_unsigned_clearance_clears_nothing` |
+| A36 | a local dispatch on a protected host | `submit` refuses any non-protected selection on a protected host | `protected host` | `crates/axon-fabric/tests/psv_dispatch.rs::a_protected_host_runs_nothing_outside_the_protected_profile` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 

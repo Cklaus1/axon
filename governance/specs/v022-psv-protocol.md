@@ -491,3 +491,26 @@ are negative-matrix rows A29–A32.
       under the operator's verifier root. Admission re-verifies it.
     - MiCode's D12 flow is unaffected: its executions were already ineligible for the protected
       class.
+
+The next four come from dev review-loop round 2 (wf_7cb5856d-806, 16 agents), which found four
+distinct blockers. The first is a regression of amendment 15. They are negative-matrix rows A33–A36.
+
+19. **One file per module name, suite first (PSV-1; supersedes amendment 15's mechanism).** The
+    sealed-only nested search let a candidate module's `use` load FIRST under the name of a suite
+    module. The suite's own later `use` then found it "already loaded", and the candidate defined the
+    rubric. Now, a sealed module's `use` of a name that any operator (unsealed) dir holds is E0901.
+    Under that rule, a sealed-only search list is equivalent, so it is removed.
+20. **A protected decision counts only the trials it re-verifies (PSV-7).** Admission decided on the
+    stored arm counters. Now, in the protected class:
+    - every arm's counters must equal its trials' outcomes;
+    - the trials must be exactly the frozen plan's population;
+    - every counted trial re-verifies against its OWN episode;
+    - the evaluation's class must equal the frozen plan's (defence in depth).
+21. **A protected clearance re-verifies its signature (PSV-7).** A clearance counted by its ledger
+    `key_id` string alone. Now `safety::report` keeps each clearance's detached signature
+    (`clearance-signatures/`) and records its ref on the event, and protected admission re-verifies
+    it under the operator's monitor root.
+22. **A protected host runs nothing outside the protected profile (PSV-3).** A local dispatch on a
+    protected host ran workload code in the host's own privilege domain, beside the protected
+    attempts' custody. Now `submit` refuses any selection other than the protected profile when a
+    protected host is configured, and nothing runs.

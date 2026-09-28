@@ -265,7 +265,29 @@
           "mutations": "M251-M259 9/9 killed"
         }
       },
-      "next": "round 2 on the fixed dev tree"
+      "next": "round 3 on the fixed dev tree",
+      "round_2": {
+        "run": "wf_7cb5856d-806",
+        "tree": "axon-s3-veto a2a0be67",
+        "agents": 16,
+        "blockers": [
+          "PSV-1: a regression of amendment 15 \u2014 a candidate module claims a suite module's name first (executed, keyed PASS)",
+          "PSV-7: admission decided on stored arm counters (executed, ACCEPT)",
+          "PSV-7: a clearance counted by its ledger key_id alone; forged unsigned events cleared (executed, ACCEPT)",
+          "PSV-3: a local dispatch on a protected host ran workload code in the host's privilege domain (executed)"
+        ],
+        "fixed": {
+          "commits": [
+            "38273ef1",
+            "5f01a5a6",
+            "bcfd902f",
+            "79957075"
+          ],
+          "amendments": "19-22",
+          "matrix": "A33-A36 (36 rows)",
+          "mutations": "M251 retargeted, M260-M265 killed"
+        }
+      }
     }
   }
 }
