@@ -387,3 +387,39 @@ Recorded follow-ups, not fixed in candidate 3:
 - A launch with no observer proceeds as `guest-unobserved` (MINOR).
 - The ownership checks on `nonce_store` and `out_root` are missing (MINOR).
 - Custodian UID separation is protected-only.
+
+The next two come from the independent review of candidate 3b (wf_1bc28496-38e, verdict
+DO_NOT_REGISTER). They are the negative-matrix rows A25 and A26.
+
+11. **A failure is a verdict only with KEYED evidence (PSV-4).** §6 required completion evidence for
+    a pass and none for a failure. As a result, a correct candidate could print a `failed` line for
+    the registered test over its own genuine, keyed pass, and Fabric attested a protected Failed.
+    Now:
+    - Under `--completion-key-stdin`, the interpreter keys every failure IT decides, in its own
+      domain: `HMAC(K, "axon-test-failed/1\0" + name)`. A pass stays
+      `HMAC(K, "axon-test-completion/1\0" + name)`.
+    - `axon_psv::keyed_outcome` decides the outcome only when exactly one line names the test and
+      that line carries the token K issues for its status.
+    - The guest runner reports `failed` only with that evidence and a failing exit.
+    - Fabric's `derive` requires it for a Failed, and requires a non-zero exit. Anything else is
+      Unknown and never protected. A failure in candidate code (a panic, or `exit(n)`) is still a
+      failure the interpreter decides, so it is keyed.
+    - `derive` also requires the verdict bytes it reads to be the ones the launcher bound
+      (`result.json` `psv.verdict_sha256`), and not whatever the extracted file holds later.
+12. **Monitor keys are operator-rooted in the protected class (PSV-7).** O2 (§8) rooted only the
+    verifier and observer keys. A safety-monitor key that existed only in the mutable store cleared a
+    protected trial, and the reviewer reached ACCEPT and activation on one.
+    - There is a fifth trust authority, `monitor` (`/etc/axon/trust/monitor/`).
+    - In a protected scope, `safety::report` authenticates a clearance only under a monitor key the
+      operator root also holds.
+    - Admission's protected re-derivation re-checks the key against the root at every derivation,
+      so a key revoked at the root un-counts the clearance.
+    - The store may name a monitor and narrow the set, but never add a key.
+
+Recorded from that review as follow-ups, not fixed here (none was a BLOCKER):
+- `task_acceptance` and `verifier_pins.check_suites` are store config.
+- The loop has no anchor of its own for the guest kernel, rootfs, init or qualification digests.
+- Intake and EVL do not re-check the observation's freshness or epoch.
+- The observer runs as Fabric's UID (protected-only).
+- `protected_scopes` is store config.
+- In protected mode, the guest effect policy comes from the caller's `--grant-registry`.

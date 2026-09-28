@@ -324,6 +324,46 @@ pub fn completion_key(secret: &[u8; 32], m: &LaunchManifest) -> [u8; 32] {
     hmac_sha256(secret, &msg)
 }
 
+/// The keyed OUTCOME token the interpreter issues under `K` for test `name`
+/// (`axon test --completion-key-stdin`): for a completed pass,
+/// `HMAC(K, "axon-test-completion/1\0" + name)`; for a failure the INTERPRETER
+/// decided, `HMAC(K, "axon-test-failed/1\0" + name)`. Without `K`, candidate
+/// code can print a result line but never its token, so it can neither forge a
+/// pass nor write a failure over a genuine one (review wf_1bc28496-38e, PSV-4).
+pub fn outcome_token(key: &[u8], name: &str, passed: bool) -> String {
+    let mut msg = if passed {
+        b"axon-test-completion/1\0".to_vec()
+    } else {
+        b"axon-test-failed/1\0".to_vec()
+    };
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256(key, &msg)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The outcome of `test` in `axon test --json` output, decided ONLY by keyed
+/// evidence: `Some(true)` for a pass, `Some(false)` for a failure, `None` when
+/// no line, or more than one line, names the test, or when its token is not the
+/// one `key` issues for that outcome. `None` is never a verdict.
+pub fn keyed_outcome(stdout: &str, test: &str, key: &[u8]) -> Option<bool> {
+    let mut lines = stdout.lines().filter_map(|l| {
+        serde_json::from_str::<serde_json::Value>(l.trim())
+            .ok()
+            .filter(|v| v["name"].as_str() == Some(test))
+    });
+    let (Some(v), None) = (lines.next(), lines.next()) else {
+        return None;
+    };
+    let passed = match v["status"].as_str() {
+        Some("ok") => true,
+        Some("failed") => false,
+        _ => return None,
+    };
+    (v["completion"].as_str() == Some(outcome_token(key, test, passed).as_str())).then_some(passed)
+}
+
 // ── §5 guest verdict ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

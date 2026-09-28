@@ -220,7 +220,11 @@ pub fn operator_root() -> PathBuf {
     let r = ROOT.with(|c| {
         c.get_or_init(|| {
             let d = tempfile::tempdir().unwrap().keep();
-            for (auth, key) in [("verifier", verifier_key()), ("observer", observer_key())] {
+            for (auth, key) in [
+                ("verifier", verifier_key()),
+                ("observer", observer_key()),
+                ("monitor", monitor_key()),
+            ] {
                 std::fs::create_dir_all(d.join(auth)).unwrap();
                 std::fs::write(d.join(auth).join("fixture.pub"), format!("{}\n", key.1)).unwrap();
             }

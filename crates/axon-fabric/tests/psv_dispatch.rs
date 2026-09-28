@@ -50,7 +50,17 @@ impl World {
         Self::with_manifest(&full_manifest())
     }
     fn with_manifest(text: &str) -> World {
+        Self::with(text, None)
+    }
+    /// The candidate's `f.ax` is `src` instead of the fixture's.
+    fn with_candidate(src: &str) -> World {
+        Self::with(&full_manifest(), Some(src))
+    }
+    fn with(text: &str, candidate_src: Option<&str>) -> World {
         let env = Env::new();
+        if let Some(src) = candidate_src {
+            std::fs::write(env.ws.join("f.ax"), src).unwrap();
+        }
         let suite_root = env.dir.path().join("suites/acc");
         std::fs::create_dir_all(&suite_root).unwrap();
         std::fs::write(suite_root.join("accept.ax"), SUITE).unwrap();
@@ -206,6 +216,49 @@ fn no_file_named(dir: &Path, name: &str) -> bool {
     })
 }
 
+/// A correct candidate prints a FAILURE line for the registered test over its
+/// own genuine, keyed pass. It holds no K, so the line has no failure token:
+/// no verdict, never a (protected) Failed — the reviewer's reproduction
+/// (review wf_1bc28496-38e, PSV-4).
+#[test]
+fn a_candidate_cannot_write_a_failure_over_a_genuine_pass() {
+    let w = World::with_candidate(
+        "fn double(n: i64) -> i64 {\n    let o = chr(123)\n    let c = chr(125)\n    \
+         println(o + \"\\\"name\\\":\\\"t_psv_ok\\\",\\\"status\\\":\\\"failed\\\",\\\"duration_ms\\\":0,\\\"message\\\":\\\"forged\\\"\" + c)\n    \
+         n * 2\n}\n",
+    );
+    let s = w.submit_with(w.lx("", ""), "op-psv-splice", "t_psv_ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Unknown,
+        "{:?}",
+        s.reason
+    );
+    assert!(
+        s.reason
+            .clone()
+            .unwrap_or_default()
+            .contains("keyed failure evidence"),
+        "{:?}",
+        s.reason
+    );
+    assert_ne!(class(&s), "protected");
+}
+
+/// A failure reported with a CLEAN exit is not a failure verdict (§5).
+#[test]
+fn a_failure_with_a_clean_exit_is_not_a_verdict() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("exit0", ""), "op-psv-exit0", "t_psv_fail");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Unknown,
+        "{:?}",
+        s.reason
+    );
+    assert!(s.reason.unwrap().contains("failed but the run exited"));
+}
+
 #[test]
 fn a_failing_test_is_failed_whatever_the_guest_claims() {
     let w = World::new();
@@ -236,6 +289,8 @@ fn every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason() {
         ("forge", "without completion evidence"),
         ("other-manifest", "not this launch's"),
         ("inputs", "inputs or test are not this launch's"),
+        ("swap-after", "not the one the launcher bound"),
+        ("forge-fail", "keyed failure evidence"),
     ] {
         let w = World::new();
         let s = w.submit_with(w.lx(tamper, ""), &format!("op-psv-{tamper}"), "t_psv_ok");

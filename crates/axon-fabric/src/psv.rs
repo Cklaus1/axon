@@ -358,6 +358,23 @@ pub fn derive(
         "guest-verdict-sha256:{}",
         axon_psv::sha256_hex(&vbytes)
     ));
+    // These bytes are the verdict the launcher bound to the serial console
+    // (`--verify-result` re-derived it from the returned drive), not whatever
+    // sits in the extracted file now (review wf_1bc28496-38e).
+    let bound = std::fs::read(out_dir.join("result.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|r| r["psv"]["verdict_sha256"].as_str().map(String::from));
+    if bound.as_deref() != Some(axon_psv::sha256_hex(&vbytes).as_str()) {
+        return unknown(
+            format!(
+                "the guest verdict read is not the one the launcher bound ({})",
+                bound.as_deref().unwrap_or("none")
+            ),
+            evidence,
+            None,
+        );
+    }
     let v: GuestVerdict = match serde_json::from_slice(&vbytes) {
         Ok(v) => v,
         Err(e) => return unknown(format!("guest verdict is malformed: {e}"), evidence, None),
@@ -420,8 +437,32 @@ pub fn derive(
         "completion": report.completion, "exit_code": v.exit_code,
     });
     let test = &m.suite.test;
+    // The outcome is decided by KEYED evidence only: exactly one line names the
+    // test, and it carries the token K issues for that outcome. A printed line
+    // without it (candidate output) is never a pass NOR a failure
+    // (review wf_1bc28496-38e, PSV-4).
+    let keyed = axon_psv::keyed_outcome(&text, test, &launch.key());
     let verification = match report.verdict(test) {
-        CheckVerdict::Failed => ReceiptVerification::Failed,
+        CheckVerdict::Failed => {
+            if keyed != Some(false) {
+                return unknown(
+                    format!(
+                        "check `{test}` failed without keyed failure evidence under this \
+                         launch's key (no token, another launch's, or more than one line)"
+                    ),
+                    evidence,
+                    Some(report_json),
+                );
+            }
+            if matches!(v.exit_code, Some(0) | None) {
+                return unknown(
+                    format!("check `{test}` failed but the run exited {:?}", v.exit_code),
+                    evidence,
+                    Some(report_json),
+                );
+            }
+            ReceiptVerification::Failed
+        }
         CheckVerdict::NotRun => {
             return unknown(
                 format!("check `{test}` produced no verdict"),
@@ -441,6 +482,13 @@ pub fn derive(
                         "check `{test}` passed without completion evidence under this launch's \
                          key (none, or a token for another attempt, candidate, suite or test)"
                     ),
+                    evidence,
+                    Some(report_json),
+                );
+            }
+            if keyed != Some(true) {
+                return unknown(
+                    format!("check `{test}` has more than one result line"),
                     evidence,
                     Some(report_json),
                 );

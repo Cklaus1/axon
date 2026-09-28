@@ -190,10 +190,18 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
         Ok(r) => r,
         Err(e) => return refused(cfg, &m_sha, inputs, &test, format!("axon test: {e}")),
     };
-    let (mut status, report) = report_for(&stdout, &test);
-    if status == GuestStatus::Passed && exit_code != Some(0) {
-        status = GuestStatus::Unknown;
-    }
+    let (status, report) = report_for(&stdout, &test);
+    // A verdict needs KEYED evidence for its outcome and a run that agrees: a
+    // pass exits 0, a failure does not (review wf_1bc28496-38e, PSV-4).
+    let status = match (
+        status,
+        crate::keyed_outcome(&stdout, &test, &key),
+        exit_code,
+    ) {
+        (GuestStatus::Passed, Some(true), Some(0)) => GuestStatus::Passed,
+        (GuestStatus::Failed, Some(false), Some(c)) if c != 0 => GuestStatus::Failed,
+        _ => GuestStatus::Unknown,
+    };
     // The CHILD's output, under names of its own: in the guest, /init already
     // redirects the runner's own stdout to /out/stdout, and sharing that file
     // let the runner's console line overwrite the child's output (measured).

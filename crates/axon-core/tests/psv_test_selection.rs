@@ -99,3 +99,84 @@ fn exact_selects_only_the_named_test() {
     assert_eq!(names, vec!["t_ok".to_string()]);
     assert_eq!(total, 1);
 }
+
+fn hmac_hex(key: &[u8], msg: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut k = [0u8; 64];
+    k[..key.len()].copy_from_slice(key);
+    let mut inner = Sha256::new();
+    inner.update(k.map(|b| b ^ 0x36));
+    inner.update(msg);
+    let mut outer = Sha256::new();
+    outer.update(k.map(|b| b ^ 0x5c));
+    outer.update(inner.finalize());
+    outer
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Review wf_1bc28496-38e (PSV-4): under a completion key, a FAILURE the
+/// interpreter decided carries its own keyed token, in a domain distinct from
+/// a pass's — so a printed "failed" line without it is not a verdict.
+#[test]
+fn a_failure_is_keyed_in_its_own_domain() {
+    use std::io::Write;
+    let d = fresh("keyed");
+    fixture(&d);
+    let key = [0x0bu8; 32];
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    let line_for = |test: &str| -> serde_json::Value {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                test,
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .env("AXON_PATH_EXCLUSIVE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{hex}").unwrap();
+        let out = c.wait_with_output().unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .find(|v| v["name"] == test)
+            .unwrap_or_default()
+    };
+    let token = |domain: &str, test: &str| {
+        let mut m = domain.as_bytes().to_vec();
+        m.push(0);
+        m.extend_from_slice(test.as_bytes());
+        hmac_hex(&key, &m)
+    };
+    let f = line_for("t_ok_edge");
+    assert_eq!(f["status"], "failed", "{f}");
+    assert_eq!(
+        f["completion"].as_str(),
+        Some(token("axon-test-failed/1", "t_ok_edge").as_str()),
+        "{f}"
+    );
+    // Control: a pass is keyed in the completion domain, not the failure one.
+    let p = line_for("t_ok");
+    assert_eq!(p["status"], "ok", "{p}");
+    assert_eq!(
+        p["completion"].as_str(),
+        Some(token("axon-test-completion/1", "t_ok").as_str()),
+        "{p}"
+    );
+}

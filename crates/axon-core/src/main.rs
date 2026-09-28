@@ -6060,6 +6060,15 @@ fn completion_token(key: &[u8], name: &str) -> String {
     hmac_sha256_hex(key, &msg)
 }
 
+/// The keyed token for a failure THIS interpreter decided, in its own domain
+/// (`axon_psv::outcome_token`): without it a printed "failed" line is not a
+/// verdict, so candidate output cannot write a failure over a genuine pass.
+fn failure_token(key: &[u8], name: &str) -> String {
+    let mut msg = b"axon-test-failed/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256_hex(key, &msg)
+}
+
 fn cmd_test(
     files: Vec<PathBuf>,
     filter: Option<String>,
@@ -6306,10 +6315,19 @@ fn cmd_test(
                         c => c.to_string(),
                     })
                     .collect();
-                println!(
-                    "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
-                    r.name, r.duration_ms, escaped
-                );
+                match completion_key.as_deref() {
+                    Some(k) => println!(
+                        "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\",\"completion\":\"{}\"}}",
+                        r.name,
+                        r.duration_ms,
+                        escaped,
+                        failure_token(k, &r.name)
+                    ),
+                    None => println!(
+                        "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
+                        r.name, r.duration_ms, escaped
+                    ),
+                }
             }
         } else if r.passed {
             println!("test {} ... ok ({:.1}ms)", r.name, r.duration_ms as f64);

@@ -128,6 +128,23 @@
         ]
       },
       "aborted_launch": "wf_bc1b72ef-a54 was launched with a placeholder instead of the brief and stopped at once; it never saw the brief, so it is not a review; the frozen trees were verified untouched"
+    },
+    "candidate_4": {
+      "state": "fixes landed in dev; not yet frozen",
+      "fixed": [
+        "PSV-4 keyed failures + verdict-bytes binding (amendment 11)",
+        "PSV-7 operator-rooted monitor keys (amendment 12)"
+      ],
+      "matrix": "A25, A26 (26 rows)",
+      "mutations": "M239-M245 7/7 killed against passing baselines",
+      "dev_checks": "652 axon tests (loop/contracts/fabric/cortex/reflex/adapter/psv/recipe/guest-init), clippy clean, interop 287, micode gates 22",
+      "pending": [
+        "guest image rebuild (axon + axon-psv-runner changed) and real-guest boot",
+        "axon-core full suite",
+        "full dev mutation run",
+        "frozen run with fresh target dirs",
+        "ONE independent review"
+      ]
     }
   }
 }

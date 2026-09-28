@@ -154,6 +154,23 @@ pub fn report(store: &Store, text: &str, signature: Option<&str>) -> Result<(Saf
                     r.issuer_ref
                 ))
             })?;
+            // A PROTECTED scope's clearance counts only under a monitor key the
+            // OPERATOR root holds: the store may name it, never supply it
+            // (review wf_1bc28496-38e, PSV-7; the O2 rule for monitors).
+            if config.protected_scopes.contains(&r.scope) {
+                crate::store::Config::rooted_key(
+                    &config.monitor_keys,
+                    &r.issuer_ref,
+                    axon_loop_contracts::operator_trust::TrustAuthority::Monitor,
+                )
+                .map_err(|e| {
+                    refused(format!(
+                        "monitor {} is not authenticated under the operator's monitor root, so \
+                         its clearance cannot count in a protected scope: {e}",
+                        r.issuer_ref
+                    ))
+                })?;
+            }
             let sig = signature.ok_or_else(|| {
                 refused("a clearance is not authenticated: no monitor signature was presented")
             })?;

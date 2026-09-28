@@ -27,14 +27,18 @@ pub enum TrustAuthority {
     Verifier,
     /// Admission / transition authority.
     Admission,
+    /// Safety monitors whose clearance a PROTECTED evaluation rests on
+    /// (review wf_1bc28496-38e, PSV-7).
+    Monitor,
 }
 
 impl TrustAuthority {
-    pub const ALL: [TrustAuthority; 4] = [
+    pub const ALL: [TrustAuthority; 5] = [
         TrustAuthority::Qualification,
         TrustAuthority::Observer,
         TrustAuthority::Verifier,
         TrustAuthority::Admission,
+        TrustAuthority::Monitor,
     ];
     pub fn parse(s: &str) -> Option<TrustAuthority> {
         TrustAuthority::ALL.into_iter().find(|a| a.dir_name() == s)
@@ -45,6 +49,7 @@ impl TrustAuthority {
             TrustAuthority::Observer => "observer",
             TrustAuthority::Verifier => "verifier",
             TrustAuthority::Admission => "admission",
+            TrustAuthority::Monitor => "monitor",
         }
     }
     /// The fixed, absolute production path.

@@ -807,6 +807,13 @@ MUTATIONS = [
     ('M236', 'B2: the manifest joins the request and receipt', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        if manifest != other {', '        if false && manifest != other {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M237', 'B2: the manifest suite is the receipt check-suite', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if want("check-suite:")? != suite_ref {', 'if false && want("check-suite:")? != suite_ref {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M238', 'B2: the observation is signed under the operator observer root', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        &rooted_keys(TrustAuthority::Observer)?,\n        TrustAuthority::Observer,', '        &serde_json::from_str::<serde_json::Value>(&b.observation_signature).ok().and_then(|v| v["public_key"].as_str().and_then(|h| (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok()).collect::<Option<Vec<u8>>>())).into_iter().collect::<Vec<_>>(),\n        TrustAuthority::Observer,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M239', 'PSV-4 (3b): a Failed verdict needs the keyed failure token', 'crates/axon-fabric/src/psv.rs', 'if keyed != Some(false) {', 'if false && keyed != Some(false) {', 'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
+    ('M240', 'PSV-4 (3b): a Failed verdict needs a failing exit', 'crates/axon-fabric/src/psv.rs', 'if matches!(v.exit_code, Some(0) | None) {', 'if false {', 'axon-fabric', '--test psv_dispatch', 'a_failure_with_a_clean_exit_is_not_a_verdict'),
+    ('M241', 'the verdict read is the one the launcher bound', 'crates/axon-fabric/src/psv.rs', 'if bound.as_deref() != Some(axon_psv::sha256_hex(&vbytes).as_str()) {', 'if false && bound.as_deref() != Some(axon_psv::sha256_hex(&vbytes).as_str()) {', 'axon-fabric', '--test psv_dispatch', 'every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason'),
+    ('M242', 'PSV-4 (3b): the guest runner reports Failed only with keyed evidence', 'crates/axon-psv/src/runner.rs', '(GuestStatus::Failed, Some(false), Some(c)) if c != 0 => GuestStatus::Failed,', '(GuestStatus::Failed, _, _) => GuestStatus::Failed,', 'axon-psv', '--test runner', 'a_lone_unkeyed_failure_line_is_not_a_verdict'),
+    ('M243', 'PSV-4 (3b): the interpreter keys a failure in its own domain', 'crates/axon-core/src/main.rs', 'failure_token(k, &r.name)', 'completion_token(k, &r.name)', 'axon-core', '--no-default-features --test psv_test_selection', 'a_failure_is_keyed_in_its_own_domain'),
+    ('M244', 'PSV-7 (3b): a protected-scope clearance needs an operator-rooted monitor key', 'crates/axon-loop/src/safety.rs', '            if config.protected_scopes.contains(&r.scope) {', '            if false && config.protected_scopes.contains(&r.scope) {', 'axon-loop', '--test protected_class', 'a_monitor_key_planted_in_the_store_never_clears_a_protected_trial'),
+    ('M245', 'PSV-7 (3b): admission re-checks a clearance under the monitor root', 'crates/axon-loop/src/admission.rs', '                                    && crate::store::Config::rooted_key(\n                                        &config.monitor_keys,\n                                        &report.issuer_ref,\n                                        axon_loop_contracts::operator_trust::TrustAuthority::Monitor,\n                                    )\n                                    .ok()', '                                    && config.monitor_keys.get(&report.issuer_ref)', 'axon-loop', '--test protected_class', 'a_key_revoked_at_the_operator_root_no_longer_counts'),
 ]
 
 
@@ -831,7 +838,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # (Fabric's own exit-0 check) remains killed.
 RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 239)}
+PSV_IDS = {f"M{n}" for n in range(137, 246)}
 
 
 def in_scope(mid, scope):

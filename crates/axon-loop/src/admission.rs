@@ -399,10 +399,6 @@ pub(crate) fn derive(
     // re-keyed, since then vouches for nothing (review wf_d788c05a-be2).
     if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
         let observers = config.observers();
-        let key_now = |keys: &std::collections::BTreeMap<OpaqueRef, String>, who: &OpaqueRef| {
-            keys.get(who)
-                .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk))
-        };
         for arm in &eval.arms {
             for t in &arm.trials {
                 if matches!(
@@ -438,7 +434,14 @@ pub(crate) fn derive(
                                     && report.identity.trial_id == t.trial_id
                                     && config.trusted_monitors.contains(&report.issuer_ref)
                                     && key_id.is_some()
-                                    && key_now(&config.monitor_keys, &report.issuer_ref) == *key_id)
+                                    && crate::store::Config::rooted_key(
+                                        &config.monitor_keys,
+                                        &report.issuer_ref,
+                                        axon_loop_contracts::operator_trust::TrustAuthority::Monitor,
+                                    )
+                                    .ok()
+                                    .and_then(|pk| axon_loop_contracts::attestation::key_id_of_hex(pk))
+                                        == *key_id)
                     })
                 {
                     return Err(refused(format!(

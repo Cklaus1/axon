@@ -101,6 +101,15 @@ fn fixture(test: &str, drop: bool) -> Fx {
 }
 
 fn fixture_at(entry: &str, test: &str, drop: bool) -> Fx {
+    fixture_with(entry, test, drop, CANDIDATE)
+}
+
+/// A correct candidate that ALSO prints a failure line for `t_ok` — the splice
+/// of review wf_1bc28496-38e (PSV-4). It has no K, so the line carries no
+/// failure token.
+const SPLICING_CANDIDATE: &str = "fn double(x: i64) -> i64 {\n    let o = chr(123)\n    let c = chr(125)\n    println(o + \"\\\"name\\\":\\\"t_ok\\\",\\\"status\\\":\\\"failed\\\",\\\"duration_ms\\\":0,\\\"message\\\":\\\"forged\\\"\" + c)\n    x * 2\n}\n";
+
+fn fixture_with(entry: &str, test: &str, drop: bool, candidate: &str) -> Fx {
     let d = tempfile::tempdir().unwrap();
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     let (cand, suite, job, out) = (
@@ -113,7 +122,7 @@ fn fixture_at(entry: &str, test: &str, drop: bool) -> Fx {
         std::fs::create_dir(p).unwrap();
         std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    std::fs::write(cand.join("f.ax"), CANDIDATE).unwrap();
+    std::fs::write(cand.join("f.ax"), candidate).unwrap();
     std::fs::write(cand.join("helper.ax"), PLANTED_HELPER).unwrap();
     std::fs::write(cand.join("g.ax"), CHEAT).unwrap();
     std::fs::write(suite.join("helper.ax"), SUITE_HELPER).unwrap();
@@ -240,6 +249,25 @@ fn the_named_test_passes_with_a_token_the_host_verifies() {
         sha,
         sha256_hex(&std::fs::read(fx.cfg.out.join("verdict.json")).unwrap())
     );
+}
+
+/// A failure is a verdict only with the interpreter's KEYED failure token: a
+/// correct candidate that prints a failure line over its own genuine pass
+/// yields no verdict, never a Failed (review wf_1bc28496-38e, PSV-4).
+#[test]
+fn a_failure_line_printed_by_the_candidate_is_not_a_verdict() {
+    let fx = fixture_with("accept.ax", "t_ok", false, SPLICING_CANDIDATE);
+    let v = run(&fx.cfg);
+    let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
+    assert!(out.contains("\"forged\""), "the splice happened: {out}");
+    assert_eq!(v.status, GuestStatus::Unknown, "{v:?}");
+    // Control: the interpreter's own failure carries the keyed token.
+    let fx = fixture("t_fail", false);
+    let v = run(&fx.cfg);
+    assert_eq!(v.status, GuestStatus::Failed, "{v:?}");
+    let key = axon_psv::completion_key(&fx.secret, &fx.m);
+    let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
+    assert_eq!(axon_psv::keyed_outcome(&out, "t_fail", &key), Some(false));
 }
 
 #[test]
@@ -421,4 +449,33 @@ fn a_sealed_candidate_cannot_read_the_suites_answer() {
     assert_ne!(v.status, GuestStatus::Passed, "{v:?}");
     let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap();
     assert!(err.contains("E0004"), "refused for another reason: {err}");
+}
+
+/// If the interpreter dies before writing its own line, the output can hold a
+/// LONE failure line printed by candidate code, with a failing exit. That is
+/// still no verdict without the keyed failure token (review wf_1bc28496-38e,
+/// PSV-4). Control: the same stand-in, holding K and emitting the correct
+/// token, IS a failure.
+#[test]
+fn a_lone_unkeyed_failure_line_is_not_a_verdict() {
+    for (keyed, want) in [(false, GuestStatus::Unknown), (true, GuestStatus::Failed)] {
+        let mut fx = fixture("t_ok", false);
+        let token = if keyed {
+            r#"$(printf 'axon-test-failed/1\0t_ok' | openssl dgst -sha256 -mac HMAC -macopt hexkey:$K | sed 's/.*= //')"#
+        } else {
+            "0000"
+        };
+        let script = fx._d.path().join(format!("dying-axon-{keyed}.sh"));
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nread K\nprintf '{{\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"x\",\"completion\":\"%s\"}}\\n' \"{token}\"\nexit 1\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        fx.cfg.axon = script;
+        let v = run(&fx.cfg);
+        assert_eq!(v.status, want, "keyed={keyed}: {v:?}");
+    }
 }

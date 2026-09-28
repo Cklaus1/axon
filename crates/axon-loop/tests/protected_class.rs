@@ -853,7 +853,7 @@ fn an_observer_key_planted_in_the_store_is_not_authority() {
 /// root: this revocation touches no other test.
 #[test]
 fn a_key_revoked_at_the_operator_root_no_longer_counts() {
-    for auth in ["verifier", "observer"] {
+    for auth in ["verifier", "observer", "monitor"] {
         let (w, adm) = protected_accepted(&format!("revoke-{auth}"));
         let key = common::operator_root().join(auth).join("fixture.pub");
         let saved = std::fs::read(&key).unwrap();
@@ -879,6 +879,46 @@ fn a_key_revoked_at_the_operator_root_no_longer_counts() {
         );
         std::fs::write(&key, saved).unwrap();
     }
+}
+
+/// PSV-7 (review wf_1bc28496-38e): a safety-monitor key that exists ONLY in
+/// the mutable store never clears a trial in a protected scope — the
+/// reviewer's reproduction reached ACCEPT and activation on one. Control: the
+/// operator installs the same key at the monitor root, and it counts.
+#[test]
+fn a_monitor_key_planted_in_the_store_never_clears_a_protected_trial() {
+    const PLANTED: &str = "agent:planted-monitor";
+    let (sk, pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "mon", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "mon", &specs_for(&w));
+    let mut v = evl_request("mon", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    assert!(intake_all(&w.s, &v).is_empty(), "the bundle intakes");
+    let mut cfg = w.s.config().unwrap();
+    let m = OpaqueRef::new(PLANTED).unwrap();
+    cfg.trusted_monitors.push(m.clone());
+    cfg.monitor_keys.insert(m.clone(), pk.clone());
+    w.s.write_config(&cfg).unwrap();
+    let t = &v["trials"][0];
+    let r = safety_report(t, "clear", None, PLANTED);
+    let sig = axon_loop_contracts::attestation::sign_document(
+        &sk,
+        axon_loop::safety::CLEARANCE_DOMAIN,
+        &m,
+        &r,
+    )
+    .unwrap();
+    let e = axon_loop::safety::report(&w.s, &r.to_string(), Some(&sig.to_string())).unwrap_err();
+    assert!(e.to_string().contains("operator's monitor root"), "{e}");
+    // The operator installs the key: now the clearance counts.
+    let rooted = common::operator_root().join("monitor").join("planted.pub");
+    std::fs::write(&rooted, format!("{pk}\n")).unwrap();
+    let ok = axon_loop::safety::report(&w.s, &r.to_string(), Some(&sig.to_string()));
+    std::fs::remove_file(&rooted).unwrap();
+    ok.unwrap();
 }
 
 /// M4 / A13 / A14: in a protected evaluation a verdict counts ONLY as

@@ -381,7 +381,10 @@ fn psv_host_guest() {
             "workload_exit": if code == 0 { Some(0) } else { None },
             "outputs": {"stdout": {"sha256": s}},
             "cleanup": {"complete": true, "left_behind": []},
-            "psv": {"launch_manifest_sha256": sha, "bound": code == 0},
+            "psv": {"launch_manifest_sha256": sha, "bound": code == 0,
+                    "verdict_sha256": std::fs::read(od.join("verdict.bound"))
+                        .or_else(|_| std::fs::read(od.join("verdict.json"))).ok()
+                        .map(|b| axon_psv::sha256_hex(&b))},
         });
         std::fs::write(out.join("result.json"), r.to_string()).unwrap();
         std::process::exit(code);
@@ -460,10 +463,32 @@ fn psv_host_guest() {
         }
         // The run's exit, reported non-zero after a genuine pass.
         "exit" => v["exit_code"] = serde_json::json!(3),
-        "candidate-changed" | "suite-changed" | "unbound" => {}
+        // The interpreter died after candidate output: a LONE failure line
+        // with no keyed token, and a failing exit.
+        "forge-fail" => {
+            let t = v["test"].as_str().unwrap().to_string();
+            std::fs::write(
+                od.join("test-stdout"),
+                format!("{{\"name\":\"{t}\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"x\"}}\n{{\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":0}}\n"),
+            )
+            .unwrap();
+            rehash(&od, &mut v);
+            v["status"] = serde_json::json!("failed");
+            v["exit_code"] = serde_json::json!(1);
+        }
+        // A failure, reported with a clean exit.
+        "exit0" => v["exit_code"] = serde_json::json!(0),
+        "candidate-changed" | "suite-changed" | "unbound" | "swap-after" => {}
         other => panic!("__psv-host-guest: unknown tamper {other}"),
     }
     std::fs::write(od.join("verdict.json"), axon_psv::canonical_json(&v)).unwrap();
+    if tamper == "swap-after" {
+        // The launcher bound the GENUINE verdict; the extracted file is then
+        // replaced by one that needs no key (a failure).
+        std::fs::rename(od.join("verdict.json"), od.join("verdict.bound")).unwrap();
+        v["status"] = serde_json::json!("failed");
+        std::fs::write(od.join("verdict.json"), axon_psv::canonical_json(&v)).unwrap();
+    }
     if tamper == "unbound" {
         // A GENUINE verdict, from a launch the launcher did not bind (27).
         write_result("verdict-unbound", 27);
