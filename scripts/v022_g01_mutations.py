@@ -867,7 +867,7 @@ def sh(cmd):
 def cargo_test(package, target, test):
     cmd = (
         "source scripts/lib_bounded_run.sh && "
-        f"bounded_run 16G 1800 cargo test -q -p {package} {target} -- --exact {test}"
+        f"bounded_run {MEM} 1800 cargo test -q -p {package} {target} -- --exact {test}"
     )
     r = subprocess.run(["bash", "-c", cmd], cwd=ROOT, capture_output=True, text=True)
     out = r.stdout + r.stderr
@@ -898,11 +898,75 @@ def sha(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+# The memory cap for each cargo step. Two shards run side by side on a 23 GB
+# host, so each takes a smaller cap (V022_MUT_MEM, e.g. 10G).
+MEM = os.environ.get("V022_MUT_MEM", "16G")
+
+
+def in_shard(i, shard):
+    """Row `i` (its position among the scope's rows) belongs to shard (k, n)."""
+    return shard is None or i % shard[1] == shard[0]
+
+
+def merge(out, parts):
+    """Combine shard runs of ONE commit and scope into one run. Refuses shards
+    that disagree on commit, scope or shard count, that overlap, or that leave
+    any row of the scope uncovered: a merged pass is evidence only if it is
+    exactly the unsharded pass, split."""
+    docs = [json.load(open(p)) for p in parts]
+    base = docs[0]
+    for d in docs:
+        for k in ("commit", "scope"):
+            if d[k] != base[k]:
+                sys.exit(f"refused: shards disagree on {k}: {d[k]} vs {base[k]}")
+        if (d.get("shard") or {}).get("of") != len(docs):
+            sys.exit(f"refused: a shard of {(d.get('shard') or {}).get('of')} merged as one of {len(docs)}")
+    got = sorted(d["shard"]["index"] for d in docs)
+    if got != list(range(len(docs))):
+        sys.exit(f"refused: shard indices {got}, not 0..{len(docs) - 1}")
+    rows = [r for d in docs for r in d["mutations"]]
+    ids = [r["id"] for r in rows]
+    want = [m[0] for m in MUTATIONS if in_scope(m[0], base["scope"])]
+    if sorted(ids) != sorted(want):
+        missing = sorted(set(want) - set(ids))
+        extra = sorted(i for i in set(ids) if ids.count(i) > 1 or i not in want)
+        sys.exit(f"refused: shards cover the scope wrongly; missing {missing}, duplicate/extra {extra}")
+    order = {m: n for n, m in enumerate(want)}
+    rows.sort(key=lambda r: order[r["id"]])
+    ok = all(d["all_killed"] for d in docs)
+    doc = {"schema": "axon-v022-mutation-run/2", "gate": base["gate"], "scope": base["scope"],
+           "commit": base["commit"], "toolchain": [d["toolchain"] for d in docs],
+           "merged_from": [{"shard": d["shard"], "all_killed": d["all_killed"]} for d in docs],
+           "all_killed": ok, "mutations": rows}
+    with open(out, "w") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    killed = sum(r["result"] == "killed" for r in rows)
+    base_ok = all(r["baseline"] == "passed" for r in rows)
+    print(f"{killed}/{len(rows)} killed; baselines {'all pass' if base_ok else 'NOT all pass'} "
+          f"(merged from {len(docs)} shards)"
+          + ("" if ok else "; a SHARD reported a failure (see its own BAD lines)"))
+    sys.exit(0 if ok else 1)
+
+
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--scope=")]
+    if sys.argv[1:2] == ["--merge"]:
+        if len(sys.argv) < 5:
+            sys.exit("usage: v022_g01_mutations.py --merge OUT.json SHARD.json SHARD.json…")
+        merge(sys.argv[2], sys.argv[3:])
+    args = [a for a in sys.argv[1:] if not a.startswith("--scope=") and not a.startswith("--shard=")]
     scope = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--scope=")), "g01")
+    shard_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--shard=")), None)
+    shard = None
+    if shard_arg is not None:
+        try:
+            k, n = (int(x) for x in shard_arg.split("/"))
+            assert 0 <= k < n
+        except (ValueError, AssertionError):
+            sys.exit(f"--shard={shard_arg}: want K/N with 0 <= K < N")
+        shard = (k, n)
     if len(args) != 1 or scope not in ("g01", "pci", "binding", "psv", "all"):
-        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] OUT.json")
+        sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] [--shard=K/N] OUT.json")
     sys.argv = [sys.argv[0], args[0]]
     dirty = sh("git status --porcelain -- crates").stdout.strip()
     if dirty:
@@ -913,7 +977,7 @@ def main():
     # stale binary, and record which one it was.
     def build_interpreter():
         return subprocess.run(
-            ["bash", "-c", "source scripts/lib_bounded_run.sh && bounded_run 16G 1800 "
+            ["bash", "-c", f"source scripts/lib_bounded_run.sh && bounded_run {MEM} 1800 "
              "cargo build -q -p axon-core --no-default-features --bin axon"],
             cwd=ROOT, capture_output=True, text=True)
     built = build_interpreter()
@@ -928,8 +992,12 @@ def main():
     }
     results, ok = [], True
     baselines = {}
+    position = -1
     for (mid, guard, rel, old, new, pkg, target, test) in MUTATIONS:
         if not in_scope(mid, scope):
+            continue
+        position += 1
+        if not in_shard(position, shard):
             continue
         key = (pkg, target, test)
         if key not in baselines:
@@ -974,6 +1042,7 @@ def main():
     doc = {"schema": "axon-v022-mutation-run/2", "gate": "G01" if scope == "g01" else scope,
            "scope": scope, "commit": commit,
            "toolchain": toolchain,
+           "shard": None if shard is None else {"index": shard[0], "of": shard[1]},
            "all_killed": ok, "mutations": results}
     with open(sys.argv[1], "w") as f:
         json.dump(doc, f, indent=2)
