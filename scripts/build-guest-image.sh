@@ -196,6 +196,11 @@ build_rootfs_linux() {
     local STAGE
     STAGE="$(mktemp -d)"
     trap 'rm -rf "${STAGE:-}"' EXIT
+    # mktemp -d makes the stage 0700 and it becomes the image's `/`: nothing
+    # unprivileged could traverse it (measured: the PSV runner's uid-dropped
+    # `axon test` got EACCES at execve). Every workload used to run as root, so
+    # it never showed.
+    chmod 0755 "$STAGE"
     mkdir -p "$STAGE"/{bin,usr/bin,proc,sys,dev,tmp,work,out,in/candidate,in/suite,in/job}
     cp "$BUSYBOX_SRC" "$STAGE/bin/busybox"
     local applet
@@ -216,6 +221,13 @@ build_rootfs_linux() {
     cp "$AXON_BIN" "$LDIST/axon"
     cp "$INIT_BIN" "$LDIST/axon-guest-init"
     cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"
+    # The image's root must be traversable by the unprivileged test uid.
+    local ROOTMODE
+    ROOTMODE="$(unsquashfs -lln "$LDIST/rootfs.sqfs" 2>/dev/null | head -1 | cut -c1-10)"
+    if [[ "$ROOTMODE" != drwxr-xr-x ]]; then
+        echo "[build-guest-image] ERROR: rootfs / is $ROOTMODE, not drwxr-xr-x" >&2
+        exit 1
+    fi
     echo "[build-guest-image] rootfs → $LDIST/rootfs.sqfs ($(du -sh "$LDIST/rootfs.sqfs" | cut -f1))"
 }
 
