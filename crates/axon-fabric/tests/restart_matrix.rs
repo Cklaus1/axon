@@ -49,6 +49,7 @@ fn cfg_at(root: &Path, epoch: u64) -> axon_fabric::SubmitConfig {
         grants: axon_fabric::GrantRegistry::load(&root.join("grants/grants.json")).unwrap(),
         linux: None,
         protected_host: None,
+        observer: None,
         pre_launch_hook: None,
         fault_hook: Some(die_at_the_named_boundary),
     }

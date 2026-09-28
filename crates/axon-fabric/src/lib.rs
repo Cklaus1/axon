@@ -20,6 +20,7 @@ pub mod backend;
 pub mod branches;
 pub mod grants;
 pub mod journal;
+pub mod observer;
 pub mod protected_host;
 pub mod psv;
 pub mod readiness;

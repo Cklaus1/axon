@@ -59,6 +59,8 @@ pub struct ProtectedHost {
     pub suite_registry: PathBuf,
     pub suite_registry_sha256: String,
     pub signer: SignerSpec,
+    /// M3: the preflight observer, if this host has one.
+    pub observer: Option<crate::observer::ObserverConfig>,
 }
 
 const KEYS: [&str; 8] = [
@@ -82,7 +84,13 @@ impl ProtectedHost {
         if std::fs::symlink_metadata(p).is_err() {
             return Ok(None);
         }
-        Self::load(p, Some(Path::new("/")), QualificationTrust::operator()).map(Some)
+        Self::load(
+            p,
+            Some(Path::new("/")),
+            QualificationTrust::operator(),
+            crate::observer::ObserverTrust::operator(),
+        )
+        .map(Some)
     }
 
     /// TESTS ONLY. With `owned_below`, operator ownership is checked from that
@@ -95,7 +103,9 @@ impl ProtectedHost {
         owned_below: Option<&Path>,
         trust: QualificationTrust,
     ) -> Result<Self, String> {
-        Self::load(config, owned_below, trust)
+        let observers =
+            crate::observer::ObserverTrust::for_test(&trust.issuers_dir.join("../observer"));
+        Self::load(config, owned_below, trust, observers)
     }
 
     #[cfg(unix)]
@@ -103,6 +113,7 @@ impl ProtectedHost {
         config: &Path,
         owned_below: Option<&Path>,
         mut trust: QualificationTrust,
+        observer_trust: crate::observer::ObserverTrust,
     ) -> Result<Self, String> {
         use crate::backend::check_owned_chain;
         let owned = |p: &Path, entries: bool| -> Result<(), String> {
@@ -123,6 +134,8 @@ impl ProtectedHost {
             .map(|o| o.keys().map(String::as_str).collect())
             .unwrap_or_default();
         keys.sort_unstable();
+        // `observer` is the one optional section (M3).
+        keys.retain(|k| *k != "observer");
         if keys != KEYS {
             return Err(bad(format!("must have exactly {KEYS:?}; has {keys:?}")));
         }
@@ -205,6 +218,26 @@ impl ProtectedHost {
             owned(dir, false).map_err(bad)?;
         }
         let out_root = path_at("/out_root")?;
+        let observer = match v.get("observer") {
+            None | Some(Value::Null) => None,
+            Some(ob) => {
+                let (command, command_sha256) = pinned("observer/command")?;
+                let nonces = path_at("/observer/nonce_store")?;
+                Some(crate::observer::ObserverConfig {
+                    command,
+                    command_sha256,
+                    trust: observer_trust,
+                    nonces: crate::observer::NonceStore { dir: nonces },
+                    max_age_s: match ob.get("max_age_s") {
+                        None | Some(Value::Null) => crate::observer::DEFAULT_OBSERVATION_MAX_AGE_S,
+                        Some(n) => n
+                            .as_u64()
+                            .ok_or_else(|| bad("observer.max_age_s is not a number".into()))?,
+                    },
+                    clock: crate::backend::Clock::System,
+                })
+            }
+        };
 
         Ok(ProtectedHost {
             config_sha256: sha256_hex(&bytes),
@@ -222,6 +255,7 @@ impl ProtectedHost {
             suite_registry,
             suite_registry_sha256,
             signer,
+            observer,
         })
     }
 }

@@ -566,6 +566,7 @@ fn submit(a: &Args) {
         config_sha256: h.config_sha256.clone(),
         suite_registry_sha256: h.suite_registry_sha256.clone(),
     });
+    let observer = host.as_ref().and_then(|h| h.observer.clone());
     let linux = host.map(|h| h.linux);
     let cfg = SubmitConfig {
         journal: PathBuf::from(a.req("--journal")),
@@ -586,6 +587,7 @@ fn submit(a: &Args) {
         grants,
         linux,
         protected_host,
+        observer,
         pre_launch_hook: None,
         fault_hook: None,
     };

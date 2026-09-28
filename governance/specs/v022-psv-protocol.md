@@ -324,4 +324,9 @@ These are recorded here rather than edited into the frozen text above.
 3. **Launcher exit 27, `verdict-unbound` (M1).** It was not in §4. It means the verdict on the
    returned drive is not the one `/init` hashed on the serial console, or the guest named another
    launch manifest. It is not admissible.
+4. **The observer is an operator-pinned PROGRAM (M3).** `PROGRAM --manifest FILE --out DIR` writes
+   `observation.json` plus its `.sig`. It is named with its sha256 in the host config's optional
+   `observer` section, together with the custodian's `nonce_store` and `max_age_s`. The nonce is
+   issued before the manifest is built, and consumed only after every other check holds. A refused
+   observation refuses the launch.
 

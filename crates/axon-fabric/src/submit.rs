@@ -128,6 +128,9 @@ pub struct SubmitConfig {
     /// O1: the protected host config's identity, bound into every launch
     /// manifest. `None` off a protected host.
     pub protected_host: Option<crate::psv::HostIdentity>,
+    /// M3: the operator's preflight observer. `None`: no observation, so no
+    /// guest verdict is ever `protected` (it is `guest-unobserved`).
+    pub observer: Option<crate::observer::ObserverConfig>,
     /// Test seam: called after the submit-time checks and the reservation,
     /// immediately before the dispatch-time epoch recheck. `None` in
     /// production (the CLI never sets it).
@@ -1381,27 +1384,49 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             let Bound::Version { dir, .. } = &target.bound else {
                 unreachable!("a suite target is always a stored version")
             };
-            let prepared = crate::psv::prepare(
-                &req,
-                &crate::psv::PrepareInputs {
-                    qualification: q,
-                    profile_manifest: &lx.manifest,
-                    host: cfg.protected_host.as_ref(),
-                    policy_json: policy.json(),
-                    suite_id: &suite.id,
-                    suite_version: suite.version.as_str(),
-                    entry: &file,
-                    test: filter.as_deref().expect("checked above"),
-                    candidate_dir: &dir.0.join("candidate"),
-                    suite_dir: &dir.0.join("check"),
-                    job_dir: &dir.0.join("job"),
-                    // M3 supplies the custodian's nonce and verifies the
-                    // observation; until then no verdict is protected.
-                    observation_nonce: "none",
-                },
-            );
-            match prepared {
-                Ok(launch) => {
+            let epoch = cfg.expected_epoch.get();
+            // M3: the custodian's nonce goes INTO the manifest the observer
+            // then observes.
+            let nonce = match &cfg.observer {
+                Some(o) => o.nonces.issue(epoch, &o.clock),
+                None => Ok("none".to_string()),
+            };
+            let prepared = nonce.and_then(|nonce| {
+                crate::psv::prepare(
+                    &req,
+                    &crate::psv::PrepareInputs {
+                        qualification: q,
+                        profile_manifest: &lx.manifest,
+                        host: cfg.protected_host.as_ref(),
+                        policy_json: policy.json(),
+                        suite_id: &suite.id,
+                        suite_version: suite.version.as_str(),
+                        entry: &file,
+                        test: filter.as_deref().expect("checked above"),
+                        candidate_dir: &dir.0.join("candidate"),
+                        suite_dir: &dir.0.join("check"),
+                        job_dir: &dir.0.join("job"),
+                        observation_nonce: &nonce,
+                    },
+                )
+            });
+            // The observation, verified BEFORE anything is launched; a
+            // refusal launches nothing.
+            let observed = prepared.and_then(|launch| match &cfg.observer {
+                None => Ok((launch, None)),
+                Some(o) => crate::observer::observe(
+                    o,
+                    &launch.manifest,
+                    &launch.digest,
+                    &launch.job_dir.join("launch-manifest.json"),
+                    epoch,
+                    &dir.0.join("observation"),
+                )
+                .map(|v| (launch, Some(v)))
+                .map_err(|e| format!("preflight observation refused: {e}")),
+            });
+            match observed {
+                Ok((launch, observation)) => {
                     let res = backend::run_linux_profile(
                         lx,
                         &run_dir.join(&file),
@@ -1410,11 +1435,15 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                         Some(&launch),
                     );
                     launch.scrub();
-                    let hv = crate::psv::derive(&launch, &res.out_dir, None);
+                    let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
                     psv_receipt(&req, &journal, res, q, hv, liability)?
                 }
                 Err(why) => {
-                    let why = format!("launch manifest not built: {why}");
+                    let why = if why.starts_with("preflight observation refused") {
+                        why
+                    } else {
+                        format!("launch manifest not built: {why}")
+                    };
                     journal.fail(&req.operation_id, &why, Billing::Unknown)?;
                     (
                         receipt(

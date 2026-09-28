@@ -360,3 +360,271 @@ fn a_valid_verdict_from_an_unbound_launch_counts_for_nothing() {
     assert_ne!(s.receipt.verification, ReceiptVerification::Passed);
     assert_eq!(class(&s), "guest-unobserved");
 }
+
+// ── M3: the preflight observation ───────────────────────────────────────────
+//
+// The stand-in observer composes the observation FROM the launch manifest and
+// signs it with `axon-fabric sign-evidence` (the operator tool). It proves the
+// PROTOCOL — domain, root, joins, freshness, nonce — never a measurement.
+
+use axon_fabric::backend::Clock;
+use axon_fabric::observer::{NonceStore, ObserverConfig, ObserverTrust};
+
+struct ObserverKey {
+    pk8: PathBuf,
+    key_id: String,
+}
+
+fn observer_key(dir: &Path, name: &str, trust_in: &[&Path]) -> ObserverKey {
+    use ring::signature::KeyPair;
+    let rng = ring::rand::SystemRandom::new();
+    let doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    let kp = ring::signature::Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap();
+    let pk8 = dir.join(format!("{name}.pk8"));
+    std::fs::write(&pk8, doc.as_ref()).unwrap();
+    let hexpk = hex(kp.public_key().as_ref());
+    for d in trust_in {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::write(d.join(format!("{name}.pub")), format!("{hexpk}\n")).unwrap();
+    }
+    use sha2::{Digest, Sha256};
+    let key_id = format!(
+        "ed25519:{}",
+        &hex(&Sha256::digest(kp.public_key().as_ref()))[..16]
+    );
+    ObserverKey { pk8, key_id }
+}
+
+impl World {
+    fn observer_roots(&self) -> PathBuf {
+        self.env.dir.path().join("observer_keys")
+    }
+    /// An observer program: `mode` applies ONE defect; `key` signs, as
+    /// `authority`.
+    fn observer(&self, mode: &str, key: &ObserverKey, authority: &str) -> ObserverConfig {
+        let d = self.env.dir.path();
+        let script = d.join(format!("observer-{mode}-{authority}.sh"));
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2"; shift 2;; *) shift;; esac; done
+[ "{mode}" = exit ] && exit 1
+if [ "{mode}" = replay ]; then
+    cp "{prev}" "$O/observation.json" && cp "{prev}.sig" "$O/observation.json.sig"; exit $?
+fi
+python3 - "$M" "$O/observation.json" "{mode}" "{kid}" <<'PY'
+import json, sys, hashlib, datetime
+m_path, out, mode, kid = sys.argv[1:]
+raw = open(m_path, "rb").read(); m = json.loads(raw)
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+o = {{"schema": "axon-preflight-observation/1", "observer_key_id": kid,
+     "nonce": m["observation_nonce"], "epoch": 0, "observed_at": now,
+     "host_profile": m["backend_profile"], "fabric_revision": m["fabric_revision"],
+     "firecracker_sha256": m["firecracker_sha256"], "launcher_sha256": m["launcher_sha256"],
+     "host_config_sha256": m["host_config_sha256"], "guest": m["guest"],
+     "suite_registry_sha256": m["suite"]["registry_sha256"], "policy_sha256": m["policy_sha256"],
+     "intended_launch_manifest_sha256": hashlib.sha256(raw).hexdigest()}}
+if mode == "stale": o["observed_at"] = "2020-01-01T00:00:00Z"
+if mode == "other-manifest": o["intended_launch_manifest_sha256"] = "0" * 64
+if mode == "kernel": o["guest"] = dict(o["guest"], kernel_sha256="9" * 64)
+if mode == "epoch": o["epoch"] = 7
+if mode == "nonce-forged": o["nonce"] = "ab" * 16
+if mode == "claims-other-key": o["observer_key_id"] = "ed25519:0000000000000000"
+json.dump(o, open(out, "w"))
+PY
+{fabric} sign-evidence --record "$O/observation.json" --key {key} --authority {authority} >/dev/null || exit 1
+# Keep this genuine signed observation, so a later test can REPLAY it.
+cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
+"#,
+                kid = key.key_id,
+                prev = d.join("prev-observation.json").display(),
+                fabric = env!("CARGO_BIN_EXE_axon-fabric"),
+                key = key.pk8.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        ObserverConfig {
+            command_sha256: sha256_file(&script),
+            command: script,
+            trust: ObserverTrust::for_test(&self.observer_roots()),
+            nonces: NonceStore {
+                dir: d.join("custodian-nonces"),
+            },
+            max_age_s: 300,
+            clock: Clock::System,
+        }
+    }
+    fn submit_observed(&self, ob: ObserverConfig, op: &str) -> axon_fabric::Submission {
+        let mut cfg = self.env.cfg(0);
+        cfg.linux = Some(self.lx("", ""));
+        cfg.observer = Some(ob);
+        submit(&self.request(op, "check:acc", "t_psv_ok").to_string(), &cfg).unwrap()
+    }
+}
+
+fn launched(w: &World, op: &str) -> bool {
+    w.env.dir.path().join("lx-out").join(op).exists()
+}
+
+#[test]
+fn a_verified_observation_makes_the_guest_verdict_protected() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let s = w.submit_observed(w.observer("", &key, "observer"), "op-obs-ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(class(&s), "protected");
+    assert!(refs(&s)
+        .iter()
+        .any(|e| e.starts_with("preflight-observation-sha256:")));
+    let req =
+        axon_loop_contracts::parse(&w.request("op-obs-ok", "check:acc", "t_psv_ok").to_string())
+            .unwrap();
+    assert_eq!(
+        axon_fabric::signing::attestation_decision(&req, false, s.ran_under.as_ref()),
+        Ok(())
+    );
+    // The nonce was spent.
+    let used = std::fs::read_dir(w.env.dir.path().join("custodian-nonces"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "used"))
+        .count();
+    assert_eq!(used, 1);
+}
+
+/// Each defect refuses the LAUNCH (nothing runs), for its own reason, and is
+/// never protected.
+#[test]
+fn every_defective_observation_refuses_the_launch() {
+    for (mode, authority, key_in, why) in [
+        // A9: another authority domain (the key IS a trusted observer).
+        ("", "qualification", "observer", "is for authority"),
+        // A key the observer root does not hold (only the qualification root).
+        (
+            "",
+            "observer",
+            "qualification",
+            "not a trusted evidence issuer",
+        ),
+        ("stale", "observer", "observer", "old (max 300s)"),
+        ("epoch", "observer", "observer", "for epoch 7"),
+        (
+            "other-manifest",
+            "observer",
+            "observer",
+            "intended_launch_manifest_sha256",
+        ),
+        ("kernel", "observer", "observer", "guest.kernel_sha256"),
+        // A nonce the manifest does not name fails the join before the store
+        // (the store's own "never issued" is `a_nonce_authorizes_exactly_one_launch`).
+        (
+            "nonce-forged",
+            "observer",
+            "observer",
+            "observation nonce is",
+        ),
+        (
+            "claims-other-key",
+            "observer",
+            "observer",
+            "but is signed by",
+        ),
+        ("exit", "observer", "observer", "observer exited"),
+    ] {
+        let w = World::new();
+        let d = w.env.dir.path().to_path_buf();
+        let roots: Vec<PathBuf> = match key_in {
+            "observer" => vec![w.observer_roots()],
+            _ => {
+                // The observer root holds a LEGITIMATE observer — just not
+                // this key, which only the qualification root trusts.
+                observer_key(&d, "real-observer", &[&w.observer_roots()]);
+                vec![d.join("trusted_issuers")]
+            }
+        };
+        let rr: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
+        let key = observer_key(&d, "obs", &rr);
+        let op = format!("op-obs-{mode}-{authority}-{key_in}");
+        let s = w.submit_observed(w.observer(mode, &key, authority), &op);
+        assert_eq!(s.receipt.verification, ReceiptVerification::NotRun, "{op}");
+        let r = s.reason.clone().unwrap_or_default();
+        assert!(
+            r.contains("preflight observation refused") && r.contains(why),
+            "{op}: {r}"
+        );
+        assert!(!launched(&w, &op), "{op}: launched");
+        assert_ne!(class(&s), "protected", "{op}");
+    }
+}
+
+/// A15: a GENUINE, correctly signed observation of an earlier launch,
+/// presented again, authorizes nothing: it observed another manifest (and its
+/// nonce is spent).
+#[test]
+fn an_earlier_observation_does_not_authorize_another_launch() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let s = w.submit_observed(w.observer("", &key, "observer"), "op-obs-first");
+    assert_eq!(class(&s), "protected");
+    assert!(w.env.dir.path().join("prev-observation.json.sig").exists());
+    let s = w.submit_observed(w.observer("replay", &key, "observer"), "op-obs-second");
+    assert_eq!(s.receipt.verification, ReceiptVerification::NotRun);
+    let r = s.reason.unwrap();
+    assert!(
+        r.contains("preflight observation refused")
+            && r.contains("intended_launch_manifest_sha256"),
+        "{r}"
+    );
+    assert!(!launched(&w, "op-obs-second"));
+}
+
+/// The nonce store: issued once, consumed once, of its epoch, within its age.
+#[test]
+fn a_nonce_authorizes_exactly_one_launch() {
+    let d = tempfile::tempdir().unwrap();
+    let st = NonceStore {
+        dir: d.path().join("n"),
+    };
+    let c = Clock::FixedUnix(1_000_000);
+    let n = st.issue(3, &c).unwrap();
+    assert!(st.consume(&n, 4, &c, 60).unwrap_err().contains("epoch"));
+    assert!(st
+        .consume(&n, 3, &Clock::FixedUnix(1_000_061), 60)
+        .unwrap_err()
+        .contains("old"));
+    st.consume(&n, 3, &c, 60).unwrap();
+    assert!(st
+        .consume(&n, 3, &c, 60)
+        .unwrap_err()
+        .contains("already used"));
+    assert!(st
+        .consume(&"cd".repeat(16), 3, &c, 60)
+        .unwrap_err()
+        .contains("never issued"));
+    assert!(st
+        .consume("../x", 3, &c, 60)
+        .unwrap_err()
+        .contains("not one"));
+}
+
+/// The observer program is pinned: other bytes are refused before it runs.
+#[test]
+fn an_unpinned_observer_is_refused() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let ob = w.observer("", &key, "observer");
+    let mut text = std::fs::read_to_string(&ob.command).unwrap();
+    text.push_str("\n# changed\n");
+    std::fs::write(&ob.command, text).unwrap();
+    let s = w.submit_observed(ob, "op-obs-pin");
+    assert!(s.reason.unwrap().contains("not its pin"));
+    assert!(!launched(&w, "op-obs-pin"));
+}

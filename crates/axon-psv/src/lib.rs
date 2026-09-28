@@ -334,3 +334,97 @@ impl GuestVerdict {
         canonical_json(&serde_json::to_value(self).expect("serializable"))
     }
 }
+
+// ── §7 preflight observation ────────────────────────────────────────────────
+
+pub const PREFLIGHT_OBSERVATION_SCHEMA: &str = "axon-preflight-observation/1";
+
+/// `axon-preflight-observation/1` (ADR-002 + the O1 digests), signed by the
+/// OBSERVER with an observer-domain `axon-evidence-signature/2`. Fabric
+/// verifies and consumes one; it holds no observer key and cannot mint one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreflightObservation {
+    pub schema: String,
+    pub observer_key_id: String,
+    pub nonce: String,
+    pub epoch: u64,
+    pub observed_at: String,
+    pub host_profile: String,
+    pub fabric_revision: String,
+    pub firecracker_sha256: String,
+    pub launcher_sha256: String,
+    pub host_config_sha256: String,
+    pub guest: GuestDigests,
+    pub suite_registry_sha256: String,
+    pub policy_sha256: String,
+    pub intended_launch_manifest_sha256: String,
+}
+
+impl PreflightObservation {
+    /// Every observed fact must be the one the launch manifest names, and the
+    /// observation must be of THIS manifest. The first difference is named.
+    pub fn joins(&self, m: &LaunchManifest, manifest_digest: &str) -> Result<(), String> {
+        if self.schema != PREFLIGHT_OBSERVATION_SCHEMA {
+            return Err(format!(
+                "observation schema is not {PREFLIGHT_OBSERVATION_SCHEMA}"
+            ));
+        }
+        let pairs: [(&str, &str, &str); 12] = [
+            (
+                "intended_launch_manifest_sha256",
+                &self.intended_launch_manifest_sha256,
+                manifest_digest,
+            ),
+            ("nonce", &self.nonce, &m.observation_nonce),
+            ("host_profile", &self.host_profile, &m.backend_profile),
+            ("fabric_revision", &self.fabric_revision, &m.fabric_revision),
+            (
+                "firecracker_sha256",
+                &self.firecracker_sha256,
+                &m.firecracker_sha256,
+            ),
+            ("launcher_sha256", &self.launcher_sha256, &m.launcher_sha256),
+            (
+                "host_config_sha256",
+                &self.host_config_sha256,
+                &m.host_config_sha256,
+            ),
+            (
+                "guest.kernel_sha256",
+                &self.guest.kernel_sha256,
+                &m.guest.kernel_sha256,
+            ),
+            (
+                "guest.rootfs_sha256",
+                &self.guest.rootfs_sha256,
+                &m.guest.rootfs_sha256,
+            ),
+            (
+                "guest.axon_sha256",
+                &self.guest.axon_sha256,
+                &m.guest.axon_sha256,
+            ),
+            (
+                "suite_registry_sha256",
+                &self.suite_registry_sha256,
+                &m.suite.registry_sha256,
+            ),
+            ("policy_sha256", &self.policy_sha256, &m.policy_sha256),
+        ];
+        for (field, observed, launch) in pairs {
+            if observed != launch {
+                return Err(format!(
+                    "observation {field} is {observed}, but the launch names {launch}"
+                ));
+            }
+        }
+        if self.guest.init_sha256 != m.guest.init_sha256 {
+            return Err(format!(
+                "observation guest.init_sha256 is {}, but the launch names {}",
+                self.guest.init_sha256, m.guest.init_sha256
+            ));
+        }
+        Ok(())
+    }
+}
