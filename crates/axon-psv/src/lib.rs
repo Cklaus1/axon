@@ -15,6 +15,8 @@ use std::path::Path;
 
 pub use axon_workspace_recipe::{sha256_hex, Quota};
 
+pub mod runner;
+
 pub const LAUNCH_MANIFEST_SCHEMA: &str = "axon-launch-manifest/1";
 pub const GUEST_VERDICT_SCHEMA: &str = "axon-guest-verdict/1";
 pub const COMPLETION_SCHEME: &str = "axon-guest-completion/1";
