@@ -178,14 +178,21 @@ fn fixture_at(entry: &str, test: &str, drop: bool) -> Fx {
         },
     };
     std::fs::write(job.join("launch-manifest.json"), m.bytes()).unwrap();
+    // The interpreter, copied where the unprivileged test uid can execute it:
+    // the build's target dir may sit under a 0700 home (measured: the frozen
+    // run's `$HOME/.cache` target made the dropped child fail to exec, so the
+    // custody test depended on WHERE the build lived).
+    let axon_copy = d.path().join("axon");
+    std::fs::copy(axon(), &axon_copy).unwrap();
+    std::fs::set_permissions(&axon_copy, std::fs::Permissions::from_mode(0o755)).unwrap();
     let cfg = RunnerConfig {
         manifest: job.join("launch-manifest.json"),
         secret: secret_path,
         candidate: cand,
         suite,
         out,
-        axon: axon(),
-        runner_exe: axon(),
+        axon: axon_copy.clone(),
+        runner_exe: axon_copy,
         expected_manifest_sha256: m.digest(),
         drop: drop.then_some((65534, 65534)),
         effect_ceiling: None,
@@ -396,6 +403,7 @@ fn a_candidate_cannot_shadow_the_suites_own_modules() {
 fn a_sealed_candidate_cannot_read_the_suites_answer() {
     let fx = fixture_at("seal.ax", "t_seal", false);
     let v = run(&fx.cfg);
+
     assert_ne!(v.status, GuestStatus::Passed, "{v:?}");
     let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap();
     assert!(err.contains("E0004"), "refused for another reason: {err}");

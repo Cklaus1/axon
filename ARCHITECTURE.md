@@ -131,6 +131,8 @@ codegen-disagrees-with-HM bug is a live category.
 | `axon-os` | supervisor: bounded jobs, operator kill, compliance monitor |
 | `axon-wasm` | the interpreter as a wasm cdylib (browser tier) |
 | `axon-guest-kernel` / `axon-guest-init` | freestanding kernel + guest init (R17) |
+| `axon-psv` | **v0.22 PSV (dev evidence only).** The protected suite-verdict protocol shared by Fabric and the guest: `axon-launch-manifest/1` (canonical, verified only under the digest Fabric names), the input check, the per-attempt completion key, `axon-guest-verdict/1`, `axon-preflight-observation/1` joins, and `axon-psv-runner`, the trusted guest runner that holds the per-attempt secret. See `governance/specs/v022-psv-protocol.md` |
+| `axon-workspace-recipe` | the ONE WorkspaceVersion byte recipe + tree walker, shared by the host (`axon-cortex` re-exports it, `axon-fabric` walks with it) and the guest runner, so both compute a tree digest with the same code (sha2 + serde only; musl-linkable) |
 | `axon-gfx` / `axon-gfx-mock` | native FFI graphics module and its mock twin (R13) |
 | `axon-attest` · `axon-ledger` · `axon-signal` · `axon-certcheck` · `axon-domain` · `axon-intent` · `axon-surface` | attestation, provenance ledger, signals, certificate checking, domain modules, intent compilation, surface syntax |
 

@@ -366,6 +366,38 @@
       "verified_by": "journal.rs::crash_child is #[ignore] by design \u2014 it is the child-process body the sigkill_after_* restart tests spawn, so it IS exercised. The linux-microvm-protected dispatch is tested only against a stand-in launcher; the real scripts/fc_linux_profile.sh + b263_qualify.sh need root/jailer and are invoked by no gate.",
       "gate_compiles": true,
       "gate_tests": true
+    },
+    "axon-psv": {
+      "class": "A",
+      "why": "The protected suite-verdict protocol (v022-psv-protocol.md): the launch manifest and its canonical digest, the per-attempt completion-key derivation, the input check, the guest verdict, the preflight observation's field joins, and axon-psv-runner \u2014 the trusted guest runner that holds the per-attempt secret and decides what executes. A defect here lets a candidate forge, replay or reach completion evidence.",
+      "surfaces": [
+        "launch manifest verify",
+        "completion key derivation",
+        "input check",
+        "trusted guest runner (secret custody)",
+        "preflight observation joins"
+      ],
+      "required": [
+        "cargo test --locked -p axon-psv"
+      ],
+      "prerequisite": "the runner tests execute the REAL interpreter (AXON_BIN, else <target>/debug/axon) and FAIL, never skip, when it is absent; the uid-drop leg of the custody test runs only as root.",
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-workspace-recipe": {
+      "class": "A",
+      "why": "The ONE WorkspaceVersion byte recipe and tree walker, shared by the host (axon-cortex re-exports it; axon-fabric's importer walks with it) and the protected guest runner. Every candidate/suite identity a verdict is bound to is computed here; a divergence would let two sides disagree about which tree was judged.",
+      "surfaces": [
+        "acf1 canonical bytes",
+        "workspace manifest bytes / version ref",
+        "tree walker (import rules)"
+      ],
+      "required": [
+        "cargo test --locked -p axon-fabric --test workspace"
+      ],
+      "verified_by": "crates/axon-fabric/tests/workspace.rs: the cross-language vector and the_guest_tree_digest_is_the_store_reference (the crate has no tests of its own; its behaviour is pinned where both sides meet).",
+      "gate_compiles": true,
+      "gate_tests": true
     }
   },
   "inventory_note": "gate_compiles: the strict gate builds this crate (clippy --all-targets builds its tests too). gate_tests: the strict gate RUNS its required commands. The distinction is the point \u2014 before 2026-09-22 the gate compiled 20 of 22 crates and ran the tests of 5, and nothing recorded the gap."
