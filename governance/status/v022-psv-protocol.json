@@ -46,7 +46,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "NOT_PROVEN \u2014 candidate 3b (b22fb35d) passed its frozen run but failed its independent review",
+    "state": "NOT_PROVEN \u2014 candidate 4 (191b2e93) passed its frozen run but failed its independent review (PSV-3)",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -132,7 +132,7 @@
       "aborted_launch": "wf_bc1b72ef-a54 was launched with a placeholder instead of the brief and stopped at once; it never saw the brief, so it is not a review; the frozen trees were verified untouched"
     },
     "candidate_4": {
-      "state": "fixes landed in dev; not yet frozen",
+      "state": "frozen run green; review DO_NOT_REGISTER",
       "fixed": [
         "PSV-4 keyed failures + verdict-bytes binding (amendment 11)",
         "PSV-7 operator-rooted monitor keys (amendment 12)"
@@ -146,7 +146,45 @@
         "full dev mutation run",
         "frozen run with fresh target dirs",
         "ONE independent review"
-      ]
+      ],
+      "commit": "191b2e93",
+      "frozen_run": "fully green: 652 + 1576 axon tests, 5312 micode, 241/241 mutants killed, PCI 18 rows, stage5, readiness, matrix 26, preflight, real-guest boot 9/9, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_ecfcd666-6c9",
+        "verdict": "DO_NOT_REGISTER",
+        "register": [
+          "PSV-1",
+          "PSV-2",
+          "PSV-4",
+          "PSV-5",
+          "PSV-6",
+          "PSV-7",
+          "FIELD-ORIGIN"
+        ],
+        "blockers": [
+          "PSV-3: K sits in the memory of the process that runs candidate code; under an Exec grant a spawned helper can read it (found by reading the code)"
+        ],
+        "reproduction": "EXECUTED in the real guest on the candidate-4 image, under policy-io-exec: the candidate recovered K from /proc/<pid>/mem; HMAC(K, 'axon-test-completion/1\\0t_ok') equalled the interpreter's pass token",
+        "majors_recorded": [
+          "protected_scopes is store config",
+          "no loop anchor for guest kernel/rootfs/init digests",
+          "Fabric's attestation key is not refused in the observer root",
+          "Fabric issues the custodian nonce in-process",
+          "intake/EVL do not check observation age/epoch/nonce",
+          "InterpreterRun jobs on the protected profile launch without an observation",
+          "the protected grant registry is a caller path and sets the guest policy",
+          "task_acceptance and check_suites are store config"
+        ]
+      }
+    },
+    "candidate_5": {
+      "state": "fix landed in dev; not yet frozen",
+      "fixed": [
+        "PSV-3 key custody (amendment 13)"
+      ],
+      "matrix": "A27 (27 rows)",
+      "mutations": "M246-M249 4/4 killed",
+      "follow_up_operator": "Yama in the guest kernel config (kernel rebuild + B263 re-qualification)"
     }
   }
 }

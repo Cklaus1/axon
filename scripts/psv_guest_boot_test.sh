@@ -78,7 +78,7 @@ run() {
         --test "$test" --job "$W/$c/job" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
     [[ -n "${4:-}" ]] && eval "$4"
     "$LAUNCH" --psv-candidate "$W/$c/cand" --psv-suite "$W/$c/suite" --psv-job "$W/$c/job" \
-        --psv-manifest-sha "$MSHA" --policy "$POLICY" --out "$W/$c/out" --timeout-s 90 \
+        --psv-manifest-sha "$MSHA" --policy "${POLICY_FOR:-$POLICY}" --out "$W/$c/out" --timeout-s 90 \
         > "$W/$c/launch.log" 2>&1
     RC=$?
 }
@@ -168,6 +168,28 @@ if [[ -n "$ST" && "$ST" != failed && "$ST" != passed ]] && grep -q forged "$W/sp
     ok "splice: a candidate's unkeyed failure line over its genuine pass is no verdict (status $ST)"
 else
     bad splice "status=$ST rc=$RC"
+fi
+
+# A27: K is unreachable from candidate code even under an Exec GRANT (review
+# wf_ecfcd666-6c9, PSV-3). On the candidate-4 image this exact probe recovered
+# K from the axon process's memory (the recorded reproduction); now the
+# key-holding process spawns nothing and is non-dumpable.
+mkdir -p "$W/cand-reach"; cp -r "$W/cand/." "$W/cand-reach/"
+cat > "$W/cand-reach/f.ax" <<'RCH'
+fn double(x: i64) -> i64 {
+    match exec("/bin/sh", ["-c", "P=$PPID; grep rw-p /proc/$P/maps | cut -d' ' -f1 | tr '-' ' ' | while read S E; do N=$(((0x$E-0x$S)/4096)); if [ $N -le 16384 ]; then dd if=/proc/$P/mem bs=4096 skip=$((0x$S/4096)) count=$N 2>/dev/null; fi; done | tr -c '0-9a-f' '\\n' | awk 'length($0)==64' | sort -u | head -20"]) {
+        Ok(o) => println("REACH-OK:{o}")
+        Err(e) => println("REACH-ERR:{e}")
+    }
+    x * 2
+}
+RCH
+POLICY_FOR="$REPO/profiles/linux-microvm/fixtures/policy-io-exec.json" CAND_SRC="$W/cand-reach" run reach accept.ax t_ok
+SO="$(cat "$W/reach/out/out/test-stdout" 2>/dev/null)"
+if grep -q "requires effect .Exec." <<<"$SO" && ! grep -q "REACH-OK" <<<"$SO"; then
+    ok "reach: under an Exec grant, candidate code cannot spawn a reader of K (refused: Exec)"
+else
+    bad reach "rc=$RC stdout=$(head -c 400 <<<"$SO")"
 fi
 
 echo "psv guest boot test: $FAILS failure(s)"

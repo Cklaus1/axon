@@ -6053,6 +6053,39 @@ fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
     outer.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Read the completion key: ONE hex line from fd 0, read raw (a byte at a time,
+/// so no buffered stdin keeps a copy), decoded, and the line scrubbed.
+fn read_completion_key() -> Vec<u8> {
+    use std::io::Read;
+    let fail = |m: &str| -> ! {
+        eprintln!("axon test: --completion-key-stdin: {m}");
+        std::process::exit(2)
+    };
+    // SAFETY: fd 0 is borrowed for the read only; ManuallyDrop never closes it.
+    let mut fd0 = std::mem::ManuallyDrop::new(unsafe {
+        <std::fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(0)
+    });
+    let mut line = Vec::with_capacity(160);
+    let mut b = [0u8; 1];
+    loop {
+        match fd0.read(&mut b) {
+            Ok(1) if b[0] != b'\n' && line.len() < 1024 => line.push(b[0]),
+            Ok(_) => break,
+            Err(_) => fail("could not read the key from stdin"),
+        }
+    }
+    let t: &[u8] = line.trim_ascii();
+    let ok = t.len() >= 32 && t.len().is_multiple_of(2) && t.iter().all(|c| c.is_ascii_hexdigit());
+    let key = ok.then(|| {
+        t.chunks(2)
+            .map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap_or("00"), 16).unwrap_or(0))
+            .collect::<Vec<u8>>()
+    });
+    line.fill(0);
+    b.fill(0);
+    key.unwrap_or_else(|| fail("the key must be at least 16 bytes of hex"))
+}
+
 /// The completion token for test `name` under `key` — Fabric computes the same.
 fn completion_token(key: &[u8], name: &str) -> String {
     let mut msg = b"axon-test-completion/1\0".to_vec();
@@ -6080,26 +6113,33 @@ fn cmd_test(
     // Read the completion secret FIRST — before any program code runs — so
     // nothing the program does can read stdin for it.
     let completion_key: Option<Vec<u8>> = if completion_key_stdin {
-        let mut line = String::new();
-        if std::io::stdin().read_line(&mut line).is_err() {
-            eprintln!("axon test: --completion-key-stdin: could not read the key from stdin");
+        let key = read_completion_key();
+        // K now lives in this address space, which will also run candidate
+        // code. Nothing unprivileged may read it (review wf_ecfcd666-6c9,
+        // PSV-3: a spawned helper read K from /proc/<pid>/mem in the guest):
+        // the process is NON-DUMPABLE, so no unprivileged process, its own
+        // children included, can open its memory; and it can spawn NOTHING, as
+        // `Exec` leaves the effect ceiling whatever the caller granted.
+        #[cfg(target_os = "linux")]
+        // SAFETY: prctl(PR_SET_DUMPABLE, 0) takes no pointers.
+        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+            eprintln!("axon test: --completion-key-stdin: could not make the process non-dumpable");
             std::process::exit(2);
         }
-        let t = line.trim();
-        let ok =
-            t.len() >= 32 && t.len().is_multiple_of(2) && t.bytes().all(|c| c.is_ascii_hexdigit());
-        if !ok {
-            eprintln!(
-                "axon test: --completion-key-stdin: the key must be at least 16 bytes of hex"
-            );
-            std::process::exit(2);
-        }
-        Some(
-            (0..t.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&t[i..i + 2], 16).unwrap_or(0))
+        let ceiling: Vec<String> = match std::env::var("AXON_ALLOWED_EFFECTS") {
+            Ok(raw) => raw
+                .split(',')
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty() && e != "Exec")
                 .collect(),
-        )
+            Err(_) => axon_core::builtins::GRANTABLE_EFFECTS
+                .iter()
+                .filter(|e| **e != "Exec")
+                .map(|e| e.to_string())
+                .collect(),
+        };
+        std::env::set_var("AXON_ALLOWED_EFFECTS", ceiling.join(","));
+        Some(key)
     } else {
         None
     };

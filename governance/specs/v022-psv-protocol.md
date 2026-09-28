@@ -423,3 +423,24 @@ Recorded from that review as follow-ups, not fixed here (none was a BLOCKER):
 - The observer runs as Fabric's UID (protected-only).
 - `protected_scopes` is store config.
 - In protected mode, the guest effect policy comes from the caller's `--grant-registry`.
+
+The next one comes from the independent review of candidate 4 (wf_ecfcd666-6c9, verdict
+DO_NOT_REGISTER, 7 of 8 claims registered). It is negative-matrix row A27.
+
+13. **K is unreachable from candidate code, even under an Exec grant (PSV-3).** The derived key K
+    lives in the memory of the `axon test` process, which also runs candidate code. Before this
+    fix, that process was dumpable, the guest kernel has no Yama, and the effect ceiling came from
+    the caller's grant.
+    - **Reproduced in the real guest** on the candidate-4 image, under `policy-io-exec`: candidate
+      code spawned a shell that scanned the process's own writable memory and recovered K. HMAC
+      under the recovered value reproduced the interpreter's own pass token, so any pass or failure
+      token could be forged.
+    - **Now, under `--completion-key-stdin`, `axon test`:**
+      - reads the key raw from fd 0 (no buffered copy) and scrubs the line;
+      - makes itself NON-DUMPABLE (`PR_SET_DUMPABLE 0`) before any program code runs, so no
+        unprivileged process, its own children and parent included, can open its memory;
+      - removes `Exec` from the effect ceiling (and, with no ceiling, takes every effect except
+        `Exec`), so it spawns nothing whatever the grant says.
+    - **The guest runner independently** passes the policy's ceiling without `Exec`.
+    - **Recorded, not done:** Yama in the guest kernel config needs a kernel rebuild and a B263
+      re-qualification, so it is an operator-side follow-up.

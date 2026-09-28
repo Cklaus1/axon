@@ -180,3 +180,93 @@ fn a_failure_is_keyed_in_its_own_domain() {
         "{p}"
     );
 }
+
+/// Review wf_ecfcd666-6c9 (PSV-3): in the guest, under an Exec grant, a
+/// candidate spawned a helper that read K out of this process's memory. While
+/// it holds a completion key, `axon test` spawns NOTHING, whatever the ceiling
+/// granted. Control: the same program without a key spawns.
+#[test]
+fn holding_a_completion_key_spawns_nothing() {
+    use std::io::Write;
+    let d = fresh("spawn");
+    std::fs::write(
+        d.join("spawn.ax"),
+        "@[test]\nfn t_spawn() {\n    match exec(\"/bin/echo\", [\"SPAWNED\"]) {\n        Ok(o) => println(\"OUT:{o}\")\n        Err(e) => println(\"ERR:{e}\")\n    }\n}\n",
+    )
+    .unwrap();
+    let run = |key: bool, ceiling: Option<&str>| -> String {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"));
+        c.current_dir(&d)
+            .arg("test")
+            .arg(d.join("spawn.ax"))
+            .args(["--json", "--filter", "t_spawn", "--exact"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
+        if let Some(v) = ceiling {
+            c.env("AXON_ALLOWED_EFFECTS", v);
+        }
+        if key {
+            c.arg("--completion-key-stdin");
+        }
+        let mut ch = c.spawn().unwrap();
+        writeln!(ch.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        String::from_utf8_lossy(&ch.wait_with_output().unwrap().stdout).into_owned()
+    };
+    assert!(
+        run(false, Some("IO,Exec")).contains("OUT:SPAWNED"),
+        "control"
+    );
+    for ceiling in [Some("IO,Exec"), None] {
+        let out = run(true, ceiling);
+        assert!(!out.contains("SPAWNED"), "{ceiling:?}: {out}");
+        assert!(out.contains("requires effect `Exec`"), "{ceiling:?}: {out}");
+    }
+}
+
+/// Review wf_ecfcd666-6c9 (PSV-3): while it holds a completion key, `axon
+/// test` is NON-DUMPABLE: an unprivileged process — even its own parent,
+/// which the host's ptrace policy would otherwise allow — cannot open its
+/// memory. Control: without a key the same parent can. Needs root (to run the
+/// parent as nobody); otherwise this is not exercised and says so.
+#[test]
+fn holding_a_completion_key_makes_the_process_non_dumpable() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("NOT EXERCISED: needs root to run the probing parent as nobody");
+        return;
+    }
+    let d = fresh("dump");
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let axon = d.join("axon");
+    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &axon).unwrap();
+    std::fs::set_permissions(&axon, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        d.join("sleep.ax"),
+        "@[test]\nfn t_sleep() { sleep_ms(2500) }\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(d.join("sleep.ax"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let probe = |flag: &str| -> String {
+        let script = format!(
+            "cd {dir}\necho {key} | ./axon test sleep.ax --json --filter t_sleep --exact {flag} >/dev/null 2>&1 &\n\
+             P=$!\nsleep 1\nif {{ :; }} 3</proc/$P/mem 2>/dev/null; then echo OPENED; else echo DENIED; fi\nwait $P\n",
+            dir = d.display(),
+            key = "0b".repeat(32),
+        );
+        let out = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .uid(65534)
+            .gid(65534)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(probe(""), "OPENED", "control: a dumpable child");
+    assert_eq!(probe("--completion-key-stdin"), "DENIED");
+}

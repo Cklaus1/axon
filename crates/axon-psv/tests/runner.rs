@@ -479,3 +479,25 @@ fn a_lone_unkeyed_failure_line_is_not_a_verdict() {
         assert_eq!(v.status, want, "keyed={keyed}: {v:?}");
     }
 }
+
+/// The candidate runs in the process that holds K, so that process gets a
+/// ceiling WITHOUT `Exec`, whatever the guest policy granted (review
+/// wf_ecfcd666-6c9, PSV-3: under an Exec grant a spawned helper read K from
+/// its memory in the guest). A stand-in interpreter reports the ceiling it was
+/// given; the other effects pass through.
+#[test]
+fn the_process_holding_k_is_given_no_exec() {
+    let mut fx = fixture("t_ok", false);
+    let script = fx._d.path().join("ceiling-axon.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nread K\necho \"CEIL:[$AXON_ALLOWED_EFFECTS]\"\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fx.cfg.axon = script;
+    fx.cfg.effect_ceiling = Some("IO,Exec,Net".into());
+    run(&fx.cfg);
+    let out = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
+    assert!(out.contains("CEIL:[IO,Net]"), "{out}");
+}

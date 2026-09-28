@@ -88,6 +88,16 @@ fn is_identifier(s: &str) -> bool {
 /// The exact-name result lines of `axon test --json` for `test`. `--filter` is
 /// a SUBSTRING match, so every other name is ignored, and a name reported
 /// twice is not a pass.
+/// An `AXON_ALLOWED_EFFECTS` ceiling with `Exec` removed.
+pub fn without_exec(ceiling: &str) -> String {
+    ceiling
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty() && *e != "Exec")
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 pub fn report_for(stdout: &str, test: &str) -> (GuestStatus, GuestReport) {
     let mut report = GuestReport {
         passed: vec![],
@@ -261,8 +271,12 @@ fn exec_axon_test(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // The guest policy's ceiling, WITHOUT `Exec`: the process that runs the
+    // candidate also holds K, so it spawns nothing, whatever the caller's
+    // grant allowed (review wf_ecfcd666-6c9, PSV-3). `axon test` enforces the
+    // same under a completion key; this does not rely on it.
     if let Some(c) = &cfg.effect_ceiling {
-        cmd.env("AXON_ALLOWED_EFFECTS", c);
+        cmd.env("AXON_ALLOWED_EFFECTS", without_exec(c));
     }
     #[cfg(target_os = "linux")]
     {
