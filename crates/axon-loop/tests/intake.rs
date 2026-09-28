@@ -2080,6 +2080,21 @@ fn each_protected_join_is_verified_over_the_documents() {
             "the observation is",
         ),
         (
+            "receipt names another launch manifest",
+            |_| {},
+            |_| {},
+            |rc| {
+                let refs = rc["evidence_refs"].as_array_mut().unwrap();
+                refs.retain(|e| !e.as_str().unwrap().starts_with("launch-manifest-sha256"));
+                refs.push(serde_json::json!(format!(
+                    "launch-manifest-sha256:{}",
+                    "5".repeat(64)
+                )));
+            },
+            None,
+            "the launch manifest is",
+        ),
+        (
             "receipt qualification ref not the manifest's",
             |_| {},
             |_| {},
@@ -2125,7 +2140,24 @@ fn each_protected_join_is_verified_over_the_documents() {
         use axon_loop_contracts::operator_trust::{evidence_signing_message, TrustAuthority};
         use ring::signature::{Ed25519KeyPair, KeyPair};
         let kp = Ed25519KeyPair::from_pkcs8(&other).unwrap();
-        let obs = bv["observation"].as_str().unwrap().as_bytes().to_vec();
+        // The attacker's observation names the attacker's own key, so only
+        // the operator root (not the claimed-signer check) can refuse it.
+        let mut ov: Value = serde_json::from_str(bv["observation"].as_str().unwrap()).unwrap();
+        ov["observer_key_id"] = serde_json::json!(
+            axon_loop_contracts::operator_trust::key_fingerprint(kp.public_key().as_ref())
+        );
+        let obs = ov.to_string().into_bytes();
+        bv["observation"] = serde_json::json!(ov.to_string());
+        let o_sha = axon_psv::sha256_hex(&obs);
+        let refs = rc["evidence_refs"].as_array_mut().unwrap();
+        refs.retain(|e| {
+            !e.as_str()
+                .unwrap()
+                .starts_with("preflight-observation-sha256")
+        });
+        refs.push(serde_json::json!(format!(
+            "preflight-observation-sha256:{o_sha}"
+        )));
         let hx = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
         bv["observation_signature"] = serde_json::json!(serde_json::json!({
             "schema": "axon-evidence-signature/2", "alg": "ed25519", "domain": "observer",

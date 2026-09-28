@@ -391,6 +391,13 @@ fn the_verify_step_inherits_nothing_from_the_caller() {
     );
     let seen = std::fs::read_to_string(out_root.join("op-psv-env/verify-env-leaked")).unwrap();
     assert_eq!(seen, "no");
+    // The per-attempt secret is already gone when the verify step runs.
+    let secret =
+        std::fs::read_to_string(out_root.join("op-psv-env/verify-secret-present")).unwrap();
+    assert_eq!(
+        secret, "no",
+        "the secret outlived the launch into the verify step"
+    );
 }
 
 /// A GENUINE, valid verdict from a launch the launcher could not bind (exit

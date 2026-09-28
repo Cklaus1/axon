@@ -787,6 +787,26 @@ MUTATIONS = [
     ('M216', 'M4: each join exactly once', 'crates/axon-loop-contracts/src/protected_evidence.rs', '            [d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', '            [d, ..] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) => {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M217', 'M4: each join is a sha256', 'crates/axon-loop-contracts/src/protected_evidence.rs', '[d] if d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()) =>', '[d] =>', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
     ('M218', 'M4: intake holds a protected claim to every join', 'crates/axon-loop/src/intake.rs', '        axon_loop_contracts::protected_evidence::check(&req, &rc).map_err(|e| {', '        Ok::<(), String>(()).map_err(|e: String| {', 'axon-loop', '--test intake', 'a_protected_claim_without_every_join_is_refused'),
+    ('M219', 'B1: a sealed candidate @[test] is never collected', 'crates/axon-core/src/main.rs', 'if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'if false && axon_core::resolver::span_in_sealed(f.span, &sealed) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_candidates_own_test_is_never_collected'),
+    ('M220', 'B1: the runner selects exactly the registered test', 'crates/axon-psv/src/runner.rs', '        .arg("--exact")\n', '', 'axon-psv', '--test runner', 'a_suite_sibling_does_not_run_beside_the_registered_test'),
+    ('M221', 'B3: launch inputs come from the store, never the caller-owned run dir', 'crates/axon-fabric/src/submit.rs', '            let inputs = crate::psv::private_inputs(\n                lx,\n', '            let inputs = match &target.bound { Bound::Version { dir, .. } => Ok::<PathBuf, String>(dir.0.clone()), _ => unreachable!() }; let _ = (\n                lx,\n', 'axon-fabric', '--test psv_dispatch', 'a_run_dir_swapped_under_the_callers_state_changes_nothing'),
+    ('M222', 'B3: a manifest candidate tree digest is its WorkspaceVersion', 'crates/axon-psv/src/lib.rs', 'if m.candidate.tree_digest != m.candidate.workspace_version {', 'if false && m.candidate.tree_digest != m.candidate.workspace_version {', 'axon-psv', '--test protocol', 'a_tree_digest_must_be_the_version_it_names'),
+    ('M223', 'B3: a manifest suite tree digest is its version', 'crates/axon-psv/src/lib.rs', 'if m.suite.tree_digest != m.suite.version {', 'if false && m.suite.tree_digest != m.suite.version {', 'axon-psv', '--test protocol', 'a_tree_digest_must_be_the_version_it_names'),
+    ('M224', 'guest input: nothing the digest omits', 'crates/axon-psv/src/lib.rs', 'if let Some(o) = omitted.first() {', 'if let Some(o) = omitted.first().filter(|_| false) {', 'axon-psv', '--test protocol', 'inputs_with_links_or_omitted_entries_are_refused'),
+    ('M225', 'guest input: no symlink', 'crates/axon-psv/src/lib.rs', '.find(|e| e.kind == axon_workspace_recipe::EntryKind::Symlink)', '.find(|e| false && e.kind == axon_workspace_recipe::EntryKind::Symlink)', 'axon-psv', '--test protocol', 'inputs_with_links_or_omitted_entries_are_refused'),
+    ('M226', 'a PSV verdict names its one matched check', 'crates/axon-fabric/src/submit.rs', '        r.matched_checks = Some(1);\n', '', 'axon-fabric', '--test psv_dispatch', 'an_operator_suite_passes_through_the_guest_path_as_guest_unobserved'),
+    ('M227', 'observation joins the manifest verifier', 'crates/axon-psv/src/lib.rs', '("verifier_sha256", &self.verifier_sha256, &m.verifier_sha256),', '("verifier_sha256", &m.verifier_sha256, &m.verifier_sha256),', 'axon-fabric', '--test psv_dispatch', 'every_defective_observation_refuses_the_launch'),
+    ('M228', 'the verify step inherits no caller environment', 'crates/axon-fabric/src/backend.rs', '            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).\n            .env_clear()\n', '            // (PATH, …) steers the pinned launcher (review wf_d725935a-7ed).\n', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
+    ('M229', 'the per-attempt secret is scrubbed when the launcher returns', 'crates/axon-fabric/src/backend.rs', '    if let Some(l) = psv {\n        l.scrub();\n    }\n', '    let _ = &psv;\n', 'axon-fabric', '--test psv_dispatch', 'the_verify_step_inherits_nothing_from_the_caller'),
+    ('M230', 'B2: intake joins a protected claim over the bundle', 'crates/axon-loop/src/intake.rs', 'axon_loop_contracts::protected_evidence::check_bundle(&req, &rc, bundle).map_err(|e| {', 'axon_loop_contracts::protected_evidence::check(&req, &rc).map(|_| bundle).map(|_| ()).map_err(|e| {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M231', 'B2: a bundle for a non-protected receipt is refused', 'crates/axon-loop/src/intake.rs', '} else if psv_evidence.is_some() {', '} else if false && psv_evidence.is_some() {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M232', 'B2: the bundle manifest is the receipt manifest', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if m_sha != want("launch-manifest-sha256:")? {', 'if false && m_sha != want("launch-manifest-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M233', 'B2: the bundle observation is the receipt observation', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if o_sha != want("preflight-observation-sha256:")? {', 'if false && o_sha != want("preflight-observation-sha256:")? {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M234', 'B2: the observation names its signer', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if o.observer_key_id != signer {', 'if false && o.observer_key_id != signer {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M235', 'B2: the observation joins the manifest', 'crates/axon-loop-contracts/src/protected_evidence.rs', '    o.joins(&m, &m_sha)?;\n', '', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M236', 'B2: the manifest joins the request and receipt', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        if manifest != other {', '        if false && manifest != other {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M237', 'B2: the manifest suite is the receipt check-suite', 'crates/axon-loop-contracts/src/protected_evidence.rs', 'if want("check-suite:")? != suite_ref {', 'if false && want("check-suite:")? != suite_ref {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
+    ('M238', 'B2: the observation is signed under the operator observer root', 'crates/axon-loop-contracts/src/protected_evidence.rs', '        &rooted_keys(TrustAuthority::Observer)?,\n        TrustAuthority::Observer,', '        &serde_json::from_str::<serde_json::Value>(&b.observation_signature).ok().and_then(|v| v["public_key"].as_str().and_then(|h| (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok()).collect::<Option<Vec<u8>>>())).into_iter().collect::<Vec<_>>(),\n        TrustAuthority::Observer,', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
 ]
 
 
@@ -803,9 +823,15 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78",
            "M79", "M80", "M81", "M82", "M83", "M84", "M85",
            "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95", "M96", "M97"}
-RETIRED = {"M58"}
+# M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
+# wf_d725935a-7ed, B1): the runner now executes exactly the one registered
+# test, so a Passed report for it already implies the interpreter exited 0.
+# Its killing test (a failing SIBLING beside a passing named test) described
+# the very behaviour B1 removed. The guard stays as defence in depth; M184
+# (Fabric's own exit-0 check) remains killed.
+RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 219)}
+PSV_IDS = {f"M{n}" for n in range(137, 239)}
 
 
 def in_scope(mid, scope):

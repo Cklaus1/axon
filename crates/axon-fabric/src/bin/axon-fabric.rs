@@ -339,6 +339,14 @@ fn psv_host_guest() {
                 PathBuf::from(dir).join("verify-env-leaked"),
                 if leaked { "yes" } else { "no" },
             );
+            // …and whether the per-attempt secret was still on disk then.
+            let secret = std::fs::read_to_string(PathBuf::from(dir).join("job-secret-path"))
+                .map(|p| std::path::Path::new(p.trim()).exists())
+                .unwrap_or(false);
+            let _ = std::fs::write(
+                PathBuf::from(dir).join("verify-secret-present"),
+                if secret { "yes" } else { "no" },
+            );
         }
         std::process::exit(0);
     }
@@ -354,6 +362,11 @@ fn psv_host_guest() {
     let tamper = get("--tamper").unwrap_or_default();
     let od = out.join("out");
     std::fs::create_dir_all(&od).unwrap();
+    std::fs::write(
+        out.join("job-secret-path"),
+        job.join("completion-secret").to_string_lossy().as_bytes(),
+    )
+    .unwrap();
     let write_result = |status: &str, code: i32| {
         let stdout = od.join("stdout");
         if !stdout.exists() {
