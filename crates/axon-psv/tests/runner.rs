@@ -208,7 +208,7 @@ fn host_token(secret: &[u8; 32], m: &LaunchManifest, test: &str) -> String {
 }
 
 fn ran(fx: &Fx) -> bool {
-    fx.cfg.out.join("stdout").exists()
+    fx.cfg.out.join("test-stdout").exists()
 }
 
 #[test]
@@ -320,7 +320,7 @@ fn neither_the_secret_nor_the_key_reaches_candidate_code_or_the_output() {
     let root = unsafe { libc::geteuid() } == 0;
     let fx = fixture("t_custody", root);
     let v = run(&fx.cfg);
-    let stdout = std::fs::read_to_string(fx.cfg.out.join("stdout")).unwrap();
+    let stdout = std::fs::read_to_string(fx.cfg.out.join("test-stdout")).unwrap();
     assert!(
         stdout.contains("STDIN-SAW:[]"),
         "stdin was not at EOF: {stdout}"
@@ -397,6 +397,6 @@ fn a_sealed_candidate_cannot_read_the_suites_answer() {
     let fx = fixture_at("seal.ax", "t_seal", false);
     let v = run(&fx.cfg);
     assert_ne!(v.status, GuestStatus::Passed, "{v:?}");
-    let err = std::fs::read_to_string(fx.cfg.out.join("stderr")).unwrap();
+    let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap();
     assert!(err.contains("E0004"), "refused for another reason: {err}");
 }

@@ -194,9 +194,12 @@ pub fn run(cfg: &RunnerConfig) -> GuestVerdict {
     if status == GuestStatus::Passed && exit_code != Some(0) {
         status = GuestStatus::Unknown;
     }
-    let _ = std::fs::write(cfg.out.join("stdout"), &stdout);
+    // The CHILD's output, under names of its own: in the guest, /init already
+    // redirects the runner's own stdout to /out/stdout, and sharing that file
+    // let the runner's console line overwrite the child's output (measured).
+    let _ = std::fs::write(cfg.out.join("test-stdout"), &stdout);
     // Diagnostics only (a refusal's reason, e.g. PCI E0004); never read as a result.
-    let _ = std::fs::write(cfg.out.join("stderr"), &stderr);
+    let _ = std::fs::write(cfg.out.join("test-stderr"), &stderr);
     GuestVerdict {
         schema: GUEST_VERDICT_SCHEMA.into(),
         launch_manifest_sha256: m_sha,
