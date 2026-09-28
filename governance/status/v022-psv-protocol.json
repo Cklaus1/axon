@@ -3,7 +3,7 @@
   "note": "DEVELOPMENT evidence for PSV_PROTOCOL_PROVEN. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN until the operator-controlled environment certifies them.",
   "readiness_credit": "none",
   "m1_guest": {
-    "image_source_revision": "8f8e9755aaa93dac223d456ed3e9f1f9c539a9ad",
+    "image_source_revision": "1e4a42994accb74f9d821564cbe43e92101adf83",
     "image_tree_dirty": false,
     "pci_lineage": {
       "certified_revision": "31413ca7",
@@ -12,12 +12,12 @@
     },
     "artifacts": {
       "vmlinux": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
-      "rootfs.sqfs": "ff4e024482fd4feca045d89fab69924352ec0c39a2a25901cf2e16261fd4b629",
-      "axon": "c2850fe14617d3a7991f394da6bc263081342aff36d72f07af1ef46d59d43416",
+      "rootfs.sqfs": "f558b5743895ccd18f8590c9ffc453f01ac5a7bdd41196d81e5cd1142c8c6000",
+      "axon": "1e6f68788b6d24160109174ff82274c31f3bd16d740d2908b1e21544f35908e9",
       "axon-guest-init": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
       "axon-psv-runner": "da41591ff1a73673203fb47ba283e695fa987b198da1fd928acb958a6bc841a6"
     },
-    "profile_manifest_sha256": "c2d74777ae6ec5e412e5fb2431b494513f8c545dd1fe3b618448fe15a1c7d02d",
+    "profile_manifest_sha256": "4153430989cea57dab635ecdf8f2b59aa4ae2523e9f42d1df8b52567dc98c6cc",
     "host": "WSL2-nested KVM (development host, ADR-001 D1)",
     "boot_test": {
       "script": "scripts/psv_guest_boot_test.sh",
@@ -43,9 +43,8 @@
       "The candidate-5 image was built from a4a05f28. The next commit cfg-gates read_completion_key's raw-fd read to unix, because the wasm32 build of the axon binary broke (caught by interp_compiles_for_wasm32_unknown_unknown_r7c). The linux code path is unchanged, so the pinned guest axon is the same logic; only its embedded --version SHA names the earlier commit."
     ],
     "previous_image": {
-      "image_source_revision": "a4a05f282c2e2aed9c7d3d3eb1f4578f8116f6c3",
-      "profile_manifest_sha256": "2408c3420f733d7ac4371c934a720fda5d826fcb178849372c9cb1122574b170",
-      "note": "candidate-5 image; superseded because axon (no module fall-through) changed; runner unchanged"
+      "image_source_revision": "8f8e9755aaa93dac223d456ed3e9f1f9c539a9ad",
+      "profile_manifest_sha256": "c2d74777ae6ec5e412e5fb2431b494513f8c545dd1fe3b618448fe15a1c7d02d"
     }
   },
   "psv_protocol_proven": {
