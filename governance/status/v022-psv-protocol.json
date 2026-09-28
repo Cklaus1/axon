@@ -38,7 +38,8 @@
     },
     "open_observations": [
       "One launcher exit 21 (vmm-died) in the custody case of the first run after an image rebuild; not reproduced in 6 subsequent full runs; its evidence was deleted before keep-on-failure existed, so it is UNEXPLAINED, not fixed.",
-      "The first candidate-3 image build ended with rc 141 and no message after mksquashfs. The only silent-141 pipeline there, `unsquashfs | head -1` under pipefail, was replaced by `sed -n 1p` (ab71e845). The race did not reproduce in 40 isolated runs, so the attribution is by elimination."
+      "The first candidate-3 image build ended with rc 141 and no message after mksquashfs. The only silent-141 pipeline there, `unsquashfs | head -1` under pipefail, was replaced by `sed -n 1p` (ab71e845). The race did not reproduce in 40 isolated runs, so the attribution is by elimination.",
+      "The candidate-5 image was built from a4a05f28. The next commit cfg-gates read_completion_key's raw-fd read to unix, because the wasm32 build of the axon binary broke (caught by interp_compiles_for_wasm32_unknown_unknown_r7c). The linux code path is unchanged, so the pinned guest axon is the same logic; only its embedded --version SHA names the earlier commit."
     ],
     "previous_image": {
       "image_source_revision": "bae904b8600412179d0e3564028a841ccb68c76c",

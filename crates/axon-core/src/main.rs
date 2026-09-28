@@ -6061,10 +6061,15 @@ fn read_completion_key() -> Vec<u8> {
         eprintln!("axon test: --completion-key-stdin: {m}");
         std::process::exit(2)
     };
+    // Raw fd 0 on unix. Elsewhere (the wasm32 build of this binary, which has
+    // no processes and so no guest runner) plain stdin.
+    #[cfg(unix)]
     // SAFETY: fd 0 is borrowed for the read only; ManuallyDrop never closes it.
     let mut fd0 = std::mem::ManuallyDrop::new(unsafe {
         <std::fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(0)
     });
+    #[cfg(not(unix))]
+    let mut fd0 = std::io::stdin();
     let mut line = Vec::with_capacity(160);
     let mut b = [0u8; 1];
     loop {
