@@ -44,7 +44,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "NOT_PROVEN \u2014 candidate 2 (8102d404) failed its independent review",
+    "state": "NOT_PROVEN \u2014 candidate 3b (b22fb35d) passed its frozen run but failed its independent review",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -94,6 +94,40 @@
         "failed": "mutations 229/234: M152, M153, M204 and M218 no longer applied (their code moved in the candidate-3 fixes); M173 survived (its end-to-end killing test is unreachable under --exact)",
         "fix": "rows retargeted to the moved code; M173's kill is now the parser-level substring assertion; all five verified killed in dev"
       }
+    },
+    "candidate_3b": {
+      "commit": "b22fb35d",
+      "micode": "63fe711b",
+      "frozen_run": "fully green: 647 + 1575 axon tests, 5312 micode, 234/234 mutants killed, PCI 18 rows, stage5, readiness, matrix, preflight, real-guest boot 7/7, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_1bc28496-38e",
+        "verdict": "DO_NOT_REGISTER",
+        "reviewers": 8,
+        "register": [
+          "PSV-1",
+          "PSV-2",
+          "PSV-3",
+          "PSV-5",
+          "PSV-6",
+          "FIELD-ORIGIN"
+        ],
+        "blockers": [
+          "PSV-4: a Failed verdict is attested as protected with no completion evidence; a candidate can print a forged failed line for the registered test over a genuine keyed pass (executed reproduction)",
+          "PSV-7: a safety-monitor key that exists only in the mutable store satisfies a protected evaluation's clearance; ACCEPT and activation in a protected scope (executed reproduction)"
+        ],
+        "majors_to_fix": [
+          "derive re-reads the extracted verdict.json without binding it to the drive/serial verdict digest"
+        ],
+        "majors_recorded": [
+          "task_acceptance and verifier_pins.check_suites are store config (PSV-1)",
+          "no loop-side anchor for guest kernel/rootfs/init/qualification digests (PSV-5)",
+          "intake/EVL do not re-check the observation's freshness or epoch (PSV-5, PSV-6)",
+          "the observer runs as Fabric's UID (PSV-6, protected-only)",
+          "protected_scopes is store config (PSV-7)",
+          "the guest effect policy comes from the caller's --grant-registry in protected mode (FIELD-ORIGIN)"
+        ]
+      },
+      "aborted_launch": "wf_bc1b72ef-a54 was launched with a placeholder instead of the brief and stopped at once; it never saw the brief, so it is not a review; the frozen trees were verified untouched"
     }
   }
 }
