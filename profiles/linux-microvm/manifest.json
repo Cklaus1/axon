@@ -3,7 +3,7 @@
   "profile": "linux-microvm-protected",
   "guest_truth": "Linux kernel (NOT the axon-guest-kernel)",
   "source": {
-    "axon_git_rev_at_build": "bae904b8600412179d0e3564028a841ccb68c76c",
+    "axon_git_rev_at_build": "a4a05f282c2e2aed9c7d3d3eb1f4578f8116f6c3",
     "axon_tree_dirty_at_build": false,
     "axon_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-core --no-default-features --bin axon --release --target x86_64-unknown-linux-musl",
     "axon_guest_init_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-guest-init --release --target x86_64-unknown-linux-musl (default features: no dev-allow-no-policy bypass)",
@@ -42,13 +42,13 @@
     },
     "rootfs.sqfs": {
       "path": "dist/guest-linux/rootfs.sqfs",
-      "sha256": "7a255fde457f4fd69dac679bfe2a1f53c28a0b4d599515df94d32ba3ff87c24f",
+      "sha256": "c5f7af901af7069ad531ad3d139fac5b4e7bf20a481b52d604b2041c4c268459",
       "bytes": 5468160
     },
     "axon": {
       "path": "dist/guest-linux/axon",
-      "sha256": "26299f40538652ad2e6d6259e7776d4e786e827b43d642356ba37a2877cdf834",
-      "bytes": 8194352
+      "sha256": "2aa8e53b34b00374ec000b0a1927ecc86139393c1ac0669d765b9bc82cb62fa2",
+      "bytes": 8198448
     },
     "axon-guest-init": {
       "path": "dist/guest-linux/axon-guest-init",
@@ -57,8 +57,8 @@
     },
     "axon-psv-runner": {
       "path": "dist/guest-linux/axon-psv-runner",
-      "sha256": "218c33ca0f8a6a1cc867ce9e2592316a8529408b56d0ea8daf957bad6a71de15",
-      "bytes": 832168
+      "sha256": "da41591ff1a73673203fb47ba283e695fa987b198da1fd928acb958a6bc841a6",
+      "bytes": 836264
     }
   },
   "engine": {

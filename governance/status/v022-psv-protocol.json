@@ -3,7 +3,7 @@
   "note": "DEVELOPMENT evidence for PSV_PROTOCOL_PROVEN. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN until the operator-controlled environment certifies them.",
   "readiness_credit": "none",
   "m1_guest": {
-    "image_source_revision": "bae904b8600412179d0e3564028a841ccb68c76c",
+    "image_source_revision": "a4a05f282c2e2aed9c7d3d3eb1f4578f8116f6c3",
     "image_tree_dirty": false,
     "pci_lineage": {
       "certified_revision": "31413ca7",
@@ -12,12 +12,12 @@
     },
     "artifacts": {
       "vmlinux": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
-      "rootfs.sqfs": "7a255fde457f4fd69dac679bfe2a1f53c28a0b4d599515df94d32ba3ff87c24f",
-      "axon": "26299f40538652ad2e6d6259e7776d4e786e827b43d642356ba37a2877cdf834",
+      "rootfs.sqfs": "c5f7af901af7069ad531ad3d139fac5b4e7bf20a481b52d604b2041c4c268459",
+      "axon": "2aa8e53b34b00374ec000b0a1927ecc86139393c1ac0669d765b9bc82cb62fa2",
       "axon-guest-init": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
-      "axon-psv-runner": "218c33ca0f8a6a1cc867ce9e2592316a8529408b56d0ea8daf957bad6a71de15"
+      "axon-psv-runner": "da41591ff1a73673203fb47ba283e695fa987b198da1fd928acb958a6bc841a6"
     },
-    "profile_manifest_sha256": "3c5eca35bde72e811d1ed89acb53f7dfa168ca4891211d0c032aa5903e695474",
+    "profile_manifest_sha256": "2408c3420f733d7ac4371c934a720fda5d826fcb178849372c9cb1122574b170",
     "host": "WSL2-nested KVM (development host, ADR-001 D1)",
     "boot_test": {
       "script": "scripts/psv_guest_boot_test.sh",
@@ -30,9 +30,10 @@
         "changed candidate",
         "candtest (A22: candidate @[test] under the registered name never runs)",
         "fail (A25 control: a genuine failure is a keyed failed verdict; shows the image's interpreter and runner agree on the failure token)",
-        "splice (A25: an unkeyed failure line over a genuine pass is no verdict; a regression check at the runner, which already refused duplicate lines; the discriminating check is Fabric's psv_dispatch splice test)"
+        "splice (A25: an unkeyed failure line over a genuine pass is no verdict; a regression check at the runner, which already refused duplicate lines; the discriminating check is Fabric's psv_dispatch splice test)",
+        "reach (A27: under policy-io-exec, the exact probe that recovered K on the candidate-4 image is refused: Exec)"
       ],
-      "result": "9/9 PASS on the image above",
+      "result": "10/10 PASS on the image above",
       "repeatability": "the six earlier cases: 36/36 PASS over 6 runs on the candidate-2 image; not yet repeated on this image"
     },
     "open_observations": [
@@ -40,9 +41,9 @@
       "The first candidate-3 image build ended with rc 141 and no message after mksquashfs. The only silent-141 pipeline there, `unsquashfs | head -1` under pipefail, was replaced by `sed -n 1p` (ab71e845). The race did not reproduce in 40 isolated runs, so the attribution is by elimination."
     ],
     "previous_image": {
-      "image_source_revision": "ab71e845629c3319c56b59924700e390c2812ca0",
-      "profile_manifest_sha256": "dccaf6029d2ef5668f62b74aae9b2466aa0339b364073683cc29b200f423d1ab",
-      "note": "candidate-3/3b image; superseded because axon (keyed failures) and axon-psv-runner (keyed outcome) changed"
+      "image_source_revision": "bae904b8600412179d0e3564028a841ccb68c76c",
+      "profile_manifest_sha256": "3c5eca35bde72e811d1ed89acb53f7dfa168ca4891211d0c032aa5903e695474",
+      "note": "candidate-4 image; the PSV-3 reproduction (K recovered from process memory under an Exec grant) ran on it; superseded because axon (key custody) and axon-psv-runner (no Exec) changed"
     }
   },
   "psv_protocol_proven": {
