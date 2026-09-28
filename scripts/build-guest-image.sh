@@ -141,6 +141,13 @@ build_kernel_linux() {
 
 build_rootfs_linux() {
     load_pin
+    # The guest axon must carry the certified PCI interpreter (the survey found
+    # the pinned one predated it): refuse a revision that does not descend from
+    # the PCI certification (governance/proofs/v022-pci/CERTIFICATION.md).
+    git merge-base --is-ancestor 31413ca7 HEAD || {
+        echo "[build-guest-image] ERROR: HEAD does not descend from PCI-certified 31413ca7" >&2
+        exit 1
+    }
     require_sha "$BUSYBOX_SRC" "$BUSYBOX_SHA256" "busybox"
 
     echo "[build-guest-image] Building axon interpreter (static musl, --locked)..."
@@ -175,10 +182,21 @@ build_rootfs_linux() {
         exit 1
     fi
 
+    # axon-psv-runner: the trusted suite-verdict runner (v022-psv-protocol.md §4).
+    echo "[build-guest-image] Building axon-psv-runner (static musl, --locked)..."
+    RUSTFLAGS="-C target-feature=+crt-static" \
+        cargo build --locked -p axon-psv --bin axon-psv-runner \
+            --target x86_64-unknown-linux-musl --release --quiet
+    local RUNNER_BIN="${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/axon-psv-runner"
+    if ! file "$RUNNER_BIN" | grep -q 'static'; then
+        echo "[build-guest-image] ERROR: $RUNNER_BIN is not statically linked" >&2
+        exit 1
+    fi
+
     local STAGE
     STAGE="$(mktemp -d)"
     trap 'rm -rf "${STAGE:-}"' EXIT
-    mkdir -p "$STAGE"/{bin,usr/bin,proc,sys,dev,tmp,work}
+    mkdir -p "$STAGE"/{bin,usr/bin,proc,sys,dev,tmp,work,out,in/candidate,in/suite,in/job}
     cp "$BUSYBOX_SRC" "$STAGE/bin/busybox"
     local applet
     for applet in $("$STAGE/bin/busybox" --list); do
@@ -186,9 +204,10 @@ build_rootfs_linux() {
     done
     cp "$AXON_BIN" "$STAGE/usr/bin/axon"
     cp "$INIT_BIN" "$STAGE/usr/bin/axon-guest-init"
+    cp "$RUNNER_BIN" "$STAGE/usr/bin/axon-psv-runner"
     cp "$PROFILE_DIR/guest-init.sh" "$STAGE/init"
     chmod 0755 "$STAGE/init" "$STAGE/usr/bin/axon" "$STAGE/usr/bin/axon-guest-init" \
-        "$STAGE/bin/busybox"
+        "$STAGE/usr/bin/axon-psv-runner" "$STAGE/bin/busybox"
 
     rm -f "$LDIST/rootfs.sqfs"
     # -all-time/-mkfs-time 0 + -all-root: the image is a function of its inputs.
@@ -196,6 +215,7 @@ build_rootfs_linux() {
         -mkfs-time 0 -all-time 0 -comp gzip -quiet
     cp "$AXON_BIN" "$LDIST/axon"
     cp "$INIT_BIN" "$LDIST/axon-guest-init"
+    cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"
     echo "[build-guest-image] rootfs → $LDIST/rootfs.sqfs ($(du -sh "$LDIST/rootfs.sqfs" | cut -f1))"
 }
 

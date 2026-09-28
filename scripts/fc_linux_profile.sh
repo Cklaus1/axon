@@ -59,6 +59,9 @@
 #       policy other than the one the host embedded, or none (NOT admissible)
 #   26  engine unbound: the VMM that ran is not the pinned firecracker (the
 #       jailer's chroot copy or the running image differ; NOT admissible)
+#   27  verdict unbound (PSV mode): the verdict on the returned drive is not the
+#       one the guest's /init hashed on the serial console, or the guest named
+#       another launch manifest (NOT admissible)
 #
 # DIR on return: result.json, serial.log, jailer.log, workspace.img (the
 # returned drive), out/ (files extracted from the drive WITHOUT mounting it on
@@ -120,6 +123,15 @@ if [[ "${1:-}" == "--verify-result" ]]; then
     SP="$(sed -n 's/.*B263-POLICY sha=\([0-9a-f]*\).*/\1/p' "$VD/serial.log" | tr -d '\r' | head -1)"
     RP="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("policy_sha256") or "")' "$VD/result.json" 2>/dev/null)"
     echo "{\"drive\":\"$D\",\"serial\":\"$S\",\"result\":\"$R\",\"policy_serial\":\"$SP\",\"policy_result\":\"$RP\"}"
+    # PSV: the returned drive's verdict, the serial digest and the result's must agree.
+    PV="$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("psv"); print("" if p is None else (p.get("verdict_sha256") or "-"))' "$VD/result.json" 2>/dev/null)"
+    if [[ -n "$PV" ]]; then
+        T="$(mktemp -d)"
+        debugfs -R "dump /out/verdict.json $T/v" "$VD/workspace.img" >/dev/null 2>&1
+        DV="$( [[ -f "$T/v" ]] && sha256sum "$T/v" | cut -d' ' -f1 )"; rm -rf "$T"
+        SV="$(grep -a 'PSV-VERDICT-INIT sha256=' "$VD/serial.log" | head -1 | sed -n 's/.*sha256=\([0-9a-f]\{64\}\).*/\1/p')"
+        [[ -n "$DV" && "$DV" == "$SV" && "$DV" == "$PV" ]] || exit 27
+    fi
     [[ -n "$D" && "$D" == "$S" && "$D" == "$R" && -n "$RP" && "$SP" == "$RP" ]] && exit 0
     exit 23
 fi
@@ -135,6 +147,11 @@ PROGRAM="" OUT="" VCPUS=1 ADIR="" MEM_MIB=256 CG_MEM_MAX="" CG_PIDS_MAX=16
 CG_CPU_MAX="100000 100000" WS_MIB=64 TIMEOUT_S=60 ID="" MANIFEST="$REPO/dist/guest-linux/manifest.json"
 PUTS=()
 POLICY=""
+# PSV mode (v022-psv-protocol.md §4): a registered-suite verdict instead of a
+# program run. Three STRUCTURALLY SEPARATE read-only drives — candidate, suite,
+# job (launch manifest + per-attempt secret) — and the manifest digest Fabric
+# named, on the kernel cmdline as `axon.psv.manifest=<sha256>`.
+PSV_CAND="" PSV_SUITE="" PSV_JOB="" PSV_MSHA=""
 
 die_usage() { echo "fc_linux_profile: $*" >&2; exit 22; }
 
@@ -156,10 +173,29 @@ while [[ $# -gt 0 ]]; do
         --id) ID="$2"; shift 2 ;;
         --manifest) MANIFEST="$2"; shift 2 ;;
         --artifacts-dir) ADIR="$2"; shift 2 ;;
+        --psv-candidate) PSV_CAND="$2"; shift 2 ;;
+        --psv-suite) PSV_SUITE="$2"; shift 2 ;;
+        --psv-job) PSV_JOB="$2"; shift 2 ;;
+        --psv-manifest-sha) PSV_MSHA="$2"; shift 2 ;;
         *) die_usage "unknown argument $1" ;;
     esac
 done
-[[ -n "$PROGRAM" && -f "$PROGRAM" ]] || die_usage "--program FILE required"
+PSV=false
+if [[ -n "$PSV_CAND$PSV_SUITE$PSV_JOB$PSV_MSHA" ]]; then
+    PSV=true
+    [[ -d "$PSV_CAND" && -d "$PSV_SUITE" && -d "$PSV_JOB" && "$PSV_MSHA" =~ ^[0-9a-f]{64}$ ]] \
+        || die_usage "PSV mode needs --psv-candidate DIR --psv-suite DIR --psv-job DIR --psv-manifest-sha SHA256"
+    [[ -z "$PROGRAM" && ${#PUTS[@]} -eq 0 ]] || die_usage "PSV mode takes no --program/--put: the suite and candidate are the inputs"
+    [[ -f "$PSV_JOB/launch-manifest.json" && -f "$PSV_JOB/completion-secret" ]] \
+        || die_usage "--psv-job must hold launch-manifest.json and completion-secret"
+    [[ "$(ls -A "$PSV_JOB" | sort | tr '\n' ' ')" == "completion-secret launch-manifest.json " ]] \
+        || die_usage "--psv-job must hold exactly launch-manifest.json and completion-secret"
+    [[ "$(sha256sum "$PSV_JOB/launch-manifest.json" | cut -d' ' -f1)" == "$PSV_MSHA" ]] \
+        || die_usage "the job's launch-manifest.json is not the --psv-manifest-sha Fabric named"
+    [[ "$(stat -c %s "$PSV_JOB/completion-secret")" == 32 ]] || die_usage "completion-secret must be 32 bytes"
+else
+    [[ -n "$PROGRAM" && -f "$PROGRAM" ]] || die_usage "--program FILE required"
+fi
 [[ -n "$OUT" ]] || die_usage "--out DIR required"
 # the jailer names the chroot after the exec file's basename; JAIL_DIR below
 # assumes `firecracker`
@@ -194,7 +230,7 @@ ROOTFS="$ADIR/rootfs.sqfs"
 PIN_KERNEL="$(read_pin vmlinux)"; PIN_ROOTFS="$(read_pin rootfs.sqfs)"; PIN_AXON="$(read_pin axon)"
 GOT_KERNEL="$(sha256sum "$KERNEL" | cut -d' ' -f1)"
 GOT_ROOTFS="$(sha256sum "$ROOTFS" | cut -d' ' -f1)"
-PROG_SHA="$(sha256sum "$PROGRAM" | cut -d' ' -f1)"
+PROG_SHA=""; [[ "$PSV" == true ]] || PROG_SHA="$(sha256sum "$PROGRAM" | cut -d' ' -f1)"
 # refuse_prelaunch REASON [EXTRA_JSON_FIELDS] — nothing has been acquired yet
 refuse_prelaunch() {
     python3 - "$OUT/result.json" "$ID" "$1" "${2:-{\}}" <<'PY'
@@ -296,6 +332,7 @@ PY
     POLICY_WORD="axon.policy=$(base64 -w0 < "$EMBED")"
 fi
 BOOT_ARGS_FULL="$BOOT_ARGS${POLICY_WORD:+ $POLICY_WORD}"
+[[ "$PSV" == true ]] && BOOT_ARGS_FULL="$BOOT_ARGS_FULL axon.psv.manifest=$PSV_MSHA"
 CMDLINE_BYTES="$(printf '%s' "$BOOT_ARGS_FULL" | wc -c)"
 (( CMDLINE_BYTES <= CMDLINE_MAX )) \
     || refuse_prelaunch "kernel cmdline would be $CMDLINE_BYTES bytes (> $CMDLINE_MAX): the guest kernel may truncate the policy word" "{\"cmdline_bytes\":$CMDLINE_BYTES}"
@@ -379,7 +416,7 @@ trap 'STATUS="interrupted"; RC=21; exit 21' INT TERM
 # ── 2. workspace drive (job in, result out) ───────────────────────────────────
 STAGE="$(mktemp -d)"
 mkdir -p "$STAGE/job" "$STAGE/out"
-cp "$PROGRAM" "$STAGE/job/program.ax"
+[[ "$PSV" == true ]] || cp "$PROGRAM" "$STAGE/job/program.ax"
 for p in "${PUTS[@]:-}"; do
     [[ -z "$p" ]] && continue
     src="${p%%:*}"; dest="${p#*:}"
@@ -391,6 +428,31 @@ mkfs.ext4 -q -F -O ^has_journal -E root_owner=0:0 -d "$STAGE" "$OUT/workspace.im
     || { rm -rf "$STAGE"; STATUS="launch-refused"; RC=22; exit 22; }
 rm -rf "$STAGE"
 WS_IN_SHA="$(sha256sum "$OUT/workspace.img" | cut -d' ' -f1)"
+
+# PSV inputs: one read-only ext4 image each. Ownership is root and modes are
+# normalised (readable, not writable; the EXECUTABLE bit — part of the tree
+# digest — is kept), so the unprivileged test uid in the guest can read the
+# trees but nothing is writable. The job image holds the secret 0400 root.
+PSV_IMGS=()
+declare -A PSV_IMG_SHA=()
+psv_image() {  # NAME SRC
+    local st; st="$(mktemp -d)"
+    cp -a "$2/." "$st/" || return 1
+    chown -R -h root:root "$st"
+    find "$st" -type d -exec chmod 0755 {} +
+    find "$st" -type f -perm /111 -exec chmod 0755 {} +
+    find "$st" -type f ! -perm /111 -exec chmod 0644 {} +
+    if [[ "$1" == job ]]; then chmod 0444 "$st/launch-manifest.json"; chmod 0400 "$st/completion-secret"; fi
+    local kib; kib=$(( $(du -sk "$st" | cut -f1) * 2 + 8192 ))
+    truncate -s "${kib}K" "$OUT/$1.img"
+    mkfs.ext4 -q -F -O ^has_journal -E root_owner=0:0 -d "$st" "$OUT/$1.img" || { rm -rf "$st"; return 1; }
+    rm -rf "$st"
+    PSV_IMGS+=("$1"); PSV_IMG_SHA[$1]="$(sha256sum "$OUT/$1.img" | cut -d' ' -f1)"
+}
+if [[ "$PSV" == true ]]; then
+    psv_image candidate "$PSV_CAND" && psv_image suite "$PSV_SUITE" && psv_image job "$PSV_JOB" \
+        || { STATUS="launch-refused"; RC=22; exit 22; }
+fi
 
 # ── 3. chroot contents (acquired) ─────────────────────────────────────────────
 mkdir -p "$CHROOT"; ACQUIRED+=("chroot:$JAIL_DIR")
@@ -419,6 +481,16 @@ chown root:root "$CHROOT/vmlinux" "$CHROOT/rootfs.sqfs"; chmod 0444 "$CHROOT/vml
 # workspace goes in via a hard link-free copy so the VMM owns only that file
 mv "$OUT/workspace.img" "$CHROOT/workspace.img"
 chown "$PUID:$PGID" "$CHROOT/workspace.img"; chmod 0600 "$CHROOT/workspace.img"
+PSV_DRIVES=""
+for n in "${PSV_IMGS[@]:-}"; do
+    [[ -z "$n" ]] && continue
+    mv "$OUT/$n.img" "$CHROOT/$n.img"
+    # Read-only at the FILE level too. The job image holds the secret, so the
+    # VMM uid may read it (to serve the guest) and nobody else.
+    chown "root:$PGID" "$CHROOT/$n.img"; chmod 0440 "$CHROOT/$n.img"
+    PSV_DRIVES="$PSV_DRIVES,
+    {\"drive_id\": \"$n\", \"path_on_host\": \"$n.img\", \"is_root_device\": false, \"is_read_only\": true}"
+done
 cat > "$CHROOT/vm.json" <<EOF
 {
   "boot-source": {
@@ -427,7 +499,7 @@ cat > "$CHROOT/vm.json" <<EOF
   },
   "drives": [
     {"drive_id": "rootfs", "path_on_host": "rootfs.sqfs", "is_root_device": true, "is_read_only": true},
-    {"drive_id": "workspace", "path_on_host": "workspace.img", "is_root_device": false, "is_read_only": false}
+    {"drive_id": "workspace", "path_on_host": "workspace.img", "is_root_device": false, "is_read_only": false}$PSV_DRIVES
   ],
   "machine-config": {"vcpu_count": $VCPUS, "mem_size_mib": $MEM_MIB, "smt": false},
   "network-interfaces": []
@@ -570,6 +642,15 @@ ENGINE_BOUND=true
 [[ -z "${ENGINE_RUN_SHA:-}" || "$ENGINE_RUN_SHA" == "$PIN_FC" ]] || ENGINE_BOUND=false
 DRIVE_OUT_SHA=""; [[ -f "$OUT/out/stdout" ]] && DRIVE_OUT_SHA="$(sha256sum "$OUT/out/stdout" | cut -d' ' -f1)"
 WORKLOAD_EXIT=""; [[ -f "$OUT/out/exit" ]] && WORKLOAD_EXIT="$(tr -d '\n' < "$OUT/out/exit")"
+# PSV: the verdict on the drive must be the one the guest's /init hashed and
+# printed (first PSV-VERDICT line, printed by /init after the runner exits).
+PSV_BOUND=true SERIAL_VERDICT_SHA="" DRIVE_VERDICT_SHA="" SERIAL_PSV_MANIFEST=""
+if [[ "$PSV" == true ]]; then
+    SERIAL_VERDICT_SHA="$(grep -a 'PSV-VERDICT-INIT sha256=' "$OUT/serial.log" | head -1 | sed -n 's/.*PSV-VERDICT-INIT sha256=\([0-9a-f]\{64\}\).*/\1/p')"
+    SERIAL_PSV_MANIFEST="$(grep -a -m1 'PSV-MANIFEST sha256=' "$OUT/serial.log" | sed -n 's/.*PSV-MANIFEST sha256=\([0-9a-f]\{64\}\).*/\1/p')"
+    [[ -f "$OUT/out/verdict.json" ]] && DRIVE_VERDICT_SHA="$(sha256sum "$OUT/out/verdict.json" | cut -d' ' -f1)"
+    [[ -n "$DRIVE_VERDICT_SHA" && "$DRIVE_VERDICT_SHA" == "$SERIAL_VERDICT_SHA" && "$SERIAL_PSV_MANIFEST" == "$PSV_MSHA" ]] || PSV_BOUND=false
+fi
 
 if [[ "$STATUS" != "timeout" ]]; then
     if [[ "$ENGINE_BOUND" != true ]]; then
@@ -580,6 +661,8 @@ if [[ "$STATUS" != "timeout" ]]; then
         STATUS="policy-unbound"; RC=25
     elif [[ -z "$DRIVE_OUT_SHA" || "$DRIVE_OUT_SHA" != "$SERIAL_OUT_SHA" || "$WORKLOAD_EXIT" != "$SERIAL_EXIT" ]]; then
         STATUS="output-unbound"; RC=23
+    elif [[ "$PSV_BOUND" != true ]]; then
+        STATUS="verdict-unbound"; RC=27
     elif [[ "$WORKLOAD_EXIT" == 0 ]]; then
         STATUS="ok"; RC=0
     else
@@ -632,6 +715,14 @@ r = {
   "vmm_exit": ${VMM_EXIT_REAL:-None},
   "outputs": outputs,
   "output_bound": "$DRIVE_OUT_SHA" != "" and "$DRIVE_OUT_SHA" == "$SERIAL_OUT_SHA",
+  "psv": ({"launch_manifest_sha256": "$PSV_MSHA",
+           "serial_manifest_sha256": "$SERIAL_PSV_MANIFEST" or None,
+           "verdict_sha256": "$DRIVE_VERDICT_SHA" or None,
+           "serial_verdict_sha256": "$SERIAL_VERDICT_SHA" or None,
+           "inputs": {"candidate_img_sha256": "${PSV_IMG_SHA[candidate]:-}",
+                      "suite_img_sha256": "${PSV_IMG_SHA[suite]:-}",
+                      "job_img_sha256": "${PSV_IMG_SHA[job]:-}"},
+           "bound": "$PSV_BOUND" == "true"} if "$PSV" == "true" else None),
   "wall_ms": ($END_NS - $START_NS) // 1000000,
   "host_observed": json.loads(open(os.path.join(out, "host_observed.json")).read()) if os.path.exists(os.path.join(out, "host_observed.json")) else None,
 }

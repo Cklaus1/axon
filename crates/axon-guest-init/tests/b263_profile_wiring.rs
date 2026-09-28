@@ -156,8 +156,23 @@ fn the_linux_rootfs_build_installs_a_default_features_axon_guest_init() {
 #[test]
 fn the_profile_manifest_pins_axon_guest_init() {
     let s = read("scripts/linux_profile_manifest.py");
-    assert!(
-        s.contains(r#"for name in ("vmlinux", "rootfs.sqfs", "axon", "axon-guest-init"):"#),
-        "linux_profile_manifest.py must pin axon-guest-init's sha256"
-    );
+    let pinned = s
+        .lines()
+        .find(|l| l.trim_start().starts_with("for name in ("))
+        .expect("linux_profile_manifest.py pins artifacts in a `for name in (…)` loop");
+    // Every binary that holds or enforces authority in the guest is pinned:
+    // the policy channel (axon-guest-init) and the suite-verdict runner that
+    // holds the per-attempt secret (axon-psv-runner).
+    for name in [
+        "vmlinux",
+        "rootfs.sqfs",
+        "axon",
+        "axon-guest-init",
+        "axon-psv-runner",
+    ] {
+        assert!(
+            pinned.contains(&format!("\"{name}\"")),
+            "linux_profile_manifest.py must pin {name}'s sha256: {pinned}"
+        );
+    }
 }

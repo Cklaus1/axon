@@ -62,6 +62,11 @@ def main():
                                      "--locked -p axon-guest-init --release "
                                      "--target x86_64-unknown-linux-musl (default features: "
                                      "no dev-allow-no-policy bypass)",
+            "axon_psv_runner_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build "
+                                     "--locked -p axon-psv --bin axon-psv-runner --release "
+                                     "--target x86_64-unknown-linux-musl",
+            "pci_lineage": {"certified_revision": "31413ca7",
+                            "rule": "axon_git_rev_at_build descends from it (git merge-base --is-ancestor)"},
             "rustc": first_line(["rustc", "--version"]),
         },
         "kernel": {
@@ -95,7 +100,9 @@ def main():
     # axon-guest-init is pinned like axon: it is the in-guest policy channel
     # (reads `axon.policy=` from the kernel cmdline), so a swapped binary is a
     # swapped policy enforcer.
-    for name in ("vmlinux", "rootfs.sqfs", "axon", "axon-guest-init"):
+    # axon-psv-runner is the trusted suite-verdict runner (v022-psv-protocol.md
+    # §4): it holds the per-attempt secret, so it is pinned like the others.
+    for name in ("vmlinux", "rootfs.sqfs", "axon", "axon-guest-init", "axon-psv-runner"):
         p = os.path.join(dist, name)
         manifest["artifacts"][name] = {
             "path": os.path.join("dist/guest-linux", name),

@@ -62,14 +62,36 @@ fail() {
 }
 
 mount -t ext4 -o nosuid,nodev /dev/vdb /work || fail "workspace-mount"
-[ -f /work/job/program.ax ] || fail "no-program"
+
+# PSV mode (v022-psv-protocol.md §4): the cmdline names a launch manifest. The
+# inputs are three READ-ONLY drives, mounted nodev,nosuid,noexec:
+#   /dev/vdc -> /in/candidate   /dev/vdd -> /in/suite   /dev/vde -> /in/job
+# and the trusted runner (axon-psv-runner) checks them before anything runs.
+set -f
+PSV_MSHA=""; PSV_WORDS=0
+for w in $(cat /proc/cmdline); do
+    case "$w" in axon.psv.manifest=*) PSV_MSHA="${w#axon.psv.manifest=}"; PSV_WORDS=$((PSV_WORDS + 1)) ;; esac
+done
+set +f
+[ "$PSV_WORDS" -le 1 ] || fail "psv-ambiguous"
+if [ -n "$PSV_MSHA" ]; then
+    mount -t ext4 -o ro,nodev,nosuid,noexec /dev/vdc /in/candidate || fail "psv-candidate-mount"
+    mount -t ext4 -o ro,nodev,nosuid,noexec /dev/vdd /in/suite || fail "psv-suite-mount"
+    mount -t ext4 -o ro,nodev,nosuid,noexec /dev/vde /in/job || fail "psv-job-mount"
+    echo "PSV-MANIFEST sha256=$PSV_MSHA"
+else
+    [ -f /work/job/program.ax ] || fail "no-program"
+fi
 rm -rf /work/out
 mkdir -p /work/out
+[ -n "$PSV_MSHA" ] && { mount --bind /work/out /out || fail "psv-out-bind"; }
 
 AXON_SHA=$(sha256sum /usr/bin/axon | cut -d' ' -f1)
-PROG_SHA=$(sha256sum /work/job/program.ax | cut -d' ' -f1)
+PROG_SHA=""
+[ -n "$PSV_MSHA" ] || PROG_SHA=$(sha256sum /work/job/program.ax | cut -d' ' -f1)
 INIT_SHA=$(sha256sum /usr/bin/axon-guest-init | cut -d' ' -f1)
-echo "B263-LOADED axon=$AXON_SHA program=$PROG_SHA init=$INIT_SHA"
+RUNNER_SHA=$(sha256sum /usr/bin/axon-psv-runner 2>/dev/null | cut -d' ' -f1)
+echo "B263-LOADED axon=$AXON_SHA program=$PROG_SHA init=$INIT_SHA runner=$RUNNER_SHA"
 
 # Report the policy the host put on the cmdline. `set -f`: a cmdline word must
 # not be glob-expanded. The digest is over the DECODED JSON bytes, i.e. the
@@ -132,6 +154,12 @@ echo "B263-START"
     # AXON_BUDGET_TOKENS, and the labels). `env -i` also means a
     # `NAME=value` cmdline word the kernel copied into PID 1's environment
     # cannot reach axon-guest-init either.
+    if [ -n "$PSV_MSHA" ]; then
+        # The runner takes no arguments: its paths are fixed and the manifest
+        # digest is the cmdline word it reads itself.
+        exec env -i PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \
+            /usr/bin/axon-guest-init /usr/bin/axon-psv-runner
+    fi
     # shellcheck disable=SC2086
     exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \
         /usr/bin/axon-guest-init /usr/bin/axon run /work/job/program.ax $ARGS
@@ -151,6 +179,16 @@ printf '{"netdevs":"%s","blockdevs":"%s","root_mount_mode":"%s","axon_sha256":"%
     > /work/out/guest.json
 
 OUT_SHA=$(sha256sum /work/out/stdout | cut -d' ' -f1)
+if [ -n "$PSV_MSHA" ]; then
+    # /init's OWN digest of the verdict file (the runner's line is only on
+    # /out/stdout); the host compares it with the returned drive.
+    if [ -f /work/out/verdict.json ]; then
+        echo "PSV-VERDICT-INIT sha256=$(sha256sum /work/out/verdict.json | cut -d' ' -f1)"
+    else
+        echo "PSV-VERDICT-INIT none"
+    fi
+    umount /out 2>/dev/null
+fi
 sync
 umount /work
 echo "B263-OUT stdout=$OUT_SHA exit=$RC"
