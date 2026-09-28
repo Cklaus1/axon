@@ -83,6 +83,7 @@ originate from one of those today.**
 | F9 | verifier identity / key | operator trust root `/etc/axon/trust/verifier/` | the loop store config: `trusted_verifiers` + `verifier_keys` (`axon-loop/src/store.rs:48, 67`), a file written by whoever sets up the experiment | **GAP**: the keys that authenticate every verdict are not under the operator root |
 | F10 | trial / attempt / operation | the experiment (axon-loop), bound by Fabric | request → Fabric binding → attestation (`attestation.rs:56-60`) | OK |
 | F11 | backend profile | Fabric, signed in the attestation | Fabric | OK as a claim; its truth depends on F5, F8 and M4 |
+| F13 | Fabric attestation signing key | the operator host config, readable only by the Fabric UID | named INSIDE the caller-supplied check registry (`signer.key_path`, resolved relative to it, `bin/axon-fabric.rs:151-181`) | **GAP**: the key that signs every verdict is located by a caller path. Closed by O1 (`v022-psv-protocol.md` §2) |
 | F12 | readiness verdict | the operator-installed verifier | `/etc/axon/trust/verifier.json`-pinned `verify-readiness` (`b590f536`) | OK |
 
 ## The mechanisms to build (four, plus two origin fixes)
