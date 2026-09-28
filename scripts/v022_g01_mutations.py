@@ -835,6 +835,9 @@ MUTATIONS = [
     ('M264', 'PSV-7 (r2): a protected clearance re-verifies its stored monitor signature', 'crates/axon-loop/src/admission.rs', '                                    && clearance_verifies(tx, &config, report, signature_ref.as_ref()))', '                                    && signature_ref.is_some() | true)', 'axon-loop', '--test protected_class', 'a_forged_unsigned_clearance_clears_nothing'),
     ('M265', 'PSV-3 (r2): a protected host runs nothing outside the protected profile', 'crates/axon-fabric/src/submit.rs', '        if cfg.protected_host.is_some() && p.id != backend::LINUX_MICROVM_PROTECTED.id {', '        if false && p.id != backend::LINUX_MICROVM_PROTECTED.id {', 'axon-fabric', '--test psv_dispatch', 'a_protected_host_runs_nothing_outside_the_protected_profile'),
     ('M266', "FIELD-ORIGIN (r3): the launcher's Python never imports from the caller's cwd", 'scripts/fc_linux_profile.sh', '    R="$(python3 -I -c \'import json,sys;', '    R="$(python3 -c \'import json,sys;', 'axon-fabric', '--test launcher_isolation', 'the_launchers_python_never_imports_from_the_callers_cwd'),
+    ('M267', "PSV-7 (r3): a counted trial's episode ran its arm's policy", 'crates/axon-loop/src/admission.rs', '    if ep.policy_ref != arm.policy_ref {', '    if false && ep.policy_ref != arm.policy_ref {', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
+    ('M268', "PSV-7 (r3): a counted trial's outcome is its signed verdict", 'crates/axon-loop/src/admission.rs', '        (crate::evl::Outcome::VerifiedPass, RV::Passed)\n        | (crate::evl::Outcome::Fail, RV::Failed) => {}', '        (_, _) if true => {}', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
+    ('M269', "PSV-7 (r3): a counted trial's context signature re-verifies", 'crates/axon-loop/src/admission.rs', '    )\n    .map_err(|e| fail(format!("context signature: {e}")))?;', '    )\n    .ok();', 'axon-loop', '--test protected_class', 'a_protected_record_must_agree_with_its_re_verified_documents'),
 ]
 
 
@@ -859,7 +862,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # (Fabric's own exit-0 check) remains killed.
 RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 267)}
+PSV_IDS = {f"M{n}" for n in range(137, 270)}
 
 
 def in_scope(mid, scope):

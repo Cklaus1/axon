@@ -306,6 +306,7 @@ fn reverify_protected(
     tx: &Tx,
     config: &crate::store::Config,
     eval: &crate::evl::EvaluationRecord,
+    arm: &crate::evl::ArmResult,
     t: &crate::evl::TrialResult,
     v: &crate::evl::VerificationEvidence,
     rc: &axon_loop_contracts::ExecutionReceipt,
@@ -328,6 +329,14 @@ fn reverify_protected(
     if ep.identity.trial_id != t.trial_id || ep.identity.task_id != t.task_id {
         return Err(fail("its episode is another trial's".into()));
     }
+    // …ran THIS arm's policy (dev review round wf_bf757240-925: a forged
+    // record swapped the arms' policy_refs).
+    if ep.policy_ref != arm.policy_ref {
+        return Err(fail(format!(
+            "its episode ran policy {}, not its arm's {}",
+            ep.policy_ref, arm.policy_ref
+        )));
+    }
     let text = |kind: &str, r: &Ref| tx.store.get_cas_text(kind, r);
     let req_text = text("fabric-requests", &v.request_ref)?;
     let rc_text = text("fabric-receipts", &v.receipt_ref)?;
@@ -338,7 +347,7 @@ fn reverify_protected(
         .map(|r| text("fabric-psv-evidence", r))
         .transpose()?;
     let subjects: BTreeSet<OpaqueRef> = eval.subject_issuers.iter().cloned().collect();
-    crate::intake::verify_check_evidence(
+    let (_, verified_rc, _, _) = crate::intake::verify_check_evidence(
         &ep,
         &req_text,
         &rc_text,
@@ -348,6 +357,55 @@ fn reverify_protected(
         psv.as_deref(),
     )
     .map_err(|e| fail(e.to_string()))?;
+    // The recorded outcome IS the verdict the verifier signed (dev review
+    // round wf_bf757240-925: a signed FAILED verdict counted as a pass).
+    use axon_loop_contracts::ReceiptVerification as RV;
+    match (t.outcome, &verified_rc.verification) {
+        (crate::evl::Outcome::VerifiedPass, RV::Passed)
+        | (crate::evl::Outcome::Fail, RV::Failed) => {}
+        (o, r) => {
+            return Err(fail(format!(
+                "its recorded outcome {o:?} is not the signed verdict {r:?}"
+            )))
+        }
+    }
+    // …and its preflight context carries the observer's signature, stored
+    // and re-verified under the operator's observer root (not the
+    // `context_signed_by` string).
+    let ctx_text = text("contexts", &ep.context_ref)?;
+    let ctx: serde_json::Value =
+        serde_json::from_str(&ctx_text).map_err(|e| fail(format!("context: {e}")))?;
+    let sig_ref = t
+        .context_signature_ref
+        .as_ref()
+        .ok_or_else(|| fail("it cites no context signature".into()))?;
+    let sig: serde_json::Value = serde_json::from_str(&text("context-signatures", sig_ref)?)
+        .map_err(|e| fail(format!("context signature: {e}")))?;
+    let who = OpaqueRef::new(ctx["observed_issuer_ref"].as_str().unwrap_or_default())
+        .map_err(|e| fail(format!("context observer: {e}")))?;
+    if !config.observers().contains(&who) {
+        return Err(fail(format!(
+            "its context observer {who} is one the operator no longer trusts"
+        )));
+    }
+    let key = crate::store::Config::rooted_key(
+        &config.observer_keys,
+        &who,
+        axon_loop_contracts::operator_trust::TrustAuthority::Observer,
+    )
+    .map_err(|e| {
+        fail(format!(
+            "its protected context is not authenticated: observer {who} is not held with that key by the operator root: {e}"
+        ))
+    })?;
+    axon_loop_contracts::attestation::verify_document(
+        &sig,
+        crate::evl::CONTEXT_DOMAIN,
+        &who,
+        &ctx,
+        key,
+    )
+    .map_err(|e| fail(format!("context signature: {e}")))?;
     // …and its execution leg, from its own documents (PSV-7).
     let att_ref = v
         .execution_attestation_ref
@@ -537,7 +595,7 @@ pub(crate) fn derive(
                 },
             )?;
             if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
-                reverify_protected(tx, &config, eval, t, v, &rc)?;
+                reverify_protected(tx, &config, eval, arm, t, v, &rc)?;
             }
         }
     }

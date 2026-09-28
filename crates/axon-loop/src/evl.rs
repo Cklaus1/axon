@@ -229,6 +229,11 @@ pub struct TrialResult {
     /// every re-derivation can require that authority still to be current.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_signed_by: Option<SignedBy>,
+    /// PROTECTED class, counted trial: the observer's detached signature over
+    /// its context (`context-signatures/`), so admission RE-VERIFIES it rather
+    /// than trusting `context_signed_by` (dev review round wf_bf757240-925).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_signature_ref: Option<Ref>,
     /// Counted trial, any class: the observer its preflight context was
     /// admitted under (a development evaluation judges it by this name), so a
     /// re-derivation can require that observer to be trusted still.
@@ -801,6 +806,14 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                             key_id,
                         })
                 }),
+            context_signature_ref: delivered
+                .get(&key)
+                .filter(|d| {
+                    frozen.evaluation_class == crate::plan::EvaluationClass::Protected
+                        && matches!(outcome, Outcome::VerifiedPass | Outcome::Fail)
+                        && !d.ctx_sig.is_null()
+                })
+                .and_then(|d| digest_value(&d.ctx_sig).ok()),
         });
     }
     for (id, arm) in arms.iter_mut() {
@@ -851,6 +864,9 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
     for t in &r.trials {
         if !t.verification_psv_evidence.is_null() {
             store.put_cas("fabric-psv-evidence", &t.verification_psv_evidence)?;
+        }
+        if !t.context_signature.is_null() {
+            store.put_cas("context-signatures", &t.context_signature)?;
         }
         if !t.acf_attestation.is_null() {
             store.put_cas("acf-requests", &t.acf_request)?;

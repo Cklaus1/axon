@@ -1254,3 +1254,59 @@ fn only_protected_class_evidence_counts_in_a_protected_evaluation() {
         );
     }
 }
+
+/// Round-3 joins: a counted protected trial's stored record must agree with
+/// its re-verified documents (arm policy, signed outcome, signed context).
+#[test]
+fn a_protected_record_must_agree_with_its_re_verified_documents() {
+    let cases: [(&str, &str); 3] = [
+        ("policy", "ran policy"),
+        ("outcome", "is not the signed verdict"),
+        ("context", "context signature"),
+    ];
+    for (case, why) in cases {
+        let exp = format!("r3-{case}");
+        let w = world();
+        protect(&w.s);
+        pin_protected_backend(&w.s);
+        freeze_plan(&w.s, &exp, &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+        assign_specs(&w.s, &exp, &specs_for(&w));
+        let mut v = evl_request(&exp, &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+        on_protected_backend(&mut v);
+        clear_all(&w.s, &v);
+        let (rec, _) = evaluate(&w.s, &v).unwrap();
+        let cand = w.cand_ref.to_string();
+        let junk =
+            w.s.put_cas("context-signatures", &json!({"schema": "junk"}))
+                .unwrap();
+        let fe = forge_eval(&w, &exp, &rec, |j| match case {
+            "policy" => {
+                let arms = j["arms"].as_array_mut().unwrap();
+                let (a, b) = (arms[0]["policy_ref"].clone(), arms[1]["policy_ref"].clone());
+                arms[0]["policy_ref"] = b;
+                arms[1]["policy_ref"] = a;
+            }
+            "outcome" => {
+                for arm in j["arms"].as_array_mut().unwrap() {
+                    if arm["policy_ref"] == cand {
+                        arm["trials"][0]["outcome"] = json!("fail");
+                        let vp = arm["verified_pass"].as_u64().unwrap();
+                        let f = arm["fail"].as_u64().unwrap();
+                        arm["verified_pass"] = json!(vp - 1);
+                        arm["fail"] = json!(f + 1);
+                    }
+                }
+            }
+            _ => {
+                for arm in j["arms"].as_array_mut().unwrap() {
+                    for t in arm["trials"].as_array_mut().unwrap() {
+                        if t["verification"].is_object() {
+                            t["context_signature_ref"] = json!(junk);
+                        }
+                    }
+                }
+            }
+        });
+        refused_or_not_accepted(&w, &exp, &fe, why);
+    }
+}
