@@ -3,10 +3,15 @@
   "profile": "linux-microvm-protected",
   "guest_truth": "Linux kernel (NOT the axon-guest-kernel)",
   "source": {
-    "axon_git_rev_at_build": "75faf48d84401be9e145837a33073c93b62f18a2",
+    "axon_git_rev_at_build": "859283ea55fe19fa40ad2ebd650cda63b8f477dd",
     "axon_tree_dirty_at_build": false,
     "axon_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-core --no-default-features --bin axon --release --target x86_64-unknown-linux-musl",
     "axon_guest_init_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-guest-init --release --target x86_64-unknown-linux-musl (default features: no dev-allow-no-policy bypass)",
+    "axon_psv_runner_build": "RUSTFLAGS='-C target-feature=+crt-static' cargo build --locked -p axon-psv --bin axon-psv-runner --release --target x86_64-unknown-linux-musl",
+    "pci_lineage": {
+      "certified_revision": "31413ca7",
+      "rule": "axon_git_rev_at_build descends from it (git merge-base --is-ancestor)"
+    },
     "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)"
   },
   "kernel": {
@@ -27,7 +32,7 @@
   },
   "guest_init": {
     "path": "profiles/linux-microvm/guest-init.sh",
-    "sha256": "d5361a10b66e630f5fcd7d072b7cf5342f2acc7271f2a635ad7f16773b32ecd1"
+    "sha256": "62a1d1887532b1a0e7d7f43bf46b59db0b906c75b10004f07fd195b84052cad3"
   },
   "artifacts": {
     "vmlinux": {
@@ -37,18 +42,23 @@
     },
     "rootfs.sqfs": {
       "path": "dist/guest-linux/rootfs.sqfs",
-      "sha256": "4c8a28b0b3577d31cc11345652809a3e889f4f5ce31267d4a9e9dd06dde5111f",
-      "bytes": 5046272
+      "sha256": "a223855d5f340e51c2312ff3e8b09e50d785ccad7a37ccf53f73919a76eae3f1",
+      "bytes": 5464064
     },
     "axon": {
       "path": "dist/guest-linux/axon",
-      "sha256": "bf1ef7011a80d656888a9961ddbfdd606e405354f7fd2e8883cc330de9ed7781",
-      "bytes": 8136976
+      "sha256": "e5636f45adb884a56827ee35159881b124ed9fa725ddd31c672deabad92b5a77",
+      "bytes": 8190256
     },
     "axon-guest-init": {
       "path": "dist/guest-linux/axon-guest-init",
       "sha256": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
       "bytes": 733288
+    },
+    "axon-psv-runner": {
+      "path": "dist/guest-linux/axon-psv-runner",
+      "sha256": "b8e04af67012562ecbcd3b5e9a53aa0b5c49156b0e50487020ad976f6c74f26a",
+      "bytes": 823976
     }
   },
   "engine": {

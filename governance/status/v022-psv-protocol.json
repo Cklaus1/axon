@@ -1,0 +1,39 @@
+{
+  "schema": "axon-v022-psv-protocol-status/1",
+  "note": "DEVELOPMENT evidence for PSV_PROTOCOL_PROVEN. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN until the operator-controlled environment certifies them.",
+  "readiness_credit": "none",
+  "m1_guest": {
+    "image_source_revision": "859283ea55fe19fa40ad2ebd650cda63b8f477dd",
+    "image_tree_dirty": false,
+    "pci_lineage": {
+      "certified_revision": "31413ca7",
+      "descends": true,
+      "checked_by": "git merge-base --is-ancestor (also enforced by build-guest-image.sh)"
+    },
+    "artifacts": {
+      "vmlinux": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
+      "rootfs.sqfs": "a223855d5f340e51c2312ff3e8b09e50d785ccad7a37ccf53f73919a76eae3f1",
+      "axon": "e5636f45adb884a56827ee35159881b124ed9fa725ddd31c672deabad92b5a77",
+      "axon-guest-init": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
+      "axon-psv-runner": "b8e04af67012562ecbcd3b5e9a53aa0b5c49156b0e50487020ad976f6c74f26a"
+    },
+    "profile_manifest_sha256": "aea6215be496fb3c1279f44d3b8d54262336c9c016daca41f6cbb1409f88a401",
+    "host": "WSL2-nested KVM (development host, ADR-001 D1)",
+    "boot_test": {
+      "script": "scripts/psv_guest_boot_test.sh",
+      "cases": [
+        "pass",
+        "verify-result",
+        "tampered (27)",
+        "custody",
+        "seal (E0004)",
+        "changed candidate"
+      ],
+      "result": "6/6 PASS on the image above",
+      "repeatability": "6 further full runs on the previous build of the same code: 36/36 PASS"
+    },
+    "open_observations": [
+      "One launcher exit 21 (vmm-died) in the custody case of the first run after an image rebuild; not reproduced in 6 subsequent full runs; its evidence was deleted before keep-on-failure existed, so it is UNEXPLAINED, not fixed."
+    ]
+  }
+}
