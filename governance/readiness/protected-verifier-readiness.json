@@ -33,8 +33,10 @@
       "missing": [
         "G13-r22-profile-qualification",
         "G13-r22-profile-eligibility",
-        "G13-r22-guest-truth"
-      ]
+        "G13-r22-guest-truth",
+        "governance/proofs/v022-protected/protected_backend.json: no protected-host certification record (earned only on the protected host)"
+      ],
+      "requires_protected_host_certification": "governance/proofs/v022-protected/protected_backend.json(.sig)"
     },
     "g01_on_protected_backend": {
       "status": "NOT_RUN",
@@ -48,8 +50,10 @@
       "missing": [
         "G01-r22-registered-check",
         "G01-r22-verifier-separation",
-        "governance/proofs/v022-g01-microvm/REGISTRATION.md"
-      ]
+        "governance/proofs/v022-g01-microvm/REGISTRATION.md",
+        "governance/proofs/v022-protected/g01_on_protected_backend.json: no protected-host certification record (earned only on the protected host)"
+      ],
+      "requires_protected_host_certification": "governance/proofs/v022-protected/g01_on_protected_backend.json(.sig)"
     },
     "pci_on_protected_backend": {
       "status": "NOT_RUN",
@@ -63,8 +67,10 @@
       "missing": [
         "G03-r22-trial-isolation",
         "G03-r22-physical-isolation",
-        "governance/proofs/v022-pci-microvm/CERTIFICATION.md"
-      ]
+        "governance/proofs/v022-pci-microvm/CERTIFICATION.md",
+        "governance/proofs/v022-protected/pci_on_protected_backend.json: no protected-host certification record (earned only on the protected host)"
+      ],
+      "requires_protected_host_certification": "governance/proofs/v022-protected/pci_on_protected_backend.json(.sig)"
     },
     "verification_binding": {
       "status": "PASS",

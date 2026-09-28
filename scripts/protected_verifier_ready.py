@@ -54,6 +54,15 @@ OUT = {
     "cx21": "governance/readiness/cx21-readiness.json",
 }
 PRE_READY = {"PREREGISTERED", "NOT_RUN"}
+# governance/specs/v022-protected-suite-verdict.md: a PROTECTED component is
+# earned only on the protected host — an operator-signed certification record,
+# verified by `axon-fabric verify-evidence` (the B263 rules) against the
+# COMMITTED trust root. Neither the directory nor the verifier can be redirected:
+# the verifier is built from this tree's own source, and a development host
+# holds no operator key, so nothing produced there can verify.
+PROTECTED_CERT_DIR = "governance/proofs/v022-protected"
+TRUSTED_ISSUERS = "profiles/linux-microvm/trusted_issuers"
+PROTECTED_PROFILE = "linux-microvm-protected"
 
 
 def path(p):
@@ -84,6 +93,47 @@ def gates_component(registered, gates, files=()):
     missing = [g for g in gates if g not in registered] + [f for f in files if f not in have_f]
     if missing:
         c["missing"] = missing
+    return c
+
+
+def protected_certification(component):
+    """(ok, detail): the operator-signed protected-host certification record
+    for `component`. Absent → not earned. Present → it must verify under a
+    trusted issuer, name this component and the protected profile, and every
+    evidence file it lists must exist."""
+    rec = f"{PROTECTED_CERT_DIR}/{component}.json"
+    if not os.path.exists(path(rec)):
+        return False, f"{rec}: no protected-host certification record (earned only on the protected host)"
+    try:
+        doc = load(rec)
+    except (OSError, ValueError) as e:
+        return False, f"{rec}: unreadable ({e})"
+    if doc.get("schema") != "axon-v022-protected-certification/1" or doc.get("component") != component \
+            or doc.get("host_profile") != PROTECTED_PROFILE:
+        return False, f"{rec}: not a {PROTECTED_PROFILE} certification of {component}"
+    missing = [e for e in doc.get("evidence", []) if not os.path.exists(path(e))]
+    if missing or not doc.get("evidence"):
+        return False, f"{rec}: evidence missing: {missing or 'none listed'}"
+    import subprocess
+    r = subprocess.run(
+        ["cargo", "run", "-q", "--locked", "-p", "axon-fabric", "--bin", "axon-fabric", "--",
+         "verify-evidence", "--record", path(rec), "--issuers", path(TRUSTED_ISSUERS)],
+        cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return False, f"{rec}: signature not verified by a trusted operator issuer ({r.stdout.strip() or r.stderr.strip()[-300:]})"
+    return True, rec
+
+
+def with_protected_cert(component, c):
+    """A protected component: its gates and proofs AND the signed certification."""
+    ok, detail = protected_certification(component)
+    c["requires_protected_host_certification"] = f"{PROTECTED_CERT_DIR}/{component}.json(.sig)"
+    if not ok:
+        c.setdefault("missing", []).append(detail)
+        if c["status"] == "PASS":
+            c["status"] = "PARTIAL"
+    else:
+        c["protected_host_certification"] = detail
     return c
 
 
@@ -139,20 +189,20 @@ def derive():
     v = {
         "g01_authenticity": certified_component(g01),
         "pci_isolation": certified_component(pci),
-        "protected_backend": gates_component(
+        "protected_backend": with_protected_cert("protected_backend", gates_component(
             registered,
             ["G13-r22-profile-qualification", "G13-r22-profile-eligibility", "G13-r22-guest-truth"],
-        ),
-        "g01_on_protected_backend": gates_component(
+        )),
+        "g01_on_protected_backend": with_protected_cert("g01_on_protected_backend", gates_component(
             registered,
             ["G01-r22-registered-check", "G01-r22-verifier-separation"],
             ["governance/proofs/v022-g01-microvm/REGISTRATION.md"],
-        ),
-        "pci_on_protected_backend": gates_component(
+        )),
+        "pci_on_protected_backend": with_protected_cert("pci_on_protected_backend", gates_component(
             registered,
             ["G03-r22-trial-isolation", "G03-r22-physical-isolation"],
             ["governance/proofs/v022-pci-microvm/CERTIFICATION.md"],
-        ),
+        )),
         "verification_binding": gates_component(
             registered,
             [

@@ -18,6 +18,13 @@
 //! Ed25519 public keys in `--linux-trusted-issuers` (default: the manifest's
 //! sibling `trusted_issuers/`), no older than the max age (default 30 days).
 //! axon-fabric workspace-import --state DIR --tenant T --root DIR
+//! axon-fabric verify-evidence --record FILE --issuers DIR [--signature FILE (default <record>.sig)]
+//!
+//! `verify-evidence` checks an operator-signed evidence document (the v0.22
+//! protected-host certification record) with the SAME rules as the B263
+//! qualification record: exit 0 and `{"verified":true,"issuer":…}` only when
+//! a detached `axon-evidence-signature/1` over the record's exact bytes
+//! verifies under a key in `--issuers`; otherwise a refusal (exit 4).
 //! axon-fabric status --journal FILE --op ID --grant-registry FILE --principal P --grant-ref G
 //! axon-fabric cancel --journal FILE --op ID --reason TEXT --grant-registry FILE --principal P --grant-ref G
 //!
@@ -112,6 +119,7 @@ fn main() {
         "cancel" => cancel(&a),
         "workspace-import" => workspace_import(&a),
         "keygen" => keygen(&a),
+        "verify-evidence" => verify_evidence(&a),
         _ => refuse(
             "usage",
             "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
@@ -178,6 +186,23 @@ fn signer(registry: &std::path::Path) -> Option<(axon_loop_contracts::OpaqueRef,
         ));
     }
     Some((id, key))
+}
+
+fn verify_evidence(a: &Args) {
+    let record = PathBuf::from(a.req("--record"));
+    let issuers = PathBuf::from(a.req("--issuers"));
+    let sig = a.opt("--signature").map(PathBuf::from).unwrap_or_else(|| {
+        let mut s = record.as_os_str().to_owned();
+        s.push(".sig");
+        PathBuf::from(s)
+    });
+    match axon_fabric::backend::verify_operator_evidence(&record, &sig, &issuers) {
+        Ok(issuer) => println!(
+            "{}",
+            serde_json::json!({"schema":"axon-fabric-verify-evidence/1","verified":true,"issuer":issuer})
+        ),
+        Err(e) => refuse("unregistered", &e, 4),
+    }
 }
 
 fn keygen(a: &Args) {

@@ -391,6 +391,22 @@ fn verify_detached(
     Ok(issuer)
 }
 
+/// Verify an operator-signed evidence document (e.g. a protected-host
+/// certification record): its detached `axon-evidence-signature/1` (`sig`)
+/// over the EXACT bytes of `record`, under a key in `issuers_dir`. The same
+/// rules as the B263 qualification record: unsigned, untrusted, malformed or
+/// non-verifying all refuse, and no configured issuer at all refuses. Returns
+/// the issuer fingerprint.
+pub fn verify_operator_evidence(
+    record: &Path,
+    sig: &Path,
+    issuers_dir: &Path,
+) -> Result<String, String> {
+    let bytes = std::fs::read(record).map_err(|e| format!("evidence {}: {e}", record.display()))?;
+    let trusted = trusted_issuers(issuers_dir)?;
+    verify_detached("evidence", &bytes, sig, &trusted)
+}
+
 fn sidecar_sig(p: &Path) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
     s.push(".sig");
