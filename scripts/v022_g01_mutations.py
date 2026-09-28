@@ -855,13 +855,31 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M55", "M72", "M73", "M74", "M75", "M76", "M77", "M78",
            "M79", "M80", "M81", "M82", "M83", "M84", "M85",
            "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95", "M96", "M97"}
+# ── Equivalent-by-defence-in-depth (dev review rounds 1-3, recorded for the
+# candidate-7 frozen run). Each mutates a guard that a rounds-1-3 fix turned
+# into a SECOND, independent check of the same property: with the guard
+# mutated the attack is STILL refused (all verified: the mutant test passes),
+# and the property is killed by a LIVE sibling row. So each is an equivalent
+# mutant, excluded from the kill requirement — the code keeps both checks.
+#   M204: submit's observe seam — observer-refusal is killed by M192-M195
+#         (observer.rs) and the epoch arm by M253.
+#   M103: derive check_pins — killed by intake pins M26/M28/M47.
+#   M104: derive context_signed_by — killed by M99 and round-3 M269.
+#   M209: derive rooted verifier — killed by O2 M205/M206.
+#   M210: derive rooted observer — killed by O2 M207/M208.
+#   M245: derive monitor key_id scan — killed by M105 and round-2 M264.
+#   M254: the reverify_protected CALL — killed by round-2 M261 (grounding)
+#         and round-3 M267-M269 (the joins).
+#   M255: reverify claims_protected — killed by M211/M212/M213.
+EQUIVALENT_DID = {"M204", "M103", "M104", "M209", "M210", "M245", "M254", "M255"}
+
 # M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
 # wf_d725935a-7ed, B1): the runner now executes exactly the one registered
 # test, so a Passed report for it already implies the interpreter exited 0.
 # Its killing test (a failing SIBLING beside a passing named test) described
 # the very behaviour B1 removed. The guard stays as defence in depth; M184
 # (Fabric's own exit-0 check) remains killed.
-RETIRED = {"M58", "M176"}
+RETIRED = {"M58", "M176"} | EQUIVALENT_DID
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 PSV_IDS = {f"M{n}" for n in range(137, 271)}
 
