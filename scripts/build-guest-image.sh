@@ -223,7 +223,9 @@ build_rootfs_linux() {
     cp "$RUNNER_BIN" "$LDIST/axon-psv-runner"
     # The image's root must be traversable by the unprivileged test uid.
     local ROOTMODE
-    ROOTMODE="$(unsquashfs -lln "$LDIST/rootfs.sqfs" 2>/dev/null | head -1 | cut -c1-10)"
+    # `sed -n 1p`, not `head -1`: head closes the pipe early, and under
+    # pipefail unsquashfs's SIGPIPE ended one build silently with 141.
+    ROOTMODE="$(unsquashfs -lln "$LDIST/rootfs.sqfs" 2>/dev/null | sed -n 1p | cut -c1-10)"
     if [[ "$ROOTMODE" != drwxr-xr-x ]]; then
         echo "[build-guest-image] ERROR: rootfs / is $ROOTMODE, not drwxr-xr-x" >&2
         exit 1
