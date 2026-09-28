@@ -367,6 +367,14 @@ fn psv_host_guest() {
     if tamper == "vmm-died" {
         write_result("vmm-died", 21);
     }
+    if tamper == "suite-changed" {
+        // The OPERATOR suite changes under the guest: the runner must refuse.
+        std::fs::write(
+            PathBuf::from(need("--psv-suite")).join("planted.ax"),
+            "// not the registered suite\n",
+        )
+        .unwrap();
+    }
     if tamper == "candidate-changed" {
         // The candidate changes under the guest: the runner must refuse.
         std::fs::write(
@@ -428,7 +436,7 @@ fn psv_host_guest() {
             v["status"] = serde_json::json!("passed");
             v["exit_code"] = serde_json::json!(0);
         }
-        "candidate-changed" | "unbound" => {}
+        "candidate-changed" | "suite-changed" | "unbound" => {}
         other => panic!("__psv-host-guest: unknown tamper {other}"),
     }
     std::fs::write(od.join("verdict.json"), axon_psv::canonical_json(&v)).unwrap();

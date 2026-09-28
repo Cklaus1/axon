@@ -298,6 +298,18 @@ echo "── gate: v0.22 protected readiness (derived; certified artifacts pinne
 python3 -B scripts/protected_verifier_ready.py --check || fail "v0.22 protected readiness"
 python3 -B scripts/test_protected_verifier_ready.py || fail "v0.22 readiness relay (pinned verifier identity)"
 bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
+# PSV negative matrix: every row A1..A21 cites tests that exist (a renamed or
+# deleted test fails here, rather than leaving a row claiming coverage).
+python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
+# PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
+# NON-RESULT, reported as such, never as a pass.
+cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
+bash scripts/psv_guest_boot_test.sh; rc=$?
+case $rc in
+  0) echo "v0.22 PSV real-guest boot test: PASS" ;;
+  77) echo "v0.22 PSV real-guest boot test: SKIP (non-result: not proven on this host)" ;;
+  *) fail "v0.22 PSV real-guest boot test" ;;
+esac
 for ep in scripts/v022_stage7_pilot.sh scripts/v022_cx21_experiment.sh; do
   grep -q "protected_verifier_ready.py --require" "$ep" \
     || fail "$ep does not call the protected readiness preflight"

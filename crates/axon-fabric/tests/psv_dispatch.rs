@@ -628,3 +628,25 @@ fn an_unpinned_observer_is_refused() {
     assert!(s.reason.unwrap().contains("not its pin"));
     assert!(!launched(&w, "op-obs-pin"));
 }
+
+/// A2 through the Fabric: the operator suite changes under the guest; the
+/// guest refuses before running anything, and the Fabric reports WHY.
+#[test]
+fn a_suite_changed_under_the_guest_is_refused_there() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("suite-changed", ""), "op-psv-suite-chg", "t_psv_ok");
+    assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
+    let r = s.reason.unwrap();
+    assert!(r.contains("the guest refused: suite tree is"), "{r}");
+}
+
+/// A3 through the Fabric: a test the registered suite does not define yields
+/// no verdict (never a pass), whatever the request names.
+#[test]
+fn a_test_the_suite_does_not_define_has_no_verdict() {
+    let w = World::new();
+    let s = w.submit_with(w.lx("", ""), "op-psv-absent", "t_psv_absent");
+    assert_eq!(s.receipt.verification, ReceiptVerification::Unknown);
+    let r = s.reason.unwrap();
+    assert!(r.contains("produced no verdict"), "{r}");
+}

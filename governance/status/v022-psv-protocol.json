@@ -35,5 +35,11 @@
     "open_observations": [
       "One launcher exit 21 (vmm-died) in the custody case of the first run after an image rebuild; not reproduced in 6 subsequent full runs; its evidence was deleted before keep-on-failure existed, so it is UNEXPLAINED, not fixed."
     ]
+  },
+  "psv_protocol_proven": {
+    "state": "PENDING_FROZEN_PROOF_AND_REVIEW",
+    "why": "All mechanisms (O1, M1-M4, O2) are landed and the negative matrix A1-A21 is complete, with each row citing tests that assert its refusal reason (scripts/psv_matrix_check.py). It is NOT claimed until a frozen exact-HEAD proof run (including MiCode interop and the real-guest boot test) and ONE independent review have passed.",
+    "matrix": "governance/specs/v022-psv-negative-matrix.md",
+    "readiness_credit": "none"
   }
 }
