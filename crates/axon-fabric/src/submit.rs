@@ -1089,6 +1089,17 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     // unsatisfiable requirement, before anything is launched.
     let ceiling = crate::grants::effect_ceiling(grant.grant());
     let selected = backend::select(&req, cfg.linux.as_ref(), needs).and_then(|p| {
+        // A PROTECTED host runs nothing outside the protected profile: a local
+        // dispatch would run workload code in the host's own privilege domain,
+        // beside the protected attempts' custody (dev review round
+        // wf_7cb5856d-806, PSV-3).
+        if cfg.protected_host.is_some() && p.id != backend::LINUX_MICROVM_PROTECTED.id {
+            return Err(backend::Unsupported(format!(
+                "this is a protected host: only {} runs here, not {}",
+                backend::LINUX_MICROVM_PROTECTED.id,
+                p.id
+            )));
+        }
         if p.id == backend::LINUX_MICROVM_PROTECTED.id {
             backend::GuestPolicy::for_grant(&req, &ceiling).map(|g| (p, Some(g)))
         } else {

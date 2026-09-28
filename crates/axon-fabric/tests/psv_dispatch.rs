@@ -386,6 +386,40 @@ fn a_local_check_is_development_evidence() {
     assert_eq!(s.ran_under.unwrap().evidence_class, "development");
 }
 
+/// PSV-3 (dev review round wf_7cb5856d-806): on a PROTECTED host a request
+/// the local backend would take is refused before anything runs. Control: the
+/// same request on a non-protected host runs locally
+/// (`a_local_check_is_development_evidence`).
+#[test]
+fn a_protected_host_runs_nothing_outside_the_protected_profile() {
+    let w = World::new();
+    let mut r = request(&w.env, "op-local-ph", "t_psv_ok");
+    r["argv"] = json!(["check:acc", "t_psv_ok"]);
+    r["workspace_version_ref"] = json!(w.candidate.as_str());
+    r["grant_ref"] = json!("grant:open");
+    let mut cfg = w.env.cfg(0);
+    cfg.protected_host = Some(axon_fabric::psv::HostIdentity {
+        config_sha256: "1".repeat(64),
+        suite_registry_sha256: "2".repeat(64),
+    });
+    let s = submit(&r.to_string(), &cfg).unwrap();
+    assert_eq!(
+        s.receipt.status,
+        ReceiptStatus::Unsupported,
+        "{:?}",
+        s.reason
+    );
+    assert!(
+        s.reason
+            .clone()
+            .unwrap_or_default()
+            .contains("protected host"),
+        "{:?}",
+        s.reason
+    );
+    assert!(s.ran_under.is_none());
+}
+
 fn tenant() -> axon_loop_contracts::TenantId {
     axon_loop_contracts::TenantId::new("tenant-t").unwrap()
 }
