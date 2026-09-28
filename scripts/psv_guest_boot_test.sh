@@ -73,7 +73,7 @@ printf 'mod g\nuse g.{double2}\n\nfn expected() -> i64 { 42 }\n\n@[test]\nfn t_s
 run() {
     local c="$1" entry="$2" test="$3"
     mkdir -p "$W/$c"
-    cp -r "${CAND_SRC:-$W/cand}" "$W/$c/cand"; cp -r "$W/suite" "$W/$c/suite"
+    cp -r "${CAND_SRC:-$W/cand}" "$W/$c/cand"; cp -r "${SUITE_SRC:-$W/suite}" "$W/$c/suite"
     MSHA="$("$DEV" make-job --candidate "$W/$c/cand" --suite "$W/$c/suite" --entry "$entry" \
         --test "$test" --job "$W/$c/job" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
     [[ -n "${4:-}" ]] && eval "$4"
@@ -190,6 +190,22 @@ if grep -q "requires effect .Exec." <<<"$SO" && ! grep -q "REACH-OK" <<<"$SO"; t
     ok "reach: under an Exec grant, candidate code cannot spawn a reader of K (refused: Exec)"
 else
     bad reach "rc=$RC stdout=$(head -c 400 <<<"$SO")"
+fi
+
+# A28: a suite module that exists but cannot be read (one Latin-1 byte) never
+# falls through to the candidate's same-named module (review wf_293dfdb6-9d8,
+# PSV-1, executed there to a keyed PASS). The operator's `want` (7) can never
+# pass; the candidate's plant (42) would.
+mkdir -p "$W/suite-fall" "$W/cand-fall"; cp -r "$W/cand/." "$W/cand-fall/"
+printf 'mod helper\nuse helper.{want}\n\n@[test]\nfn t_helper() { assert_eq(want(), 42) }\n' > "$W/suite-fall/accept.ax"
+printf 'fn want() -> i64 { 7 }\n// caf\351\n' > "$W/suite-fall/helper.ax"
+printf 'fn want() -> i64 { 42 }\n' > "$W/cand-fall/helper.ax"
+SUITE_SRC="$W/suite-fall" CAND_SRC="$W/cand-fall" run fall accept.ax t_helper
+ST="$(check fall | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null)"
+if [[ -n "$ST" && "$ST" != passed ]] && grep -q "does not fall through" "$W/fall/out/out/test-stderr" 2>/dev/null; then
+    ok "fall: an unreadable suite module is E0901, never the candidate's same-named module (status $ST)"
+else
+    bad fall "status=$ST rc=$RC stderr=$(head -c 300 "$W/fall/out/out/test-stderr" 2>/dev/null)"
 fi
 
 echo "psv guest boot test: $FAILS failure(s)"

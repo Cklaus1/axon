@@ -270,3 +270,69 @@ fn holding_a_completion_key_makes_the_process_non_dumpable() {
     assert_eq!(probe(""), "OPENED", "control: a dumpable child");
     assert_eq!(probe("--completion-key-stdin"), "DENIED");
 }
+
+/// Review wf_293dfdb6-9d8 (PSV-1, executed to a keyed PASS): a SUITE module
+/// that exists but cannot be read (a non-UTF-8 byte; a directory named like
+/// the module) must never let a later search directory — the candidate's —
+/// define it. The candidate plants `helper.ax` with the answer the suite's
+/// test wants; the run must not pass, and must name the unreadable module.
+#[test]
+fn an_unreadable_suite_module_never_falls_through_to_the_candidate() {
+    use std::io::Write;
+    for (case, plant_suite) in [("latin1", true), ("dir", false)] {
+        let d = fresh(&format!("fall-{case}"));
+        std::fs::create_dir_all(d.join("cand")).unwrap();
+        std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::write(
+            d.join("suite/accept.ax"),
+            "mod helper\nuse helper.{want}\n\n@[test]\nfn t_helper() { assert_eq(want(), 42) }\n",
+        )
+        .unwrap();
+        if plant_suite {
+            // The operator's helper can never pass (7 != 42), and one Latin-1
+            // byte makes it unreadable as UTF-8.
+            std::fs::write(
+                d.join("suite/helper.ax"),
+                b"fn want() -> i64 { 7 }\n// caf\xe9\n",
+            )
+            .unwrap();
+        } else {
+            std::fs::create_dir_all(d.join("suite/helper.ax")).unwrap();
+        }
+        std::fs::write(d.join("cand/helper.ax"), "fn want() -> i64 { 42 }\n").unwrap();
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                "t_helper",
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .arg("--seal")
+            .arg(d.join("cand"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .env("AXON_PATH_EXCLUSIVE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        let out = c.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stdout.contains("\"status\":\"ok\""), "{case}: {stdout}");
+        assert!(
+            stderr.contains("E0901") && stderr.contains("does not fall through"),
+            "{case}: {stderr}"
+        );
+    }
+}

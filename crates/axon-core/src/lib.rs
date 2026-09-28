@@ -804,8 +804,29 @@ fn load_module_recursive(
     for dir in search_dirs {
         let candidate = dir.join(&rel);
         searched.push(candidate.display().to_string());
-        if !candidate.exists() {
-            continue;
+        // Only a module that is ABSENT here moves the search to the next
+        // directory. One that exists but cannot be read — or whose existence
+        // cannot even be determined — is an error: falling through let a
+        // LOWER-priority directory define it. Under the PSV runner's
+        // `AXON_PATH=suite:candidate`, that let a candidate's same-named module
+        // replace an unreadable suite module and define the rubric (review
+        // wf_293dfdb6-9d8, PSV-1: executed to a keyed PASS).
+        match candidate.try_exists() {
+            Ok(false) => continue,
+            Ok(true) => {}
+            Err(e) => {
+                errors.push(MergeError {
+                    code: error::E0901,
+                    message: format!(
+                        "module `{path_str}` at {}: cannot tell whether it exists ({e}); \
+                         the search does not fall through to a later directory",
+                        candidate.display()
+                    ),
+                    file: candidate.display().to_string(),
+                });
+                found = true;
+                break;
+            }
         }
 
         match std::fs::read_to_string(&candidate) {
@@ -867,10 +888,17 @@ fn load_module_recursive(
                 }
             },
             Err(e) => {
-                // I/O error on this candidate — try next directory.
-                if let Some(s) = searched.last_mut() {
-                    s.push_str(&format!(" (read error: {e})"));
-                }
+                errors.push(MergeError {
+                    code: error::E0901,
+                    message: format!(
+                        "module `{path_str}` at {} exists but cannot be read ({e}); the search \
+                         does not fall through to a later directory",
+                        candidate.display()
+                    ),
+                    file: candidate.display().to_string(),
+                });
+                found = true;
+                break;
             }
         }
     }

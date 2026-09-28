@@ -444,3 +444,19 @@ DO_NOT_REGISTER, 7 of 8 claims registered). It is negative-matrix row A27.
     - **The guest runner independently** passes the policy's ceiling without `Exec`.
     - **Recorded, not done:** Yama in the guest kernel config needs a kernel rebuild and a B263
       re-qualification, so it is an operator-side follow-up.
+
+The next one comes from the independent review of candidate 5 (wf_293dfdb6-9d8, verdict
+DO_NOT_REGISTER, 7 of 8 claims registered, PSV-3 among them). It is negative-matrix row A28.
+
+14. **The suite's modules win name resolution, with no fall-through (PSV-1).** Amendment 5 relied on
+    `AXON_PATH=suite:candidate`. The module loader, however, tried the next directory when a module
+    existed but could not be read.
+    - **Executed by the reviewer to a keyed PASS**, through the real runner: a suite `helper.ax`
+      with one Latin-1 byte, plus a candidate `helper.ax` with the wanted answer.
+    - **Now:** only an ABSENT module moves the search on. One that exists but cannot be read
+      (non-UTF-8 content, a directory of that name), or whose existence cannot be determined
+      (`try_exists` error), is E0901, and the search stops.
+    - **Not covered by a test:** the `try_exists` error arm (EACCES while traversing) cannot be
+      exercised by the root-run tests.
+    - **Recorded, not fixed:** under an IO grant, a sealed candidate can READ the suite's source
+      through the filesystem. It learns the answers, but cannot change the rubric.

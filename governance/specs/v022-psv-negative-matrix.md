@@ -5,7 +5,8 @@ three protected components stay NOT_RUN until the operator-controlled environmen
 
 Rows are the gap map's A1–A19, the protocol spec's A20–A21, A22–A24 from the candidate-2
 independent review (wf_d725935a-7ed, B1–B3), A25–A26 from the candidate-3b review
-(wf_1bc28496-38e), and A27 from the candidate-4 review (wf_ecfcd666-6c9). Every cited test asserts its row's
+(wf_1bc28496-38e), A27 from the candidate-4 review (wf_ecfcd666-6c9), and A28 from
+the candidate-5 review (wf_293dfdb6-9d8). Every cited test asserts its row's
 SPECIFIC refusal (the reason, not only a non-pass), and runs in the fabric/psv/loop suites or in
 `gate.sh`. `scripts/psv_matrix_check.py` fails when a row is missing, cites no test, or cites a
 test that does not exist (`file::function`), so this table cannot silently rot.
@@ -42,6 +43,7 @@ depth, and each has its own test.
 | A25 | candidate writes a failure over a genuine pass (or a lone unkeyed failure line) | interpreter keys every failure it decides in its own domain; runner and Fabric decide an outcome only from exactly one keyed line; Failed also needs a failing exit; `derive` reads only the launcher-bound verdict bytes | `keyed failure evidence`; `Unknown`; `failed but the run exited`; `not the one the launcher bound` | `crates/axon-fabric/tests/psv_dispatch.rs::a_candidate_cannot_write_a_failure_over_a_genuine_pass`, `crates/axon-fabric/tests/psv_dispatch.rs::every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason`, `crates/axon-fabric/tests/psv_dispatch.rs::a_failure_with_a_clean_exit_is_not_a_verdict`, `crates/axon-psv/tests/runner.rs::a_failure_line_printed_by_the_candidate_is_not_a_verdict`, `crates/axon-psv/tests/runner.rs::a_lone_unkeyed_failure_line_is_not_a_verdict`, `crates/axon-core/tests/psv_test_selection.rs::a_failure_is_keyed_in_its_own_domain` |
 | A26 | safety-monitor key planted in the loop store | a protected-scope clearance needs a key the operator's monitor root holds; admission re-checks it at every derivation | `operator's monitor root`; activation refused after revocation | `crates/axon-loop/tests/protected_class.rs::a_monitor_key_planted_in_the_store_never_clears_a_protected_trial`, `crates/axon-loop/tests/protected_class.rs::a_key_revoked_at_the_operator_root_no_longer_counts` |
 | A27 | candidate code reads K from the memory of the process that holds it (Exec granted) | `axon test` under a completion key: non-dumpable, no `Exec` in its ceiling whatever was granted, key read raw and scrubbed; the guest runner passes the ceiling without `Exec` | `requires effect \`Exec\``; `DENIED` on `/proc/<pid>/mem`; the child's ceiling has no `Exec` | `crates/axon-core/tests/psv_test_selection.rs::holding_a_completion_key_spawns_nothing`, `crates/axon-core/tests/psv_test_selection.rs::holding_a_completion_key_makes_the_process_non_dumpable`, `crates/axon-psv/tests/runner.rs::the_process_holding_k_is_given_no_exec`, `scripts/psv_guest_boot_test.sh` |
+| A28 | an unreadable suite module replaced by the candidate's same-named module | the module loader: only an absent module moves the search on; an unreadable one is E0901 | `does not fall through`; no pass | `crates/axon-core/tests/psv_test_selection.rs::an_unreadable_suite_module_never_falls_through_to_the_candidate`, `scripts/psv_guest_boot_test.sh` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 

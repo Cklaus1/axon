@@ -48,7 +48,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "NOT_PROVEN \u2014 candidate 4 (191b2e93) passed its frozen run but failed its independent review (PSV-3)",
+    "state": "NOT_PROVEN \u2014 candidate 5 (e9a13f72) passed its frozen run but failed its independent review (PSV-1)",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -180,13 +180,50 @@
       }
     },
     "candidate_5": {
-      "state": "fix landed in dev; not yet frozen",
+      "state": "frozen run green; review DO_NOT_REGISTER",
       "fixed": [
         "PSV-3 key custody (amendment 13)"
       ],
       "matrix": "A27 (27 rows)",
       "mutations": "M246-M249 4/4 killed",
-      "follow_up_operator": "Yama in the guest kernel config (kernel rebuild + B263 re-qualification)"
+      "follow_up_operator": "Yama in the guest kernel config (kernel rebuild + B263 re-qualification)",
+      "commit": "e9a13f72",
+      "frozen_run": "fully green: 653 + 1578 axon tests, 5312 micode, 245/245 mutants killed, PCI 18 rows, stage5, readiness, matrix 27, preflight, real-guest boot 10/10, interop 287, micode gates 22, trees clean",
+      "review": {
+        "run": "wf_293dfdb6-9d8",
+        "verdict": "DO_NOT_REGISTER",
+        "register": [
+          "PSV-2",
+          "PSV-3",
+          "PSV-4",
+          "PSV-5",
+          "PSV-6",
+          "PSV-7",
+          "FIELD-ORIGIN"
+        ],
+        "blockers": [
+          "PSV-1: the module loader fell through on an unreadable suite module, so the candidate's same-named module defined the rubric (EXECUTED to a keyed PASS through the real runner)"
+        ],
+        "majors_recorded": [
+          "under an IO grant a sealed candidate can read the suite's source",
+          "epoch revoked while the observer runs still yields a protected verdict",
+          "the policy digest the observation joins is not enforced against the launched policy",
+          "three manifest joins lack a frozen test (operation_id, guest rootfs, guest init)",
+          "protected_scopes store config lets a scope be un-protected and re-protected",
+          "the execution leg of a protected trial is unauthenticated (a relabelled local receipt passes the D3 filter)",
+          "admission/transition authority unauthenticated; baseline designation bypasses the protected-scope gate",
+          "guest effect policy from the caller's grant decides what a sealed candidate may do",
+          "task_acceptance store config"
+        ]
+      }
+    },
+    "candidate_6": {
+      "state": "fix landed in dev; not yet frozen",
+      "fixed": [
+        "PSV-1 module fall-through (amendment 14)"
+      ],
+      "matrix": "A28 (28 rows)",
+      "mutations": "M250 killed"
     }
   }
 }
