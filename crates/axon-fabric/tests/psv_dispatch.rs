@@ -378,7 +378,7 @@ fn a_candidate_cannot_supply_the_acceptance_test_through_fabric() {
 /// wf_d725935a-7ed).
 #[test]
 fn the_verify_step_inherits_nothing_from_the_caller() {
-    std::env::set_var("AXON_PSV_ENV_PROBE", "leak");
+    std::env::set_var("PSV_VERIFY_ENV_PROBE", "leak");
     let w = World::new();
     let lx = w.lx("", "");
     let out_root = lx.out_root.clone();

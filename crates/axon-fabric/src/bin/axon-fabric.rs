@@ -334,7 +334,7 @@ fn psv_host_guest() {
         // Record what environment the verify step was given (the Fabric
         // must clear it: review wf_d725935a-7ed).
         if let Some(dir) = args.get(i + 1) {
-            let leaked = std::env::var_os("AXON_PSV_ENV_PROBE").is_some();
+            let leaked = std::env::var_os("PSV_VERIFY_ENV_PROBE").is_some();
             let _ = std::fs::write(
                 PathBuf::from(dir).join("verify-env-leaked"),
                 if leaked { "yes" } else { "no" },
