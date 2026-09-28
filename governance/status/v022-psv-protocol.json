@@ -48,7 +48,7 @@
     }
   },
   "psv_protocol_proven": {
-    "state": "NOT_PROVEN \u2014 candidate 6 (13927667) registered all 8 claims in its certifying review, but dev-loop round 1 falsified PSV-1, PSV-6 and PSV-7 on the same protocol code",
+    "state": "NOT_PROVEN \u2014 candidate 7 dev loop reached a clean round (4), but its frozen run is not green: mutation registry drifted against rounds 1-3; 7 rows are now equivalent (defence-in-depth), pending an operator decision",
     "frozen_run": "candidate 2 (8102d404, micode fc6221a5): the proof run was fully green (640 + 1573 axon tests, 5311 micode, 215/215 mutants killed, real-guest boot 6/6, interop 287, micode gates 22, trees clean)",
     "review": {
       "run": "wf_d725935a-7ed",
@@ -318,6 +318,34 @@
         "result": "CLEAN \u2014 16/16 REGISTER, no blocker (findings: one MINOR symlink-attribution defence-in-depth, not reachable on the guest path since check_inputs refuses symlink trees; one FUTURE candidate random_* draw, cannot seed or predict)"
       },
       "status": "round 4 clean; the dev loop's stop condition (a round with no blocker) is met. Proceed to ONE freeze + certifying review; rounds 1-3 found 5+4+5 blockers"
+    },
+    "candidate_7": {
+      "state": "frozen run NOT green \u2014 mutation registry drifted against the rounds 1-3 restructuring; blocked on an operator decision about 7 subsumed rows",
+      "commit": "a0835eec",
+      "micode": "63fe711b",
+      "frozen_run_green_except_mutations": "lanes A/B/C green (647-class axon + 1582 axon-core + 5312 micode), real-guest boot 11/11, interop 287, micode gates 22, trees clean",
+      "mutation": "255/266 killed; 11 BAD rows, all drift from MY OWN rounds 1-3 fixes (no code defect)",
+      "retargeted_and_killing": [
+        "M01 (signing replayed, disambiguated from the new execution_attestation_decision)",
+        "M218 + M230 (intake check_bundle now multi-line with an epoch arg)"
+      ],
+      "not_applicable_subsumed": [
+        "M204 (submit observe block restructured for the epoch recheck; observer-refusal is covered by M192-M195 in observer.rs and the epoch arm by M253)"
+      ],
+      "survived_now_defence_in_depth": {
+        "note": "Each mutates a derive()/reverify guard that rounds 1-3 turned into a SECOND, independent check of the same property. With the guard mutated, the attack is STILL refused (verified: all 7 mutant tests pass), so each is an equivalent mutant subsumed by a named check \u2014 none is a hole.",
+        "rows": {
+          "M103": "derive check_pins (profile/rev/suite/acceptance) \u2014 subsumed by reverify_protected -> verify_check_evidence -> check_pins",
+          "M104": "derive context_signed_by \u2014 subsumed by reverify_protected's context-signature check under the rooted observer",
+          "M209": "derive verifier rooted_key \u2014 subsumed by verify_check_evidence's rooted verifier requirement",
+          "M210": "derive observer rooted_key \u2014 subsumed by reverify_protected's context signature under the rooted observer",
+          "M245": "admission monitor key_id in the clearance ledger-scan \u2014 subsumed by clearance_verifies (round 2) re-verifying the stored signature under the monitor root",
+          "M254": "the reverify_protected CALL \u2014 subsumed for the relabel test by round-2's check_arm_grounding + class binding",
+          "M255": "reverify_protected claims_protected \u2014 subsumed by the class-grounding + join checks"
+        }
+      },
+      "decision_needed": "How to treat the 7 subsumed rows: (a) document as equivalent mutants (name the subsuming check each), like M58/M176 \u2014 keeps defence in depth, expands the equivalent set from 2 to 9; (b) remove the now-redundant derive() guards so each row retargets to the single authoritative point (weakens defence in depth, risky late change); (c) leave the belt-and-braces and accept the rows as equivalent. Recommend (a). This expands the equivalent set 4.5x right before certification, so it is put to the operator rather than self-cleared.",
+      "readiness_credit": "none"
     }
   }
 }
