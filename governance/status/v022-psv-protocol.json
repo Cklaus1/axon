@@ -69,7 +69,7 @@
     },
     "readiness_credit": "none",
     "candidate_3": {
-      "state": "fixes landed in dev; not yet frozen",
+      "state": "frozen run e321b5dc NOT GREEN (mutation registry drift); fixed in dev; re-freeze as 3b pending",
       "axon_dev_head_at_fixes": "c99b9ed1",
       "micode_dev_head": "63fe711b",
       "fixed": [
@@ -85,7 +85,15 @@
         "guest image rebuild (axon + axon-psv-runner changed) and real-guest boot",
         "frozen run with fresh target dirs",
         "ONE independent review"
-      ]
+      ],
+      "frozen_run": {
+        "commit": "e321b5dc",
+        "micode": "63fe711b",
+        "result": "NOT GREEN",
+        "green": "647 + 1575 axon tests, 5312 micode, PCI/stage5/readiness/matrix/preflight gates, real-guest boot 7/7, interop 287, micode gates 22, trees clean",
+        "failed": "mutations 229/234: M152, M153, M204 and M218 no longer applied (their code moved in the candidate-3 fixes); M173 survived (its end-to-end killing test is unreachable under --exact)",
+        "fix": "rows retargeted to the moved code; M173's kill is now the parser-level substring assertion; all five verified killed in dev"
+      }
     }
   }
 }
