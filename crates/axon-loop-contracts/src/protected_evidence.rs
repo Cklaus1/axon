@@ -154,6 +154,7 @@ pub fn check_bundle(
     req: &ComputeRequest,
     rc: &ExecutionReceipt,
     bundle: &str,
+    epoch: u64,
 ) -> Result<(), String> {
     use crate::operator_trust::{rooted_keys, verify_evidence_signature, TrustAuthority};
     check(req, rc)?;
@@ -193,6 +194,16 @@ pub fn check_bundle(
     }
     // 3. the observation joins the manifest
     o.joins(&m, &m_sha)?;
+    // …and was made under the trial's authority epoch, which the loop joins
+    // to its OWN scope pointer. A caller-chosen authority store, or an epoch
+    // that moved while the observer ran, is another epoch (dev review round
+    // wf_336353cb-a2b, PSV-6).
+    if o.epoch != epoch {
+        return Err(format!(
+            "the observation is for authority epoch {}, not the trial's epoch {epoch}",
+            o.epoch
+        ));
+    }
     // 4. the manifest joins the request and the receipt
     let pairs: [(&str, &str, &str); 12] = [
         ("operation_id", &m.operation_id, req.operation_id.as_str()),

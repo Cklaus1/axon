@@ -724,7 +724,13 @@ pub fn verify_check_evidence(
                  its launch manifest and observation cannot be joined"
             ))
         })?;
-        axon_loop_contracts::protected_evidence::check_bundle(&req, &rc, bundle).map_err(|e| {
+        axon_loop_contracts::protected_evidence::check_bundle(
+            &req,
+            &rc,
+            bundle,
+            ep.authority_epoch.get(),
+        )
+        .map_err(|e| {
             refused(format!(
                 "protected evidence from verifier {issuer} does not join: {e}"
             ))

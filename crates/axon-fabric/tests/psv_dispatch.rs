@@ -514,6 +514,11 @@ impl World {
                 r#"#!/bin/sh
 while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2"; shift 2;; *) shift;; esac; done
 [ "{mode}" = exit ] && exit 1
+if [ "{mode}" = wait ]; then
+    # Hold the observation open until the test says go (the epoch moves meanwhile).
+    touch "{d}/observer-waiting"; i=0
+    while [ ! -f "{d}/observer-go" ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done
+fi
 if [ "{mode}" = replay ]; then
     cp "{prev}" "$O/observation.json" && cp "{prev}.sig" "$O/observation.json.sig"; exit $?
 fi
@@ -545,6 +550,7 @@ cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
 "#,
                 kid = key.key_id,
                 prev = d.join("prev-observation.json").display(),
+                d = d.display(),
                 fabric = env!("CARGO_BIN_EXE_axon-fabric"),
                 key = key.pk8.display(),
             ),
@@ -573,6 +579,52 @@ cp "$O/observation.json" "{prev}"; cp "$O/observation.json.sig" "{prev}.sig"
 
 fn launched(w: &World, op: &str) -> bool {
     w.env.dir.path().join("lx-out").join(op).exists()
+}
+
+/// PSV-6 (dev review round wf_336353cb-a2b, executed there): the authority
+/// epoch moves WHILE the observer runs. The observation was made under the
+/// old epoch, so the launch is refused and nothing runs. Control: the same
+/// observer, with no epoch change, gives a protected Passed.
+#[test]
+fn an_epoch_that_moves_while_the_observer_runs_refuses_the_launch() {
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let d = w.env.dir.path().to_path_buf();
+    let s = std::thread::scope(|sc| {
+        let h =
+            sc.spawn(|| w.submit_observed(w.observer("wait", &key, "observer"), "op-obs-epoch"));
+        let mut n = 0;
+        while !d.join("observer-waiting").exists() && n < 400 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            n += 1;
+        }
+        assert!(d.join("observer-waiting").exists(), "the observer started");
+        w.env.bump_epoch();
+        std::fs::write(d.join("observer-go"), "").unwrap();
+        h.join().unwrap()
+    });
+    assert_ne!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert_ne!(class(&s), "protected");
+    let why = s.reason.clone().unwrap_or_default();
+    assert!(why.contains("authority epoch is now 1"), "{why}");
+    // Control: no epoch change.
+    let w = World::new();
+    let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
+    let d = w.env.dir.path().to_path_buf();
+    std::fs::write(d.join("observer-go"), "").unwrap();
+    let s = w.submit_observed(w.observer("wait", &key, "observer"), "op-obs-epoch-ok");
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "{:?}",
+        s.reason
+    );
+    assert_eq!(class(&s), "protected");
 }
 
 #[test]
@@ -609,8 +661,23 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         std::fs::copy(e.path(), root.join("observer").join(e.file_name())).unwrap();
     }
     axon_loop_contracts::operator_trust::set_test_root(&root);
-    axon_loop_contracts::protected_evidence::check_bundle(&req, &s.receipt, &bundle.to_string())
-        .expect("the loop joins what Fabric launched and observed");
+    let epoch = w.env.cfg(0).expected_epoch.get();
+    axon_loop_contracts::protected_evidence::check_bundle(
+        &req,
+        &s.receipt,
+        &bundle.to_string(),
+        epoch,
+    )
+    .expect("the loop joins what Fabric launched and observed");
+    // Under another authority epoch it does not (PSV-6, dev round 1).
+    let e = axon_loop_contracts::protected_evidence::check_bundle(
+        &req,
+        &s.receipt,
+        &bundle.to_string(),
+        epoch + 1,
+    )
+    .unwrap_err();
+    assert!(e.contains("authority epoch"), "{e}");
     // …and a single byte of the manifest changed breaks it.
     let mut bad = bundle.clone();
     bad["launch_manifest"] =
@@ -618,7 +685,8 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
     assert!(axon_loop_contracts::protected_evidence::check_bundle(
         &req,
         &s.receipt,
-        &bad.to_string()
+        &bad.to_string(),
+        epoch
     )
     .is_err());
     // The nonce was spent.

@@ -1442,8 +1442,20 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     epoch,
                     &launch.job_dir.with_file_name("observation"),
                 )
-                .map(|v| (launch, Some(v)))
-                .map_err(|e| format!("preflight observation refused: {e}")),
+                .map_err(|e| format!("preflight observation refused: {e}"))
+                .and_then(|v| {
+                    // The epoch may move while the observer runs: re-read it
+                    // now, and launch only if it is still the one observed
+                    // (dev review round wf_336353cb-a2b, PSV-6).
+                    match cfg.epoch.current() {
+                        Ok(now) if now == cfg.expected_epoch => Ok((launch, Some(v))),
+                        now => Err(format!(
+                            "preflight observation refused: the authority epoch is now {} but \
+                             the observation is for {epoch}",
+                            now.map(|e| e.get().to_string()).unwrap_or_else(|e| e)
+                        )),
+                    }
+                }),
             });
             match observed {
                 Ok((launch, observation)) => {

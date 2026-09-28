@@ -2030,6 +2030,16 @@ fn each_protected_join_is_verified_over_the_documents() {
             "guest.kernel_sha256",
         ),
         (
+            // PSV-6 (dev round wf_336353cb-a2b): an observation made under
+            // another authority epoch (a caller-chosen store, or one that moved).
+            "observation of another authority epoch",
+            |_| {},
+            |o| o.epoch = 9,
+            |_| {},
+            None,
+            "authority epoch",
+        ),
+        (
             "observation claims another observer",
             |_| {},
             |o| o.observer_key_id = "ed25519:0000000000000000".into(),
