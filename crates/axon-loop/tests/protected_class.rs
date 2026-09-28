@@ -1050,6 +1050,119 @@ fn a_protected_admission_re_verifies_the_execution_leg_from_its_documents() {
     }
 }
 
+/// A store writer forges a GENUINE protected evaluation record: `forge` edits
+/// its JSON, then the record goes in the CAS with a forged ledger append.
+fn forge_eval(
+    w: &World,
+    exp: &str,
+    rec: &axon_loop::evl::EvaluationRecord,
+    forge: impl FnOnce(&mut Value),
+) -> Ref {
+    let mut j = serde_json::to_value(rec).unwrap();
+    forge(&mut j);
+    let forged: axon_loop::evl::EvaluationRecord = serde_json::from_value(j).unwrap();
+    let fe = w.s.put_cas("evaluations", &forged).unwrap();
+    forged_append(
+        w.s.root(),
+        axon_loop::ledger::Event::Evaluation {
+            scope: scope(),
+            experiment_id: exp.into(),
+            evaluation_ref: fe.clone(),
+            freeze_seq: forged.freeze_seq,
+            authority_epoch: forged.authority_epoch,
+        },
+    );
+    fe
+}
+
+fn refused_or_not_accepted(w: &World, exp: &str, fe: &Ref, why: &str) {
+    match admit(&w.s, exp, fe, ADMITTER, false) {
+        Err(e) => assert!(e.to_string().contains(why), "{e}"),
+        Ok((adm, _)) => panic!("{why}: admitted {:?} {:?}", adm.decision, adm.reasons),
+    }
+}
+
+/// PSV-7 (dev review round wf_7cb5856d-806, executed there to ACCEPT): a
+/// protected decision counts only the trials it re-verifies. Here the
+/// candidate's trials are marked Unknown with no verification (nothing to
+/// re-verify) while the stored counters still say 2 passes.
+#[test]
+fn a_protected_decision_counts_only_its_re_verified_trials() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "gc", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "gc", &specs_for(&w));
+    let mut v = evl_request("gc", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let cand = w.cand_ref.to_string();
+    let fe = forge_eval(&w, "gc", &rec, |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            if arm["policy_ref"] == cand {
+                for t in arm["trials"].as_array_mut().unwrap() {
+                    t["outcome"] = json!("unknown");
+                    t.as_object_mut().unwrap().remove("verification");
+                }
+            }
+        }
+    });
+    refused_or_not_accepted(&w, "gc", &fe, "counts are not its trials");
+}
+
+/// PSV-7: a counted trial re-verifies against ITS OWN episode: borrowing
+/// another trial's genuine episode and verdict counts one pass twice.
+#[test]
+fn a_counted_trial_cannot_borrow_another_trials_verdict() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    freeze_plan(&w.s, "bw", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "bw", &specs_for(&w));
+    let mut v = evl_request("bw", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let cand = w.cand_ref.to_string();
+    let fe = forge_eval(&w, "bw", &rec, |j| {
+        for arm in j["arms"].as_array_mut().unwrap() {
+            if arm["policy_ref"] == cand {
+                let ts = arm["trials"].as_array_mut().unwrap();
+                let (ep, ver) = (ts[0]["episode_ref"].clone(), ts[0]["verification"].clone());
+                ts[1]["episode_ref"] = ep;
+                ts[1]["verification"] = ver;
+            }
+        }
+    });
+    refused_or_not_accepted(&w, "bw", &fe, "another trial's");
+}
+
+/// PSV-7: the evaluation's class is the frozen plan's. A DEVELOPMENT plan's
+/// evaluation (here even with genuinely protected documents) relabelled
+/// protected after the scope was protected is refused.
+#[test]
+fn an_evaluation_class_other_than_the_frozen_plans_is_refused() {
+    let w = world();
+    pin_protected_backend(&w.s);
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, "cb", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "cb", &specs_for(&w));
+    let mut v = evl_request("cb", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    clear_all(&w.s, &v);
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    assert_eq!(
+        rec.evaluation_class,
+        axon_loop::plan::EvaluationClass::Development
+    );
+    protect(&w.s);
+    let fe = forge_eval(&w, "cb", &rec, |j| {
+        j["evaluation_class"] = json!("protected")
+    });
+    refused_or_not_accepted(&w, "cb", &fe, "class is not the frozen plan's");
+}
+
 /// M4 / A13 / A14: in a protected evaluation a verdict counts ONLY as
 /// protected evidence. The same guest-path verdict WITHOUT a verified
 /// observation (`guest-unobserved`), or a `development` one — each genuinely

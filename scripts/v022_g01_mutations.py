@@ -829,6 +829,9 @@ MUTATIONS = [
     ('M258', 'PSV-7 (r1): admission re-verifies the execution leg', 'crates/axon-loop/src/admission.rs', 'crate::evl::verify_execution(&att, &areq, &arc, config).map_err(fail)?;', 'let _ = (&att, &areq, &arc);', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
     ('M259', 'PSV-7 (r1): a protected admission cites an execution attestation', 'crates/axon-loop/src/admission.rs', '    let att_ref = v\n        .execution_attestation_ref\n        .as_ref()\n        .ok_or_else(|| fail("it cites no execution attestation".into()))?;', '    let Some(att_ref) = v.execution_attestation_ref.as_ref() else {\n        return Ok(());\n    };', 'axon-loop', '--test protected_class', 'a_protected_admission_re_verifies_the_execution_leg_from_its_documents'),
     ('M260', "PSV-1 (r2): a sealed module's nested use is judged as sealed", 'crates/axon-core/src/lib.rs', '                            in_sealed(&candidate),\n', '                            false,\n', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_module_never_supplies_an_operator_modules_name'),
+    ('M261', 'PSV-7 (r2): protected counters are the re-verified trials, over the plan population', 'crates/axon-loop/src/admission.rs', '        check_arm_grounding(tx, frozen, eval)?;', '        let _ = (frozen, eval);', 'axon-loop', '--test protected_class', 'a_protected_decision_counts_only_its_re_verified_trials'),
+    ('M262', "PSV-7 (r2): the evaluation class is the frozen plan's", 'crates/axon-loop/src/admission.rs', '    if eval.evaluation_class != frozen.evaluation_class {', '    if false && eval.evaluation_class != frozen.evaluation_class {', 'axon-loop', '--test protected_class', 'an_evaluation_class_other_than_the_frozen_plans_is_refused'),
+    ('M263', 'PSV-7 (r2): a counted trial re-verifies against its own episode', 'crates/axon-loop/src/admission.rs', '    if ep.identity.trial_id != t.trial_id || ep.identity.task_id != t.task_id {', '    if false && ep.identity.trial_id != t.trial_id {', 'axon-loop', '--test protected_class', 'a_counted_trial_cannot_borrow_another_trials_verdict'),
 ]
 
 
@@ -853,7 +856,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # (Fabric's own exit-0 check) remains killed.
 RETIRED = {"M58", "M176"}
 BINDING_IDS = {f"M{n}" for n in range(101, 137)}
-PSV_IDS = {f"M{n}" for n in range(137, 261)}
+PSV_IDS = {f"M{n}" for n in range(137, 264)}
 
 
 def in_scope(mid, scope):

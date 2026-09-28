@@ -213,6 +213,46 @@ pub(crate) struct Inputs<'a> {
     pub mechanism_test: bool,
 }
 
+/// Every arm's counters are exactly its trials' outcomes, and the trials are
+/// exactly the frozen plan's population (tasks × repetitions per arm).
+fn check_arm_grounding(
+    tx: &Tx,
+    frozen: &Frozen,
+    eval: &crate::evl::EvaluationRecord,
+) -> Result<()> {
+    use crate::evl::Outcome;
+    let mut population = Vec::new();
+    for arm in &eval.arms {
+        let n = |o: Outcome| arm.trials.iter().filter(|t| t.outcome == o).count() as u64;
+        let missing = arm
+            .trials
+            .iter()
+            .filter(|t| t.episode_ref.is_none())
+            .count() as u64;
+        if arm.assigned != arm.trials.len() as u64
+            || arm.verified_pass != n(Outcome::VerifiedPass)
+            || arm.fail != n(Outcome::Fail)
+            || arm.unknown != n(Outcome::Unknown)
+            || arm.missing != missing
+        {
+            return Err(refused(format!(
+                "arm {}'s counts are not its trials' outcomes: a protected decision counts only \
+                 trials it re-verifies",
+                arm.arm_id
+            )));
+        }
+        for t in &arm.trials {
+            population.push(crate::evl::Assignment {
+                task_id: t.task_id.clone(),
+                arm_id: arm.arm_id.clone(),
+                trial_id: t.trial_id.clone(),
+                policy_ref: arm.policy_ref.clone(),
+            });
+        }
+    }
+    crate::evl::check_population(tx, frozen, &population)
+}
+
 /// A PROTECTED decision rests on verdicts, not on the stored record's word:
 /// every counted verdict is re-verified from its own stored documents,
 /// exactly as intake verified it. The attestation is checked under the
@@ -244,6 +284,9 @@ fn reverify_protected(
         .as_ref()
         .ok_or_else(|| fail("the trial cites no episode".into()))?;
     let ep: axon_loop_contracts::LoopEpisode = tx.store.get_contract("episodes", ep_ref)?;
+    if ep.identity.trial_id != t.trial_id || ep.identity.task_id != t.task_id {
+        return Err(fail("its episode is another trial's".into()));
+    }
     let text = |kind: &str, r: &Ref| tx.store.get_cas_text(kind, r);
     let req_text = text("fabric-requests", &v.request_ref)?;
     let rc_text = text("fabric-receipts", &v.receipt_ref)?;
@@ -327,6 +370,18 @@ pub(crate) fn derive(
         return Err(refused(
             "binding: evaluation was not made under this freeze (plan re-frozen after the evaluation?)",
         ));
+    }
+    if eval.evaluation_class != frozen.evaluation_class {
+        return Err(refused(
+            "binding: the evaluation's class is not the frozen plan's",
+        ));
+    }
+    // A PROTECTED decision counts only trials it re-verifies (below): every
+    // arm's counters must BE its trials' outcomes, and the trials must be
+    // exactly the frozen plan's population, so no stored number and no
+    // dropped trial decides it (dev review round wf_7cb5856d-806, PSV-7).
+    if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
+        check_arm_grounding(tx, frozen, eval)?;
     }
     if eval_seq <= frozen.freeze_seq {
         return Err(refused("evaluation predates the freeze"));

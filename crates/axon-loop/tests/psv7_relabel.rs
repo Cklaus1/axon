@@ -66,7 +66,11 @@ fn development_verdicts_relabelled_protected_are_refused() {
         },
     );
     match admit(&w.s, "x", &fe, ADMITTER, false) {
-        Err(e) => assert!(e.to_string().contains("does not re-verify"), "{e}"),
+        Err(e) => assert!(
+            e.to_string().contains("does not re-verify")
+                || e.to_string().contains("class is not the frozen plan's"),
+            "{e}"
+        ),
         Ok((adm, adm_ref)) => {
             assert_ne!(adm.decision, Decision::Accept, "{:?}", adm.reasons);
             let t = transition(
