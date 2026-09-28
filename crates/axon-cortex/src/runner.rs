@@ -2595,138 +2595,16 @@ impl FabricSubmitExecutor {
     }
 }
 
-/// THE `acf1:` canonicaliser for the Fabric's flat identity objects — the one
-/// implementation both sides of the cortex → fabric process seam use
-/// (`axon_fabric::submit::{executable_digest, workspace_digest}` delegate
-/// here; D-C3). It lives in this crate because it is the lowest one both
-/// sides link: `axon-fabric` depends on `axon-cortex`, never the reverse.
-///
-/// Bytes: a JSON object of string values with keys sorted by code point, no
-/// whitespace, strings escaped by the `cl22` rule (Python
-/// `json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)`):
-/// `"` `\` and C0 controls escaped (`\b \f \n \r \t` short, the rest
-/// `\u00xx` lowercase), everything else — DEL and non-ASCII included — raw.
-/// Key order is SORTED HERE, not inherited from a map type, so enabling
-/// serde_json's `preserve_order` anywhere in the build cannot change a digest.
-/// A duplicate key is a caller bug and panics.
-pub fn acf1_canonical_bytes(fields: &[(&str, &str)]) -> Vec<u8> {
-    fn string(s: &str, out: &mut Vec<u8>) {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        out.push(b'"');
-        for &b in s.as_bytes() {
-            match b {
-                b'"' => out.extend_from_slice(b"\\\""),
-                b'\\' => out.extend_from_slice(b"\\\\"),
-                b'\n' => out.extend_from_slice(b"\\n"),
-                b'\r' => out.extend_from_slice(b"\\r"),
-                b'\t' => out.extend_from_slice(b"\\t"),
-                0x08 => out.extend_from_slice(b"\\b"),
-                0x0c => out.extend_from_slice(b"\\f"),
-                0x00..=0x1f => {
-                    out.extend_from_slice(b"\\u00");
-                    out.push(HEX[(b >> 4) as usize]);
-                    out.push(HEX[(b & 0xf) as usize]);
-                }
-                _ => out.push(b),
-            }
-        }
-        out.push(b'"');
-    }
-    let mut sorted: Vec<&(&str, &str)> = fields.iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(b.0));
-    assert!(
-        sorted.windows(2).all(|w| w[0].0 != w[1].0),
-        "acf1 identity object with a duplicate key"
-    );
-    let mut out = vec![b'{'];
-    for (i, (k, v)) in sorted.into_iter().enumerate() {
-        if i > 0 {
-            out.push(b',');
-        }
-        string(k, &mut out);
-        out.push(b':');
-        string(v, &mut out);
-    }
-    out.push(b'}');
-    out
-}
-
-/// `"acf1:" + sha256(acf1_canonical_bytes(fields))`.
-pub fn acf1_digest(fields: &[(&str, &str)]) -> String {
-    format!("acf1:{}", sha256_hex(&acf1_canonical_bytes(fields)))
-}
-
-/// `acf1:` identity of a registered executable:
-/// `{"registered_executable_ref","sha256"}`.
-pub fn fabric_executable_digest(id: &str, sha256: &str) -> String {
-    acf1_digest(&[("registered_executable_ref", id), ("sha256", sha256)])
-}
-
-/// `acf1:` identity of a single-file workspace version (the exact bytes a
-/// check judged): `{"path","sha256"}`.
-pub fn fabric_workspace_digest(rel_path: &str, bytes: &[u8]) -> String {
-    acf1_digest(&[("path", rel_path), ("sha256", &sha256_hex(bytes))])
-}
-
-/// The `schema` value of a WorkspaceVersion identity object.
-pub const WORKSPACE_VERSION_SCHEMA: &str = "axon.workspace-version/1";
-
-/// One entry of a WorkspaceVersion manifest (B261, identity gap G8): a
-/// relative `/`-separated UTF-8 path, its mode (`100644` | `100755` |
-/// `120000`), content length and lowercase-hex sha256. Validating the path
-/// and the tree (traversal, links, quotas …) is the importer's job
-/// (`axon_fabric::workspace`); this is only the byte recipe.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceManifestEntry {
-    pub path: String,
-    pub mode: &'static str,
-    pub size: u64,
-    pub sha256: String,
-}
-
-/// THE WorkspaceVersion manifest bytes (MiCode
-/// `docs/axon-support/WORKSPACE_VERSION_RECIPE.md` §3, shared with
-/// `micode-persist::workspace_version`): one
-/// `<mode> SP <size> SP <sha256> SP <path> LF` line per entry, sorted by the
-/// path's UTF-8 bytes; an empty tree is the empty byte string. It lives here,
-/// beside `acf1_canonical_bytes`, for the same reason: both sides of the
-/// cortex → fabric seam build it, and there must be one implementation.
-pub fn workspace_manifest_bytes(entries: &[WorkspaceManifestEntry]) -> Vec<u8> {
-    let mut sorted: Vec<&WorkspaceManifestEntry> = entries.iter().collect();
-    sorted.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
-    let mut out = Vec::new();
-    for e in sorted {
-        out.extend_from_slice(e.mode.as_bytes());
-        out.push(b' ');
-        out.extend_from_slice(e.size.to_string().as_bytes());
-        out.push(b' ');
-        out.extend_from_slice(e.sha256.as_bytes());
-        out.push(b' ');
-        out.extend_from_slice(e.path.as_bytes());
-        out.push(b'\n');
-    }
-    out
-}
-
-/// `acf1:` WorkspaceVersion reference of a manifest (recipe §4):
-/// `acf1_digest({"manifest_sha256": sha256(manifest), "schema": "axon.workspace-version/1"})`.
-pub fn workspace_version_ref(manifest: &[u8]) -> String {
-    acf1_digest(&[
-        ("manifest_sha256", &sha256_hex(manifest)),
-        ("schema", WORKSPACE_VERSION_SCHEMA),
-    ])
-}
-
-/// The WorkspaceVersion reference of a tree holding exactly one regular,
-/// non-executable file — the artifact a single-file check judges.
-pub fn single_file_workspace_version_ref(rel_path: &str, bytes: &[u8]) -> String {
-    workspace_version_ref(&workspace_manifest_bytes(&[WorkspaceManifestEntry {
-        path: rel_path.to_string(),
-        mode: "100644",
-        size: bytes.len() as u64,
-        sha256: sha256_hex(bytes),
-    }]))
-}
+// The `acf1:` canonicaliser and the WorkspaceVersion byte recipe live in
+// `axon-workspace-recipe`, the one crate the host (cortex, fabric) AND the
+// guest verdict runner link, so both compute a tree digest with the same
+// code (v022-psv-protocol.md §4). Re-exported so every existing caller is
+// unchanged.
+pub use axon_workspace_recipe::{
+    acf1_canonical_bytes, acf1_digest, fabric_executable_digest, fabric_workspace_digest,
+    single_file_workspace_version_ref, workspace_manifest_bytes, workspace_version_ref,
+    WorkspaceManifestEntry, WORKSPACE_VERSION_SCHEMA,
+};
 
 impl CheckExecutor for FabricSubmitExecutor {
     fn id(&self) -> String {

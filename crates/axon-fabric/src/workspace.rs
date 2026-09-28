@@ -60,155 +60,15 @@ use std::path::{Path, PathBuf};
 use axon_cortex::runner::{
     workspace_manifest_bytes, workspace_version_ref, WorkspaceManifestEntry,
 };
+// The recipe's per-entry rules, quota, entry types and walker are shared with
+// the protected guest's verdict runner: one implementation (§4).
 use axon_loop_contracts::{Acf1Ref, TenantId, TrialId};
+use axon_workspace_recipe::{check_link, check_path, is_exec, walk_tree};
+pub use axon_workspace_recipe::{
+    EntryKind, ImportRefusal, Omission, Quota, TreeEntry, MAX_BYTES, MAX_DEPTH, MAX_ENTRIES,
+    MODE_EXEC, MODE_FILE, MODE_LINK, SKIPPED_TOP_LEVEL,
+};
 use serde::{Deserialize, Serialize};
-
-/// D11 default: at most this many entries.
-pub const MAX_ENTRIES: usize = 20_000;
-/// D11 default: at most this many content bytes (files + symlink targets).
-pub const MAX_BYTES: u64 = 268_435_456;
-/// D11 default: at most this many `/`-separated components per path.
-pub const MAX_DEPTH: usize = 32;
-
-/// Top-level names the recipe skips (repository / MiCode runtime state).
-pub const SKIPPED_TOP_LEVEL: [&str; 2] = [".git", ".micode"];
-
-pub const MODE_FILE: &str = "100644";
-pub const MODE_EXEC: &str = "100755";
-pub const MODE_LINK: &str = "120000";
-
-/// Import quota. `Default` is operator decision D11.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Quota {
-    pub entries: usize,
-    pub bytes: u64,
-    pub depth: usize,
-}
-
-impl Default for Quota {
-    fn default() -> Self {
-        Quota {
-            entries: MAX_ENTRIES,
-            bytes: MAX_BYTES,
-            depth: MAX_DEPTH,
-        }
-    }
-}
-
-/// Why a tree was refused. The whole tree is refused; nothing is imported.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ImportRefusal {
-    Traversal(String),
-    Absolute(String),
-    EscapingSymlink { path: String, target: String },
-    SpecialFile(String),
-    NonUtf8(String),
-    ControlCharacter(String),
-    Duplicate(String),
-    Collision { a: String, b: String },
-    QuotaEntries { limit: usize },
-    QuotaBytes { limit: u64 },
-    QuotaDepth { path: String, limit: usize },
-    Io(String),
-}
-
-impl ImportRefusal {
-    /// A stable class name (one per recipe §2 row, plus `collision`).
-    pub fn class(&self) -> &'static str {
-        match self {
-            ImportRefusal::Traversal(_) => "traversal",
-            ImportRefusal::Absolute(_) => "absolute",
-            ImportRefusal::EscapingSymlink { .. } => "escaping_symlink",
-            ImportRefusal::SpecialFile(_) => "special_file",
-            ImportRefusal::NonUtf8(_) => "non_utf8",
-            ImportRefusal::ControlCharacter(_) => "control_character",
-            ImportRefusal::Duplicate(_) => "duplicate",
-            ImportRefusal::Collision { .. } => "collision",
-            ImportRefusal::QuotaEntries { .. } => "quota_entries",
-            ImportRefusal::QuotaBytes { .. } => "quota_bytes",
-            ImportRefusal::QuotaDepth { .. } => "quota_depth",
-            ImportRefusal::Io(_) => "io",
-        }
-    }
-}
-
-impl std::fmt::Display for ImportRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ImportRefusal::Traversal(p) => write!(
-                f,
-                "traversal: path {p:?} has an empty, `.` or `..` component"
-            ),
-            ImportRefusal::Absolute(p) => write!(f, "absolute path {p:?}"),
-            ImportRefusal::EscapingSymlink { path, target } => {
-                write!(
-                    f,
-                    "symlink {path:?} -> {target:?} leaves the workspace root"
-                )
-            }
-            ImportRefusal::SpecialFile(p) => write!(f, "{p:?} is a device, FIFO or socket"),
-            ImportRefusal::NonUtf8(p) => write!(f, "name under {p:?} is not UTF-8"),
-            ImportRefusal::ControlCharacter(p) => {
-                write!(f, "path {p:?} contains a control character")
-            }
-            ImportRefusal::Duplicate(p) => write!(f, "path {p:?} appears twice"),
-            ImportRefusal::Collision { a, b } => write!(
-                f,
-                "namespace collision: {a:?} and {b:?} name the same file on a \
-                 case-insensitive/normalizing filesystem (or a file is also a directory)"
-            ),
-            ImportRefusal::QuotaEntries { limit } => write!(f, "quota: more than {limit} entries"),
-            ImportRefusal::QuotaBytes { limit } => {
-                write!(f, "quota: more than {limit} content bytes")
-            }
-            ImportRefusal::QuotaDepth { path, limit } => {
-                write!(f, "quota: {path:?} is deeper than {limit} components")
-            }
-            ImportRefusal::Io(e) => write!(f, "io: {e}"),
-        }
-    }
-}
-
-/// What an entry is. The content of a symlink is its TARGET text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EntryKind {
-    File { executable: bool },
-    Symlink,
-}
-
-impl EntryKind {
-    pub fn mode(self) -> &'static str {
-        match self {
-            EntryKind::File { executable: false } => MODE_FILE,
-            EntryKind::File { executable: true } => MODE_EXEC,
-            EntryKind::Symlink => MODE_LINK,
-        }
-    }
-    fn from_mode(m: &str) -> Option<EntryKind> {
-        match m {
-            MODE_FILE => Some(EntryKind::File { executable: false }),
-            MODE_EXEC => Some(EntryKind::File { executable: true }),
-            MODE_LINK => Some(EntryKind::Symlink),
-            _ => None,
-        }
-    }
-}
-
-/// One entry with its content.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreeEntry {
-    pub path: String,
-    pub kind: EntryKind,
-    pub content: Vec<u8>,
-}
-
-/// Something deliberately NOT in the version, and why.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Omission {
-    pub path: String,
-    pub reason: String,
-}
 
 /// A validated tree: entries sorted by path bytes, plus explicit omissions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,52 +80,6 @@ pub struct WorkspaceTree {
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
-}
-
-/// Recipe path rules: relative, `/`-separated, no empty/`.`/`..`
-/// component, no control character, within the depth quota.
-fn check_path(path: &str, quota: &Quota) -> Result<(), ImportRefusal> {
-    if path.starts_with('/') {
-        return Err(ImportRefusal::Absolute(path.into()));
-    }
-    if path
-        .split('/')
-        .any(|c| c.is_empty() || c == "." || c == "..")
-    {
-        return Err(ImportRefusal::Traversal(path.into()));
-    }
-    if path.chars().any(char::is_control) {
-        return Err(ImportRefusal::ControlCharacter(path.into()));
-    }
-    if path.split('/').count() > quota.depth {
-        return Err(ImportRefusal::QuotaDepth {
-            path: path.into(),
-            limit: quota.depth,
-        });
-    }
-    Ok(())
-}
-
-/// Recipe symlink rule: a target that is empty or absolute, or that —
-/// resolved lexically from the link's own directory — pops above the root.
-fn check_link(path: &str, target: &[u8]) -> Result<(), ImportRefusal> {
-    let esc = || ImportRefusal::EscapingSymlink {
-        path: path.into(),
-        target: String::from_utf8_lossy(target).into_owned(),
-    };
-    let t = std::str::from_utf8(target).map_err(|_| ImportRefusal::NonUtf8(path.into()))?;
-    if t.is_empty() || t.starts_with('/') {
-        return Err(esc());
-    }
-    let mut depth = path.split('/').count() - 1; // the link's own directory
-    for c in t.split('/') {
-        match c {
-            "" | "." => {}
-            ".." => depth = depth.checked_sub(1).ok_or_else(esc)?,
-            _ => depth += 1,
-        }
-    }
-    Ok(())
 }
 
 /// The collision key: NFC, then Unicode lowercase.
@@ -333,17 +147,7 @@ impl WorkspaceTree {
 
     /// Walk `root` (never following a symlink) and validate it.
     pub fn import_dir(root: &Path, quota: &Quota) -> Result<WorkspaceTree, ImportRefusal> {
-        let meta = std::fs::symlink_metadata(root).map_err(|e| ImportRefusal::Io(e.to_string()))?;
-        if !meta.is_dir() {
-            return Err(ImportRefusal::Io(format!(
-                "{} is not a directory",
-                root.display()
-            )));
-        }
-        let mut entries = Vec::new();
-        let mut omissions = Vec::new();
-        let mut bytes: u64 = 0;
-        walk(root, "", quota, &mut entries, &mut omissions, &mut bytes)?;
+        let (entries, omissions) = walk_tree(root, quota)?;
         WorkspaceTree::from_entries(entries, omissions, quota)
     }
 
@@ -407,102 +211,6 @@ impl WorkspaceTree {
     pub fn reference(&self) -> Acf1Ref {
         Acf1Ref::new(workspace_version_ref(&self.manifest())).expect("acf1 + sha256 hex")
     }
-}
-
-#[cfg(unix)]
-fn is_exec(m: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    m.permissions().mode() & 0o111 != 0
-}
-#[cfg(not(unix))]
-fn is_exec(_m: &std::fs::Metadata) -> bool {
-    false
-}
-
-fn walk(
-    dir: &Path,
-    prefix: &str,
-    quota: &Quota,
-    entries: &mut Vec<TreeEntry>,
-    omissions: &mut Vec<Omission>,
-    bytes: &mut u64,
-) -> Result<(), ImportRefusal> {
-    let io = |e: std::io::Error| ImportRefusal::Io(format!("{}: {e}", dir.display()));
-    let mut names: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
-        .map_err(io)?
-        .collect::<Result<_, _>>()
-        .map_err(io)?;
-    names.sort_by_key(|d| d.file_name());
-    for d in names {
-        let name = d.file_name();
-        let Some(name) = name.to_str() else {
-            return Err(ImportRefusal::NonUtf8(if prefix.is_empty() {
-                ".".into()
-            } else {
-                prefix.into()
-            }));
-        };
-        let path = if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        if prefix.is_empty() && SKIPPED_TOP_LEVEL.contains(&name) {
-            omissions.push(Omission {
-                path,
-                reason: "top-level repository/runtime state (recipe §1)".into(),
-            });
-            continue;
-        }
-        let meta = std::fs::symlink_metadata(d.path()).map_err(io)?;
-        let ft = meta.file_type();
-        if ft.is_dir() {
-            // A directory contributes nothing itself (an empty one is
-            // invisible); its entries carry its components and are checked.
-            walk(&d.path(), &path, quota, entries, omissions, bytes)?;
-            continue;
-        }
-        check_path(&path, quota)?;
-        let entry = if ft.is_symlink() {
-            let target = std::fs::read_link(d.path()).map_err(io)?;
-            let t = target
-                .to_str()
-                .ok_or_else(|| ImportRefusal::NonUtf8(path.clone()))?
-                .as_bytes()
-                .to_vec();
-            check_link(&path, &t)?;
-            TreeEntry {
-                path,
-                kind: EntryKind::Symlink,
-                content: t,
-            }
-        } else if ft.is_file() {
-            // Refuse BEFORE reading a file that alone breaks the byte quota.
-            if bytes.saturating_add(meta.len()) > quota.bytes {
-                return Err(ImportRefusal::QuotaBytes { limit: quota.bytes });
-            }
-            TreeEntry {
-                content: std::fs::read(d.path()).map_err(io)?,
-                kind: EntryKind::File {
-                    executable: is_exec(&meta),
-                },
-                path,
-            }
-        } else {
-            return Err(ImportRefusal::SpecialFile(path));
-        };
-        *bytes = bytes.saturating_add(entry.content.len() as u64);
-        if *bytes > quota.bytes {
-            return Err(ImportRefusal::QuotaBytes { limit: quota.bytes });
-        }
-        entries.push(entry);
-        if entries.len() > quota.entries {
-            return Err(ImportRefusal::QuotaEntries {
-                limit: quota.entries,
-            });
-        }
-    }
-    Ok(())
 }
 
 // ── the content-addressed store ─────────────────────────────────────────────

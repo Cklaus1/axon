@@ -7,6 +7,7 @@
 mod common;
 use common::*;
 
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use axon_fabric::submit;
@@ -881,4 +882,51 @@ fn a_legacy_single_file_swapped_before_launch_never_yields_a_verdict_on_the_orig
         "{:?}",
         s.reason
     );
+}
+
+/// The protected guest re-digests its read-only inputs with
+/// `axon_workspace_recipe::tree_version_ref` (v022-psv-protocol.md §4). That
+/// digest IS the store's reference for the same tree — the cross-language
+/// vector included — and any byte, mode or link change moves it.
+#[test]
+fn the_guest_tree_digest_is_the_store_reference() {
+    use axon_workspace_recipe::tree_version_ref;
+    let v = vector();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tree");
+    materialize_vector(&root, &v);
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::write(root.join(".git/HEAD"), "ref: x\n").unwrap();
+    let q = Quota::default();
+    let guest = tree_version_ref(&root, &q).unwrap();
+    assert_eq!(guest, v["reference"].as_str().unwrap());
+    assert_eq!(
+        guest,
+        WorkspaceTree::import_dir(&root, &q)
+            .unwrap()
+            .reference()
+            .as_str()
+    );
+
+    // One byte.
+    let f = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| std::fs::symlink_metadata(p).unwrap().is_file())
+        .expect("a top-level file in the vector");
+    let orig = std::fs::read(&f).unwrap();
+    let mut changed = orig.clone();
+    changed.push(b'!');
+    std::fs::write(&f, &changed).unwrap();
+    assert_ne!(tree_version_ref(&root, &q).unwrap(), guest, "content");
+    std::fs::write(&f, &orig).unwrap();
+    assert_eq!(tree_version_ref(&root, &q).unwrap(), guest);
+    // One mode bit.
+    let exec = std::fs::symlink_metadata(&f).unwrap().permissions().mode() & 0o111 != 0;
+    set_exec(&f, !exec);
+    assert_ne!(tree_version_ref(&root, &q).unwrap(), guest, "mode");
+    set_exec(&f, exec);
+    // A new link.
+    std::os::unix::fs::symlink("x", root.join("new-link")).unwrap();
+    assert_ne!(tree_version_ref(&root, &q).unwrap(), guest, "link");
 }

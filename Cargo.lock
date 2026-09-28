@@ -189,6 +189,7 @@ name = "axon-cortex"
 version = "0.1.0"
 dependencies = [
  "axon-ai",
+ "axon-workspace-recipe",
  "hex",
  "libc",
  "serde",
@@ -217,6 +218,7 @@ dependencies = [
  "axon-loop-contracts",
  "axon-os",
  "axon-vm",
+ "axon-workspace-recipe",
  "icu_normalizer",
  "libc",
  "ring",
@@ -386,6 +388,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "tiny_http",
+]
+
+[[package]]
+name = "axon-workspace-recipe"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
 ]
 
 [[package]]

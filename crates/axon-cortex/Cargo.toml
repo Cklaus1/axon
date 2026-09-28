@@ -9,6 +9,7 @@ description = "Axon Cortex — typed contracts for the M0/M1 repair-episode slic
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+axon-workspace-recipe = { path = "../axon-workspace-recipe" }
 hex = "0.4"
 # PR_SET_PDEATHSIG for the check worker (G13-r22-restart-matrix): a worker must not
 # outlive the supervisor that journalled its launch.
