@@ -3,7 +3,7 @@
   "note": "DEVELOPMENT evidence for PSV_PROTOCOL_PROVEN. It earns NO protected-readiness credit: protected_backend, g01_on_protected_backend and pci_on_protected_backend stay NOT_RUN until the operator-controlled environment certifies them.",
   "readiness_credit": "none",
   "m1_guest": {
-    "image_source_revision": "859283ea55fe19fa40ad2ebd650cda63b8f477dd",
+    "image_source_revision": "ab71e845629c3319c56b59924700e390c2812ca0",
     "image_tree_dirty": false,
     "pci_lineage": {
       "certified_revision": "31413ca7",
@@ -12,12 +12,12 @@
     },
     "artifacts": {
       "vmlinux": "4ec3ba40a4024467d959fd3812af000ad9f7f9900579cc9f0fd01a465dcd22b7",
-      "rootfs.sqfs": "a223855d5f340e51c2312ff3e8b09e50d785ccad7a37ccf53f73919a76eae3f1",
-      "axon": "e5636f45adb884a56827ee35159881b124ed9fa725ddd31c672deabad92b5a77",
+      "rootfs.sqfs": "58d08faae8f157c0694e487dc5447c43bea3d1d83684650c9a69eda875692582",
+      "axon": "7209e4a2eaf1b5c82875665f520bcf4b0f896d92f0b342b939ace2e8a2b37a72",
       "axon-guest-init": "bc319dde79f1139ba33dd2af05b5274394a141c10193f42ddd90a760e8454fdb",
-      "axon-psv-runner": "b8e04af67012562ecbcd3b5e9a53aa0b5c49156b0e50487020ad976f6c74f26a"
+      "axon-psv-runner": "1b36bad8c337ba429d14d9e3c4829264bf755477f23541f1a272791ec222c773"
     },
-    "profile_manifest_sha256": "aea6215be496fb3c1279f44d3b8d54262336c9c016daca41f6cbb1409f88a401",
+    "profile_manifest_sha256": "dccaf6029d2ef5668f62b74aae9b2466aa0339b364073683cc29b200f423d1ab",
     "host": "WSL2-nested KVM (development host, ADR-001 D1)",
     "boot_test": {
       "script": "scripts/psv_guest_boot_test.sh",
@@ -27,14 +27,21 @@
         "tampered (27)",
         "custody",
         "seal (E0004)",
-        "changed candidate"
+        "changed candidate",
+        "candtest (A22: candidate @[test] under the registered name never runs)"
       ],
-      "result": "6/6 PASS on the image above",
-      "repeatability": "6 further full runs on the previous build of the same code: 36/36 PASS"
+      "result": "7/7 PASS on the image above (candtest control: the same probe as a SUITE test runs, prints CAND-RAN and passes, so the case discriminates)",
+      "repeatability": "the six earlier cases: 36/36 PASS over 6 runs on the candidate-2 image; not yet repeated on this image"
     },
     "open_observations": [
-      "One launcher exit 21 (vmm-died) in the custody case of the first run after an image rebuild; not reproduced in 6 subsequent full runs; its evidence was deleted before keep-on-failure existed, so it is UNEXPLAINED, not fixed."
-    ]
+      "One launcher exit 21 (vmm-died) in the custody case of the first run after an image rebuild; not reproduced in 6 subsequent full runs; its evidence was deleted before keep-on-failure existed, so it is UNEXPLAINED, not fixed.",
+      "The first candidate-3 image build ended with rc 141 and no message after mksquashfs. The only silent-141 pipeline there, `unsquashfs | head -1` under pipefail, was replaced by `sed -n 1p` (ab71e845). The race did not reproduce in 40 isolated runs, so the attribution is by elimination."
+    ],
+    "previous_image": {
+      "image_source_revision": "859283ea55fe19fa40ad2ebd650cda63b8f477dd",
+      "profile_manifest_sha256": "aea6215be496fb3c1279f44d3b8d54262336c9c016daca41f6cbb1409f88a401",
+      "note": "candidate-2 image; superseded because axon (B1 sealed-test rule, --exact) and axon-psv-runner (--exact, input checks) changed"
+    }
   },
   "psv_protocol_proven": {
     "state": "NOT_PROVEN \u2014 candidate 2 (8102d404) failed its independent review",

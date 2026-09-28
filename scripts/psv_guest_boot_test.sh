@@ -70,7 +70,7 @@ printf 'mod g\nuse g.{double2}\n\nfn expected() -> i64 { 42 }\n\n@[test]\nfn t_s
 run() {
     local c="$1" entry="$2" test="$3"
     mkdir -p "$W/$c"
-    cp -r "$W/cand" "$W/$c/cand"; cp -r "$W/suite" "$W/$c/suite"
+    cp -r "${CAND_SRC:-$W/cand}" "$W/$c/cand"; cp -r "$W/suite" "$W/$c/suite"
     MSHA="$("$DEV" make-job --candidate "$W/$c/cand" --suite "$W/$c/suite" --entry "$entry" \
         --test "$test" --job "$W/$c/job" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])')"
     [[ -n "${4:-}" ]] && eval "$4"
@@ -127,6 +127,20 @@ if printf '%s' "$V" | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.e
     ok "candidate: the guest refused a changed candidate before running anything"
 else
     bad candidate "rc=$RC verdict=$V"
+fi
+
+# A22: the candidate defines a test, in the very module the suite imports,
+# under the name the job registers. It is never collected, so never run and
+# never a pass (review wf_d725935a-7ed, B1).
+mkdir -p "$W/cand-probe"; cp -r "$W/cand/." "$W/cand-probe/"
+printf '\n@[test]\nfn t_cand_probe() { println("CAND-RAN") }\n' >> "$W/cand-probe/f.ax"
+CAND_SRC="$W/cand-probe" run candtest accept.ax t_cand_probe
+V="$(check candtest)"
+ST="$(printf '%s' "$V" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null)"
+if [[ -n "$ST" && "$ST" != passed ]] && ! grep -q CAND-RAN "$W/candtest/out/out/test-stdout" 2>/dev/null; then
+    ok "candtest: a candidate's own @[test] under the registered name never runs (status $ST)"
+else
+    bad candtest "status=$ST rc=$RC stdout=$(head -c 300 "$W/candtest/out/out/test-stdout" 2>/dev/null)"
 fi
 
 echo "psv guest boot test: $FAILS failure(s)"
