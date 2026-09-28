@@ -78,6 +78,11 @@ pub struct DeliveredTrial {
     pub verification_receipt: Value,
     #[serde(default)]
     pub verification_attestation: Value,
+    /// B2: for a PROTECTED verdict, the `axon-psv-evidence/1` bundle its joins
+    /// are verified over (as intake does). Omitted when absent, so a request
+    /// that never carried it keeps its canonical bytes.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub verification_psv_evidence: Value,
     /// G32-r22-sidecar-bindings: the preflight observer's detached signature
     /// (`axon-document-signature/1`, domain [`CONTEXT_DOMAIN`]) over `context`.
     /// Required in a PROTECTED-class evaluation. Omitted when absent, so a
@@ -295,6 +300,8 @@ struct Delivered {
     acf: Option<(ComputeRequest, ExecutionReceipt, PolicyProjection)>,
     verification: [Value; 3],
     ctx_sig: Value,
+    /// B2: the `axon-psv-evidence/1` bundle a protected verdict is joined through.
+    psv: Value,
 }
 
 /// ADR-001 D12: only the acceptance CHECK goes through Fabric; the agent's own
@@ -556,6 +563,7 @@ pub fn evaluate(store: &Store, r: &EvlRequest) -> Result<(EvaluationRecord, Ref)
                         t.verification_attestation.clone(),
                     ],
                     ctx_sig: t.context_signature.clone(),
+                    psv: t.verification_psv_evidence.clone(),
                 },
             )
             .is_some()
@@ -955,6 +963,7 @@ fn judge(
                 text(att).as_deref(),
                 config,
                 subjects,
+                text(&d.psv).as_deref(),
             )
             .and_then(|(q, r, a, key_id)| {
                 // Authenticated by `verify` above (it is in the signed bytes).

@@ -181,3 +181,112 @@ pub fn rooted(a: TrustAuthority, key_hex: &str) -> Result<(), String> {
         ))
     }
 }
+
+// ── axon-evidence-signature/2: ONE implementation (Fabric and the loop) ─────
+
+/// `/2`: DOMAIN-SEPARATED. The signed message is
+/// `axon-evidence-signature/2\n<authority>\n<exact bytes>`, and the signature
+/// names its authority, so a key trusted for one purpose never validates a
+/// statement of another.
+pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/2";
+
+/// The exact message an `axon-evidence-signature/2` for `authority` signs.
+pub fn evidence_signing_message(authority: TrustAuthority, bytes: &[u8]) -> Vec<u8> {
+    let mut m = format!("{EVIDENCE_SIGNATURE_SCHEMA}\n{}\n", authority.dir_name()).into_bytes();
+    m.extend_from_slice(bytes);
+    m
+}
+
+/// `ed25519:<first 16 hex of sha256(public key)>`.
+pub fn key_fingerprint(pk: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let h: String = Sha256::digest(pk)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("ed25519:{}", &h[..16])
+}
+
+fn hex_bytes(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// Verify the detached signature `sig_text` over `bytes` for `authority`
+/// under one of `trusted` (32-byte Ed25519 keys). Returns the signer's
+/// fingerprint. Each refusal is its own rule.
+pub fn verify_evidence_signature(
+    what: &str,
+    bytes: &[u8],
+    sig_text: &str,
+    trusted: &[Vec<u8>],
+    authority: TrustAuthority,
+) -> Result<String, String> {
+    use ring::signature::{UnparsedPublicKey, ED25519};
+    let sv: serde_json::Value =
+        serde_json::from_str(sig_text).map_err(|e| format!("{what} signature is not JSON: {e}"))?;
+    if sv["schema"] != EVIDENCE_SIGNATURE_SCHEMA || sv["alg"] != "ed25519" {
+        return Err(format!(
+            "{what} signature is not {EVIDENCE_SIGNATURE_SCHEMA} with alg ed25519"
+        ));
+    }
+    // RULE:authority-domain
+    if sv["domain"] != authority.dir_name() {
+        return Err(format!(
+            "{what} signature is for authority {}, not {}: a key trusted for one purpose \
+             never validates another",
+            sv["domain"],
+            authority.dir_name()
+        ));
+    }
+    let pk = sv["public_key"]
+        .as_str()
+        .and_then(hex_bytes)
+        .filter(|k| k.len() == 32)
+        .ok_or(format!("{what} signature has no 32-byte public_key"))?;
+    let sig = sv["signature"]
+        .as_str()
+        .and_then(hex_bytes)
+        .filter(|s| s.len() == 64)
+        .ok_or(format!("{what} signature has no 64-byte signature"))?;
+    // RULE:issuer-trusted
+    if !trusted.contains(&pk) {
+        return Err(format!(
+            "{what} is signed by {}, which is not a trusted evidence issuer",
+            key_fingerprint(&pk)
+        ));
+    }
+    // RULE:signature-verifies
+    if UnparsedPublicKey::new(&ED25519, &pk)
+        .verify(&evidence_signing_message(authority, bytes), &sig)
+        .is_err()
+    {
+        return Err(format!(
+            "{what} signature does not verify under {}: the bytes are not the ones the issuer \
+             signed",
+            key_fingerprint(&pk)
+        ));
+    }
+    Ok(key_fingerprint(&pk))
+}
+
+/// The keys `a`'s operator root trusts in THIS process, as raw bytes, after
+/// the ownership walk (always, except under a test root).
+pub fn rooted_keys(a: TrustAuthority) -> Result<Vec<Vec<u8>>, String> {
+    let (dir, owned) = authority_root(a);
+    #[cfg(unix)]
+    if owned {
+        check_owned_chain(Path::new("/"), &dir, true)?;
+    }
+    #[cfg(not(unix))]
+    if owned {
+        return Err("operator ownership cannot be checked on this platform".into());
+    }
+    Ok(keys_in(&dir)?.iter().filter_map(|h| hex_bytes(h)).collect())
+}

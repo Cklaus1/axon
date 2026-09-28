@@ -645,19 +645,22 @@ fn submit(a: &Args) {
                     }
                 }
             };
-            println!(
-                "{}",
-                json!({
-                    "schema": "axon-fabric-submit/1",
-                    "receipt": s.receipt,
-                    "check_report": s.check_report,
-                    "replayed": s.replayed,
-                    "backend": s.backend,
-                    "reason": s.reason,
-                    "receipt_attestation": attestation,
-                    "attestation_withheld": withheld,
-                })
-            )
+            let mut out = json!({
+                "schema": "axon-fabric-submit/1",
+                "receipt": s.receipt,
+                "check_report": s.check_report,
+                "replayed": s.replayed,
+                "backend": s.backend,
+                "reason": s.reason,
+                "receipt_attestation": attestation,
+                "attestation_withheld": withheld,
+            });
+            // B2: only a PROTECTED verdict carries its axon-psv-evidence/1
+            // bundle; every other output keeps its bytes.
+            if let Some(b) = s.psv_evidence {
+                out["psv_evidence"] = b;
+            }
+            println!("{out}")
         }
         Err(e) => refuse(e.kind(), &e.to_string(), e.exit_code()),
     }

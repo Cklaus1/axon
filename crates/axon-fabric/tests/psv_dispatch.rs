@@ -535,6 +535,30 @@ fn a_verified_observation_makes_the_guest_verdict_protected() {
         axon_fabric::signing::attestation_decision(&req, false, s.ran_under.as_ref()),
         Ok(())
     );
+    // B2 end to end: the bundle Fabric emits satisfies the LOOP's own join
+    // check, under an operator observer root holding this observer's key.
+    let bundle = s
+        .psv_evidence
+        .clone()
+        .expect("a protected verdict carries its bundle");
+    let root = w.env.dir.path().join("loop-operator-root");
+    std::fs::create_dir_all(root.join("observer")).unwrap();
+    for e in std::fs::read_dir(w.observer_roots()).unwrap().flatten() {
+        std::fs::copy(e.path(), root.join("observer").join(e.file_name())).unwrap();
+    }
+    axon_loop_contracts::operator_trust::set_test_root(&root);
+    axon_loop_contracts::protected_evidence::check_bundle(&req, &s.receipt, &bundle.to_string())
+        .expect("the loop joins what Fabric launched and observed");
+    // …and a single byte of the manifest changed breaks it.
+    let mut bad = bundle.clone();
+    bad["launch_manifest"] =
+        serde_json::json!(format!("{} ", bad["launch_manifest"].as_str().unwrap()));
+    assert!(axon_loop_contracts::protected_evidence::check_bundle(
+        &req,
+        &s.receipt,
+        &bad.to_string()
+    )
+    .is_err());
     // The nonce was spent.
     let used = std::fs::read_dir(w.env.dir.path().join("custodian-nonces"))
         .unwrap()

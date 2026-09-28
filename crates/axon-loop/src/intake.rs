@@ -194,6 +194,11 @@ pub struct IntakeRecord {
     pub verification_attestation_ref: Option<Ref>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_key_id: Option<String>,
+    /// `cl22:` of the `axon-psv-evidence/1` bundle (`fabric-psv-evidence/`) a
+    /// PROTECTED verdict was joined through (v022-psv-protocol.md §9). Absent
+    /// for any other verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_psv_evidence_ref: Option<Ref>,
 }
 
 /// What `intake_episode` returns.
@@ -226,6 +231,10 @@ pub struct IntakeInput<'a> {
     /// Step 8: the issuer's `acf-receipt-attestation/2` over that receipt and
     /// request, required with them.
     pub verification_attestation: Option<&'a str>,
+    /// B2: for a receipt that claims PROTECTED evidence, the
+    /// `axon-psv-evidence/1` bundle (the exact launch manifest, observation and
+    /// its observer signature) its joins are verified over.
+    pub verification_psv_evidence: Option<&'a str>,
 }
 
 fn semantic(what: &str) -> impl Fn(Refusal) -> LoopError + '_ {
@@ -387,10 +396,16 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     store.put_cas("episodes", &ep)?;
     store.put_cas("contexts", &ctx)?;
     let mut attestation_ref = None;
+    let mut psv_ref = None;
     if let Some((req, rc, att, _)) = &verification {
         store.put_cas("fabric-requests", req)?;
         store.put_cas("fabric-receipts", rc)?;
         attestation_ref = Some(store.put_cas("fabric-attestations", att)?);
+        if let Some(b) = input.verification_psv_evidence {
+            let v: Value = serde_json::from_str(b)
+                .map_err(|e| refused(format!("psv evidence bundle: {e}")))?;
+            psv_ref = Some(store.put_cas("fabric-psv-evidence", &v)?);
+        }
     }
     let record = IntakeRecord {
         schema: IntakeSchema,
@@ -426,6 +441,7 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
             .map(|(req, _, _, _)| digest(req))
             .transpose()?,
         verification_attestation_ref: attestation_ref,
+        verification_psv_evidence_ref: psv_ref,
         verification_key_id: verification.as_ref().map(|v| v.3.clone()),
     };
     let seq = tx.append(Event::EpisodeIntake {
@@ -582,6 +598,7 @@ fn check_verification(
         if input.verification_request.is_some()
             || input.verification_receipt.is_some()
             || input.verification_attestation.is_some()
+            || input.verification_psv_evidence.is_some()
         {
             return Err(refused(
                 "verification evidence was presented, but the sidecar names no verifier_ref: \
@@ -604,6 +621,7 @@ fn check_verification(
         input.verification_attestation,
         config,
         subject,
+        input.verification_psv_evidence,
     )
     .map(Some)
 }
@@ -634,6 +652,7 @@ pub fn verify_check_evidence(
     att_text: Option<&str>,
     config: &crate::store::Config,
     subject: &BTreeSet<OpaqueRef>,
+    psv_evidence: Option<&str>,
 ) -> Result<(ComputeRequest, ExecutionReceipt, Value, String)> {
     let v = &ep.verification;
     let vref = v
@@ -686,12 +705,6 @@ pub fn verify_check_evidence(
     // a verifier key the OPERATOR root holds; the store may name it, never
     // supply it.
     if axon_loop_contracts::protected_evidence::claims_protected(&rc) {
-        // M4: a protected CLAIM carries every join, or it is refused.
-        axon_loop_contracts::protected_evidence::check(&req, &rc).map_err(|e| {
-            refused(format!(
-                "protected evidence from verifier {issuer} does not join: {e}"
-            ))
-        })?;
         crate::store::Config::rooted_key(
             verifier_keys,
             issuer,
@@ -703,6 +716,24 @@ pub fn verify_check_evidence(
                  operator's verifier root: {e}"
             ))
         })?;
+        // M4 + B2: a protected CLAIM carries every join, VERIFIED over the
+        // exact documents (review wf_d725935a-7ed), or it is refused.
+        let bundle = psv_evidence.ok_or_else(|| {
+            refused(format!(
+                "protected evidence from verifier {issuer} carries no axon-psv-evidence bundle: \
+                 its launch manifest and observation cannot be joined"
+            ))
+        })?;
+        axon_loop_contracts::protected_evidence::check_bundle(&req, &rc, bundle).map_err(|e| {
+            refused(format!(
+                "protected evidence from verifier {issuer} does not join: {e}"
+            ))
+        })?;
+    } else if psv_evidence.is_some() {
+        return Err(refused(
+            "an axon-psv-evidence bundle was presented for a receipt that does not claim \
+             protected evidence: evidence the receipt does not cite is not attached to it",
+        ));
     }
     let key = verifier_keys.get(issuer).ok_or_else(|| {
         refused(format!(

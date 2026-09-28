@@ -411,6 +411,10 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                 Some(p) => Some(read(std::path::Path::new(p))?),
                 None => None,
             };
+            let vpsv = match a.flags.get("verification-psv-evidence") {
+                Some(p) => Some(read(std::path::Path::new(p))?),
+                None => None,
+            };
             let out = intake::intake_episode(
                 &a.store()?,
                 &intake::IntakeInput {
@@ -422,6 +426,7 @@ fn run(a: &Args) -> Result<Value, LoopError> {
                     verification_request: vreq.as_deref(),
                     verification_receipt: vrc.as_deref(),
                     verification_attestation: vatt.as_deref(),
+                    verification_psv_evidence: vpsv.as_deref(),
                 },
             )?;
             Ok(

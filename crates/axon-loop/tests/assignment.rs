@@ -123,6 +123,7 @@ fn a_population_is_issued_before_any_outcome() {
             verification_request: text(&t["verification_request"]).as_deref(),
             verification_receipt: text(&t["verification_receipt"]).as_deref(),
             verification_attestation: text(&t["verification_attestation"]).as_deref(),
+            verification_psv_evidence: None,
         },
     )
     .unwrap();

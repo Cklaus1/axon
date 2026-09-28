@@ -300,6 +300,22 @@ pub struct HostVerdict {
 /// one exists for this launch; M3 defines and checks it.
 pub struct VerifiedObservation {
     pub sha256: String,
+    /// The exact observation bytes and their observer signature, carried into
+    /// the `axon-psv-evidence/1` bundle the loop joins through (B2).
+    pub bytes: Vec<u8>,
+    pub signature: String,
+}
+
+/// The `axon-psv-evidence/1` bundle for a PROTECTED verdict: the exact launch
+/// manifest, observation and observer signature the receipt's digests name
+/// (`axon_loop_contracts::protected_evidence::check_bundle` verifies it).
+pub fn evidence_bundle(launch: &Launch, o: &VerifiedObservation) -> serde_json::Value {
+    serde_json::json!({
+        "schema": axon_loop_contracts::protected_evidence::PSV_EVIDENCE_SCHEMA,
+        "launch_manifest": String::from_utf8_lossy(&launch.manifest.bytes()),
+        "observation": String::from_utf8_lossy(&o.bytes),
+        "observation_signature": o.signature,
+    })
 }
 
 /// Derive the verdict from the launcher's `out` directory (`out/out/…` is

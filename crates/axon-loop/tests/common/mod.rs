@@ -953,6 +953,7 @@ pub fn intake_all(s: &Store, v: &Value) -> Vec<(String, String)> {
                 verification_request: text(&t["verification_request"]).as_deref(),
                 verification_receipt: text(&t["verification_receipt"]).as_deref(),
                 verification_attestation: text(&t["verification_attestation"]).as_deref(),
+                verification_psv_evidence: text(&t["verification_psv_evidence"]).as_deref(),
             },
         );
         if let Err(e) = r {
@@ -1027,4 +1028,140 @@ pub fn accepted(w: &World, exp: &str) -> Ref {
         rec.reasons
     );
     a
+}
+
+// ── B2: a GENUINE protected verification (review wf_d725935a-7ed) ──────────
+
+/// Sign `bytes` as an OBSERVER-domain `axon-evidence-signature/2` with the
+/// fixture observer's key (installed in the test operator root).
+pub fn observer_sign(bytes: &[u8]) -> String {
+    use axon_loop_contracts::operator_trust::{evidence_signing_message, TrustAuthority};
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let kp = Ed25519KeyPair::from_pkcs8(&observer_key().0).unwrap();
+    let hexs = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    serde_json::json!({
+        "schema": "axon-evidence-signature/2", "alg": "ed25519", "domain": "observer",
+        "public_key": hexs(kp.public_key().as_ref()),
+        "signature": hexs(kp.sign(&evidence_signing_message(TrustAuthority::Observer, bytes)).as_ref()),
+    })
+    .to_string()
+}
+
+/// The fixture observer's key id.
+pub fn observer_key_id() -> String {
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    let kp = Ed25519KeyPair::from_pkcs8(&observer_key().0).unwrap();
+    axon_loop_contracts::operator_trust::key_fingerprint(kp.public_key().as_ref())
+}
+
+/// Turn a (request, receipt) verification into a GENUINE protected one: a
+/// launch manifest built from the request, an observation of it signed by the
+/// operator-rooted fixture observer, and the receipt's class and digest refs
+/// derived from THOSE documents. `edit_m`/`edit_o` apply one defect before
+/// signing (the refs follow the edited documents); returns the bundle text.
+pub fn make_protected(
+    req: &Value,
+    rc: &mut Value,
+    edit_m: impl FnOnce(&mut axon_psv::LaunchManifest),
+    edit_o: impl FnOnce(&mut axon_psv::PreflightObservation),
+) -> String {
+    use axon_psv::*;
+    let h = |c: &str| c.repeat(64);
+    let suite = check_suite();
+    let (id, rest) = suite
+        .strip_prefix("check-suite:")
+        .unwrap()
+        .split_once('@')
+        .unwrap();
+    let (version, entry) = rest.split_once('#').unwrap();
+    let mut m = LaunchManifest {
+        schema: LAUNCH_MANIFEST_SCHEMA.into(),
+        operation_id: req["operation_id"].as_str().unwrap().into(),
+        task_id: req["task_id"].as_str().unwrap().into(),
+        trial_id: req["trial_id"].as_str().unwrap().into(),
+        attempt_id: req["attempt_id"].as_str().unwrap().into(),
+        backend_profile: PROTECTED_PROFILE.into(),
+        fabric_revision: "f".repeat(40),
+        verifier_sha256: h("d"),
+        qualification_sha256: h("4"),
+        host_config_sha256: h("5"),
+        launcher_sha256: h("6"),
+        firecracker_sha256: h("7"),
+        profile_manifest_sha256: h("8"),
+        guest: GuestDigests {
+            kernel_sha256: h("1"),
+            rootfs_sha256: h("2"),
+            axon_sha256: check_executable_sha256(),
+            init_sha256: h("3"),
+        },
+        policy_sha256: h("9"),
+        suite: SuiteRef {
+            id: id.into(),
+            version: version.into(),
+            entry: entry.into(),
+            test: req["argv"][1].as_str().unwrap().into(),
+            tree_digest: version.into(),
+            registry_sha256: h("a"),
+        },
+        candidate: CandidateRef {
+            workspace_version: req["workspace_version_ref"].as_str().unwrap().into(),
+            tree_digest: req["workspace_version_ref"].as_str().unwrap().into(),
+        },
+        completion: Completion {
+            scheme: COMPLETION_SCHEME.into(),
+        },
+        observation_nonce: h("b")[..32].into(),
+        limits: Limits {
+            wall_time_ms: 60_000,
+            output_bytes: 1 << 20,
+        },
+    };
+    edit_m(&mut m);
+    let m_bytes = m.bytes();
+    let m_sha = sha256_hex(&m_bytes);
+    let mut o = PreflightObservation {
+        schema: PREFLIGHT_OBSERVATION_SCHEMA.into(),
+        observer_key_id: observer_key_id(),
+        nonce: m.observation_nonce.clone(),
+        epoch: 0,
+        observed_at: "2026-09-28T00:00:00Z".into(),
+        host_profile: m.backend_profile.clone(),
+        fabric_revision: m.fabric_revision.clone(),
+        firecracker_sha256: m.firecracker_sha256.clone(),
+        launcher_sha256: m.launcher_sha256.clone(),
+        host_config_sha256: m.host_config_sha256.clone(),
+        guest: m.guest.clone(),
+        verifier_sha256: m.verifier_sha256.clone(),
+        suite_registry_sha256: m.suite.registry_sha256.clone(),
+        policy_sha256: m.policy_sha256.clone(),
+        intended_launch_manifest_sha256: m_sha.clone(),
+    };
+    edit_o(&mut o);
+    let o_bytes = serde_json::to_vec(&o).unwrap();
+    rc["backend_profile_ref"] = serde_json::json!("linux-microvm-protected");
+    let refs = rc["evidence_refs"].as_array_mut().unwrap();
+    refs.retain(|e| {
+        let e = e.as_str().unwrap_or("");
+        !(e.starts_with("evidence-class:") || e.contains("-sha256:"))
+    });
+    for r in [
+        "evidence-class:protected".to_string(),
+        format!("launch-manifest-sha256:{m_sha}"),
+        format!("preflight-observation-sha256:{}", sha256_hex(&o_bytes)),
+        format!("guest-verdict-sha256:{}", h("c")),
+        format!("guest-kernel-sha256:{}", m.guest.kernel_sha256),
+        format!("guest-rootfs-sha256:{}", m.guest.rootfs_sha256),
+        format!("guest-axon-sha256:{}", m.guest.axon_sha256),
+        format!("guest-init-sha256:{}", m.guest.init_sha256),
+        format!("qualification-sha256:{}", m.qualification_sha256),
+    ] {
+        refs.push(serde_json::json!(r));
+    }
+    serde_json::json!({
+        "schema": "axon-psv-evidence/1",
+        "launch_manifest": String::from_utf8(m_bytes).unwrap(),
+        "observation": String::from_utf8(o_bytes.clone()).unwrap(),
+        "observation_signature": observer_sign(&o_bytes),
+    })
+    .to_string()
 }

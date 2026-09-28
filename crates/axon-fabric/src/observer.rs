@@ -203,7 +203,11 @@ pub fn observe(
     // its nonce, and it can be spent once.
     cfg.nonces
         .consume(&o.nonce, epoch, &cfg.clock, cfg.max_age_s)?;
+    let signature = std::fs::read_to_string(work.join("observation.json.sig"))
+        .map_err(|e| format!("observation signature: {e}"))?;
     Ok(VerifiedObservation {
         sha256: axon_psv::sha256_hex(&bytes),
+        bytes,
+        signature,
     })
 }

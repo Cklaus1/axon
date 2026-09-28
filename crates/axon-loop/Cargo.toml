@@ -19,6 +19,9 @@ libc = "0.2"
 axon-attest = { path = "../axon-attest" }
 
 [dev-dependencies]
+# Genuine PSV bundles in the protected-evidence tests (B2).
+axon-psv = { path = "../axon-psv" }
+ring = "0.17"
 # The operator trust root in loop tests is a test root (O2).
 axon-loop-contracts = { path = "../axon-loop-contracts", features = ["test-trust-root"] }
 tempfile = "3"

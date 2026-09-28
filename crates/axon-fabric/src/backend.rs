@@ -160,14 +160,10 @@ pub const DEFAULT_EVIDENCE_MAX_AGE_S: u64 = 30 * 24 * 3600;
 /// names its authority, so a key trusted for one purpose never validates a
 /// statement of another, whatever directory it sits in. `/1` (bytes alone,
 /// no domain) is refused: nothing operator-signed under it exists.
-pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/2";
+pub use axon_loop_contracts::operator_trust::{
+    evidence_signing_message, EVIDENCE_SIGNATURE_SCHEMA,
+};
 
-/// The exact message an `axon-evidence-signature/2` for `authority` signs.
-pub fn evidence_signing_message(authority: TrustAuthority, bytes: &[u8]) -> Vec<u8> {
-    let mut m = format!("{EVIDENCE_SIGNATURE_SCHEMA}\n{}\n", authority.dir_name()).into_bytes();
-    m.extend_from_slice(bytes);
-    m
-}
 pub const WAIVER_SCHEMA: &str = "axon-b263-waiver/1";
 
 /// The time source freshness and waiver expiry are judged against. Injectable
@@ -422,10 +418,6 @@ fn trusted_issuers(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
     Ok(keys)
 }
 
-fn fingerprint(pk: &[u8]) -> String {
-    format!("ed25519:{}", &sha256_hex(pk)[..16])
-}
-
 /// Verify a detached `axon-evidence-signature/2` over `bytes`. Returns the
 /// issuer fingerprint. Each refusal is its own rule.
 fn verify_detached(
@@ -435,7 +427,6 @@ fn verify_detached(
     trusted: &[Vec<u8>],
     authority: TrustAuthority,
 ) -> Result<String, String> {
-    use ring::signature::{UnparsedPublicKey, ED25519};
     let sig_file = match std::fs::read_to_string(sig_path) {
         Ok(t) => Some(t),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -448,51 +439,14 @@ fn verify_detached(
             sig_path.display()
         ));
     }
-    let mut issuer = String::from("unsigned");
-    if let Some(t) = sig_file {
-        let sv: serde_json::Value =
-            serde_json::from_str(&t).map_err(|e| format!("{what} signature is not JSON: {e}"))?;
-        if sv["schema"] != EVIDENCE_SIGNATURE_SCHEMA || sv["alg"] != "ed25519" {
-            return Err(format!(
-                "{what} signature is not {EVIDENCE_SIGNATURE_SCHEMA} with alg ed25519"
-            ));
-        }
-        // RULE:authority-domain
-        if sv["domain"] != authority.dir_name() {
-            return Err(format!(
-                "{what} signature is for authority {}, not {}: a key trusted for one purpose \
-                 never validates another",
-                sv["domain"],
-                authority.dir_name()
-            ));
-        }
-        let pk = sv["public_key"]
-            .as_str()
-            .and_then(hex_decode)
-            .filter(|k| k.len() == 32)
-            .ok_or(format!("{what} signature has no 32-byte public_key"))?;
-        let sig = sv["signature"]
-            .as_str()
-            .and_then(hex_decode)
-            .filter(|s| s.len() == 64)
-            .ok_or(format!("{what} signature has no 64-byte signature"))?;
-        // RULE:issuer-trusted
-        if !trusted.contains(&pk) {
-            return Err(format!(
-                "{what} is signed by {}, which is not a trusted evidence issuer",
-                fingerprint(&pk)
-            ));
-        }
-        // RULE:signature-verifies
-        if UnparsedPublicKey::new(&ED25519, &pk)
-            .verify(&evidence_signing_message(authority, bytes), &sig)
-            .is_err()
-        {
-            return Err(format!("{what} signature does not verify under {}: the bytes are not the ones the issuer signed", fingerprint(&pk)));
-        }
-        issuer = fingerprint(&pk);
-    }
-    Ok(issuer)
+    // The cryptographic rules are the loop's too: one implementation.
+    axon_loop_contracts::operator_trust::verify_evidence_signature(
+        what,
+        bytes,
+        &sig_file.expect("checked above"),
+        trusted,
+        authority,
+    )
 }
 
 /// Verify an operator-signed evidence document (e.g. a protected-host

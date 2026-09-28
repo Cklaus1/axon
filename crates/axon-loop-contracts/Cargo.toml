@@ -13,6 +13,9 @@ sha2 = "0.10"
 # Already in the workspace lockfile (axon-fabric, rustls); no new crate.
 ring = "0.17"
 axon-cortex = { path = "../axon-cortex" }
+# The PSV formats (launch manifest, preflight observation) the protected
+# joins verify (v022-psv-protocol.md §9, review wf_d725935a-7ed B2).
+axon-psv = { path = "../axon-psv" }
 
 [features]
 # TESTS ONLY: `operator_trust::set_test_root`. Enabled only as a

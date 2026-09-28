@@ -39,5 +39,7 @@ libc = "0.2"
 test-trust-root = []
 
 [dev-dependencies]
+# The loop's own join check over a Fabric-emitted bundle, under a test root.
+axon-loop-contracts = { path = "../axon-loop-contracts", features = ["test-trust-root"] }
 tempfile = "3"
 axon-fabric = { path = ".", features = ["test-trust-root"] }

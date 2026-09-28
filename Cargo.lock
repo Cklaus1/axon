@@ -287,8 +287,10 @@ version = "0.1.0"
 dependencies = [
  "axon-attest",
  "axon-loop-contracts",
+ "axon-psv",
  "axon-reflex",
  "libc",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",
@@ -299,6 +301,7 @@ name = "axon-loop-contracts"
 version = "0.1.0"
 dependencies = [
  "axon-cortex",
+ "axon-psv",
  "ring",
  "serde",
  "serde_json",

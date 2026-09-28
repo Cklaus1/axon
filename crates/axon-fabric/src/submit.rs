@@ -183,6 +183,9 @@ pub struct Submission {
     /// that vouches for the result (the verifier's attestation) decides from
     /// this, never from the configuration of the call that asked.
     pub ran_under: Option<RanUnder>,
+    /// B2: for a PROTECTED verdict, the `axon-psv-evidence/1` bundle its joins
+    /// are verified over (delivered to intake with the receipt).
+    pub psv_evidence: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1116,6 +1119,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 backend: None,
                 reason: Some(why),
                 ran_under: None,
+                psv_evidence: None,
             });
         }
     };
@@ -1192,6 +1196,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                 backend: Some(profile.id),
                 reason: Some(why),
                 ran_under: None,
+                psv_evidence: None,
             });
         }
     };
@@ -1335,6 +1340,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
     journal.mark_launched(&req.operation_id)?;
     fault(cfg, Boundary::AfterLaunchRecord);
     let liability = req.limits.max_cost_micro;
+    let mut psv_evidence: Option<Value> = None;
     let (r, report, reason) = match profile.id {
         id if id == backend::LOCAL_INTERPRETER.id => {
             let res = local.expect("host backend").run_checks(&CheckRequest {
@@ -1450,6 +1456,11 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     );
                     launch.scrub();
                     let hv = crate::psv::derive(&launch, &res.out_dir, observation.as_ref());
+                    // B2: a protected verdict travels with the exact documents
+                    // its joins are verified over.
+                    if let Some(o) = &observation {
+                        psv_evidence = Some(crate::psv::evidence_bundle(&launch, o));
+                    }
                     launch.discard();
                     psv_receipt(&req, &journal, res, q, hv, liability)?
                 }
@@ -1536,6 +1547,7 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
             effect_ceiling: ceiling.clone(),
             evidence_class,
         }),
+        psv_evidence,
     })
 }
 
@@ -1893,6 +1905,8 @@ fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
                 backend: None,
                 reason: o.get("reason").and_then(|x| x.as_str()).map(String::from),
                 ran_under: v.launched.then(|| ran_under_of(&v.intent)).flatten(),
+                // Not journalled: a replay carries no bundle (and is never signed).
+                psv_evidence: None,
             };
         }
     }
@@ -1943,6 +1957,7 @@ fn replayed(req: &ComputeRequest, v: &crate::journal::OpView) -> Submission {
         backend: None,
         reason: Some(why.to_string()),
         ran_under: None,
+        psv_evidence: None,
     }
 }
 

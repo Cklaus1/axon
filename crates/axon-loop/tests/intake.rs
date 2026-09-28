@@ -205,6 +205,7 @@ fn run(c: &Case, ep: &Value, src: bool) -> Result<axon_loop::intake::IntakeOutco
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
 }
@@ -351,6 +352,7 @@ fn tampered_unknown_or_unjoinable_episodes_are_refused_with_the_store_unchanged(
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
     .unwrap_err();
@@ -400,6 +402,7 @@ fn a_policy_the_store_does_not_hold_is_refused() {
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
     .unwrap_err();
@@ -441,6 +444,7 @@ fn g1_zero_canonical_cost_is_refused_with_a_clear_reason() {
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
     .unwrap_err();
@@ -473,6 +477,7 @@ fn run_with(
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
 }
@@ -634,6 +639,7 @@ fn run_va(
             verification_request: req.map(|v| v.to_string()).as_deref(),
             verification_receipt: rc.map(|v| v.to_string()).as_deref(),
             verification_attestation: att.map(|v| v.to_string()).as_deref(),
+            verification_psv_evidence: None,
         },
     )
 }
@@ -1022,6 +1028,7 @@ fn a_repeated_trial_of_one_task_and_arm_is_recorded_as_its_own() {
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
     .unwrap();
@@ -1101,6 +1108,7 @@ fn every_historical_spend_shape_is_read_through_the_pinned_table() {
             verification_request: None,
             verification_receipt: None,
             verification_attestation: None,
+            verification_psv_evidence: None,
         },
     )
     .unwrap_err();
@@ -1592,6 +1600,7 @@ fn run_ctx(c: &Case, ctx: &Value, ep: &Value, req: &Value, rc: &Value) -> Result
             verification_request: Some(req.to_string()).as_deref(),
             verification_receipt: Some(rc.to_string()).as_deref(),
             verification_attestation: Some(att.to_string()).as_deref(),
+            verification_psv_evidence: None,
         },
     )
     .map(|_| ())
@@ -1723,6 +1732,7 @@ fn one_verdict_decides_one_trial_in_one_scope() {
             verification_request: Some(req.to_string()).as_deref(),
             verification_receipt: Some(rc.to_string()).as_deref(),
             verification_attestation: Some(att.to_string()).as_deref(),
+            verification_psv_evidence: None,
         },
     )
     .unwrap_err();
@@ -1756,75 +1766,29 @@ fn an_episode_is_bound_to_the_input_workspace_its_observer_saw() {
     );
 }
 
-/// O2 / A18 (v022-psv-protocol.md §8): PROTECTED evidence is authenticated
-/// only under a verifier key the OPERATOR root holds. A key planted in the
-/// store — registered for the trusted verifier's name and genuinely signing
-/// the documents — authenticates a development receipt, never a protected
-/// one. Control: the fixture key (installed in the operator root) authenticates
-/// the protected receipt.
-#[test]
-fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() {
-    let protected_rc = || protected_receipt(check_receipt("passed", 2));
-    let req = check_request();
-    let (planted_sk, planted_pk) = axon_loop_contracts::attestation::generate().unwrap();
-    let plant = |c: &Case| {
-        let mut cfg = c.s.config().unwrap();
-        cfg.verifier_keys.insert(
-            axon_loop_contracts::OpaqueRef::new(common::VERIFIER).unwrap(),
-            planted_pk.clone(),
-        );
-        c.s.write_config(&cfg).unwrap();
-    };
-
-    // Planted key, protected claim: refused, for the operator-root reason.
-    let c = case(Some(500));
-    pin_protected(&c);
-    plant(&c);
-    let rc = protected_rc();
-    let ep = verified(&c.ep, &req, &rc, "passed");
-    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
-    let e = run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).unwrap_err();
-    assert!(e.to_string().contains("operator's verifier root"), "{e}");
-
-    // Planted key, NO protected claim: development evidence, store keys suffice.
-    let c = case(Some(500));
-    plant(&c);
-    let rc = check_receipt("passed", 2);
-    let ep = verified(&c.ep, &req, &rc, "passed");
-    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
-    run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).expect("development: the store's key");
-
-    // Control: the operator-rooted fixture key authenticates the protected claim.
-    let c = case(Some(500));
-    pin_protected(&c);
-    let rc = protected_rc();
-    let ep = verified(&c.ep, &req, &rc, "passed");
-    run_v(&c, &ep, Some(&req), Some(&rc)).expect("an operator-rooted key");
-}
-
-/// A GENUINE protected verification receipt (what the Fabric emits for an
-/// observed guest verdict, M2/M3): protected backend, the class, every digest
-/// join, and the guest interpreter that is the request's pinned executable.
-fn protected_receipt(mut rc: Value) -> Value {
-    rc["backend_profile_ref"] = serde_json::json!("linux-microvm-protected");
-    let refs = rc["evidence_refs"].as_array_mut().unwrap();
-    refs.push(serde_json::json!("evidence-class:protected"));
-    for (p, c) in [
-        ("launch-manifest-sha256", "a"),
-        ("preflight-observation-sha256", "b"),
-        ("guest-verdict-sha256", "c"),
-        ("guest-kernel-sha256", "1"),
-        ("guest-rootfs-sha256", "2"),
-        ("guest-init-sha256", "3"),
-        ("qualification-sha256", "4"),
-    ] {
-        refs.push(serde_json::json!(format!("{p}:{}", c.repeat(64))));
-    }
-    refs.push(serde_json::json!(format!(
-        "guest-axon-sha256:{}",
-        common::check_executable_sha256()
-    )));
-    rc
+/// Step 8 with a PSV evidence bundle (B2).
+fn run_vb(
+    c: &Case,
+    ep: &Value,
+    req: &Value,
+    rc: &Value,
+    att: &Value,
+    bundle: Option<&str>,
+) -> Result<axon_loop::intake::IntakeOutcome, LoopError> {
+    intake_episode(
+        &c.s,
+        &IntakeInput {
+            episode: &ep.to_string(),
+            context: &c.ctx.to_string(),
+            acks: &[c.ack.to_string()],
+            projection: None,
+            source_episode: None,
+            verification_request: Some(&req.to_string()),
+            verification_receipt: Some(&rc.to_string()),
+            verification_attestation: Some(&att.to_string()),
+            verification_psv_evidence: bundle,
+        },
+    )
 }
 
 /// The operator pins the protected profile for the fixture verifier.
@@ -1836,10 +1800,66 @@ fn pin_protected(c: &Case) {
     c.s.write_config(&cfg).unwrap();
 }
 
+/// A genuine protected (receipt, bundle) for the fixture check request.
+fn genuine(req: &Value) -> (Value, String) {
+    let mut rc = check_receipt("passed", 2);
+    let b = common::make_protected(req, &mut rc, |_| {}, |_| {});
+    (rc, b)
+}
+
+/// O2 / A18 (v022-psv-protocol.md §8): PROTECTED evidence is authenticated
+/// only under a verifier key the OPERATOR root holds. A key planted in the
+/// store — registered for the trusted verifier's name and genuinely signing
+/// the documents — authenticates a development receipt, never a protected
+/// one. Control: the fixture key (installed in the operator root)
+/// authenticates the protected receipt, with its genuine bundle.
+#[test]
+fn a_verifier_key_planted_in_the_store_never_authenticates_protected_evidence() {
+    let req = check_request();
+    let (planted_sk, planted_pk) = axon_loop_contracts::attestation::generate().unwrap();
+    let plant = |c: &Case| {
+        let mut cfg = c.s.config().unwrap();
+        cfg.verifier_keys.insert(
+            axon_loop_contracts::OpaqueRef::new(common::VERIFIER).unwrap(),
+            planted_pk.clone(),
+        );
+        c.s.write_config(&cfg).unwrap();
+    };
+
+    // Planted key, protected claim (genuine bundle): refused, for the root reason.
+    let c = case(Some(500));
+    pin_protected(&c);
+    plant(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
+    let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
+    assert!(e.to_string().contains("operator's verifier root"), "{e}");
+
+    // Planted key, NO protected claim: development evidence, store keys suffice.
+    let c = case(Some(500));
+    plant(&c);
+    let rc = check_receipt("passed", 2);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&planted_sk, common::VERIFIER, &req, &rc);
+    run_va(&c, &ep, Some(&req), Some(&rc), Some(&att)).expect("development: the store's key");
+
+    // Control: the operator-rooted fixture key authenticates the protected
+    // claim, joined through its genuine bundle, and the bundle is recorded.
+    let c = case(Some(500));
+    pin_protected(&c);
+    let (rc, b) = genuine(&req);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let out = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).expect("an operator-rooted key");
+    assert!(out.record.verification_psv_evidence_ref.is_some());
+}
+
 /// M4: a receipt that CLAIMS protected evidence must carry every join — the
 /// one class, a protected backend, each digest exactly once, and the guest
-/// interpreter that IS the request's pinned executable. Each defect is refused
-/// for its own reason, genuinely signed by the operator-rooted verifier.
+/// interpreter that IS the request's pinned executable. Each defect (applied
+/// to a GENUINE protected receipt) is refused for its own reason, genuinely
+/// signed by the operator-rooted verifier.
 #[test]
 fn a_protected_claim_without_every_join_is_refused() {
     let req = check_request();
@@ -1908,10 +1928,224 @@ fn a_protected_claim_without_every_join_is_refused() {
     for (name, edit, why) in cases {
         let c = case(Some(500));
         pin_protected(&c);
-        let mut rc = protected_receipt(check_receipt("passed", 2));
+        let (mut rc, b) = genuine(&req);
         edit(&mut rc);
         let ep = verified(&c.ep, &req, &rc, "passed");
-        let e = run_v(&c, &ep, Some(&req), Some(&rc)).unwrap_err();
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
         assert!(e.to_string().contains(why), "{name}: {e}");
     }
+}
+
+/// B2 (review wf_d725935a-7ed): the protected joins are VERIFIED over the exact
+/// documents — never only present and well-formed. Each defect (signed and
+/// attested genuinely otherwise) is refused for its own reason, including
+/// the reviewer's reproduction (the observation ref equal to the manifest ref;
+/// kernel/rootfs refs no manifest names).
+#[test]
+fn each_protected_join_is_verified_over_the_documents() {
+    use axon_psv::{LaunchManifest as M, PreflightObservation as O};
+    let req = check_request();
+    type EditM = fn(&mut M);
+    type EditO = fn(&mut O);
+    type EditRc = fn(&mut Value);
+    type Case6 = (
+        &'static str,
+        EditM,
+        EditO,
+        EditRc,
+        Option<&'static str>,
+        &'static str,
+    );
+    let cases: Vec<Case6> = vec![
+        (
+            "no bundle",
+            |_| {},
+            |_| {},
+            |_| {},
+            Some("NONE"),
+            "carries no axon-psv-evidence bundle",
+        ),
+        (
+            "manifest for another trial",
+            |m| m.trial_id = "trial-other".into(),
+            |_| {},
+            |_| {},
+            None,
+            "trial_id",
+        ),
+        (
+            "manifest for another attempt",
+            |m| m.attempt_id = "attempt-9".into(),
+            |_| {},
+            |_| {},
+            None,
+            "attempt_id",
+        ),
+        (
+            "manifest for another candidate",
+            |m| {
+                // Not OUT_TREE (acf1:7…), which IS the request's candidate.
+                m.candidate.workspace_version = format!("acf1:{}", "8".repeat(64));
+                m.candidate.tree_digest = m.candidate.workspace_version.clone();
+            },
+            |_| {},
+            |_| {},
+            None,
+            "candidate",
+        ),
+        (
+            "manifest for another test",
+            |m| m.suite.test = "t_other".into(),
+            |_| {},
+            |_| {},
+            None,
+            "test",
+        ),
+        (
+            "manifest for another suite version",
+            |m| {
+                m.suite.version = format!("acf1:{}", "6".repeat(64));
+                m.suite.tree_digest = m.suite.version.clone();
+            },
+            |_| {},
+            |_| {},
+            None,
+            "check-suite",
+        ),
+        (
+            "observation of another manifest",
+            |_| {},
+            |o| o.intended_launch_manifest_sha256 = "0".repeat(64),
+            |_| {},
+            None,
+            "intended_launch_manifest_sha256",
+        ),
+        (
+            "observation of another guest kernel",
+            |_| {},
+            |o| o.guest.kernel_sha256 = "9".repeat(64),
+            |_| {},
+            None,
+            "guest.kernel_sha256",
+        ),
+        (
+            "observation claims another observer",
+            |_| {},
+            |o| o.observer_key_id = "ed25519:0000000000000000".into(),
+            |_| {},
+            None,
+            "claims observer",
+        ),
+        (
+            "receipt kernel ref not the manifest's (the reviewer's repro)",
+            |_| {},
+            |_| {},
+            |rc| {
+                let refs = rc["evidence_refs"].as_array_mut().unwrap();
+                refs.retain(|e| !e.as_str().unwrap().starts_with("guest-kernel-sha256"));
+                refs.push(serde_json::json!(format!(
+                    "guest-kernel-sha256:{}",
+                    "0".repeat(64)
+                )));
+            },
+            None,
+            "guest kernel",
+        ),
+        (
+            "observation ref is the manifest ref (the reviewer's repro)",
+            |_| {},
+            |_| {},
+            |rc| {
+                let refs = rc["evidence_refs"].as_array_mut().unwrap();
+                let m = refs
+                    .iter()
+                    .find_map(|e| {
+                        e.as_str()
+                            .unwrap()
+                            .strip_prefix("launch-manifest-sha256:")
+                            .map(String::from)
+                    })
+                    .unwrap();
+                refs.retain(|e| {
+                    !e.as_str()
+                        .unwrap()
+                        .starts_with("preflight-observation-sha256")
+                });
+                refs.push(serde_json::json!(format!(
+                    "preflight-observation-sha256:{m}"
+                )));
+            },
+            None,
+            "the observation is",
+        ),
+        (
+            "receipt qualification ref not the manifest's",
+            |_| {},
+            |_| {},
+            |rc| {
+                let refs = rc["evidence_refs"].as_array_mut().unwrap();
+                refs.retain(|e| !e.as_str().unwrap().starts_with("qualification-sha256"));
+                refs.push(serde_json::json!(format!(
+                    "qualification-sha256:{}",
+                    "e".repeat(64)
+                )));
+            },
+            None,
+            "qualification",
+        ),
+    ];
+    for (name, em, eo, erc, bundle_override, why) in cases {
+        let c = case(Some(500));
+        pin_protected(&c);
+        let mut rc = check_receipt("passed", 2);
+        let b = common::make_protected(&req, &mut rc, em, eo);
+        erc(&mut rc);
+        let ep = verified(&c.ep, &req, &rc, "passed");
+        let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+        let bundle = match bundle_override {
+            Some("NONE") => None,
+            _ => Some(b.as_str()),
+        };
+        let e = match run_vb(&c, &ep, &req, &rc, &att, bundle) {
+            Err(e) => e,
+            Ok(_) => panic!("{name}: ACCEPTED"),
+        };
+        assert!(e.to_string().contains(why), "{name}: {e}");
+    }
+
+    // The observation signed by a key NOT in the operator's observer root.
+    let c = case(Some(500));
+    pin_protected(&c);
+    let mut rc = check_receipt("passed", 2);
+    let b = common::make_protected(&req, &mut rc, |_| {}, |_| {});
+    let mut bv: Value = serde_json::from_str(&b).unwrap();
+    let (other, _) = axon_loop_contracts::attestation::generate().unwrap();
+    {
+        use axon_loop_contracts::operator_trust::{evidence_signing_message, TrustAuthority};
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        let kp = Ed25519KeyPair::from_pkcs8(&other).unwrap();
+        let obs = bv["observation"].as_str().unwrap().as_bytes().to_vec();
+        let hx = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        bv["observation_signature"] = serde_json::json!(serde_json::json!({
+            "schema": "axon-evidence-signature/2", "alg": "ed25519", "domain": "observer",
+            "public_key": hx(kp.public_key().as_ref()),
+            "signature": hx(kp.sign(&evidence_signing_message(TrustAuthority::Observer, &obs)).as_ref()),
+        }).to_string());
+    }
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let e = run_vb(&c, &ep, &req, &rc, &att, Some(&bv.to_string())).unwrap_err();
+    assert!(
+        e.to_string().contains("not a trusted evidence issuer"),
+        "{e}"
+    );
+
+    // A bundle presented for a receipt that does not claim protected evidence.
+    let c = case(Some(500));
+    let rc = check_receipt("passed", 2);
+    let ep = verified(&c.ep, &req, &rc, "passed");
+    let att = attest(&verifier_key().0, common::VERIFIER, &req, &rc);
+    let e = run_vb(&c, &ep, &req, &rc, &att, Some(&b)).unwrap_err();
+    assert!(e.to_string().contains("does not claim"), "{e}");
 }
