@@ -45,7 +45,14 @@ fn on_backends(v: &mut Value, exec: bool, verif: bool) {
             // derived from a real launch manifest and an observation signed by
             // the operator-rooted fixture observer, delivered as its bundle.
             let req = t["verification_request"].clone();
-            let bundle = make_protected(&req, &mut t["verification_receipt"], |_| {}, |_| {});
+            // Observed under the trial's own authority epoch (the loop joins it).
+            let epoch = t["episode"]["authority_epoch"].as_u64().unwrap();
+            let bundle = make_protected(
+                &req,
+                &mut t["verification_receipt"],
+                |_| {},
+                |o| o.epoch = epoch,
+            );
             t["verification_psv_evidence"] = serde_json::from_str(&bundle).unwrap();
             t["episode"]["verification"]["verifier_ref"] =
                 json!(digest_value(&t["verification_receipt"]).unwrap());

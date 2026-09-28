@@ -227,7 +227,6 @@ fn reverify_protected(
     eval: &crate::evl::EvaluationRecord,
     t: &crate::evl::TrialResult,
     v: &crate::evl::VerificationEvidence,
-    req: &axon_loop_contracts::ComputeRequest,
     rc: &axon_loop_contracts::ExecutionReceipt,
 ) -> Result<()> {
     let fail = |e: String| {
@@ -428,7 +427,7 @@ pub(crate) fn derive(
                 },
             )?;
             if eval.evaluation_class == crate::plan::EvaluationClass::Protected {
-                reverify_protected(tx, &config, eval, t, v, &req, &rc)?;
+                reverify_protected(tx, &config, eval, t, v, &rc)?;
             }
         }
     }
