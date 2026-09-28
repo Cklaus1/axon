@@ -54,27 +54,15 @@ OUT = {
     "cx21": "governance/readiness/cx21-readiness.json",
 }
 PRE_READY = {"PREREGISTERED", "NOT_RUN"}
-# governance/specs/v022-protected-suite-verdict.md: a PROTECTED component is
-# earned only on the protected host. Neither WHICH keys are trusted nor WHAT
-# verifies a signature may come from this repository (operator direction
-# 2026-09-27): both live in the operator's trust root, outside any repository,
-# root-owned and unwritable by whoever runs this check. The repository may only
-# NARROW the accepted issuers (governance/status/trust-expectations.json).
-PROTECTED_CERT_DIR = "governance/proofs/v022-protected"
+# governance/specs/v022-protected-suite-verdict.md: the three PROTECTED
+# components are NOT decided here. This script is a repository file an agent
+# can edit; the verdict comes from the OPERATOR-INSTALLED `axon-fabric
+# verify-readiness` (pinned in /etc/axon/trust/verifier.json, checked against
+# /etc/axon/trust/qualification/), which reads this repository as evidence only.
+# Anything else, including this host being unable to run it, is NOT PASS.
 OPERATOR_TRUST_ROOT = "/etc/axon/trust"
-PROTECTED_PROFILE = "linux-microvm-protected"
-PSV_SPEC = "governance/specs/v022-protected-suite-verdict.md"
-TRUST_EXPECTATIONS = "governance/status/trust-expectations.json"
-CERT_SCHEMA = "axon-v022-protected-certification/2"
-# What a certification must bind, so any later change invalidates it rather
-# than inheriting it.
-CERT_FIELDS = [
-    "component", "host_profile", "psv_spec_sha256", "axon_sha", "micode_sha",
-    "fabric_revision", "guest_image_sha256", "guest_kernel_sha256", "guest_runtime_sha256",
-    "suite", "candidate_tree_ref", "observer_key_id", "observation_sha256",
-    "verifier_key_id", "qualification_profile", "b263_qualification_sha256",
-    "evidence", "evidence_bundle_sha256", "certified_at",
-]
+QUALIFICATION_ROOT = "/etc/axon/trust/qualification"
+PROTECTED = ("protected_backend", "g01_on_protected_backend", "pci_on_protected_backend")
 
 
 def path(p):
@@ -109,22 +97,26 @@ def gates_component(registered, gates, files=()):
 
 
 def operator_owned(p):
-    """None if `p` is a root-owned, non-symlink path, writable by neither
-    group/other NOR the process running this check; else why not. On a host
-    where this check runs as root (a development host), nothing qualifies."""
+    """None if `p` and every ancestor are root-owned, non-symlink, writable by
+    neither group/other nor the process running this check; else why not."""
     import stat
-    try:
-        st = os.lstat(p)
-    except OSError as e:
-        return f"{p}: {e}"
-    if stat.S_ISLNK(st.st_mode):
-        return f"{p} is a symlink"
-    if st.st_uid != 0:
-        return f"{p} is not root-owned"
-    if st.st_mode & 0o022:
-        return f"{p} is group/other-writable"
-    if os.access(p, os.W_OK):
-        return f"{p} is writable by the process running this check: an agent-writable trust root authorizes nothing"
+    q = os.path.abspath(p)
+    chain = [q]
+    while os.path.dirname(chain[-1]) != chain[-1]:
+        chain.append(os.path.dirname(chain[-1]))
+    for x in chain:
+        try:
+            st = os.lstat(x)
+        except OSError as e:
+            return f"{x}: {e}"
+        if stat.S_ISLNK(st.st_mode):
+            return f"{x} is a symlink"
+        if st.st_uid != 0:
+            return f"{x} is not root-owned"
+        if st.st_mode & 0o022 and not (x == os.path.dirname(x)):
+            return f"{x} is group/other-writable"
+    if os.access(q, os.W_OK):
+        return f"{q} is writable by the process running this check: an agent-writable trust root authorizes nothing"
     return None
 
 
@@ -132,7 +124,7 @@ def operator_verifier():
     """(argv0, None) for the operator-installed verifier pinned in the trust
     root (verifier.json: {"path", "sha256"}), or (None, why)."""
     pin = os.path.join(OPERATOR_TRUST_ROOT, "verifier.json")
-    for p in (OPERATOR_TRUST_ROOT, os.path.join(OPERATOR_TRUST_ROOT, "qualification_issuers"), pin):
+    for p in (QUALIFICATION_ROOT, pin):
         bad = operator_owned(p)
         if bad:
             return None, f"operator trust root not usable: {bad}"
@@ -151,88 +143,28 @@ def operator_verifier():
     return binpath, None
 
 
-def git(*args):
+def protected_verdicts():
+    """The three protected components, as the operator-installed verifier
+    decides them. Never PASS unless it says so, from a production build, under
+    the operator's qualification root."""
     import subprocess
-    r = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)
-    return r.returncode, r.stdout.strip()
-
-
-def protected_certification(component):
-    """(ok, detail) for the operator-signed protected-host certification of
-    `component`: absent -> not earned; present -> every binding must hold and
-    the operator-installed verifier must verify it under the operator root."""
-    import re
-    import subprocess
-    rec = f"{PROTECTED_CERT_DIR}/{component}.json"
-    if not os.path.exists(path(rec)):
-        return False, f"{rec}: no protected-host certification record (earned only on the protected host)"
-    try:
-        doc = load(rec)
-    except (OSError, ValueError) as e:
-        return False, f"{rec}: unreadable ({e})"
-    missing = [k for k in CERT_FIELDS if k not in doc]
-    if doc.get("schema") != CERT_SCHEMA or missing:
-        return False, f"{rec}: not a {CERT_SCHEMA} record (missing {missing})"
-    if doc["component"] != component or doc["host_profile"] != PROTECTED_PROFILE \
-            or doc["qualification_profile"] != PROTECTED_PROFILE:
-        return False, f"{rec}: not a {PROTECTED_PROFILE} certification of {component}"
-    hexok = lambda v, n: isinstance(v, str) and re.fullmatch(f"[0-9a-f]{{{n}}}", v) is not None
-    for k in ("psv_spec_sha256", "guest_image_sha256", "guest_kernel_sha256", "guest_runtime_sha256",
-              "observation_sha256", "b263_qualification_sha256", "evidence_bundle_sha256"):
-        if not hexok(doc[k], 64):
-            return False, f"{rec}: {k} is not a sha256"
-    for k in ("axon_sha", "micode_sha", "fabric_revision"):
-        if not hexok(doc[k], 40):
-            return False, f"{rec}: {k} is not a full commit id"
-    suite = doc["suite"]
-    if not isinstance(suite, dict) or not all(suite.get(x) for x in ("id", "version", "entry", "test", "digest")):
-        return False, f"{rec}: suite must name id, version, entry, test and digest"
-    # Bound to THIS spec, and to THIS code: nothing but governance/ may have
-    # changed since the certified revision.
-    if doc["psv_spec_sha256"] != sha(PSV_SPEC):
-        return False, f"{rec}: certifies another version of {PSV_SPEC}"
-    rc, _ = git("merge-base", "--is-ancestor", doc["axon_sha"], "HEAD")
-    if rc != 0:
-        return False, f"{rec}: axon_sha {doc['axon_sha']} is not an ancestor of this tree"
-    _, changed = git("diff", "--name-only", doc["axon_sha"], "HEAD")
-    code = [f for f in changed.splitlines() if f and not f.startswith("governance/")]
-    if code:
-        return False, f"{rec}: {len(code)} file(s) outside governance/ changed since the certified revision (e.g. {code[0]})"
-    ev = doc["evidence"]
-    if not ev or any(not os.path.exists(path(e)) for e in ev):
-        return False, f"{rec}: evidence missing"
-    bundle = hashlib.sha256("".join(sha(e) for e in ev).encode()).hexdigest()
-    if bundle != doc["evidence_bundle_sha256"]:
-        return False, f"{rec}: the evidence bundle changed since it was certified"
     verifier, why = operator_verifier()
-    if not verifier:
-        return False, f"{rec}: {why}"
-    r = subprocess.run([verifier, "verify-evidence", "--record", path(rec), "--issuers",
-                        os.path.join(OPERATOR_TRUST_ROOT, "qualification_issuers")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        return False, f"{rec}: not verified under the operator trust root ({r.stdout.strip()[-200:]})"
-    issuer = json.loads(r.stdout).get("issuer")
-    if os.path.exists(path(TRUST_EXPECTATIONS)):
-        expected = load(TRUST_EXPECTATIONS).get("qualification_issuers")
-        if expected is not None and issuer not in expected:
-            return False, f"{rec}: issuer {issuer} is not one this repository expects (it may narrow, never add)"
-    return True, f"{rec} (issuer {issuer})"
-
-
-def with_protected_cert(component, c):
-    """A protected component: its gates and proofs AND the signed certification."""
-    ok, detail = protected_certification(component)
-    c["requires_protected_host_certification"] = (
-        f"{PROTECTED_CERT_DIR}/{component}.json(.sig), verified by the operator-installed verifier "
-        f"under {OPERATOR_TRUST_ROOT}")
-    if not ok:
-        c.setdefault("missing", []).append(detail)
-        if c["status"] == "PASS":
-            c["status"] = "PARTIAL"
-    else:
-        c["protected_host_certification"] = detail
-    return c
+    if verifier:
+        r = subprocess.run([verifier, "verify-readiness", "--repo", ROOT], capture_output=True, text=True)
+        try:
+            out = json.loads(r.stdout)
+        except ValueError:
+            out, why = None, f"operator verifier gave no verdict (exit {r.returncode})"
+        if out is not None:
+            if out.get("build") != "production" or out.get("trust_root") != QUALIFICATION_ROOT:
+                why = f"operator verifier is not a production build over {QUALIFICATION_ROOT}"
+            else:
+                comps = out.get("components", {})
+                return {k: dict(comps.get(k, {"status": "NOT_RUN", "missing": ["no verdict"]}),
+                                decided_by="operator-installed axon-fabric verify-readiness")
+                        for k in PROTECTED}
+    return {k: {"status": "NOT_RUN", "decided_by": "operator-installed axon-fabric verify-readiness",
+                "missing": [f"earned only on the protected host: {why}"]} for k in PROTECTED}
 
 
 def certified_component(st):
@@ -284,23 +216,10 @@ def derive():
         for f in load(COMPLETENESS)["false_greens"]
         if f["status"] == "open" and f.get("severity") == "security"
     ]
+    prot = protected_verdicts()
     v = {
         "g01_authenticity": certified_component(g01),
         "pci_isolation": certified_component(pci),
-        "protected_backend": with_protected_cert("protected_backend", gates_component(
-            registered,
-            ["G13-r22-profile-qualification", "G13-r22-profile-eligibility", "G13-r22-guest-truth"],
-        )),
-        "g01_on_protected_backend": with_protected_cert("g01_on_protected_backend", gates_component(
-            registered,
-            ["G01-r22-registered-check", "G01-r22-verifier-separation"],
-            ["governance/proofs/v022-g01-microvm/REGISTRATION.md"],
-        )),
-        "pci_on_protected_backend": with_protected_cert("pci_on_protected_backend", gates_component(
-            registered,
-            ["G03-r22-trial-isolation", "G03-r22-physical-isolation"],
-            ["governance/proofs/v022-pci-microvm/CERTIFICATION.md"],
-        )),
         "verification_binding": gates_component(
             registered,
             [
@@ -311,6 +230,9 @@ def derive():
                 "G11-r22-rollback-revalidate", "G33-r22-decision-rule-freeze",
             ],
         ),
+        "protected_backend": prot["protected_backend"],
+        "g01_on_protected_backend": prot["g01_on_protected_backend"],
+        "pci_on_protected_backend": prot["pci_on_protected_backend"],
         "no_open_blocking_false_greens": (
             {"status": "FAIL", "open": open_blocking}
             if open_blocking else {"status": "PASS", "evidence": COMPLETENESS}

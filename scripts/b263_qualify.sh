@@ -9,7 +9,7 @@
 # see the effect had it happened. Anything this host cannot test honestly is
 # recorded BLOCKED with a reason — never downgraded to a weaker check.
 #
-# Usage:  sudo scripts/b263_qualify.sh [--evidence-dir DIR] [--keep]
+# Usage:  sudo scripts/b263_qualify.sh [--evidence-dir DIR] [--keep] [--issuer-key-id ed25519:<16hex>]
 #
 # Exit status — four outcomes, never conflated. The LAST stdout line always
 # names the outcome as `b263_qualify: <OUTCOME> — <detail>`:
@@ -45,6 +45,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --evidence-dir) EVIDENCE_DIR="$2"; shift 2 ;;
         --keep) KEEP=1; shift ;;
+        # The OPERATOR's key id (ed25519:<16 hex>) the record will be signed
+        # under: Fabric accepts a record only under the issuer it names
+        # (RULE:issuer-claimed). The key itself never touches this host.
+        --issuer-key-id) export B263_ISSUER_KEY_ID="$2"; shift 2 ;;
         *) echo "unknown arg $1" >&2; exit 2 ;;
     esac
 done
@@ -609,6 +613,7 @@ cgc = open("/sys/fs/cgroup/cgroup.controllers").read().split()
 ev = {
   "schema": "axon-b263-evidence/1",
   "work_package": "B263", "fabric_task": "ACF-T06",
+  "issuer_key_id": os.environ.get("B263_ISSUER_KEY_ID"),
   "host": "WSL2-nested",
   "caveat": "Nested virtualization under Hyper-V; the L0 hypervisor is outside the qualified boundary. (operator decision D2, .axon-v022/coordination/operator_decisions.json)",
   "host_facts": {

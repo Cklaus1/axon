@@ -29,5 +29,13 @@ axon-vm = { path = "../axon-vm" }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[features]
+# TESTS ONLY: constructors for a trust root that is not the operator's (a
+# temp dir, the repository fixture). A production build (`cargo build`, no
+# dev-dependencies) never has it, and `verify-readiness` reports it, so a
+# test-trust build can never satisfy protected readiness.
+test-trust-root = []
+
 [dev-dependencies]
 tempfile = "3"
+axon-fabric = { path = ".", features = ["test-trust-root"] }

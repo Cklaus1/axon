@@ -176,6 +176,38 @@ impl Clock {
 /// signature and which keys are trusted").
 pub const OPERATOR_TRUST_ROOT: &str = "/etc/axon/trust";
 
+/// One trust root PER AUTHORITY, so a key trusted for one purpose never becomes
+/// valid for another: `/etc/axon/trust/<authority>/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustAuthority {
+    /// B263 qualification records and protected-host certifications.
+    Qualification,
+    /// ADR-002 preflight observations.
+    Observer,
+    /// Fabric verifier (receipt attestation) keys.
+    Verifier,
+    /// Admission / transition authority.
+    Admission,
+}
+
+impl TrustAuthority {
+    pub fn dir_name(self) -> &'static str {
+        match self {
+            TrustAuthority::Qualification => "qualification",
+            TrustAuthority::Observer => "observer",
+            TrustAuthority::Verifier => "verifier",
+            TrustAuthority::Admission => "admission",
+        }
+    }
+    /// The fixed, absolute production path.
+    pub fn operator_dir(self) -> PathBuf {
+        Path::new(OPERATOR_TRUST_ROOT).join(self.dir_name())
+    }
+}
+
+/// Whether this build carries the TEST-ONLY trust constructors.
+pub const TEST_TRUST_BUILD: bool = cfg!(any(test, feature = "test-trust-root"));
+
 /// The trust root for qualification evidence. Only PUBLIC keys live here; the
 /// signing key is held by the operator (decision D6) and never by this tree.
 #[derive(Debug, Clone)]
@@ -193,19 +225,20 @@ pub struct QualificationTrust {
 }
 
 impl QualificationTrust {
-    /// PRODUCTION: `/etc/axon/trust/qualification_issuers`, operator-owned.
+    /// PRODUCTION: `/etc/axon/trust/qualification/`, operator-owned. There is
+    /// no fallback: an absent or unreadable root is NOT QUALIFIED.
     pub fn operator() -> QualificationTrust {
         QualificationTrust {
-            issuers_dir: Path::new(OPERATOR_TRUST_ROOT).join("qualification_issuers"),
+            issuers_dir: TrustAuthority::Qualification.operator_dir(),
             max_age_s: DEFAULT_EVIDENCE_MAX_AGE_S,
             clock: Clock::System,
             operator_owned: true,
         }
     }
 
-    /// DEVELOPMENT AND TESTS ONLY: `<manifest dir>/trusted_issuers`, with no
-    /// ownership requirement. A repository directory is agent-mutable, so it
-    /// is never a production trust root; the CLI does not use this.
+    /// TESTS ONLY (feature `test-trust-root`): `<manifest dir>/trusted_issuers`,
+    /// with no ownership requirement. Absent from production builds.
+    #[cfg(any(test, feature = "test-trust-root"))]
     pub fn for_manifest(manifest: &Path) -> QualificationTrust {
         QualificationTrust {
             issuers_dir: manifest
@@ -219,12 +252,39 @@ impl QualificationTrust {
     }
 }
 
-/// An operator-owned trust directory: the directory and every entry in it are
-/// real files or directories (not symlinks), owned by root, and writable by
-/// neither group nor other. Anything else authorizes nothing.
+/// An operator-owned trust directory. It must be an ABSOLUTE path; every
+/// component from `/` down to it, the directory itself and every entry in it
+/// must be a real file or directory (no symlink anywhere on the path), owned
+/// by root, and writable by neither group nor other. Anything else — including
+/// an absent directory — authorizes nothing.
 #[cfg(unix)]
 pub fn check_operator_owned(dir: &Path) -> Result<(), String> {
+    check_owned_from(Path::new("/"), dir)
+}
+
+/// TESTS ONLY: [`check_operator_owned`] from `base` down (a temp dir's
+/// ancestors are not operator-owned).
+#[cfg(all(unix, any(test, feature = "test-trust-root")))]
+pub fn check_operator_owned_below(base: &Path, dir: &Path) -> Result<(), String> {
+    check_owned_from(base, dir)
+}
+
+/// [`check_operator_owned`] from `base` (crate-internal: `readiness` passes
+/// `/` in production and a test base only in test-trust builds).
+#[cfg(unix)]
+pub(crate) fn check_owned_from_pub(base: &Path, dir: &Path) -> Result<(), String> {
+    check_owned_from(base, dir)
+}
+
+#[cfg(unix)]
+fn check_owned_from(base: &Path, dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
+    if !dir.is_absolute() {
+        return Err(format!(
+            "{} is not an absolute path: a trust root is a fixed host path",
+            dir.display()
+        ));
+    }
     let check = |p: &Path| -> Result<(), String> {
         let m = std::fs::symlink_metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
         if m.file_type().is_symlink() {
@@ -249,7 +309,15 @@ pub fn check_operator_owned(dir: &Path) -> Result<(), String> {
         }
         Ok(())
     };
-    check(dir)?;
+    let rel = dir
+        .strip_prefix(base)
+        .map_err(|_| format!("{} is not below {}", dir.display(), base.display()))?;
+    let mut p = base.to_path_buf();
+    check(&p)?;
+    for c in rel.components() {
+        p.push(c);
+        check(&p)?;
+    }
     for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
         check(&e.map_err(|e| e.to_string())?.path())?;
     }
@@ -527,6 +595,15 @@ impl LinuxProfileConfig {
         }
         if ev["profile"]["name"] != LINUX_MICROVM_PROTECTED.id {
             return Err("evidence record is for a different profile".into());
+        }
+        // RULE:issuer-claimed: the record names the key it is issued under, and
+        // that is the key that verified it — a record signed by one trusted
+        // issuer cannot pass as another's.
+        if ev["issuer_key_id"].as_str() != Some(issuer.as_str()) {
+            return Err(format!(
+                "evidence record claims issuer_key_id {} but is signed by {issuer}",
+                ev["issuer_key_id"]
+            ));
         }
         let now = self.trust.clock.now_unix();
 

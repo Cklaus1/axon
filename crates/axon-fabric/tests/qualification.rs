@@ -471,8 +471,16 @@ fn the_real_b263_record_is_refused() {
     let ev: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
     assert_eq!(ev["counts"]["BLOCKED"], 4);
     assert_eq!(ev["profile"]["manifest_sha256"], sha256_file(&manifest));
-    std::fs::copy(&fixture, d.join("evidence.json")).unwrap();
     let issuer = Issuer::generate();
+    // The historical record predates RULE:issuer-claimed. Its copy names the
+    // key that signs it here, so this test still pins its ORIGINAL refusal.
+    let mut rec: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
+    rec["issuer_key_id"] = serde_json::json!(issuer.key_id());
+    std::fs::write(
+        d.join("evidence.json"),
+        serde_json::to_vec_pretty(&rec).unwrap(),
+    )
+    .unwrap();
     issuer.trust_in(&d.join("trusted_issuers"), "operator");
     let mut trust = backend::QualificationTrust::for_manifest(&manifest);
     trust.issuers_dir = d.join("trusted_issuers");
@@ -519,8 +527,16 @@ fn the_stage3_requalification_record_is_refused_until_signed_and_waived() {
     assert_eq!(ev["counts"]["BLOCKED"], 2);
     assert_eq!(ev["counts"]["FAIL"], 0);
     assert_eq!(ev["profile"]["manifest_sha256"], sha256_file(&manifest));
-    std::fs::copy(&fixture, d.join("evidence.json")).unwrap();
     let issuer = Issuer::generate();
+    // The historical record predates RULE:issuer-claimed. Its copy names the
+    // key that signs it here, so this test still pins its ORIGINAL refusal.
+    let mut rec: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
+    rec["issuer_key_id"] = serde_json::json!(issuer.key_id());
+    std::fs::write(
+        d.join("evidence.json"),
+        serde_json::to_vec_pretty(&rec).unwrap(),
+    )
+    .unwrap();
     issuer.trust_in(&d.join("trusted_issuers"), "operator");
     let mut trust = backend::QualificationTrust::for_manifest(&manifest);
     trust.issuers_dir = d.join("trusted_issuers");
@@ -612,4 +628,28 @@ fn only_the_documented_time_format_parses() {
     ] {
         assert_eq!(backend::parse_utc(bad), None, "{bad}");
     }
+}
+
+/// RULE:issuer-claimed: a qualification record names the key it is issued
+/// under, and only that key's signature counts — a record signed by one trusted
+/// issuer cannot pass as another's, and an unnamed issuer qualifies nothing.
+/// Mutation: drop the claim check in `qualification()` → both are accepted.
+#[test]
+fn a_record_counts_only_under_the_issuer_it_names() {
+    let w = World::new();
+    let d = w.env.dir.path();
+    let issuer = &w.issuer;
+    let mut ev = good_evidence(&w.manifest_sha);
+    ev["issuer_key_id"] = serde_json::json!("ed25519:0000000000000000");
+    let lx = qualified_linux_cfg(d, issuer, &ev);
+    let e = lx.qualification().unwrap_err();
+    assert!(e.contains("claims issuer_key_id"), "{e}");
+    ev["issuer_key_id"] = serde_json::Value::Null;
+    let lx = qualified_linux_cfg(d, issuer, &ev);
+    let e = lx.qualification().unwrap_err();
+    assert!(e.contains("claims issuer_key_id null"), "{e}");
+    ev.as_object_mut().unwrap().remove("issuer_key_id");
+    let lx = qualified_linux_cfg(d, issuer, &ev);
+    lx.qualification()
+        .expect("the helper names the signing key: qualified");
 }

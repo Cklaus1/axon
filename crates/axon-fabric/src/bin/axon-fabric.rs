@@ -15,11 +15,19 @@
 //! The Linux profile is eligible only for an issuer-signed evidence record
 //! (`<evidence>.sig` unless `--linux-evidence-sig`), verified against the
 //! Ed25519 public keys in the OPERATOR's trust root,
-//! `/etc/axon/trust/qualification_issuers` (root-owned, not group/other
+//! `/etc/axon/trust/qualification/` (root-owned, not group/other
 //! writable, no symlinks; a caller cannot choose it), no older than the max
 //! age (default 30 days).
 //! axon-fabric workspace-import --state DIR --tenant T --root DIR
 //! axon-fabric verify-evidence --record FILE --issuers DIR [--signature FILE (default <record>.sig)]
+//! axon-fabric verify-readiness --repo DIR
+//!
+//! `verify-readiness` is the AUTHORITATIVE verdict for the three protected
+//! readiness components (governance/specs/v022-protected-suite-verdict.md):
+//! the repository is read as evidence only, and authority comes solely from
+//! the operator's `/etc/axon/trust/qualification/` (no flag chooses it). The
+//! output names the build (`production` / `test-trust`); readiness accepts
+//! only a production build, installed and pinned by the operator.
 //!
 //! `verify-evidence` checks an operator-signed evidence document (the v0.22
 //! protected-host certification record) with the SAME rules as the B263
@@ -121,6 +129,7 @@ fn main() {
         "workspace-import" => workspace_import(&a),
         "keygen" => keygen(&a),
         "verify-evidence" => verify_evidence(&a),
+        "verify-readiness" => verify_readiness(&a),
         _ => refuse(
             "usage",
             "usage: axon-fabric submit|status|cancel … (see --help in the source header)",
@@ -206,6 +215,18 @@ fn verify_evidence(a: &Args) {
     }
 }
 
+/// The AUTHORITATIVE protected-readiness verdict for `--repo` (see
+/// `axon_fabric::readiness`). Authority is the operator's root only: there is
+/// no flag to choose it.
+fn verify_readiness(a: &Args) {
+    let repo = PathBuf::from(a.req("--repo"));
+    let v = axon_fabric::readiness::protected_components(
+        &repo,
+        &axon_fabric::readiness::ReadinessTrust::operator(),
+    );
+    println!("{v}");
+}
+
 fn keygen(a: &Args) {
     use ring::signature::{Ed25519KeyPair, KeyPair};
     let out = PathBuf::from(a.req("--out"));
@@ -247,7 +268,7 @@ fn submit(a: &Args) {
         refuse(
             "usage",
             "--linux-trusted-issuers is not accepted: the protected profile's issuers are the \
-             operator's, in /etc/axon/trust/qualification_issuers",
+             operator's, in /etc/axon/trust/qualification/",
             2,
         );
     }

@@ -3,7 +3,10 @@
 //! symlinks. A caller cannot choose it, and a repository directory (agent
 //! mutable) never counts in production (operator direction 2026-09-27).
 
-use axon_fabric::backend::{check_operator_owned, QualificationTrust, OPERATOR_TRUST_ROOT};
+use axon_fabric::backend::{
+    check_operator_owned, check_operator_owned_below, QualificationTrust, TrustAuthority,
+    OPERATOR_TRUST_ROOT,
+};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -16,7 +19,7 @@ fn production_trust_is_the_operator_root_and_must_be_operator_owned() {
     let t = QualificationTrust::operator();
     assert_eq!(
         t.issuers_dir,
-        Path::new(OPERATOR_TRUST_ROOT).join("qualification_issuers")
+        Path::new(OPERATOR_TRUST_ROOT).join("qualification")
     );
     assert!(t.operator_owned);
     // The repository constructor is development-only: never operator-owned.
@@ -41,28 +44,30 @@ fn an_agent_writable_root_authorizes_nothing() {
     let key = root.join("operator.pub");
     std::fs::write(&key, "ab".repeat(32)).unwrap();
     chmod(&key, 0o644);
-    check_operator_owned(&root).expect("root-owned, 0755/0644");
+    check_operator_owned_below(d.path(), &root).expect("root-owned, 0755/0644");
 
     chmod(&key, 0o666);
-    assert!(check_operator_owned(&root)
+    assert!(check_operator_owned_below(d.path(), &root)
         .unwrap_err()
         .contains("writable"));
     chmod(&key, 0o644);
 
     chmod(&root, 0o777);
-    assert!(check_operator_owned(&root)
+    assert!(check_operator_owned_below(d.path(), &root)
         .unwrap_err()
         .contains("writable"));
     chmod(&root, 0o755);
 
     std::os::unix::fs::chown(&key, Some(1000), None).unwrap();
-    assert!(check_operator_owned(&root)
+    assert!(check_operator_owned_below(d.path(), &root)
         .unwrap_err()
         .contains("not root"));
     std::os::unix::fs::chown(&key, Some(0), None).unwrap();
 
     std::os::unix::fs::symlink(&key, root.join("alias.pub")).unwrap();
-    assert!(check_operator_owned(&root).unwrap_err().contains("symlink"));
+    assert!(check_operator_owned_below(d.path(), &root)
+        .unwrap_err()
+        .contains("symlink"));
 }
 
 #[test]
@@ -102,5 +107,35 @@ fn a_caller_cannot_choose_the_protected_trust_root() {
     assert!(
         text.contains("--linux-trusted-issuers is not accepted"),
         "{text}"
+    );
+}
+
+/// One root PER AUTHORITY, each a fixed absolute path, so a key trusted for
+/// one purpose never becomes valid for another; and a relative path is never
+/// a trust root.
+#[test]
+fn each_authority_has_its_own_fixed_root() {
+    let dirs: Vec<std::path::PathBuf> = [
+        TrustAuthority::Qualification,
+        TrustAuthority::Observer,
+        TrustAuthority::Verifier,
+        TrustAuthority::Admission,
+    ]
+    .iter()
+    .map(|a| a.operator_dir())
+    .collect();
+    for d in &dirs {
+        assert!(
+            d.is_absolute() && d.starts_with(OPERATOR_TRUST_ROOT),
+            "{}",
+            d.display()
+        );
+    }
+    let unique: std::collections::BTreeSet<_> = dirs.iter().collect();
+    assert_eq!(unique.len(), dirs.len(), "authorities share a root");
+    assert!(
+        check_operator_owned(Path::new("profiles/linux-microvm/trusted_issuers"))
+            .unwrap_err()
+            .contains("not an absolute path")
     );
 }

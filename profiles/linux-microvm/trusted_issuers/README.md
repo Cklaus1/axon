@@ -2,7 +2,7 @@
 
 > **Not a production trust root** (2026-09-27). A repository directory is agent-mutable, so it
 > can never decide which keys are trusted. Production Fabric reads the operator's root,
-> `/etc/axon/trust/qualification_issuers` (root-owned, not group/other-writable, no symlinks; see
+> `/etc/axon/trust/qualification/` (root-owned, not group/other-writable, no symlinks; see
 > `governance/specs/v022-protected-suite-verdict.md`), and `axon-fabric submit` refuses a
 > caller-chosen root. `QualificationTrust::for_manifest` (this directory) remains for tests.
 > Never commit a key here.

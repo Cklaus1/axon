@@ -23,55 +23,6 @@
         "governance/proofs/v022-pci/CERTIFICATION.md": "afb94d6a47d637adb4702e0df71dc14b6b1fcf3c14365c5b1c318fdae8d57b05"
       }
     },
-    "protected_backend": {
-      "status": "NOT_RUN",
-      "requires_gates": [
-        "G13-r22-profile-qualification",
-        "G13-r22-profile-eligibility",
-        "G13-r22-guest-truth"
-      ],
-      "missing": [
-        "G13-r22-profile-qualification",
-        "G13-r22-profile-eligibility",
-        "G13-r22-guest-truth",
-        "governance/proofs/v022-protected/protected_backend.json: no protected-host certification record (earned only on the protected host)"
-      ],
-      "requires_protected_host_certification": "governance/proofs/v022-protected/protected_backend.json(.sig), verified by the operator-installed verifier under /etc/axon/trust"
-    },
-    "g01_on_protected_backend": {
-      "status": "NOT_RUN",
-      "requires_gates": [
-        "G01-r22-registered-check",
-        "G01-r22-verifier-separation"
-      ],
-      "requires_proofs": [
-        "governance/proofs/v022-g01-microvm/REGISTRATION.md"
-      ],
-      "missing": [
-        "G01-r22-registered-check",
-        "G01-r22-verifier-separation",
-        "governance/proofs/v022-g01-microvm/REGISTRATION.md",
-        "governance/proofs/v022-protected/g01_on_protected_backend.json: no protected-host certification record (earned only on the protected host)"
-      ],
-      "requires_protected_host_certification": "governance/proofs/v022-protected/g01_on_protected_backend.json(.sig), verified by the operator-installed verifier under /etc/axon/trust"
-    },
-    "pci_on_protected_backend": {
-      "status": "NOT_RUN",
-      "requires_gates": [
-        "G03-r22-trial-isolation",
-        "G03-r22-physical-isolation"
-      ],
-      "requires_proofs": [
-        "governance/proofs/v022-pci-microvm/CERTIFICATION.md"
-      ],
-      "missing": [
-        "G03-r22-trial-isolation",
-        "G03-r22-physical-isolation",
-        "governance/proofs/v022-pci-microvm/CERTIFICATION.md",
-        "governance/proofs/v022-protected/pci_on_protected_backend.json: no protected-host certification record (earned only on the protected host)"
-      ],
-      "requires_protected_host_certification": "governance/proofs/v022-protected/pci_on_protected_backend.json(.sig), verified by the operator-installed verifier under /etc/axon/trust"
-    },
     "verification_binding": {
       "status": "PASS",
       "requires_gates": [
@@ -85,6 +36,27 @@
         "G11-r22-admission-disposition",
         "G11-r22-rollback-revalidate",
         "G33-r22-decision-rule-freeze"
+      ]
+    },
+    "protected_backend": {
+      "status": "NOT_RUN",
+      "decided_by": "operator-installed axon-fabric verify-readiness",
+      "missing": [
+        "earned only on the protected host: operator trust root not usable: /etc/axon/trust/qualification: [Errno 2] No such file or directory: '/etc/axon/trust/qualification'"
+      ]
+    },
+    "g01_on_protected_backend": {
+      "status": "NOT_RUN",
+      "decided_by": "operator-installed axon-fabric verify-readiness",
+      "missing": [
+        "earned only on the protected host: operator trust root not usable: /etc/axon/trust/qualification: [Errno 2] No such file or directory: '/etc/axon/trust/qualification'"
+      ]
+    },
+    "pci_on_protected_backend": {
+      "status": "NOT_RUN",
+      "decided_by": "operator-installed axon-fabric verify-readiness",
+      "missing": [
+        "earned only on the protected host: operator trust root not usable: /etc/axon/trust/qualification: [Errno 2] No such file or directory: '/etc/axon/trust/qualification'"
       ]
     },
     "no_open_blocking_false_greens": {

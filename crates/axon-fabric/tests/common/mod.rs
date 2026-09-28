@@ -363,6 +363,12 @@ impl Issuer {
     pub fn public_hex(&self) -> String {
         hex(self.0.public_key().as_ref())
     }
+    /// `ed25519:<first 16 hex of sha256(public key)>`, as Fabric names it.
+    pub fn key_id(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let h = Sha256::digest(self.0.public_key().as_ref());
+        format!("ed25519:{}", &hex(&h)[..16])
+    }
     /// An `axon-evidence-signature/1` over exactly `bytes`.
     pub fn sign(&self, bytes: &[u8]) -> String {
         json!({"schema":"axon-evidence-signature/1","alg":"ed25519",
@@ -426,7 +432,13 @@ pub fn good_evidence(manifest_sha: &str) -> Value {
 /// (which the caller has written). Clock pinned at `TEST_NOW`, max age 30 d.
 pub fn qualified_linux_cfg(dir: &Path, issuer: &Issuer, evidence: &Value) -> LinuxProfileConfig {
     issuer.trust_in(&dir.join("trusted_issuers"), "operator");
-    issuer.write_signed(&dir.join("evidence.json"), evidence);
+    // The record names the key it is issued under (RULE:issuer-claimed),
+    // unless the caller set it (to test that rule).
+    let mut evidence = evidence.clone();
+    if evidence.get("issuer_key_id").is_none() {
+        evidence["issuer_key_id"] = json!(issuer.key_id());
+    }
+    issuer.write_signed(&dir.join("evidence.json"), &evidence);
     let manifest = dir.join("manifest.json");
     let mut trust = QualificationTrust::for_manifest(&manifest);
     trust.clock = Clock::FixedUnix(axon_fabric::backend::parse_utc(TEST_NOW).unwrap());

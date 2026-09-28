@@ -16,42 +16,67 @@ The rule is enforced by `scripts/protected_verifier_ready.py`, not by convention
 
 ### The trust root is the operator's, outside any repository
 
-Neither WHICH keys are trusted nor WHAT verifies a signature may come from this repository.
-Otherwise an agent could generate a keypair, add the public key, sign a fake qualification, and
-have a repo-built verifier accept it.
+Neither WHICH keys are trusted, nor WHAT verifies a signature, nor WHAT DECIDES readiness may come
+from this repository. Otherwise an agent with repository write access could plant a key, sign a
+fake qualification, or simply edit the readiness script to print PASS.
 
 ```
 operator root trust
       │
-      └── /etc/axon/trust/                root/custodian-owned, never agent-writable
-             ├── qualification_issuers/   *.pub: B263 records and protected-host certifications
-             ├── observer_issuers/        ADR-002 preflight observer keys
-             ├── verifier_issuers/        Fabric verifier keys
-             └── verifier.json            {"path", "sha256"}: the operator-installed verifier binary
+      └── /etc/axon/trust/              root/custodian-owned, never agent-writable
+             ├── qualification/         B263 records and protected-host certifications
+             ├── observer/              ADR-002 preflight observer keys
+             ├── verifier/              Fabric verifier keys
+             ├── admission/             admission / transition authority
+             └── verifier.json          {"path", "sha256"}: the operator-installed axon-fabric
 
-repository
-      └── governance/status/trust-expectations.json   may NARROW the accepted key ids, never add one
+repository  →  evidence only (records, proofs, gate rows)
+            →  governance/status/trust-expectations.json may NARROW accepted key ids, never add one
 ```
 
-- **Fabric (runtime).**
-  - The protected profile's B263 evidence is trusted only under
-    `/etc/axon/trust/qualification_issuers` (`QualificationTrust::operator()`). The directory and
-    every key must be root-owned, not group- or other-writable, and not symlinks.
-  - `axon-fabric submit` refuses `--linux-trusted-issuers`: a caller cannot choose the root.
-  - The repository directory `profiles/linux-microvm/trusted_issuers/` is a development and test
-    fixture only.
-- **Readiness.**
-  - `protected_backend`, `g01_on_protected_backend` and `pci_on_protected_backend` are each PASS
-    only with a protected-host certification record that the **operator-installed verifier**
-    verifies under `/etc/axon/trust/qualification_issuers`.
-  - The verifier's path and sha256 are pinned in `/etc/axon/trust/verifier.json`.
-  - The root, the issuer directory, the pin and the verifier binary must each be root-owned, not
-    group- or other-writable, and **not writable by the process running the check**. On a host
-    where the check runs as root (this development host), nothing qualifies, even a root-created
-    `/etc/axon/trust`.
-  - The repository-built verifier is never used for this decision.
-- Gate registration rows and unsigned proof documents are necessary but NOT sufficient for these
-  three components.
+One trust source per authority. A key trusted for one purpose never becomes valid for another.
+
+**Protected runtime (Fabric).** The protected profile's B263 evidence is trusted only under
+`/etc/axon/trust/qualification/` (`QualificationTrust::operator()`, `TrustAuthority`):
+- a fixed, absolute host path;
+- every path component, from `/` down to each key, root-owned, not group- or other-writable, and
+  not a symlink;
+- the record's `issuer_key_id` equal to the key that verified it (`RULE:issuer-claimed`;
+  `b263_qualify.sh --issuer-key-id`);
+- a missing or unreadable root is NOT QUALIFIED, never a fallback;
+- `axon-fabric submit` refuses `--linux-trusted-issuers`;
+- no repository path, CLI argument, environment variable, workspace file or candidate config can
+  replace or extend the set.
+
+Test roots exist only behind the Cargo feature `test-trust-root`: `for_manifest`,
+`check_operator_owned_below` and `ReadinessTrust::test`. A production build (`cargo build`, no
+dev-dependencies) does not contain them.
+
+**Readiness, the authority.**
+- `protected_backend`, `g01_on_protected_backend` and `pci_on_protected_backend` are decided by
+  `axon-fabric verify-readiness --repo DIR` (`axon_fabric::readiness`), run from the
+  **operator-installed** binary pinned in `/etc/axon/trust/verifier.json`.
+- That binary reads the repository as evidence only, and takes authority solely from
+  `/etc/axon/trust/qualification/`, which must also be unwritable by the process running it.
+- It reports its `build`; only `production` counts.
+- `scripts/protected_verifier_ready.py` merely relays that verdict. Editing it, or any repository
+  file, cannot turn the operator verifier's verdict to PASS.
+- On a protected host, the custodian's launcher (operator-owned, ADR-001 D6) runs the pinned
+  verifier before any protected Stage 7 / CX-21 run. The repository entry points are advisory.
+- Gate registration rows and unsigned proof documents are necessary but NOT sufficient.
+
+**Adversarial proof** (`crates/axon-fabric/tests/readiness.rs`). From a genuinely certified
+repository, none of these keeps `protected_backend` PASS, each for its stated reason:
+- the agent signs with its own key, plants it and lists it as expected;
+- narrowing the expected issuers;
+- changing source, scripts, manifests or local keys, committed or not;
+- changing the spec, the evidence or the record;
+- re-labelling the record for another component;
+- a certification of another history;
+- a trust root that is world-writable, not root-owned or symlinked;
+- the production root being absent on this host.
+
+A governance-only change keeps the certification.
 
 ### Two layers, never merged
 
@@ -182,7 +207,7 @@ still need their own frozen documents.
 
 `governance/proofs/v022-protected/<component>.json`, plus
 `governance/proofs/v022-protected/<component>.json.sig`: an `axon-evidence-signature/1` over the
-exact bytes, from an operator key in `/etc/axon/trust/qualification_issuers`.
+exact bytes, from an operator key in `/etc/axon/trust/qualification/`.
 
 ```json
 {
@@ -208,7 +233,7 @@ The readiness script requires every field, with well-formed digests and commit i
 - `psv_spec_sha256` equal to this document's current hash;
 - `axon_sha` an ancestor of the judged tree, with **no file outside `governance/` changed since**;
 - every evidence file present, and the recomputed bundle digest equal;
-- the operator-installed verifier to verify the signature under the operator root;
+- the operator-installed `verify-readiness` to verify the signature under the operator root;
 - if `trust-expectations.json` lists expected issuers, the signer to be among them.
 
 Any later change to the spec, the code or the evidence therefore invalidates the certification
