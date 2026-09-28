@@ -514,3 +514,22 @@ distinct blockers. The first is a regression of amendment 15. They are negative-
     protected host ran workload code in the host's own privilege domain, beside the protected
     attempts' custody. Now `submit` refuses any selection other than the protected profile when a
     protected host is configured, and nothing runs.
+
+The next four come from dev review-loop round 3 (wf_bf757240-925, 16 agents), which found five
+blockers reducing to four fixes (two PSV-7 findings share one). They are negative-matrix rows
+A37–A40.
+
+23. **The launcher's inline Python runs isolated (FIELD-ORIGIN).** The pinned launcher runs as
+    root, and its `python3 -c` / `python3 -` calls put the caller's working directory first on
+    `sys.path`. Every call now runs with `-I` (isolated: no cwd on the path, no env-driven import).
+24. **A protected record must agree with its re-verified documents (PSV-7).** Re-verification
+    checked each counted verdict's documents but not every join back to the stored record. Now each
+    counted trial's episode must have run its arm's policy; its recorded outcome must equal the
+    verdict the verifier signed; and its preflight-context signature is stored at evaluation
+    (`context-signatures/`) and re-verified at admission under the operator's observer root, not
+    taken from the `context_signed_by` string.
+25. **A sealed frame may not reseed the process RNG (PSV-1).** The interpreter's RNG is
+    process-global, so sealed candidate code could `srand` it and predict every draw the operator's
+    acceptance test makes. `srand` is now refused (SandboxViolation) from a sealed frame; the
+    operator's test may still use randomness.
+26. (Grouped with 24: the arm-policy, outcome and context-signature joins are one fix.)

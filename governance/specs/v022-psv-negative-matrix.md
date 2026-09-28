@@ -6,8 +6,8 @@ three protected components stay NOT_RUN until the operator-controlled environmen
 Rows are the gap map's A1–A19, the protocol spec's A20–A21, A22–A24 from the candidate-2
 independent review (wf_d725935a-7ed, B1–B3), A25–A26 from the candidate-3b review
 (wf_1bc28496-38e), A27 from the candidate-4 review (wf_ecfcd666-6c9), A28 from
-the candidate-5 review (wf_293dfdb6-9d8), A29–A32 from dev review-loop round 1 (wf_336353cb-a2b), and A33–A36 from round 2
-(wf_7cb5856d-806). Every cited test asserts its row's
+the candidate-5 review (wf_293dfdb6-9d8), A29–A32 from dev review-loop round 1 (wf_336353cb-a2b), A33–A36 from round 2
+(wf_7cb5856d-806), and A37–A40 from round 3 (wf_bf757240-925). Every cited test asserts its row's
 SPECIFIC refusal (the reason, not only a non-pass), and runs in the fabric/psv/loop suites or in
 `gate.sh`. `scripts/psv_matrix_check.py` fails when a row is missing, cites no test, or cites a
 test that does not exist (`file::function`), so this table cannot silently rot.
@@ -53,6 +53,10 @@ depth, and each has its own test.
 | A34 | stored counters, dropped or borrowed trials, or a relabelled class decide a protected admission | admission: counters equal the trials' outcomes over the frozen population; each counted trial re-verifies against its own episode; class equals the frozen plan's | `counts are not its trials`; `another trial's`; `class is not the frozen plan's` | `crates/axon-loop/tests/protected_class.rs::a_protected_decision_counts_only_its_re_verified_trials`, `crates/axon-loop/tests/protected_class.rs::a_counted_trial_cannot_borrow_another_trials_verdict`, `crates/axon-loop/tests/protected_class.rs::an_evaluation_class_other_than_the_frozen_plans_is_refused` |
 | A35 | forged unsigned clearances in the ledger | admission re-verifies each clearance's stored monitor signature under the operator's monitor root | `no longer cleared` | `crates/axon-loop/tests/protected_class.rs::a_forged_unsigned_clearance_clears_nothing` |
 | A36 | a local dispatch on a protected host | `submit` refuses any non-protected selection on a protected host | `protected host` | `crates/axon-fabric/tests/psv_dispatch.rs::a_protected_host_runs_nothing_outside_the_protected_profile` |
+| A37 | the launcher imports Python from the caller's cwd (runs as root) | every inline `python3` call runs isolated (`-I`) | no module imported from cwd | `crates/axon-fabric/tests/launcher_isolation.rs::the_launchers_python_never_imports_from_the_callers_cwd` |
+| A38 | a forged record swaps the arms' policy_refs | each counted trial's episode must have run its arm's policy | `ran policy` | `crates/axon-loop/tests/protected_class.rs::a_protected_record_must_agree_with_its_re_verified_documents` |
+| A39 | a genuine FAILED verdict recorded as a pass, or a context no observer signed | the recorded outcome must equal the signed verdict; the context signature is stored and re-verified under the operator observer root | `is not the signed verdict`; `context signature` | `crates/axon-loop/tests/protected_class.rs::a_protected_record_must_agree_with_its_re_verified_documents` |
+| A40 | a sealed candidate reseeds the RNG the operator test draws from | `srand` refused in a sealed frame | (reseed does not pass) | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_candidate_cannot_reseed_the_rng` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 

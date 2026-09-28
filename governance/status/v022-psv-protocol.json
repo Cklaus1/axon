@@ -265,7 +265,7 @@
           "mutations": "M251-M259 9/9 killed"
         }
       },
-      "next": "round 3 on the fixed dev tree",
+      "next": "round 4 on the fixed dev tree",
       "round_2": {
         "run": "wf_7cb5856d-806",
         "tree": "axon-s3-veto a2a0be67",
@@ -286,6 +286,28 @@
           "amendments": "19-22",
           "matrix": "A33-A36 (36 rows)",
           "mutations": "M251 retargeted, M260-M265 killed"
+        }
+      },
+      "round_3": {
+        "run": "wf_bf757240-925",
+        "tree": "axon-s3-veto 4fbe6918",
+        "agents": 16,
+        "blockers": [
+          "FIELD-ORIGIN: the launcher's inline Python imports from the caller's cwd as root (executed)",
+          "PSV-7: a forged record swaps arm policy_refs; arm policy not joined to the trials' episodes (executed)",
+          "PSV-7: a signed FAILED verdict counted as a pass; outcome not joined to the re-verified verdict (executed)",
+          "PSV-7: a context no observer signed counts; context signature not stored/re-verified (executed)",
+          "PSV-1: a sealed candidate reseeds the process RNG and predicts the operator test's draws (executed)"
+        ],
+        "fixed": {
+          "commits": [
+            "a2df24c5",
+            "96aa96f3",
+            "8e9858f4"
+          ],
+          "amendments": "23-25",
+          "matrix": "A37-A40 (40 rows)",
+          "mutations": "M266-M270 killed"
         }
       }
     }
