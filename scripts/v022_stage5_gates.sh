@@ -65,7 +65,7 @@ GATES=(
   # G01-r22-unknown-outcome: timeout, cancellation, unmatched, missing evidence
   # and unverifiable output stay distinct kinds (D12 trials judged, never
   # counted); real-binary evidence is loop_interop_gate.sh section 8b.
-  "G01-r22-unknown-outcome|axon-loop|d12_unknown_outcome|*5"
+  "G01-r22-unknown-outcome|axon-loop|d12_unknown_outcome|*7"
   "G01-r22-unknown-outcome|axon-loop|unknown_kinds|each_unknown_names_its_kind_and_the_arm_adds_up"
   "G11-r22-independent-admission|axon-loop|evl_admission|an_admitter_holds_no_other_loop_role a_candidate_is_bound_to_one_experiment full_loop_accept_activate_future_task_rollback"
   "G11-r22-independent-admission|axon-loop|pointer|a_rollback_needs_an_independent_trusted_issuer no_proposer_evaluator_or_subject_issues_a_promotion a_baseline_issuer_holds_no_other_loop_role"

@@ -108,6 +108,34 @@ pub fn cost_micro_from_micro_cents(micro_cents: Option<u64>) -> Option<u64> {
     micro_cents.map(|mc| mc / 100 + u64::from(mc % 100 != 0))
 }
 
+/// Why MiCode's verification is `not_run`, as its sidecar may state it
+/// (`loop_sidecar::NotRunReason`): a CLAIM that can only say which kind of
+/// non-success a trial is (G01-r22-unknown-outcome), never make one count.
+pub const MICODE_NOT_RUN_REASONS: [&str; 5] = [
+    "run_timed_out",
+    "check_timed_out",
+    "check_evidence_missing",
+    "check_unverifiable",
+    "check_refused",
+];
+
+/// MiCode's `cl22:` over a not-run reason (`loop_sidecar::not_run_ref`).
+pub fn micode_not_run_ref(reason: &str) -> Ref {
+    digest_value(&json!({"not_run_reason": reason, "by": "micode"}))
+        .expect("two strings always canonicalise")
+}
+
+/// The not-run reason an UNCITED verification names, if it names exactly one
+/// of [`MICODE_NOT_RUN_REASONS`].
+pub fn micode_not_run_reason(v: &axon_loop_contracts::EpisodeVerification) -> Option<&'static str> {
+    match (v.verifier_ref.as_ref(), v.evidence_refs.as_slice()) {
+        (None, [r]) => MICODE_NOT_RUN_REASONS
+            .into_iter()
+            .find(|x| &micode_not_run_ref(x) == r),
+        _ => None,
+    }
+}
+
 /// MiCode's `cl22:` over a named absence (`loop_sidecar::not_produced_ref`).
 pub fn micode_not_produced_ref(field: &str) -> Ref {
     digest_value(&json!({"not_produced_by": "micode", "field": field}))
@@ -231,6 +259,16 @@ pub fn intake_episode(store: &Store, input: &IntakeInput<'_>) -> Result<IntakeOu
     if ep.status == EpisodeStatus::Refused {
         return Err(refused(
             "status refused: a TASK_NOT_STARTED sidecar is not a post-preflight episode",
+        ));
+    }
+    // An UNCITED verification names no evidence, or exactly one MiCode not-run
+    // reason: an arbitrary ref beside no verifier would be evidence of nothing.
+    if ep.verification.verifier_ref.is_none()
+        && !ep.verification.evidence_refs.is_empty()
+        && micode_not_run_reason(&ep.verification).is_none()
+    {
+        return Err(refused(
+            "an uncited verification may name no evidence, or exactly one not-run reason marker",
         ));
     }
     // 4. The policy must be one this store issued.

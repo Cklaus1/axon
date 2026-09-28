@@ -280,3 +280,94 @@ fn a_cancelled_run_does_not_count_its_failed_check() {
     );
     assert_eq!(c.fail, 0, "{c:?}");
 }
+
+/// Review wf_849bc606-7e8 (three executed blockers): the bridge's own
+/// failures used to reach EVL as one uncited `not_run`. MiCode now states WHY
+/// with one content marker (`micode_not_run_ref`), and EVL keeps the kinds
+/// apart: a run or check timeout is TimedOut, missing evidence is
+/// MissingEvidence, an unverifiable one is Unverifiable, a refusal NotRun.
+/// A cancelled run stays Cancelled whatever it states. Nothing counts.
+#[test]
+fn a_stated_not_run_reason_keeps_the_kind() {
+    use axon_loop::intake::micode_not_run_ref;
+    let w = world();
+    freeze_plan_n(&w.s, "why", &w.inc_ref, &w.cand_ref, 6, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 6, 6, 6, Some(100), Some(50));
+    let mut v = evl_request("why", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    let cases = [
+        (
+            "c0",
+            "completed",
+            Some("check_timed_out"),
+            UnknownKind::TimedOut,
+        ),
+        ("c1", "failed", Some("run_timed_out"), UnknownKind::TimedOut),
+        (
+            "c2",
+            "completed",
+            Some("check_evidence_missing"),
+            UnknownKind::MissingEvidence,
+        ),
+        (
+            "c3",
+            "completed",
+            Some("check_unverifiable"),
+            UnknownKind::Unverifiable,
+        ),
+        (
+            "c4",
+            "completed",
+            Some("check_refused"),
+            UnknownKind::NotRun,
+        ),
+        (
+            "c5",
+            "cancelled",
+            Some("run_timed_out"),
+            UnknownKind::Cancelled,
+        ),
+    ];
+    for (t, status, why, _) in cases {
+        let tr = trial_mut(&mut v, t);
+        d12(tr);
+        uncited(tr, status, "not_run");
+        if let Some(r) = why {
+            tr["episode"]["verification"]["evidence_refs"] = json!([micode_not_run_ref(r)]);
+        }
+    }
+    let refused = intake_all(&w.s, &v);
+    assert!(refused.is_empty(), "{refused:?}");
+    let (rec, _) = evaluate(&w.s, &v).unwrap();
+    let c = rec.arm_for_policy(&w.cand_ref).unwrap();
+    for (t, _, _, want) in cases {
+        let r = c.trials.iter().find(|x| x.trial_id.as_str() == t).unwrap();
+        assert_eq!(
+            (r.outcome, r.unknown_kind),
+            (Outcome::Unknown, Some(want)),
+            "{t}: {}",
+            r.reason
+        );
+    }
+    assert_eq!((c.verified_pass, c.fail), (0, 0));
+}
+
+/// An uncited verification names no evidence, or exactly one not-run reason:
+/// any other ref is refused at intake, writing nothing.
+#[test]
+fn an_uncited_verification_names_no_other_evidence() {
+    let w = world();
+    freeze_plan(&w.s, "junk", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    let specs = pair(&w.inc, &w.cand, 2, 2, 2, Some(100), Some(50));
+    let mut v = evl_request("junk", &w.inc, &w.cand, &specs, &EvlOpts::default());
+    let tr = trial_mut(&mut v, "c0");
+    d12(tr);
+    uncited(tr, "completed", "not_run");
+    tr["episode"]["verification"]["evidence_refs"] = json!([format!("cl22:{}", "a".repeat(64))]);
+    let refused = intake_all(&w.s, &v);
+    assert!(
+        refused
+            .iter()
+            .any(|(t, e)| t == "c0" && e.contains("not-run reason marker")),
+        "{refused:?}"
+    );
+}

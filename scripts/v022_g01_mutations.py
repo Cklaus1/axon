@@ -682,6 +682,31 @@ MUTATIONS = [
      'if let (Some(k), VerificationResult::Passed | VerificationResult::Failed) = (run_end, v.result)',
      'if let (Some(k), VerificationResult::Passed | VerificationResult::Failed) = (run_end.filter(|_| false), v.result)',
      'axon-loop', '--test d12_unknown_outcome', 'a_cancelled_run_does_not_count_its_failed_check'),
+    ('M132', 'intake: an uncited verification names no evidence but one not-run marker',
+     'crates/axon-loop/src/intake.rs',
+     '        && micode_not_run_reason(&ep.verification).is_none()\n',
+     '        && false\n',
+     'axon-loop', '--test d12_unknown_outcome', 'an_uncited_verification_names_no_other_evidence'),
+    ('M133', 'EVL: a stated run or check timeout is TimedOut',
+     'crates/axon-loop/src/evl.rs',
+     '"run_timed_out" | "check_timed_out" => UnknownKind::TimedOut,',
+     '"run_timed_out" | "check_timed_out" => UnknownKind::NotRun,',
+     'axon-loop', '--test d12_unknown_outcome', 'a_stated_not_run_reason_keeps_the_kind'),
+    ('M134', 'EVL: stated missing check evidence is MissingEvidence',
+     'crates/axon-loop/src/evl.rs',
+     '"check_evidence_missing" => UnknownKind::MissingEvidence,',
+     '"check_evidence_missing" => UnknownKind::NotRun,',
+     'axon-loop', '--test d12_unknown_outcome', 'a_stated_not_run_reason_keeps_the_kind'),
+    ('M135', 'EVL: a stated unverifiable check is Unverifiable',
+     'crates/axon-loop/src/evl.rs',
+     '"check_unverifiable" => UnknownKind::Unverifiable,',
+     '"check_unverifiable" => UnknownKind::NotRun,',
+     'axon-loop', '--test d12_unknown_outcome', 'a_stated_not_run_reason_keeps_the_kind'),
+    ('M136', 'EVL: how the run ended outranks what the producer states',
+     'crates/axon-loop/src/evl.rs',
+     '            run_end.or(stated).unwrap_or(UnknownKind::NotRun),',
+     '            stated.or(run_end).unwrap_or(UnknownKind::NotRun),',
+     'axon-loop', '--test d12_unknown_outcome', 'a_stated_not_run_reason_keeps_the_kind'),
 ]
 
 
@@ -699,7 +724,7 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
            "M79", "M80", "M81", "M82", "M83", "M84", "M85",
            "M86", "M87", "M88", "M89", "M90", "M91", "M92", "M93", "M94", "M95", "M96", "M97"}
 RETIRED = {"M58"}
-BINDING_IDS = {f"M{n}" for n in range(101, 132)}
+BINDING_IDS = {f"M{n}" for n in range(101, 137)}
 
 
 def in_scope(mid, scope):

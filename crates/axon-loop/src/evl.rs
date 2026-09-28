@@ -987,6 +987,19 @@ fn judge(
         },
         None => (d.ep.status == EpisodeStatus::Cancelled).then_some(UnknownKind::Cancelled),
     };
+    // What the PRODUCER states about an uncited verification (MiCode's not-run
+    // reason marker): which non-success it is, never a verdict. Below how the
+    // run ended (a cancellation stays a cancellation).
+    let reason = crate::intake::micode_not_run_reason(v);
+    let stated = reason.map(|r| match r {
+        "run_timed_out" | "check_timed_out" => UnknownKind::TimedOut,
+        "check_evidence_missing" => UnknownKind::MissingEvidence,
+        "check_unverifiable" => UnknownKind::Unverifiable,
+        _ => UnknownKind::NotRun,
+    });
+    let stated_why = reason
+        .map(|r| format!("; the producer states {r}"))
+        .unwrap_or_default();
     // A run that did not finish has no verdict that counts: a check over what
     // a cancelled or timed-out run left behind is not the trial's outcome, and
     // counting it would average the interruption away. (A pass is already
@@ -1030,8 +1043,11 @@ fn judge(
         VerificationResult::Failed if d12 => unknown(UnknownKind::Unbound, D12_NOT_COUNTED),
         VerificationResult::Failed => (Outcome::Fail, "verifier reported failure".into(), None),
         VerificationResult::NotRun => unknown(
-            run_end.unwrap_or(UnknownKind::NotRun),
-            format!("verification not run (status {:?})", d.ep.status),
+            run_end.or(stated).unwrap_or(UnknownKind::NotRun),
+            format!(
+                "verification not run (status {:?}{})",
+                d.ep.status, stated_why
+            ),
         ),
         VerificationResult::Unknown => match check_receipt {
             // The check itself did not reach a verdict, as the verifier signed.
@@ -1054,8 +1070,11 @@ fn judge(
                 ),
             ),
             None => unknown(
-                run_end.unwrap_or(UnknownKind::MissingEvidence),
-                format!("verification unknown (status {:?})", d.ep.status),
+                run_end.or(stated).unwrap_or(UnknownKind::MissingEvidence),
+                format!(
+                    "verification unknown (status {:?}{})",
+                    d.ep.status, stated_why
+                ),
             ),
         },
     }
