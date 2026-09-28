@@ -460,3 +460,34 @@ DO_NOT_REGISTER, 7 of 8 claims registered, PSV-3 among them). It is negative-mat
       exercised by the root-run tests.
     - **Recorded, not fixed:** under an IO grant, a sealed candidate can READ the suite's source
       through the filesystem. It learns the answers, but cannot change the rubric.
+
+The next four come from dev review-loop round 1 (wf_336353cb-a2b, 16 agents, run on protocol
+code identical to candidate 6, whose certifying review wf_0bc40b69-da7 had registered 8/8). The
+round found five executed blockers, and those falsify candidate 6's PSV-1, PSV-6 and PSV-7. They
+are negative-matrix rows A29–A32.
+
+15. **A sealed module's imports stay sealed (PSV-1).** A `use` inside a sealed (candidate) module
+    searched the suite dir first. It could therefore pull into the program an operator module the
+    entry never imports, which then decided the verdict. Now a module loaded from a sealed dir
+    resolves its own nested `use`s only in the sealed dirs.
+16. **The observation's authority epoch is joined and re-checked (PSV-6).**
+    - `check_bundle` takes the trial's epoch and refuses an observation made under another one. The
+      loop joins that epoch to its OWN scope pointer, so an authority store chosen by the caller no
+      longer yields accepted protected evidence.
+    - Fabric re-reads the current epoch after the observer returns, and refuses the launch if it
+      moved.
+    - Recorded, not done: on a protected host, `--store` should also come from the operator config
+      (defence in depth; the loop join is the enforcement point).
+17. **A protected decision re-verifies its verdicts (PSV-7).** Admission trusted the stored
+    evaluation record. Now, in the protected class, admission (and so rederive and the
+    protected-scope gate) re-runs intake's own verification on every counted verdict, from its
+    stored request, receipt, attestation and `axon-psv-evidence/1` bundle, under the operator
+    roots. The receipt must claim protected evidence. The record, the ledger and the CAS are all
+    writable by a store writer; the signatures are not.
+18. **The execution leg is attested, not claimed (PSV-7).**
+    - Fabric attests an EXECUTION it dispatched to the protected profile, in its own domain
+      (`axon.fabric-execution/1`), over that execution's request and receipt.
+    - EVL's protected class counts a trial's execution leg only with that attestation, verified
+      under the operator's verifier root. Admission re-verifies it.
+    - MiCode's D12 flow is unaffected: its executions were already ineligible for the protected
+      class.

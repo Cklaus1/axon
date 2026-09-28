@@ -253,8 +253,20 @@
           "PSV-6: the epoch is not re-checked after the observer runs (executed)",
           "PSV-6: in protected mode the epoch's authority store is caller-chosen, and the loop never joins the observation's epoch (executed)",
           "PSV-1: a sealed module's mod/use is not confined to the sealed dirs, so operator modules outside the entry's import closure can join the program (executed)"
-        ]
-      }
+        ],
+        "fixed": {
+          "commits": [
+            "08903fdf sealed imports (PSV-1)",
+            "dfce767d epoch join + post-observation recheck (PSV-6)",
+            "5abd8990 + c8e43538 admission re-verification (PSV-7; the follow-up fixes a commit made without gating on its tests)",
+            "cf0a6dfe attested execution leg (PSV-7)"
+          ],
+          "amendments": "15-18",
+          "matrix": "A29-A32 (32 rows)",
+          "mutations": "M251-M259 9/9 killed"
+        }
+      },
+      "next": "round 2 on the fixed dev tree"
     }
   }
 }

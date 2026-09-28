@@ -5,8 +5,8 @@ three protected components stay NOT_RUN until the operator-controlled environmen
 
 Rows are the gap map's A1–A19, the protocol spec's A20–A21, A22–A24 from the candidate-2
 independent review (wf_d725935a-7ed, B1–B3), A25–A26 from the candidate-3b review
-(wf_1bc28496-38e), A27 from the candidate-4 review (wf_ecfcd666-6c9), and A28 from
-the candidate-5 review (wf_293dfdb6-9d8). Every cited test asserts its row's
+(wf_1bc28496-38e), A27 from the candidate-4 review (wf_ecfcd666-6c9), A28 from
+the candidate-5 review (wf_293dfdb6-9d8), and A29–A32 from dev review-loop round 1 (wf_336353cb-a2b). Every cited test asserts its row's
 SPECIFIC refusal (the reason, not only a non-pass), and runs in the fabric/psv/loop suites or in
 `gate.sh`. `scripts/psv_matrix_check.py` fails when a row is missing, cites no test, or cites a
 test that does not exist (`file::function`), so this table cannot silently rot.
@@ -44,6 +44,10 @@ depth, and each has its own test.
 | A26 | safety-monitor key planted in the loop store | a protected-scope clearance needs a key the operator's monitor root holds; admission re-checks it at every derivation | `operator's monitor root`; activation refused after revocation | `crates/axon-loop/tests/protected_class.rs::a_monitor_key_planted_in_the_store_never_clears_a_protected_trial`, `crates/axon-loop/tests/protected_class.rs::a_key_revoked_at_the_operator_root_no_longer_counts` |
 | A27 | candidate code reads K from the memory of the process that holds it (Exec granted) | `axon test` under a completion key: non-dumpable, no `Exec` in its ceiling whatever was granted, key read raw and scrubbed; the guest runner passes the ceiling without `Exec` | `requires effect \`Exec\``; `DENIED` on `/proc/<pid>/mem`; the child's ceiling has no `Exec` | `crates/axon-core/tests/psv_test_selection.rs::holding_a_completion_key_spawns_nothing`, `crates/axon-core/tests/psv_test_selection.rs::holding_a_completion_key_makes_the_process_non_dumpable`, `crates/axon-psv/tests/runner.rs::the_process_holding_k_is_given_no_exec`, `scripts/psv_guest_boot_test.sh` |
 | A28 | an unreadable suite module replaced by the candidate's same-named module | the module loader: only an absent module moves the search on; an unreadable one is E0901 | `does not fall through`; no pass | `crates/axon-core/tests/psv_test_selection.rs::an_unreadable_suite_module_never_falls_through_to_the_candidate`, `scripts/psv_guest_boot_test.sh` |
+| A29 | a sealed candidate's `use` pulls in an operator module the entry never imports | module loader: a sealed module's nested `use` resolves only in the sealed dirs | no pass | `crates/axon-core/tests/psv_test_selection.rs::a_sealed_modules_use_never_reaches_an_unimported_suite_module` |
+| A30 | observation under another authority epoch (moved during observation, or a caller-chosen store) | Fabric: epoch re-read after the observer, launch refused; loop: `check_bundle` joins the observation's epoch to the trial's | `authority epoch is now`; `authority epoch` | `crates/axon-fabric/tests/psv_dispatch.rs::an_epoch_that_moves_while_the_observer_runs_refuses_the_launch`, `crates/axon-loop/tests/intake.rs::each_protected_join_is_verified_over_the_documents` |
+| A31 | development verdicts relabelled protected in the store | admission re-verifies every counted protected verdict from its documents under the operator roots | `does not re-verify` | `crates/axon-loop/tests/psv7_relabel.rs::development_verdicts_relabelled_protected_are_refused` |
+| A32 | an execution receipt relabelled to the protected backend | EVL: the protected execution leg needs Fabric's execution attestation under the operator's verifier root; admission re-verifies it | `not attested as a protected execution`; `execution` | `crates/axon-loop/tests/protected_class.rs::a_relabelled_execution_leg_counts_nothing_in_a_protected_evaluation`, `crates/axon-loop/tests/protected_class.rs::a_protected_admission_re_verifies_the_execution_leg_from_its_documents`, `crates/axon-fabric/src/signing.rs::only_a_protected_profile_execution_is_attested` |
 
 ## What these rows do NOT prove (PROTECTED_ONLY)
 
