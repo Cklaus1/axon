@@ -67,7 +67,7 @@
       ]
     },
     "verification_binding": {
-      "status": "PARTIAL",
+      "status": "PASS",
       "requires_gates": [
         "G01-r22-nonvacuous-outcome",
         "G01-r22-unknown-outcome",
@@ -79,9 +79,6 @@
         "G11-r22-admission-disposition",
         "G11-r22-rollback-revalidate",
         "G33-r22-decision-rule-freeze"
-      ],
-      "missing": [
-        "G01-r22-unknown-outcome"
       ]
     },
     "no_open_blocking_false_greens": {
@@ -92,7 +89,6 @@
   "missing": [
     "protected_backend",
     "g01_on_protected_backend",
-    "pci_on_protected_backend",
-    "verification_binding"
+    "pci_on_protected_backend"
   ]
 }

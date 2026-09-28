@@ -378,6 +378,15 @@
         "PASS"
       ],
       "note": "Binding candidate 3, REGISTERED at axon 6d3f0ff6 + micode e7fdb739 (governance/proofs/v022-binding-c3/REGISTRATION.md; review wf_849bc606-7e8, zero blockers). ACCEPT/REJECT/INCONCLUSIVE/VETOED carry explicit reasons in a content-addressed admission record re-derived byte-identically at activation; only an ACCEPT whose evidence is still authorized NOW (admitter, verifier trust/key/pins, context observer, protected clearances and keys) activates; a recorded violation vetoes before any utility; unknown costs are never zero (Fabric execution component, multi-currency liability summed, report-only economics per ADR-001 D4). axon-loop admission.rs, evl.rs, pointer.rs; tests evl_admission.rs, protected_class.rs, safety.rs, assignment.rs, admission decide_tests."
+    },
+    {
+      "gate_id": "G01-r22-unknown-outcome",
+      "executed_by": "scripts/v022_stage5_gates.sh",
+      "invoked_by": "scripts/gate.sh",
+      "allowed_product_result": [
+        "PASS"
+      ],
+      "note": "REGISTERED at axon a9e4c269 + micode fc6221a5 after three candidates (governance/proofs/v022-unknown-outcome/REGISTRATION.md; final review wf_dc09551c-ab1, zero blockers). Timeout (run deadline incl. a silent provider past first-byte, Fabric watchdog, Fabric wall-time), cancellation (SIGTERM -> cancelled sidecar), unmatched checks, missing evidence (crashed Fabric) and unverifiable output (unsigned Fabric) each reach EVL as a distinct UnknownKind through the real MiCode->Fabric->axon-loop bridge (loop_interop_gate.sh section 8b, 16 real trials) and are counted apart in the arm statistics; D12 verdicts are judged but never counted; no default pass. MiCode states the not-run reason as a closed-set content marker inside the pinned episode contract. Also runs in scripts/v022_micode_gates.sh (micode, micode-persist, micode-core rows)."
     }
   ],
   "tasks": [],

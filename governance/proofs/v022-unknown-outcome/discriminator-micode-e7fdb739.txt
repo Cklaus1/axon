@@ -1,0 +1,384 @@
+
+== build
+micode dir /home/cklaus/projects/aicoding/micode-v022-wt
+axon   f1c4cb27 (dirty)
+micode e7fdb739 
+
+== 0. old peer: no expected context, no policy
+  PASS  old peer: micode exec succeeds
+  PASS  old peer: exactly one provider request
+  PASS  old peer: no .micode/axon/closed-loop directory
+  PASS  old peer: Axon ledger has nothing to record
+
+== 0b. a policy set WITHOUT an expected context is REFUSED, not ignored
+  PASS  policy without context: micode exec is refused (nonzero)
+  PASS  policy without context: zero provider requests
+  PASS  policy without context: names POLICY_WITHOUT_EXPECTED_CONTEXT
+  PASS  policy without context: no .micode/axon/closed-loop directory
+  PASS  policy without context: Axon ledger has nothing to record
+
+== 1. incumbent run: learn the candidate view from MiCode's own ack
+  PASS  incumbent: micode exec succeeds
+  PASS  incumbent: exactly one provider request
+  PASS  incumbent: ack records not_configured
+  PASS  incumbent: ack candidates == tools the provider was sent
+  PASS  incumbent: tool set identical to the old-peer run
+  PASS  incumbent: Axon intake refuses a task that ran under no Axon policy (exit 4)
+  PASS  incumbent: refusal names the not-produced marker
+  PASS  incumbent: store bytes unchanged
+
+== 2. Axon produces the policy: DEC → put → baseline → activate → resolve
+  PASS  DEC driver produced a policy
+  PASS  DEC shortlist is [read, grep] (frequency ranking, limit 2)
+  PASS  Axon candidate_set_ref == MiCode's (two independent cl22 implementations agree)
+  PASS  G2: policy put REFUSES a view with no registered candidate list (exit 4)
+  PASS  G2: refusal names the unregistered candidate_set_ref
+  PASS  G2: store unchanged by the refused put
+  PASS  candidates put: registered list digests to MiCode's candidate_set_ref
+  PASS  policy put exit 0
+  PASS  activate transition exit 0
+  PASS  pointer resolve exit 0
+  PASS  resolve pins the DEC policy (digest == put ref)
+
+== 3. MiCode consumes Axon's policy (real binary)
+  PASS  pinned: micode exec succeeds
+  PASS  pinned: exactly one provider request
+  PASS  pinned: provider was sent EXACTLY the shortlisted tools
+  PASS  pinned: ack state pinned
+  PASS  pinned: ack policy_id == Axon's
+  PASS  pinned: ack policy_ref == Axon's cl22 digest
+  PASS  G6: sidecar projection_ref is null (the ack is not a PolicyProjection)
+  PASS  pinned: sidecar policy_ref == Axon's digest
+  PASS  pinned: sidecar epoch == Axon pointer epoch
+  PASS  pinned: sidecar cost_micro is 7500 MicroCents converted (75)
+  PASS  pinned: usage state estimated (not final)
+
+== 4. Axon intakes MiCode's real episode + context receipt
+  PASS  intake exit 0
+  PASS  ledger grew by exactly one entry
+  PASS  ledger event is episode_intake
+  PASS  recorded corpus_role mechanism_test
+  PASS  recorded policy_ref == Axon's
+  PASS  recorded cost_micro 75
+  PASS  recorded context_ref == receipt file name
+  PASS  recorded trial identity
+  PASS  episode bytes stored content-addressed
+  PASS  paired-trial structural refusal recorded (primary checkout), not hidden
+  PASS  re-intake is idempotent (recorded_now false)
+  PASS  re-intake leaves store bytes unchanged
+  PASS  source_episode_ref resolves to a canonical MiCode episode on disk
+  PASS  G1 fixed: canonical episode cost.spend_micro_cents is the metered spend (7500), not 0
+  PASS  G1 fixed: --source-episode join succeeds (digest + round-up cost conversion)
+  PASS  source-join task: micode exec succeeds
+  PASS  source-join task: its canonical episode is on disk
+  PASS  zero canonical cost vs a metered sidecar is refused (exit 4)
+  PASS  zero: refused BY THE COST JOIN (ZERO spend), not by anything earlier
+  PASS  v014 canonical cost vs a metered sidecar is refused (exit 4)
+  PASS  v014: refused BY THE COST JOIN (NO known spend), not by anything earlier
+  PASS  store unchanged by the source-episode cross-checks
+
+== 5. negative: bad policies → MiCode abstains to the incumbent, zero tool additions
+  PASS  dup-key fixture really has a duplicate key
+  PASS  escaped-alias fixture carries the escaped key once and the plain key once
+  PASS  added-tool: G2: Axon policy put REFUSES a tool-adding shortlist (exit 4)
+  PASS  added-tool: G2: refusal names the added tool
+  PASS  added-tool: store bytes unchanged
+  PASS  added-tool: micode task still runs (abstention never fails a task)
+  PASS  added-tool: exactly one provider request
+  PASS  added-tool: provider sent the incumbent tool set, zero additions
+  PASS  added-tool: 'teleport' never reached the provider
+  PASS  added-tool: ack records abstained
+  PASS  added-tool: abstention reason recorded
+  PASS  added-tool: Axon intake refuses the fallback episode (exit 4)
+  PASS  added-tool: nothing recorded, store unchanged
+        reason: shortlist names "teleport", which is not an authorized candidate; a policy may only remove or reorder
+  PASS  authority-expansion: Axon policy put refuses it (exit 3/4)
+  PASS  authority-expansion: store bytes unchanged
+  PASS  authority-expansion: micode task still runs (abstention never fails a task)
+  PASS  authority-expansion: exactly one provider request
+  PASS  authority-expansion: provider sent the incumbent tool set, zero additions
+  PASS  authority-expansion: 'teleport' never reached the provider
+  PASS  authority-expansion: ack records abstained
+  PASS  authority-expansion: abstention reason recorded
+  PASS  authority-expansion: Axon intake refuses the fallback episode (exit 4)
+  PASS  authority-expansion: nothing recorded, store unchanged
+        reason: authority_expansion must be false
+  PASS  unknown-field: Axon policy put refuses it (exit 3/4)
+  PASS  unknown-field: store bytes unchanged
+  PASS  unknown-field: micode task still runs (abstention never fails a task)
+  PASS  unknown-field: exactly one provider request
+  PASS  unknown-field: provider sent the incumbent tool set, zero additions
+  PASS  unknown-field: 'teleport' never reached the provider
+  PASS  unknown-field: ack records abstained
+  PASS  unknown-field: abstention reason recorded
+  PASS  unknown-field: Axon intake refuses the fallback episode (exit 4)
+  PASS  unknown-field: nothing recorded, store unchanged
+        reason: not a axon.closed-loop.policy/1 envelope: unknown field `extra`, expected one of `schema`, `policy_id`, `paren
+  PASS  dup-key: Axon policy put refuses it (exit 3/4)
+  PASS  dup-key: store bytes unchanged
+  PASS  dup-key: micode task still runs (abstention never fails a task)
+  PASS  dup-key: exactly one provider request
+  PASS  dup-key: provider sent the incumbent tool set, zero additions
+  PASS  dup-key: 'teleport' never reached the provider
+  PASS  dup-key: ack records abstained
+  PASS  dup-key: abstention reason recorded
+  PASS  dup-key: Axon intake refuses the fallback episode (exit 4)
+  PASS  dup-key: nothing recorded, store unchanged
+        reason: not strict JSON: duplicate object key "policy_id"
+  PASS  escaped-alias: Axon policy put refuses it (exit 3/4)
+  PASS  escaped-alias: store bytes unchanged
+  PASS  escaped-alias: micode task still runs (abstention never fails a task)
+  PASS  escaped-alias: exactly one provider request
+  PASS  escaped-alias: provider sent the incumbent tool set, zero additions
+  PASS  escaped-alias: 'teleport' never reached the provider
+  PASS  escaped-alias: ack records abstained
+  PASS  escaped-alias: abstention reason recorded
+  PASS  escaped-alias: Axon intake refuses the fallback episode (exit 4)
+  PASS  escaped-alias: nothing recorded, store unchanged
+        reason: not strict JSON: duplicate object key "controls_ref"
+  PASS  escaped-alias: MiCode decoded the escape (duplicate controls_ref)
+  PASS  escaped-alias: Axon names the decoded duplicate too
+  PASS  malformed-digest: Axon policy put refuses it (exit 3/4)
+  PASS  malformed-digest: store bytes unchanged
+  PASS  malformed-digest: micode task still runs (abstention never fails a task)
+  PASS  malformed-digest: exactly one provider request
+  PASS  malformed-digest: provider sent the incumbent tool set, zero additions
+  PASS  malformed-digest: 'teleport' never reached the provider
+  PASS  malformed-digest: ack records abstained
+  PASS  malformed-digest: abstention reason recorded
+  PASS  malformed-digest: Axon intake refuses the fallback episode (exit 4)
+  PASS  malformed-digest: nothing recorded, store unchanged
+        reason: controls_ref "cl22:not-a-digest" is not a content ref
+  PASS  unsafe-number fixture carries 2^53+1
+  PASS  unsafe number: MiCode refuses the context before any provider request
+  PASS  unsafe-number transition fixture carries 2^53+1
+  PASS  unsafe number: Axon pointer transition refuses it as malformed (exit 3)
+  PASS  unsafe number: store unchanged
+
+== 6. negative: context mismatch → TASK_NOT_STARTED, zero provider requests
+  PASS  mismatch: micode exec fails
+  PASS  mismatch: stderr says TASK_NOT_STARTED: EXECUTION_CONTEXT_MISMATCH
+  PASS  mismatch: ZERO provider requests
+  PASS  mismatch: refused sidecar written (denominator)
+  PASS  mismatch: Axon intake refuses (exit 4)
+  PASS  mismatch: refusal says TASK_NOT_STARTED
+  PASS  mismatch: nothing recorded, store unchanged
+  PASS  repo mismatch (gate-repo): TASK_NOT_STARTED naming repo_id
+  PASS  repo mismatch (gate-repo): ZERO provider requests
+  PASS  repo mismatch (git-root:1111111111111111111111111111111111111111): TASK_NOT_STARTED naming repo_id
+  PASS  repo mismatch (git-root:1111111111111111111111111111111111111111): ZERO provider requests
+
+== 7. negative: tampered MiCode episodes → Axon intake refuses, store unchanged
+  PASS  tampered policy-ref: refused with exit 4
+  PASS  tampered policy-ref: nothing recorded, store unchanged
+  PASS  tampered unknown-field: refused with exit 3
+  PASS  tampered unknown-field: nothing recorded, store unchanged
+  PASS  tampered context-ref: refused with exit 4
+  PASS  tampered context-ref: nothing recorded, store unchanged
+  PASS  tampered dup-key: refused with exit 3
+  PASS  tampered dup-key: nothing recorded, store unchanged
+  PASS  tampered identity: refused with exit 4
+  PASS  tampered identity: nothing recorded, store unchanged
+  PASS  tampered projection-ref: refused with exit 4
+  PASS  tampered projection-ref: nothing recorded, store unchanged
+  PASS  tampered cost (same trial, different bytes): refused as identity conflict (exit 5)
+  PASS  tampered cost: nothing recorded
+
+== 8. G3: MiCode's acceptance check runs through REAL Fabric; Axon intake joins it
+  PASS  G3: micode exec succeeds
+  PASS  G3: a sidecar was written
+  PASS  G3: verification cites a verifier (MiCode ran the check through Fabric)
+  PASS  G3: the cited receipt is on disk under closed-loop/fabric/
+  PASS  G3: the cited request is on disk under closed-loop/fabric/
+  PASS  G3: verification passed with matched_checks 1 (the named check, t_ok_double)
+  PASS  G3: receipt is supervisor-observed
+  PASS  G3: receipt's operation is this attempt's
+  PASS  G3: receipt's execution id is the sidecar's
+  PASS  G3: the check ran as the check principal, not the subject
+  PASS  G3: output_workspace_ref == receipt input tree
+  PASS  G3: an independent Fabric import of the repo yields the same tree ref
+  PASS  G3/D12: acf_request_ref stays MiCode's not-produced marker
+  PASS  G3: Fabric journal holds the op, launched
+  PASS  G3: Fabric journal op state is completed
+  PASS  G3: intake WITHOUT the Fabric documents is refused (exit 4)
+  PASS  G3: store unchanged by that refusal
+  PASS  G3: intake with a receipt that is not the cited one is refused (exit 4)
+  PASS  G3: ...by the cited-receipt join
+  PASS  G3: store unchanged by that refusal
+  PASS  G01: MiCode kept Fabric's attestation of the cited receipt
+  PASS  G01: it is signed by the provisioned verifier key
+  PASS  G01: it binds this attempt's operation
+  PASS  G01: the right documents WITHOUT the attestation are refused (exit 4)
+  PASS  G01: ...as unauthenticated
+  PASS  G01: the real Fabric replays the verification receipt unsigned
+  PASS  G01: the impostor Fabric ran and signed the same operation under its own key
+  PASS  G01: an attestation under an unregistered key is refused (exit 4)
+  PASS  G01: ...naming the key it is not signed by
+  PASS  G01: store unchanged by the refusals
+  PASS  G01/(2): an effectful check grant runs, unsigned, naming why
+  PASS  G01/(3): Fabric signed the check run as the observer (the principal is a caller-chosen name)
+  PASS  G01/(3): ...and intake refuses a check run as the subject (exit 4, principal)
+  PASS  G01/(3): store unchanged by that refusal
+  PASS  G01/(4): a store pinned to another verifier revision refuses the genuine verdict (exit 4)
+  PASS  G3: intake joins the real Fabric check (exit 0)
+  PASS  G3: record cites the receipt
+  PASS  G01/(7): the record names the key that authenticated it
+  PASS  G01/(7): ...and the attestation it verified, stored content-addressed
+  PASS  G3: Fabric receipt stored content-addressed
+  PASS  rubric: the task still completes (a withheld attestation never fails a task)
+  PASS  rubric: MiCode cites NO verdict from the candidate's own check file
+  PASS  acceptance: the requester-chosen test passed and was signed
+  PASS  acceptance: a verdict on a test the task did not register is refused (exit 4)
+  PASS  acceptance: ...naming the task's registered acceptance check
+  PASS  acceptance: store unchanged
+  PASS  G3: a failing check → verification failed
+  PASS  G3: a failed Fabric check is intaken (exit 0)
+  PASS  G3: ...recorded as the failed verdict it is
+  PASS  G3: a check name matching no test → unknown with 0 matched (never passed)
+  PASS  G3: a template naming a task-owned field → no verifier cited (not_run)
+  PASS  G3: Fabric never saw the hijacked op (unknown_op, exit 5)
+  PASS  G3: status without the submitting authority is refused (exit 7)
+loop_interop_gate: G3 section executed 53 assertions, 0 failed
+
+== 8b. G01-r22-unknown-outcome: non-success states stay distinct through the real bridge into EVL
+  PASS  8b: evo propose produced a candidate of the active policy
+  PASS  8b: plan register exit 0
+  PASS  8b: plan freeze exit 0
+  PASS  8b: plan assign exit 0 (24 trials)
+  FAIL  8b: u-pong-2 wrote no sidecar (rc 143)
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 58544)
+Traceback (most recent call last):
+  File "/usr/lib/python3.14/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/http/server.py", line 496, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/http/server.py", line 484, in handle_one_request
+    method()
+    ~~~~~~^^
+  File "/var/tmp/axon-test-tmp/loop-interop.UU0bHO/provider.py", line 32, in do_POST
+    self.end_headers(); self.wfile.write(sse)
+                        ~~~~~~~~~~~~~~~~^^^^^
+  File "/usr/lib/python3.14/socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+BrokenPipeError: [Errno 32] Broken pipe
+----------------------------------------
+  PASS  8b: the timed-out check is cited as unknown, 0 matched
+  PASS  8b: ...and Fabric signed it as timed_out
+  PASS  8b: the unmatched check is cited as unknown, 0 matched
+  PASS  8b: the refused check is not_run with no verifier
+jq: error: Could not open file : No such file or directory
+        expected [["cancelled","not_run"]] got []
+  FAIL  8b: SIGTERM ends the exec with a CANCELLED sidecar, not a missing one
+        expected [["failed","not_run",1]] got [["failed","not_run",0]]
+  FAIL  8b: a run past its own deadline is failed + not_run, and says so
+        expected [["not_run",null,1]] got [["not_run",null,0]]
+  FAIL  8b: u-fail-2 is an uncited not_run stating one reason
+        expected [["not_run",null,1]] got [["not_run",null,0]]
+  FAIL  8b: u-fail-3 is an uncited not_run stating one reason
+        expected [["not_run",null,1]] got [["not_run",null,0]]
+  FAIL  8b: u-none-3 is an uncited not_run stating one reason
+        expected [["not_run",null,1]] got [["not_run",null,0]]
+  FAIL  8b: u-spin-2 is an uncited not_run stating one reason
+jq: error: Could not open file : No such file or directory
+jq: error: Could not open file : No such file or directory
+jq: error: Could not open file : No such file or directory
+        expected [12] got [11]
+  FAIL  8b: all 12 candidate sidecars are intaken (no non-success state is dropped)
+jq: error: Could not open file : No such file or directory
+jq: error: Could not open file : No such file or directory
+jq: error: Could not open file : No such file or directory
+cat: /var/tmp/axon-test-tmp/loop-interop.UU0bHO/wt/u-pong-2/.micode/axon/closed-loop/fabric/.json: No such file or directory
+cat: /var/tmp/axon-test-tmp/loop-interop.UU0bHO/wt/u-pong-2/.micode/axon/closed-loop/fabric/.json: No such file or directory
+cat: '': No such file or directory
+jq: Bad JSON in --slurpfile e : Could not open : No such file or directory
+  PASS  8b: evl evaluate over the real trials exit 0
+  PASS  8b: u-pong-1 is unknown/unbound
+        expected [unknown/cancelled] got [unknown/]
+  FAIL  8b: u-pong-2 is unknown/cancelled
+        expected [unknown/timed_out] got [unknown/not_run]
+  FAIL  8b: u-pong-3 is unknown/timed_out
+  PASS  8b: u-fail-1 is unknown/unbound
+        expected [unknown/unverifiable] got [unknown/not_run]
+  FAIL  8b: u-fail-2 is unknown/unverifiable
+        expected [unknown/missing_evidence] got [unknown/not_run]
+  FAIL  8b: u-fail-3 is unknown/missing_evidence
+  PASS  8b: u-none-1 is unknown/unmatched
+  PASS  8b: u-none-2 is unknown/not_run
+  PASS  8b: u-none-3 is unknown/not_run
+  PASS  8b: u-spin-1 is unknown/timed_out
+        expected [unknown/timed_out] got [unknown/not_run]
+  FAIL  8b: u-spin-2 is unknown/timed_out
+  PASS  8b: u-spin-3 is unknown/timed_out
+  PASS  8b: no default pass: the candidate arm counts 0 pass, 0 fail
+        expected [{"cancelled":1,"missing_evidence":1,"not_run":2,"timed_out":4,"unbound":2,"unmatched":1,"unverifiable":1}] got [{"not_run":6,"timed_out":2,"unbound":2,"unmatched":1}]
+  FAIL  8b: the kinds are counted apart in the statistics
+  PASS  8b: every assigned trial is exactly one of pass/fail/kind/missing (both arms)
+  PASS  8b: the undelivered incumbent trials are missing, never passed
+loop_interop_gate: 8b section executed 33 assertions, 14 failed
+
+== 9. B256: real MiCode negotiates closed-loop-profile/1 with the REAL cortex-policy-adapter
+  PASS  B256: micode exec succeeds with negotiation on
+  PASS  B256: a profile record was written
+  PASS  B256: outcome agreed with the real adapter
+  PASS  B256: the agreed profile was recorded before the first model call
+  PASS  B256: the accept is Axon's (peer axon, role accept)
+  PASS  B256: cortex-policy-adapter/1 agreed; axon-bridge/v0 NOT (Axon never claims MiCode's wire)
+  PASS  B256: the real adapter accepts MiCode's recorded offer (exit 0)
+  PASS  B256: ...with exactly the accept MiCode recorded
+  PASS  B256: an old adapter → micode still runs (incumbent protocol 1)
+  PASS  B256: an old adapter is recorded as old_peer, never as agreed
+  PASS  B256: no common profile → micode still runs (incumbent protocol 1, authority retained)
+  PASS  B256: no common profile is recorded as unsupported, never agreed
+  PASS  B256: ...with the real adapter's own code no_common_schema
+  PASS  B256: no common profile resolved (and was recorded) before the first model call
+  PASS  B256: no common profile is distinct from an old peer (not old_peer, no accept)
+  PASS  B256: a fabricated accept is recorded as failed, never agreed
+  PASS  B256: ...and names why
+loop_interop_gate: B256 section executed 17 assertions, 0 failed
+
+== 10. G03: revocation is rechecked at TOOL EXECUTION (real pointer show → real MiCode)
+  PASS  G03: pointer show exit 0
+  PASS  G03: the live view does not list the pinned policy as revoked
+  PASS  G03 in force: micode exec succeeds
+  PASS  G03 in force: two provider requests (the tool call, then its result)
+  PASS  G03 in force: the read ran (its content reached the model)
+  PASS  G03 in force: no revocation refusal
+  PASS  G03: pointer revoke exit 0
+  PASS  G03: the view now lists the pinned policy as revoked
+  PASS  G03 revoked: the task starts (the pin agreed at task start)
+  PASS  G03 revoked: two provider requests (the tool call, then its refusal)
+  PASS  G03 revoked: the read was refused at execution, naming the revocation
+  PASS  G03 revoked: the file's content never reached the model
+loop_interop_gate: G03 section executed 12 assertions, 0 failed
+
+== 11. G16 role-scope: a read-only role writes nothing (real binary)
+  PASS  critic: micode exec succeeds (the task runs)
+  PASS  critic: two provider requests (the write, then its refusal)
+  PASS  critic: the write was refused naming the read-only role
+  PASS  critic: the file never appeared
+  PASS  critic declaring writes: TASK_NOT_STARTED, zero provider requests
+
+== 12. G01: the subject cannot read the verifier's signing key (real binary)
+  PASS  key/control: unscoped, the key DOES reach the model and the detector sees it
+  key/read tool_result: [error] read rejected "/var/tmp/axon-test-tmp/loop-interop.UU0bHO/issuer.pk8": path "/var/tmp/axon-test-tmp/loop-interop.UU0bHO/issuer.pk8" is absolute; tool paths must be relative to the workspace root (rejected before any filesystem effec
+  PASS  key/read: the task runs, the call is answered
+  PASS  key/read: the tool_result is the tool's own refusal
+  PASS  key/read: no byte of the key reached the model
+  key/bash tool_result: [denied] delegation scope denied this call: tool "bash" reaches files this scope cannot bound from its arguments, so it is denied while path_globs are set 
+  PASS  key/bash: the task runs, the call is answered
+  PASS  key/bash: the tool_result is the tool's own refusal
+  PASS  key/bash: no byte of the key reached the model
+
+== summary
+assertions: 283  pass: 269  fail: 14
+loop_interop_gate: FAIL — 14 of 283 assertions failed
