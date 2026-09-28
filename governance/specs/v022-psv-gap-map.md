@@ -166,3 +166,5 @@ This section is appended as mechanisms land; the rows above stay as they were at
 The O1 host-config path makes the pins sound. What it cannot show on the dev host is PROTECTED_ONLY:
 the operator installing `/etc/axon/protected-host.json`, and the protected-mode preflight passing
 against it.
+| M1 step 1: shared recipe | landed | F1 (same digest code host + guest) | `crates/axon-workspace-recipe`; `tests/workspace.rs::the_guest_tree_digest_is_the_store_reference` (`655fb08f`) |
+| M1 step 2: protocol crate | landed (dev) | A1, A2, A3, A11 at the format level | `crates/axon-psv` (6 tests): manifest canonical and verified only under the named digest; inputs checked separately and named; completion key bound to all 11 identities + secret; RFC 4231 HMAC. Mutation: 15 killed, 1 EQUIVALENT (`sort-nested`: no `preserve_order` in the build), not counted as killed |

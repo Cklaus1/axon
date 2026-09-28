@@ -316,6 +316,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "axon-psv"
+version = "0.1.0"
+dependencies = [
+ "axon-workspace-recipe",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "axon-reflex"
 version = "0.1.0"
 dependencies = [

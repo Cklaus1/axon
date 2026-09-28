@@ -5,6 +5,7 @@ members = [
   "crates/axon-cortex",
   "crates/axon-loop-contracts",
   "crates/axon-workspace-recipe",
+  "crates/axon-psv",
   "crates/axon-loop",
   "crates/cortex-policy-adapter",
   "crates/axon-reflex",
