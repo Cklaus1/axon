@@ -401,3 +401,73 @@ fn a_sealed_modules_use_never_reaches_an_unimported_suite_module() {
     let (out, err) = run("mod reference\nuse reference\n");
     assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
 }
+
+/// Dev review round wf_7cb5856d-806 (a regression of the round-1 fix,
+/// executed there to a keyed PASS): one file per module name, suite first,
+/// whoever asks. The suite imports a candidate module BEFORE its own
+/// `rubric`; the candidate's module `use`s `rubric` and ships a same-named
+/// copy. That copy must never become the rubric. Control: the honest
+/// candidate passes against the operator's rubric.
+#[test]
+fn a_sealed_module_never_supplies_an_operator_modules_name() {
+    use std::io::Write;
+    let run = |cand: &[(&str, &str)]| -> (String, String) {
+        let d = fresh(&format!("claim-{}", cand.len()));
+        std::fs::create_dir_all(d.join("cand")).unwrap();
+        std::fs::create_dir_all(d.join("suite")).unwrap();
+        std::fs::write(
+            d.join("suite/accept.ax"),
+            "mod f\nuse f.{double}\nmod rubric\nuse rubric.{expected}\n\n@[test]\nfn t_ok() { assert_eq(double(21), expected()) }\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("suite/rubric.ax"), "fn expected() -> i64 { 42 }\n").unwrap();
+        for (n, src) in cand {
+            std::fs::write(d.join("cand").join(n), src).unwrap();
+        }
+        let mut c = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .current_dir(d.join("suite"))
+            .arg("test")
+            .arg(d.join("suite/accept.ax"))
+            .args([
+                "--json",
+                "--filter",
+                "t_ok",
+                "--exact",
+                "--completion-key-stdin",
+            ])
+            .arg("--seal")
+            .arg(d.join("cand"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env(
+                "AXON_PATH",
+                format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+            )
+            .env("AXON_PATH_EXCLUSIVE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(c.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+        let out = c.wait_with_output().unwrap();
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, _) = run(&[("f.ax", "fn double(x: i64) -> i64 { x * 2 }\n")]);
+    assert!(
+        ok.contains("\"status\":\"ok\""),
+        "control: an honest candidate passes: {ok}"
+    );
+    let (out, err) = run(&[
+        (
+            "f.ax",
+            "use rubric.{expected}\nfn double(x: i64) -> i64 { 999 }\n",
+        ),
+        ("rubric.ax", "fn expected() -> i64 { 999 }\n"),
+    ]);
+    assert!(!out.contains("\"status\":\"ok\""), "{out}\n{err}");
+    assert!(err.contains("may not supply it"), "{err}");
+}

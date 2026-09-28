@@ -568,6 +568,7 @@ pub fn load_use_decls(
         load_module_recursive(
             &use_path,
             search_dirs,
+            false,
             &mut already_loaded,
             &mut loading_stack,
             &mut loaded_items,
@@ -753,6 +754,8 @@ pub fn resolve_use_files_transitive(
 fn load_module_recursive(
     use_path: &[String],
     search_dirs: &[std::path::PathBuf],
+    // The `use` comes from a SEALED module (the candidate under test).
+    from_sealed: bool,
     already_loaded: &mut std::collections::HashSet<String>,
     loading_stack: &mut Vec<String>,
     loaded_items: &mut Vec<ast::Item>,
@@ -797,6 +800,36 @@ fn load_module_recursive(
         rel.push(segment);
     }
     rel.set_extension("ax");
+
+    // A SEALED module's `use` never resolves a name an operator module holds,
+    // so it can reach only a sealed module, or nothing. One file per module
+    // name, suite first, whoever asks: were the candidate's copy allowed to
+    // load first, the suite's own later `use` of that name would find it
+    // "already loaded" and the candidate would define the rubric (dev review
+    // round wf_7cb5856d-806, a regression of the round-1 fix).
+    let sealed = crate::resolver::sealed_module_dirs();
+    let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let in_sealed = |p: &std::path::Path| {
+        let c = canon(p);
+        sealed.iter().any(|d| c.starts_with(d))
+    };
+    if from_sealed {
+        for d in search_dirs.iter().filter(|d| !in_sealed(d)) {
+            let op = d.join(&rel);
+            if !matches!(op.try_exists(), Ok(false)) {
+                errors.push(MergeError {
+                    code: error::E0901,
+                    message: format!(
+                        "module `{path_str}`: a sealed module may not supply it, because an \
+                         operator module of that name is at {}",
+                        op.display()
+                    ),
+                    file: op.display().to_string(),
+                });
+                return;
+            }
+        }
+    }
 
     let mut found = false;
     let mut searched: Vec<String> = Vec::new();
@@ -858,31 +891,11 @@ fn load_module_recursive(
                         })
                         .collect();
 
-                    // A SEALED module (the candidate under test) imports only
-                    // from the sealed dirs: its `use` never pulls an operator
-                    // module into the program that the entry's own imports did
-                    // not (review round wf_336353cb-a2b, PSV-1: a candidate
-                    // `use` of an unimported suite module decided the verdict).
-                    let sealed = crate::resolver::sealed_module_dirs();
-                    let canon =
-                        |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-                    let in_sealed = |p: &std::path::Path| {
-                        let c = canon(p);
-                        sealed.iter().any(|d| c.starts_with(d))
-                    };
-                    let nested_dirs: Vec<std::path::PathBuf> = if in_sealed(&candidate) {
-                        search_dirs
-                            .iter()
-                            .filter(|d| in_sealed(d))
-                            .cloned()
-                            .collect()
-                    } else {
-                        search_dirs.to_vec()
-                    };
                     for nested in nested_uses {
                         load_module_recursive(
                             &nested,
-                            &nested_dirs,
+                            search_dirs,
+                            in_sealed(&candidate),
                             already_loaded,
                             loading_stack,
                             loaded_items,
