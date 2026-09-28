@@ -212,6 +212,7 @@ name = "axon-fabric"
 version = "0.1.0"
 dependencies = [
  "axon-cortex",
+ "axon-fabric",
  "axon-loop",
  "axon-loop-contracts",
  "axon-os",
